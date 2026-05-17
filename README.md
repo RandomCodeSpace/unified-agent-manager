@@ -6,8 +6,7 @@ Codex, GitHub Copilot CLI, and OpenCode.
 
 > Status: **Phase 0 skeleton.** This is a bootstrapped Go module with an
 > empty Bubble Tea app. Adapter packages, tmux backend, and TUI table land
-> in subsequent phases — see `/root/.claude/plans/are-you-aware-of-magical-orbit.md`
-> for the full plan.
+> in subsequent phases.
 
 ## Build
 
