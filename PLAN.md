@@ -2,7 +2,7 @@
 
 ## Context
 
-The repository `/home/user/unified-agent-manager` is currently empty (no commits, no files). The goal is to build a **terminal UI that replicates Claude Code's "agent view" (`claude agents`) experience but works across multiple coding-agent CLIs in one unified dashboard** — Claude Code, OpenAI Codex, GitHub Copilot CLI, and OpenCode.
+The repository `/home/dev/projects/unified-agent-manager` contains a Go implementation of a **terminal UI that replicates Claude Code's "agent view" (`claude agents`) experience but works across multiple coding-agent CLIs in one unified dashboard** — Claude Code, OpenAI Codex, GitHub Copilot CLI, and OpenCode.
 
 Why: Claude Code has a great background-session dashboard (see https://code.claude.com/docs/en/agent-view), but it only manages Claude sessions. Developers who use Codex, Copilot, or OpenCode alongside Claude have to context-switch between tools. A unified TUI lets you dispatch, peek, attach, and stop sessions across all of them from one screen, with the same UX patterns: rows grouped by state (Needs input / Working / Completed / Ready for review), Space to peek, Enter to attach, Ctrl+X to stop, PR status dots, pin/rename/group, etc.
 
@@ -17,7 +17,7 @@ Intended outcome: a single-binary CLI called `uam` that opens an agent-view-styl
 - **Session storage** modeled on [`RandomCodeSpace/ctm`](https://github.com/RandomCodeSpace/ctm)'s `~/.config/ctm/sessions.json` pattern: a single JSON file at `~/.config/uam/sessions.json` with atomic write (temp + rename), flock-based locking, schema versioning with auto-migration, and `.bak.<unix-nano>` backups on schema upgrade. Each record holds `id` (uuid), `name`, `agent`, `mode` (always `yolo` for now), `workdir`, `tmux_session`, `created_at`, `last_seen_at`, `pinned`, `group`, `sort_index`, plus cached PR info. Live state (Working/NeedsInput/...) is NEVER persisted — adapters re-derive it from tmux every refresh.
 - **Always yolo mode.** Every session is launched with the provider's "full access / skip permissions" flag — `claude --dangerously-skip-permissions`, `codex --sandbox danger-full-access`, Copilot agent mode with auto-approval, `opencode` equivalent. We rely entirely on each provider's own safety mechanisms (Codex's sandbox, Claude's own guardrails, etc.); UAM does NOT layer its own git-checkpoint commits on top. If a provider offers a checkpoint feature natively, it's used as-is.
 - **Easy mode.** A guided wizard (`uam new` with no args, or `e` keybinding inside the TUI) walks the user through: 1) pick provider, 2) confirm or change workdir, 3) enter prompt. Each step uses Bubble Tea's list/input components. The wizard skips disabled providers (capability probe failed at startup). Power users can still bypass with `uam dispatch <agent> "<prompt>"` or by typing `@<agent> <prompt>` directly into the TUI's dispatch input.
-- **Build order:** Full phased plan (Phase 0 → Phase 8), ~10 working days of solo dev.
+- **Build order:** Full phased plan (Phase 0 → Phase 12), implemented in this repository as a cohesive MVP.
 
 ## Repository Layout
 
@@ -95,7 +95,7 @@ Rename(ctx, id, newName) error
 Subscribe(ctx) (<-chan SessionEvent, error)   // nil channel = poll-only
 ```
 
-Adapters are stateless about live state — they always re-read truth from tmux or Claude's job store. Our own metadata (pin, rename, group, SortIndex, PR cache) is overlaid by `store` after each adapter call.
+Adapters are stateless about live state — they always re-read truth from tmux. Our own metadata (pin, rename, group, SortIndex, PR cache) is overlaid by `store` after each adapter call.
 
 ## Yolo Mode (no UAM-managed checkpoints)
 
@@ -225,7 +225,7 @@ Triggered by `uam new` (no args) from the shell, or pressing `e` from the TUI's 
 2. **Pick workdir** — text input prefilled with the current `cwd`; `Tab` for filesystem completion; warn if the path is not a git repo (means no checkpoint will be created).
 3. **Enter prompt** — multiline input; `Ctrl+G` opens `$EDITOR` for a longer prompt; `Enter` sends, `Esc` cancels back to step 2.
 
-On submit: write the session record to `sessions.json` (yolo mode), create the git checkpoint, then call the chosen adapter's `Dispatch`. The new row appears immediately in the TUI.
+On submit: call the chosen adapter's `Dispatch`; after tmux session creation succeeds, write the session record to `sessions.json` (yolo mode). The new row appears immediately in the TUI.
 
 Power users skip the wizard with `uam dispatch <agent> "<prompt>"` or by typing `@<agent> <prompt>` into the TUI's dispatch input directly.
 
