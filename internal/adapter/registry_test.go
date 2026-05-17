@@ -2,6 +2,23 @@ package adapter
 
 import "testing"
 
+func TestRegistryDefaultAndDisabledReasons(t *testing.T) {
+	r := NewRegistry([]AgentAdapter{fakeAdapter{name: "b", available: true}, fakeAdapter{name: "a", available: true}, fakeAdapter{name: "x", available: false}})
+	if r.DisabledReasons()["x"] == "" {
+		t.Fatal("missing disabled reason")
+	}
+	if got := r.Default("b"); got == nil || got.Name() != "b" {
+		t.Fatalf("default preferred=%v", got)
+	}
+	if got := r.Default("missing"); got == nil || got.Name() != "a" {
+		t.Fatalf("default fallback=%v", got)
+	}
+	empty := NewRegistry(nil)
+	if got := empty.Default("none"); got != nil {
+		t.Fatalf("empty default=%v", got)
+	}
+}
+
 func TestRegistrySkipsUnavailableAdapters(t *testing.T) {
 	r := NewRegistry([]AgentAdapter{fakeAdapter{name: "ok", available: true}, fakeAdapter{name: "missing", available: false}})
 	if len(r.Enabled()) != 1 || r.Enabled()[0].Name() != "ok" {
