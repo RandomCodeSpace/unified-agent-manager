@@ -4,33 +4,83 @@ A terminal UI that replicates Claude Code's "agent view" experience across
 multiple coding-agent CLIs in one unified dashboard: Claude Code, OpenAI
 Codex, GitHub Copilot CLI, and OpenCode.
 
-> Status: **Phase 0 skeleton.** This is a bootstrapped Go module with an
-> empty Bubble Tea app. Adapter packages, tmux backend, and TUI table land
-> in subsequent phases.
+Status: **complete MVP across PLAN.md Phases 0–12**.
+
+## Features
+
+- Single Go/Bubble Tea binary: `uam`
+- Private tmux backend: every managed session runs under `tmux -L uam`
+- Agent adapters for:
+  - Claude Code: `claude --dangerously-skip-permissions`
+  - Codex: `codex --sandbox danger-full-access`
+  - GitHub Copilot CLI: `copilot --allow-all-tools` or `gh copilot --allow-all-tools`
+  - OpenCode: `opencode --auto-approve`
+- Persistent metadata at `${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json`
+- Atomic JSON writes, flock locking, schema migration backups, corrupt-file self-healing
+- TUI grouping by session state: Needs Input, Working, Review, Failed, Completed
+- Peek/reply/attach/stop flows backed by tmux `capture-pane` and `send-keys`
+- Pin, rename, group-by-dir toggle, and persisted manual reorder
+- PR URL detection from pane output plus optional `gh pr view` status refresh
+- Shell commands for automation
 
 ## Build
 
 ```sh
 make build      # produces ./bin/uam
-make run        # build + launch the (empty) TUI; press q to quit
+make test       # go test ./...
+make run        # build + launch the TUI
 ```
 
-Requires Go 1.24+ and tmux 3.x.
+Requires Go 1.24+ and tmux 3.x. Agent CLIs are capability-probed at runtime;
+unavailable providers are hidden from the TUI dispatch selector.
 
-## Roadmap
+## CLI
 
-| Phase | Scope |
+```sh
+uam                              # open TUI
+uam new                          # guided terminal dispatch flow
+uam dispatch [--safe] <agent> "prompt"
+uam dispatch --cwd /path/to/repo claude "fix flaky tests"
+uam ls [--json]
+uam peek <id>
+uam attach <id>
+uam last
+uam stop <id>                    # kill tmux session, keep record
+uam rm <id>                      # kill tmux session and remove record
+```
+
+## TUI keys
+
+| Key | Action |
 |---|---|
-| 0 | Skeleton (this commit): `go mod`, Makefile, Bubble Tea entry, file logger |
-| 1 | `internal/store` (atomic write + flock + schema versioning) + `internal/tmux` wrapper on private socket `-L uam` |
-| 2 | ClaudeAdapter (dispatch/list/attach/stop in yolo mode) + shell subcommands |
-| 3 | TUI MVP: table, dispatch input, attach/stop keys |
-| 4 | Peek + Reply via `capture-pane` + `send-keys` |
-| 5 | Claude `detect.go` patterns + grouping (Needs input / Working / Completed / Review) |
-| 6 | CodexAdapter + `@<agent>` dispatch selector |
-| 7 | CopilotAdapter + OpenCodeAdapter (capability-probed) |
-| 8 | Easy-mode wizard (`uam new` + `e` keybinding) |
-| 9 | State-detection polish (pane-hash demotion, optional `--classifier=llm`) |
-| 10 | PR status dot via `gh` |
-| 11 | Pin / rename / group-by-dir / reorder |
-| 12 | Help overlay, confirm overlays, prune-old, README screencast |
+| `↑` / `↓` | Move selection |
+| `Enter` / `→` | Attach selected session |
+| Type prompt + `Enter` | Dispatch to default agent |
+| `@codex prompt` | Dispatch to a specific agent |
+| `Tab` | Cycle default agent |
+| `Space` | Toggle peek panel |
+| `Ctrl+T` | Pin selected session |
+| `Ctrl+R` | Rename selected session |
+| `Ctrl+X` | Stop/remove selected session with confirmation |
+| `Ctrl+S` | Toggle group-by-directory |
+| `Shift+↑/↓` | Reorder rows and persist `sort_index` |
+| `e` | Open easy-mode wizard |
+| `?` | Help overlay |
+| `q` | Quit |
+
+## Development
+
+```sh
+go test ./...
+make build
+```
+
+Core packages:
+
+- `internal/store`: sessions JSON, locking, migration, backups
+- `internal/tmux`: all tmux shell-out logic
+- `internal/adapter`: shared adapter interfaces, tmux adapter, state detection
+- `internal/adapter/{claude,codex,copilot,opencode}`: provider registrations
+- `internal/app`: service layer and Bubble Tea model
+- `internal/pr`: optional GitHub PR status lookup
+- `internal/refresh`: refresh ticker policy

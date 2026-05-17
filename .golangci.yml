@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   timeout: 3m
 
@@ -8,9 +10,9 @@ linters:
     - staticcheck
     - unused
     - errcheck
-    - gofmt
-    - goimports
     - misspell
 
-issues:
-  exclude-use-default: false
+formatters:
+  enable:
+    - gofmt
+    - goimports
