@@ -34,8 +34,3 @@ Requires Go 1.24+ and tmux 3.x.
 | 10 | PR status dot via `gh` |
 | 11 | Pin / rename / group-by-dir / reorder |
 | 12 | Help overlay, confirm overlays, prune-old, README screencast |
-
-## References
-
-- Claude Code agent view (UX inspiration): <https://code.claude.com/docs/en/agent-view>
-- ctm (session-persistence patterns): <https://github.com/RandomCodeSpace/ctm>
