@@ -1,6 +1,8 @@
 package app
 
 import (
+	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -11,8 +13,8 @@ import (
 
 func TestModelViewAndKeys(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "one", State: adapter.NeedsInput, Activity: "waiting", PR: &adapter.PRRef{Status: adapter.PROpen}}, {ID: "2", AgentType: "fake", DisplayName: "two", State: adapter.Completed}}
-	if out := m.View(); !strings.Contains(out, "NEEDS INPUT") {
+	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "waiting prompt", Cwd: "/tmp/one", ProcAlive: adapter.Alive, PR: &adapter.PRRef{Status: adapter.PROpen}}, {ID: "2", AgentType: "fake", DisplayName: "two", Prompt: "done prompt", ProcAlive: adapter.Exited}}
+	if out := m.View(); !strings.Contains(out, "SESSIONS") || !strings.Contains(out, "TMUX: LIVE") {
 		t.Fatalf("view=%s", out)
 	}
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
@@ -36,6 +38,14 @@ func TestModelViewAndKeys(t *testing.T) {
 	m.input = "@fake do work"
 	if prompt, agent := parseDispatchInput(m.input, "claude"); prompt != "do work" || agent != "fake" {
 		t.Fatalf("%q %q", prompt, agent)
+	}
+	spec := parseDispatchSpec("@fake #my-session do work", "claude")
+	if spec.Agent != "fake" || spec.Name != "my-session" || spec.Prompt != "do work" {
+		t.Fatalf("spec=%+v", spec)
+	}
+	spec = parseDispatchSpec("@fake #my-session", "claude")
+	if spec.Agent != "fake" || spec.Name != "my-session" || spec.Prompt != "" {
+		t.Fatalf("named no-prompt spec=%+v", spec)
 	}
 	if prompt, agent := parseDispatchInput("do work", "claude"); prompt != "do work" || agent != "claude" {
 		t.Fatalf("%q %q", prompt, agent)
@@ -80,6 +90,48 @@ func TestModelUpdateMessages(t *testing.T) {
 		t.Fatal(m.message)
 	}
 	_, _ = m.Update(tickMsg(time.Now()))
+}
+
+func TestDispatchedMessageAttachesNewSession(t *testing.T) {
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	var gotArgs []string
+	m.execProcess = func(cmd *exec.Cmd, cb tea.ExecCallback) tea.Cmd {
+		gotArgs = append([]string(nil), cmd.Args...)
+		return func() tea.Msg { return cb(nil) }
+	}
+
+	model, cmd := m.Update(dispatchedMsg{session: adapter.Session{ID: "abc12345", AgentType: "fake"}})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("expected attach command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatal("expected attach completion message")
+	}
+	want := []string{"echo", "abc12345"}
+	if !reflect.DeepEqual(gotArgs, want) {
+		t.Fatalf("attach args = %v, want %v", gotArgs, want)
+	}
+	if m.input != "" || !strings.Contains(m.message, "attaching abc12345") {
+		t.Fatalf("message/input not updated: message=%q input=%q", m.message, m.input)
+	}
+}
+
+func TestViewShowsDetailsOnTopAndNamePromptOnlyInTable(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{
+		{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "fix the parser", Cwd: "/tmp/project", TmuxSession: "uam-fake-1", ProcAlive: adapter.Alive},
+		{ID: "2", AgentType: "fake", DisplayName: "old", Prompt: "old prompt", Cwd: "/tmp/old", TmuxSession: "uam-fake-2", ProcAlive: adapter.Exited},
+	}
+	view := m.View()
+	if !strings.Contains(view, "TMUX: LIVE") || !strings.Contains(view, "cwd: /tmp/project") || !strings.Contains(view, "⠋") || !strings.Contains(view, "💀") {
+		t.Fatalf("view missing rich details/status: %s", view)
+	}
+	table := m.renderTable()
+	if !strings.Contains(table, "one") || !strings.Contains(table, "fix the parser") || strings.Contains(table, "/tmp/project") || strings.Contains(table, "working") || strings.Contains(table, "completed") {
+		t.Fatalf("table should only show tmux mark, session name, and prompt: %s", table)
+	}
 }
 
 func TestWizardAndRenameKeys(t *testing.T) {

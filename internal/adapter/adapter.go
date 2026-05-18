@@ -47,6 +47,7 @@ type Session struct {
 	ID          string
 	AgentType   string
 	DisplayName string
+	Prompt      string
 	Cwd         string
 	TmuxSession string
 	State       State

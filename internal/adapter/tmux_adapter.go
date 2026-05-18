@@ -106,7 +106,7 @@ func (a *TmuxAgent) Dispatch(ctx context.Context, req DispatchRequest) (Session,
 		name = displayNameFromPrompt(req.Prompt)
 	}
 	now := time.Now()
-	return Session{ID: id, AgentType: a.Name(), DisplayName: name, Cwd: cwd, TmuxSession: tmuxName, State: Working, ProcAlive: Alive, Activity: "dispatched", CreatedAt: now, LastChange: now}, nil
+	return Session{ID: id, AgentType: a.Name(), DisplayName: name, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Working, ProcAlive: Alive, Activity: "dispatched", CreatedAt: now, LastChange: now}, nil
 }
 
 func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {

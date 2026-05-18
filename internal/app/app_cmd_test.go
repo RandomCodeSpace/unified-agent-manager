@@ -31,6 +31,45 @@ func TestCycleAndPRDots(t *testing.T) {
 	}
 }
 
+func TestTabPersistsDefaultAgentChoice(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
+	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "a", available: true}, &svcFakeAdapter{name: "b", available: true}}))
+	m.defaultAgent = "a"
+	model, _ := m.handleKey(keyMsg("tab"))
+	m = model.(Model)
+	if m.defaultAgent != "b" {
+		t.Fatalf("agent=%s", m.defaultAgent)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultAgent != "b" {
+		t.Fatalf("stored default agent=%q", cfg.DefaultAgent)
+	}
+}
+
+func TestWizardTabPersistsDefaultAgentChoice(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
+	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "a", available: true}, &svcFakeAdapter{name: "b", available: true}}))
+	m.wizard = true
+	m.defaultAgent = "a"
+	model, _ := m.handleWizardKey(keyMsg("tab"))
+	m = model.(Model)
+	if m.defaultAgent != "b" || m.wizardAgent != "b" {
+		t.Fatalf("default=%s wizard=%s", m.defaultAgent, m.wizardAgent)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultAgent != "b" {
+		t.Fatalf("stored default agent=%q", cfg.DefaultAgent)
+	}
+}
+
 func TestModelCommandFactories(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
@@ -107,6 +146,35 @@ func TestHandleKeyBranches(t *testing.T) {
 	}
 }
 
+func TestPromptTypingAllowsAgentMentionsSpacesAndShortcutLetters(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Working, CreatedAt: time.Now()}}}
+	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	m.sessions = fake.sessions
+	m.defaultAgent = "fake"
+
+	for _, r := range "@fake #bugfix hello world" {
+		model, _ := m.handleKey(keyMsg(string(r)))
+		m = model.(Model)
+	}
+	if m.input != "@fake #bugfix hello world" {
+		t.Fatalf("typed input=%q", m.input)
+	}
+
+	_, cmd := m.handleKey(keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("expected dispatch command")
+	}
+	msg := cmd().(dispatchedMsg)
+	if msg.err != nil {
+		t.Fatalf("dispatch err=%v", msg.err)
+	}
+	if msg.session.AgentType != "fake" || msg.session.DisplayName != "bugfix" {
+		t.Fatalf("session=%+v", msg.session)
+	}
+}
+
 func TestRenameAndWizardEnterBranches(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
@@ -153,6 +221,10 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlX}
 	case "right":
 		return tea.KeyMsg{Type: tea.KeyRight}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case " ":
+		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")}
 	case "n":
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
 	case "e":

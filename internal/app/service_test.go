@@ -35,7 +35,7 @@ func (f *svcFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
-	return adapter.Session{ID: "12345678", AgentType: f.name, DisplayName: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), TmuxSession: "uam-" + f.name + "-12345678", State: adapter.Working, CreatedAt: time.Now()}, nil
+	return adapter.Session{ID: "12345678", AgentType: f.name, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), TmuxSession: "uam-" + f.name + "-12345678", State: adapter.Working, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) { return f.sessions, nil }
 func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
@@ -132,15 +132,34 @@ func TestServicePrintListAndErrors(t *testing.T) {
 	_ = out
 }
 
+func TestServicePersistsPromptAndReportsDeadTmuxRecord(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "bugfix", "fix parser", "/tmp/project", ""); err != nil {
+		t.Fatal(err)
+	}
+	sessions, _, err := svc.LoadSessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("sessions=%+v", sessions)
+	}
+	if sessions[0].DisplayName != "bugfix" || sessions[0].Prompt != "fix parser" || sessions[0].ProcAlive != adapter.Exited {
+		t.Fatalf("stored dead session = %+v", sessions[0])
+	}
+}
+
 func TestSortSessionsAndRecord(t *testing.T) {
 	now := time.Now()
-	sessions := []adapter.Session{{ID: "c", State: adapter.Completed, CreatedAt: now}, {ID: "n", State: adapter.NeedsInput, CreatedAt: now}, {ID: "p", State: adapter.Completed, Pinned: true, CreatedAt: now}}
+	sessions := []adapter.Session{{ID: "dead", ProcAlive: adapter.Exited, CreatedAt: now}, {ID: "live", ProcAlive: adapter.Alive, CreatedAt: now}, {ID: "p", ProcAlive: adapter.Exited, Pinned: true, CreatedAt: now}}
 	SortSessions(sessions)
-	if sessions[0].ID != "p" || sessions[1].ID != "n" {
+	if sessions[0].ID != "p" || sessions[1].ID != "live" {
 		t.Fatalf("order=%+v", sessions)
 	}
-	rec := RecordFromSession(adapter.Session{ID: "id", AgentType: "fake", Cwd: "/tmp", TmuxSession: "tm", CreatedAt: now}, "")
-	if rec.Mode != store.ModeYolo || rec.Name != "id" {
+	rec := RecordFromSession(adapter.Session{ID: "id", AgentType: "fake", Prompt: "do work", Cwd: "/tmp", TmuxSession: "tm", CreatedAt: now}, "")
+	if rec.Mode != store.ModeYolo || rec.Name != "id" || rec.Prompt != "do work" {
 		t.Fatalf("rec=%+v", rec)
 	}
 }

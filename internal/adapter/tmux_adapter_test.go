@@ -80,6 +80,31 @@ exit 0
 	}
 }
 
+func TestTmuxAgentDispatchWithoutPromptSkipsSendKeys(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(dir, "tmux"), `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), tmux.New("uam"))
+	sess, err := ag.Dispatch(context.Background(), DispatchRequest{Cwd: "/tmp", Mode: "yolo"})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if sess.DisplayName != "untitled" {
+		t.Fatalf("DisplayName=%q", sess.DisplayName)
+	}
+	logData, _ := os.ReadFile(logPath)
+	if strings.Contains(string(logData), "send-keys") {
+		t.Fatalf("empty prompt should not be sent: %s", logData)
+	}
+}
+
 func TestTmuxAgentUnavailable(t *testing.T) {
 	ag := NewTmuxAgent("missing", "Missing", []CommandCandidate{{Display: "definitely-missing", Args: []string{"definitely-missing-uam-test"}}}, nil, DefaultPatterns("missing"), nil)
 	if ok, reason := ag.Available(); ok || reason == "" {

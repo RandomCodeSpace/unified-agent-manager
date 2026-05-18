@@ -38,6 +38,7 @@ type SessionRecord struct {
 	ID          string    `json:"id"`
 	Agent       string    `json:"agent"`
 	Name        string    `json:"name"`
+	Prompt      string    `json:"prompt,omitempty"`
 	Mode        Mode      `json:"mode"`
 	Workdir     string    `json:"workdir"`
 	TmuxSession string    `json:"tmux_session"`
