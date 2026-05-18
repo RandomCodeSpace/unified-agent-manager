@@ -10,13 +10,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter/claude"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter/codex"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter/copilot"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter/opencode"
-	"github.com/randomcodespace/unified-agent-manager/internal/store"
-	"github.com/randomcodespace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/claude"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
 
 type Model struct {
@@ -529,10 +530,11 @@ const uamANSILogo = ` _   _  _   __  __
  \___/_/ \_\_|  |_|`
 
 func (m Model) renderBranding() string {
+	subtitle := fmt.Sprintf("Unified Agent Manager · %s", version.String())
 	if m.contentWidth() < 34 {
-		return brandStyle.Render("UAM") + "\n" + hintStyle.Render("Unified Agent Manager") + "\n" + m.renderDivider() + "\n"
+		return brandStyle.Render("UAM") + "\n" + hintStyle.Render(subtitle) + "\n" + m.renderDivider() + "\n"
 	}
-	return brandStyle.Render(uamANSILogo) + "\n" + hintStyle.Render("Unified Agent Manager") + "\n" + m.renderDivider() + "\n"
+	return brandStyle.Render(uamANSILogo) + "\n" + hintStyle.Render(subtitle) + "\n" + m.renderDivider() + "\n"
 }
 
 func (m Model) renderTable() string {

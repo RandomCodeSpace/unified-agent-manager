@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/randomcodespace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
 type CommandCandidate struct {

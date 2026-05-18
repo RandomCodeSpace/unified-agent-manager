@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter"
-	"github.com/randomcodespace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
 func TestNew(t *testing.T) {

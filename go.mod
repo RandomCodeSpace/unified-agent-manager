@@ -1,4 +1,4 @@
-module github.com/randomcodespace/unified-agent-manager
+module github.com/RandomCodeSpace/unified-agent-manager
 
 go 1.24.0
 

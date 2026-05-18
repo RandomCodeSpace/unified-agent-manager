@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/randomcodespace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
 func TestTmuxAgentLifecycleWithFakeTmux(t *testing.T) {

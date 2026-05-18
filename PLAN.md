@@ -27,7 +27,7 @@ unified-agent-manager/
 ├── go.mod / go.sum
 ├── Makefile                       # build, lint, test, install
 ├── .golangci.yml
-├── cmd/uam/main.go                # entrypoint
+├── main.go                        # entrypoint
 ├── internal/
 │   ├── app/
 │   │   ├── app.go                 # top-level Bubble Tea Model
@@ -208,7 +208,7 @@ All commands use private socket `-L uam` to isolate from the user's own tmux ser
 
 | Op | Command |
 |---|---|
-| Create | `tmux -L uam new-session -d -s <name> -c <cwd> -x 200 -y 50 -e UAM_ID=<id> '<cmd>; exec bash'` |
+| Create | `tmux -L uam new-session -d -s <name> -c <cwd> -x 200 -y 50 'env UAM_ID=<id> <cmd>; exec bash'` |
 | List | `tmux -L uam list-sessions -F '#{session_name}|#{session_created}|#{session_attached}|#{pane_pid}|#{pane_current_path}|#{pane_current_command}'` |
 | Peek | `tmux -L uam capture-pane -p -t <name> -S -200 -J` |
 | Reply | `tmux -L uam send-keys -t <name> -l -- "<text>"` then `... send-keys -t <name> Enter` |
@@ -369,7 +369,7 @@ Total ≈ 15.5 working days (added store hardening, easy-mode wizard, Copilot + 
 
 ## Critical Files
 
-- `/home/user/unified-agent-manager/cmd/uam/main.go`
+- `/home/user/unified-agent-manager/main.go`
 - `/home/user/unified-agent-manager/internal/app/app.go`
 - `/home/user/unified-agent-manager/internal/adapter/adapter.go`
 - `/home/user/unified-agent-manager/internal/adapter/claude/claude.go`
