@@ -227,3 +227,72 @@ func TestWizardAndRenameKeys(t *testing.T) {
 		t.Fatal("still renaming")
 	}
 }
+
+func TestMovementAndQuitBranches(t *testing.T) {
+	m := modelWithTwoSessions()
+	if handled, cmd := m.handleMovementKey("shift+up"); !handled || cmd != nil {
+		t.Fatalf("boundary move handled=%v cmd=%v", handled, cmd)
+	}
+	if handled, cmd := m.handleMovementKey("shift+down"); !handled || cmd == nil || m.selected != 1 || m.sessions[1].ID != "1" {
+		t.Fatalf("move down failed handled=%v cmd=%v selected=%d sessions=%v", handled, cmd, m.selected, m.sessions)
+	}
+
+	m = modelWithTwoSessions()
+	if handled, cmd := m.handleActionKey("ctrl+c"); !handled || cmd == nil || !m.quitting {
+		t.Fatalf("quit branch handled=%v cmd=%v quitting=%v", handled, cmd, m.quitting)
+	}
+	m = modelWithTwoSessions()
+	m.input = "typed"
+	if handled, cmd := m.handleActionKey("q"); !handled || cmd != nil || m.input != "typedq" || m.quitting {
+		t.Fatalf("input q branch handled=%v cmd=%v input=%q quitting=%v", handled, cmd, m.input, m.quitting)
+	}
+}
+
+func TestInputWindowAndStateBranches(t *testing.T) {
+	m := Model{}
+	if cmd := m.handleEnterKey(); cmd != nil {
+		t.Fatalf("empty enter should not command: %v", cmd)
+	}
+	m.input = "draft"
+	if cmd := m.handleSpaceKey(" "); cmd != nil || m.input != "draft " {
+		t.Fatalf("space input branch cmd=%v input=%q", cmd, m.input)
+	}
+	m = modelWithTwoSessions()
+	m.peekOpen = true
+	if cmd := m.handleSpaceKey(" "); cmd != nil || m.peekOpen {
+		t.Fatalf("closing peek cmd=%v peek=%v", cmd, m.peekOpen)
+	}
+
+	m.height = 12
+	m.selected = 1
+	m.peekOpen = true
+	start, end := m.visibleSessionWindow()
+	if start < 0 || end < start || end > len(m.sessions) {
+		t.Fatalf("bad window %d:%d", start, end)
+	}
+	if stateLabel(adapter.NeedsInput) != "needs input" || stateLabel(adapter.Working) != "working" {
+		t.Fatal("state labels not covered")
+	}
+}
+
+func TestRenameEditingBranches(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{{ID: "1", DisplayName: "old"}}
+	m.renaming = true
+	m.input = "ab"
+	model, cmd := m.handleRenameKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = model.(Model)
+	if cmd != nil || m.input != "a" {
+		t.Fatalf("backspace input=%q cmd=%v", m.input, cmd)
+	}
+	model, cmd = m.handleRenameKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	m = model.(Model)
+	if cmd != nil || m.input != "az" {
+		t.Fatalf("rune input=%q cmd=%v", m.input, cmd)
+	}
+	model, cmd = m.handleRenameKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = model.(Model)
+	if cmd == nil || m.renaming || m.input != "" {
+		t.Fatalf("enter rename cmd=%v renaming=%v input=%q", cmd, m.renaming, m.input)
+	}
+}
