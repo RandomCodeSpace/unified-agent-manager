@@ -21,7 +21,8 @@ func TestNew(t *testing.T) {
 func TestYoloModeUsesAutopilot(t *testing.T) {
 	dir := t.TempDir()
 	writeExecutable(t, filepath.Join(dir, "copilot"), "#!/bin/sh\nexit 0\n")
-	writeExecutable(t, filepath.Join(dir, "tmux"), `#!/bin/sh
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 exit 0
 `)
@@ -29,7 +30,9 @@ exit 0
 	logPath := filepath.Join(dir, "tmux.log")
 	t.Setenv("TMUX_LOG", logPath)
 
-	a := New(tmux.New("uam"))
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	a := New(client)
 	_, err := a.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: "/tmp", Mode: "yolo"})
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)

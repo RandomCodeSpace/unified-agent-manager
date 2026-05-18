@@ -3,14 +3,20 @@ package tmux
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 )
 
-type Client struct{ Socket string }
+type Client struct {
+	Socket     string
+	Executable string
+}
 
 func New(socket string) *Client {
 	if socket == "" {
@@ -25,12 +31,32 @@ func (c *Client) baseArgs(args ...string) []string {
 }
 
 func (c *Client) run(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "tmux", c.baseArgs(args...)...) // #nosec G204 -- fixed tmux executable with argv args, no shell expansion.
+	exe, err := c.ExecutablePath()
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, exe, c.baseArgs(args...)...) // #nosec G204 -- tmux path is resolved from fixed system directories or injected as an absolute test path; argv args avoid shell expansion.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
+}
+
+func (c *Client) ExecutablePath() (string, error) {
+	if v := os.Getenv("UAM_TMUX_BIN"); v != "" {
+		if err := execpath.ValidateAbsoluteExecutable(v); err != nil {
+			return "", fmt.Errorf("invalid UAM_TMUX_BIN: %w", err)
+		}
+		return v, nil
+	}
+	if c.Executable == "" {
+		return execpath.Resolve("tmux")
+	}
+	if err := execpath.ValidateAbsoluteExecutable(c.Executable); err != nil {
+		return "", fmt.Errorf("invalid tmux executable: %w", err)
+	}
+	return c.Executable, nil
 }
 
 func (c *Client) CreateSession(ctx context.Context, name, cwd string, env map[string]string, command []string) error {
@@ -106,6 +132,14 @@ func (c *Client) Kill(ctx context.Context, target string) error {
 func (c *Client) HasSession(ctx context.Context, target string) bool {
 	_, err := c.run(ctx, "has-session", "-t", target)
 	return err == nil
+}
+
+func (c *Client) AttachArgv(target string) ([]string, error) {
+	exe, err := c.ExecutablePath()
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{exe}, c.baseArgs("attach", "-t", target)...), nil
 }
 
 func (c *Client) AttachArgs(target string) []string { return c.baseArgs("attach", "-t", target) }

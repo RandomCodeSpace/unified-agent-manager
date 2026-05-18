@@ -169,7 +169,11 @@ func (a *TmuxAgent) Reply(ctx context.Context, id, text string) error {
 	return a.Tmux.SendLine(ctx, a.target(id), text)
 }
 func (a *TmuxAgent) Attach(id string) (AttachSpec, error) {
-	return AttachSpec{Argv: append([]string{"tmux"}, a.Tmux.AttachArgs(a.target(id))...)}, nil
+	argv, err := a.Tmux.AttachArgv(a.target(id))
+	if err != nil {
+		return AttachSpec{}, err
+	}
+	return AttachSpec{Argv: argv}, nil
 }
 func (a *TmuxAgent) Stop(ctx context.Context, id string) error                  { return a.Tmux.Kill(ctx, a.target(id)) }
 func (a *TmuxAgent) Rename(ctx context.Context, id, newName string) error       { return nil }

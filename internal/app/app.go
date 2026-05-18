@@ -95,109 +95,156 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		return m, nil
+		return m.handleWindowSize(msg), nil
 	case refreshMsg:
 		return m, tea.Batch(m.loadSessionsCmd(), refreshTick())
 	case sessionsLoadedMsg:
-		if msg.err != nil {
-			m.message = msg.err.Error()
-			return m, nil
-		}
-		if msg.sessions != nil {
-			m.sessions = msg.sessions
-			m.groupByDir = msg.groupByDir
-		}
-		if msg.defaultAgent != "" {
-			m.defaultAgent = msg.defaultAgent
-		}
-		if m.selected >= len(m.sessions) {
-			m.selected = max(0, len(m.sessions)-1)
-		}
-		return m, nil
+		return m.handleSessionsLoaded(msg), nil
 	case peekLoadedMsg:
-		if msg.err != nil {
-			m.message = msg.err.Error()
-		} else {
-			m.peekText = msg.text
-		}
-		return m, nil
+		return m.handlePeekLoaded(msg), nil
 	case dispatchedMsg:
-		if msg.err != nil {
-			m.message = msg.err.Error()
-			return m, nil
-		}
-		m.message = "attaching " + msg.session.ID
-		m.input = ""
-		return m, m.attachSessionCmd(msg.session)
+		return m.handleDispatched(msg)
 	case attachSpecMsg:
 		return m, m.execAttachSpec(msg.spec, msg.err)
 	case attachFinishedMsg:
-		if msg.err != nil {
-			m.message = "session exited: " + msg.err.Error()
-		} else {
-			m.message = "returned to uam"
-		}
-		return m, m.loadSessionsCmd()
+		return m.handleAttachFinished(msg), m.loadSessionsCmd()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
+func (m Model) handleWindowSize(msg tea.WindowSizeMsg) Model {
+	m.width, m.height = msg.Width, msg.Height
+	return m
+}
+
+func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
+	if msg.err != nil {
+		m.message = msg.err.Error()
+		return m
+	}
+	if msg.sessions != nil {
+		m.sessions = msg.sessions
+		m.groupByDir = msg.groupByDir
+	}
+	if msg.defaultAgent != "" {
+		m.defaultAgent = msg.defaultAgent
+	}
+	if m.selected >= len(m.sessions) {
+		m.selected = max(0, len(m.sessions)-1)
+	}
+	return m
+}
+
+func (m Model) handlePeekLoaded(msg peekLoadedMsg) Model {
+	if msg.err != nil {
+		m.message = msg.err.Error()
+	} else {
+		m.peekText = msg.text
+	}
+	return m
+}
+
+func (m Model) handleDispatched(msg dispatchedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.message = msg.err.Error()
+		return m, nil
+	}
+	m.message = "attaching " + msg.session.ID
+	m.input = ""
+	return m, m.attachSessionCmd(msg.session)
+}
+
+func (m Model) handleAttachFinished(msg attachFinishedMsg) Model {
+	if msg.err != nil {
+		m.message = "session exited: " + msg.err.Error()
+	} else {
+		m.message = "returned to uam"
+	}
+	return m
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if handled, model, cmd := m.handleModalKey(msg, key); handled {
+		return model, cmd
+	}
+	if handled, cmd := m.handleMovementKey(key); handled {
+		return m, cmd
+	}
+	if handled, cmd := m.handleActionKey(key); handled {
+		return m, cmd
+	}
+	m.appendKeyInput(msg, key)
+	return m, nil
+}
+
+func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.Cmd) {
 	if m.helpOpen {
 		if key == "?" || key == "esc" {
 			m.helpOpen = false
 		}
-		return m, nil
+		return true, m, nil
 	}
 	if m.confirmStop {
 		if key == "y" || key == "enter" {
 			m.confirmStop = false
-			return m, m.stopSelectedCmd(true)
+			return true, m, m.stopSelectedCmd(true)
 		}
 		if key == "n" || key == "esc" {
 			m.confirmStop = false
 		}
-		return m, nil
+		return true, m, nil
 	}
 	if m.wizard {
-		return m.handleWizardKey(msg)
+		model, cmd := m.handleWizardKey(msg)
+		return true, model, cmd
 	}
 	if m.renaming {
-		return m.handleRenameKey(msg)
+		model, cmd := m.handleRenameKey(msg)
+		return true, model, cmd
 	}
+	return false, m, nil
+}
+
+func (m *Model) handleMovementKey(key string) (bool, tea.Cmd) {
+	switch key {
+	case "up":
+		m.moveSelection(-1)
+		return true, nil
+	case "down":
+		m.moveSelection(1)
+		return true, nil
+	case "shift+up":
+		return true, m.moveSession(-1)
+	case "shift+down":
+		return true, m.moveSession(1)
+	}
+	return false, nil
+}
+
+func (m *Model) moveSelection(delta int) {
+	next := m.selected + delta
+	if next >= 0 && next < len(m.sessions) {
+		m.selected = next
+	}
+}
+
+func (m *Model) moveSession(delta int) tea.Cmd {
+	next := m.selected + delta
+	if next < 0 || next >= len(m.sessions) {
+		return nil
+	}
+	m.sessions[m.selected], m.sessions[next] = m.sessions[next], m.sessions[m.selected]
+	m.selected = next
+	return m.persistOrderCmd()
+}
+
+func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	switch key {
 	case "ctrl+c", "q":
-		if strings.TrimSpace(m.input) == "" {
-			m.quitting = true
-			return m, tea.Quit
-		}
-		if key == "q" {
-			m.input += key
-		}
-	case "up":
-		if m.selected > 0 {
-			m.selected--
-		}
-	case "down":
-		if m.selected < len(m.sessions)-1 {
-			m.selected++
-		}
-	case "shift+up":
-		if m.selected > 0 {
-			m.sessions[m.selected], m.sessions[m.selected-1] = m.sessions[m.selected-1], m.sessions[m.selected]
-			m.selected--
-			return m, m.persistOrderCmd()
-		}
-	case "shift+down":
-		if m.selected < len(m.sessions)-1 {
-			m.sessions[m.selected], m.sessions[m.selected+1] = m.sessions[m.selected+1], m.sessions[m.selected]
-			m.selected++
-			return m, m.persistOrderCmd()
-		}
+		return true, m.handleQuitOrInput(key)
 	case "tab":
 		m.cycleDefaultAgent()
 		_ = m.service.SetDefaultAgent(m.defaultAgent)
@@ -207,57 +254,91 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.groupByDir = !m.groupByDir
 		_ = m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = m.groupByDir })
 	case "ctrl+t":
-		return m, m.pinSelectedCmd()
+		return true, m.pinSelectedCmd()
 	case "ctrl+r":
-		if len(m.sessions) > 0 {
-			m.renaming = true
-			m.input = m.sessions[m.selected].DisplayName
-		}
+		m.startRename()
 	case "ctrl+x":
-		if len(m.sessions) > 0 {
-			m.confirmStop = true
-		}
+		m.confirmStop = len(m.sessions) > 0
 	case " ":
-		if strings.TrimSpace(m.input) == "" && len(m.sessions) > 0 {
-			m.peekOpen = !m.peekOpen
-			if m.peekOpen {
-				return m, m.peekSelectedCmd()
-			}
-		} else {
-			m.input += key
-		}
-	case "right":
-		fallthrough
-	case "enter":
-		if strings.TrimSpace(m.input) != "" {
-			spec := parseDispatchSpec(m.input, m.defaultAgent)
-			return m, m.dispatchNamedCmd(spec.Agent, spec.Name, spec.Prompt)
-		}
-		if len(m.sessions) > 0 {
-			return m, m.attachSelectedCmd()
-		}
+		return true, m.handleSpaceKey(key)
+	case "right", "enter":
+		return true, m.handleEnterKey()
 	case "esc":
 		m.input = ""
 		m.peekOpen = false
 	case "backspace":
-		if len(m.input) > 0 {
-			m.input = m.input[:len(m.input)-1]
-		}
+		m.backspaceInput()
 	case "e":
-		if strings.TrimSpace(m.input) == "" {
-			m.wizard = true
-			m.wizardStep = 0
-			m.input = ""
-			m.wizardCwd = "."
-		} else {
-			m.input += key
-		}
+		m.handleEditKey(key)
 	default:
-		if msg.Type == tea.KeyRunes || len([]rune(key)) == 1 {
-			m.input += key
-		}
+		return false, nil
 	}
-	return m, nil
+	return true, nil
+}
+
+func (m *Model) handleQuitOrInput(key string) tea.Cmd {
+	if strings.TrimSpace(m.input) == "" {
+		m.quitting = true
+		return tea.Quit
+	}
+	if key == "q" {
+		m.input += key
+	}
+	return nil
+}
+
+func (m *Model) startRename() {
+	if len(m.sessions) == 0 {
+		return
+	}
+	m.renaming = true
+	m.input = m.sessions[m.selected].DisplayName
+}
+
+func (m *Model) handleSpaceKey(key string) tea.Cmd {
+	if strings.TrimSpace(m.input) != "" || len(m.sessions) == 0 {
+		m.input += key
+		return nil
+	}
+	m.peekOpen = !m.peekOpen
+	if m.peekOpen {
+		return m.peekSelectedCmd()
+	}
+	return nil
+}
+
+func (m *Model) handleEnterKey() tea.Cmd {
+	if strings.TrimSpace(m.input) != "" {
+		spec := parseDispatchSpec(m.input, m.defaultAgent)
+		return m.dispatchNamedCmd(spec.Agent, spec.Name, spec.Prompt)
+	}
+	if len(m.sessions) > 0 {
+		return m.attachSelectedCmd()
+	}
+	return nil
+}
+
+func (m *Model) handleEditKey(key string) {
+	if strings.TrimSpace(m.input) != "" {
+		m.input += key
+		return
+	}
+	m.wizard = true
+	m.wizardStep = 0
+	m.input = ""
+	m.wizardCwd = "."
+}
+
+func (m *Model) backspaceInput() {
+	if len(m.input) > 0 {
+		m.input = m.input[:len(m.input)-1]
+	}
+}
+
+func (m *Model) appendKeyInput(msg tea.KeyMsg, key string) {
+	if msg.Type == tea.KeyRunes || len([]rune(key)) == 1 {
+		m.input += key
+	}
 }
 
 func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -287,50 +368,79 @@ func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "esc" {
-		m.wizard = false
-		m.input = ""
+		m.closeWizard()
 		return m, nil
 	}
+	if cmd, done := m.handleWizardStepKey(key); done {
+		return m, cmd
+	}
+	m.editWizardInput(key)
+	return m, nil
+}
+
+func (m *Model) closeWizard() {
+	m.wizard = false
+	m.input = ""
+}
+
+func (m *Model) handleWizardStepKey(key string) (tea.Cmd, bool) {
 	switch m.wizardStep {
 	case 0:
-		if key == "tab" {
-			m.cycleDefaultAgent()
-			_ = m.service.SetDefaultAgent(m.defaultAgent)
-			m.wizardAgent = m.defaultAgent
-			return m, nil
-		}
-		if key == "enter" {
-			if m.wizardAgent == "" {
-				m.wizardAgent = m.defaultAgent
-			}
-			m.wizardStep = 1
-			m.input = m.wizardCwd
-			return m, nil
-		}
+		return m.handleWizardAgentKey(key)
 	case 1:
-		if key == "enter" {
-			m.wizardCwd = firstNonEmpty(m.input, ".")
-			m.wizardStep = 2
-			m.input = ""
-			return m, nil
-		}
+		return m.handleWizardCwdKey(key)
 	case 2:
-		if key == "enter" {
-			spec := parseDispatchSpec(m.input, firstNonEmpty(m.wizardAgent, m.defaultAgent))
-			cwd := m.wizardCwd
-			m.wizard = false
-			m.input = ""
-			return m, m.dispatchWithNameCwdCmd(spec.Agent, spec.Name, spec.Prompt, cwd)
-		}
+		return m.handleWizardPromptKey(key)
 	}
-	if key == "backspace" {
-		if len(m.input) > 0 {
-			m.input = m.input[:len(m.input)-1]
+	return nil, false
+}
+
+func (m *Model) handleWizardAgentKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "tab":
+		m.cycleDefaultAgent()
+		_ = m.service.SetDefaultAgent(m.defaultAgent)
+		m.wizardAgent = m.defaultAgent
+		return nil, true
+	case "enter":
+		if m.wizardAgent == "" {
+			m.wizardAgent = m.defaultAgent
 		}
-	} else if len(key) == 1 || key == " " {
+		m.wizardStep = 1
+		m.input = m.wizardCwd
+		return nil, true
+	}
+	return nil, false
+}
+
+func (m *Model) handleWizardCwdKey(key string) (tea.Cmd, bool) {
+	if key != "enter" {
+		return nil, false
+	}
+	m.wizardCwd = firstNonEmpty(m.input, ".")
+	m.wizardStep = 2
+	m.input = ""
+	return nil, true
+}
+
+func (m *Model) handleWizardPromptKey(key string) (tea.Cmd, bool) {
+	if key != "enter" {
+		return nil, false
+	}
+	spec := parseDispatchSpec(m.input, firstNonEmpty(m.wizardAgent, m.defaultAgent))
+	cwd := m.wizardCwd
+	m.closeWizard()
+	return m.dispatchWithNameCwdCmd(spec.Agent, spec.Name, spec.Prompt, cwd), true
+}
+
+func (m *Model) editWizardInput(key string) {
+	if key == "backspace" {
+		m.backspaceInput()
+		return
+	}
+	if len(key) == 1 || key == " " {
 		m.input += key
 	}
-	return m, nil
 }
 
 func (m *Model) cycleDefaultAgent() {

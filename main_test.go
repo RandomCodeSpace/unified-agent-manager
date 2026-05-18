@@ -15,68 +15,75 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
 
-func TestRunHelpListDispatchAndErrors(t *testing.T) {
-	dir := setupFakeCLIEnv(t)
-	t.Setenv("UAM_CONFIG_DIR", filepath.Join(dir, "cfg"))
-	if out := captureStderr(t, func() {
-		if err := run(context.Background(), []string{"help"}); err != nil {
-			t.Fatal(err)
-		}
-	}); !strings.Contains(out, "uam") {
+func TestRunHelpAndList(t *testing.T) {
+	dir := setupFakeCLIConfig(t, "cfg")
+	if out := runStderr(t, []string{"help"}); !strings.Contains(out, "uam") {
 		t.Fatalf("help=%q", out)
 	}
-	if out := captureStdout(t, func() {
-		if err := run(context.Background(), []string{"ls", "--json"}); err != nil {
-			t.Fatal(err)
-		}
-	}); !strings.Contains(out, "[") {
+	if out := runStdout(t, []string{"ls", "--json"}); !strings.Contains(out, "[") {
 		t.Fatalf("ls=%q", out)
 	}
-	out := captureStdout(t, func() {
-		if err := run(context.Background(), []string{"dispatch", "claude", "hello world"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if strings.TrimSpace(out) == "" {
-		t.Fatal("empty dispatch id")
-	}
-	noPromptOut := captureStdout(t, func() {
-		if err := run(context.Background(), []string{"dispatch", "claude"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if strings.TrimSpace(noPromptOut) == "" {
-		t.Fatal("empty no-prompt dispatch id")
-	}
-	namedOut := captureStdout(t, func() {
-		if err := run(context.Background(), []string{"dispatch", "claude", "#bugfix", "fix", "thing"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if strings.TrimSpace(namedOut) == "" {
-		t.Fatal("empty named dispatch id")
-	}
-	if text := captureStdout(t, func() {
-		if err := run(context.Background(), []string{"ls"}); err != nil {
-			t.Fatal(err)
-		}
-	}); !strings.Contains(text, "bugfix") {
+	_ = dir
+}
+
+func TestRunDispatchVariants(t *testing.T) {
+	setupFakeCLIConfig(t, "cfg-dispatch")
+	assertNonEmptyRunOutput(t, []string{"dispatch", "claude", "hello world"}, "empty dispatch id")
+	assertNonEmptyRunOutput(t, []string{"dispatch", "claude"}, "empty no-prompt dispatch id")
+	assertNonEmptyRunOutput(t, []string{"dispatch", "claude", "#bugfix", "fix", "thing"}, "empty named dispatch id")
+	if text := runStdout(t, []string{"ls"}); !strings.Contains(text, "bugfix") {
 		t.Fatalf("named session missing from list: %q", text)
 	}
-	if err := run(context.Background(), []string{"unknown"}); err == nil {
-		t.Fatal("want unknown error")
+}
+
+func TestRunArgumentErrors(t *testing.T) {
+	setupFakeCLIConfig(t, "cfg-errors")
+	cases := []struct {
+		args []string
+		msg  string
+	}{
+		{[]string{"unknown"}, "want unknown error"},
+		{[]string{"peek"}, "want peek arg error"},
+		{[]string{"stop"}, "want stop arg error"},
+		{[]string{"rm"}, "want rm arg error"},
+		{[]string{"attach"}, "want attach arg error"},
 	}
-	if err := run(context.Background(), []string{"peek"}); err == nil {
-		t.Fatal("want peek arg error")
+	for _, tc := range cases {
+		if err := run(context.Background(), tc.args); err == nil {
+			t.Fatal(tc.msg)
+		}
 	}
-	if err := run(context.Background(), []string{"stop"}); err == nil {
-		t.Fatal("want stop arg error")
-	}
-	if err := run(context.Background(), []string{"rm"}); err == nil {
-		t.Fatal("want rm arg error")
-	}
-	if err := run(context.Background(), []string{"attach"}); err == nil {
-		t.Fatal("want attach arg error")
+}
+
+func setupFakeCLIConfig(t *testing.T, name string) string {
+	t.Helper()
+	dir := setupFakeCLIEnv(t)
+	t.Setenv("UAM_CONFIG_DIR", filepath.Join(dir, name))
+	return dir
+}
+
+func runStdout(t *testing.T, args []string) string {
+	t.Helper()
+	return captureStdout(t, func() {
+		if err := run(context.Background(), args); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func runStderr(t *testing.T, args []string) string {
+	t.Helper()
+	return captureStderr(t, func() {
+		if err := run(context.Background(), args); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func assertNonEmptyRunOutput(t *testing.T, args []string, message string) {
+	t.Helper()
+	if strings.TrimSpace(runStdout(t, args)) == "" {
+		t.Fatal(message)
 	}
 }
 
@@ -234,13 +241,15 @@ func setupFakeCLIEnv(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	writeFileMode(t, filepath.Join(dir, "claude"), "#!/bin/sh\nexit 0\n", 0o755)
-	writeFileMode(t, filepath.Join(dir, "tmux"), `#!/bin/sh
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeFileMode(t, tmuxPath, `#!/bin/sh
 case "$*" in
   *"list-sessions"*) exit 0 ;;
   *"capture-pane"*) echo "pane" ;;
 esac
 exit 0
 `, 0o755)
+	t.Setenv("UAM_TMUX_BIN", tmuxPath)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return dir
 }
@@ -268,6 +277,10 @@ func captureFile(t *testing.T, target **os.File, fn func()) string {
 		t.Fatal(err)
 	}
 	*target = w
+	defer func() {
+		_ = w.Close()
+		*target = old
+	}()
 	fn()
 	_ = w.Close()
 	*target = old

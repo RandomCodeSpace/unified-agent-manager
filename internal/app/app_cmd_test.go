@@ -86,7 +86,7 @@ func TestModelCommandFactories(t *testing.T) {
 	if m.Init() == nil {
 		t.Fatal("Init returned nil")
 	}
-	if msg := m.loadSessionsCmd()(); msg == nil {
+	if m.loadSessionsCmd()() == nil {
 		t.Fatal("nil load msg")
 	}
 	if msg := m.dispatchCmd("fake", "prompt")(); msg.(dispatchedMsg).err != nil {
@@ -104,7 +104,7 @@ func TestModelCommandFactories(t *testing.T) {
 	if msg := m.persistOrderCmd()(); msg.(sessionsLoadedMsg).err != nil {
 		t.Fatalf("persist msg=%+v", msg)
 	}
-	if msg := m.attachSelectedCmd()(); msg == nil {
+	if m.attachSelectedCmd()() == nil {
 		t.Fatal("attach returned nil msg")
 	}
 }

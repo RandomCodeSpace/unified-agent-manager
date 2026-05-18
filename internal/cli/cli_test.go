@@ -1,0 +1,137 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+)
+
+type cliFakeAdapter struct {
+	sessions []adapter.Session
+	stopped  bool
+}
+
+func (f *cliFakeAdapter) Name() string        { return "fake" }
+func (f *cliFakeAdapter) DisplayName() string { return "fake" }
+func (f *cliFakeAdapter) Available() (bool, string) {
+	return true, ""
+}
+func (f *cliFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchRequest) (adapter.Session, error) {
+	if req.Prompt == "fail" {
+		return adapter.Session{}, errors.New("fail")
+	}
+	sess := adapter.Session{ID: "abc12345", AgentType: "fake", DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: "uam-fake-abc12345", State: adapter.Working, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	f.sessions = append(f.sessions, sess)
+	return sess, nil
+}
+func (f *cliFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) { return f.sessions, nil }
+func (f *cliFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
+	return adapter.PeekResult{TailText: "tail for " + id}, nil
+}
+func (f *cliFakeAdapter) Reply(ctx adapter.Context, id, text string) error { return nil }
+func (f *cliFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
+	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
+}
+func (f *cliFakeAdapter) Stop(ctx adapter.Context, id string) error            { f.stopped = true; return nil }
+func (f *cliFakeAdapter) Rename(ctx adapter.Context, id, newName string) error { return nil }
+func (f *cliFakeAdapter) Subscribe(ctx adapter.Context) (<-chan adapter.SessionEvent, error) {
+	return nil, nil
+}
+
+func TestRunDispatchListPeekAndStop(t *testing.T) {
+	svc, fake := newCLITestService(t)
+	id := dispatchAndCaptureID(t, svc, []string{"--cwd", "/tmp", "fake", "#bugfix", "fix", "thing"})
+	if id != "abc12345" {
+		t.Fatalf("id=%q", id)
+	}
+	if out := captureCLIStdout(t, func() { must(t, runList(context.Background(), svc, []string{"--json"})) }); !strings.Contains(out, "bugfix") {
+		t.Fatalf("list=%q", out)
+	}
+	if out := captureCLIStdout(t, func() { must(t, runPeek(context.Background(), svc, []string{id})) }); !strings.Contains(out, "tail for") {
+		t.Fatalf("peek=%q", out)
+	}
+	must(t, runStop(context.Background(), svc, "stop", []string{id}))
+	if !fake.stopped {
+		t.Fatal("fake adapter was not stopped")
+	}
+}
+
+func TestCLIArgumentValidationAndParsing(t *testing.T) {
+	svc, _ := newCLITestService(t)
+	if err := RunDispatch(context.Background(), svc, nil); err == nil {
+		t.Fatal("dispatch without agent should fail")
+	}
+	if _, err := requireArg(nil, "missing"); err == nil {
+		t.Fatal("empty args should fail")
+	}
+	name, prompt := parseNameAndPrompt([]string{"#name", "do", "work"})
+	if name != "name" || prompt != "do work" {
+		t.Fatalf("name=%q prompt=%q", name, prompt)
+	}
+	name, prompt = parseNameAndPrompt([]string{"do", "work"})
+	if name != "" || prompt != "do work" {
+		t.Fatalf("name=%q prompt=%q", name, prompt)
+	}
+}
+
+func newCLITestService(t *testing.T) (*app.Service, *cliFakeAdapter) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &cliFakeAdapter{}
+	return app.NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake})), fake
+}
+
+func dispatchAndCaptureID(t *testing.T, svc *app.Service, args []string) string {
+	t.Helper()
+	out := captureCLIStdout(t, func() { must(t, RunDispatch(context.Background(), svc, args)) })
+	return strings.TrimSpace(out)
+}
+
+func captureCLIStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() {
+		_ = w.Close()
+		os.Stdout = old
+	}()
+	fn()
+	_ = w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	return buf.String()
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}

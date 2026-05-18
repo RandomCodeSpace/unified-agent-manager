@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 )
 
 type Status string
@@ -46,13 +49,24 @@ func ParseGHState(data []byte) (Status, error) {
 }
 
 func Check(ctx context.Context, url string) (Status, error) {
-	if _, err := exec.LookPath("gh"); err != nil {
+	exe, err := ghExecutable()
+	if err != nil {
 		return None, err
 	}
-	cmd := exec.CommandContext(ctx, "gh", "pr", "view", url, "--json", "state,isDraft,mergedAt") // #nosec G204 -- fixed gh executable with argv args, no shell expansion.
+	cmd := exec.CommandContext(ctx, exe, "pr", "view", url, "--json", "state,isDraft,mergedAt") // #nosec G204 -- gh path is resolved from fixed system directories; URL is passed as an argv argument with no shell expansion.
 	out, err := cmd.Output()
 	if err != nil {
 		return None, fmt.Errorf("gh pr view: %w", err)
 	}
 	return ParseGHState(out)
+}
+
+func ghExecutable() (string, error) {
+	if v := os.Getenv("UAM_GH_BIN"); v != "" {
+		if err := execpath.ValidateAbsoluteExecutable(v); err != nil {
+			return "", fmt.Errorf("invalid UAM_GH_BIN: %w", err)
+		}
+		return v, nil
+	}
+	return execpath.Resolve("gh")
 }

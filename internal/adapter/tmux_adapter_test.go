@@ -12,9 +12,19 @@ import (
 )
 
 func TestTmuxAgentLifecycleWithFakeTmux(t *testing.T) {
+	ag, logPath := setupLifecycleAgent(t)
+	assertAgentAvailable(t, ag)
+	assertAgentDispatchAndList(t, ag)
+	assertAgentInteractions(t, ag)
+	assertTmuxLifecycleLog(t, logPath)
+}
+
+func setupLifecycleAgent(t *testing.T) (*TmuxAgent, string) {
+	t.Helper()
 	dir := t.TempDir()
 	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
-	writeExecutable(t, filepath.Join(dir, "tmux"), `#!/bin/sh
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 case "$*" in
   *"list-sessions"*) echo "uam-fake-abc12345|1710000000|0|1|/tmp/repo|fakeagent" ;;
@@ -25,14 +35,23 @@ exit 0
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	logPath := filepath.Join(dir, "tmux.log")
 	t.Setenv("TMUX_LOG", logPath)
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	return NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), client), logPath
+}
 
-	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), tmux.New("uam"))
+func assertAgentAvailable(t *testing.T, ag *TmuxAgent) {
+	t.Helper()
 	if ok, reason := ag.Available(); !ok || reason != "" {
 		t.Fatalf("Available = %v %q", ok, reason)
 	}
 	if ag.Name() != "fake" || ag.DisplayName() != "Fake Agent" {
 		t.Fatalf("names wrong")
 	}
+}
+
+func assertAgentDispatchAndList(t *testing.T, ag *TmuxAgent) {
+	t.Helper()
 	sess, err := ag.Dispatch(context.Background(), DispatchRequest{Prompt: "hello", Cwd: "/tmp", Mode: "yolo"})
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
@@ -47,38 +66,50 @@ exit 0
 	if list[0].PR == nil || list[0].PR.Number != 7 || list[0].Activity == "" {
 		t.Fatalf("bad classified list: %+v", list[0])
 	}
+}
+
+func assertAgentInteractions(t *testing.T, ag *TmuxAgent) {
+	t.Helper()
 	peek, err := ag.Peek(context.Background(), "abc12345")
 	if err != nil || !strings.Contains(peek.TailText, "Thinking") {
 		t.Fatalf("Peek: %+v %v", peek, err)
 	}
-	if err := ag.Reply(context.Background(), "abc12345", "ok"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ag.Attach("abc12345"); err != nil {
-		t.Fatal(err)
-	}
-	if err := ag.Stop(context.Background(), "abc12345"); err != nil {
-		t.Fatal(err)
-	}
-	if err := ag.Rename(context.Background(), "abc12345", "name"); err != nil {
-		t.Fatal(err)
+	for _, action := range []func() error{
+		func() error { return ag.Reply(context.Background(), "abc12345", "ok") },
+		func() error { _, err := ag.Attach("abc12345"); return err },
+		func() error { return ag.Stop(context.Background(), "abc12345") },
+		func() error { return ag.Rename(context.Background(), "abc12345", "name") },
+	} {
+		if err := action(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if ch, err := ag.Subscribe(context.Background()); err != nil || ch != nil {
 		t.Fatalf("Subscribe = %v %v", ch, err)
 	}
+	assertChangedRecently(t, ag)
+}
+
+func assertChangedRecently(t *testing.T, ag *TmuxAgent) {
+	t.Helper()
 	if !ag.changedRecently("pane", "a", time.Minute) {
 		t.Fatal("first change should be recent")
 	}
 	if !ag.changedRecently("pane", "a", time.Minute) {
 		t.Fatal("same hash inside window should be recent")
 	}
+}
+
+func assertTmuxLifecycleLog(t *testing.T, logPath string) {
+	t.Helper()
 	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
 	for _, want := range []string{"new-session", "send-keys", "kill-session"} {
-		if !strings.Contains(string(logData), want) {
+		if !strings.Contains(logText, want) {
 			t.Fatalf("log missing %s: %s", want, logData)
 		}
 	}
-	if strings.Contains(string(logData), "exec bash") {
+	if strings.Contains(logText, "exec bash") {
 		t.Fatalf("agent exit should terminate tmux session, log should not keep a fallback shell: %s", logData)
 	}
 }
@@ -86,7 +117,8 @@ exit 0
 func TestTmuxAgentResumeUsesPersistedMetadata(t *testing.T) {
 	dir := t.TempDir()
 	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
-	writeExecutable(t, filepath.Join(dir, "tmux"), `#!/bin/sh
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 exit 0
 `)
@@ -94,7 +126,9 @@ exit 0
 	logPath := filepath.Join(dir, "tmux.log")
 	t.Setenv("TMUX_LOG", logPath)
 
-	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), tmux.New("uam"))
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), client)
 	sess, err := ag.Resume(context.Background(), ResumeRequest{ID: "abc12345-dead-beef-cafe-0123456789ab", Name: "bugfix", Prompt: "fix parser", Cwd: "/tmp/project", Mode: "yolo", TmuxSession: "uam-fake-abc12345"})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -114,7 +148,8 @@ exit 0
 func TestTmuxAgentDispatchWithoutPromptSkipsSendKeys(t *testing.T) {
 	dir := t.TempDir()
 	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
-	writeExecutable(t, filepath.Join(dir, "tmux"), `#!/bin/sh
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_LOG"
 exit 0
 `)
@@ -122,7 +157,9 @@ exit 0
 	logPath := filepath.Join(dir, "tmux.log")
 	t.Setenv("TMUX_LOG", logPath)
 
-	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), tmux.New("uam"))
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), client)
 	sess, err := ag.Dispatch(context.Background(), DispatchRequest{Cwd: "/tmp", Mode: "yolo"})
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)

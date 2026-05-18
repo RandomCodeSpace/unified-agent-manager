@@ -76,6 +76,10 @@ func RunWithTUI(ctx context.Context, args []string, runTUI func(context.Context,
 	if len(args) == 0 {
 		return runTUI(ctx, app.NewWithDeps(st, svc.Registry))
 	}
+	return runCommand(ctx, svc, args, runTUI)
+}
+
+func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI func(context.Context, tea.Model) error) error {
 	switch args[0] {
 	case "-h", "--help", "help":
 		Usage()
@@ -88,49 +92,70 @@ func RunWithTUI(ctx context.Context, args []string, runTUI func(context.Context,
 	case "dispatch":
 		return RunDispatch(ctx, svc, args[1:])
 	case "ls", "list":
-		fs := flag.NewFlagSet("ls", flag.ContinueOnError)
-		asJSON := fs.Bool("json", false, "print JSON")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		return svc.PrintList(ctx, *asJSON)
+		return runList(ctx, svc, args[1:])
 	case "peek":
-		if len(args) < 2 {
-			return errors.New("peek requires <id>")
-		}
-		p, err := svc.Peek(ctx, args[1])
-		if err != nil {
-			return err
-		}
-		fmt.Print(p.TailText)
-		return nil
-	case "stop":
-		if len(args) < 2 {
-			return errors.New("stop requires <id>")
-		}
-		return svc.Stop(ctx, args[1], false)
-	case "rm":
-		if len(args) < 2 {
-			return errors.New("rm requires <id>")
-		}
-		return svc.Stop(ctx, args[1], true)
+		return runPeek(ctx, svc, args[1:])
+	case "stop", "rm":
+		return runStop(ctx, svc, args[0], args[1:])
 	case "attach":
-		if len(args) < 2 {
-			return errors.New("attach requires <id>")
-		}
-		return execAttach(ctx, svc, args[1], runTUI)
-	case "last":
-		sessions, _, err := svc.LoadSessions(ctx)
+		id, err := requireArg(args[1:], "attach requires <id>")
 		if err != nil {
 			return err
 		}
-		if len(sessions) == 0 {
-			return errors.New("no sessions")
-		}
-		return execAttach(ctx, svc, sessions[0].ID, runTUI)
+		return execAttach(ctx, svc, id, runTUI)
+	case "last":
+		return runLast(ctx, svc, runTUI)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func runList(ctx context.Context, svc *app.Service, args []string) error {
+	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return svc.PrintList(ctx, *asJSON)
+}
+
+func runPeek(ctx context.Context, svc *app.Service, args []string) error {
+	id, err := requireArg(args, "peek requires <id>")
+	if err != nil {
+		return err
+	}
+	p, err := svc.Peek(ctx, id)
+	if err != nil {
+		return err
+	}
+	fmt.Print(p.TailText)
+	return nil
+}
+
+func runStop(ctx context.Context, svc *app.Service, cmd string, args []string) error {
+	id, err := requireArg(args, cmd+" requires <id>")
+	if err != nil {
+		return err
+	}
+	return svc.Stop(ctx, id, cmd == "rm")
+}
+
+func runLast(ctx context.Context, svc *app.Service, runTUI func(context.Context, tea.Model) error) error {
+	sessions, _, err := svc.LoadSessions(ctx)
+	if err != nil {
+		return err
+	}
+	if len(sessions) == 0 {
+		return errors.New("no sessions")
+	}
+	return execAttach(ctx, svc, sessions[0].ID, runTUI)
+}
+
+func requireArg(args []string, message string) (string, error) {
+	if len(args) == 0 {
+		return "", errors.New(message)
+	}
+	return args[0], nil
 }
 
 // NewService wires the app service and supported agent adapters.

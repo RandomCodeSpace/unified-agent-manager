@@ -60,13 +60,26 @@ func (f *svcFakeAdapter) Subscribe(ctx adapter.Context) (<-chan adapter.SessionE
 }
 
 func TestServiceWorkflow(t *testing.T) {
+	svc, fake := newWorkflowService(t)
+	sess := assertWorkflowDispatch(t, svc)
+	list := assertWorkflowLoadAndFind(t, svc, sess.ID)
+	assertWorkflowMetadataMutations(t, svc, list)
+	assertWorkflowAdapterActions(t, svc, fake)
+}
+
+func newWorkflowService(t *testing.T) (*Service, *svcFakeAdapter) {
+	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "sessions.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "live0001", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-live0001", State: adapter.Completed, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/1", Number: 1, Status: adapter.PROpen}}}}
-	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	return NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake})), fake
+}
+
+func assertWorkflowDispatch(t *testing.T, svc *Service) adapter.Session {
+	t.Helper()
 	sess, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo")
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +87,11 @@ func TestServiceWorkflow(t *testing.T) {
 	if sess.ID == "" {
 		t.Fatal("empty id")
 	}
+	return sess
+}
+
+func assertWorkflowLoadAndFind(t *testing.T, svc *Service, idPrefix string) []adapter.Session {
+	t.Helper()
 	list, _, err := svc.LoadSessions(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -81,10 +99,15 @@ func TestServiceWorkflow(t *testing.T) {
 	if len(list) < 2 {
 		t.Fatalf("list=%+v", list)
 	}
-	found, _, err := svc.Find(context.Background(), "1234")
+	found, _, err := svc.Find(context.Background(), idPrefix[:4])
 	if err != nil || found.DisplayName != "hello" {
 		t.Fatalf("found=%+v err=%v", found, err)
 	}
+	return list
+}
+
+func assertWorkflowMetadataMutations(t *testing.T, svc *Service, list []adapter.Session) {
+	t.Helper()
 	if err := svc.Rename(context.Background(), "1234", "renamed"); err != nil {
 		t.Fatal(err)
 	}
@@ -94,6 +117,13 @@ func TestServiceWorkflow(t *testing.T) {
 	if err := svc.SetUI(func(ui *store.UISettings) { ui.GroupByDir = true }); err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.UpdateSortOrder(list); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertWorkflowAdapterActions(t *testing.T, svc *Service, fake *svcFakeAdapter) {
+	t.Helper()
 	if p, err := svc.Peek(context.Background(), "live"); err != nil || p.TailText != "tail" {
 		t.Fatalf("peek=%+v err=%v", p, err)
 	}
@@ -102,9 +132,6 @@ func TestServiceWorkflow(t *testing.T) {
 	}
 	if spec, err := svc.AttachSpec(context.Background(), "live"); err != nil || len(spec.Argv) == 0 {
 		t.Fatalf("attach=%+v err=%v", spec, err)
-	}
-	if err := svc.UpdateSortOrder(list); err != nil {
-		t.Fatal(err)
 	}
 	if err := svc.Stop(context.Background(), "live", true); err != nil || !fake.stopped {
 		t.Fatalf("stop %v stopped=%v", err, fake.stopped)
@@ -208,6 +235,10 @@ func captureStdout(t *testing.T, fn func()) string {
 		t.Fatal(err)
 	}
 	os.Stdout = w
+	defer func() {
+		_ = w.Close()
+		os.Stdout = old
+	}()
 	fn()
 	_ = w.Close()
 	os.Stdout = old

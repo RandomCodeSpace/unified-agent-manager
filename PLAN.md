@@ -105,7 +105,7 @@ UAM launches every session with the provider's "full access / skip permissions" 
 |---|---|
 | Claude | `claude --dangerously-skip-permissions` |
 | Codex | `codex --sandbox danger-full-access` |
-| Copilot | `copilot --allow-all-tools` (or the current flag — probed at startup) |
+| Copilot | `copilot --autopilot` |
 | OpenCode | `opencode --auto-approve` (or current equivalent) |
 
 If the user wants safe mode for one dispatch, `uam dispatch --safe <agent> "<prompt>"` drops the yolo flag and lets the provider run with its default prompts.
@@ -117,7 +117,7 @@ Runs `claude` interactively inside its own tmux session in yolo mode. Same mecha
 - **Dispatch:**
   ```
   tmux -L uam new-session -d -s uam-claude-<id> -c <cwd> -x 200 -y 50 \
-    -e UAM_AGENT=claude -e UAM_ID=<id> 'claude --dangerously-skip-permissions; exec bash'
+    'env UAM_AGENT=claude UAM_ID=<id> claude --dangerously-skip-permissions'
   tmux -L uam send-keys -t uam-claude-<id> -l -- "<prompt>"
   tmux -L uam send-keys -t uam-claude-<id> Enter
   ```
@@ -143,7 +143,7 @@ Runs GitHub Copilot CLI's interactive/agent mode inside tmux. Command is whichev
 - **Dispatch:**
   ```
   tmux -L uam new-session -d -s uam-copilot-<id> -c <cwd> -x 200 -y 50 \
-    -e UAM_AGENT=copilot -e UAM_ID=<id> '<copilot-cmd> --allow-all-tools; exec bash'
+    'env UAM_AGENT=copilot UAM_ID=<id> <copilot-cmd> --autopilot'
   tmux -L uam send-keys -t uam-copilot-<id> -l -- "<prompt>"
   tmux -L uam send-keys -t uam-copilot-<id> Enter
   ```
@@ -159,7 +159,7 @@ Runs `opencode` interactively inside tmux. Same shape as the others.
 - **Dispatch:**
   ```
   tmux -L uam new-session -d -s uam-opencode-<id> -c <cwd> -x 200 -y 50 \
-    -e UAM_AGENT=opencode -e UAM_ID=<id> 'opencode --auto-approve; exec bash'
+    'env UAM_AGENT=opencode UAM_ID=<id> opencode --auto-approve'
   tmux -L uam send-keys -t uam-opencode-<id> -l -- "<prompt>"
   tmux -L uam send-keys -t uam-opencode-<id> Enter
   ```
@@ -181,7 +181,7 @@ These are acceptable for uniformity. If we later add a `--claude-native` flag, i
 - **Dispatch:**
   ```
   tmux -L uam new-session -d -s uam-codex-<id> -c <cwd> -x 200 -y 50 \
-    -e UAM_AGENT=codex -e UAM_ID=<id> 'codex --sandbox danger-full-access; exec bash'
+    'env UAM_AGENT=codex UAM_ID=<id> codex --sandbox danger-full-access'
   tmux -L uam send-keys -t uam-codex-<id> -l -- "<prompt>"
   tmux -L uam send-keys -t uam-codex-<id> Enter
   ```
@@ -208,7 +208,7 @@ All commands use private socket `-L uam` to isolate from the user's own tmux ser
 
 | Op | Command |
 |---|---|
-| Create | `tmux -L uam new-session -d -s <name> -c <cwd> -x 200 -y 50 'env UAM_ID=<id> <cmd>; exec bash'` |
+| Create | `tmux -L uam new-session -d -s <name> -c <cwd> -x 200 -y 50 'env UAM_AGENT=<agent> UAM_ID=<id> <cmd>'` |
 | List | `tmux -L uam list-sessions -F '#{session_name}|#{session_created}|#{session_attached}|#{pane_pid}|#{pane_current_path}|#{pane_current_command}'` |
 | Peek | `tmux -L uam capture-pane -p -t <name> -S -200 -J` |
 | Reply | `tmux -L uam send-keys -t <name> -l -- "<text>"` then `... send-keys -t <name> Enter` |
