@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -84,6 +86,63 @@ func TestCLIArgumentValidationAndParsing(t *testing.T) {
 	}
 }
 
+func TestRunWithTUIHelpVersionAndDefault(t *testing.T) {
+	t.Setenv("UAM_CONFIG_DIR", t.TempDir())
+	called := false
+	runTUI := func(ctx context.Context, model tea.Model) error {
+		called = true
+		return nil
+	}
+	if err := RunWithTUI(context.Background(), nil, runTUI); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("default command should run TUI")
+	}
+	if out := captureCLIStderr(t, Usage); !strings.Contains(out, "uam") {
+		t.Fatalf("usage=%q", out)
+	}
+	versionOut := captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"version"}, runTUI)) })
+	if strings.TrimSpace(versionOut) == "" {
+		t.Fatal("version output should not be empty")
+	}
+	if err := RunWithTUI(context.Background(), []string{"unknown"}, runTUI); err == nil {
+		t.Fatal("unknown command should fail")
+	}
+}
+
+func TestRunCommandAttachLastAndNew(t *testing.T) {
+	svc, _ := newCLITestService(t)
+	id := dispatchAndCaptureID(t, svc, []string{"fake", "attachable"})
+	var tuiCalls int
+	runTUI := func(ctx context.Context, model tea.Model) error {
+		tuiCalls++
+		return nil
+	}
+	if err := runCommand(context.Background(), svc, []string{"attach", id}, runTUI); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCommand(context.Background(), svc, []string{"last"}, runTUI); err != nil {
+		t.Fatal(err)
+	}
+	if tuiCalls != 2 {
+		t.Fatalf("TUI calls=%d", tuiCalls)
+	}
+	out := captureCLIStdout(t, func() {
+		withCLIStdin(t, "fake\n/tmp\n#from-new prompt\n", func() { must(t, runNew(context.Background(), svc)) })
+	})
+	if !strings.Contains(out, "dispatched") {
+		t.Fatalf("new output=%q", out)
+	}
+}
+
+func TestRunLastWithoutSessionsFails(t *testing.T) {
+	svc, _ := newCLITestService(t)
+	if err := runLast(context.Background(), svc, func(context.Context, tea.Model) error { return nil }); err == nil {
+		t.Fatal("last without sessions should fail")
+	}
+}
+
 func newCLITestService(t *testing.T) (*app.Service, *cliFakeAdapter) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
@@ -102,22 +161,46 @@ func dispatchAndCaptureID(t *testing.T, svc *app.Service, args []string) string 
 
 func captureCLIStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stdout
+	return captureCLIFile(t, &os.Stdout, fn)
+}
+
+func captureCLIStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	return captureCLIFile(t, &os.Stderr, fn)
+}
+
+func captureCLIFile(t *testing.T, target **os.File, fn func()) string {
+	t.Helper()
+	old := *target
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
+	*target = w
 	defer func() {
 		_ = w.Close()
-		os.Stdout = old
+		*target = old
 	}()
 	fn()
 	_ = w.Close()
-	os.Stdout = old
+	*target = old
 	var buf bytes.Buffer
 	_, _ = io.Copy(&buf, r)
 	return buf.String()
+}
+
+func withCLIStdin(t *testing.T, input string, fn func()) {
+	t.Helper()
+	old := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.WriteString(input)
+	_ = w.Close()
+	os.Stdin = r
+	defer func() { os.Stdin = old }()
+	fn()
 }
 
 func must(t *testing.T, err error) {
