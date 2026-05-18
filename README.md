@@ -94,11 +94,12 @@ make build
 GitHub Actions run security checks on `main`, pull requests, and a weekly
 schedule:
 
-- CodeQL analysis for Go code scanning
 - `govulncheck ./...` for known Go vulnerabilities
 - `gosec ./...` with SARIF upload to GitHub code scanning
 - Dependency Review on pull requests
 - SonarCloud analysis with Go coverage from `coverage.out`
+
+GitHub CodeQL default setup is also enabled for Go code scanning.
 
 SonarCloud requires a repository secret named `SONAR_TOKEN`. The workflow skips
 only the SonarCloud upload step until that secret exists.
