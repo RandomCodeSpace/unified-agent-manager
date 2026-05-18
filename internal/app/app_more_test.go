@@ -11,30 +11,66 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestModelViewAndKeys(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "waiting prompt", Cwd: "/tmp/one", ProcAlive: adapter.Alive, PR: &adapter.PRRef{Status: adapter.PROpen}}, {ID: "2", AgentType: "fake", DisplayName: "two", Prompt: "done prompt", ProcAlive: adapter.Exited}}
-	if out := m.View(); !strings.Contains(out, "SESSIONS") || !strings.Contains(out, "●") || strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
+func TestModelViewBasics(t *testing.T) {
+	m := modelWithTwoSessions()
+	out := m.View()
+	if !strings.Contains(out, "SESSIONS") || !strings.Contains(out, "●") {
 		t.Fatalf("view=%s", out)
 	}
+	if strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
+		t.Fatalf("view should hide textual tmux liveness: %s", out)
+	}
+}
+
+func TestModelKeyNavigationAndDispatchParsing(t *testing.T) {
+	m := modelWithTwoSessions()
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	m = model.(Model)
 	for _, key := range []string{"down", "up", " ", "esc", "?", "esc", "ctrl+s", "tab"} {
 		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
-		if cast, ok := model.(Model); ok {
-			m = cast
-		}
+		m = model.(Model)
 	}
-	model, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
-	m = model.(Model)
-	if m.selected != 1 {
+	assertSelectionAfterKey(t, &m, tea.KeyDown, 1)
+	assertSelectionAfterKey(t, &m, tea.KeyUp, 0)
+	assertDispatchParsing(t, m)
+}
+
+func TestModelModalViewsAndHelpers(t *testing.T) {
+	m := modelWithTwoSessions()
+	m.helpOpen = true
+	if !strings.Contains(m.View(), "Keys:") {
+		t.Fatal("missing help")
+	}
+	m.confirmStop = true
+	m.helpOpen = false
+	if !strings.Contains(m.View(), "Stop") {
+		t.Fatal("missing confirm")
+	}
+	m.wizard = true
+	m.confirmStop = false
+	if !strings.Contains(m.View(), "NEW SESSION") {
+		t.Fatal("missing wizard")
+	}
+	assertViewHelpers(t)
+}
+
+func modelWithTwoSessions() Model {
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "waiting prompt", Cwd: "/tmp/one", ProcAlive: adapter.Alive, PR: &adapter.PRRef{Status: adapter.PROpen}}, {ID: "2", AgentType: "fake", DisplayName: "two", Prompt: "done prompt", ProcAlive: adapter.Exited}}
+	return m
+}
+
+func assertSelectionAfterKey(t *testing.T, m *Model, key tea.KeyType, want int) {
+	t.Helper()
+	model, _ := m.handleKey(tea.KeyMsg{Type: key})
+	*m = model.(Model)
+	if m.selected != want {
 		t.Fatalf("selected=%d", m.selected)
 	}
-	model, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyUp})
-	m = model.(Model)
-	if m.selected != 0 {
-		t.Fatalf("selected=%d", m.selected)
-	}
+}
+
+func assertDispatchParsing(t *testing.T, m Model) {
+	t.Helper()
 	m.input = "@fake do work"
 	if prompt, agent := parseDispatchInput(m.input, "claude"); prompt != "do work" || agent != "fake" {
 		t.Fatalf("%q %q", prompt, agent)
@@ -53,22 +89,15 @@ func TestModelViewAndKeys(t *testing.T) {
 	if sess, ok := m.selectedSession(); !ok || sess.ID != "1" {
 		t.Fatalf("selected session %+v %v", sess, ok)
 	}
-	m.helpOpen = true
-	if !strings.Contains(m.View(), "Keys:") {
-		t.Fatal("missing help")
+}
+
+func assertViewHelpers(t *testing.T) {
+	t.Helper()
+	if stateLabel(adapter.ReadyForReview) != "review" || prStatusDot(adapter.PRMerged) == " " {
+		t.Fatal("status helpers bad")
 	}
-	m.confirmStop = true
-	m.helpOpen = false
-	if !strings.Contains(m.View(), "Stop") {
-		t.Fatal("missing confirm")
-	}
-	m.wizard = true
-	m.confirmStop = false
-	if !strings.Contains(m.View(), "NEW SESSION") {
-		t.Fatal("missing wizard")
-	}
-	if stateLabel(adapter.ReadyForReview) != "review" || prStatusDot(adapter.PRMerged) == " " || truncate("abcdef", 4) != "abc…" || trimLines("a\nb\nc", 2) != "b\nc" {
-		t.Fatal("helpers bad")
+	if truncate("abcdef", 4) != "abc…" || trimLines("a\nb\nc", 2) != "b\nc" {
+		t.Fatal("text helpers bad")
 	}
 }
 

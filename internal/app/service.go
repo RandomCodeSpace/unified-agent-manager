@@ -20,78 +20,116 @@ type Service struct {
 	Registry *adapter.Registry
 }
 
+const agentUnavailableFormat = "agent %q unavailable"
+
 func NewService(st *store.Store, reg *adapter.Registry) *Service {
 	return &Service{Store: st, Registry: reg}
 }
 
 func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Config, error) {
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return nil, cfg, err
+	}
+	live := s.liveSessions(ctx)
+	s.mergeStoredSessions(live, cfg, time.Now())
+	mutated := s.refreshSessionRecords(ctx, live, &cfg)
+	if mutated && s.Store != nil {
+		_ = s.Store.Save(cfg)
+	}
+	out := sessionsFromMap(live)
+	SortSessions(out)
+	return out, cfg, nil
+}
+
+func (s *Service) loadConfig() (store.Config, error) {
 	cfg := store.DefaultConfig()
-	var err error
-	if s.Store != nil {
-		cfg, err = s.Store.Load()
-		if err != nil {
-			return nil, cfg, err
-		}
+	if s.Store == nil {
+		return cfg, nil
 	}
+	return s.Store.Load()
+}
+
+func (s *Service) liveSessions(ctx context.Context) map[string]adapter.Session {
 	live := map[string]adapter.Session{}
-	if s.Registry != nil {
-		for _, a := range s.Registry.Enabled() {
-			sessions, err := a.List(ctx)
-			if err != nil {
-				continue
-			}
-			for _, sess := range sessions {
-				live[store.Key(sess.AgentType, sess.ID)] = sess
-			}
-		}
+	if s.Registry == nil {
+		return live
 	}
-	now := time.Now()
-	mutated := false
-	for key, rec := range cfg.Sessions {
-		if sess, ok := live[key]; ok {
-			sess.DisplayName = firstNonEmpty(rec.Name, sess.DisplayName)
-			sess.Prompt = firstNonEmpty(rec.Prompt, sess.Prompt)
-			sess.Pinned = rec.Pinned
-			sess.Group = rec.Group
-			sess.SortIndex = rec.SortIndex
-			if rec.PR != nil && sess.PR == nil {
-				sess.PR = &adapter.PRRef{URL: rec.PR.URL, Number: rec.PR.Number, Status: adapter.PRStatus(rec.PR.LastStatus)}
-			}
-			live[key] = sess
+	for _, a := range s.Registry.Enabled() {
+		sessions, err := a.List(ctx)
+		if err != nil {
 			continue
 		}
-		// Keep recent dead records visible so users can clean them up.
-		live[key] = adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, Activity: "tmux session not running", CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex}
+		for _, sess := range sessions {
+			live[store.Key(sess.AgentType, sess.ID)] = sess
+		}
 	}
+	return live
+}
+
+func (s *Service) mergeStoredSessions(live map[string]adapter.Session, cfg store.Config, now time.Time) {
+	for key, rec := range cfg.Sessions {
+		if sess, ok := live[key]; ok {
+			live[key] = mergeStoredMetadata(sess, rec)
+			continue
+		}
+		live[key] = deadSessionFromRecord(rec, now)
+	}
+}
+
+func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.Session {
+	sess.DisplayName = firstNonEmpty(rec.Name, sess.DisplayName)
+	sess.Prompt = firstNonEmpty(rec.Prompt, sess.Prompt)
+	sess.Pinned = rec.Pinned
+	sess.Group = rec.Group
+	sess.SortIndex = rec.SortIndex
+	if rec.PR != nil && sess.PR == nil {
+		sess.PR = &adapter.PRRef{URL: rec.PR.URL, Number: rec.PR.Number, Status: adapter.PRStatus(rec.PR.LastStatus)}
+	}
+	return sess
+}
+
+func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Session {
+	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, Activity: "tmux session not running", CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex}
+}
+
+func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) bool {
+	mutated := false
+	now := time.Now()
 	for key, sess := range live {
 		rec, ok := cfg.Sessions[key]
 		if !ok || rec.ID == "" {
 			rec = RecordFromSession(sess, store.ModeYolo)
 			mutated = true
 		}
-		if sess.PR != nil {
-			status := string(sess.PR.Status)
-			if rec.PR == nil || rec.PR.URL != sess.PR.URL || time.Since(rec.PR.LastChecked) > 60*time.Second {
-				if checked, err := pr.Check(ctx, sess.PR.URL); err == nil && checked != pr.None {
-					status = string(checked)
-					sess.PR.Status = adapter.PRStatus(status)
-					live[key] = sess
-				}
-				rec.PR = &store.PRRecord{URL: sess.PR.URL, Number: sess.PR.Number, LastStatus: status, LastChecked: now}
-				cfg.Sessions[key] = rec
-				mutated = true
-			}
+		if updatePRRecord(ctx, key, &sess, &rec, live, now) {
+			cfg.Sessions[key] = rec
+			mutated = true
 		}
 	}
-	if mutated && s.Store != nil {
-		_ = s.Store.Save(cfg)
+	return mutated
+}
+
+func updatePRRecord(ctx context.Context, key string, sess *adapter.Session, rec *store.SessionRecord, live map[string]adapter.Session, now time.Time) bool {
+	if sess.PR == nil || (rec.PR != nil && rec.PR.URL == sess.PR.URL && time.Since(rec.PR.LastChecked) <= 60*time.Second) {
+		return false
 	}
+	status := string(sess.PR.Status)
+	if checked, err := pr.Check(ctx, sess.PR.URL); err == nil && checked != pr.None {
+		status = string(checked)
+		sess.PR.Status = adapter.PRStatus(status)
+		live[key] = *sess
+	}
+	rec.PR = &store.PRRecord{URL: sess.PR.URL, Number: sess.PR.Number, LastStatus: status, LastChecked: now}
+	return true
+}
+
+func sessionsFromMap(live map[string]adapter.Session) []adapter.Session {
 	out := make([]adapter.Session, 0, len(live))
 	for _, sess := range live {
 		out = append(out, sess)
 	}
-	SortSessions(out)
-	return out, cfg, nil
+	return out
 }
 
 func SortSessions(sessions []adapter.Session) {
@@ -211,7 +249,7 @@ func (s *Service) Peek(ctx context.Context, id string) (adapter.PeekResult, erro
 	}
 	a, ok := s.Registry.Get(sess.AgentType)
 	if !ok {
-		return adapter.PeekResult{}, fmt.Errorf("agent %q unavailable", sess.AgentType)
+		return adapter.PeekResult{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
 	}
 	return a.Peek(ctx, sess.ID)
 }
@@ -223,7 +261,7 @@ func (s *Service) Reply(ctx context.Context, id, text string) error {
 	}
 	a, ok := s.Registry.Get(sess.AgentType)
 	if !ok {
-		return fmt.Errorf("agent %q unavailable", sess.AgentType)
+		return fmt.Errorf(agentUnavailableFormat, sess.AgentType)
 	}
 	return a.Reply(ctx, sess.ID, text)
 }
@@ -235,7 +273,7 @@ func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec
 	}
 	a, ok := s.Registry.Get(sess.AgentType)
 	if !ok {
-		return adapter.AttachSpec{}, fmt.Errorf("agent %q unavailable", sess.AgentType)
+		return adapter.AttachSpec{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
 	}
 	if sess.ProcAlive == adapter.Exited {
 		resumable, ok := a.(adapter.ResumableAdapter)
