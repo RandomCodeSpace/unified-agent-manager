@@ -14,6 +14,8 @@ import (
 
 const CurrentSchemaVersion = 1
 
+const configFileName = "sessions.json"
+
 type Mode string
 
 const (
@@ -73,16 +75,15 @@ func (s *Store) Path() string { return s.path }
 
 func DefaultPath() string {
 	if v := os.Getenv("UAM_CONFIG_DIR"); v != "" {
-		return filepath.Join(v, "sessions.json")
+		return filepath.Join(v, configFileName)
 	}
 	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
-		return filepath.Join(v, "uam", "sessions.json")
+		return filepath.Join(v, "uam", configFileName)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "uam", "sessions.json")
+	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "uam", configFileName)
 	}
-	return filepath.Join(home, ".config", "uam", "sessions.json")
+	return filepath.Join(".uam", configFileName)
 }
 
 func DefaultConfig() Config {
