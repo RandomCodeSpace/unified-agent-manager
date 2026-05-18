@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/randomcodespace/unified-agent-manager/internal/store"
 )
 
@@ -158,6 +160,35 @@ func TestRunMoreCLIPaths(t *testing.T) {
 	}
 	if err := runDispatch(context.Background(), newService(mustTestStore(t, dir)), []string{"--bad"}); err == nil {
 		t.Fatal("want bad flag error")
+	}
+}
+
+func TestAttachReturnsToTUI(t *testing.T) {
+	dir := setupFakeCLIEnv(t)
+	t.Setenv("UAM_CONFIG_DIR", filepath.Join(dir, "cfg-attach"))
+	out := captureStdout(t, func() {
+		if err := run(context.Background(), []string{"dispatch", "claude", "attach me"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	id := strings.TrimSpace(out)
+	if id == "" {
+		t.Fatal("empty id")
+	}
+
+	oldRunTUI := runTUIFn
+	defer func() { runTUIFn = oldRunTUI }()
+	returnedToTUI := false
+	runTUIFn = func(ctx context.Context, model tea.Model) error {
+		returnedToTUI = true
+		return nil
+	}
+
+	if err := run(context.Background(), []string{"attach", id}); err != nil {
+		t.Fatal(err)
+	}
+	if !returnedToTUI {
+		t.Fatal("attach should return to UAM TUI after the session exits")
 	}
 }
 

@@ -71,28 +71,48 @@ func (a *TmuxAgent) resolveCommand() ([]string, bool) {
 	return nil, false
 }
 
-func (a *TmuxAgent) Dispatch(ctx context.Context, req DispatchRequest) (Session, error) {
+func (a *TmuxAgent) commandForMode(mode string) ([]string, error) {
 	cmd, ok := a.resolveCommand()
 	if !ok {
-		return Session{}, fmt.Errorf("%s unavailable", a.Name())
+		return nil, fmt.Errorf("%s unavailable", a.Name())
 	}
-	if req.Mode == "safe" {
+	if mode == "safe" {
 		cmd = append(cmd, a.SafeArgs...)
 	} else {
 		cmd = append(cmd, a.YoloArgs...)
 	}
+	return cmd, nil
+}
+
+func (a *TmuxAgent) Dispatch(ctx context.Context, req DispatchRequest) (Session, error) {
 	id := newID()
-	short := id[:8]
+	return a.startSession(ctx, ResumeRequest{ID: id, Name: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, Mode: req.Mode}, "dispatched")
+}
+
+func (a *TmuxAgent) Resume(ctx context.Context, req ResumeRequest) (Session, error) {
+	if req.ID == "" {
+		req.ID = newID()
+	}
+	return a.startSession(ctx, req, "resumed")
+}
+
+func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activity string) (Session, error) {
+	cmd, err := a.commandForMode(req.Mode)
+	if err != nil {
+		return Session{}, err
+	}
 	cwd := req.Cwd
 	if cwd == "" {
-		var err error
 		cwd, err = os.Getwd()
 		if err != nil {
 			return Session{}, err
 		}
 	}
-	tmuxName := fmt.Sprintf("uam-%s-%s", a.Name(), short)
-	env := map[string]string{"UAM_AGENT": a.Name(), "UAM_ID": id}
+	tmuxName := req.TmuxSession
+	if tmuxName == "" {
+		tmuxName = fmt.Sprintf("uam-%s-%s", a.Name(), req.ID[:min(8, len(req.ID))])
+	}
+	env := map[string]string{"UAM_AGENT": a.Name(), "UAM_ID": req.ID}
 	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
 		return Session{}, err
 	}
@@ -106,7 +126,11 @@ func (a *TmuxAgent) Dispatch(ctx context.Context, req DispatchRequest) (Session,
 		name = displayNameFromPrompt(req.Prompt)
 	}
 	now := time.Now()
-	return Session{ID: id, AgentType: a.Name(), DisplayName: name, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Working, ProcAlive: Alive, Activity: "dispatched", CreatedAt: now, LastChange: now}, nil
+	created := req.CreatedAt
+	if created.IsZero() {
+		created = now
+	}
+	return Session{ID: req.ID, AgentType: a.Name(), DisplayName: name, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Working, ProcAlive: Alive, Activity: activity, CreatedAt: created, LastChange: now}, nil
 }
 
 func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {

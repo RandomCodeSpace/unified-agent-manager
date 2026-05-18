@@ -40,7 +40,7 @@ func (c *Client) CreateSession(ctx context.Context, name, cwd string, env map[st
 	for k, v := range env {
 		args = append(args, "-e", k+"="+v)
 	}
-	args = append(args, ShellJoin(command)+"; exec bash")
+	args = append(args, ShellJoin(command))
 	_, err := c.run(ctx, args...)
 	return err
 }

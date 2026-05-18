@@ -19,8 +19,6 @@ import (
 	"github.com/randomcodespace/unified-agent-manager/internal/tmux"
 )
 
-const version = "0.1.0"
-
 type Model struct {
 	width, height int
 	quitting      bool
@@ -41,7 +39,6 @@ type Model struct {
 	wizardCwd     string
 	groupByDir    bool
 	execProcess   func(*exec.Cmd, tea.ExecCallback) tea.Cmd
-	spinnerFrame  int
 }
 
 type sessionsLoadedMsg struct {
@@ -58,7 +55,12 @@ type dispatchedMsg struct {
 	session adapter.Session
 	err     error
 }
-type tickMsg time.Time
+type attachSpecMsg struct {
+	spec adapter.AttachSpec
+	err  error
+}
+type attachFinishedMsg struct{ err error }
+type refreshMsg time.Time
 
 func New() Model {
 	st, _ := store.Open(store.DefaultPath())
@@ -76,9 +78,11 @@ func NewWizard(st *store.Store, reg *adapter.Registry) Model {
 	return m
 }
 
-func (m Model) Init() tea.Cmd { return tea.Batch(m.loadSessionsCmd(), tick()) }
+func (m Model) Init() tea.Cmd { return tea.Batch(m.loadSessionsCmd(), refreshTick()) }
 
-func tick() tea.Cmd { return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
+func refreshTick() tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return refreshMsg(t) })
+}
 
 func (m Model) loadSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
@@ -92,9 +96,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
-	case tickMsg:
-		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
-		return m, tea.Batch(m.loadSessionsCmd(), tick())
+	case refreshMsg:
+		return m, tea.Batch(m.loadSessionsCmd(), refreshTick())
 	case sessionsLoadedMsg:
 		if msg.err != nil {
 			m.message = msg.err.Error()
@@ -126,6 +129,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.message = "attaching " + msg.session.ID
 		m.input = ""
 		return m, m.attachSessionCmd(msg.session)
+	case attachSpecMsg:
+		return m, m.execAttachSpec(msg.spec, msg.err)
+	case attachFinishedMsg:
+		if msg.err != nil {
+			m.message = "session exited: " + msg.err.Error()
+		} else {
+			m.message = "returned to uam"
+		}
+		return m, m.loadSessionsCmd()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -421,7 +433,7 @@ func (m Model) attachSelectedCmd() tea.Cmd {
 	}
 	return func() tea.Msg {
 		spec, err := m.service.AttachSpec(context.Background(), sess.ID)
-		return m.execAttachSpec(spec, err)()
+		return attachSpecMsg{spec: spec, err: err}
 	}
 }
 
@@ -438,7 +450,7 @@ func (m Model) attachSessionCmd(sess adapter.Session) tea.Cmd {
 			return sessionsLoadedMsg{err: fmt.Errorf("agent %q unavailable", sess.AgentType)}
 		}
 		spec, err := a.Attach(sess.ID)
-		return m.execAttachSpec(spec, err)()
+		return attachSpecMsg{spec: spec, err: err}
 	}
 }
 
@@ -454,7 +466,7 @@ func (m Model) execAttachSpec(spec adapter.AttachSpec, err error) tea.Cmd {
 		runner = tea.ExecProcess
 	}
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
-	return runner(cmd, func(err error) tea.Msg { return sessionsLoadedMsg{err: err} })
+	return runner(cmd, func(err error) tea.Msg { return attachFinishedMsg{err: err} })
 }
 
 func (m Model) persistOrderCmd() tea.Cmd {
@@ -462,25 +474,31 @@ func (m Model) persistOrderCmd() tea.Cmd {
 	return func() tea.Msg { return sessionsLoadedMsg{err: m.service.UpdateSortOrder(sessions)} }
 }
 
-var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-var brandStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-var hintStyle = lipgloss.NewStyle().Faint(true)
-var selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
-var borderStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-var detailStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("63")).Padding(0, 1).MarginTop(1)
-var sectionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
-var liveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-var deadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
-var taskStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229"))
-var pillStyle = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("238"))
+var (
+	accentColor  = lipgloss.AdaptiveColor{Light: "#1F2937", Dark: "#E5E7EB"}
+	mutedColor   = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#94A3B8"}
+	dividerColor = lipgloss.AdaptiveColor{Light: "#CBD5E1", Dark: "#334155"}
+	taskColor    = lipgloss.AdaptiveColor{Light: "#334155", Dark: "#CBD5E1"}
+	liveColor    = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
+	deadColor    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
+)
 
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+var brandStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#0F766E", Dark: "#2DD4BF"})
+var hintStyle = lipgloss.NewStyle().Foreground(mutedColor).Faint(true)
+var selectedStyle = lipgloss.NewStyle()
+var detailStyle = lipgloss.NewStyle()
+var dividerStyle = lipgloss.NewStyle().Foreground(dividerColor).Faint(true)
+var sectionStyle = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
+var liveStyle = lipgloss.NewStyle().Foreground(liveColor).Bold(true)
+var deadStyle = lipgloss.NewStyle().Foreground(deadColor).Bold(true)
+var taskStyle = lipgloss.NewStyle().Foreground(taskColor)
 
 func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
-	body := m.renderHeader() + "\n"
+	body := m.renderBranding()
 	if m.helpOpen {
 		body += m.renderHelp()
 	} else if m.confirmStop {
@@ -502,32 +520,19 @@ func (m Model) View() string {
 		prompt += "\n" + hintStyle.Render(m.message)
 	}
 	body += prompt
-	if m.width > 0 {
-		return borderStyle.Width(max(20, m.width-2)).Render(body)
-	}
 	return body
 }
 
-func (m Model) renderHeader() string {
-	live, dead := 0, 0
-	for _, s := range m.sessions {
-		if s.ProcAlive == adapter.Alive {
-			live++
-		} else {
-			dead++
-		}
+const uamANSILogo = ` _   _  _   __  __ 
+| | | |/_\ |  \/  |
+| |_| / _ \| |\/| |
+ \___/_/ \_\_|  |_|`
+
+func (m Model) renderBranding() string {
+	if m.contentWidth() < 34 {
+		return brandStyle.Render("UAM") + "\n" + hintStyle.Render("Unified Agent Manager") + "\n" + m.renderDivider() + "\n"
 	}
-	title := brandStyle.Render("UAM") + " " + hintStyle.Render("unified-agent-manager "+version)
-	stats := strings.Join([]string{
-		pillStyle.Foreground(lipgloss.Color("42")).Render(fmt.Sprintf("%d live", live)),
-		pillStyle.Foreground(lipgloss.Color("203")).Render(fmt.Sprintf("%d dead", dead)),
-		pillStyle.Foreground(lipgloss.Color("111")).Render("agent " + m.defaultAgent),
-	}, " ")
-	if m.contentWidth() < 72 {
-		return title + "\n" + stats
-	}
-	gap := max(1, m.contentWidth()-lipgloss.Width(title)-lipgloss.Width(stats))
-	return title + strings.Repeat(" ", gap) + stats
+	return brandStyle.Render(uamANSILogo) + "\n" + hintStyle.Render("Unified Agent Manager") + "\n" + m.renderDivider() + "\n"
 }
 
 func (m Model) renderTable() string {
@@ -576,28 +581,28 @@ func (m Model) renderDetails() string {
 	if !ok {
 		return ""
 	}
-	status := liveStyle.Render("TMUX: LIVE")
-	if sess.ProcAlive != adapter.Alive {
-		status = deadStyle.Render("TMUX: DEAD")
-	}
-	nameWidth := max(12, m.contentWidth()-20)
+	nameWidth := max(12, m.contentWidth()-8)
 	lines := []string{
 		sectionStyle.Render("SELECTED"),
-		fmt.Sprintf("%s  %s  %s", m.tmuxMark(sess), status, titleStyle.Render(truncate(firstNonEmpty(sess.DisplayName, sess.ID), nameWidth))),
+		fmt.Sprintf("%s  %s", m.tmuxMark(sess), titleStyle.Render(truncate(firstNonEmpty(sess.DisplayName, sess.ID), nameWidth))),
 		fmt.Sprintf("agent: %s · id: %s", firstNonEmpty(sess.AgentType, "?"), firstNonEmpty(sess.ID, "?")),
 	}
 	if !sess.CreatedAt.IsZero() {
 		lines = append(lines, "created: "+sess.CreatedAt.Format("Jan 02 15:04"))
 	}
 	lines = append(lines, fmt.Sprintf("cwd: %s", firstNonEmpty(sess.Cwd, "?")))
-	return detailStyle.Width(max(20, m.contentWidth()-4)).Render(strings.Join(lines, "\n")) + "\n"
+	return detailStyle.Render(strings.Join(lines, "\n")) + "\n" + m.renderDivider() + "\n"
+}
+
+func (m Model) renderDivider() string {
+	return dividerStyle.Render(strings.Repeat("─", max(20, m.contentWidth())))
 }
 
 func (m Model) contentWidth() int {
 	if m.width <= 0 {
 		return 96
 	}
-	return max(24, m.width-6)
+	return max(24, m.width-2)
 }
 
 func (m Model) tableWidths() (nameWidth, taskWidth int, showTask bool) {
@@ -616,7 +621,7 @@ func (m Model) visibleSessionWindow() (int, int) {
 	if m.height <= 0 {
 		return 0, limit
 	}
-	reserve := 14
+	reserve := 20
 	if m.peekOpen {
 		reserve += max(5, m.height/3) + 2
 	}
@@ -631,9 +636,9 @@ func (m Model) visibleSessionWindow() (int, int) {
 
 func (m Model) tmuxMark(sess adapter.Session) string {
 	if sess.ProcAlive == adapter.Alive {
-		return liveStyle.Render(spinnerFrames[m.spinnerFrame%len(spinnerFrames)])
+		return liveStyle.Render("●")
 	}
-	return deadStyle.Render("💀")
+	return deadStyle.Render("○")
 }
 
 func promptText(sess adapter.Session) string {
