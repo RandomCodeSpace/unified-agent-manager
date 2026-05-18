@@ -143,6 +143,20 @@ func TestRunLastWithoutSessionsFails(t *testing.T) {
 	}
 }
 
+func TestNewServiceRegistersHermesWhenAvailable(t *testing.T) {
+	dir := t.TempDir()
+	writeCLIExecutable(t, filepath.Join(dir, "hermes"))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(st)
+	if a, ok := svc.Registry.Get("hermes"); !ok || a.DisplayName() != "Hermes Agent" {
+		t.Fatalf("hermes adapter missing: %v %v", a, ok)
+	}
+}
+
 func newCLITestService(t *testing.T) (*app.Service, *cliFakeAdapter) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
@@ -201,6 +215,13 @@ func withCLIStdin(t *testing.T, input string, fn func()) {
 	os.Stdin = r
 	defer func() { os.Stdin = old }()
 	fn()
+}
+
+func writeCLIExecutable(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func must(t *testing.T, err error) {
