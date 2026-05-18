@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -41,6 +40,8 @@ type Model struct {
 	wizardAgent   string
 	wizardCwd     string
 	groupByDir    bool
+	execProcess   func(*exec.Cmd, tea.ExecCallback) tea.Cmd
+	spinnerFrame  int
 }
 
 type sessionsLoadedMsg struct {
@@ -67,7 +68,7 @@ func New() Model {
 }
 
 func NewWithDeps(st *store.Store, reg *adapter.Registry) Model {
-	return Model{service: NewService(st, reg), defaultAgent: "claude", wizardCwd: "."}
+	return Model{service: NewService(st, reg), defaultAgent: "claude", wizardCwd: ".", execProcess: tea.ExecProcess}
 }
 func NewWizard(st *store.Store, reg *adapter.Registry) Model {
 	m := NewWithDeps(st, reg)
@@ -92,6 +93,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case tickMsg:
+		m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
 		return m, tea.Batch(m.loadSessionsCmd(), tick())
 	case sessionsLoadedMsg:
 		if msg.err != nil {
@@ -119,11 +121,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dispatchedMsg:
 		if msg.err != nil {
 			m.message = msg.err.Error()
-		} else {
-			m.message = "dispatched " + msg.session.ID
-			m.input = ""
+			return m, nil
 		}
-		return m, m.loadSessionsCmd()
+		m.message = "attaching " + msg.session.ID
+		m.input = ""
+		return m, m.attachSessionCmd(msg.session)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -160,6 +162,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		}
+		if key == "q" {
+			m.input += key
+		}
 	case "up":
 		if m.selected > 0 {
 			m.selected--
@@ -182,6 +187,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "tab":
 		m.cycleDefaultAgent()
+		_ = m.service.SetDefaultAgent(m.defaultAgent)
 	case "?":
 		m.helpOpen = true
 	case "ctrl+s":
@@ -199,18 +205,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmStop = true
 		}
 	case " ":
-		if len(m.sessions) > 0 {
+		if strings.TrimSpace(m.input) == "" && len(m.sessions) > 0 {
 			m.peekOpen = !m.peekOpen
 			if m.peekOpen {
 				return m, m.peekSelectedCmd()
 			}
+		} else {
+			m.input += key
 		}
 	case "right":
 		fallthrough
 	case "enter":
 		if strings.TrimSpace(m.input) != "" {
-			prompt, agent := parseDispatchInput(m.input, m.defaultAgent)
-			return m, m.dispatchCmd(agent, prompt)
+			spec := parseDispatchSpec(m.input, m.defaultAgent)
+			return m, m.dispatchNamedCmd(spec.Agent, spec.Name, spec.Prompt)
 		}
 		if len(m.sessions) > 0 {
 			return m, m.attachSelectedCmd()
@@ -223,12 +231,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input = m.input[:len(m.input)-1]
 		}
 	case "e":
-		m.wizard = true
-		m.wizardStep = 0
-		m.input = ""
-		m.wizardCwd = "."
+		if strings.TrimSpace(m.input) == "" {
+			m.wizard = true
+			m.wizardStep = 0
+			m.input = ""
+			m.wizardCwd = "."
+		} else {
+			m.input += key
+		}
 	default:
-		if len(key) == 1 || key == " " {
+		if msg.Type == tea.KeyRunes || len([]rune(key)) == 1 {
 			m.input += key
 		}
 	}
@@ -270,6 +282,7 @@ func (m Model) handleWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case 0:
 		if key == "tab" {
 			m.cycleDefaultAgent()
+			_ = m.service.SetDefaultAgent(m.defaultAgent)
 			m.wizardAgent = m.defaultAgent
 			return m, nil
 		}
@@ -290,12 +303,11 @@ func (m Model) handleWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case 2:
 		if key == "enter" {
-			prompt := m.input
-			agent := firstNonEmpty(m.wizardAgent, m.defaultAgent)
+			spec := parseDispatchSpec(m.input, firstNonEmpty(m.wizardAgent, m.defaultAgent))
 			cwd := m.wizardCwd
 			m.wizard = false
 			m.input = ""
-			return m, m.dispatchWithCwdCmd(agent, prompt, cwd)
+			return m, m.dispatchWithNameCwdCmd(spec.Agent, spec.Name, spec.Prompt, cwd)
 		}
 	}
 	if key == "backspace" {
@@ -324,20 +336,45 @@ func (m *Model) cycleDefaultAgent() {
 	}
 	m.defaultAgent = enabled[idx%len(enabled)].Name()
 }
+
+type dispatchSpec struct {
+	Agent  string
+	Name   string
+	Prompt string
+}
+
 func parseDispatchInput(input, def string) (string, string) {
+	spec := parseDispatchSpec(input, def)
+	return spec.Prompt, spec.Agent
+}
+
+func parseDispatchSpec(input, def string) dispatchSpec {
 	fields := strings.Fields(input)
+	spec := dispatchSpec{Agent: def}
 	if len(fields) > 0 && strings.HasPrefix(fields[0], "@") {
-		return strings.TrimSpace(strings.TrimPrefix(input, fields[0])), strings.TrimPrefix(fields[0], "@")
+		spec.Agent = strings.TrimPrefix(fields[0], "@")
+		fields = fields[1:]
 	}
-	return input, def
+	if len(fields) > 0 && strings.HasPrefix(fields[0], "#") {
+		spec.Name = strings.TrimPrefix(fields[0], "#")
+		fields = fields[1:]
+	}
+	spec.Prompt = strings.Join(fields, " ")
+	return spec
 }
 
 func (m Model) dispatchCmd(agent, prompt string) tea.Cmd {
 	return m.dispatchWithCwdCmd(agent, prompt, "")
 }
+func (m Model) dispatchNamedCmd(agent, name, prompt string) tea.Cmd {
+	return m.dispatchWithNameCwdCmd(agent, name, prompt, "")
+}
 func (m Model) dispatchWithCwdCmd(agent, prompt, cwd string) tea.Cmd {
+	return m.dispatchWithNameCwdCmd(agent, "", prompt, cwd)
+}
+func (m Model) dispatchWithNameCwdCmd(agent, name, prompt, cwd string) tea.Cmd {
 	return func() tea.Msg {
-		sess, err := m.service.Dispatch(context.Background(), agent, prompt, cwd, string(store.ModeYolo))
+		sess, err := m.service.DispatchNamed(context.Background(), agent, name, prompt, cwd, string(store.ModeYolo))
 		return dispatchedMsg{session: sess, err: err}
 	}
 }
@@ -384,12 +421,40 @@ func (m Model) attachSelectedCmd() tea.Cmd {
 	}
 	return func() tea.Msg {
 		spec, err := m.service.AttachSpec(context.Background(), sess.ID)
-		if err != nil {
-			return sessionsLoadedMsg{err: err}
-		}
-		cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
-		return tea.ExecProcess(cmd, func(err error) tea.Msg { return sessionsLoadedMsg{err: err} })()
+		return m.execAttachSpec(spec, err)()
 	}
+}
+
+func (m Model) attachSessionCmd(sess adapter.Session) tea.Cmd {
+	if sess.ID == "" || sess.AgentType == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		if m.service == nil || m.service.Registry == nil {
+			return sessionsLoadedMsg{err: fmt.Errorf("agent %q unavailable", sess.AgentType)}
+		}
+		a, ok := m.service.Registry.Get(sess.AgentType)
+		if !ok {
+			return sessionsLoadedMsg{err: fmt.Errorf("agent %q unavailable", sess.AgentType)}
+		}
+		spec, err := a.Attach(sess.ID)
+		return m.execAttachSpec(spec, err)()
+	}
+}
+
+func (m Model) execAttachSpec(spec adapter.AttachSpec, err error) tea.Cmd {
+	if err != nil {
+		return func() tea.Msg { return sessionsLoadedMsg{err: err} }
+	}
+	if len(spec.Argv) == 0 {
+		return func() tea.Msg { return sessionsLoadedMsg{err: fmt.Errorf("empty attach command")} }
+	}
+	runner := m.execProcess
+	if runner == nil {
+		runner = tea.ExecProcess
+	}
+	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
+	return runner(cmd, func(err error) tea.Msg { return sessionsLoadedMsg{err: err} })
 }
 
 func (m Model) persistOrderCmd() tea.Cmd {
@@ -401,6 +466,13 @@ var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")
 var hintStyle = lipgloss.NewStyle().Faint(true)
 var selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
 var borderStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+var detailStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("63")).Padding(0, 1).MarginTop(1)
+var tableHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true)
+var liveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+var deadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
+var promptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229"))
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 func (m Model) View() string {
 	if m.quitting {
@@ -414,6 +486,7 @@ func (m Model) View() string {
 	} else if m.wizard {
 		body += m.renderWizard()
 	} else {
+		body += m.renderDetails()
 		body += m.renderTable()
 		if m.peekOpen {
 			body += "\n" + hintStyle.Render("peek") + "\n" + trimLines(m.peekText, max(5, m.height/3))
@@ -435,34 +508,21 @@ func (m Model) View() string {
 
 func (m Model) renderTable() string {
 	if len(m.sessions) == 0 {
-		return "\nNo sessions. Type @claude fix bug, press e for wizard, or run uam dispatch.\n"
+		return "\nNo sessions. Type @claude #bugfix fix bug, type @claude for an empty session, press e for wizard, or run uam dispatch.\n"
 	}
 	var b strings.Builder
-	current := adapter.State("")
+	b.WriteString("\n" + tableHeaderStyle.Render("SESSIONS") + "\n")
+	b.WriteString(hintStyle.Render(fmt.Sprintf("  %-24s %s", "NAME", "PROMPT")) + "\n")
 	for i, s := range m.sessions {
-		if !m.groupByDir && s.State != current {
-			current = s.State
-			b.WriteString("\n" + strings.ToUpper(stateLabel(s.State)) + "\n")
-		}
-		if m.groupByDir {
-			grp := firstNonEmpty(s.Group, filepath.Base(s.Cwd))
-			if i == 0 || grp != firstNonEmpty(m.sessions[i-1].Group, filepath.Base(m.sessions[i-1].Cwd)) {
-				b.WriteString("\n" + strings.ToUpper(grp) + "\n")
-			}
-		}
 		cursor := " "
 		if i == m.selected {
 			cursor = "›"
 		}
-		pin := " "
+		pin := ""
 		if s.Pinned {
-			pin = "★"
+			pin = "★ "
 		}
-		prDot := " "
-		if s.PR != nil {
-			prDot = prStatusDot(s.PR.Status)
-		}
-		line := fmt.Sprintf("%s %s %s %-8s %-14s %-20s %s", cursor, pin, prDot, s.AgentType, stateLabel(s.State), truncate(s.DisplayName, 20), truncate(s.Activity, 40))
+		line := fmt.Sprintf("%s %s %-24s %s", cursor, m.tmuxMark(s), truncate(pin+firstNonEmpty(s.DisplayName, s.ID), 24), promptStyle.Render(truncate(promptText(s), 58)))
 		if i == m.selected {
 			line = selectedStyle.Render(line)
 		}
@@ -471,11 +531,44 @@ func (m Model) renderTable() string {
 	return b.String()
 }
 
+func (m Model) renderDetails() string {
+	sess, ok := m.selectedSession()
+	if !ok {
+		return ""
+	}
+	status := liveStyle.Render("TMUX: LIVE")
+	if sess.ProcAlive != adapter.Alive {
+		status = deadStyle.Render("TMUX: DEAD")
+	}
+	created := ""
+	if !sess.CreatedAt.IsZero() {
+		created = " · created: " + sess.CreatedAt.Format("Jan 02 15:04")
+	}
+	lines := []string{
+		fmt.Sprintf("%s  %s  %s", m.tmuxMark(sess), status, titleStyle.Render(firstNonEmpty(sess.DisplayName, sess.ID))),
+		fmt.Sprintf("agent: %s · id: %s · tmux: %s%s", firstNonEmpty(sess.AgentType, "?"), firstNonEmpty(sess.ID, "?"), firstNonEmpty(sess.TmuxSession, "?"), created),
+		fmt.Sprintf("cwd: %s", firstNonEmpty(sess.Cwd, "?")),
+		fmt.Sprintf("prompt: %s", promptText(sess)),
+	}
+	return detailStyle.Render(strings.Join(lines, "\n")) + "\n"
+}
+
+func (m Model) tmuxMark(sess adapter.Session) string {
+	if sess.ProcAlive == adapter.Alive {
+		return liveStyle.Render(spinnerFrames[m.spinnerFrame%len(spinnerFrames)])
+	}
+	return deadStyle.Render("💀")
+}
+
+func promptText(sess adapter.Session) string {
+	return firstNonEmpty(sess.Prompt, sess.Activity, "<no prompt>")
+}
+
 func (m Model) renderHelp() string {
-	return "\nKeys: ↑/↓ select · Enter/→ attach · Space peek · type prompt Enter dispatch · @agent prompt select agent · Tab default agent · Ctrl+T pin · Ctrl+R rename · Ctrl+X stop/remove · Ctrl+S group · e wizard · q quit\n"
+	return "\nKeys: ↑/↓ select · Enter/→ attach · Space peek · @agent #name prompt dispatch (name/prompt optional) · Tab default agent · Ctrl+T pin · Ctrl+R rename · Ctrl+X stop/remove · Ctrl+S group · e wizard · q quit\n"
 }
 func (m Model) renderWizard() string {
-	steps := []string{"Pick provider (Tab cycles, Enter confirms): " + firstNonEmpty(m.wizardAgent, m.defaultAgent), "Pick workdir: " + m.input, "Enter prompt: " + m.input}
+	steps := []string{"Pick provider (Tab cycles, Enter confirms): " + firstNonEmpty(m.wizardAgent, m.defaultAgent), "Pick workdir: " + m.input, "Enter #name prompt (both optional): " + m.input}
 	return "\nNEW SESSION\n" + steps[m.wizardStep] + "\nEsc cancels\n"
 }
 func stateLabel(s adapter.State) string {

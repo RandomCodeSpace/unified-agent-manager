@@ -49,7 +49,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  uam                              open the TUI")
 	fmt.Fprintln(os.Stderr, "  uam new                          guided dispatch wizard")
-	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] <agent> <prompt>")
+	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] <agent> [#session-name] [prompt]")
 	fmt.Fprintln(os.Stderr, "  uam attach <name-or-id>")
 	fmt.Fprintln(os.Stderr, "  uam last")
 	fmt.Fprintln(os.Stderr, "  uam ls [--json]")
@@ -141,14 +141,15 @@ func runDispatch(ctx context.Context, svc *app.Service, args []string) error {
 		return err
 	}
 	rem := fs.Args()
-	if len(rem) < 2 {
-		return errors.New("dispatch requires <agent> <prompt>")
+	if len(rem) < 1 {
+		return errors.New("dispatch requires <agent> [#session-name] [prompt]")
 	}
 	mode := string(store.ModeYolo)
 	if *safe {
 		mode = string(store.ModeSafe)
 	}
-	sess, err := svc.Dispatch(ctx, rem[0], strings.Join(rem[1:], " "), *cwd, mode)
+	name, prompt := parseNameAndPrompt(rem[1:])
+	sess, err := svc.DispatchNamed(ctx, rem[0], name, prompt, *cwd, mode)
 	if err != nil {
 		return err
 	}
@@ -172,18 +173,26 @@ func runNew(ctx context.Context, svc *app.Service) error {
 	if line, _ := reader.ReadString('\n'); strings.TrimSpace(line) != "" {
 		cwd = strings.TrimSpace(line)
 	}
-	fmt.Print("prompt: ")
+	fmt.Print("prompt [#session-name prompt, optional]: ")
 	prompt, _ := reader.ReadString('\n')
 	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return errors.New("empty prompt")
-	}
-	sess, err := svc.Dispatch(ctx, agent, prompt, cwd, string(store.ModeYolo))
+	name, prompt := parseNameAndPrompt(strings.Fields(prompt))
+	sess, err := svc.DispatchNamed(ctx, agent, name, prompt, cwd, string(store.ModeYolo))
 	if err != nil {
 		return err
 	}
 	fmt.Printf("dispatched %s (%s)\n", sess.ID, sess.TmuxSession)
 	return nil
+}
+
+func parseNameAndPrompt(parts []string) (string, string) {
+	if len(parts) == 0 {
+		return "", ""
+	}
+	if strings.HasPrefix(parts[0], "#") {
+		return strings.TrimPrefix(parts[0], "#"), strings.Join(parts[1:], " ")
+	}
+	return "", strings.Join(parts, " ")
 }
 
 func execAttach(ctx context.Context, svc *app.Service, id string) error {

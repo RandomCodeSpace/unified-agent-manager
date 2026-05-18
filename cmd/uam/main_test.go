@@ -37,8 +37,28 @@ func TestRunHelpListDispatchAndErrors(t *testing.T) {
 	if strings.TrimSpace(out) == "" {
 		t.Fatal("empty dispatch id")
 	}
-	if err := run(context.Background(), []string{"dispatch", "claude"}); err == nil {
-		t.Fatal("want dispatch args error")
+	noPromptOut := captureStdout(t, func() {
+		if err := run(context.Background(), []string{"dispatch", "claude"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.TrimSpace(noPromptOut) == "" {
+		t.Fatal("empty no-prompt dispatch id")
+	}
+	namedOut := captureStdout(t, func() {
+		if err := run(context.Background(), []string{"dispatch", "claude", "#bugfix", "fix", "thing"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.TrimSpace(namedOut) == "" {
+		t.Fatal("empty named dispatch id")
+	}
+	if text := captureStdout(t, func() {
+		if err := run(context.Background(), []string{"ls"}); err != nil {
+			t.Fatal(err)
+		}
+	}); !strings.Contains(text, "bugfix") {
+		t.Fatalf("named session missing from list: %q", text)
 	}
 	if err := run(context.Background(), []string{"unknown"}); err == nil {
 		t.Fatal("want unknown error")
@@ -66,6 +86,28 @@ func TestRunNew(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = w.WriteString("claude\n/tmp\nfrom wizard\n")
+	_ = w.Close()
+	os.Stdin = r
+	defer func() { os.Stdin = old }()
+	out := captureStdout(t, func() {
+		if err := run(context.Background(), []string{"new"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "dispatched") {
+		t.Fatalf("out=%q", out)
+	}
+}
+
+func TestRunNewAllowsEmptyPrompt(t *testing.T) {
+	dir := setupFakeCLIEnv(t)
+	t.Setenv("UAM_CONFIG_DIR", filepath.Join(dir, "cfg-empty-prompt"))
+	old := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.WriteString("claude\n/tmp\n\n")
 	_ = w.Close()
 	os.Stdin = r
 	defer func() { os.Stdin = old }()

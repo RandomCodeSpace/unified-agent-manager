@@ -50,6 +50,7 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 	for key, rec := range cfg.Sessions {
 		if sess, ok := live[key]; ok {
 			sess.DisplayName = firstNonEmpty(rec.Name, sess.DisplayName)
+			sess.Prompt = firstNonEmpty(rec.Prompt, sess.Prompt)
 			sess.Pinned = rec.Pinned
 			sess.Group = rec.Group
 			sess.SortIndex = rec.SortIndex
@@ -60,7 +61,7 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 			continue
 		}
 		// Keep recent dead records visible so users can clean them up.
-		live[key] = adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, Activity: "session not running", CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex}
+		live[key] = adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, Activity: "tmux session not running", CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex}
 	}
 	for key, sess := range live {
 		rec, ok := cfg.Sessions[key]
@@ -94,7 +95,6 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 }
 
 func SortSessions(sessions []adapter.Session) {
-	order := map[adapter.State]int{adapter.NeedsInput: 0, adapter.Working: 1, adapter.ReadyForReview: 2, adapter.Failed: 3, adapter.Completed: 4, adapter.Idle: 5}
 	sort.SliceStable(sessions, func(i, j int) bool {
 		if sessions[i].Pinned != sessions[j].Pinned {
 			return sessions[i].Pinned
@@ -102,14 +102,18 @@ func SortSessions(sessions []adapter.Session) {
 		if sessions[i].SortIndex != sessions[j].SortIndex {
 			return sessions[i].SortIndex < sessions[j].SortIndex
 		}
-		if order[sessions[i].State] != order[sessions[j].State] {
-			return order[sessions[i].State] < order[sessions[j].State]
+		if sessions[i].ProcAlive != sessions[j].ProcAlive {
+			return sessions[i].ProcAlive == adapter.Alive
 		}
 		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
 	})
 }
 
 func (s *Service) Dispatch(ctx context.Context, agentName, prompt, cwd, mode string) (adapter.Session, error) {
+	return s.DispatchNamed(ctx, agentName, "", prompt, cwd, mode)
+}
+
+func (s *Service) DispatchNamed(ctx context.Context, agentName, name, prompt, cwd, mode string) (adapter.Session, error) {
 	if s.Registry == nil {
 		return adapter.Session{}, errors.New("no registry configured")
 	}
@@ -120,7 +124,7 @@ func (s *Service) Dispatch(ctx context.Context, agentName, prompt, cwd, mode str
 	if mode == "" {
 		mode = string(store.ModeYolo)
 	}
-	sess, err := a.Dispatch(ctx, adapter.DispatchRequest{Prompt: prompt, Cwd: cwd, Mode: mode})
+	sess, err := a.Dispatch(ctx, adapter.DispatchRequest{Name: name, Prompt: prompt, Cwd: cwd, Mode: mode})
 	if err != nil {
 		return adapter.Session{}, err
 	}
@@ -178,6 +182,13 @@ func (s *Service) SetUI(mut func(*store.UISettings)) error {
 		return nil
 	}
 	return s.Store.Update(func(cfg *store.Config) error { mut(&cfg.UI); return nil })
+}
+
+func (s *Service) SetDefaultAgent(agent string) error {
+	if s.Store == nil || agent == "" {
+		return nil
+	}
+	return s.Store.Update(func(cfg *store.Config) error { cfg.DefaultAgent = agent; return nil })
 }
 
 func (s *Service) Find(ctx context.Context, id string) (adapter.Session, store.Config, error) {
@@ -248,7 +259,7 @@ func RecordFromSession(sess adapter.Session, mode store.Mode) store.SessionRecor
 		mode = store.ModeYolo
 	}
 	name := firstNonEmpty(sess.DisplayName, sess.ID)
-	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, Name: name, Mode: mode, Workdir: sess.Cwd, TmuxSession: sess.TmuxSession, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex}
+	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, Name: name, Prompt: sess.Prompt, Mode: mode, Workdir: sess.Cwd, TmuxSession: sess.TmuxSession, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex}
 }
 
 func (s *Service) UpdateSortOrder(sessions []adapter.Session) error {
