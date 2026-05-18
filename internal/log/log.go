@@ -42,11 +42,10 @@ func cacheDir() string {
 	if v := os.Getenv("XDG_CACHE_HOME"); v != "" {
 		return filepath.Join(v, "uam")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "uam")
+	if dir, err := os.UserCacheDir(); err == nil && dir != "" {
+		return filepath.Join(dir, "uam")
 	}
-	return filepath.Join(home, ".cache", "uam")
+	return filepath.Join(".uam", "cache")
 }
 
 // Fatal prints to stderr and exits with code 1.
