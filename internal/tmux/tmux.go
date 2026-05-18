@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -37,12 +38,27 @@ func (c *Client) CreateSession(ctx context.Context, name, cwd string, env map[st
 	if cwd != "" {
 		args = append(args, "-c", cwd)
 	}
-	for k, v := range env {
-		args = append(args, "-e", k+"="+v)
-	}
-	args = append(args, ShellJoin(command))
+	args = append(args, ShellJoin(commandWithEnv(env, command)))
 	_, err := c.run(ctx, args...)
 	return err
+}
+
+func commandWithEnv(env map[string]string, command []string) []string {
+	if len(env) == 0 {
+		return command
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, 1+len(keys)+len(command))
+	out = append(out, "env")
+	for _, k := range keys {
+		out = append(out, k+"="+env[k])
+	}
+	out = append(out, command...)
+	return out
 }
 
 func (c *Client) List(ctx context.Context) ([]SessionInfo, error) {
