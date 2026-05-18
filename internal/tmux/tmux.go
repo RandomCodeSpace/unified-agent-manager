@@ -25,7 +25,7 @@ func (c *Client) baseArgs(args ...string) []string {
 }
 
 func (c *Client) run(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "tmux", c.baseArgs(args...)...)
+	cmd := exec.CommandContext(ctx, "tmux", c.baseArgs(args...)...) // #nosec G204 -- fixed tmux executable with argv args, no shell expansion.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
