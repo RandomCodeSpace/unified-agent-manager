@@ -463,14 +463,16 @@ func (m Model) persistOrderCmd() tea.Cmd {
 }
 
 var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+var brandStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 var hintStyle = lipgloss.NewStyle().Faint(true)
-var selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+var selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Bold(true)
 var borderStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 var detailStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("63")).Padding(0, 1).MarginTop(1)
-var tableHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true)
+var sectionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
 var liveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 var deadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
-var promptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229"))
+var taskStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229"))
+var pillStyle = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("238"))
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
@@ -478,7 +480,7 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
-	body := titleStyle.Render(fmt.Sprintf("unified-agent-manager %s", version)) + "\n"
+	body := m.renderHeader() + "\n"
 	if m.helpOpen {
 		body += m.renderHelp()
 	} else if m.confirmStop {
@@ -492,9 +494,9 @@ func (m Model) View() string {
 			body += "\n" + hintStyle.Render("peek") + "\n" + trimLines(m.peekText, max(5, m.height/3))
 		}
 	}
-	prompt := fmt.Sprintf("\n> %s_   [agent:%s] [?] help [e] new", m.input, m.defaultAgent)
+	prompt := fmt.Sprintf("\n%s %s_   %s", hintStyle.Render("command"), m.input, hintStyle.Render("agent:"+m.defaultAgent+" · ? help · e new"))
 	if m.renaming {
-		prompt = "\nrename> " + m.input + "_"
+		prompt = "\n" + hintStyle.Render("rename") + " " + m.input + "_"
 	}
 	if m.message != "" {
 		prompt += "\n" + hintStyle.Render(m.message)
@@ -506,27 +508,65 @@ func (m Model) View() string {
 	return body
 }
 
+func (m Model) renderHeader() string {
+	live, dead := 0, 0
+	for _, s := range m.sessions {
+		if s.ProcAlive == adapter.Alive {
+			live++
+		} else {
+			dead++
+		}
+	}
+	title := brandStyle.Render("UAM") + " " + hintStyle.Render("unified-agent-manager "+version)
+	stats := strings.Join([]string{
+		pillStyle.Foreground(lipgloss.Color("42")).Render(fmt.Sprintf("%d live", live)),
+		pillStyle.Foreground(lipgloss.Color("203")).Render(fmt.Sprintf("%d dead", dead)),
+		pillStyle.Foreground(lipgloss.Color("111")).Render("agent " + m.defaultAgent),
+	}, " ")
+	if m.contentWidth() < 72 {
+		return title + "\n" + stats
+	}
+	gap := max(1, m.contentWidth()-lipgloss.Width(title)-lipgloss.Width(stats))
+	return title + strings.Repeat(" ", gap) + stats
+}
+
 func (m Model) renderTable() string {
 	if len(m.sessions) == 0 {
 		return "\nNo sessions. Type @claude #bugfix fix bug, type @claude for an empty session, press e for wizard, or run uam dispatch.\n"
 	}
+	nameWidth, taskWidth, showTask := m.tableWidths()
+	start, end := m.visibleSessionWindow()
 	var b strings.Builder
-	b.WriteString("\n" + tableHeaderStyle.Render("SESSIONS") + "\n")
-	b.WriteString(hintStyle.Render(fmt.Sprintf("  %-24s %s", "NAME", "PROMPT")) + "\n")
-	for i, s := range m.sessions {
+	b.WriteString("\n" + sectionStyle.Render("SESSIONS") + "\n")
+	if showTask {
+		b.WriteString(hintStyle.Render(fmt.Sprintf("  %-*s %s", nameWidth+2, "NAME", "TASK")) + "\n")
+	} else {
+		b.WriteString(hintStyle.Render(fmt.Sprintf("  %-*s", nameWidth+2, "NAME")) + "\n")
+	}
+	if start > 0 {
+		b.WriteString(hintStyle.Render(fmt.Sprintf("  ↑ %d more", start)) + "\n")
+	}
+	for i, s := range m.sessions[start:end] {
+		idx := start + i
 		cursor := " "
-		if i == m.selected {
+		if idx == m.selected {
 			cursor = "›"
 		}
 		pin := ""
 		if s.Pinned {
 			pin = "★ "
 		}
-		line := fmt.Sprintf("%s %s %-24s %s", cursor, m.tmuxMark(s), truncate(pin+firstNonEmpty(s.DisplayName, s.ID), 24), promptStyle.Render(truncate(promptText(s), 58)))
-		if i == m.selected {
+		line := fmt.Sprintf("%s %s %-*s", cursor, m.tmuxMark(s), nameWidth, truncate(pin+firstNonEmpty(s.DisplayName, s.ID), nameWidth))
+		if showTask {
+			line += " " + taskStyle.Render(truncate(promptText(s), taskWidth))
+		}
+		if idx == m.selected {
 			line = selectedStyle.Render(line)
 		}
 		b.WriteString(line + "\n")
+	}
+	if end < len(m.sessions) {
+		b.WriteString(hintStyle.Render(fmt.Sprintf("  ↓ %d more", len(m.sessions)-end)) + "\n")
 	}
 	return b.String()
 }
@@ -540,17 +580,53 @@ func (m Model) renderDetails() string {
 	if sess.ProcAlive != adapter.Alive {
 		status = deadStyle.Render("TMUX: DEAD")
 	}
-	created := ""
-	if !sess.CreatedAt.IsZero() {
-		created = " · created: " + sess.CreatedAt.Format("Jan 02 15:04")
-	}
+	nameWidth := max(12, m.contentWidth()-20)
 	lines := []string{
-		fmt.Sprintf("%s  %s  %s", m.tmuxMark(sess), status, titleStyle.Render(firstNonEmpty(sess.DisplayName, sess.ID))),
-		fmt.Sprintf("agent: %s · id: %s · tmux: %s%s", firstNonEmpty(sess.AgentType, "?"), firstNonEmpty(sess.ID, "?"), firstNonEmpty(sess.TmuxSession, "?"), created),
-		fmt.Sprintf("cwd: %s", firstNonEmpty(sess.Cwd, "?")),
-		fmt.Sprintf("prompt: %s", promptText(sess)),
+		sectionStyle.Render("SELECTED"),
+		fmt.Sprintf("%s  %s  %s", m.tmuxMark(sess), status, titleStyle.Render(truncate(firstNonEmpty(sess.DisplayName, sess.ID), nameWidth))),
+		fmt.Sprintf("agent: %s · id: %s", firstNonEmpty(sess.AgentType, "?"), firstNonEmpty(sess.ID, "?")),
 	}
-	return detailStyle.Render(strings.Join(lines, "\n")) + "\n"
+	if !sess.CreatedAt.IsZero() {
+		lines = append(lines, "created: "+sess.CreatedAt.Format("Jan 02 15:04"))
+	}
+	lines = append(lines, fmt.Sprintf("cwd: %s", firstNonEmpty(sess.Cwd, "?")))
+	return detailStyle.Width(max(20, m.contentWidth()-4)).Render(strings.Join(lines, "\n")) + "\n"
+}
+
+func (m Model) contentWidth() int {
+	if m.width <= 0 {
+		return 96
+	}
+	return max(24, m.width-6)
+}
+
+func (m Model) tableWidths() (nameWidth, taskWidth int, showTask bool) {
+	w := m.contentWidth()
+	showTask = w >= 58
+	if !showTask {
+		return max(12, w-8), 0, false
+	}
+	nameWidth = min(30, max(14, w/3))
+	taskWidth = max(16, w-nameWidth-8)
+	return nameWidth, taskWidth, true
+}
+
+func (m Model) visibleSessionWindow() (int, int) {
+	limit := len(m.sessions)
+	if m.height <= 0 {
+		return 0, limit
+	}
+	reserve := 14
+	if m.peekOpen {
+		reserve += max(5, m.height/3) + 2
+	}
+	limit = min(len(m.sessions), max(3, m.height-reserve))
+	start := 0
+	if m.selected >= limit {
+		start = m.selected - limit + 1
+	}
+	start = max(0, min(start, len(m.sessions)-limit))
+	return start, start + limit
 }
 
 func (m Model) tmuxMark(sess adapter.Session) string {
