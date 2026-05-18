@@ -49,7 +49,7 @@ func Check(ctx context.Context, url string) (Status, error) {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return None, err
 	}
-	cmd := exec.CommandContext(ctx, "gh", "pr", "view", url, "--json", "state,isDraft,mergedAt")
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view", url, "--json", "state,isDraft,mergedAt") // #nosec G204 -- fixed gh executable with argv args, no shell expansion.
 	out, err := cmd.Output()
 	if err != nil {
 		return None, fmt.Errorf("gh pr view: %w", err)

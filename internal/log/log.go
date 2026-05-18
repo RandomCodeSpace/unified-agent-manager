@@ -12,10 +12,10 @@ var current *slog.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func Init() (io.Closer, error) {
 	dir := cacheDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "uam.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(dir, "uam.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- UAM intentionally writes its own cache log path.
 	if err != nil {
 		return nil, err
 	}

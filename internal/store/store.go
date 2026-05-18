@@ -63,7 +63,7 @@ func Open(path string) (*Store, error) {
 	if path == "" {
 		path = DefaultPath()
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
 	return &Store{path: path}, nil
@@ -190,11 +190,11 @@ func migrate(cfg Config) Config {
 }
 
 func (s *Store) saveNoLock(cfg Config) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
 	tmp := fmt.Sprintf("%s.tmp.%d", s.path, os.Getpid())
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec G304 -- UAM intentionally writes its own config file path.
 	if err != nil {
 		return err
 	}
@@ -219,10 +219,10 @@ func (s *Store) saveNoLock(cfg Config) error {
 
 func (s *Store) lock() (func(), error) {
 	lockPath := s.path + ".lock"
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600) // #nosec G304 -- UAM intentionally writes its own config lock file path.
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func (s *Store) copyBackup() error {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(s.backupPath(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	out, err := os.OpenFile(s.backupPath(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) // #nosec G304 -- UAM intentionally writes migration backups next to its config.
 	if err != nil {
 		return err
 	}
