@@ -26,6 +26,7 @@ Status: **complete MVP across PLAN.md Phases 0–12**.
 ## Build
 
 ```sh
+go install github.com/RandomCodeSpace/unified-agent-manager@latest
 make build      # produces ./bin/uam
 make test       # go test ./...
 make run        # build + launch the TUI
@@ -45,6 +46,7 @@ uam ls [--json]
 uam peek <id>
 uam attach <id>
 uam last
+uam version
 uam stop <id>                    # kill tmux session, keep record
 uam rm <id>                      # kill tmux session and remove record
 ```

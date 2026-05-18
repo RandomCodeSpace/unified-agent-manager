@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter"
 )
 
 func TestRenderRowsShowsTmuxStatusNameAndPrompt(t *testing.T) {
@@ -86,6 +87,10 @@ func TestThemeUsesAdaptiveProfessionalPaletteWithoutSelectedBackground(t *testin
 }
 
 func TestViewShowsUAMBrandingNameAndANSILogo(t *testing.T) {
+	oldVersion := version.Override
+	version.Override = "v9.9.9"
+	t.Cleanup(func() { version.Override = oldVersion })
+
 	m := NewWithDeps(nil, nil)
 	m.width = 80
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "clean", Cwd: "/tmp/repo", ProcAlive: adapter.Alive}}
@@ -95,6 +100,7 @@ func TestViewShowsUAMBrandingNameAndANSILogo(t *testing.T) {
 		" _   _  _   __  __ ",
 		"| | | |/_\\ |  \\/  |",
 		"Unified Agent Manager",
+		"v9.9.9",
 		"SELECTED",
 	} {
 		if !strings.Contains(view, want) {

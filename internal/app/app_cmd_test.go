@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter"
-	"github.com/randomcodespace/unified-agent-manager/internal/store"
 )
 
 func TestCycleAndPRDots(t *testing.T) {

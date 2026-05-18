@@ -12,15 +12,16 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter/claude"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter/codex"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter/copilot"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter/opencode"
-	"github.com/randomcodespace/unified-agent-manager/internal/app"
-	"github.com/randomcodespace/unified-agent-manager/internal/log"
-	"github.com/randomcodespace/unified-agent-manager/internal/store"
-	"github.com/randomcodespace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/claude"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
 
 func main() {
@@ -51,6 +52,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] <agent> [#session-name] [prompt]")
 	fmt.Fprintln(os.Stderr, "  uam attach <name-or-id>")
 	fmt.Fprintln(os.Stderr, "  uam last")
+	fmt.Fprintln(os.Stderr, "  uam version")
 	fmt.Fprintln(os.Stderr, "  uam ls [--json]")
 	fmt.Fprintln(os.Stderr, "  uam peek <id>")
 	fmt.Fprintln(os.Stderr, "  uam stop <id>")
@@ -72,6 +74,9 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	case "new":
 		return runNew(ctx, svc)
+	case "version", "--version":
+		fmt.Println(version.String())
+		return nil
 	case "dispatch":
 		return runDispatch(ctx, svc, args[1:])
 	case "ls", "list":

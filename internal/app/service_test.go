@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter"
-	"github.com/randomcodespace/unified-agent-manager/internal/store"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 type svcFakeAdapter struct {

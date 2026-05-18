@@ -11,7 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/randomcodespace/unified-agent-manager/internal/store"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
 
 func TestRunHelpListDispatchAndErrors(t *testing.T) {
@@ -202,11 +203,22 @@ func mustTestStore(t *testing.T, dir string) *store.Store {
 }
 
 func TestUsageAndNewService(t *testing.T) {
+	oldVersion := version.Override
+	version.Override = "v9.9.9"
+	t.Cleanup(func() { version.Override = oldVersion })
+
 	dir := setupFakeCLIEnv(t)
 	t.Setenv("UAM_CONFIG_DIR", filepath.Join(dir, "cfg3"))
 	out := captureStderr(t, usage)
 	if !strings.Contains(out, "dispatch") {
 		t.Fatalf("usage=%q", out)
+	}
+	if out := captureStdout(t, func() {
+		if err := run(context.Background(), []string{"version"}); err != nil {
+			t.Fatal(err)
+		}
+	}); !strings.Contains(out, "v9.9.9") {
+		t.Fatalf("version=%q", out)
 	}
 	st, err := store.Open(filepath.Join(dir, "direct", "sessions.json"))
 	if err != nil {

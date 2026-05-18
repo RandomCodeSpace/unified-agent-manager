@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/randomcodespace/unified-agent-manager/internal/adapter"
 )
 
 func TestModelViewAndKeys(t *testing.T) {
