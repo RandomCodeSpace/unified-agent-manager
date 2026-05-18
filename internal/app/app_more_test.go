@@ -14,7 +14,7 @@ import (
 func TestModelViewAndKeys(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "waiting prompt", Cwd: "/tmp/one", ProcAlive: adapter.Alive, PR: &adapter.PRRef{Status: adapter.PROpen}}, {ID: "2", AgentType: "fake", DisplayName: "two", Prompt: "done prompt", ProcAlive: adapter.Exited}}
-	if out := m.View(); !strings.Contains(out, "SESSIONS") || !strings.Contains(out, "TMUX: LIVE") {
+	if out := m.View(); !strings.Contains(out, "SESSIONS") || !strings.Contains(out, "●") || strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
 		t.Fatalf("view=%s", out)
 	}
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
@@ -89,7 +89,6 @@ func TestModelUpdateMessages(t *testing.T) {
 	if !strings.Contains(m.message, "abc") {
 		t.Fatal(m.message)
 	}
-	_, _ = m.Update(tickMsg(time.Now()))
 }
 
 func TestDispatchedMessageAttachesNewSession(t *testing.T) {
@@ -104,17 +103,32 @@ func TestDispatchedMessageAttachesNewSession(t *testing.T) {
 	model, cmd := m.Update(dispatchedMsg{session: adapter.Session{ID: "abc12345", AgentType: "fake"}})
 	m = model.(Model)
 	if cmd == nil {
-		t.Fatal("expected attach command")
+		t.Fatal("expected attach spec command")
 	}
-	if msg := cmd(); msg == nil {
-		t.Fatal("expected attach completion message")
+	specMsg, ok := cmd().(attachSpecMsg)
+	if !ok {
+		t.Fatalf("expected attachSpecMsg, got %T", specMsg)
+	}
+	model, cmd = m.Update(specMsg)
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("expected exec attach command")
+	}
+	finishedMsg, ok := cmd().(attachFinishedMsg)
+	if !ok {
+		t.Fatalf("expected attachFinishedMsg, got %T", finishedMsg)
+	}
+	model, refreshCmd := m.Update(finishedMsg)
+	m = model.(Model)
+	if refreshCmd == nil {
+		t.Fatal("expected refresh command after returning from attach")
 	}
 	want := []string{"echo", "abc12345"}
 	if !reflect.DeepEqual(gotArgs, want) {
 		t.Fatalf("attach args = %v, want %v", gotArgs, want)
 	}
-	if m.input != "" || !strings.Contains(m.message, "attaching abc12345") {
-		t.Fatalf("message/input not updated: message=%q input=%q", m.message, m.input)
+	if m.input != "" || !strings.Contains(m.message, "returned to uam") {
+		t.Fatalf("message/input not updated after attach: message=%q input=%q", m.message, m.input)
 	}
 }
 
@@ -125,12 +139,40 @@ func TestViewShowsDetailsOnTopAndNamePromptOnlyInTable(t *testing.T) {
 		{ID: "2", AgentType: "fake", DisplayName: "old", Prompt: "old prompt", Cwd: "/tmp/old", TmuxSession: "uam-fake-2", ProcAlive: adapter.Exited},
 	}
 	view := m.View()
-	if !strings.Contains(view, "TMUX: LIVE") || !strings.Contains(view, "cwd: /tmp/project") || !strings.Contains(view, "⠋") || !strings.Contains(view, "💀") {
+	if !strings.Contains(view, "cwd: /tmp/project") || strings.Count(view, "●") < 2 || !strings.Contains(view, "○") {
 		t.Fatalf("view missing rich details/status: %s", view)
+	}
+	if strings.Contains(view, "⠋") || strings.Contains(view, "💀") || strings.Contains(view, "TMUX: LIVE") || strings.Contains(view, "TMUX: DEAD") || strings.Contains(view, "🚀") || strings.Contains(view, "🔴") || strings.Contains(view, "🟢") {
+		t.Fatalf("view should use compact marker-only liveness, not text/spinner/skull/large emoji: %s", view)
+	}
+	if strings.Contains(view, "unified-agent-manager") || strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") {
+		t.Fatalf("view should start with selected-session info, not header stats: %s", view)
 	}
 	table := m.renderTable()
 	if !strings.Contains(table, "one") || !strings.Contains(table, "fix the parser") || strings.Contains(table, "/tmp/project") || strings.Contains(table, "working") || strings.Contains(table, "completed") {
 		t.Fatalf("table should only show tmux mark, session name, and prompt: %s", table)
+	}
+}
+
+func TestTmuxMarksAreStaticAcrossRefresh(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{{ID: "live", DisplayName: "live", ProcAlive: adapter.Alive}, {ID: "dead", DisplayName: "dead", ProcAlive: adapter.Exited}}
+	before := m.renderTable()
+	if strings.Count(before, "●") != 1 || strings.Count(before, "○") != 1 {
+		t.Fatalf("static compact markers missing before refresh: %s", before)
+	}
+	if strings.Contains(before, "⠋") || strings.Contains(before, "💀") || strings.Contains(before, "🚀") || strings.Contains(before, "🔴") || strings.Contains(before, "🟢") {
+		t.Fatalf("compact markers should replace spinner/skull/large emoji before refresh: %s", before)
+	}
+
+	model, cmd := m.Update(refreshMsg(time.Now()))
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("expected refresh command batch")
+	}
+	after := m.renderTable()
+	if after != before {
+		t.Fatalf("status marks should remain static across refresh\nbefore=%s\nafter=%s", before, after)
 	}
 }
 

@@ -78,6 +78,37 @@ exit 0
 			t.Fatalf("log missing %s: %s", want, logData)
 		}
 	}
+	if strings.Contains(string(logData), "exec bash") {
+		t.Fatalf("agent exit should terminate tmux session, log should not keep a fallback shell: %s", logData)
+	}
+}
+
+func TestTmuxAgentResumeUsesPersistedMetadata(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(dir, "tmux"), `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), tmux.New("uam"))
+	sess, err := ag.Resume(context.Background(), ResumeRequest{ID: "abc12345-dead-beef-cafe-0123456789ab", Name: "bugfix", Prompt: "fix parser", Cwd: "/tmp/project", Mode: "yolo", TmuxSession: "uam-fake-abc12345"})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if sess.ID != "abc12345-dead-beef-cafe-0123456789ab" || sess.DisplayName != "bugfix" || sess.Prompt != "fix parser" || sess.Cwd != "/tmp/project" || sess.TmuxSession != "uam-fake-abc12345" || sess.ProcAlive != Alive {
+		t.Fatalf("resumed session did not preserve metadata: %+v", sess)
+	}
+	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
+	for _, want := range []string{"new-session", "uam-fake-abc12345", "/tmp/project", "fakeagent --yolo", "send-keys", "fix parser"} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("resume log missing %q: %s", want, logText)
+		}
+	}
 }
 
 func TestTmuxAgentDispatchWithoutPromptSkipsSendKeys(t *testing.T) {

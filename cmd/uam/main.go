@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -65,7 +64,7 @@ func run(ctx context.Context, args []string) error {
 	}
 	svc := newService(st)
 	if len(args) == 0 {
-		return runTUI(ctx, app.NewWithDeps(st, svc.Registry))
+		return runTUIFn(ctx, app.NewWithDeps(st, svc.Registry))
 	}
 	switch args[0] {
 	case "-h", "--help", "help":
@@ -132,6 +131,8 @@ func runTUI(ctx context.Context, model tea.Model) error {
 	_, err := p.Run()
 	return err
 }
+
+var runTUIFn = runTUI
 
 func runDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
@@ -203,9 +204,12 @@ func execAttach(ctx context.Context, svc *app.Service, id string) error {
 	if len(spec.Argv) == 0 {
 		return errors.New("empty attach command")
 	}
-	path, err := exec.LookPath(spec.Argv[0])
-	if err != nil {
-		return err
+	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "uam: session exited: %v\n", err)
 	}
-	return syscall.Exec(path, spec.Argv, os.Environ())
+	return runTUIFn(ctx, app.NewWithDeps(svc.Store, svc.Registry))
 }

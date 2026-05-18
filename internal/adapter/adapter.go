@@ -70,6 +70,20 @@ type PeekResult struct {
 
 type AttachSpec struct{ Argv []string }
 
+type ResumeRequest struct {
+	ID          string
+	Name        string
+	Prompt      string
+	Cwd         string
+	Mode        string
+	TmuxSession string
+	CreatedAt   time.Time
+}
+
+type ResumableAdapter interface {
+	Resume(ctx Context, req ResumeRequest) (Session, error)
+}
+
 type SessionEvent struct {
 	SessionID string
 	Kind      string

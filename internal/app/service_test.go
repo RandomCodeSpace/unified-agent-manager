@@ -21,6 +21,7 @@ type svcFakeAdapter struct {
 	available bool
 	stopped   bool
 	replied   string
+	resumed   *adapter.ResumeRequest
 }
 
 func (f *svcFakeAdapter) Name() string        { return f.name }
@@ -36,6 +37,10 @@ func (f *svcFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 		return adapter.Session{}, errors.New("fail")
 	}
 	return adapter.Session{ID: "12345678", AgentType: f.name, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), TmuxSession: "uam-" + f.name + "-12345678", State: adapter.Working, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
+}
+func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) (adapter.Session, error) {
+	f.resumed = &req
+	return adapter.Session{ID: req.ID, AgentType: f.name, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: req.TmuxSession, State: adapter.Working, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) { return f.sessions, nil }
 func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
@@ -148,6 +153,37 @@ func TestServicePersistsPromptAndReportsDeadTmuxRecord(t *testing.T) {
 	}
 	if sessions[0].DisplayName != "bugfix" || sessions[0].Prompt != "fix parser" || sessions[0].ProcAlive != adapter.Exited {
 		t.Fatalf("stored dead session = %+v", sessions[0])
+	}
+}
+
+func TestAttachSpecResumesDeadSessionFromMetadata(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	created := time.Now().Add(-time.Hour)
+	if err := st.Save(store.Config{
+		SchemaVersion: store.CurrentSchemaVersion,
+		DefaultAgent:  "fake",
+		Sessions: map[string]store.SessionRecord{
+			"fake:abc12345": {ID: "abc12345-dead-beef-cafe-0123456789ab", Agent: "fake", Name: "bugfix", Prompt: "fix parser", Mode: store.ModeYolo, Workdir: "/tmp/project", TmuxSession: "uam-fake-abc12345", CreatedAt: created},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	spec, err := svc.AttachSpec(context.Background(), "abc12345")
+	if err != nil {
+		t.Fatalf("AttachSpec: %v", err)
+	}
+	if len(spec.Argv) == 0 {
+		t.Fatal("empty attach spec")
+	}
+	if fake.resumed == nil {
+		t.Fatal("dead metadata-backed session should be resumed before attach")
+	}
+	if fake.resumed.ID != "abc12345-dead-beef-cafe-0123456789ab" || fake.resumed.Name != "bugfix" || fake.resumed.Prompt != "fix parser" || fake.resumed.Cwd != "/tmp/project" || fake.resumed.Mode != "yolo" || fake.resumed.TmuxSession != "uam-fake-abc12345" {
+		t.Fatalf("resume metadata = %+v", fake.resumed)
 	}
 }
 
