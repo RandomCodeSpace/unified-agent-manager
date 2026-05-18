@@ -2,20 +2,20 @@
 
 ## Context
 
-The repository `/home/dev/projects/unified-agent-manager` contains a Go implementation of a **terminal UI that replicates Claude Code's "agent view" (`claude agents`) experience but works across multiple coding-agent CLIs in one unified dashboard** — Claude Code, OpenAI Codex, GitHub Copilot CLI, and OpenCode.
+The repository `/home/dev/projects/unified-agent-manager` contains a Go implementation of a **terminal UI that replicates Claude Code's "agent view" (`claude agents`) experience but works across multiple coding-agent CLIs in one unified dashboard** — Claude Code, OpenAI Codex, GitHub Copilot CLI, Hermes Agent, and OpenCode.
 
-Why: Claude Code has a great background-session dashboard (see https://code.claude.com/docs/en/agent-view), but it only manages Claude sessions. Developers who use Codex, Copilot, or OpenCode alongside Claude have to context-switch between tools. A unified TUI lets you dispatch, peek, attach, and stop sessions across all of them from one screen, with the same UX patterns: rows grouped by state (Needs input / Working / Completed / Ready for review), Space to peek, Enter to attach, Ctrl+X to stop, PR status dots, pin/rename/group, etc.
+Why: Claude Code has a great background-session dashboard (see https://code.claude.com/docs/en/agent-view), but it only manages Claude sessions. Developers who use Codex, Copilot, Hermes, or OpenCode alongside Claude have to context-switch between tools. A unified TUI lets you dispatch, peek, attach, and stop sessions across all of them from one screen, with the same UX patterns: rows grouped by state (Needs input / Working / Completed / Ready for review), Space to peek, Enter to attach, Ctrl+X to stop, PR status dots, pin/rename/group, etc.
 
 Intended outcome: a single-binary CLI called `uam` that opens an agent-view-style TUI showing every Claude and Codex session on the machine, with feature parity for the core operations the reference UX provides.
 
 ## Key Decisions (confirmed with user)
 
 - **Stack:** Go + Bubble Tea (single static binary; matches lazygit/gh dash distribution model; Bubble Tea's Elm-style model maps cleanly to the event-driven nature of the dashboard).
-- **Uniform tmux backend for every agent.** Codex/Copilot/OpenCode have no supervisor; the user chose uniformity over Claude's first-class supervisor advantage. Every session — Claude, Codex, Copilot, OpenCode — runs interactively inside its own tmux session on private socket `-L uam`, named `uam-<agent>-<id>`. State for all of them is derived by capturing pane content. We give up Claude's `state.json` but get one mental model, one code path for attach/peek/reply/stop, and one set of bugs.
+- **Uniform tmux backend for every agent.** Codex/Copilot/Hermes/OpenCode have no UAM supervisor; the user chose uniformity over Claude's first-class supervisor advantage. Every session — Claude, Codex, Copilot, Hermes, OpenCode — runs interactively inside its own tmux session on private socket `-L uam`, named `uam-<agent>-<id>`. State for all of them is derived by capturing pane content. We give up Claude's `state.json` but get one mental model, one code path for attach/peek/reply/stop, and one set of bugs.
 - **Adapter abstraction:** All backends sit behind a common `AgentAdapter` interface. Adding a new CLI later (Aider, etc.) is a matter of dropping in a new package under `internal/adapter/<name>/` with its own `detect.go` patterns.
-- **Supported agents at launch:** Claude Code (`claude`), OpenAI Codex (`codex`), GitHub Copilot CLI (`gh copilot` / `copilot`), OpenCode (`opencode`). Each is one adapter package.
+- **Supported agents at launch:** Claude Code (`claude`), OpenAI Codex (`codex`), GitHub Copilot CLI (`gh copilot` / `copilot`), Hermes Agent (`hermes`), OpenCode (`opencode`). Each is one adapter package.
 - **Session storage** modeled on [`RandomCodeSpace/ctm`](https://github.com/RandomCodeSpace/ctm)'s `~/.config/ctm/sessions.json` pattern: a single JSON file at `~/.config/uam/sessions.json` with atomic write (temp + rename), flock-based locking, schema versioning with auto-migration, and `.bak.<unix-nano>` backups on schema upgrade. Each record holds `id` (uuid), `name`, `agent`, `mode` (always `yolo` for now), `workdir`, `tmux_session`, `created_at`, `last_seen_at`, `pinned`, `group`, `sort_index`, plus cached PR info. Live state (Working/NeedsInput/...) is NEVER persisted — adapters re-derive it from tmux every refresh.
-- **Always yolo mode.** Every session is launched with the provider's "full access / skip permissions" flag — `claude --dangerously-skip-permissions`, `codex --sandbox danger-full-access`, Copilot agent mode with auto-approval, `opencode` equivalent. We rely entirely on each provider's own safety mechanisms (Codex's sandbox, Claude's own guardrails, etc.); UAM does NOT layer its own git-checkpoint commits on top. If a provider offers a checkpoint feature natively, it's used as-is.
+- **Always yolo mode.** Every session is launched with the provider's "full access / skip permissions" flag — `claude --dangerously-skip-permissions`, `codex --sandbox danger-full-access`, Copilot agent mode with auto-approval, `hermes --tui --yolo`, and `opencode` equivalent. We rely entirely on each provider's own safety mechanisms (Codex's sandbox, Claude's own guardrails, etc.); UAM does NOT layer its own git-checkpoint commits on top. If a provider offers a checkpoint feature natively, it's used as-is.
 - **Easy mode.** A guided wizard (`uam new` with no args, or `e` keybinding inside the TUI) walks the user through: 1) pick provider, 2) confirm or change workdir, 3) enter prompt. Each step uses Bubble Tea's list/input components. The wizard skips disabled providers (capability probe failed at startup). Power users can still bypass with `uam dispatch <agent> "<prompt>"` or by typing `@<agent> <prompt>` directly into the TUI's dispatch input.
 - **Build order:** Full phased plan (Phase 0 → Phase 12), implemented in this repository as a cohesive MVP.
 
@@ -46,6 +46,7 @@ unified-agent-manager/
 │   │   ├── claude/{claude.go, detect.go, patterns.go, pr.go}
 │   │   ├── codex/{codex.go, detect.go, patterns.go}
 │   │   ├── copilot/{copilot.go, detect.go, patterns.go}
+│   │   ├── hermes/{hermes.go, detect.go, patterns.go}
 │   │   └── opencode/{opencode.go, detect.go, patterns.go}
 │   ├── tmux/{tmux.go, parse.go}   # ONLY place that shells out to tmux
 │   ├── store/{store.go, schema.go, migrate.go, flock.go}
@@ -106,6 +107,7 @@ UAM launches every session with the provider's "full access / skip permissions" 
 | Claude | `claude --dangerously-skip-permissions` |
 | Codex | `codex --sandbox danger-full-access` |
 | Copilot | `copilot --autopilot` |
+| Hermes Agent | `hermes --tui --yolo` |
 | OpenCode | `opencode --auto-approve` (or current equivalent) |
 
 If the user wants safe mode for one dispatch, `uam dispatch --safe <agent> "<prompt>"` drops the yolo flag and lets the provider run with its default prompts.
@@ -151,6 +153,21 @@ Runs GitHub Copilot CLI's interactive/agent mode inside tmux. Command is whichev
 - **State detection** (`copilot/detect.go`): Copilot CLI shows a distinct prompt indicator and offers Run/Explain/Revise choices when it suggests a command — `NeedsInput` fires on those choice prompts. Spinner detection from the `Thinking...` / `Generating...` strings. Idle state when the trailing line is the prompt sigil with no spinner.
 - **PR detection:** same regex as the others.
 - **Capability probe:** if neither `gh copilot` nor `copilot` resolves on PATH, the adapter is disabled at startup and its agent option is removed from the dispatch selector.
+
+## HermesAdapter (`internal/adapter/hermes/`)
+
+Runs Hermes Agent's terminal UI inside tmux. UAM always includes Hermes' explicit TUI flag so the managed session opens the interactive interface.
+
+- **Dispatch:**
+  ```
+  tmux -L uam new-session -d -s uam-hermes-<id> -c <cwd> -x 200 -y 50 \
+    'env UAM_AGENT=hermes UAM_ID=<id> hermes --tui --yolo'
+  tmux -L uam send-keys -t uam-hermes-<id> -l -- "<prompt>"
+  tmux -L uam send-keys -t uam-hermes-<id> Enter
+  ```
+- **List/Peek/Reply/Attach/Stop:** identical shape, prefix `uam-hermes-`.
+- **State detection / PR detection:** uses the shared tmux pane classifier and PR URL regex.
+- **Capability probe:** if `hermes` is not on PATH, the adapter is disabled and removed from the dispatch selector.
 
 ## OpenCodeAdapter (`internal/adapter/opencode/`)
 

@@ -10,7 +10,7 @@
 
 A terminal UI that replicates Claude Code's "agent view" experience across
 multiple coding-agent CLIs in one unified dashboard: Claude Code, OpenAI
-Codex, GitHub Copilot CLI, and OpenCode.
+Codex, GitHub Copilot CLI, Hermes Agent, and OpenCode.
 
 Status: **complete MVP across PLAN.md Phases 0–12**.
 
@@ -22,6 +22,7 @@ Status: **complete MVP across PLAN.md Phases 0–12**.
   - Claude Code: `claude --dangerously-skip-permissions`
   - Codex: `codex --sandbox danger-full-access`
   - GitHub Copilot CLI: `copilot --autopilot` or `gh copilot --autopilot`
+  - Hermes Agent: `hermes --tui --yolo`
   - OpenCode: `opencode --auto-approve`
 - Persistent metadata at `${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json`
 - Atomic JSON writes, flock locking, schema migration backups, corrupt-file self-healing
@@ -109,7 +110,7 @@ Core packages:
 - `internal/store`: sessions JSON, locking, migration, backups
 - `internal/tmux`: all tmux shell-out logic
 - `internal/adapter`: shared adapter interfaces, tmux adapter, state detection
-- `internal/adapter/{claude,codex,copilot,opencode}`: provider registrations
+- `internal/adapter/{claude,codex,copilot,hermes,opencode}`: provider registrations
 - `internal/app`: service layer and Bubble Tea model
 - `internal/pr`: optional GitHub PR status lookup
 - `internal/refresh`: refresh ticker policy
