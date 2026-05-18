@@ -6,5 +6,5 @@ import (
 )
 
 func New(client *tmux.Client) adapter.AgentAdapter {
-	return adapter.NewTmuxAgent("copilot", "GitHub Copilot", []adapter.CommandCandidate{{Display: "copilot", Args: []string{"copilot"}}, {Display: "gh copilot", Args: []string{"gh", "copilot"}}}, []string{"--allow-all-tools"}, adapter.DefaultPatterns("copilot"), client)
+	return adapter.NewTmuxAgent("copilot", "GitHub Copilot", []adapter.CommandCandidate{{Display: "copilot", Args: []string{"copilot"}}, {Display: "gh copilot", Args: []string{"gh", "copilot"}}}, []string{"--autopilot"}, adapter.DefaultPatterns("copilot"), client)
 }

@@ -32,6 +32,17 @@ exit 0
 	if err := c.CreateSession(context.Background(), "uam-a", "/tmp", map[string]string{"A": "B"}, []string{"cmd", "arg with space"}); err != nil {
 		t.Fatal(err)
 	}
+	logData, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(logData)
+	if strings.Contains(logText, " -e ") {
+		t.Fatalf("CreateSession should not rely on tmux new-session -e because older tmux rejects it: %s", logText)
+	}
+	if !strings.Contains(logText, "env A=B cmd \"arg with space\"") {
+		t.Fatalf("CreateSession should prefix the shell command with env assignments: %s", logText)
+	}
 	list, err := c.List(context.Background())
 	if err != nil || len(list) != 1 {
 		t.Fatalf("list=%v err=%v", list, err)

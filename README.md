@@ -13,7 +13,7 @@ Status: **complete MVP across PLAN.md Phases 0–12**.
 - Agent adapters for:
   - Claude Code: `claude --dangerously-skip-permissions`
   - Codex: `codex --sandbox danger-full-access`
-  - GitHub Copilot CLI: `copilot --allow-all-tools` or `gh copilot --allow-all-tools`
+  - GitHub Copilot CLI: `copilot --autopilot` or `gh copilot --autopilot`
   - OpenCode: `opencode --auto-approve`
 - Persistent metadata at `${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json`
 - Atomic JSON writes, flock locking, schema migration backups, corrupt-file self-healing
