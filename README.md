@@ -26,11 +26,15 @@ Status: **complete MVP across PLAN.md Phases 0–12**.
 ## Build
 
 ```sh
-go install github.com/RandomCodeSpace/unified-agent-manager@latest
+go install github.com/RandomCodeSpace/unified-agent-manager/cmd/uam@latest
 make build      # produces ./bin/uam
 make test       # go test ./...
 make run        # build + launch the TUI
 ```
+
+Go names installed binaries after the last import-path element. The root path
+`github.com/RandomCodeSpace/unified-agent-manager` therefore installs a binary
+named `unified-agent-manager`; use `/cmd/uam` when you want the `uam` command.
 
 Requires Go 1.24+ and tmux 3.x. Agent CLIs are capability-probed at runtime;
 unavailable providers are hidden from the TUI dispatch selector.
