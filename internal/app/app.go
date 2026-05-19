@@ -754,7 +754,7 @@ func (m Model) tmuxMark(sess adapter.Session) string {
 }
 
 func promptText(sess adapter.Session) string {
-	return firstNonEmpty(sess.Prompt, sess.Activity, "<no prompt>")
+	return firstNonEmpty(sess.Activity, sess.Prompt, "<no activity>")
 }
 
 func (m Model) renderHelp() string {

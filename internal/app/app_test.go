@@ -25,6 +25,26 @@ func TestRenderRowsShowsTmuxStatusNameAndPrompt(t *testing.T) {
 	}
 }
 
+func TestRenderTableTaskShowsLiveActivityBeforeOriginalPrompt(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{{
+		ID:          "1",
+		AgentType:   "claude",
+		DisplayName: "live",
+		Prompt:      "fix bug",
+		Activity:    "editing parser.go",
+		ProcAlive:   adapter.Alive,
+	}}
+
+	out := m.renderTable()
+	if !strings.Contains(out, "editing parser.go") {
+		t.Fatalf("task column should show current session activity: %s", out)
+	}
+	if strings.Contains(out, "fix bug") {
+		t.Fatalf("task column should prefer live activity over original prompt: %s", out)
+	}
+}
+
 func TestRenderDetailsHidesPromptAndTmuxNameWithCreatedSeparately(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{
