@@ -18,6 +18,20 @@ func TestClassifyCompletedWhenProcessExited(t *testing.T) {
 	}
 }
 
+func TestClassifySummaryIgnoresDecorativeDividers(t *testing.T) {
+	patterns := DefaultPatterns("claude")
+	lines := []string{
+		"working on parser",
+		"────────────────────────────────────────────────────────────────────────────────",
+		"",
+	}
+
+	_, _, summary := ClassifyPane(lines, "claude", true, true, patterns)
+	if summary != "working on parser" {
+		t.Fatalf("summary = %q", summary)
+	}
+}
+
 func TestClassifyReadyForReviewWhenPRURLPresent(t *testing.T) {
 	patterns := DefaultPatterns("claude")
 	state, _, _ := ClassifyPane([]string{"created https://github.com/o/r/pull/42", ">"}, "claude", true, false, patterns)
