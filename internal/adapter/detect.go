@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type Patterns struct {
@@ -94,7 +95,7 @@ func summarize(lines []string) string {
 	best := ""
 	for _, line := range lines[start:] {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.ContainsAny(line, "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✻✽") {
+		if line == "" || isDecorativeLine(line) || strings.ContainsAny(line, "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✻✽") {
 			continue
 		}
 		if len(line) > len(best) {
@@ -102,6 +103,22 @@ func summarize(lines []string) string {
 		}
 	}
 	return best
+}
+
+func isDecorativeLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if len([]rune(line)) < 6 {
+		return false
+	}
+	for _, r := range line {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return false
+		}
+		if strings.ContainsRune("?!$%#@/\\", r) {
+			return false
+		}
+	}
+	return true
 }
 
 func lastNonBlank(lines []string) string {
