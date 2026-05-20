@@ -18,18 +18,33 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestYoloModeUsesAutopilot(t *testing.T) {
+func TestAvailableRequiresCopilotBinary(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "gh"), "#!/bin/sh\nexit 0\n")
+	t.Setenv("PATH", dir)
+
+	a := New(nil)
+	available, reason := a.Available()
+	if available {
+		t.Fatal("copilot adapter should not fall back to gh copilot")
+	}
+	if !strings.Contains(reason, "copilot not on PATH") {
+		t.Fatalf("unexpected unavailable reason: %q", reason)
+	}
+}
+
+func TestYoloModeUsesYoloFlag(t *testing.T) {
 	a, logPath := newTestCopilotAdapter(t)
 	_, err := a.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: "/tmp", Mode: "yolo"})
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	logText := readLog(t, logPath)
-	if !strings.Contains(logText, "copilot --autopilot") {
-		t.Fatalf("copilot yolo mode should use --autopilot: %s", logText)
+	if !strings.Contains(logText, "copilot --yolo") {
+		t.Fatalf("copilot yolo mode should use --yolo: %s", logText)
 	}
-	if strings.Contains(logText, "--allow-all-tools") {
-		t.Fatalf("copilot yolo mode should not use --allow-all-tools: %s", logText)
+	if strings.Contains(logText, "--autopilot") {
+		t.Fatalf("copilot yolo mode should not use --autopilot: %s", logText)
 	}
 }
 
@@ -41,8 +56,11 @@ func TestDispatchSeedsCopilotSessionIDForFutureResume(t *testing.T) {
 	}
 
 	logText := readLog(t, logPath)
-	if !strings.Contains(logText, "--resume="+sess.ID) {
-		t.Fatalf("copilot dispatch should seed provider session id from UAM id: %s", logText)
+	if !strings.Contains(logText, "--name "+sess.ID) {
+		t.Fatalf("copilot dispatch should name the provider session with the UAM id: %s", logText)
+	}
+	if strings.Contains(logText, "--resume=") {
+		t.Fatalf("initial dispatch should not try to resume a new Copilot session: %s", logText)
 	}
 	if !strings.Contains(logText, "send-keys") || !strings.Contains(logText, "fix parser") {
 		t.Fatalf("initial dispatch should still send the prompt: %s", logText)
@@ -61,7 +79,7 @@ func TestResumeUsesCopilotSessionIDAndDoesNotReplayPrompt(t *testing.T) {
 	}
 
 	logText := readLog(t, logPath)
-	if !strings.Contains(logText, "copilot --autopilot --resume=abc12345-dead-beef-cafe-0123456789ab") {
+	if !strings.Contains(logText, "copilot --yolo --resume=abc12345-dead-beef-cafe-0123456789ab") {
 		t.Fatalf("copilot resume should pass the persisted provider session id: %s", logText)
 	}
 	if strings.Contains(logText, "send-keys") || strings.Contains(logText, "fix parser") {
