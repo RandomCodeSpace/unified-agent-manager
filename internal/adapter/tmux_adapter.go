@@ -21,17 +21,17 @@ type CommandCandidate struct {
 }
 
 type TmuxAgent struct {
-	NameValue        string
-	DisplayNameValue string
-	Candidates       []CommandCandidate
-	YoloArgs         []string
-	SafeArgs         []string
-	Patterns         Patterns
-	Tmux             *tmux.Client
-	SessionArgs      func(req ResumeRequest, activity string) []string
+	NameValue          string
+	DisplayNameValue   string
+	Candidates         []CommandCandidate
+	YoloArgs           []string
+	SafeArgs           []string
+	Patterns           Patterns
+	Tmux               *tmux.Client
+	SessionArgs        func(req ResumeRequest, activity string) []string
 	SkipPromptOnResume bool
-	mu               sync.Mutex
-	hashes           map[string]paneHashState
+	mu                 sync.Mutex
+	hashes             map[string]paneHashState
 }
 
 type paneHashState struct {
@@ -121,7 +121,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
 		return Session{}, err
 	}
-	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && !(activity == "resumed" && a.SkipPromptOnResume)
+	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
 	if shouldSendPrompt {
 		if err := a.Tmux.SendLine(ctx, tmuxName, req.Prompt); err != nil {
 			return Session{}, err
