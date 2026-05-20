@@ -28,6 +28,8 @@ type TmuxAgent struct {
 	SafeArgs         []string
 	Patterns         Patterns
 	Tmux             *tmux.Client
+	SessionArgs      func(req ResumeRequest, activity string) []string
+	SkipPromptOnResume bool
 	mu               sync.Mutex
 	hashes           map[string]paneHashState
 }
@@ -101,6 +103,9 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if err != nil {
 		return Session{}, err
 	}
+	if a.SessionArgs != nil {
+		cmd = append(cmd, a.SessionArgs(req, activity)...)
+	}
 	cwd := req.Cwd
 	if cwd == "" {
 		cwd, err = os.Getwd()
@@ -116,7 +121,8 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
 		return Session{}, err
 	}
-	if strings.TrimSpace(req.Prompt) != "" {
+	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && !(activity == "resumed" && a.SkipPromptOnResume)
+	if shouldSendPrompt {
 		if err := a.Tmux.SendLine(ctx, tmuxName, req.Prompt); err != nil {
 			return Session{}, err
 		}
