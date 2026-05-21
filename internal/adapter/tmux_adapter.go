@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -129,7 +130,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	}
 	name := req.Name
 	if name == "" {
-		name = displayNameFromPrompt(req.Prompt)
+		name = displayNameFromDir(cwd)
 	}
 	now := time.Now()
 	created := req.CreatedAt
@@ -218,13 +219,16 @@ func (a *TmuxAgent) changedRecently(target, capture string, window time.Duration
 	return now.Sub(prev.changed) <= window
 }
 
-func displayNameFromPrompt(prompt string) string {
-	prompt = strings.TrimSpace(strings.ReplaceAll(prompt, "\n", " "))
-	if prompt == "" {
+// displayNameFromDir derives a default session name from the working
+// directory's base name (e.g. "/home/dev/projects/uam" -> "uam"). It is the
+// fallback name when a dispatch provides no explicit #name.
+func displayNameFromDir(cwd string) string {
+	if abs, err := filepath.Abs(cwd); err == nil {
+		cwd = abs
+	}
+	base := filepath.Base(cwd)
+	if base == "" || base == "." || base == string(filepath.Separator) {
 		return "untitled"
 	}
-	if len(prompt) > 48 {
-		return prompt[:48]
-	}
-	return prompt
+	return base
 }
