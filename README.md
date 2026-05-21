@@ -81,7 +81,7 @@ uam rm <id>                      # kill tmux session and remove record
 | `Shift+↑/↓` | Reorder rows and persist `sort_index` |
 | `e` | Open easy-mode wizard |
 | `?` | Help overlay |
-| `q` | Quit |
+| `Esc` | Close overlay / clear input / quit |
 
 ## Development
 

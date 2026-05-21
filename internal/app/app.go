@@ -243,8 +243,9 @@ func (m *Model) moveSession(delta int) tea.Cmd {
 
 func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	switch key {
-	case "ctrl+c", "q":
-		return true, m.handleQuitOrInput(key)
+	case "ctrl+c":
+		m.quitting = true
+		return true, tea.Quit
 	case "tab":
 		m.cycleDefaultAgent()
 		_ = m.service.SetDefaultAgent(m.defaultAgent)
@@ -264,8 +265,7 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "right", "enter":
 		return true, m.handleEnterKey()
 	case "esc":
-		m.input = ""
-		m.peekOpen = false
+		return true, m.handleEscKey()
 	case "backspace":
 		m.backspaceInput()
 	case "e":
@@ -276,15 +276,19 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	return true, nil
 }
 
-func (m *Model) handleQuitOrInput(key string) tea.Cmd {
-	if strings.TrimSpace(m.input) == "" {
-		m.quitting = true
-		return tea.Quit
+// handleEscKey makes Esc back out one level per press: close the peek panel,
+// then clear the command input, and finally quit the uam TUI.
+func (m *Model) handleEscKey() tea.Cmd {
+	if m.peekOpen {
+		m.peekOpen = false
+		return nil
 	}
-	if key == "q" {
-		m.input += key
+	if m.input != "" {
+		m.input = ""
+		return nil
 	}
-	return nil
+	m.quitting = true
+	return tea.Quit
 }
 
 func (m *Model) startRename() {
@@ -758,7 +762,7 @@ func promptText(sess adapter.Session) string {
 }
 
 func (m Model) renderHelp() string {
-	return "\nKeys: ↑/↓ select · Enter/→ attach · Space peek · @agent #name prompt dispatch (name/prompt optional) · Tab default agent · Ctrl+T pin · Ctrl+R rename · Ctrl+X stop/remove · Ctrl+S group · e wizard · q quit\n"
+	return "\nKeys: ↑/↓ select · Enter/→ attach · Space peek · @agent #name prompt dispatch (name/prompt optional) · Tab default agent · Ctrl+T pin · Ctrl+R rename · Ctrl+X stop/remove · Ctrl+S group · e wizard · Esc quit\n"
 }
 func (m Model) renderWizard() string {
 	steps := []string{"Pick provider (Tab cycles, Enter confirms): " + firstNonEmpty(m.wizardAgent, m.defaultAgent), "Pick workdir: " + m.input, "Enter #name prompt (both optional): " + m.input}
