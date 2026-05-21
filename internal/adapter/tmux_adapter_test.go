@@ -164,12 +164,25 @@ exit 0
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	if sess.DisplayName != "untitled" {
-		t.Fatalf("DisplayName=%q", sess.DisplayName)
+	if sess.DisplayName != "tmp" {
+		t.Fatalf("DisplayName=%q, want dir-derived name", sess.DisplayName)
 	}
 	logData, _ := os.ReadFile(logPath)
 	if strings.Contains(string(logData), "send-keys") {
 		t.Fatalf("empty prompt should not be sent: %s", logData)
+	}
+}
+
+func TestDisplayNameFromDir(t *testing.T) {
+	if got := displayNameFromDir("/home/dev/projects/uam"); got != "uam" {
+		t.Fatalf("dir name = %q, want uam", got)
+	}
+	if got := displayNameFromDir("/"); got != "untitled" {
+		t.Fatalf("root dir name = %q, want untitled", got)
+	}
+	cwd, _ := os.Getwd()
+	if got := displayNameFromDir("."); got != filepath.Base(cwd) {
+		t.Fatalf("relative dir name = %q, want %q", got, filepath.Base(cwd))
 	}
 }
 
