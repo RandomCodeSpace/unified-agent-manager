@@ -243,8 +243,27 @@ func TestMovementAndQuitBranches(t *testing.T) {
 	}
 	m = modelWithTwoSessions()
 	m.input = "typed"
-	if handled, cmd := m.handleActionKey("q"); !handled || cmd != nil || m.input != "typedq" || m.quitting {
-		t.Fatalf("input q branch handled=%v cmd=%v input=%q quitting=%v", handled, cmd, m.input, m.quitting)
+	model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m = model.(Model)
+	if cmd != nil || m.input != "typedq" || m.quitting {
+		t.Fatalf("q should type into input: cmd=%v input=%q quitting=%v", cmd, m.input, m.quitting)
+	}
+
+	m = modelWithTwoSessions()
+	m.peekOpen = true
+	if handled, cmd := m.handleActionKey("esc"); !handled || cmd != nil || m.peekOpen || m.quitting {
+		t.Fatalf("esc should close peek first: handled=%v cmd=%v peek=%v quitting=%v", handled, cmd, m.peekOpen, m.quitting)
+	}
+
+	m = modelWithTwoSessions()
+	m.input = "draft"
+	if handled, cmd := m.handleActionKey("esc"); !handled || cmd != nil || m.input != "" || m.quitting {
+		t.Fatalf("esc should clear input next: handled=%v cmd=%v input=%q quitting=%v", handled, cmd, m.input, m.quitting)
+	}
+
+	m = modelWithTwoSessions()
+	if handled, cmd := m.handleActionKey("esc"); !handled || cmd == nil || !m.quitting {
+		t.Fatalf("esc should quit on empty main screen: handled=%v cmd=%v quitting=%v", handled, cmd, m.quitting)
 	}
 }
 
