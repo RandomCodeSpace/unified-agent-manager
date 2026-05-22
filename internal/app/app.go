@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -589,107 +590,107 @@ func (m Model) persistOrderCmd() tea.Cmd {
 	return func() tea.Msg { return sessionsLoadedMsg{err: m.service.UpdateSortOrder(sessions)} }
 }
 
+// ─── theme ───────────────────────────────────────────────────────────────
+// Borderless adaptive palette: one teal accent, semantic status colors, and
+// AdaptiveColor everywhere so the UI reads well on light and dark terminals.
+
 var (
-	accentColor  = lipgloss.AdaptiveColor{Light: "#1F2937", Dark: "#E5E7EB"}
-	mutedColor   = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#94A3B8"}
-	dividerColor = lipgloss.AdaptiveColor{Light: "#CBD5E1", Dark: "#334155"}
-	taskColor    = lipgloss.AdaptiveColor{Light: "#334155", Dark: "#CBD5E1"}
+	accentColor  = lipgloss.AdaptiveColor{Light: "#0F766E", Dark: "#2DD4BF"}
+	textColor    = lipgloss.AdaptiveColor{Light: "#0F172A", Dark: "#E8EDF4"}
+	mutedColor   = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#8B97AC"}
+	dividerColor = lipgloss.AdaptiveColor{Light: "#D6DEE8", Dark: "#2B3547"}
+	taskColor    = lipgloss.AdaptiveColor{Light: "#475569", Dark: "#AEBACD"}
 	liveColor    = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
-	deadColor    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
+	inputColor   = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
+	reviewColor  = lipgloss.AdaptiveColor{Light: "#1D4ED8", Dark: "#60A5FA"}
+	failColor    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
 )
 
-var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
-var brandStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#0F766E", Dark: "#2DD4BF"})
-var hintStyle = lipgloss.NewStyle().Foreground(mutedColor).Faint(true)
-var selectedStyle = lipgloss.NewStyle()
-var detailStyle = lipgloss.NewStyle()
-var dividerStyle = lipgloss.NewStyle().Foreground(dividerColor).Faint(true)
-var sectionStyle = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
-var liveStyle = lipgloss.NewStyle().Foreground(liveColor).Bold(true)
-var deadStyle = lipgloss.NewStyle().Foreground(deadColor).Bold(true)
-var taskStyle = lipgloss.NewStyle().Foreground(taskColor)
+var (
+	brandStyle    = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(textColor)
+	sectionStyle  = lipgloss.NewStyle().Bold(true).Foreground(mutedColor)
+	hintStyle     = lipgloss.NewStyle().Foreground(mutedColor)
+	dividerStyle  = lipgloss.NewStyle().Foreground(dividerColor)
+	taskStyle     = lipgloss.NewStyle().Foreground(taskColor)
+	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+)
+
+// bar is the accent rule that marks the brand and command lines.
+func bar() string { return brandStyle.Render("▌") }
+
+// layoutMode buckets the usable width: 0 narrow (mobile), 1 mid, 2 wide.
+func (m Model) layoutMode() int {
+	switch w := m.contentWidth(); {
+	case w >= 76:
+		return 2
+	case w >= 48:
+		return 1
+	default:
+		return 0
+	}
+}
 
 func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
-	body := m.renderBranding()
-	if m.helpOpen {
-		body += m.renderHelp()
-	} else if m.confirmStop {
-		body += "Stop and remove selected session? y/N\n"
-	} else if m.wizard {
-		body += m.renderWizard()
-	} else {
-		body += m.renderDetails()
-		body += m.renderTable()
+	var b strings.Builder
+	b.WriteString(m.renderBranding())
+	switch {
+	case m.helpOpen:
+		b.WriteString(m.renderHelp())
+	case m.confirmStop:
+		b.WriteString(m.renderConfirm())
+	case m.wizard:
+		b.WriteString(m.renderWizard())
+	default:
+		b.WriteString(m.renderDetails())
+		b.WriteString(m.renderTable())
 		if m.peekOpen {
-			body += "\n" + hintStyle.Render("peek") + "\n" + trimLines(m.peekText, max(5, m.height/3))
+			b.WriteString(m.renderPeek())
 		}
 	}
-	prompt := fmt.Sprintf("\n%s %s_   %s", hintStyle.Render("command"), m.input, hintStyle.Render("agent:"+m.defaultAgent+" · ? help · e new"))
-	if m.renaming {
-		prompt = "\n" + hintStyle.Render("rename") + " " + m.input + "_"
-	}
-	if m.message != "" {
-		prompt += "\n" + hintStyle.Render(m.message)
-	}
-	body += prompt
-	return body
+	b.WriteString(m.renderPrompt())
+	return b.String()
 }
 
-const uamANSILogo = ` _   _  _   __  __ 
+const uamANSILogo = ` _   _  _   __  __
 | | | |/_\ |  \/  |
 | |_| / _ \| |\/| |
  \___/_/ \_\_|  |_|`
 
 func (m Model) renderBranding() string {
-	subtitle := fmt.Sprintf("Unified Agent Manager · %s", version.String())
-	if m.contentWidth() < 34 {
-		return brandStyle.Render("UAM") + "\n" + hintStyle.Render(subtitle) + "\n" + m.renderDivider() + "\n"
+	var b strings.Builder
+	ver := hintStyle.Render(version.String())
+	if m.layoutMode() == 0 {
+		b.WriteString(bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("Unified Agent Manager") + "\n")
+		b.WriteString(bar() + " " + ver + "\n")
+		b.WriteString("\n")
+		return b.String()
 	}
-	return brandStyle.Render(uamANSILogo) + "\n" + hintStyle.Render(subtitle) + "\n" + m.renderDivider() + "\n"
+	logo := strings.Split(uamANSILogo, "\n")
+	side := []string{"", brandStyle.Render("Unified Agent Manager"), hintStyle.Render("multi-agent session control"), ver}
+	for i, line := range logo {
+		row := bar() + " " + brandStyle.Render(line)
+		if i < len(side) && side[i] != "" {
+			row += "    " + side[i]
+		}
+		b.WriteString(row + "\n")
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
-func (m Model) renderTable() string {
-	if len(m.sessions) == 0 {
-		return "\nNo sessions. Type @claude #bugfix fix bug, type @claude for an empty session, press e for wizard, or run uam dispatch.\n"
+// renderSection draws a borderless "LABEL ───────  right" header.
+func (m Model) renderSection(label, right string) string {
+	head := sectionStyle.Render(label)
+	fill := max(3, m.contentWidth()-lipgloss.Width(head)-lipgloss.Width(right)-4)
+	line := " " + head + "  " + dividerStyle.Render(strings.Repeat("─", fill))
+	if right != "" {
+		line += " " + hintStyle.Render(right)
 	}
-	nameWidth, taskWidth, showTask := m.tableWidths()
-	start, end := m.visibleSessionWindow()
-	var b strings.Builder
-	b.WriteString("\n" + sectionStyle.Render("SESSIONS") + "\n")
-	if showTask {
-		b.WriteString(hintStyle.Render(fmt.Sprintf("  %-*s %s", nameWidth+2, "NAME", "TASK")) + "\n")
-	} else {
-		b.WriteString(hintStyle.Render(fmt.Sprintf("  %-*s", nameWidth+2, "NAME")) + "\n")
-	}
-	if start > 0 {
-		b.WriteString(hintStyle.Render(fmt.Sprintf("  ↑ %d more", start)) + "\n")
-	}
-	for i, s := range m.sessions[start:end] {
-		idx := start + i
-		cursor := " "
-		if idx == m.selected {
-			cursor = "›"
-		}
-		pin := ""
-		if s.Pinned {
-			pin = "★ "
-		}
-		line := fmt.Sprintf("%s %s %-*s", cursor, m.tmuxMark(s), nameWidth, truncate(pin+firstNonEmpty(s.DisplayName, s.ID), nameWidth))
-		if showTask {
-			line += " " + taskStyle.Render(truncate(promptText(s), taskWidth))
-		}
-		if idx == m.selected {
-			line = selectedStyle.Render(line)
-		}
-		b.WriteString(line + "\n")
-	}
-	if end < len(m.sessions) {
-		b.WriteString(hintStyle.Render(fmt.Sprintf("  ↓ %d more", len(m.sessions)-end)) + "\n")
-	}
-	return b.String()
+	return line
 }
 
 func (m Model) renderDetails() string {
@@ -697,21 +698,124 @@ func (m Model) renderDetails() string {
 	if !ok {
 		return ""
 	}
-	nameWidth := max(12, m.contentWidth()-8)
-	lines := []string{
-		sectionStyle.Render("SELECTED"),
-		fmt.Sprintf("%s  %s", m.tmuxMark(sess), titleStyle.Render(truncate(firstNonEmpty(sess.DisplayName, sess.ID), nameWidth))),
-		fmt.Sprintf("agent: %s · id: %s", firstNonEmpty(sess.AgentType, "?"), firstNonEmpty(sess.ID, "?")),
+	var b strings.Builder
+	b.WriteString(m.renderSection("SELECTED", "") + "\n")
+	name := truncate(firstNonEmpty(sess.DisplayName, sess.ID), max(12, m.contentWidth()-6))
+	b.WriteString("  " + titleStyle.Render(name) + "\n")
+	// Show the activity here only when the session list is too narrow to show it
+	// inline (no task column) — that way it stays visible exactly once.
+	if _, _, showTask := m.tableWidths(); !showTask {
+		b.WriteString("    " + taskStyle.Render(truncate(promptText(sess), max(8, m.contentWidth()-6))) + "\n")
 	}
+	b.WriteString("    " + hintStyle.Render("agent: "+firstNonEmpty(sess.AgentType, "?")) + "\n")
 	if !sess.CreatedAt.IsZero() {
-		lines = append(lines, "created: "+sess.CreatedAt.Format("Jan 02 15:04"))
+		b.WriteString("    " + hintStyle.Render("created: "+sess.CreatedAt.Format("Jan 02 15:04")) + "\n")
 	}
-	lines = append(lines, fmt.Sprintf("cwd: %s", firstNonEmpty(sess.Cwd, "?")))
-	return detailStyle.Render(strings.Join(lines, "\n")) + "\n" + m.renderDivider() + "\n"
+	b.WriteString("    " + hintStyle.Render("cwd: "+absCwd(sess.Cwd)) + "\n")
+	return b.String()
 }
 
-func (m Model) renderDivider() string {
-	return dividerStyle.Render(strings.Repeat("─", max(20, m.contentWidth())))
+func (m Model) renderTable() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	if len(m.sessions) == 0 {
+		b.WriteString(m.renderSection("SESSIONS", "0") + "\n")
+		b.WriteString("  " + hintStyle.Render("no sessions — type a prompt, @agent #name prompt, or press e") + "\n")
+		return b.String()
+	}
+	nameWidth, taskWidth, showTask := m.tableWidths()
+	start, end := m.visibleSessionWindow()
+	active, stopped := 0, 0
+	for _, s := range m.sessions {
+		if s.ProcAlive == adapter.Alive {
+			active++
+		} else {
+			stopped++
+		}
+	}
+	if start > 0 {
+		b.WriteString("  " + hintStyle.Render(fmt.Sprintf("↑ %d more", start)) + "\n")
+	}
+	g1 := m.renderGroup("ACTIVE", active, start, end, true, nameWidth, taskWidth, showTask)
+	g2 := m.renderGroup("STOPPED", stopped, start, end, false, nameWidth, taskWidth, showTask)
+	b.WriteString(g1)
+	if g1 != "" && g2 != "" {
+		b.WriteString("\n")
+	}
+	b.WriteString(g2)
+	if end < len(m.sessions) {
+		b.WriteString("  " + hintStyle.Render(fmt.Sprintf("↓ %d more", len(m.sessions)-end)) + "\n")
+	}
+	return b.String()
+}
+
+// renderGroup renders the windowed sessions whose liveness matches wantAlive
+// under a section header. Empty groups render nothing.
+func (m Model) renderGroup(label string, total, start, end int, wantAlive bool, nameWidth, taskWidth int, showTask bool) string {
+	var rows []string
+	for i := start; i < end; i++ {
+		s := m.sessions[i]
+		if (s.ProcAlive == adapter.Alive) != wantAlive {
+			continue
+		}
+		rows = append(rows, renderRow(s, i == m.selected, nameWidth, taskWidth, showTask))
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(m.renderSection(label, fmt.Sprintf("%d", total)) + "\n")
+	for _, r := range rows {
+		b.WriteString(r + "\n")
+	}
+	return b.String()
+}
+
+func renderRow(s adapter.Session, selected bool, nameWidth, taskWidth int, showTask bool) string {
+	cursor := "  "
+	if selected {
+		cursor = brandStyle.Render("▸") + " "
+	}
+	glyph, gs := stateGlyph(s.State)
+	pin := ""
+	if s.Pinned {
+		pin = "★ "
+	}
+	nameStyle := titleStyle
+	if selected {
+		nameStyle = selectedStyle
+	}
+	label := truncate(pin+firstNonEmpty(s.DisplayName, s.ID), nameWidth)
+	if showTask {
+		cell := nameStyle.Render(fmt.Sprintf("%-*s", nameWidth, label))
+		return cursor + gs.Render(glyph) + " " + cell + "  " + taskStyle.Render(truncate(promptText(s), taskWidth))
+	}
+	// Narrow layout: state glyph + name only — one line per row. The selected
+	// session's activity is carried by the details panel, so rows don't repeat it.
+	return cursor + gs.Render(glyph) + " " + nameStyle.Render(label)
+}
+
+func (m Model) renderPeek() string {
+	return "\n" + m.renderSection("PEEK", "") + "\n" + trimLines(m.peekText, max(5, m.height/3)) + "\n"
+}
+
+func (m Model) renderPrompt() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	if m.renaming {
+		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(m.input) + brandStyle.Render("▏") + "\n")
+	} else {
+		field := hintStyle.Render("type a command…")
+		if m.input != "" {
+			field = titleStyle.Render(m.input)
+		}
+		hints := hintStyle.Render(m.defaultAgent + "  ·  ? help  ·  e new  ·  Esc quit")
+		b.WriteString(bar() + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
+	}
+	if m.message != "" {
+		b.WriteString("  " + hintStyle.Render(m.message) + "\n")
+	}
+	return b.String()
 }
 
 func (m Model) contentWidth() int {
@@ -750,24 +854,79 @@ func (m Model) visibleSessionWindow() (int, int) {
 	return start, start + limit
 }
 
-func (m Model) tmuxMark(sess adapter.Session) string {
-	if sess.ProcAlive == adapter.Alive {
-		return liveStyle.Render("●")
-	}
-	return deadStyle.Render("○")
+func promptText(sess adapter.Session) string {
+	return firstNonEmpty(sess.Activity, sess.Prompt, stateLabel(sess.State), "idle")
 }
 
-func promptText(sess adapter.Session) string {
-	return firstNonEmpty(sess.Activity, sess.Prompt, "<no activity>")
+// absCwd resolves a session's working directory to an absolute path.
+func absCwd(cwd string) string {
+	if cwd == "" {
+		return "?"
+	}
+	if abs, err := filepath.Abs(cwd); err == nil {
+		return abs
+	}
+	return cwd
 }
 
 func (m Model) renderHelp() string {
-	return "\nKeys: ↑/↓ select · Enter/→ attach · Space peek · @agent #name prompt dispatch (name/prompt optional) · Tab default agent · Ctrl+T pin · Ctrl+R rename · Ctrl+X stop/remove · Ctrl+S group · e wizard · Esc quit\n"
+	rows := []string{
+		"↑/↓  move        Enter/→  attach        Space  peek",
+		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
+		"Ctrl+X  stop/remove      Ctrl+S  group-by-dir",
+		"e  new session       Esc  quit",
+		"dispatch:  @agent #name prompt   (name & prompt optional)",
+	}
+	var b strings.Builder
+	b.WriteString("\n " + sectionStyle.Render("Keys:") + "\n")
+	for _, r := range rows {
+		b.WriteString("  " + hintStyle.Render(r) + "\n")
+	}
+	return b.String()
 }
+
+func (m Model) renderConfirm() string {
+	sess, _ := m.selectedSession()
+	name := firstNonEmpty(sess.DisplayName, sess.ID, "session")
+	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
+		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +
+		"   " + brandStyle.Render("y") + hintStyle.Render(" / ") + titleStyle.Render("N") + "\n"
+}
+
 func (m Model) renderWizard() string {
-	steps := []string{"Pick provider (Tab cycles, Enter confirms): " + firstNonEmpty(m.wizardAgent, m.defaultAgent), "Pick workdir: " + m.input, "Enter #name prompt (both optional): " + m.input}
-	return "\nNEW SESSION\n" + steps[m.wizardStep] + "\nEsc cancels\n"
+	steps := []string{
+		"provider — Tab cycles, Enter confirms:  " + firstNonEmpty(m.wizardAgent, m.defaultAgent),
+		"working directory:  " + m.input,
+		"#name prompt — both optional:  " + m.input,
+	}
+	step := m.wizardStep
+	if step < 0 || step >= len(steps) {
+		step = 0
+	}
+	var b strings.Builder
+	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 3", step+1)) + "\n")
+	b.WriteString("  " + titleStyle.Render(steps[step]) + brandStyle.Render("▏") + "\n")
+	b.WriteString("  " + hintStyle.Render("Esc cancels") + "\n")
+	return b.String()
 }
+
+func stateGlyph(s adapter.State) (string, lipgloss.Style) {
+	switch s {
+	case adapter.Working:
+		return "⟳", lipgloss.NewStyle().Bold(true).Foreground(liveColor)
+	case adapter.NeedsInput:
+		return "◆", lipgloss.NewStyle().Bold(true).Foreground(inputColor)
+	case adapter.ReadyForReview:
+		return "✦", lipgloss.NewStyle().Bold(true).Foreground(reviewColor)
+	case adapter.Failed:
+		return "✕", lipgloss.NewStyle().Bold(true).Foreground(failColor)
+	case adapter.Completed:
+		return "✓", hintStyle
+	default:
+		return "•", hintStyle
+	}
+}
+
 func stateLabel(s adapter.State) string {
 	switch s {
 	case adapter.NeedsInput:

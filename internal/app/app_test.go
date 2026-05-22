@@ -10,18 +10,20 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func TestRenderRowsShowsTmuxStatusNameAndPrompt(t *testing.T) {
+func TestRenderTableGroupsSessionsByActivity(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{{ID: "1", AgentType: "claude", DisplayName: "live", Prompt: "fix bug", ProcAlive: adapter.Alive}, {ID: "2", AgentType: "codex", DisplayName: "dead", Prompt: "old work", ProcAlive: adapter.Exited}}
+	m.sessions = []adapter.Session{{ID: "1", AgentType: "claude", DisplayName: "live-one", Prompt: "fix bug", ProcAlive: adapter.Alive}, {ID: "2", AgentType: "codex", DisplayName: "dead-one", Prompt: "old work", ProcAlive: adapter.Exited}}
 	out := m.renderTable()
-	if !strings.Contains(out, "SESSIONS") || !strings.Contains(out, "●") || !strings.Contains(out, "○") || !strings.Contains(out, "fix bug") {
-		t.Fatalf("missing tmux/name/prompt rows: %s", out)
+	for _, want := range []string{"ACTIVE", "STOPPED", "live-one", "dead-one", "fix bug"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("table missing %q: %s", want, out)
+		}
 	}
 	if strings.Contains(out, "⠋") || strings.Contains(out, "💀") || strings.Contains(out, "🚀") || strings.Contains(out, "🔴") || strings.Contains(out, "🟢") {
-		t.Fatalf("table should use compact one-cell static status dots: %s", out)
+		t.Fatalf("table should stay glyph-based, no spinner/emoji: %s", out)
 	}
-	if strings.Contains(out, "NEEDS INPUT") || strings.Contains(out, "COMPLETED") || strings.Contains(out, "claude") || strings.Contains(out, "codex") {
-		t.Fatalf("table should not show semantic state or agent columns: %s", out)
+	if strings.Contains(out, "claude") || strings.Contains(out, "codex") {
+		t.Fatalf("table should not show an agent column: %s", out)
 	}
 }
 
@@ -45,45 +47,63 @@ func TestRenderTableTaskShowsLiveActivityBeforeOriginalPrompt(t *testing.T) {
 	}
 }
 
-func TestRenderDetailsHidesPromptAndTmuxNameWithCreatedSeparately(t *testing.T) {
+func TestRenderDetailsShowsActivityOnMobileOnly(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{
 		ID:          "abc12345",
 		AgentType:   "claude",
 		DisplayName: "bugfix",
 		Prompt:      "fix the parser",
+		Activity:    "rebuilding the parser",
 		Cwd:         "/tmp/repo",
 		TmuxSession: "uam-claude-abc12345",
 		ProcAlive:   adapter.Alive,
+		State:       adapter.Working,
 		CreatedAt:   time.Date(2026, time.May, 18, 7, 4, 0, 0, time.UTC),
 	}}
 
-	out := m.renderDetails()
-	if !strings.Contains(out, "●") || strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
-		t.Fatalf("details should show compact marker-only liveness: %s", out)
+	m.width = 56 // narrow enough that the list has no inline task column
+	mobile := m.renderDetails()
+	if !strings.Contains(mobile, "rebuilding the parser") {
+		t.Fatalf("mobile details should show the current activity: %s", mobile)
 	}
-	if strings.Contains(out, "fix the parser") || strings.Contains(out, "prompt:") {
-		t.Fatalf("details should not show prompt text: %s", out)
+
+	m.width = 100
+	desktop := m.renderDetails()
+	if strings.Contains(desktop, "rebuilding the parser") {
+		t.Fatalf("desktop details should not duplicate activity already shown in the list row: %s", desktop)
 	}
-	if strings.Contains(out, "uam-claude-abc12345") || strings.Contains(out, "tmux:") {
-		t.Fatalf("details should not show tmux session name: %s", out)
-	}
-	if !strings.Contains(out, "\ncreated: May 18 07:04") {
-		t.Fatalf("created date should be on its own line: %s", out)
+
+	for _, out := range []string{mobile, desktop} {
+		if !strings.Contains(out, "bugfix") || !strings.Contains(out, "agent: claude") {
+			t.Fatalf("details should show name and agent: %s", out)
+		}
+		if strings.Contains(out, "id:") || strings.Contains(out, "abc12345") {
+			t.Fatalf("details should not show the session id: %s", out)
+		}
+		if strings.Contains(out, "needs input") || strings.Contains(out, "working") {
+			t.Fatalf("details should not show the state label (ACTIVE/STOPPED conveys it): %s", out)
+		}
+		if strings.Contains(out, "●") || strings.Contains(out, "○") || strings.Contains(out, "TMUX") || strings.Contains(out, "uam-claude-abc12345") {
+			t.Fatalf("details should not show liveness markers or tmux name: %s", out)
+		}
+		if !strings.Contains(out, "cwd: /tmp/repo") || !strings.Contains(out, "created: May 18 07:04") {
+			t.Fatalf("details should show absolute cwd and created date: %s", out)
+		}
 	}
 }
 
-func TestRenderTableIsResponsiveOnNarrowWidths(t *testing.T) {
+func TestRenderTableNarrowShowsNamesWithoutInlineActivity(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.width = 42
-	m.sessions = []adapter.Session{{ID: "1", DisplayName: "responsive", Prompt: "this task is intentionally long", ProcAlive: adapter.Alive}}
+	m.sessions = []adapter.Session{{ID: "1", DisplayName: "responsive", Activity: "running the test suite", ProcAlive: adapter.Alive}}
 
 	out := m.renderTable()
-	if strings.Contains(out, "TASK") || strings.Contains(out, "this task") {
-		t.Fatalf("narrow table should hide task column: %s", out)
+	if !strings.Contains(out, "responsive") || !strings.Contains(out, "ACTIVE") {
+		t.Fatalf("narrow table should show the session name under ACTIVE: %s", out)
 	}
-	if !strings.Contains(out, "responsive") || !strings.Contains(out, "SESSIONS") {
-		t.Fatalf("narrow table should still show session names: %s", out)
+	if strings.Contains(out, "running the test suite") {
+		t.Fatalf("narrow table rows should not repeat activity inline (the details panel shows it): %s", out)
 	}
 }
 
@@ -117,7 +137,7 @@ func TestViewShowsUAMBrandingNameAndANSILogo(t *testing.T) {
 
 	view := m.View()
 	for _, want := range []string{
-		" _   _  _   __  __ ",
+		" _   _  _   __  __",
 		"| | | |/_\\ |  \\/  |",
 		"Unified Agent Manager",
 		"v9.9.9",
@@ -146,28 +166,24 @@ func TestViewUsesLightDividerWithoutBorders(t *testing.T) {
 	}
 }
 
-func TestViewUsesCompactVerticalSpacingAndSmallMarkers(t *testing.T) {
+func TestViewIsCompactAndBorderlessOnNarrowScreens(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.width = 44
 	m.sessions = []adapter.Session{
-		{ID: "1", DisplayName: "active", Prompt: "fix spacing", Cwd: "/tmp/repo", ProcAlive: adapter.Alive},
-		{ID: "2", DisplayName: "old", Prompt: "archive", Cwd: "/tmp/old", ProcAlive: adapter.Exited},
+		{ID: "1", DisplayName: "active-one", Activity: "fixing spacing", Cwd: "/tmp/repo", ProcAlive: adapter.Alive},
+		{ID: "2", DisplayName: "old-one", Cwd: "/tmp/old", ProcAlive: adapter.Exited},
 	}
 
 	view := m.View()
-	for _, want := range []string{
-		"SELECTED\n●",
-		"active\nagent:",
-		"SESSIONS\n",
-		"NAME                                \n›",
-		"old",
-		"\n\ncommand",
-	} {
+	for _, want := range []string{"SELECTED", "ACTIVE", "STOPPED", "active-one", "old-one", "fixing spacing"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("view missing compact spacing/marker %q:\n%s", want, view)
+			t.Fatalf("narrow view missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "🚀") || strings.Contains(view, "🔴") || strings.Contains(view, "\n\n●") || strings.Contains(view, "\n\nagent:") || strings.Contains(view, "SESSIONS\n\n") {
-		t.Fatalf("view should avoid large emoji and extra vertical spacing on mobile:\n%s", view)
+	if strings.ContainsAny(view, "╭╮╰╯│┌┐└┘") {
+		t.Fatalf("narrow view should stay borderless:\n%s", view)
+	}
+	if strings.Contains(view, "🚀") || strings.Contains(view, "🔴") || strings.Contains(view, "🟢") {
+		t.Fatalf("view should avoid large emoji on mobile:\n%s", view)
 	}
 }

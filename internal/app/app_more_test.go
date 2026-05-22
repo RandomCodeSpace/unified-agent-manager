@@ -14,7 +14,7 @@ import (
 func TestModelViewBasics(t *testing.T) {
 	m := modelWithTwoSessions()
 	out := m.View()
-	if !strings.Contains(out, "SESSIONS") || !strings.Contains(out, "●") {
+	if !strings.Contains(out, "ACTIVE") || !strings.Contains(out, "SELECTED") {
 		t.Fatalf("view=%s", out)
 	}
 	if strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
@@ -161,37 +161,40 @@ func TestDispatchedMessageAttachesNewSession(t *testing.T) {
 	}
 }
 
-func TestViewShowsDetailsOnTopAndNamePromptOnlyInTable(t *testing.T) {
+func TestViewShowsDetailsOnTopAndActivityInTable(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
 		{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "fix the parser", Cwd: "/tmp/project", TmuxSession: "uam-fake-1", ProcAlive: adapter.Alive},
 		{ID: "2", AgentType: "fake", DisplayName: "old", Prompt: "old prompt", Cwd: "/tmp/old", TmuxSession: "uam-fake-2", ProcAlive: adapter.Exited},
 	}
 	view := m.View()
-	if !strings.Contains(view, "cwd: /tmp/project") || strings.Count(view, "●") < 2 || !strings.Contains(view, "○") {
-		t.Fatalf("view missing rich details/status: %s", view)
+	if !strings.Contains(view, "cwd: /tmp/project") {
+		t.Fatalf("view should show the absolute cwd in details: %s", view)
 	}
-	if strings.Contains(view, "⠋") || strings.Contains(view, "💀") || strings.Contains(view, "TMUX: LIVE") || strings.Contains(view, "TMUX: DEAD") || strings.Contains(view, "🚀") || strings.Contains(view, "🔴") || strings.Contains(view, "🟢") {
-		t.Fatalf("view should use compact marker-only liveness, not text/spinner/skull/large emoji: %s", view)
+	if strings.Contains(view, "⠋") || strings.Contains(view, "💀") || strings.Contains(view, "TMUX: LIVE") || strings.Contains(view, "🚀") || strings.Contains(view, "🟢") {
+		t.Fatalf("view should use compact styling, no spinner/skull/large emoji: %s", view)
 	}
-	if strings.Contains(view, "unified-agent-manager") || strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") {
-		t.Fatalf("view should start with selected-session info, not header stats: %s", view)
+	if strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") {
+		t.Fatalf("view should not show aggregate header stats: %s", view)
 	}
 	table := m.renderTable()
-	if !strings.Contains(table, "one") || !strings.Contains(table, "fix the parser") || strings.Contains(table, "/tmp/project") || strings.Contains(table, "working") || strings.Contains(table, "completed") {
-		t.Fatalf("table should only show tmux mark, session name, and prompt: %s", table)
+	if !strings.Contains(table, "ACTIVE") || !strings.Contains(table, "STOPPED") {
+		t.Fatalf("table should group sessions into ACTIVE and STOPPED: %s", table)
+	}
+	if !strings.Contains(table, "one") || !strings.Contains(table, "fix the parser") {
+		t.Fatalf("table should show session name and activity: %s", table)
 	}
 }
 
-func TestTmuxMarksAreStaticAcrossRefresh(t *testing.T) {
+func TestSessionRowsStayStaticAcrossRefresh(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "live", DisplayName: "live", ProcAlive: adapter.Alive}, {ID: "dead", DisplayName: "dead", ProcAlive: adapter.Exited}}
 	before := m.renderTable()
-	if strings.Count(before, "●") != 1 || strings.Count(before, "○") != 1 {
-		t.Fatalf("static compact markers missing before refresh: %s", before)
+	if !strings.Contains(before, "ACTIVE") || !strings.Contains(before, "STOPPED") {
+		t.Fatalf("table should group sessions into ACTIVE and STOPPED: %s", before)
 	}
 	if strings.Contains(before, "⠋") || strings.Contains(before, "💀") || strings.Contains(before, "🚀") || strings.Contains(before, "🔴") || strings.Contains(before, "🟢") {
-		t.Fatalf("compact markers should replace spinner/skull/large emoji before refresh: %s", before)
+		t.Fatalf("table should stay glyph-based, no spinner/skull/emoji: %s", before)
 	}
 
 	model, cmd := m.Update(refreshMsg(time.Now()))
@@ -201,7 +204,7 @@ func TestTmuxMarksAreStaticAcrossRefresh(t *testing.T) {
 	}
 	after := m.renderTable()
 	if after != before {
-		t.Fatalf("status marks should remain static across refresh\nbefore=%s\nafter=%s", before, after)
+		t.Fatalf("table should remain static across refresh\nbefore=%s\nafter=%s", before, after)
 	}
 }
 
