@@ -926,7 +926,7 @@ func (m Model) renderWizard() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 3", step+1)) + "\n")
-	b.WriteString("  " + titleStyle.Render(steps[step]) + brandStyle.Render("▏") + "\n")
+	b.WriteString("  " + titleStyle.Render(steps[step]) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
 	b.WriteString("  " + hintStyle.Render("Esc cancels") + "\n")
 	return b.String()
 }
