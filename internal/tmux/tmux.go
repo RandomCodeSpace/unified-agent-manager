@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
@@ -16,6 +17,9 @@ import (
 type Client struct {
 	Socket     string
 	Executable string
+
+	configOnce sync.Once
+	configErr  error
 }
 
 func New(socket string) *Client {
@@ -96,6 +100,8 @@ func (c *Client) List(ctx context.Context) ([]SessionInfo, error) {
 		}
 		return nil, err
 	}
+	// Server is up — apply uam-friendly settings (sync.Once, no-op after first).
+	_ = c.EnsureServerConfig(ctx)
 	return ParseListSessions(out)
 }
 
@@ -127,6 +133,27 @@ func (c *Client) SendLine(ctx context.Context, target, text string) error {
 func (c *Client) Kill(ctx context.Context, target string) error {
 	_, err := c.run(ctx, "kill-session", "-t", target)
 	return err
+}
+
+// EnsureServerConfig applies session-friendly defaults to the private tmux
+// server: disable mouse mode so the host terminal owns text selection, and
+// swallow Ctrl+Z so it can't suspend the agent in the foreground pane. The
+// configuration is applied exactly once per Client.
+func (c *Client) EnsureServerConfig(ctx context.Context) error {
+	c.configOnce.Do(func() {
+		c.configErr = c.applyServerConfig(ctx)
+	})
+	return c.configErr
+}
+
+func (c *Client) applyServerConfig(ctx context.Context) error {
+	if _, err := c.run(ctx, "set-option", "-g", "mouse", "off"); err != nil {
+		return fmt.Errorf("set mouse off: %w", err)
+	}
+	if _, err := c.run(ctx, "bind-key", "-n", "C-z", "display-message", "Ctrl+Z is disabled in uam sessions; use Ctrl+b d to detach"); err != nil {
+		return fmt.Errorf("bind C-z: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) HasSession(ctx context.Context, target string) bool {
