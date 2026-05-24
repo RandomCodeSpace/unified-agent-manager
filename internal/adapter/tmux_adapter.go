@@ -119,6 +119,9 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 		tmuxName = fmt.Sprintf("uam-%s-%s", a.Name(), req.ID[:min(8, len(req.ID))])
 	}
 	env := map[string]string{"UAM_AGENT": a.Name(), "UAM_ID": req.ID}
+	// Best-effort: apply uam-friendly tmux server settings (mouse off, swallow
+	// Ctrl+Z). Failures don't prevent the session from being created.
+	_ = a.Tmux.EnsureServerConfig(ctx)
 	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
 		return Session{}, err
 	}

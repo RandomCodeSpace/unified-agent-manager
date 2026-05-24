@@ -104,7 +104,7 @@ func assertTmuxLifecycleLog(t *testing.T, logPath string) {
 	t.Helper()
 	logData, _ := os.ReadFile(logPath)
 	logText := string(logData)
-	for _, want := range []string{"new-session", "send-keys", "kill-session"} {
+	for _, want := range []string{"set-option", "bind-key", "new-session", "send-keys", "kill-session"} {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("log missing %s: %s", want, logData)
 		}
