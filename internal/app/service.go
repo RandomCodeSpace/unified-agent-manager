@@ -267,7 +267,7 @@ func (s *Service) Reply(ctx context.Context, id, text string) error {
 }
 
 func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec, error) {
-	sess, cfg, err := s.Find(ctx, id)
+	sess, _, err := s.Find(ctx, id)
 	if err != nil {
 		return adapter.AttachSpec{}, err
 	}
@@ -276,35 +276,54 @@ func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec
 		return adapter.AttachSpec{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
 	}
 	if sess.ProcAlive == adapter.Exited {
-		resumable, ok := a.(adapter.ResumableAdapter)
-		if !ok {
-			return adapter.AttachSpec{}, fmt.Errorf("session %q is not running and agent %q cannot resume it", sess.ID, sess.AgentType)
-		}
-		rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
-		if rec.ID == "" {
-			rec = RecordFromSession(sess, store.ModeYolo)
-		}
-		resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), TmuxSession: rec.TmuxSession, CreatedAt: rec.CreatedAt})
-		if err != nil {
+		if err := s.ResumeBackground(ctx, sess.ID); err != nil {
 			return adapter.AttachSpec{}, err
 		}
-		if s.Store != nil {
-			_ = s.Store.Update(func(cfg *store.Config) error {
-				key := store.Key(resumed.AgentType, resumed.ID)
-				rec := cfg.Sessions[key]
-				if rec.ID == "" {
-					rec = RecordFromSession(resumed, store.ModeYolo)
-				}
-				rec.TmuxSession = resumed.TmuxSession
-				rec.Workdir = resumed.Cwd
-				rec.LastSeenAt = time.Now()
-				cfg.Sessions[key] = rec
-				return nil
-			})
-		}
-		sess = resumed
 	}
 	return a.Attach(sess.ID)
+}
+
+// ResumeBackground restarts a stopped session's tmux session without attaching
+// to it. It is a no-op when the session is already running.
+func (s *Service) ResumeBackground(ctx context.Context, id string) error {
+	sess, cfg, err := s.Find(ctx, id)
+	if err != nil {
+		return err
+	}
+	if sess.ProcAlive == adapter.Alive {
+		return nil
+	}
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return fmt.Errorf(agentUnavailableFormat, sess.AgentType)
+	}
+	resumable, ok := a.(adapter.ResumableAdapter)
+	if !ok {
+		return fmt.Errorf("session %q is not running and agent %q cannot resume it", sess.ID, sess.AgentType)
+	}
+	rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
+	if rec.ID == "" {
+		rec = RecordFromSession(sess, store.ModeYolo)
+	}
+	resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), TmuxSession: rec.TmuxSession, CreatedAt: rec.CreatedAt})
+	if err != nil {
+		return err
+	}
+	if s.Store == nil {
+		return nil
+	}
+	return s.Store.Update(func(cfg *store.Config) error {
+		key := store.Key(resumed.AgentType, resumed.ID)
+		rec := cfg.Sessions[key]
+		if rec.ID == "" {
+			rec = RecordFromSession(resumed, store.ModeYolo)
+		}
+		rec.TmuxSession = resumed.TmuxSession
+		rec.Workdir = resumed.Cwd
+		rec.LastSeenAt = time.Now()
+		cfg.Sessions[key] = rec
+		return nil
+	})
 }
 
 func (s *Service) PrintList(ctx context.Context, asJSON bool) error {

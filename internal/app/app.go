@@ -305,6 +305,12 @@ func (m *Model) handleSpaceKey(key string) tea.Cmd {
 		m.input += key
 		return nil
 	}
+	// A stopped session has no live tmux pane to peek into — Space restarts it
+	// in the background instead.
+	if sess, ok := m.selectedSession(); ok && sess.ProcAlive == adapter.Exited {
+		m.message = "restarting " + firstNonEmpty(sess.DisplayName, sess.ID)
+		return m.resumeSelectedCmd()
+	}
 	m.peekOpen = !m.peekOpen
 	if m.peekOpen {
 		return m.peekSelectedCmd()
@@ -520,6 +526,21 @@ func (m Model) peekSelectedCmd() tea.Cmd {
 	return func() tea.Msg {
 		p, err := m.service.Peek(context.Background(), sess.ID)
 		return peekLoadedMsg{text: p.TailText, err: err}
+	}
+}
+
+// resumeSelectedCmd restarts the selected session's tmux session in the
+// background, then reloads so it moves into the ACTIVE group.
+func (m Model) resumeSelectedCmd() tea.Cmd {
+	sess, ok := m.selectedSession()
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		if err := m.service.ResumeBackground(context.Background(), sess.ID); err != nil {
+			return sessionsLoadedMsg{err: err}
+		}
+		return m.loadSessionsCmd()()
 	}
 }
 func (m Model) stopSelectedCmd(remove bool) tea.Cmd {
