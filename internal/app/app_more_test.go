@@ -186,6 +186,26 @@ func TestViewShowsDetailsOnTopAndActivityInTable(t *testing.T) {
 	}
 }
 
+func TestSpaceRestartsStoppedSessionInsteadOfPeeking(t *testing.T) {
+	// A running session: Space opens the peek panel.
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "live", ProcAlive: adapter.Alive}}
+	if cmd := m.handleSpaceKey(" "); cmd == nil || !m.peekOpen {
+		t.Fatalf("space on a running session should peek: cmd=%v peekOpen=%v", cmd, m.peekOpen)
+	}
+
+	// A stopped session: Space restarts it and does not open the peek panel.
+	m = NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{{ID: "2", AgentType: "fake", DisplayName: "stopped", ProcAlive: adapter.Exited}}
+	cmd := m.handleSpaceKey(" ")
+	if m.peekOpen {
+		t.Fatal("space on a stopped session should not open the peek panel")
+	}
+	if cmd == nil {
+		t.Fatal("space on a stopped session should return a resume command")
+	}
+}
+
 func TestSessionRowsStayStaticAcrossRefresh(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "live", DisplayName: "live", ProcAlive: adapter.Alive}, {ID: "dead", DisplayName: "dead", ProcAlive: adapter.Exited}}
