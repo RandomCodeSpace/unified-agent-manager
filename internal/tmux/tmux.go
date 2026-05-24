@@ -150,6 +150,11 @@ func (c *Client) applyServerConfig(ctx context.Context) error {
 	if _, err := c.run(ctx, "set-option", "-g", "mouse", "off"); err != nil {
 		return fmt.Errorf("set mouse off: %w", err)
 	}
+	// Forward any tmux-side copy to the host terminal's clipboard via OSC 52
+	// so the user can paste outside the session with the usual shortcut.
+	if _, err := c.run(ctx, "set-option", "-g", "set-clipboard", "on"); err != nil {
+		return fmt.Errorf("set set-clipboard on: %w", err)
+	}
 	if _, err := c.run(ctx, "bind-key", "-n", "C-z", "display-message", "Ctrl+Z is disabled in uam sessions; use Ctrl+b d to detach"); err != nil {
 		return fmt.Errorf("bind C-z: %w", err)
 	}
