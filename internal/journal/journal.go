@@ -42,6 +42,11 @@ func OpenWithCap(path string, capBytes int64) (*Journal, error) {
 	// O_RDWR (no O_APPEND): we need WriteAt/Seek for in-place compaction.
 	// We manually seek to end on open and rely on the single-writer
 	// invariant (one journal owns its file) to preserve append semantics.
+	//
+	// #nosec G304 — path is supplied by the supervisor (caller-controlled),
+	// which constructs it under its own state directory. Scoping is the
+	// caller's responsibility; this primitive intentionally does not assume
+	// a chroot.
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("journal open %q: %w", path, err)

@@ -25,6 +25,8 @@ func Open() (*PTY, error) {
 	if err != nil {
 		return nil, err
 	}
+	// #nosec G304 — slavePath is the kernel-allocated /dev/pts/<N> returned
+	// by TIOCGPTN on the master we just opened. It is not user input.
 	slave, err := os.OpenFile(slavePath, os.O_RDWR|osNoCtty, 0)
 	if err != nil {
 		_ = master.Close()
