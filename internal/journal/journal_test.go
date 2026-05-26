@@ -81,4 +81,85 @@ func TestSizeCapTruncatesOldestBytes(t *testing.T) {
 	if int64(len(tail)) > 1024 {
 		t.Fatalf("expected tail <= cap of 1024, got %d", len(tail))
 	}
+	// The newest bytes ('y') must dominate the retained tail.
+	if !bytes.Contains(tail, bytes.Repeat([]byte("y"), 100)) {
+		t.Fatalf("expected tail to contain recent 'y' bytes")
+	}
+}
+
+func TestOpenWithCapRejectsTooSmall(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := OpenWithCap(filepath.Join(dir, "x.log"), 16); err == nil {
+		t.Fatalf("expected error for sub-minimum cap")
+	}
+}
+
+func TestOpenWithCapBadPath(t *testing.T) {
+	if _, err := OpenWithCap("/nonexistent-dir-12345/session.log", 4096); err == nil {
+		t.Fatalf("expected error opening unwritable path")
+	}
+}
+
+func TestFlushBeforeTailIsTransparent(t *testing.T) {
+	dir := t.TempDir()
+	j, err := Open(filepath.Join(dir, "session.log"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = j.Close() }()
+	if _, err := j.Write([]byte("buffered ")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := j.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	stat, err := os.Stat(j.Path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if stat.Size() != int64(len("buffered ")) {
+		t.Fatalf("Flush should have made all bytes durable, got file size %d", stat.Size())
+	}
+}
+
+func TestCloseIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	j, err := Open(filepath.Join(dir, "session.log"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := j.Write([]byte("data\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	// Second Close must be a no-op.
+	if err := j.Close(); err != nil {
+		t.Fatalf("second Close should be nil, got %v", err)
+	}
+}
+
+func TestTailEmptyJournal(t *testing.T) {
+	dir := t.TempDir()
+	j, err := Open(filepath.Join(dir, "empty.log"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = j.Close() }()
+	got, err := j.Tail(64)
+	if err != nil {
+		t.Fatalf("Tail on empty: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty tail, got %q", got)
+	}
+	// max <= 0 -> nil.
+	got, err = j.Tail(0)
+	if err != nil {
+		t.Fatalf("Tail(0): %v", err)
+	}
+	if got != nil {
+		t.Fatalf("Tail(0) should return nil, got %q", got)
+	}
 }

@@ -46,3 +46,38 @@ func TestTailLinesUsesLastN(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestTailLinesShorterThanN(t *testing.T) {
+	in := []string{"x", "y"}
+	got := TailLines(in, 5)
+	if !reflect.DeepEqual(got, in) {
+		t.Fatalf("expected slice returned as-is, got %q", got)
+	}
+}
+
+func TestTailLinesNonPositiveN(t *testing.T) {
+	if got := TailLines([]string{"a", "b"}, 0); got != nil {
+		t.Fatalf("n=0 should return nil, got %q", got)
+	}
+	if got := TailLines([]string{"a", "b"}, -1); got != nil {
+		t.Fatalf("n<0 should return nil, got %q", got)
+	}
+}
+
+func TestTailCombinesExtractAndTrim(t *testing.T) {
+	raw := []byte("first\nsecond\n\x1b[31mthird\x1b[0m\nfourth\n")
+	got := Tail(raw, 2)
+	// ExtractLines yields ["first","second","third","fourth",""]; last 2 are ["fourth",""].
+	if !reflect.DeepEqual(got, []string{"fourth", ""}) {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestTailReturnsAllWhenShortInput(t *testing.T) {
+	raw := []byte("only\n")
+	got := Tail(raw, 10)
+	// ExtractLines("only\n") -> ["only",""]; n=10 > len, returns whole slice.
+	if !reflect.DeepEqual(got, []string{"only", ""}) {
+		t.Fatalf("got %q", got)
+	}
+}
