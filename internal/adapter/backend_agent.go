@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/mux"
@@ -239,14 +240,14 @@ func (a *BackendAgent) changedRecently(target string, lines []string, window tim
 
 // pidAlive replaces the tmux.PaneAlive helper for the backend-agnostic path.
 // It exists in package-internal scope to avoid coupling adapter to tmux.
-// On Unix, os.FindProcess + Signal(nil) reduces to kill(pid, 0).
+//
+// syscall.Kill(pid, 0) is the standard Unix liveness probe: signal 0 does
+// not actually deliver a signal, it only runs the kernel's permission and
+// existence checks. We deliberately do not use os.Process.Signal(nil)
+// because Go 1.26 rejects nil signals with "os: unsupported signal type".
 func pidAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return proc.Signal(nil) == nil
+	return syscall.Kill(pid, 0) == nil
 }
