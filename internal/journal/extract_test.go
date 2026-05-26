@@ -14,6 +14,17 @@ func TestExtractLinesStripsANSI(t *testing.T) {
 	}
 }
 
+func TestExtractLinesTreatsCRLFAsLineEnding(t *testing.T) {
+	// PTY drivers translate '\n' on input to '\r\n' on output; ExtractLines
+	// must not interpret that trailing '\r' as cursor-rewind.
+	in := []byte("hello-host\r\nworld\r\n")
+	got := ExtractLines(in)
+	want := []string{"hello-host", "world", ""}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
 func TestExtractLinesCollapsesCR(t *testing.T) {
 	in := []byte("Generating...\r\x1b[KDone!\n")
 	got := ExtractLines(in)
