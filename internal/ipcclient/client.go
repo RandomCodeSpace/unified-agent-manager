@@ -330,11 +330,20 @@ func (c *Client) Subscribe(ctx context.Context, h mux.SessionHandle) (<-chan mux
 }
 
 // DefaultSocketPath returns the per-user supervisor socket location.
-// UAM_SOCKET wins; otherwise $XDG_RUNTIME_DIR/uam/control.sock; otherwise
-// a tmpdir fallback.
+// Resolution order (each wins over the next):
+//  1. UAM_SOCKET — explicit full path override
+//  2. UAM_RUNTIME_DIR — supervisor runtime dir; socket sits at its root
+//  3. XDG_RUNTIME_DIR/uam/control.sock — XDG convention
+//  4. $TMPDIR/uam-$UID/control.sock — fallback for systems without XDG
+//
+// Must match supervisor.DefaultRuntimeDir's resolution so the client and
+// supervisor agree on where to meet.
 func DefaultSocketPath() string {
 	if v := os.Getenv("UAM_SOCKET"); v != "" {
 		return v
+	}
+	if rd := os.Getenv("UAM_RUNTIME_DIR"); rd != "" {
+		return filepath.Join(rd, "control.sock")
 	}
 	if rd := os.Getenv("XDG_RUNTIME_DIR"); rd != "" {
 		return filepath.Join(rd, "uam", "control.sock")

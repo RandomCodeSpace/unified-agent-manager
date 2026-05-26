@@ -193,6 +193,7 @@ func (h *Host) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	if uconn, ok := conn.(*net.UnixConn); ok {
 		if uid, err := ipc.PeerUID(uconn); err == nil {
+			// #nosec G115 -- POSIX UIDs are always within uint32 range.
 			if uid != uint32(os.Getuid()) {
 				return // reject cross-uid peers silently
 			}

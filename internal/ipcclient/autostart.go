@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -72,5 +73,6 @@ func isAlive(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return proc.Signal(nil) == nil
+	// signal 0 doesn't deliver but kernel still checks pid existence + perms.
+	return proc.Signal(syscall.Signal(0)) == nil
 }

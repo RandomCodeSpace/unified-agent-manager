@@ -41,7 +41,6 @@ type SessionRecord struct {
 
 // Supervisor is the daemon's state.
 type Supervisor struct {
-	opts       Options
 	runtimeDir string
 	hostsDir   string
 	socketPath string
@@ -72,7 +71,6 @@ func New(opts Options) (*Supervisor, error) {
 		exe = got
 	}
 	return &Supervisor{
-		opts:       opts,
 		runtimeDir: runtimeDir,
 		hostsDir:   filepath.Join(runtimeDir, "hosts"),
 		socketPath: filepath.Join(runtimeDir, "control.sock"),
@@ -185,6 +183,7 @@ func (s *Supervisor) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	if uconn, ok := conn.(*net.UnixConn); ok {
 		uid, err := ipc.PeerUID(uconn)
+		// #nosec G115 -- POSIX UIDs are always within uint32 range.
 		if err == nil && uid != uint32(os.Getuid()) {
 			return // reject cross-uid
 		}

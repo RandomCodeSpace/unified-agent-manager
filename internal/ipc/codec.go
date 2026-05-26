@@ -22,6 +22,8 @@ func WriteFrame(w io.Writer, r Request) error {
 	}
 	body := frameHeaderLen + len(r.Payload)
 	hdr := make([]byte, 4+frameHeaderLen)
+	// #nosec G115 -- body is bounded by MaxFrameSize (8 MiB) above; the
+	// oversize-payload guard rejects anything that could overflow uint32.
 	binary.BigEndian.PutUint32(hdr[:4], uint32(body))
 	binary.BigEndian.PutUint32(hdr[4:8], r.ID)
 	hdr[8] = byte(r.Kind)
