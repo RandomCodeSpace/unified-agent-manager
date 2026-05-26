@@ -24,9 +24,9 @@ type SessionHandle string
 // PaneCapture is the structured output of a "peek" — equivalent to
 // `tmux capture-pane -p -S -200 -J`.
 type PaneCapture struct {
-	Lines      []string  // wrap-joined, last N rows
-	PaneCmd    string    // current foreground command name (for ProcAlive)
-	PanePID    int       // foreground pid; 0 if unknown
+	Lines      []string // wrap-joined, last N rows
+	PaneCmd    string   // current foreground command name (for ProcAlive)
+	PanePID    int      // foreground pid; 0 if unknown
 	CapturedAt time.Time
 }
 
