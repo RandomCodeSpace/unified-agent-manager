@@ -2,7 +2,7 @@ module github.com/RandomCodeSpace/unified-agent-manager
 
 go 1.24.0
 
-toolchain go1.24.7
+toolchain go1.25.10
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
