@@ -190,7 +190,7 @@ func (h *Host) acceptLoop() {
 
 // handleConn handles one connected client until it disconnects.
 func (h *Host) handleConn(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if uconn, ok := conn.(*net.UnixConn); ok {
 		if uid, err := ipc.PeerUID(uconn); err == nil {
 			if uid != uint32(os.Getuid()) {

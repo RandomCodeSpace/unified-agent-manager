@@ -14,19 +14,19 @@ func TestPeerUIDOnUDSPair(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	accepted, err := ln.Accept()
 	if err != nil {
 		t.Fatalf("Accept: %v", err)
 	}
-	defer accepted.Close()
+	defer func() { _ = accepted.Close() }()
 
 	uconn, ok := accepted.(*net.UnixConn)
 	if !ok {

@@ -55,7 +55,7 @@ func TestHostRunsEchoAndCaptures(t *testing.T) {
 	go func() { done <- h.Run(ctx) }()
 
 	conn := dialHost(t, cfg.SocketPath)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Send a Write RPC so cat echoes "hello-host" back into the PTY which
 	// is then captured into the journal.
@@ -125,7 +125,7 @@ func TestHostHandlesCaptureRPC(t *testing.T) {
 	defer func() { cancel(); <-done }()
 
 	conn := dialHost(t, cfg.SocketPath)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Drive output into the PTY via a Write RPC.
 	wrPayload, _ := json.Marshal(struct {
