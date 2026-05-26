@@ -136,7 +136,7 @@ func (a *BackendAgent) startSession(ctx context.Context, req ResumeRequest, acti
 	}
 	name := req.Name
 	if name == "" {
-		name = displayNameFromPrompt(req.Prompt)
+		name = displayNameFromDir(cwd)
 	}
 	now := time.Now()
 	created := req.CreatedAt
