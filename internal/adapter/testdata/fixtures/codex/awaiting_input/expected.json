@@ -1,0 +1,5 @@
+{
+  "state": "NeedsInput",
+  "summary": "I want to run: rm -rf /tmp/build",
+  "proc_alive": true
+}

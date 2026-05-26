@@ -1,0 +1,3 @@
+I want to run: rm -rf /tmp/build
+
+Do you want to continue? (y/n)
