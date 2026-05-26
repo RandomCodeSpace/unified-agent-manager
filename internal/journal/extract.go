@@ -14,13 +14,20 @@ var ansiRE = regexp.MustCompile("\x1b\\[[?0-9;]*[a-zA-Z]|\x1b\\][^\x07\x1b]*(?:\
 // detect.ClassifyPane:
 //  1. Strip ANSI escape sequences.
 //  2. Split on '\n'.
-//  3. For each \n-line, treat '\r' as in-place overwrite: keep only the
-//     bytes after the last '\r' in that line.
+//  3. For each \n-line, trim a single trailing '\r' (CRLF line ending),
+//     then treat any remaining embedded '\r' as in-place overwrite: keep
+//     only the bytes after the last '\r' in that line.
+//
+// Order matters: PTY drivers translate '\n' to '\r\n' on output, so plain
+// terminal lines arrive as `text\r\n` and split-on-'\n' yields `text\r`.
+// Trimming the trailing '\r' first preserves real content; only internal
+// '\r' (as in spinner frames `\rframe1\rframe2`) keeps overwrite semantics.
 func ExtractLines(raw []byte) []string {
 	clean := ansiRE.ReplaceAll(raw, nil)
 	parts := bytes.Split(clean, []byte{'\n'})
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
+		p = bytes.TrimSuffix(p, []byte{'\r'})
 		if idx := bytes.LastIndexByte(p, '\r'); idx >= 0 {
 			p = p[idx+1:]
 		}
