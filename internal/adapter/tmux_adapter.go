@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/mux/tmuxbackend"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
@@ -21,6 +22,11 @@ type CommandCandidate struct {
 	Args    []string
 }
 
+// TmuxAgent is the legacy tmux-coupled adapter shape, retained for binary
+// compatibility with provider factories that haven't migrated to BackendAgent.
+//
+// Deprecated: New code should construct BackendAgent directly. TmuxAgent is
+// scheduled for removal at v0.4.0.
 type TmuxAgent struct {
 	NameValue          string
 	DisplayNameValue   string
@@ -234,4 +240,10 @@ func displayNameFromDir(cwd string) string {
 		return "untitled"
 	}
 	return base
+}
+
+// NewBackendAgentFromTmuxClient builds a BackendAgent backed by the tmux
+// backend. Use during the v0.1.11–v0.1.13 transition; removed at v0.4.0.
+func NewBackendAgentFromTmuxClient(name, display string, candidates []CommandCandidate, yoloArgs []string, patterns Patterns, c *tmux.Client) *BackendAgent {
+	return NewBackendAgent(name, display, candidates, yoloArgs, patterns, tmuxbackend.New(c))
 }
