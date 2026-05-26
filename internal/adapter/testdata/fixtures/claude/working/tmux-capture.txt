@@ -1,0 +1,6 @@
+Reading the requirements...
+
+⏺ Bash(ls -la)
+  ⎿  total 32
+
+✻ Researching
