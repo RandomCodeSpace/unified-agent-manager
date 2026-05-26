@@ -1,6 +1,8 @@
 package pty
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -46,5 +48,17 @@ func TestMakeRawTogglesAndRestores(t *testing.T) {
 	// After restore, the relevant Lflag bits should match the original.
 	if pre.Lflag != post.Lflag {
 		t.Fatalf("Lflag mismatch after restore: pre=%x post=%x", pre.Lflag, post.Lflag)
+	}
+}
+
+func TestMakeRawOnNonTTY(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.Create(filepath.Join(dir, "notatty"))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := MakeRaw(f); err == nil {
+		t.Fatalf("expected MakeRaw to fail on non-tty fd")
 	}
 }
