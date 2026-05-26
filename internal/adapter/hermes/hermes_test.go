@@ -9,7 +9,8 @@ import (
 
 func TestNewUsesHermesTUICommand(t *testing.T) {
 	a := New(nil)
-	tmuxAgent, ok := a.(*adapter.TmuxAgent)
+	tmuxAgent, ok := a.(*adapter.TmuxAgent) //nolint:staticcheck // SA1019: deliberately exercises the legacy New constructor's return type
+
 	if !ok {
 		t.Fatalf("adapter type = %T", a)
 	}
