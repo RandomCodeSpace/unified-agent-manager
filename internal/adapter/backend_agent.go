@@ -196,11 +196,10 @@ func (a *BackendAgent) Reply(ctx context.Context, id, text string) error {
 }
 
 func (a *BackendAgent) Attach(id string) (AttachSpec, error) {
-	// For v0.1.11 the tmux backend still owns attach via tmux exec. The
-	// AttachSpec.Argv path stays. At v0.1.13, ipcclient.Attach will
-	// provide raw-mode tunneling through a separate uam attach --raw
-	// subcommand.
-	return AttachSpec{Argv: []string{"uam", "attach", "--raw", id}}, nil
+	// Pass the full session handle ("uam-<agent>-<id8>") rather than the
+	// short id so cli.RunAttachRaw can compute the host socket path
+	// directly: $runtimeDir/hosts/<handle>.sock.
+	return AttachSpec{Argv: []string{"uam", "attach", "--raw", a.target(id)}}, nil
 }
 
 func (a *BackendAgent) Stop(ctx context.Context, id string) error {

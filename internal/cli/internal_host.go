@@ -45,12 +45,3 @@ func RunInternalHost(args []string) {
 		os.Exit(1)
 	}
 }
-
-// RunAttachRaw is the entry point for `uam attach --raw <id>`. Reserved
-// for a follow-up phase; for v0.1.13 we simply error out so the
-// subcommand surface is wired without hiding work.
-func RunAttachRaw(args []string) {
-	_ = args
-	_, _ = fmt.Fprintln(os.Stderr, "uam attach --raw: not yet implemented in v0.1.13")
-	os.Exit(2)
-}
