@@ -23,6 +23,11 @@ func captureStderr(t *testing.T, fn func()) string {
 		t.Fatalf("pipe: %v", err)
 	}
 	os.Stderr = w
+	// Defer restore so a t.Fatalf inside fn (which exits via
+	// runtime.Goexit) does not leak a redirected os.Stderr into
+	// later tests. The trailing explicit assignment below stays
+	// for clarity on the happy path; this defer is the safety net.
+	defer func() { os.Stderr = orig }()
 
 	doneCh := make(chan []byte, 1)
 	go func() {

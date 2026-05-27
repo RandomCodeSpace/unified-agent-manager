@@ -174,27 +174,35 @@ func requireArg(args []string, message string) (string, error) {
 // As of v0.2.0 native is the default; the tmux backend remains available
 // as an explicit opt-out and is scheduled for removal in v0.4.0.
 func NewService(st *store.Store) *app.Service {
-	switch os.Getenv("UAM_BACKEND") {
+	backend := os.Getenv("UAM_BACKEND")
+	switch backend {
 	case "tmux":
 		return newServiceTmux(st)
+	case "", "native":
+		// Empty and explicit "native" both select the native multiplexer.
 	default:
-		c, err := ipcclient.New(ipcclient.Options{AutoStart: true})
-		if err != nil {
-			// Fall back to tmux so the user still has a working CLI rather
-			// than a hard crash on startup. Print a single warning so the
-			// regression is visible in CI without breaking attach paths.
-			fmt.Fprintf(os.Stderr, "uam: native backend unavailable, falling back to tmux: %v\n", err)
-			return newServiceTmux(st)
-		}
-		reg := adapter.NewRegistry([]adapter.AgentAdapter{
-			claude.NewBackend(c),
-			codex.NewBackend(c),
-			copilot.NewBackend(c),
-			hermes.NewBackend(c),
-			opencode.NewBackend(c),
-		})
-		return app.NewService(st, reg)
+		// Surface typos / unknown values so a misspelled "tumx" or "Tmux"
+		// does not silently route to native — the user gets a clear
+		// warning that the env var was not recognised before we proceed
+		// with the default backend.
+		fmt.Fprintf(os.Stderr, "uam: unknown UAM_BACKEND %q, defaulting to native\n", backend)
 	}
+	c, err := ipcclient.New(ipcclient.Options{AutoStart: true})
+	if err != nil {
+		// Fall back to tmux so the user still has a working CLI rather
+		// than a hard crash on startup. Print a single warning so the
+		// regression is visible in CI without breaking attach paths.
+		fmt.Fprintf(os.Stderr, "uam: native backend unavailable, falling back to tmux: %v\n", err)
+		return newServiceTmux(st)
+	}
+	reg := adapter.NewRegistry([]adapter.AgentAdapter{
+		claude.NewBackend(c),
+		codex.NewBackend(c),
+		copilot.NewBackend(c),
+		hermes.NewBackend(c),
+		opencode.NewBackend(c),
+	})
+	return app.NewService(st, reg)
 }
 
 func newServiceTmux(st *store.Store) *app.Service {
