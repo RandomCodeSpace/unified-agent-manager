@@ -746,19 +746,23 @@ func (m Model) renderTable() string {
 	}
 	nameWidth, taskWidth, showTask := m.tableWidths()
 	start, end := m.visibleSessionWindow()
-	active, stopped := 0, 0
+	active, closed := 0, 0
 	for _, s := range m.sessions {
-		if s.ProcAlive == adapter.Alive {
-			active++
+		if s.Closed {
+			closed++
 		} else {
-			stopped++
+			active++
 		}
 	}
 	if start > 0 {
 		b.WriteString("  " + hintStyle.Render(fmt.Sprintf("↑ %d more", start)) + "\n")
 	}
-	g1 := m.renderGroup("ACTIVE", active, start, end, true, nameWidth, taskWidth, showTask)
-	g2 := m.renderGroup("STOPPED", stopped, start, end, false, nameWidth, taskWidth, showTask)
+	// Two groups: Active (anything not flagged closed_by_user — including
+	// reboot-survivors that will resume on attach) and Closed (the user
+	// explicitly retired these via uam stop, exit-in-session, or external
+	// tmux kill-session).
+	g1 := m.renderGroup("ACTIVE", active, start, end, false, nameWidth, taskWidth, showTask)
+	g2 := m.renderGroup("CLOSED", closed, start, end, true, nameWidth, taskWidth, showTask)
 	b.WriteString(g1)
 	if g1 != "" && g2 != "" {
 		b.WriteString("\n")
@@ -770,13 +774,13 @@ func (m Model) renderTable() string {
 	return b.String()
 }
 
-// renderGroup renders the windowed sessions whose liveness matches wantAlive
-// under a section header. Empty groups render nothing.
-func (m Model) renderGroup(label string, total, start, end int, wantAlive bool, nameWidth, taskWidth int, showTask bool) string {
+// renderGroup renders the windowed sessions whose Closed flag matches
+// wantClosed under a section header. Empty groups render nothing.
+func (m Model) renderGroup(label string, total, start, end int, wantClosed bool, nameWidth, taskWidth int, showTask bool) string {
 	var rows []string
 	for i := start; i < end; i++ {
 		s := m.sessions[i]
-		if (s.ProcAlive == adapter.Alive) != wantAlive {
+		if s.Closed != wantClosed {
 			continue
 		}
 		rows = append(rows, renderRow(s, i == m.selected, nameWidth, taskWidth, showTask))

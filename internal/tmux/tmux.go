@@ -158,7 +158,41 @@ func (c *Client) applyServerConfig(ctx context.Context) error {
 	if _, err := c.run(ctx, "bind-key", "-n", "C-z", "display-message", "Ctrl+Z is disabled in uam sessions; use Ctrl+b d to detach"); err != nil {
 		return fmt.Errorf("bind C-z: %w", err)
 	}
+	// Hook install is best-effort. If we can't resolve a safe binary path,
+	// the rest of uam still works — only the exit-in-session signal is lost,
+	// and the user can recover via Ctrl+X or `uam rm`.
+	if cmd := sessionClosedHookCommand(); cmd != "" {
+		_, _ = c.run(ctx, "set-hook", "-g", "session-closed", cmd)
+	}
 	return nil
+}
+
+// sessionClosedHookCommand returns the tmux command to install as the
+// session-closed hook, or empty string if the uam binary path isn't safe
+// to embed (path contains characters that would break shell quoting).
+//
+// The hook fires whenever a session is destroyed — both when the user types
+// `exit` inside the agent and when uam itself calls kill-session. In either
+// case the record gets flagged closed_by_user; uam-initiated paths that
+// follow up by deleting the record (Ctrl+X / `uam rm`) make the flag moot.
+func sessionClosedHookCommand() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if err := execpath.ValidateAbsoluteExecutable(exe); err != nil {
+		return ""
+	}
+	// Reject paths with shell metacharacters we'd otherwise need to escape.
+	// Real uam installs land in standard bin directories without these,
+	// and bailing out is safer than risking a malformed hook.
+	if strings.ContainsAny(exe, "\"'\\$`") {
+		return ""
+	}
+	// run-shell receives a /bin/sh command string. tmux substitutes
+	// #{hook_session_name} before sh sees it; single quotes around the
+	// substitution prevent sh from expanding anything inside.
+	return fmt.Sprintf(`run-shell "%s notify-closed '#{hook_session_name}'"`, exe)
 }
 
 func (c *Client) HasSession(ctx context.Context, target string) bool {

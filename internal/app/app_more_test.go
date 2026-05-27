@@ -165,7 +165,7 @@ func TestViewShowsDetailsOnTopAndActivityInTable(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
 		{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "fix the parser", Cwd: "/tmp/project", TmuxSession: "uam-fake-1", ProcAlive: adapter.Alive},
-		{ID: "2", AgentType: "fake", DisplayName: "old", Prompt: "old prompt", Cwd: "/tmp/old", TmuxSession: "uam-fake-2", ProcAlive: adapter.Exited},
+		{ID: "2", AgentType: "fake", DisplayName: "old", Prompt: "old prompt", Cwd: "/tmp/old", TmuxSession: "uam-fake-2", ProcAlive: adapter.Exited, Closed: true},
 	}
 	view := m.View()
 	if !strings.Contains(view, "cwd: /tmp/project") {
@@ -178,8 +178,8 @@ func TestViewShowsDetailsOnTopAndActivityInTable(t *testing.T) {
 		t.Fatalf("view should not show aggregate header stats: %s", view)
 	}
 	table := m.renderTable()
-	if !strings.Contains(table, "ACTIVE") || !strings.Contains(table, "STOPPED") {
-		t.Fatalf("table should group sessions into ACTIVE and STOPPED: %s", table)
+	if !strings.Contains(table, "ACTIVE") || !strings.Contains(table, "CLOSED") {
+		t.Fatalf("table should group sessions into ACTIVE and CLOSED: %s", table)
 	}
 	if !strings.Contains(table, "one") || !strings.Contains(table, "fix the parser") {
 		t.Fatalf("table should show session name and activity: %s", table)
@@ -208,10 +208,10 @@ func TestSpaceRestartsStoppedSessionInsteadOfPeeking(t *testing.T) {
 
 func TestSessionRowsStayStaticAcrossRefresh(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{{ID: "live", DisplayName: "live", ProcAlive: adapter.Alive}, {ID: "dead", DisplayName: "dead", ProcAlive: adapter.Exited}}
+	m.sessions = []adapter.Session{{ID: "live", DisplayName: "live", ProcAlive: adapter.Alive}, {ID: "dead", DisplayName: "dead", ProcAlive: adapter.Exited, Closed: true}}
 	before := m.renderTable()
-	if !strings.Contains(before, "ACTIVE") || !strings.Contains(before, "STOPPED") {
-		t.Fatalf("table should group sessions into ACTIVE and STOPPED: %s", before)
+	if !strings.Contains(before, "ACTIVE") || !strings.Contains(before, "CLOSED") {
+		t.Fatalf("table should group sessions into ACTIVE and CLOSED: %s", before)
 	}
 	if strings.Contains(before, "⠋") || strings.Contains(before, "💀") || strings.Contains(before, "🚀") || strings.Contains(before, "🔴") || strings.Contains(before, "🟢") {
 		t.Fatalf("table should stay glyph-based, no spinner/skull/emoji: %s", before)

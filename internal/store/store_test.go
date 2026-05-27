@@ -111,3 +111,58 @@ func TestMigrateCreatesBackup(t *testing.T) {
 		t.Fatalf("backups = %v", matches)
 	}
 }
+
+func TestMigrateV1BackfillsStatusActive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	// Pre-v2 records had no `status` field. The migration must default them
+	// to Active so they remain recoverable on attach.
+	old := map[string]any{
+		"schema_version": 1,
+		"sessions": map[string]any{
+			"claude:abcd1234": map[string]any{
+				"id":           "abcd1234",
+				"agent":        "claude",
+				"tmux_session": "uam-claude-abcd1234",
+			},
+		},
+	}
+	data, _ := json.Marshal(old)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", cfg.SchemaVersion, CurrentSchemaVersion)
+	}
+	rec, ok := cfg.Sessions["claude:abcd1234"]
+	if !ok {
+		t.Fatalf("session lost during migration: %+v", cfg.Sessions)
+	}
+	if rec.Status != StatusActive {
+		t.Fatalf("status = %q, want %q", rec.Status, StatusActive)
+	}
+}
+
+func TestNormalizeBackfillsStatusForExistingSessions(t *testing.T) {
+	// Even at the current schema version, a record with empty Status should
+	// be normalized to Active on every load so downstream consumers never
+	// see an unset value.
+	cfg := Config{
+		SchemaVersion: CurrentSchemaVersion,
+		Sessions: map[string]SessionRecord{
+			"claude:deadbeef": {ID: "deadbeef", Agent: "claude"},
+		},
+	}
+	got := normalize(cfg)
+	if got.Sessions["claude:deadbeef"].Status != StatusActive {
+		t.Fatalf("status = %q, want %q", got.Sessions["claude:deadbeef"].Status, StatusActive)
+	}
+}

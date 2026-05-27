@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const CurrentSchemaVersion = 1
+const CurrentSchemaVersion = 2
 
 const configFileName = "sessions.json"
 
@@ -21,6 +21,16 @@ type Mode string
 const (
 	ModeYolo Mode = "yolo"
 	ModeSafe Mode = "safe"
+)
+
+// Status distinguishes records that should keep behaving as live sessions
+// (StatusActive — recoverable on attach) from records the user deliberately
+// retired (StatusClosedByUser).
+type Status string
+
+const (
+	StatusActive       Status = "active"
+	StatusClosedByUser Status = "closed_by_user"
 )
 
 type Config struct {
@@ -49,6 +59,7 @@ type SessionRecord struct {
 	Pinned      bool      `json:"pinned"`
 	Group       string    `json:"group"`
 	SortIndex   int       `json:"sort_index"`
+	Status      Status    `json:"status,omitempty"`
 	PR          *PRRecord `json:"pr,omitempty"`
 }
 
@@ -182,10 +193,28 @@ func normalize(cfg Config) Config {
 	if cfg.UI.PeekWidth == 0 {
 		cfg.UI.PeekWidth = 60
 	}
+	for k, rec := range cfg.Sessions {
+		if rec.Status == "" {
+			rec.Status = StatusActive
+			cfg.Sessions[k] = rec
+		}
+	}
 	return cfg
 }
 
 func migrate(cfg Config) Config {
+	// v1 → v2 backfills Status. Pre-v2 records had no notion of user-closed,
+	// so every existing row defaults to Active. Soft-closed records from
+	// the legacy `uam stop` path are indistinguishable here and will surface
+	// as Active until the user attaches or deletes them.
+	if cfg.SchemaVersion < 2 {
+		for k, rec := range cfg.Sessions {
+			if rec.Status == "" {
+				rec.Status = StatusActive
+				cfg.Sessions[k] = rec
+			}
+		}
+	}
 	cfg.SchemaVersion = CurrentSchemaVersion
 	return normalize(cfg)
 }
