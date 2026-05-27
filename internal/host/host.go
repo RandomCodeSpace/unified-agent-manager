@@ -147,10 +147,17 @@ func (h *Host) bootstrap() error {
 
 // pumpPTY copies PTY master output into the journal and to any attached
 // clients. Returns when the master is closed.
+//
+// master is captured up front because cleanup → pty.PTY.Close clears
+// p.Master = nil (see internal/pty/pty.go); reading h.p.Master in the
+// loop would race the cleanup goroutine and nil-deref. The captured
+// *os.File stays valid (Read returns err after close), so this
+// goroutine drains cleanly on shutdown.
 func (h *Host) pumpPTY() {
+	master := h.p.Master
 	buf := make([]byte, 32*1024)
 	for {
-		n, err := h.p.Master.Read(buf)
+		n, err := master.Read(buf)
 		if n > 0 {
 			data := buf[:n]
 			if _, werr := h.j.Write(data); werr != nil {
@@ -247,7 +254,12 @@ func (h *Host) handleFrame(conn net.Conn, req ipc.Request) bool {
 // Returns when conn closes (client disconnect) or the PTY master
 // rejects a write (child exiting). The conn is detached from h.attached
 // on exit so pumpPTY no longer broadcasts to a dead client.
+//
+// master is captured up front for the same reason as pumpPTY: cleanup
+// nils p.Master on shutdown, and reading h.p.Master in the inner loop
+// would race the cleanup goroutine. See pumpPTY.
 func (h *Host) runRawAttach(conn net.Conn) {
+	master := h.p.Master
 	h.mu.Lock()
 	h.attached = append(h.attached, conn)
 	h.mu.Unlock()
@@ -265,7 +277,7 @@ func (h *Host) runRawAttach(conn net.Conn) {
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
-			if _, werr := h.p.Master.Write(buf[:n]); werr != nil {
+			if _, werr := master.Write(buf[:n]); werr != nil {
 				return
 			}
 		}
