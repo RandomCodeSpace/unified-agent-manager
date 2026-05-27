@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
@@ -26,5 +27,37 @@ func TestNoYoloArgs(t *testing.T) {
 	}
 	if len(ta.YoloArgs) != 0 {
 		t.Fatalf("opencode YoloArgs must be empty, got %v", ta.YoloArgs)
+	}
+}
+
+// TestSessionArgsAppendsContinueOnResume asserts the SessionArgs
+// hook returns opencode's `-c` (continue) on resume and nothing on
+// dispatch. opencode has no flag for presetting its session ID at
+// dispatch, so id-based resume isn't possible at v0.1.x; `-c`
+// resumes the most recent session in the current cwd.
+func TestSessionArgsAppendsContinueOnResume(t *testing.T) {
+	if got := sessionArgs(adapter.ResumeRequest{ID: "x"}, "dispatched"); got != nil {
+		t.Fatalf("dispatched should add no flags, got %v", got)
+	}
+	if got, want := sessionArgs(adapter.ResumeRequest{ID: "x"}, "resumed"), []string{"-c"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("resumed got %v want %v", got, want)
+	}
+}
+
+// TestNewWiresSessionArgs asserts New installs the SessionArgs hook
+// and SkipPromptOnResume. Without this wiring, picking "Resume" on
+// an opencode row would re-launch opencode with no continuation
+// flag, starting a fresh TUI instead of resuming the prior session.
+func TestNewWiresSessionArgs(t *testing.T) {
+	got := New(nil)
+	ta, ok := got.(*adapter.TmuxAgent)
+	if !ok {
+		t.Fatalf("expected *adapter.TmuxAgent, got %T", got)
+	}
+	if ta.SessionArgs == nil {
+		t.Fatal("expected SessionArgs to be wired")
+	}
+	if !ta.SkipPromptOnResume {
+		t.Fatal("expected SkipPromptOnResume to be true")
 	}
 }

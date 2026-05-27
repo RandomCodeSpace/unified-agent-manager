@@ -14,6 +14,23 @@ import (
 // Therefore opencode is launched with no yolo args.
 var yoloArgs []string
 
+// sessionArgs appends opencode's `-c` (continue) flag on resume.
+// opencode has no flag for presetting its session ID at dispatch,
+// so uam can't resume by uam-id directly; `-c` instead picks
+// opencode's most recent session for the current cwd. If multiple
+// opencode rows share a cwd, all of them resume to the same
+// most-recent session — a limitation of opencode's CLI surface, not
+// of this wiring.
+func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
+	if activity == "resumed" {
+		return []string{"-c"}
+	}
+	return nil
+}
+
 func New(client *tmux.Client) adapter.AgentAdapter {
-	return adapter.NewTmuxAgent("opencode", "OpenCode", []adapter.CommandCandidate{{Display: "opencode", Args: []string{"opencode"}}}, yoloArgs, adapter.DefaultPatterns("opencode"), client)
+	a := adapter.NewTmuxAgent("opencode", "OpenCode", []adapter.CommandCandidate{{Display: "opencode", Args: []string{"opencode"}}}, yoloArgs, adapter.DefaultPatterns("opencode"), client)
+	a.SessionArgs = sessionArgs
+	a.SkipPromptOnResume = true
+	return a
 }
