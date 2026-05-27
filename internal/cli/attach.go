@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -19,11 +18,15 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/supervisor"
 )
 
-// detachKey is the byte that, when read from local stdin, ends the
-// attach session without killing the underlying agent. Chosen as Ctrl-\
-// (0x1c, ASCII FS) because it is rarely produced by interactive shells
-// or any of the supported agent CLIs.
-const detachKey byte = 0x1c
+// Detach key uses tmux-style two-byte sequence: Ctrl-b followed by 'd'.
+// Ctrl-b alone is held back (waiting for the second key); Ctrl-b Ctrl-b
+// forwards a single literal Ctrl-b to the agent (the standard escape
+// hatch); Ctrl-b d ends the attach session without killing the agent;
+// Ctrl-b <anything else> forwards Ctrl-b then the second byte.
+const (
+	prefixKey  byte = 0x02 // Ctrl-b
+	detachByte byte = 'd'
+)
 
 // RunAttachRaw implements `uam attach --raw <handle>`. It dials the
 // per-session host socket, sends KindAttach to flip the conn into a raw
@@ -150,21 +153,23 @@ func pipeAttach(streamConn net.Conn, stdin io.Reader, stdout io.Writer) {
 }
 
 // pumpStdinToStream copies bytes from stdin to streamConn until either
-// side errors or the detach key (Ctrl-\) is read. Bytes preceding the
-// detach key in the same read buffer are forwarded so a key sequence
-// ending in the detach byte does not silently drop its preamble.
+// side errors or the detach sequence (Ctrl-b d) is read. Implements the
+// tmux-style prefix state machine: scanForDetach inspects each read
+// buffer, splits out forwardable bytes, and reports detach.
 func pumpStdinToStream(stdin io.Reader, streamConn net.Conn) {
 	buf := make([]byte, 4096)
+	inPrefix := false
 	for {
 		n, rerr := stdin.Read(buf)
 		if n > 0 {
-			if i := bytes.IndexByte(buf[:n], detachKey); i >= 0 {
-				if i > 0 {
-					_, _ = streamConn.Write(buf[:i])
+			out, detach, next := scanForDetach(buf[:n], inPrefix)
+			inPrefix = next
+			if len(out) > 0 {
+				if _, werr := streamConn.Write(out); werr != nil {
+					return
 				}
-				return
 			}
-			if _, werr := streamConn.Write(buf[:n]); werr != nil {
+			if detach {
 				return
 			}
 		}
@@ -172,6 +177,43 @@ func pumpStdinToStream(stdin io.Reader, streamConn net.Conn) {
 			return
 		}
 	}
+}
+
+// scanForDetach implements the Ctrl-b prefix state machine on one
+// chunk of stdin. It returns the bytes that should be forwarded to the
+// remote PTY, a detach flag, and the new prefix state for the next
+// chunk. A pending Ctrl-b at the end of the chunk is held back (the
+// returned next == true) until the following chunk arrives so the user
+// can complete the sequence across read boundaries.
+//
+// State transitions (current prefix → input → action):
+//   - false → Ctrl-b      → next=true, no forward
+//   - false → other       → forward the byte
+//   - true  → 'd'         → detach
+//   - true  → Ctrl-b      → forward one literal Ctrl-b (escape)
+//   - true  → other       → forward Ctrl-b then the byte
+func scanForDetach(in []byte, inPrefix bool) (out []byte, detach, next bool) {
+	out = make([]byte, 0, len(in)+1)
+	for _, b := range in {
+		if inPrefix {
+			inPrefix = false
+			switch b {
+			case detachByte:
+				return out, true, false
+			case prefixKey:
+				out = append(out, prefixKey)
+			default:
+				out = append(out, prefixKey, b)
+			}
+			continue
+		}
+		if b == prefixKey {
+			inPrefix = true
+			continue
+		}
+		out = append(out, b)
+	}
+	return out, false, inPrefix
 }
 
 // sendResize reads the current terminal winsize and sends a KindResize
