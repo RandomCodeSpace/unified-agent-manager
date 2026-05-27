@@ -31,9 +31,10 @@ func EnsureDaemon(socketPath string) error {
 	if err != nil {
 		return fmt.Errorf("ipcclient os.Executable: %w", err)
 	}
-	// #nosec G204 -- exe is the absolute path of the binary running this
-	// code; not user input.
-	cmd := exec.Command(exe, "daemon", "start", "--detach")
+	if err := validateAutostartBinary(exe); err != nil {
+		return err
+	}
+	cmd := buildAutostartCmd(exe)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("ipcclient autostart daemon: %w", err)
 	}
@@ -75,4 +76,35 @@ func isAlive(pid int) bool {
 	}
 	// signal 0 doesn't deliver but kernel still checks pid existence + perms.
 	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+// validateAutostartBinary refuses to autostart unless the running binary
+// is `uam` (or the import-path-derived `unified-agent-manager`). Under
+// `go test`, os.Executable() resolves to the package's *.test binary —
+// fork-execing it would re-run the test suite recursively, detached and
+// inheriting tty stdio, effectively a slow fork bomb. Failing fast lets
+// callers fall back to tmux instead of burning the host.
+func validateAutostartBinary(exe string) error {
+	base := filepath.Base(exe)
+	if base != "uam" && base != "unified-agent-manager" {
+		return fmt.Errorf("ipcclient autostart: running binary %q is not uam; refusing fork-exec", base)
+	}
+	return nil
+}
+
+// buildAutostartCmd constructs the detached `uam daemon start --detach`
+// invocation. Setsid + nil stdio belt-and-braces the basename guard so a
+// stray non-uam binary that ever sneaks past the check cannot dump
+// output onto the user's terminals. doubleForkDaemon inside the real
+// `uam` binary repeats this for the eventual long-lived child; here we
+// just need the immediate fork-exec to be detached.
+func buildAutostartCmd(exe string) *exec.Cmd {
+	// #nosec G204 -- exe is the absolute path of the binary running this
+	// code; not user input.
+	cmd := exec.Command(exe, "daemon", "start", "--detach")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd
 }

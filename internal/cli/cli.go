@@ -163,36 +163,46 @@ func requireArg(args []string, message string) (string, error) {
 // NewService wires the app service and supported agent adapters.
 //
 // Backend selection is gated on UAM_BACKEND:
-//   - "native": ipcclient against the per-user supervisor daemon
-//     (auto-starts it if not running). All providers wire through their
-//     `NewBackend(mux.Backend)` factories.
-//   - default (or empty / "tmux"): legacy tmux backend. Provider
-//     adapters use the existing `New(*tmux.Client)` factories.
+//   - default (or empty / "native"): ipcclient against the per-user
+//     supervisor daemon (auto-starts it if not running). All providers
+//     wire through their `NewBackend(mux.Backend)` factories. If the
+//     supervisor cannot be reached, the service falls back to the
+//     legacy tmux backend after printing a single warning.
+//   - "tmux": legacy tmux backend (opt-out path). Provider adapters
+//     use the existing `New(*tmux.Client)` factories.
 //
-// Default is tmux for v0.1.13; the native path stays opt-in until v0.2.0
-// flips the default.
+// As of v0.2.0 native is the default; the tmux backend remains available
+// as an explicit opt-out and is scheduled for removal in v0.4.0.
 func NewService(st *store.Store) *app.Service {
-	switch os.Getenv("UAM_BACKEND") {
-	case "native":
-		c, err := ipcclient.New(ipcclient.Options{AutoStart: true})
-		if err != nil {
-			// Fall back to tmux so the user still has a working CLI rather
-			// than a hard crash on startup. Print a single warning so the
-			// regression is visible in CI without breaking attach paths.
-			fmt.Fprintf(os.Stderr, "uam: native backend unavailable, falling back to tmux: %v\n", err)
-			return newServiceTmux(st)
-		}
-		reg := adapter.NewRegistry([]adapter.AgentAdapter{
-			claude.NewBackend(c),
-			codex.NewBackend(c),
-			copilot.NewBackend(c),
-			hermes.NewBackend(c),
-			opencode.NewBackend(c),
-		})
-		return app.NewService(st, reg)
+	backend := os.Getenv("UAM_BACKEND")
+	switch backend {
+	case "tmux":
+		return newServiceTmux(st)
+	case "", "native":
+		// Empty and explicit "native" both select the native multiplexer.
 	default:
+		// Surface typos / unknown values so a misspelled "tumx" or "Tmux"
+		// does not silently route to native — the user gets a clear
+		// warning that the env var was not recognised before we proceed
+		// with the default backend.
+		fmt.Fprintf(os.Stderr, "uam: unknown UAM_BACKEND %q, defaulting to native\n", backend)
+	}
+	c, err := ipcclient.New(ipcclient.Options{AutoStart: true})
+	if err != nil {
+		// Fall back to tmux so the user still has a working CLI rather
+		// than a hard crash on startup. Print a single warning so the
+		// regression is visible in CI without breaking attach paths.
+		fmt.Fprintf(os.Stderr, "uam: native backend unavailable, falling back to tmux: %v\n", err)
 		return newServiceTmux(st)
 	}
+	reg := adapter.NewRegistry([]adapter.AgentAdapter{
+		claude.NewBackend(c),
+		codex.NewBackend(c),
+		copilot.NewBackend(c),
+		hermes.NewBackend(c),
+		opencode.NewBackend(c),
+	})
+	return app.NewService(st, reg)
 }
 
 func newServiceTmux(st *store.Store) *app.Service {
