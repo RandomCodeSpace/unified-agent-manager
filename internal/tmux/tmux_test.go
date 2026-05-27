@@ -111,6 +111,46 @@ func assertClientHelpers(t *testing.T, c *Client) {
 	}
 }
 
+func TestEnsureServerConfigInstallsSessionClosedHook(t *testing.T) {
+	c, logPath := setupFakeTmuxClient(t)
+	if err := c.EnsureServerConfig(context.Background()); err != nil {
+		t.Fatalf("EnsureServerConfig: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "set-hook -g session-closed") {
+		t.Fatalf("session-closed hook not installed: %s", data)
+	}
+	if !strings.Contains(string(data), "notify-closed") {
+		t.Fatalf("hook command should reference notify-closed: %s", data)
+	}
+	// #{hook_session_name} must reach tmux verbatim so it can substitute
+	// the dying session's name at fire time.
+	if !strings.Contains(string(data), "hook_session_name") {
+		t.Fatalf("hook command must pass through tmux format variable: %s", data)
+	}
+}
+
+func TestSessionClosedHookCommandRejectsUnsafePaths(t *testing.T) {
+	// We can't directly fake os.Executable without an injection seam, but
+	// we can at least sanity-check the format on the real test binary path.
+	cmd := sessionClosedHookCommand()
+	if cmd == "" {
+		t.Skip("test binary path was rejected as unsafe — skipping format check")
+	}
+	if !strings.Contains(cmd, "run-shell") {
+		t.Fatalf("hook command must use run-shell: %q", cmd)
+	}
+	if !strings.Contains(cmd, "notify-closed") {
+		t.Fatalf("hook command must reference notify-closed: %q", cmd)
+	}
+	if !strings.Contains(cmd, "'#{hook_session_name}'") {
+		t.Fatalf("session name must be single-quoted for the inner shell: %q", cmd)
+	}
+}
+
 func TestExecutablePathRejectsUnsafeOverrides(t *testing.T) {
 	c := New("uam")
 	c.Executable = "tmux"

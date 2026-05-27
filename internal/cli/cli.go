@@ -60,6 +60,7 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam peek <id>")
 	fmt.Fprintln(os.Stderr, "  uam stop <id>")
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
+	fmt.Fprintln(os.Stderr, "  uam notify-closed <tmux-session>   (internal: tmux session-closed hook)")
 }
 
 // Run executes the CLI using the default Bubble Tea TUI runner.
@@ -98,6 +99,8 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		return runPeek(ctx, svc, args[1:])
 	case "stop", "rm":
 		return runStop(ctx, svc, args[0], args[1:])
+	case "notify-closed":
+		return runNotifyClosed(svc, args[1:])
 	case "attach":
 		id, err := requireArg(args[1:], "attach requires <id>")
 		if err != nil {
@@ -139,6 +142,21 @@ func runStop(ctx context.Context, svc *app.Service, cmd string, args []string) e
 		return err
 	}
 	return svc.Stop(ctx, id, cmd == "rm")
+}
+
+// runNotifyClosed is invoked from tmux's session-closed hook via:
+//
+//	tmux set-hook -g session-closed 'run-shell "<uam-bin> notify-closed #{hook_session_name}"'
+//
+// It flags the matching record as user-closed so exit-in-session and external
+// `tmux kill-session` calls aren't mistaken for reboot-killed sessions on
+// the next uam launch. Idempotent; safe to run repeatedly.
+func runNotifyClosed(svc *app.Service, args []string) error {
+	tmuxName, err := requireArg(args, "notify-closed requires <tmux-session>")
+	if err != nil {
+		return err
+	}
+	return svc.NotifyClosed(tmuxName)
 }
 
 func runLast(ctx context.Context, svc *app.Service, runTUI func(context.Context, tea.Model) error) error {
