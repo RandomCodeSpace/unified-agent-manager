@@ -168,8 +168,12 @@ func TestAdoptOrphansAddsLiveSockets(t *testing.T) {
 	}
 	sup.mu.Lock()
 	defer sup.mu.Unlock()
-	if _, ok := sup.sessions["uam-test-alive"]; !ok {
+	rec, ok := sup.sessions["uam-test-alive"]
+	if !ok {
 		t.Fatalf("expected uam-test-alive to be adopted; sessions=%v", sup.sessions)
+	}
+	if rec.CreatedAt == 0 {
+		t.Fatalf("expected adopted session to carry a non-zero CreatedAt (socket mtime); got %+v", rec)
 	}
 	if _, ok := sup.sessions["uam-test-dead"]; ok {
 		t.Fatalf("dead socket should not be adopted")

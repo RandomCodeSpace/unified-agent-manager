@@ -283,8 +283,21 @@ func (s *Supervisor) AdoptOrphans() error {
 		path := filepath.Join(s.hostsDir, e.Name())
 		id := strings.TrimSuffix(e.Name(), ".sock")
 		if probeHostAlive(path) {
+			// Adopt the socket's mtime as CreatedAt so the TUI shows a
+			// real "created" timestamp instead of 1970-01-01. The
+			// mtime is set when the host first bound the socket, which
+			// is close enough to the original spawn time for display
+			// purposes. Falls back to time.Now() if stat fails.
+			createdAt := time.Now().Unix()
+			if info, err := os.Stat(path); err == nil {
+				createdAt = info.ModTime().Unix()
+			}
 			s.mu.Lock()
-			s.sessions[id] = SessionRecord{ID: id, SocketPath: path}
+			s.sessions[id] = SessionRecord{
+				ID:         id,
+				SocketPath: path,
+				CreatedAt:  createdAt,
+			}
 			s.mu.Unlock()
 			continue
 		}

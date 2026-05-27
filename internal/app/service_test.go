@@ -227,6 +227,27 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	}
 }
 
+// TestSortSessionsBreaksTiesByID verifies the deterministic ID
+// tiebreaker. Without it, AdoptOrphans-produced records (all sharing
+// Pinned=false, SortIndex=0, ProcAlive=Exited, CreatedAt=zero) would
+// reshuffle every refresh because sessionsFromMap walks a Go map.
+func TestSortSessionsBreaksTiesByID(t *testing.T) {
+	tied := []adapter.Session{
+		{ID: "c"}, {ID: "a"}, {ID: "d"}, {ID: "b"},
+	}
+	// Run multiple times to catch any non-determinism.
+	for range 5 {
+		work := append([]adapter.Session(nil), tied...)
+		SortSessions(work)
+		want := []string{"a", "b", "c", "d"}
+		for i, w := range want {
+			if work[i].ID != w {
+				t.Fatalf("iter: got %q at index %d, want %q (full=%+v)", work[i].ID, i, w, work)
+			}
+		}
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout

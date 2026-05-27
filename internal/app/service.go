@@ -143,7 +143,16 @@ func SortSessions(sessions []adapter.Session) {
 		if sessions[i].ProcAlive != sessions[j].ProcAlive {
 			return sessions[i].ProcAlive == adapter.Alive
 		}
-		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+		if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+			return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+		}
+		// Deterministic final tiebreaker by ID. Without it, sessions
+		// that share every higher-priority field (Pinned, SortIndex,
+		// ProcAlive, CreatedAt) shuffle on each refresh because
+		// sessionsFromMap walks a Go map and SliceStable preserves the
+		// random input order. Hits whenever AdoptOrphans produces
+		// records with zero CreatedAt.
+		return sessions[i].ID < sessions[j].ID
 	})
 }
 
