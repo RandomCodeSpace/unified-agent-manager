@@ -225,6 +225,140 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	if rec.Mode != store.ModeYolo || rec.Name != "id" || rec.Prompt != "do work" {
 		t.Fatalf("rec=%+v", rec)
 	}
+	if rec.Status != store.StatusActive {
+		t.Fatalf("new records should default to StatusActive, got %q", rec.Status)
+	}
+}
+
+func TestSortSessionsPushesClosedToBottom(t *testing.T) {
+	now := time.Now()
+	// Closed sessions belong below everything else, even pinned ones, so the
+	// Active group renders without interruption at the top.
+	sessions := []adapter.Session{
+		{ID: "closed-pinned", Pinned: true, Closed: true, ProcAlive: adapter.Exited, CreatedAt: now},
+		{ID: "live", ProcAlive: adapter.Alive, CreatedAt: now},
+		{ID: "stopped-active", ProcAlive: adapter.Exited, CreatedAt: now},
+	}
+	SortSessions(sessions)
+	if sessions[0].ID != "live" || sessions[1].ID != "stopped-active" || sessions[2].ID != "closed-pinned" {
+		t.Fatalf("order=%+v", sessions)
+	}
+}
+
+func TestStopSoftCloseFlagsRecordClosedByUser(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	// Soft-close (remove=false) must keep the record and flag it as closed.
+	if err := svc.Stop(context.Background(), "12345678", false); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if !fake.stopped {
+		t.Fatal("adapter Stop was not invoked")
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := cfg.Sessions[store.Key("fake", "12345678")]
+	if !ok {
+		t.Fatalf("record removed unexpectedly on soft close: %+v", cfg.Sessions)
+	}
+	if rec.Status != store.StatusClosedByUser {
+		t.Fatalf("status = %q, want %q", rec.Status, store.StatusClosedByUser)
+	}
+}
+
+func TestStopRemoveDeletesRecord(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Stop(context.Background(), "12345678", true); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Sessions[store.Key("fake", "12345678")]; ok {
+		t.Fatalf("record should be gone after Stop(remove=true): %+v", cfg.Sessions)
+	}
+}
+
+func TestNotifyClosedMarksMatchingRecord(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.NotifyClosed("uam-fake-12345678"); err != nil {
+		t.Fatalf("NotifyClosed: %v", err)
+	}
+	cfg, _ := st.Load()
+	if cfg.Sessions[store.Key("fake", "12345678")].Status != store.StatusClosedByUser {
+		t.Fatalf("status = %q", cfg.Sessions[store.Key("fake", "12345678")].Status)
+	}
+
+	// Idempotent: calling again leaves the record untouched.
+	if err := svc.NotifyClosed("uam-fake-12345678"); err != nil {
+		t.Fatalf("NotifyClosed (second call): %v", err)
+	}
+
+	// No-op when the tmux name does not match any record (e.g., race with rm).
+	if err := svc.NotifyClosed("uam-fake-unknown"); err != nil {
+		t.Fatalf("NotifyClosed unknown: %v", err)
+	}
+
+	// No-op when the tmux name is empty (e.g., tmux substitution failure).
+	if err := svc.NotifyClosed(""); err != nil {
+		t.Fatalf("NotifyClosed empty: %v", err)
+	}
+}
+
+func TestResumeBackgroundClearsClosedStatus(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	// User closes the session (soft close), then resumes it.
+	if err := svc.Stop(context.Background(), "12345678", false); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// Drop the live session so Find sees an exited pane, forcing resume.
+	fake.sessions = nil
+	if err := svc.ResumeBackground(context.Background(), "12345678"); err != nil {
+		t.Fatalf("ResumeBackground: %v", err)
+	}
+	cfg, _ := st.Load()
+	if cfg.Sessions[store.Key("fake", "12345678")].Status != store.StatusActive {
+		t.Fatalf("status after resume = %q, want %q", cfg.Sessions[store.Key("fake", "12345678")].Status, store.StatusActive)
+	}
 }
 
 func captureStdout(t *testing.T, fn func()) string {

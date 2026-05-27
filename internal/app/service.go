@@ -83,6 +83,7 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 	sess.Pinned = rec.Pinned
 	sess.Group = rec.Group
 	sess.SortIndex = rec.SortIndex
+	sess.Closed = rec.Status == store.StatusClosedByUser
 	if rec.PR != nil && sess.PR == nil {
 		sess.PR = &adapter.PRRef{URL: rec.PR.URL, Number: rec.PR.Number, Status: adapter.PRStatus(rec.PR.LastStatus)}
 	}
@@ -90,7 +91,11 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 }
 
 func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Session {
-	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, Activity: "tmux session not running", CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex}
+	activity := "tmux session not running"
+	if rec.Status == store.StatusClosedByUser {
+		activity = "closed"
+	}
+	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, Activity: activity, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
 }
 
 func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) bool {
@@ -134,6 +139,11 @@ func sessionsFromMap(live map[string]adapter.Session) []adapter.Session {
 
 func SortSessions(sessions []adapter.Session) {
 	sort.SliceStable(sessions, func(i, j int) bool {
+		// Closed sessions sort below everything else so the renderer's
+		// Active group stays packed at the top and Closed forms a tail.
+		if sessions[i].Closed != sessions[j].Closed {
+			return !sessions[i].Closed
+		}
 		if sessions[i].Pinned != sessions[j].Pinned {
 			return sessions[i].Pinned
 		}
@@ -183,10 +193,56 @@ func (s *Service) Stop(ctx context.Context, id string, remove bool) error {
 			_ = a.Stop(ctx, sess.ID)
 		}
 	}
-	if s.Store != nil && remove {
-		return s.Store.Update(func(cfg *store.Config) error { delete(cfg.Sessions, store.Key(sess.AgentType, sess.ID)); return nil })
+	if s.Store == nil {
+		return nil
 	}
-	return nil
+	if remove {
+		return s.Store.Update(func(cfg *store.Config) error {
+			delete(cfg.Sessions, store.Key(sess.AgentType, sess.ID))
+			return nil
+		})
+	}
+	// Soft-close: keep the record so the user can resume later, but flag it
+	// as user-closed so the UI sorts it into the Closed group and Reconcile
+	// never treats it as a reboot-recovery candidate.
+	return s.Store.Update(func(cfg *store.Config) error {
+		key := store.Key(sess.AgentType, sess.ID)
+		rec, ok := cfg.Sessions[key]
+		if !ok {
+			return nil
+		}
+		rec.Status = store.StatusClosedByUser
+		cfg.Sessions[key] = rec
+		return nil
+	})
+}
+
+// NotifyClosed flags the record whose tmux name matches tmuxSession as
+// user-closed. It is the entry point for the `uam notify-closed` CLI
+// subcommand wired into tmux's session-closed hook: when the user types
+// `exit` in a session (or someone runs `tmux -L uam kill-session`), tmux
+// destroys the session and fires this so the status survives the close.
+//
+// Idempotent: a no-op if the record is already StatusClosedByUser or if
+// no record matches (e.g., uam already deleted it via Ctrl+X / `uam rm`).
+func (s *Service) NotifyClosed(tmuxSession string) error {
+	if s.Store == nil || tmuxSession == "" {
+		return nil
+	}
+	return s.Store.Update(func(cfg *store.Config) error {
+		for key, rec := range cfg.Sessions {
+			if rec.TmuxSession != tmuxSession {
+				continue
+			}
+			if rec.Status == store.StatusClosedByUser {
+				return nil
+			}
+			rec.Status = store.StatusClosedByUser
+			cfg.Sessions[key] = rec
+			return nil
+		}
+		return nil
+	})
 }
 
 func (s *Service) Rename(ctx context.Context, id, name string) error {
@@ -321,6 +377,9 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 		rec.TmuxSession = resumed.TmuxSession
 		rec.Workdir = resumed.Cwd
 		rec.LastSeenAt = time.Now()
+		// Resuming a closed_by_user session reactivates it. The tmux hook
+		// will flip Status back to closed_by_user on the next exit.
+		rec.Status = store.StatusActive
 		cfg.Sessions[key] = rec
 		return nil
 	})
@@ -345,7 +404,11 @@ func RecordFromSession(sess adapter.Session, mode store.Mode) store.SessionRecor
 		mode = store.ModeYolo
 	}
 	name := firstNonEmpty(sess.DisplayName, sess.ID)
-	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, Name: name, Prompt: sess.Prompt, Mode: mode, Workdir: sess.Cwd, TmuxSession: sess.TmuxSession, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex}
+	status := store.StatusActive
+	if sess.Closed {
+		status = store.StatusClosedByUser
+	}
+	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, Name: name, Prompt: sess.Prompt, Mode: mode, Workdir: sess.Cwd, TmuxSession: sess.TmuxSession, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex, Status: status}
 }
 
 func (s *Service) UpdateSortOrder(sessions []adapter.Session) error {

@@ -143,6 +143,36 @@ func TestRunLastWithoutSessionsFails(t *testing.T) {
 	}
 }
 
+func TestRunNotifyClosedFlagsRecord(t *testing.T) {
+	svc, _ := newCLITestService(t)
+	id := dispatchAndCaptureID(t, svc, []string{"fake", "to-close"})
+	if id == "" {
+		t.Fatal("dispatch did not return an id")
+	}
+	// Hook payload is the tmux session name, not the agent id.
+	if err := runNotifyClosed(svc, []string{"uam-fake-" + id}); err != nil {
+		t.Fatalf("notify-closed: %v", err)
+	}
+	cfg, err := svc.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := cfg.Sessions[store.Key("fake", id)]
+	if !ok {
+		t.Fatalf("record missing: %+v", cfg.Sessions)
+	}
+	if rec.Status != store.StatusClosedByUser {
+		t.Fatalf("status = %q, want %q", rec.Status, store.StatusClosedByUser)
+	}
+}
+
+func TestRunNotifyClosedRequiresName(t *testing.T) {
+	svc, _ := newCLITestService(t)
+	if err := runNotifyClosed(svc, nil); err == nil {
+		t.Fatal("notify-closed without tmux name should fail")
+	}
+}
+
 func TestNewServiceRegistersHermesWhenAvailable(t *testing.T) {
 	dir := t.TempDir()
 	writeCLIExecutable(t, filepath.Join(dir, "hermes"))

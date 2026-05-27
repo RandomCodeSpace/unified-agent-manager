@@ -59,6 +59,12 @@ type Session struct {
 	Pinned      bool
 	Group       string
 	SortIndex   int
+	// Closed mirrors store.StatusClosedByUser: true when the user retired
+	// this session through uam (`uam stop`, exit-in-session via the tmux
+	// hook, or an external `tmux kill-session`). False otherwise — including
+	// for dead-pane sessions left over from a reboot, which remain in the
+	// Active group and resume on attach.
+	Closed bool
 }
 
 type PeekResult struct {

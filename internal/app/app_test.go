@@ -10,20 +10,34 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func TestRenderTableGroupsSessionsByActivity(t *testing.T) {
+func TestRenderTableGroupsSessionsByStatus(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{{ID: "1", AgentType: "claude", DisplayName: "live-one", Prompt: "fix bug", ProcAlive: adapter.Alive}, {ID: "2", AgentType: "codex", DisplayName: "dead-one", Prompt: "old work", ProcAlive: adapter.Exited}}
+	// live-one: live pane, status=active → ACTIVE
+	// stopped-active: dead pane, status=active (e.g., reboot survivor) → ACTIVE
+	// closed-one: dead pane, status=closed_by_user → CLOSED
+	m.sessions = []adapter.Session{
+		{ID: "1", AgentType: "claude", DisplayName: "live-one", Prompt: "fix bug", ProcAlive: adapter.Alive},
+		{ID: "2", AgentType: "codex", DisplayName: "stopped-active", Prompt: "rebooted work", ProcAlive: adapter.Exited},
+		{ID: "3", AgentType: "claude", DisplayName: "closed-one", Prompt: "old work", ProcAlive: adapter.Exited, Closed: true},
+	}
 	out := m.renderTable()
-	for _, want := range []string{"ACTIVE", "STOPPED", "live-one", "dead-one", "fix bug"} {
+	for _, want := range []string{"ACTIVE", "CLOSED", "live-one", "stopped-active", "closed-one", "fix bug"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("table missing %q: %s", want, out)
 		}
+	}
+	if strings.Contains(out, "STOPPED") {
+		t.Fatalf("STOPPED group should be replaced by CLOSED: %s", out)
 	}
 	if strings.Contains(out, "⠋") || strings.Contains(out, "💀") || strings.Contains(out, "🚀") || strings.Contains(out, "🔴") || strings.Contains(out, "🟢") {
 		t.Fatalf("table should stay glyph-based, no spinner/emoji: %s", out)
 	}
 	if strings.Contains(out, "claude") || strings.Contains(out, "codex") {
 		t.Fatalf("table should not show an agent column: %s", out)
+	}
+	// stopped-active belongs above CLOSED so its row appears before any closed_one entry.
+	if strings.Index(out, "stopped-active") > strings.Index(out, "CLOSED") {
+		t.Fatalf("active-but-stopped sessions should render under ACTIVE, before CLOSED: %s", out)
 	}
 }
 
@@ -171,11 +185,11 @@ func TestViewIsCompactAndBorderlessOnNarrowScreens(t *testing.T) {
 	m.width = 44
 	m.sessions = []adapter.Session{
 		{ID: "1", DisplayName: "active-one", Activity: "fixing spacing", Cwd: "/tmp/repo", ProcAlive: adapter.Alive},
-		{ID: "2", DisplayName: "old-one", Cwd: "/tmp/old", ProcAlive: adapter.Exited},
+		{ID: "2", DisplayName: "old-one", Cwd: "/tmp/old", ProcAlive: adapter.Exited, Closed: true},
 	}
 
 	view := m.View()
-	for _, want := range []string{"SELECTED", "ACTIVE", "STOPPED", "active-one", "old-one", "fixing spacing"} {
+	for _, want := range []string{"SELECTED", "ACTIVE", "CLOSED", "active-one", "old-one", "fixing spacing"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("narrow view missing %q:\n%s", want, view)
 		}
