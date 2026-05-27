@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,5 +103,46 @@ func TestReadPidStrconvEdgeCase(t *testing.T) {
 	}
 	if got != pid {
 		t.Fatalf("round-trip: got %d want %d", got, pid)
+	}
+}
+
+func TestValidateAutostartBinaryAcceptsUam(t *testing.T) {
+	if err := validateAutostartBinary("/usr/local/bin/uam"); err != nil {
+		t.Fatalf("expected uam to be accepted, got %v", err)
+	}
+}
+
+func TestValidateAutostartBinaryAcceptsUnifiedAgentManager(t *testing.T) {
+	if err := validateAutostartBinary("/usr/local/bin/unified-agent-manager"); err != nil {
+		t.Fatalf("expected unified-agent-manager to be accepted, got %v", err)
+	}
+}
+
+func TestValidateAutostartBinaryRejectsTestBinary(t *testing.T) {
+	err := validateAutostartBinary("/tmp/go-build123/cli.test")
+	if err == nil {
+		t.Fatalf("expected test binary to be rejected")
+	}
+	if !strings.Contains(err.Error(), "refusing fork-exec") {
+		t.Fatalf("expected refusal message, got %v", err)
+	}
+}
+
+func TestBuildAutostartCmdDetached(t *testing.T) {
+	cmd := buildAutostartCmd("/usr/local/bin/uam")
+	want := []string{"/usr/local/bin/uam", "daemon", "start", "--detach"}
+	if len(cmd.Args) != len(want) {
+		t.Fatalf("args length got %d want %d", len(cmd.Args), len(want))
+	}
+	for i, a := range want {
+		if cmd.Args[i] != a {
+			t.Fatalf("args[%d] got %q want %q", i, cmd.Args[i], a)
+		}
+	}
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
+		t.Fatalf("expected Setsid=true, got %+v", cmd.SysProcAttr)
+	}
+	if cmd.Stdin != nil || cmd.Stdout != nil || cmd.Stderr != nil {
+		t.Fatalf("expected nil stdio, got stdin=%v stdout=%v stderr=%v", cmd.Stdin, cmd.Stdout, cmd.Stderr)
 	}
 }

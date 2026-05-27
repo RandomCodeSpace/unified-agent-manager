@@ -31,29 +31,10 @@ func EnsureDaemon(socketPath string) error {
 	if err != nil {
 		return fmt.Errorf("ipcclient os.Executable: %w", err)
 	}
-	// Refuse to autostart unless the running binary is `uam` (or the
-	// import-path-derived `unified-agent-manager`). Under `go test`,
-	// os.Executable() resolves to the package's *.test binary, which has
-	// no `daemon` argv dispatch — fork-execing it would re-run the test
-	// suite recursively, detached, with inherited stdio, effectively a
-	// slow fork bomb that spews onto every tty the children inherit.
-	// Fail fast so callers fall back to tmux instead of burning the host.
-	if base := filepath.Base(exe); base != "uam" && base != "unified-agent-manager" {
-		return fmt.Errorf("ipcclient autostart: running binary %q is not uam; refusing fork-exec", base)
+	if err := validateAutostartBinary(exe); err != nil {
+		return err
 	}
-	// #nosec G204 -- exe is the absolute path of the binary running this
-	// code; not user input.
-	cmd := exec.Command(exe, "daemon", "start", "--detach")
-	// Defense in depth: detach the child unconditionally — new session, no
-	// controlling tty, no inherited stdio. The doubleForkDaemon path
-	// inside the real `uam` binary already does this, but the basename
-	// guard above is the only thing keeping a renamed-but-non-uam binary
-	// from reaching this fork; if that guard ever regresses, this stops a
-	// stray child from dumping output onto the user's terminals.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	cmd := buildAutostartCmd(exe)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("ipcclient autostart daemon: %w", err)
 	}
@@ -95,4 +76,35 @@ func isAlive(pid int) bool {
 	}
 	// signal 0 doesn't deliver but kernel still checks pid existence + perms.
 	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+// validateAutostartBinary refuses to autostart unless the running binary
+// is `uam` (or the import-path-derived `unified-agent-manager`). Under
+// `go test`, os.Executable() resolves to the package's *.test binary —
+// fork-execing it would re-run the test suite recursively, detached and
+// inheriting tty stdio, effectively a slow fork bomb. Failing fast lets
+// callers fall back to tmux instead of burning the host.
+func validateAutostartBinary(exe string) error {
+	base := filepath.Base(exe)
+	if base != "uam" && base != "unified-agent-manager" {
+		return fmt.Errorf("ipcclient autostart: running binary %q is not uam; refusing fork-exec", base)
+	}
+	return nil
+}
+
+// buildAutostartCmd constructs the detached `uam daemon start --detach`
+// invocation. Setsid + nil stdio belt-and-braces the basename guard so a
+// stray non-uam binary that ever sneaks past the check cannot dump
+// output onto the user's terminals. doubleForkDaemon inside the real
+// `uam` binary repeats this for the eventual long-lived child; here we
+// just need the immediate fork-exec to be detached.
+func buildAutostartCmd(exe string) *exec.Cmd {
+	// #nosec G204 -- exe is the absolute path of the binary running this
+	// code; not user input.
+	cmd := exec.Command(exe, "daemon", "start", "--detach")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd
 }
