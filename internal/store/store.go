@@ -12,7 +12,16 @@ import (
 	"time"
 )
 
-const CurrentSchemaVersion = 1
+// CurrentSchemaVersion is the on-disk sessions.json schema revision.
+//
+// History:
+//   - v1: initial schema (uam <= v0.1.x).
+//   - v2: introduced in v0.2.0. No JSON field changes; the bump records
+//     that the default backend has flipped to native. The JSON field
+//     `tmux_session` is retained for binary compatibility; renaming to
+//     `pane_session` is deferred to v0.4.0 when the tmux backend is
+//     removed.
+const CurrentSchemaVersion = 2
 
 const configFileName = "sessions.json"
 
@@ -185,9 +194,26 @@ func normalize(cfg Config) Config {
 	return cfg
 }
 
+// migrate walks cfg forward through every schema revision below
+// CurrentSchemaVersion. Each step is idempotent on a config already at
+// or beyond that version, so calling migrate on already-current data is
+// a no-op aside from normalization.
 func migrate(cfg Config) Config {
+	if cfg.SchemaVersion < 2 {
+		cfg = migrateV1ToV2(cfg)
+	}
 	cfg.SchemaVersion = CurrentSchemaVersion
 	return normalize(cfg)
+}
+
+// migrateV1ToV2 bumps schema 1 → 2. v0.2.0 ships the default-backend
+// flip (tmux → native) but does not rename any JSON fields; the
+// `tmux_session` field stays in place until v0.4.0 removes the tmux
+// backend. Records are passed through untouched so the migration is
+// safe to re-run.
+func migrateV1ToV2(cfg Config) Config {
+	cfg.SchemaVersion = 2
+	return cfg
 }
 
 func (s *Store) saveNoLock(cfg Config) error {

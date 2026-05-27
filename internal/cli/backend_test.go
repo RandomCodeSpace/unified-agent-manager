@@ -1,56 +1,98 @@
 package cli
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
-// TestNewServiceFallsBackToTmuxWhenSupervisorMissing exercises the native
-// branch: when UAM_BACKEND=native and the supervisor is not reachable,
-// NewService prints a warning to stderr and returns the tmux-backed
-// service. The test asserts the function returns a non-nil service
-// (no panic; legacy registry initializes).
-func TestNewServiceFallsBackToTmuxWhenSupervisorMissing(t *testing.T) {
-	// Point UAM_SOCKET at a path that cannot be a valid Unix socket so
-	// ipcclient.New(autostart=true) fails fast. Use a directory: dialing
-	// it produces ENOTSOCK regardless of autostart attempts.
-	t.Setenv("UAM_BACKEND", "native")
-	t.Setenv("UAM_SOCKET", t.TempDir())
-	// Avoid the autostart fork+exec invoking us recursively in the test:
-	// override the runtime dir so the pid/sock paths sit in a tempdir,
-	// and rely on the autostart's 5-second timeout. The fork+exec'd
-	// child will run `daemon start` against the `go test` binary which
-	// does not handle the subcommand — its stderr is suppressed.
-	//
-	// This is a slow test; mark it as not Short.
-	if testing.Short() {
-		t.Skip("native fallback test skipped in -short mode")
+// captureStderr swaps os.Stderr for a pipe for the duration of fn and
+// returns whatever fn wrote to stderr. Used to differentiate the native
+// fallback branch (prints a warning) from the tmux opt-out branch
+// (silent) when both produce structurally identical *app.Service values.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
 	}
+	os.Stderr = w
+
+	doneCh := make(chan []byte, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		doneCh <- buf.Bytes()
+	}()
+
+	fn()
+
+	_ = w.Close()
+	out := <-doneCh
+	os.Stderr = orig
+	return string(out)
+}
+
+// invokeNewService configures the requested backend env plus isolated
+// socket/runtime paths and returns whatever NewService wrote to stderr.
+// The service itself is also validated as non-nil; any failure there
+// fails the test directly.
+func invokeNewService(t *testing.T, backend string) string {
+	t.Helper()
+	t.Setenv("UAM_BACKEND", backend)
+	// Isolate socket and runtime locations so a developer's running
+	// supervisor cannot influence the test outcome.
+	t.Setenv("UAM_SOCKET", t.TempDir())
 	t.Setenv("UAM_RUNTIME_DIR", t.TempDir())
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("store.Open: %v", err)
 	}
-	svc := NewService(st)
-	if svc == nil {
-		t.Fatalf("NewService returned nil")
-	}
-	if svc.Registry == nil {
-		t.Fatalf("NewService.Registry is nil")
+	stderr := captureStderr(t, func() {
+		svc := NewService(st)
+		if svc == nil || svc.Registry == nil {
+			t.Fatalf("NewService returned nil or empty registry")
+		}
+	})
+	return stderr
+}
+
+// TestNewServiceDefaultsToNative confirms that with UAM_BACKEND unset
+// (the empty-string case from t.Setenv), NewService enters the native
+// branch. Because no supervisor is reachable in the test environment
+// the branch falls back to tmux after printing a warning to stderr;
+// presence of that warning is the observable signal that the native
+// branch executed.
+func TestNewServiceDefaultsToNative(t *testing.T) {
+	stderr := invokeNewService(t, "")
+	if !strings.Contains(stderr, "native backend unavailable") {
+		t.Fatalf("expected native fallback warning, got stderr=%q", stderr)
 	}
 }
 
-func TestNewServiceUsesTmuxByDefault(t *testing.T) {
-	t.Setenv("UAM_BACKEND", "")
-	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
-	if err != nil {
-		t.Fatal(err)
+// TestNewServiceNativeExplicit covers UAM_BACKEND=native. Behavior must
+// match the unset case: native branch is selected, fallback warning is
+// emitted when the supervisor cannot be reached.
+func TestNewServiceNativeExplicit(t *testing.T) {
+	stderr := invokeNewService(t, "native")
+	if !strings.Contains(stderr, "native backend unavailable") {
+		t.Fatalf("expected native fallback warning, got stderr=%q", stderr)
 	}
-	svc := NewService(st)
-	if svc == nil || svc.Registry == nil {
-		t.Fatalf("default service not initialized")
+}
+
+// TestNewServiceTmuxOptOut covers UAM_BACKEND=tmux. The tmux branch must
+// not attempt to dial the supervisor and therefore must not emit the
+// native-fallback warning.
+func TestNewServiceTmuxOptOut(t *testing.T) {
+	stderr := invokeNewService(t, "tmux")
+	if strings.Contains(stderr, "native backend unavailable") {
+		t.Fatalf("tmux opt-out should not probe native backend, got stderr=%q", stderr)
 	}
 }

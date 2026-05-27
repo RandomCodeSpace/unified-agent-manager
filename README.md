@@ -17,7 +17,7 @@ Status: **complete MVP across PLAN.md Phases 0–12**.
 ## Features
 
 - Single Go/Bubble Tea binary: `uam`
-- Private tmux backend: every managed session runs under `tmux -L uam`
+- Native multiplexer backend by default (since v0.2.0); legacy tmux backend remains opt-in via `UAM_BACKEND=tmux`
 - Agent adapters for:
   - Claude Code: `claude --dangerously-skip-permissions`
   - Codex: `codex --sandbox danger-full-access`
@@ -31,6 +31,52 @@ Status: **complete MVP across PLAN.md Phases 0–12**.
 - Pin, rename, group-by-dir toggle, and persisted manual reorder
 - PR URL detection from pane output plus optional `gh pr view` status refresh
 - Shell commands for automation
+
+## Backends
+
+`uam` ships two session-multiplexer backends. The active backend is
+selected at startup via the `UAM_BACKEND` environment variable.
+
+| `UAM_BACKEND` | Backend | Status |
+|---|---|---|
+| unset / empty / `native` | Native multiplexer (per-user supervisor daemon over a Unix socket) | **default since v0.2.0** |
+| `tmux` | Legacy tmux engine (`tmux -L uam`) | opt-out, scheduled for removal in v0.4.0 |
+
+The native backend auto-starts its supervisor on first use. If the
+supervisor cannot be reached (for example because the runtime
+directory is not writable), `uam` prints a single warning to stderr
+and falls back to the tmux backend so the CLI stays usable.
+
+### When to opt back into tmux
+
+Set `UAM_BACKEND=tmux` if any of the following apply:
+
+- **You rely on interactive `uam attach`.** The native backend's
+  `uam attach --raw <id>` exit currently returns `not yet implemented`
+  on v0.1.13 and v0.2.0. Interactive attach against native sessions
+  ships in a follow-up release. Until then, `UAM_BACKEND=tmux` is the
+  supported path for attach-driven workflows.
+- **You are on macOS.** The native backend cross-builds cleanly for
+  darwin/amd64 and darwin/arm64 but has not yet been validated on
+  Apple hardware. Linux is the only verified runtime in v0.2.0.
+- **You hit a classifier regression.** The native backend's pane-state
+  classifier is currently exercised by a small set of synthetic
+  fixtures rather than real-agent byte captures; some edge cases may
+  still mis-classify. If you observe one, `UAM_BACKEND=tmux` restores
+  the v0.1.x classification path while we expand the fixture corpus.
+
+### Deprecation timeline
+
+| Release | Native backend | tmux backend |
+|---|---|---|
+| v0.1.13 | opt-in via `UAM_BACKEND=native` | default |
+| **v0.2.0** | **default; tmux retained as opt-out** | **opt-out via `UAM_BACKEND=tmux`** |
+| v0.4.0 (planned) | only backend; `UAM_BACKEND` ignored | removed (`internal/tmux/` deleted; JSON field `tmux_session` renamed to `pane_session`) |
+
+The sessions.json schema is bumped to v2 in this release. On first
+load of a v1 file `uam` writes a `sessions.json.bak.<unix-nano>`
+snapshot and rewrites the file with `schema_version: 2`. No record
+fields change at v2; the field rename ships with the v0.4.0 schema v3.
 
 ## Build
 
