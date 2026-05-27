@@ -251,6 +251,13 @@ exit 0
 `, 0o755)
 	t.Setenv("UAM_TMUX_BIN", tmuxPath)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Isolate the ipcclient so a real per-user supervisor running on the
+	// developer's box (or in CI from a prior test) cannot leak into this
+	// test. With UAM_RUNTIME_DIR pointed at an empty tempdir, the initial
+	// socket dial fails, autostart's basename guard rejects the *.test
+	// binary, NewService falls back to the tmux engine, and the test
+	// observes the fake tmux above instead of a live native session.
+	t.Setenv("UAM_RUNTIME_DIR", filepath.Join(dir, "runtime"))
 	return dir
 }
 

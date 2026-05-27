@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -183,4 +184,76 @@ func TestHostHandlesCaptureRPC(t *testing.T) {
 	if !found {
 		t.Fatalf("rpc-line not found in capture: %#v", out.Lines)
 	}
+}
+
+// TestHostKindAttachRoundTrip verifies that sending KindAttach over the
+// host socket flips the conn into a raw PTY stream: an ACK frame comes
+// back, then bytes written to the conn reach the child agent's stdin
+// and bytes the child agent writes to stdout flow back out through the
+// same conn (broadcast by pumpPTY via h.attached).
+func TestHostKindAttachRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		SessionID:   "uam-test-attach",
+		Argv:        []string{"/bin/cat"},
+		Cwd:         "/tmp",
+		JournalPath: filepath.Join(dir, "session.log"),
+		SocketPath:  filepath.Join(dir, "session.sock"),
+	}
+	h, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+
+	conn := dialHost(t, cfg.SocketPath)
+	defer func() { _ = conn.Close() }()
+
+	// Handshake.
+	if err := ipc.WriteFrame(conn, ipc.Request{Kind: ipc.KindAttach, ID: 7}); err != nil {
+		t.Fatalf("WriteFrame attach: %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline ack: %v", err)
+	}
+	ack, err := ipc.ReadFrame(conn)
+	if err != nil {
+		t.Fatalf("ReadFrame ack: %v", err)
+	}
+	if ack.ID != 7 {
+		t.Fatalf("expected ack ID=7, got %d", ack.ID)
+	}
+	if !strings.Contains(string(ack.Payload), `"ok":true`) {
+		t.Fatalf("expected ok ack, got %q", string(ack.Payload))
+	}
+
+	// From here on the conn is a raw PTY stream. Write "hi\n"; cat
+	// echoes it back via the PTY master and pumpPTY broadcasts it to
+	// this same conn (since runRawAttach added us to h.attached).
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline raw: %v", err)
+	}
+	if _, err := conn.Write([]byte("hi\n")); err != nil {
+		t.Fatalf("Write raw: %v", err)
+	}
+	buf := make([]byte, 1024)
+	var got []byte
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		n, rerr := conn.Read(buf)
+		if n > 0 {
+			got = append(got, buf[:n]...)
+			if bytes.Contains(got, []byte("hi")) {
+				return
+			}
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	t.Fatalf("expected echo of 'hi' on raw stream, got %q", string(got))
 }
