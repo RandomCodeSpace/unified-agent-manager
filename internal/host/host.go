@@ -7,9 +7,7 @@ package host
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -191,39 +189,56 @@ func (h *Host) acceptLoop() {
 // handleConn handles one connected client until it disconnects.
 func (h *Host) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
-	if uconn, ok := conn.(*net.UnixConn); ok {
-		if uid, err := ipc.PeerUID(uconn); err == nil {
-			// #nosec G115 -- POSIX UIDs are always within uint32 range.
-			if uid != uint32(os.Getuid()) {
-				return // reject cross-uid peers silently
-			}
-		}
+	if !h.checkPeerUID(conn) {
+		return
 	}
 	for {
 		req, err := ipc.ReadFrame(conn)
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return
-			}
 			return
 		}
-		if req.Kind == ipc.KindAttach {
-			// One-time ACK, then this conn becomes a raw PTY stream:
-			// outbound PTY bytes are broadcast to it by pumpPTY, inbound
-			// bytes are written directly to the PTY master. handleConn
-			// returns after runRawAttach since IPC framing no longer
-			// applies on this conn.
-			if err := ipc.WriteFrame(conn, ipc.Request{ID: req.ID, Payload: []byte(`{"ok":true}`)}); err != nil {
-				return
-			}
-			h.runRawAttach(conn)
-			return
-		}
-		resp := h.dispatch(req)
-		if err := ipc.WriteFrame(conn, ipc.Request{ID: req.ID, Payload: resp}); err != nil {
+		if h.handleFrame(conn, req) {
 			return
 		}
 	}
+}
+
+// checkPeerUID enforces the same-user invariant on Unix-domain peers.
+// Non-UDS conns (e.g. an in-process net.Pipe used by tests) are
+// allowed through unconditionally because the UID check does not apply.
+func (h *Host) checkPeerUID(conn net.Conn) bool {
+	uconn, ok := conn.(*net.UnixConn)
+	if !ok {
+		return true
+	}
+	uid, err := ipc.PeerUID(uconn)
+	if err != nil {
+		return true
+	}
+	// #nosec G115 -- POSIX UIDs are always within uint32 range.
+	return uid == uint32(os.Getuid())
+}
+
+// handleFrame dispatches one IPC frame received on conn. Returns true
+// when the caller should stop reading from conn — either runRawAttach
+// has taken ownership of it or the reply write failed.
+func (h *Host) handleFrame(conn net.Conn, req ipc.Request) bool {
+	if req.Kind == ipc.KindAttach {
+		// One-time ACK, then this conn becomes a raw PTY stream:
+		// pumpPTY broadcasts to it; runRawAttach forwards inbound bytes
+		// into the PTY master. IPC framing no longer applies past this
+		// point, so we relinquish the conn after runRawAttach returns.
+		if err := ipc.WriteFrame(conn, ipc.Request{ID: req.ID, Payload: []byte(`{"ok":true}`)}); err != nil {
+			return true
+		}
+		h.runRawAttach(conn)
+		return true
+	}
+	resp := h.dispatch(req)
+	if err := ipc.WriteFrame(conn, ipc.Request{ID: req.ID, Payload: resp}); err != nil {
+		return true
+	}
+	return false
 }
 
 // runRawAttach takes ownership of conn as a raw PTY stream after the

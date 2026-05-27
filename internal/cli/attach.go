@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -41,124 +40,138 @@ func RunAttachRaw(args []string) {
 		fmt.Fprintln(os.Stderr, "uam attach --raw: requires <session-handle>")
 		os.Exit(2)
 	}
-	handle := rem[0]
-	if err := attachToHost(handle); err != nil {
+	if err := attachToHost(rem[0]); err != nil {
 		fmt.Fprintf(os.Stderr, "uam attach --raw: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// attachToHost is the core of RunAttachRaw, factored out so tests and
-// callers that want to handle errors structurally (rather than via
-// os.Exit) can reuse it.
+// attachToHost orchestrates one attach session. Each non-trivial step
+// (handshake, resize relay, bidirectional pipe) lives in its own
+// helper so this orchestrator stays straightforward.
 func attachToHost(handle string) error {
-	sockPath := filepath.Join(supervisor.DefaultRuntimeDir(), "hosts", handle+".sock")
+	sockPath := hostSocketPath(handle)
 
-	streamConn, err := net.DialTimeout("unix", sockPath, 2*time.Second)
+	streamConn, err := dialAndHandshake(sockPath)
 	if err != nil {
-		return fmt.Errorf("dial host socket %s: %w", sockPath, err)
+		return err
 	}
 	defer func() { _ = streamConn.Close() }()
 
-	if err := ipc.WriteFrame(streamConn, ipc.Request{Kind: ipc.KindAttach, ID: 1}); err != nil {
-		return fmt.Errorf("send handshake: %w", err)
-	}
-	if err := streamConn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		return fmt.Errorf("set handshake deadline: %w", err)
-	}
-	if _, err := ipc.ReadFrame(streamConn); err != nil {
-		return fmt.Errorf("handshake ack: %w", err)
-	}
-	// Clear the read deadline so the raw streaming loop blocks naturally
-	// on conn.Read.
-	if err := streamConn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("clear read deadline: %w", err)
-	}
-
-	// Open a separate conn for control RPCs (resize). The stream conn
-	// can no longer carry IPC frames after the handshake.
 	controlConn, _ := net.DialTimeout("unix", sockPath, 2*time.Second)
 	if controlConn != nil {
 		defer func() { _ = controlConn.Close() }()
 	}
 
-	// Switch local stdin to raw mode so each keystroke flows to the
-	// remote PTY without local line buffering or echo. The restore
-	// func is deferred so the terminal returns to cooked mode on every
-	// exit path.
 	restore, err := pty.MakeRaw(os.Stdin)
 	if err != nil {
 		return fmt.Errorf("set raw mode: %w", err)
 	}
 	defer func() { _ = restore() }()
 
-	// SIGWINCH handler: forward terminal resize to the host so the
-	// remote PTY matches the local viewport. Sends an initial resize
-	// immediately so the agent renders correctly even if the size has
-	// not changed since the session was spawned.
 	if controlConn != nil {
-		sigCh := make(chan os.Signal, 8)
-		signal.Notify(sigCh, syscall.SIGWINCH)
-		defer signal.Stop(sigCh)
-		sendResize(controlConn, os.Stdin)
-		go func() {
-			for range sigCh {
-				sendResize(controlConn, os.Stdin)
-			}
-		}()
+		stop := startResizeWatch(controlConn, os.Stdin)
+		defer stop()
 	}
 
-	// Bidirectional pipe. Either side returning ends the session.
-	done := make(chan struct{}, 2)
+	pipeAttach(streamConn, os.Stdin, os.Stdout)
+	return nil
+}
+
+// hostSocketPath computes the per-session host socket path for a given
+// session handle. Factored out so tests can exercise the derivation
+// without dialing.
+func hostSocketPath(handle string) string {
+	return filepath.Join(supervisor.DefaultRuntimeDir(), "hosts", handle+".sock")
+}
+
+// dialAndHandshake dials the host UDS, sends the KindAttach handshake,
+// waits up to 2s for the ACK frame, then clears the read deadline so
+// the subsequent raw streaming loop blocks naturally on conn.Read.
+func dialAndHandshake(sockPath string) (net.Conn, error) {
+	conn, err := net.DialTimeout("unix", sockPath, 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("dial host socket %s: %w", sockPath, err)
+	}
+	if err := ipc.WriteFrame(conn, ipc.Request{Kind: ipc.KindAttach, ID: 1}); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("send handshake: %w", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("set handshake deadline: %w", err)
+	}
+	if _, err := ipc.ReadFrame(conn); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("handshake ack: %w", err)
+	}
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("clear read deadline: %w", err)
+	}
+	return conn, nil
+}
+
+// startResizeWatch subscribes to SIGWINCH, sends an immediate
+// KindResize matching the current tty winsize, and forwards subsequent
+// SIGWINCH signals as further KindResize frames over the control
+// conn. Returns a stop function that unsubscribes the handler.
+func startResizeWatch(controlConn net.Conn, tty *os.File) func() {
+	sigCh := make(chan os.Signal, 8)
+	signal.Notify(sigCh, syscall.SIGWINCH)
+	sendResize(controlConn, tty)
+	go func() {
+		for range sigCh {
+			sendResize(controlConn, tty)
+		}
+	}()
+	return func() { signal.Stop(sigCh) }
+}
+
+// pipeAttach runs the bidirectional copy between the raw stream conn
+// and local stdin/stdout. Returns once either direction's goroutine
+// completes (peer close, EOF, or detach key fired from stdin).
+func pipeAttach(streamConn net.Conn, stdin io.Reader, stdout io.Writer) {
 	var closeOnce sync.Once
 	closer := func() { _ = streamConn.Close() }
+	done := make(chan struct{}, 2)
 
-	// Host PTY output → local stdout. io.Copy returns when the conn
-	// closes (host shutdown or detach key fired below).
 	go func() {
-		_, _ = io.Copy(os.Stdout, streamConn)
+		_, _ = io.Copy(stdout, streamConn)
 		closeOnce.Do(closer)
 		done <- struct{}{}
 	}()
-
-	// Local stdin → host PTY, intercepting the detach key. Reading
-	// directly from os.Stdin (instead of an io.Reader wrapper) keeps
-	// raw-mode latency to a single syscall per keystroke.
 	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, rerr := os.Stdin.Read(buf)
-			if n > 0 {
-				if i := bytes.IndexByte(buf[:n], detachKey); i >= 0 {
-					if i > 0 {
-						_, _ = streamConn.Write(buf[:i])
-					}
-					closeOnce.Do(closer)
-					done <- struct{}{}
-					return
+		pumpStdinToStream(stdin, streamConn)
+		closeOnce.Do(closer)
+		done <- struct{}{}
+	}()
+	<-done
+}
+
+// pumpStdinToStream copies bytes from stdin to streamConn until either
+// side errors or the detach key (Ctrl-\) is read. Bytes preceding the
+// detach key in the same read buffer are forwarded so a key sequence
+// ending in the detach byte does not silently drop its preamble.
+func pumpStdinToStream(stdin io.Reader, streamConn net.Conn) {
+	buf := make([]byte, 4096)
+	for {
+		n, rerr := stdin.Read(buf)
+		if n > 0 {
+			if i := bytes.IndexByte(buf[:n], detachKey); i >= 0 {
+				if i > 0 {
+					_, _ = streamConn.Write(buf[:i])
 				}
-				if _, werr := streamConn.Write(buf[:n]); werr != nil {
-					closeOnce.Do(closer)
-					done <- struct{}{}
-					return
-				}
+				return
 			}
-			if rerr != nil {
-				if !errors.Is(rerr, io.EOF) {
-					// Non-EOF read errors are surfaced via the close so
-					// the io.Copy goroutine wakes up; we don't print
-					// here because the terminal is still in raw mode.
-					_ = rerr
-				}
-				closeOnce.Do(closer)
-				done <- struct{}{}
+			if _, werr := streamConn.Write(buf[:n]); werr != nil {
 				return
 			}
 		}
-	}()
-
-	<-done
-	return nil
+		if rerr != nil {
+			return
+		}
+	}
 }
 
 // sendResize reads the current terminal winsize and sends a KindResize

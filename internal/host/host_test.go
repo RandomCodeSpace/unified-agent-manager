@@ -240,20 +240,30 @@ func TestHostKindAttachRoundTrip(t *testing.T) {
 	if _, err := conn.Write([]byte("hi\n")); err != nil {
 		t.Fatalf("Write raw: %v", err)
 	}
+	got, ok := readUntilContains(conn, []byte("hi"), 3*time.Second)
+	if !ok {
+		t.Fatalf("expected echo of 'hi' on raw stream, got %q", string(got))
+	}
+}
+
+// readUntilContains reads from conn into a growing buffer until either
+// pattern appears, the read errors, or timeout elapses. Returns the
+// accumulated bytes and whether the pattern was seen.
+func readUntilContains(conn net.Conn, pattern []byte, timeout time.Duration) ([]byte, bool) {
 	buf := make([]byte, 1024)
 	var got []byte
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		n, rerr := conn.Read(buf)
 		if n > 0 {
 			got = append(got, buf[:n]...)
-			if bytes.Contains(got, []byte("hi")) {
-				return
+			if bytes.Contains(got, pattern) {
+				return got, true
 			}
 		}
 		if rerr != nil {
-			break
+			return got, false
 		}
 	}
-	t.Fatalf("expected echo of 'hi' on raw stream, got %q", string(got))
+	return got, false
 }
