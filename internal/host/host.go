@@ -207,8 +207,54 @@ func (h *Host) handleConn(conn net.Conn) {
 			}
 			return
 		}
+		if req.Kind == ipc.KindAttach {
+			// One-time ACK, then this conn becomes a raw PTY stream:
+			// outbound PTY bytes are broadcast to it by pumpPTY, inbound
+			// bytes are written directly to the PTY master. handleConn
+			// returns after runRawAttach since IPC framing no longer
+			// applies on this conn.
+			if err := ipc.WriteFrame(conn, ipc.Request{ID: req.ID, Payload: []byte(`{"ok":true}`)}); err != nil {
+				return
+			}
+			h.runRawAttach(conn)
+			return
+		}
 		resp := h.dispatch(req)
 		if err := ipc.WriteFrame(conn, ipc.Request{ID: req.ID, Payload: resp}); err != nil {
+			return
+		}
+	}
+}
+
+// runRawAttach takes ownership of conn as a raw PTY stream after the
+// KindAttach handshake. Outbound PTY bytes are broadcast to this conn
+// by pumpPTY; inbound bytes are written directly to the PTY master.
+// Returns when conn closes (client disconnect) or the PTY master
+// rejects a write (child exiting). The conn is detached from h.attached
+// on exit so pumpPTY no longer broadcasts to a dead client.
+func (h *Host) runRawAttach(conn net.Conn) {
+	h.mu.Lock()
+	h.attached = append(h.attached, conn)
+	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		for i, c := range h.attached {
+			if c == conn {
+				h.attached = append(h.attached[:i], h.attached[i+1:]...)
+				break
+			}
+		}
+		h.mu.Unlock()
+	}()
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			if _, werr := h.p.Master.Write(buf[:n]); werr != nil {
+				return
+			}
+		}
+		if err != nil {
 			return
 		}
 	}
@@ -285,6 +331,15 @@ func (h *Host) cleanup() {
 	if h.listener != nil {
 		_ = h.listener.Close()
 		h.listener = nil
+	}
+	// Close any attached client conns so their reads return cleanly
+	// instead of blocking after the child has exited.
+	h.mu.Lock()
+	conns := h.attached
+	h.attached = nil
+	h.mu.Unlock()
+	for _, c := range conns {
+		_ = c.Close()
 	}
 	if h.j != nil {
 		_ = h.j.Close()
