@@ -62,7 +62,7 @@ func assertAgentDispatchAndList(t *testing.T, ag *TmuxAgent) {
 	if err != nil || len(list) != 1 {
 		t.Fatalf("List len=%d err=%v", len(list), err)
 	}
-	if list[0].PR == nil || list[0].PR.Number != 7 || list[0].Activity == "" {
+	if list[0].PR == nil || list[0].PR.Number != 7 {
 		t.Fatalf("bad classified list: %+v", list[0])
 	}
 }

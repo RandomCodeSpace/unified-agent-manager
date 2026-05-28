@@ -161,7 +161,7 @@ func TestDispatchedMessageAttachesNewSession(t *testing.T) {
 	}
 }
 
-func TestViewShowsDetailsOnTopAndActivityInTable(t *testing.T) {
+func TestViewShowsDetailsOnTopAndTaskInTable(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
 		{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "fix the parser", Cwd: "/tmp/project", TmuxSession: "uam-fake-1", ProcAlive: adapter.Alive},
@@ -182,7 +182,7 @@ func TestViewShowsDetailsOnTopAndActivityInTable(t *testing.T) {
 		t.Fatalf("table should group sessions into ACTIVE and CLOSED: %s", table)
 	}
 	if !strings.Contains(table, "one") || !strings.Contains(table, "fix the parser") {
-		t.Fatalf("table should show session name and activity: %s", table)
+		t.Fatalf("table should show session name and task: %s", table)
 	}
 }
 

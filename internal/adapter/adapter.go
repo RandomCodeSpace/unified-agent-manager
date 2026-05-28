@@ -53,7 +53,6 @@ type Session struct {
 	TmuxSession string
 	State       State
 	ProcAlive   ProcLiveness
-	Activity    string
 	LastChange  time.Time
 	CreatedAt   time.Time
 	PR          *PRRef
@@ -70,7 +69,6 @@ type Session struct {
 
 type PeekResult struct {
 	TailText string
-	Summary  string
 }
 
 type AttachSpec struct{ Argv []string }

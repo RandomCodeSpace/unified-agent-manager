@@ -41,34 +41,29 @@ func TestRenderTableGroupsSessionsByStatus(t *testing.T) {
 	}
 }
 
-func TestRenderTableTaskShowsLiveActivityBeforeOriginalPrompt(t *testing.T) {
+func TestRenderTableTaskShowsPrompt(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{
 		ID:          "1",
 		AgentType:   "claude",
 		DisplayName: "live",
 		Prompt:      "fix bug",
-		Activity:    "editing parser.go",
 		ProcAlive:   adapter.Alive,
 	}}
 
 	out := m.renderTable()
-	if !strings.Contains(out, "editing parser.go") {
-		t.Fatalf("task column should show current session activity: %s", out)
-	}
-	if strings.Contains(out, "fix bug") {
-		t.Fatalf("task column should prefer live activity over original prompt: %s", out)
+	if !strings.Contains(out, "fix bug") {
+		t.Fatalf("task column should show the session prompt: %s", out)
 	}
 }
 
-func TestRenderDetailsShowsActivityOnMobileOnly(t *testing.T) {
+func TestRenderDetailsShowsPromptOnMobileOnly(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{
 		ID:          "abc12345",
 		AgentType:   "claude",
 		DisplayName: "bugfix",
 		Prompt:      "fix the parser",
-		Activity:    "rebuilding the parser",
 		Cwd:         "/tmp/repo",
 		TmuxSession: "uam-claude-abc12345",
 		ProcAlive:   adapter.Alive,
@@ -78,14 +73,14 @@ func TestRenderDetailsShowsActivityOnMobileOnly(t *testing.T) {
 
 	m.width = 56 // narrow enough that the list has no inline task column
 	mobile := m.renderDetails()
-	if !strings.Contains(mobile, "rebuilding the parser") {
-		t.Fatalf("mobile details should show the current activity: %s", mobile)
+	if !strings.Contains(mobile, "fix the parser") {
+		t.Fatalf("mobile details should show the session prompt: %s", mobile)
 	}
 
 	m.width = 100
 	desktop := m.renderDetails()
-	if strings.Contains(desktop, "rebuilding the parser") {
-		t.Fatalf("desktop details should not duplicate activity already shown in the list row: %s", desktop)
+	if strings.Contains(desktop, "fix the parser") {
+		t.Fatalf("desktop details should not duplicate the prompt already shown in the list row: %s", desktop)
 	}
 
 	for _, out := range []string{mobile, desktop} {
@@ -107,17 +102,17 @@ func TestRenderDetailsShowsActivityOnMobileOnly(t *testing.T) {
 	}
 }
 
-func TestRenderTableNarrowShowsNamesWithoutInlineActivity(t *testing.T) {
+func TestRenderTableNarrowShowsNamesWithoutInlineTask(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.width = 42
-	m.sessions = []adapter.Session{{ID: "1", DisplayName: "responsive", Activity: "running the test suite", ProcAlive: adapter.Alive}}
+	m.sessions = []adapter.Session{{ID: "1", DisplayName: "responsive", Prompt: "running the test suite", ProcAlive: adapter.Alive}}
 
 	out := m.renderTable()
 	if !strings.Contains(out, "responsive") || !strings.Contains(out, "ACTIVE") {
 		t.Fatalf("narrow table should show the session name under ACTIVE: %s", out)
 	}
 	if strings.Contains(out, "running the test suite") {
-		t.Fatalf("narrow table rows should not repeat activity inline (the details panel shows it): %s", out)
+		t.Fatalf("narrow table rows should not repeat the task inline (the details panel shows it): %s", out)
 	}
 }
 
@@ -184,7 +179,7 @@ func TestViewIsCompactAndBorderlessOnNarrowScreens(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.width = 44
 	m.sessions = []adapter.Session{
-		{ID: "1", DisplayName: "active-one", Activity: "fixing spacing", Cwd: "/tmp/repo", ProcAlive: adapter.Alive},
+		{ID: "1", DisplayName: "active-one", Prompt: "fixing spacing", Cwd: "/tmp/repo", ProcAlive: adapter.Alive},
 		{ID: "2", DisplayName: "old-one", Cwd: "/tmp/old", ProcAlive: adapter.Exited, Closed: true},
 	}
 

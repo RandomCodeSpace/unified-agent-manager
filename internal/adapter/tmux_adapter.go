@@ -129,7 +129,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if created.IsZero() {
 		created = now
 	}
-	return Session{ID: req.ID, AgentType: a.Name(), DisplayName: name, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Active, ProcAlive: Alive, Activity: activity, CreatedAt: created, LastChange: now}, nil
+	return Session{ID: req.ID, AgentType: a.Name(), DisplayName: name, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
 }
 
 func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
@@ -145,10 +145,9 @@ func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
 		}
 		id := strings.TrimPrefix(info.Name, prefix)
 		capture, _ := a.Tmux.Capture(ctx, info.Name, 200)
-		lines := strings.Split(capture, "\n")
-		state, alive, summary := ClassifyPane(lines, tmux.PaneAlive(info.PanePID))
+		state, alive := ClassifyPane(tmux.PaneAlive(info.PanePID))
 		created := time.Unix(info.CreatedUnix, 0)
-		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.CurrentPath, TmuxSession: info.Name, State: state, ProcAlive: alive, Activity: summary, LastChange: time.Now(), CreatedAt: created, PR: ExtractPR(capture)})
+		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.CurrentPath, TmuxSession: info.Name, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: ExtractPR(capture)})
 	}
 	return out, nil
 }
@@ -159,7 +158,7 @@ func (a *TmuxAgent) Peek(ctx context.Context, id string) (PeekResult, error) {
 	if err != nil {
 		return PeekResult{}, err
 	}
-	return PeekResult{TailText: capture, Summary: summarize(strings.Split(capture, "\n"))}, nil
+	return PeekResult{TailText: capture}, nil
 }
 
 func (a *TmuxAgent) Reply(ctx context.Context, id, text string) error {
