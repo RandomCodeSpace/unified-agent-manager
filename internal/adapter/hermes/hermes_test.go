@@ -7,7 +7,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 )
 
-func TestNewUsesHermesTUICommand(t *testing.T) {
+func TestNewUsesBareHermesCommand(t *testing.T) {
 	a := New(nil)
 	tmuxAgent, ok := a.(*adapter.TmuxAgent)
 	if !ok {
@@ -19,10 +19,12 @@ func TestNewUsesHermesTUICommand(t *testing.T) {
 	if len(tmuxAgent.Candidates) != 1 {
 		t.Fatalf("candidates = %+v", tmuxAgent.Candidates)
 	}
-	if got, want := tmuxAgent.Candidates[0].Args, []string{"hermes", "--tui"}; !reflect.DeepEqual(got, want) {
+	// Launched bare: no --tui (fails to start) and no --yolo (unknown flag
+	// kills the pane, same as opencode).
+	if got, want := tmuxAgent.Candidates[0].Args, []string{"hermes"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidate args = %v, want %v", got, want)
 	}
-	if got, want := tmuxAgent.YoloArgs, []string{"--yolo"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("yolo args = %v, want %v", got, want)
+	if len(tmuxAgent.YoloArgs) != 0 {
+		t.Fatalf("yolo args = %v, want none", tmuxAgent.YoloArgs)
 	}
 }
