@@ -6,5 +6,5 @@ import (
 )
 
 func New(client *tmux.Client) adapter.AgentAdapter {
-	return adapter.NewTmuxAgent("claude", "Claude Code", []adapter.CommandCandidate{{Display: "claude", Args: []string{"claude"}}}, []string{"--dangerously-skip-permissions"}, adapter.DefaultPatterns("claude"), client)
+	return adapter.NewTmuxAgent("claude", "Claude Code", []adapter.CommandCandidate{{Display: "claude", Args: []string{"claude"}}}, []string{"--dangerously-skip-permissions"}, client)
 }

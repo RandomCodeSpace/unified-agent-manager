@@ -6,7 +6,7 @@ import (
 )
 
 func New(client *tmux.Client) adapter.AgentAdapter {
-	agent := adapter.NewTmuxAgent("copilot", "GitHub Copilot", []adapter.CommandCandidate{{Display: "copilot", Args: []string{"copilot"}}}, []string{"--yolo"}, adapter.DefaultPatterns("copilot"), client)
+	agent := adapter.NewTmuxAgent("copilot", "GitHub Copilot", []adapter.CommandCandidate{{Display: "copilot", Args: []string{"copilot"}}}, []string{"--yolo"}, client)
 	agent.SessionArgs = func(req adapter.ResumeRequest, activity string) []string {
 		if req.ID == "" {
 			return nil

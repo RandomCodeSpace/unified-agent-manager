@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
@@ -37,7 +36,7 @@ exit 0
 	t.Setenv("TMUX_LOG", logPath)
 	client := tmux.New("uam")
 	client.Executable = tmuxPath
-	return NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), client), logPath
+	return NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client), logPath
 }
 
 func assertAgentAvailable(t *testing.T, ag *TmuxAgent) {
@@ -56,7 +55,7 @@ func assertAgentDispatchAndList(t *testing.T, ag *TmuxAgent) {
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	if sess.AgentType != "fake" || sess.State != Working || sess.TmuxSession == "" {
+	if sess.AgentType != "fake" || sess.State != Active || sess.TmuxSession == "" {
 		t.Fatalf("bad session: %+v", sess)
 	}
 	list, err := ag.List(context.Background())
@@ -86,17 +85,6 @@ func assertAgentInteractions(t *testing.T, ag *TmuxAgent) {
 	}
 	if ch, err := ag.Subscribe(context.Background()); err != nil || ch != nil {
 		t.Fatalf("Subscribe = %v %v", ch, err)
-	}
-	assertChangedRecently(t, ag)
-}
-
-func assertChangedRecently(t *testing.T, ag *TmuxAgent) {
-	t.Helper()
-	if !ag.changedRecently("pane", "a", time.Minute) {
-		t.Fatal("first change should be recent")
-	}
-	if !ag.changedRecently("pane", "a", time.Minute) {
-		t.Fatal("same hash inside window should be recent")
 	}
 }
 
@@ -128,7 +116,7 @@ exit 0
 
 	client := tmux.New("uam")
 	client.Executable = tmuxPath
-	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), client)
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
 	sess, err := ag.Resume(context.Background(), ResumeRequest{ID: "abc12345-dead-beef-cafe-0123456789ab", Name: "bugfix", Prompt: "fix parser", Cwd: "/tmp/project", Mode: "yolo", TmuxSession: "uam-fake-abc12345"})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -159,7 +147,7 @@ exit 0
 
 	client := tmux.New("uam")
 	client.Executable = tmuxPath
-	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, DefaultPatterns("fake"), client)
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
 	sess, err := ag.Dispatch(context.Background(), DispatchRequest{Cwd: "/tmp", Mode: "yolo"})
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
@@ -187,25 +175,12 @@ func TestDisplayNameFromDir(t *testing.T) {
 }
 
 func TestTmuxAgentUnavailable(t *testing.T) {
-	ag := NewTmuxAgent("missing", "Missing", []CommandCandidate{{Display: "definitely-missing", Args: []string{"definitely-missing-uam-test"}}}, nil, DefaultPatterns("missing"), nil)
+	ag := NewTmuxAgent("missing", "Missing", []CommandCandidate{{Display: "definitely-missing", Args: []string{"definitely-missing-uam-test"}}}, nil, nil)
 	if ok, reason := ag.Available(); ok || reason == "" {
 		t.Fatalf("Available = %v %q", ok, reason)
 	}
 	if _, err := ag.Dispatch(context.Background(), DispatchRequest{}); err == nil {
 		t.Fatal("expected dispatch error")
-	}
-}
-
-func TestDetectAdditionalBranches(t *testing.T) {
-	p := DefaultPatterns("claude")
-	if state, _, _ := ClassifyPane([]string{"Error: boom"}, "claude", true, false, p); state != Failed {
-		t.Fatalf("want failed got %s", state)
-	}
-	if state, _, _ := ClassifyPane([]string{"plain", ">"}, "claude", true, false, p); state != Completed {
-		t.Fatalf("want completed got %s", state)
-	}
-	if state, _, _ := ClassifyPane([]string{"plain"}, "claude", true, false, p); state != Completed {
-		t.Fatalf("want completed fallback got %s", state)
 	}
 }
 

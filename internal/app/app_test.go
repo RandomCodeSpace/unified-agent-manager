@@ -72,7 +72,7 @@ func TestRenderDetailsShowsActivityOnMobileOnly(t *testing.T) {
 		Cwd:         "/tmp/repo",
 		TmuxSession: "uam-claude-abc12345",
 		ProcAlive:   adapter.Alive,
-		State:       adapter.Working,
+		State:       adapter.Active,
 		CreatedAt:   time.Date(2026, time.May, 18, 7, 4, 0, 0, time.UTC),
 	}}
 
