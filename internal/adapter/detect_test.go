@@ -3,29 +3,16 @@ package adapter
 import "testing"
 
 func TestClassifyAliveReturnsActive(t *testing.T) {
-	state, alive, summary := ClassifyPane([]string{"working on parser", ""}, true)
-	if state != Active || alive != Alive || summary != "working on parser" {
-		t.Fatalf("got %s %s %q", state, alive, summary)
-	}
-}
-
-func TestClassifyExitedReturnsFailed(t *testing.T) {
-	state, alive, _ := ClassifyPane([]string{"done"}, false)
-	if state != Failed || alive != Exited {
+	state, alive := ClassifyPane(true)
+	if state != Active || alive != Alive {
 		t.Fatalf("got %s %s", state, alive)
 	}
 }
 
-func TestSummaryIgnoresDecorativeDividers(t *testing.T) {
-	lines := []string{
-		"working on parser",
-		"────────────────────────────────────────────────────────────────────────────────",
-		"",
-	}
-
-	_, _, summary := ClassifyPane(lines, true)
-	if summary != "working on parser" {
-		t.Fatalf("summary = %q", summary)
+func TestClassifyExitedReturnsFailed(t *testing.T) {
+	state, alive := ClassifyPane(false)
+	if state != Failed || alive != Exited {
+		t.Fatalf("got %s %s", state, alive)
 	}
 }
 

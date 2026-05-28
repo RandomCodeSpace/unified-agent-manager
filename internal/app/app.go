@@ -721,8 +721,8 @@ func (m Model) renderDetails() string {
 	b.WriteString(m.renderSection("SELECTED", "") + "\n")
 	name := truncate(firstNonEmpty(sess.DisplayName, sess.ID), max(12, m.contentWidth()-6))
 	b.WriteString("  " + titleStyle.Render(name) + "\n")
-	// Show the activity here only when the session list is too narrow to show it
-	// inline (no task column) — that way it stays visible exactly once.
+	// Show the task/prompt here only when the session list is too narrow to
+	// show it inline (no task column) — that way it stays visible exactly once.
 	if _, _, showTask := m.tableWidths(); !showTask {
 		b.WriteString("    " + taskStyle.Render(truncate(promptText(sess), max(8, m.contentWidth()-6))) + "\n")
 	}
@@ -814,7 +814,7 @@ func renderRow(s adapter.Session, selected bool, nameWidth, taskWidth int, showT
 		return cursor + gs.Render(glyph) + " " + cell + "  " + taskStyle.Render(truncate(promptText(s), taskWidth))
 	}
 	// Narrow layout: state glyph + name only — one line per row. The selected
-	// session's activity is carried by the details panel, so rows don't repeat it.
+	// session's task is carried by the details panel, so rows don't repeat it.
 	return cursor + gs.Render(glyph) + " " + nameStyle.Render(label)
 }
 
@@ -878,7 +878,7 @@ func (m Model) visibleSessionWindow() (int, int) {
 }
 
 func promptText(sess adapter.Session) string {
-	return firstNonEmpty(sess.Activity, sess.Prompt, stateLabel(sess.State), "idle")
+	return firstNonEmpty(sess.Prompt, stateLabel(sess.State), "idle")
 }
 
 // absCwd resolves a session's working directory to an absolute path.

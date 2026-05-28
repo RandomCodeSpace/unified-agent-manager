@@ -91,11 +91,7 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 }
 
 func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Session {
-	activity := "tmux session not running"
-	if rec.Status == store.StatusClosedByUser {
-		activity = "closed"
-	}
-	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, Activity: activity, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
+	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
 }
 
 func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) bool {
@@ -153,7 +149,18 @@ func SortSessions(sessions []adapter.Session) {
 		if sessions[i].ProcAlive != sessions[j].ProcAlive {
 			return sessions[i].ProcAlive == adapter.Alive
 		}
-		return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+		if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+			return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+		}
+		// Total-order tiebreaker on the unique agent+id. Without it, rows that
+		// tie on every field above keep their input order, and that input is a
+		// Go map iteration (sessionsFromMap) — randomized per call — so equal
+		// rows reshuffle on every refresh tick. tmux reports creation time only
+		// to the second, which makes same-second ties common.
+		if sessions[i].AgentType != sessions[j].AgentType {
+			return sessions[i].AgentType < sessions[j].AgentType
+		}
+		return sessions[i].ID < sessions[j].ID
 	})
 }
 

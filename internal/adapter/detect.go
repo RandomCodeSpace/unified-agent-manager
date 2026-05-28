@@ -3,59 +3,18 @@ package adapter
 import (
 	"regexp"
 	"strconv"
-	"strings"
-	"unicode"
 )
 
-// ClassifyPane reduces a pane's observable state to {Active, Failed}, based
-// solely on whether the pane process is alive. We used to text-scrape the
-// capture for richer states (Working / NeedsInput / Completed / etc.), but
-// those signals were keyword guesses on prose and produced more false
-// positives than real signal. The activity summary line still comes from
-// the captured lines via summarize(); only the lifecycle state stops
-// depending on pattern matching.
-func ClassifyPane(lines []string, paneAlive bool) (State, ProcLiveness, string) {
-	live := Exited
-	state := Failed
+// ClassifyPane maps a pane's process liveness to the session lifecycle state.
+// We deliberately do not inspect pane content: these agents render full-screen
+// TUIs, so a capture is dominated by chrome (footer, status line, input box)
+// rather than a clean log, which made any text-scraped state or activity
+// summary unreliable. State is grounded only in whether the pane PID is alive.
+func ClassifyPane(paneAlive bool) (State, ProcLiveness) {
 	if paneAlive {
-		live = Alive
-		state = Active
+		return Active, Alive
 	}
-	return state, live, summarize(lines)
-}
-
-func summarize(lines []string) string {
-	start := 0
-	if len(lines) > 20 {
-		start = len(lines) - 20
-	}
-	best := ""
-	for _, line := range lines[start:] {
-		line = strings.TrimSpace(line)
-		if line == "" || isDecorativeLine(line) || strings.ContainsAny(line, "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✻✽") {
-			continue
-		}
-		if len(line) > len(best) {
-			best = line
-		}
-	}
-	return best
-}
-
-func isDecorativeLine(line string) bool {
-	line = strings.TrimSpace(line)
-	if len([]rune(line)) < 6 {
-		return false
-	}
-	for _, r := range line {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return false
-		}
-		if strings.ContainsRune("?!$%#@/\\", r) {
-			return false
-		}
-	}
-	return true
+	return Failed, Exited
 }
 
 var prRE = regexp.MustCompile(`https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)`)
