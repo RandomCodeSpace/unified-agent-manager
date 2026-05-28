@@ -44,7 +44,7 @@ func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) 
 }
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) { return f.sessions, nil }
 func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
-	return adapter.PeekResult{TailText: "tail", Summary: "sum"}, nil
+	return adapter.PeekResult{TailText: "tail"}, nil
 }
 func (f *svcFakeAdapter) Reply(ctx adapter.Context, id, text string) error {
 	f.replied = text
@@ -242,6 +242,33 @@ func TestSortSessionsPushesClosedToBottom(t *testing.T) {
 	SortSessions(sessions)
 	if sessions[0].ID != "live" || sessions[1].ID != "stopped-active" || sessions[2].ID != "closed-pinned" {
 		t.Fatalf("order=%+v", sessions)
+	}
+}
+
+func TestSortSessionsIsDeterministicForTiedRows(t *testing.T) {
+	now := time.Now()
+	// Three live rows that tie on every field except agent+id (same creation
+	// second is the common real-world case, since tmux reports whole seconds).
+	// The sort must produce the same order regardless of input order, otherwise
+	// map-iteration order leaks through the stable sort and rows flap on every
+	// refresh tick.
+	mk := func() []adapter.Session {
+		return []adapter.Session{
+			{ID: "c", AgentType: "codex", ProcAlive: adapter.Alive, CreatedAt: now},
+			{ID: "a", AgentType: "claude", ProcAlive: adapter.Alive, CreatedAt: now},
+			{ID: "b", AgentType: "claude", ProcAlive: adapter.Alive, CreatedAt: now},
+		}
+	}
+	want := []string{"claude/a", "claude/b", "codex/c"}
+	for _, order := range [][]int{{0, 1, 2}, {2, 1, 0}, {1, 0, 2}} {
+		in := mk()
+		shuffled := []adapter.Session{in[order[0]], in[order[1]], in[order[2]]}
+		SortSessions(shuffled)
+		for i, w := range want {
+			if got := shuffled[i].AgentType + "/" + shuffled[i].ID; got != w {
+				t.Fatalf("input order %v: position %d = %q, want %q", order, i, got, w)
+			}
+		}
 	}
 }
 
