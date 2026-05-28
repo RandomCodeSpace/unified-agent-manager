@@ -36,11 +36,11 @@ func (f *svcFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
-	return adapter.Session{ID: "12345678", AgentType: f.name, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), TmuxSession: "uam-" + f.name + "-12345678", State: adapter.Working, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
+	return adapter.Session{ID: "12345678", AgentType: f.name, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), TmuxSession: "uam-" + f.name + "-12345678", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) (adapter.Session, error) {
 	f.resumed = &req
-	return adapter.Session{ID: req.ID, AgentType: f.name, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: req.TmuxSession, State: adapter.Working, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
+	return adapter.Session{ID: req.ID, AgentType: f.name, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: req.TmuxSession, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) { return f.sessions, nil }
 func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
@@ -74,7 +74,7 @@ func newWorkflowService(t *testing.T) (*Service, *svcFakeAdapter) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "live0001", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-live0001", State: adapter.Completed, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/1", Number: 1, Status: adapter.PROpen}}}}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "live0001", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-live0001", State: adapter.Active, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/1", Number: 1, Status: adapter.PROpen}}}}
 	return NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake})), fake
 }
 

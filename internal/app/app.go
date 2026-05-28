@@ -622,8 +622,6 @@ var (
 	dividerColor = lipgloss.AdaptiveColor{Light: "#D6DEE8", Dark: "#2B3547"}
 	taskColor    = lipgloss.AdaptiveColor{Light: "#475569", Dark: "#AEBACD"}
 	liveColor    = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
-	inputColor   = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
-	reviewColor  = lipgloss.AdaptiveColor{Light: "#1D4ED8", Dark: "#60A5FA"}
 	failColor    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
 )
 
@@ -937,30 +935,17 @@ func (m Model) renderWizard() string {
 
 func stateGlyph(s adapter.State) (string, lipgloss.Style) {
 	switch s {
-	case adapter.Working:
+	case adapter.Active:
 		return "⟳", lipgloss.NewStyle().Bold(true).Foreground(liveColor)
-	case adapter.NeedsInput:
-		return "◆", lipgloss.NewStyle().Bold(true).Foreground(inputColor)
-	case adapter.ReadyForReview:
-		return "✦", lipgloss.NewStyle().Bold(true).Foreground(reviewColor)
 	case adapter.Failed:
 		return "✕", lipgloss.NewStyle().Bold(true).Foreground(failColor)
-	case adapter.Completed:
-		return "✓", hintStyle
 	default:
 		return "•", hintStyle
 	}
 }
 
 func stateLabel(s adapter.State) string {
-	switch s {
-	case adapter.NeedsInput:
-		return "needs input"
-	case adapter.ReadyForReview:
-		return "review"
-	default:
-		return strings.ToLower(string(s))
-	}
+	return strings.ToLower(string(s))
 }
 
 func prStatusDot(s adapter.PRStatus) string {

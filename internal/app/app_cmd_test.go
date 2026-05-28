@@ -73,7 +73,7 @@ func TestWizardTabPersistsDefaultAgentChoice(t *testing.T) {
 func TestModelCommandFactories(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
-	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Working, CreatedAt: time.Now()}}}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Active, CreatedAt: time.Now()}}}
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	m.sessions = fake.sessions
 	m.defaultAgent = "fake"
@@ -112,7 +112,7 @@ func TestModelCommandFactories(t *testing.T) {
 func TestHandleKeyBranches(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
-	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Working, CreatedAt: time.Now()}}}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Active, CreatedAt: time.Now()}}}
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	m.sessions = fake.sessions
 	m.defaultAgent = "fake"
@@ -149,7 +149,7 @@ func TestHandleKeyBranches(t *testing.T) {
 func TestPromptTypingAllowsAgentMentionsSpacesAndShortcutLetters(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
-	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Working, CreatedAt: time.Now()}}}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Active, CreatedAt: time.Now()}}}
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	m.sessions = fake.sessions
 	m.defaultAgent = "fake"
@@ -178,7 +178,7 @@ func TestPromptTypingAllowsAgentMentionsSpacesAndShortcutLetters(t *testing.T) {
 func TestRenameAndWizardEnterBranches(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
-	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Working, CreatedAt: time.Now()}}}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Active, CreatedAt: time.Now()}}}
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	m.sessions = fake.sessions
 	m.defaultAgent = "fake"
