@@ -29,7 +29,7 @@ func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
 }
 
 func New(client *tmux.Client) adapter.AgentAdapter {
-	a := adapter.NewTmuxAgent("opencode", "OpenCode", []adapter.CommandCandidate{{Display: "opencode", Args: []string{"opencode"}}}, yoloArgs, adapter.DefaultPatterns("opencode"), client)
+	a := adapter.NewTmuxAgent("opencode", "OpenCode", []adapter.CommandCandidate{{Display: "opencode", Args: []string{"opencode"}}}, yoloArgs, client)
 	a.SessionArgs = sessionArgs
 	a.SkipPromptOnResume = true
 	return a

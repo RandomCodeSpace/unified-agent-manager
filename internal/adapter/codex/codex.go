@@ -6,5 +6,5 @@ import (
 )
 
 func New(client *tmux.Client) adapter.AgentAdapter {
-	return adapter.NewTmuxAgent("codex", "OpenAI Codex", []adapter.CommandCandidate{{Display: "codex", Args: []string{"codex"}}}, []string{"--sandbox", "danger-full-access"}, adapter.DefaultPatterns("codex"), client)
+	return adapter.NewTmuxAgent("codex", "OpenAI Codex", []adapter.CommandCandidate{{Display: "codex", Args: []string{"codex"}}}, []string{"--sandbox", "danger-full-access"}, client)
 }

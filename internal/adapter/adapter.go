@@ -7,15 +7,16 @@ import (
 
 type Context = context.Context
 
+// State is the lifecycle bucket for a managed session. We deliberately keep
+// only two values: anything richer (working / needs-input / completed)
+// requires text-scraping the pane and produced more false positives than
+// real signal. The pane content drives the activity summary line instead;
+// the State here is grounded in the pane PID being alive or not.
 type State string
 
 const (
-	NeedsInput     State = "NeedsInput"
-	Working        State = "Working"
-	Completed      State = "Completed"
-	ReadyForReview State = "ReadyForReview"
-	Failed         State = "Failed"
-	Idle           State = "Idle"
+	Active State = "Active"
+	Failed State = "Failed"
 )
 
 type ProcLiveness string
@@ -68,10 +69,8 @@ type Session struct {
 }
 
 type PeekResult struct {
-	TailText      string
-	Summary       string
-	AwaitingInput bool
-	State         State
+	TailText string
+	Summary  string
 }
 
 type AttachSpec struct{ Argv []string }

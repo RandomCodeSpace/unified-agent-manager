@@ -5,12 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
@@ -27,25 +25,16 @@ type TmuxAgent struct {
 	Candidates         []CommandCandidate
 	YoloArgs           []string
 	SafeArgs           []string
-	Patterns           Patterns
 	Tmux               *tmux.Client
 	SessionArgs        func(req ResumeRequest, activity string) []string
 	SkipPromptOnResume bool
-	mu                 sync.Mutex
-	hashes             map[string]paneHashState
 }
 
-type paneHashState struct {
-	hash     uint64
-	changed  time.Time
-	observed bool
-}
-
-func NewTmuxAgent(name, display string, candidates []CommandCandidate, yoloArgs []string, patterns Patterns, client *tmux.Client) *TmuxAgent {
+func NewTmuxAgent(name, display string, candidates []CommandCandidate, yoloArgs []string, client *tmux.Client) *TmuxAgent {
 	if client == nil {
 		client = tmux.New("uam")
 	}
-	return &TmuxAgent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Patterns: patterns, Tmux: client, hashes: map[string]paneHashState{}}
+	return &TmuxAgent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Tmux: client}
 }
 
 func (a *TmuxAgent) Name() string        { return a.NameValue }
@@ -140,7 +129,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if created.IsZero() {
 		created = now
 	}
-	return Session{ID: req.ID, AgentType: a.Name(), DisplayName: name, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Working, ProcAlive: Alive, Activity: activity, CreatedAt: created, LastChange: now}, nil
+	return Session{ID: req.ID, AgentType: a.Name(), DisplayName: name, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Active, ProcAlive: Alive, Activity: activity, CreatedAt: created, LastChange: now}, nil
 }
 
 func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
@@ -157,8 +146,7 @@ func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
 		id := strings.TrimPrefix(info.Name, prefix)
 		capture, _ := a.Tmux.Capture(ctx, info.Name, 200)
 		lines := strings.Split(capture, "\n")
-		changedRecently := a.changedRecently(info.Name, capture, 15*time.Second)
-		state, alive, summary := ClassifyPane(lines, info.CurrentCommand, tmux.PaneAlive(info.PanePID), changedRecently, a.Patterns)
+		state, alive, summary := ClassifyPane(lines, tmux.PaneAlive(info.PanePID))
 		created := time.Unix(info.CreatedUnix, 0)
 		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.CurrentPath, TmuxSession: info.Name, State: state, ProcAlive: alive, Activity: summary, LastChange: time.Now(), CreatedAt: created, PR: ExtractPR(capture)})
 	}
@@ -171,8 +159,7 @@ func (a *TmuxAgent) Peek(ctx context.Context, id string) (PeekResult, error) {
 	if err != nil {
 		return PeekResult{}, err
 	}
-	state, _, summary := ClassifyPane(strings.Split(capture, "\n"), a.Name(), true, true, a.Patterns)
-	return PeekResult{TailText: capture, Summary: summary, AwaitingInput: state == NeedsInput, State: state}, nil
+	return PeekResult{TailText: capture, Summary: summarize(strings.Split(capture, "\n"))}, nil
 }
 
 func (a *TmuxAgent) Reply(ctx context.Context, id, text string) error {
@@ -205,21 +192,6 @@ func newID() string {
 	b[8] = (b[8] & 0x3f) | 0x80
 	h := hex.EncodeToString(b)
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
-}
-
-func (a *TmuxAgent) changedRecently(target, capture string, window time.Duration) bool {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(capture))
-	sum := h.Sum64()
-	now := time.Now()
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	prev := a.hashes[target]
-	if !prev.observed || prev.hash != sum {
-		a.hashes[target] = paneHashState{hash: sum, changed: now, observed: true}
-		return true
-	}
-	return now.Sub(prev.changed) <= window
 }
 
 // displayNameFromDir derives a default session name from the working

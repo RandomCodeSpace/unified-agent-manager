@@ -32,7 +32,7 @@ func (f *cliFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
-	sess := adapter.Session{ID: "abc12345", AgentType: "fake", DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: "uam-fake-abc12345", State: adapter.Working, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	sess := adapter.Session{ID: "abc12345", AgentType: "fake", DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	f.sessions = append(f.sessions, sess)
 	return sess, nil
 }
