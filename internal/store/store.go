@@ -7,9 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 const CurrentSchemaVersion = 2
@@ -165,6 +169,7 @@ func (s *Store) loadNoLock() (Config, error) {
 		_ = s.moveAside()
 		return DefaultConfig(), nil
 	}
+	dropInvalidRecords(&cfg)
 	if cfg.SchemaVersion < CurrentSchemaVersion {
 		if err := s.copyBackup(); err != nil {
 			return Config{}, err
@@ -175,6 +180,77 @@ func (s *Store) loadNoLock() (Config, error) {
 		}
 	}
 	return normalize(cfg), nil
+}
+
+// unsafeArgvChars are the shell metacharacters that must never appear in an ID
+// or tmux session name. Although uam reaches tmux via argv (not a shell — see
+// internal/tmux ShellJoin), these fields are an untrusted-on-disk injection
+// surface for the F05/F06/F09 sinks, so we keep classic shell metacharacters
+// out as defense in depth. Whitespace and control runes are rejected
+// separately. Note `:` is intentionally allowed: it is tmux's target separator
+// but never a shell hazard, and real Key-derived values can carry it.
+const unsafeArgvChars = "'\"`;&|$<>(){}[]*?!#\\~/ \t\n\r"
+
+// prURLRE mirrors the GitHub PR URL shape recognized by the adapter's
+// ExtractPR (internal/adapter/detect.go), anchored end-to-end so a record
+// cannot smuggle in an unrelated or malformed URL.
+var prURLRE = regexp.MustCompile(`^https://github\.com/[^/\s]+/[^/\s]+/pull/\d+$`)
+
+// dropInvalidRecords removes any session record whose untrusted on-disk fields
+// fail validation, logging each drop. It runs on load ONLY (not on the write
+// path via normalize) so a single corrupt or hostile record cannot brick the
+// whole store — the bad record is discarded and the rest survive.
+func dropInvalidRecords(cfg *Config) {
+	for key, rec := range cfg.Sessions {
+		if reason := validateRecord(rec); reason != "" {
+			log.Warn("dropping invalid session record", "key", key, "reason", reason)
+			delete(cfg.Sessions, key)
+		}
+	}
+}
+
+// validateRecord returns a non-empty reason if the record must be dropped, or
+// "" if it is safe to keep. It rejects only the values that carry real risk —
+// shell metacharacters or control runes in the argv-bound ID/TmuxSession
+// fields, a non-absolute or control-char Workdir, and a PR URL that does not
+// match the GitHub PR shape. Empty optional fields are allowed.
+func validateRecord(rec SessionRecord) string {
+	if isUnsafeArgv(rec.ID) {
+		return "unsafe id"
+	}
+	if isUnsafeArgv(rec.TmuxSession) {
+		return "unsafe tmux_session"
+	}
+	if rec.Workdir != "" {
+		if !filepath.IsAbs(rec.Workdir) {
+			return "non-absolute workdir"
+		}
+		if hasControlChar(rec.Workdir) {
+			return "control char in workdir"
+		}
+	}
+	if rec.PR != nil && !prURLRE.MatchString(rec.PR.URL) {
+		return "invalid pr url"
+	}
+	return ""
+}
+
+// isUnsafeArgv reports whether s contains a shell metacharacter or a control
+// rune that has no place in a persisted ID or tmux session name.
+func isUnsafeArgv(s string) bool {
+	if strings.ContainsAny(s, unsafeArgvChars) {
+		return true
+	}
+	return hasControlChar(s)
+}
+
+func hasControlChar(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalize(cfg Config) Config {

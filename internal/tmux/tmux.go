@@ -5,14 +5,24 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 )
+
+// ErrInvalidSessionName is returned when a session name fails the allow-list.
+var ErrInvalidSessionName = fmt.Errorf("session name failed allow-list")
+
+// sessionNameRE is the allow-list for tmux session names uam may create. It
+// matches the canonical shape minted by adapter.startSession
+// ("uam-<provider>-<id>"): a lowercase-alphanumeric provider segment and a
+// hex id segment. The pattern admits no shell metacharacters, so a name that
+// passes can be embedded in tmux argv without risk.
+var sessionNameRE = regexp.MustCompile(`^uam-[a-z0-9]+-[0-9a-f]{1,16}$`)
 
 type Client struct {
 	Socket     string
@@ -39,7 +49,12 @@ func (c *Client) run(ctx context.Context, args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, exe, c.baseArgs(args...)...) // #nosec G204 -- tmux path is resolved from fixed system directories or injected as an absolute test path; argv args avoid shell expansion.
+	// The tmux path is resolved from fixed system directories or injected as an
+	// absolute test path. tmux's own args are passed via argv (no shell). Where
+	// an arg is itself a /bin/sh command string (the new-session command built
+	// by ShellJoin), every value is POSIX single-quote escaped by shellQuote, so
+	// $(), ``, $VAR, and word-splitting cannot fire inside it.
+	cmd := exec.CommandContext(ctx, exe, c.baseArgs(args...)...) // #nosec G204
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -64,6 +79,9 @@ func (c *Client) ExecutablePath() (string, error) {
 }
 
 func (c *Client) CreateSession(ctx context.Context, name, cwd string, env map[string]string, command []string) error {
+	if !sessionNameRE.MatchString(name) {
+		return fmt.Errorf("refusing to create session: invalid name %q: %w", name, ErrInvalidSessionName)
+	}
 	args := []string{"new-session", "-d", "-s", name, "-x", "200", "-y", "50"}
 	if cwd != "" {
 		args = append(args, "-c", cwd)
@@ -189,9 +207,13 @@ func sessionClosedHookCommand() string {
 	if strings.ContainsAny(exe, "\"'\\$`") {
 		return ""
 	}
-	// run-shell receives a /bin/sh command string. tmux substitutes
-	// #{hook_session_name} before sh sees it; single quotes around the
-	// substitution prevent sh from expanding anything inside.
+	// run-shell receives a /bin/sh command string. tmux expands
+	// #{hook_session_name} INTO that string before sh parses it, so the single
+	// quotes here do NOT neutralize a hostile name on their own — a name
+	// containing a quote would break out. Safety comes from CreateSession's
+	// allow-list (sessionNameRE), which guarantees every name we ever create is
+	// [a-z0-9-] only; the quoting then merely keeps a benign name as one argv
+	// token.
 	return fmt.Sprintf(`run-shell "%s notify-closed '#{hook_session_name}'"`, exe)
 }
 
@@ -234,7 +256,11 @@ func shellQuote(s string) string {
 	}) == -1 {
 		return s
 	}
-	return strconv.Quote(s)
+	// POSIX single-quote escaping: wrap in single quotes and rewrite any
+	// embedded single quote as the close-reopen idiom '\''. Inside single
+	// quotes /bin/sh performs no expansion, so $(), ``, $VAR, and newlines
+	// all reach the command literally.
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func isShellSafeRune(r rune) bool {
