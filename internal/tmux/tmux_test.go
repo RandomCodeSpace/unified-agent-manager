@@ -225,21 +225,63 @@ exit 0
 	}
 }
 
-func TestSessionClosedHookCommandRejectsUnsafePaths(t *testing.T) {
-	// We can't directly fake os.Executable without an injection seam, but
-	// we can at least sanity-check the format on the real test binary path.
-	cmd := sessionClosedHookCommand()
-	if cmd == "" {
-		t.Skip("test binary path was rejected as unsafe — skipping format check")
+// F51 — hookCommandForExe is the testable seam: it takes the binary path
+// explicitly so the rejection branch (shell metacharacters, relative paths)
+// can be table-tested without faking os.Executable. The old test could only
+// exercise the real test-binary path and had to t.Skip the rejection branch.
+func TestHookCommandForExe(t *testing.T) {
+	cases := []struct {
+		name      string
+		exe       string
+		wantEmpty bool
+	}{
+		{"clean absolute path", "/usr/local/bin/uam", false},
+		{"relative path rejected", "uam", true},
+		{"dot-relative path rejected", "./uam", true},
+		{"double-quote rejected", `/usr/local/bin/u"am`, true},
+		{"single-quote rejected", "/usr/local/bin/u'am", true},
+		{"backslash rejected", `/usr/local/bin/u\am`, true},
+		{"dollar rejected", "/usr/local/bin/u$am", true},
+		{"backtick rejected", "/usr/local/bin/u`am`", true},
 	}
-	if !strings.Contains(cmd, "run-shell") {
-		t.Fatalf("hook command must use run-shell: %q", cmd)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := hookCommandForExe(tc.exe)
+			if tc.wantEmpty {
+				if cmd != "" {
+					t.Fatalf("hookCommandForExe(%q) = %q, want empty (rejected)", tc.exe, cmd)
+				}
+				return
+			}
+			if cmd == "" {
+				t.Fatalf("hookCommandForExe(%q) was rejected, want a command", tc.exe)
+			}
+			if !strings.Contains(cmd, "run-shell") {
+				t.Fatalf("hook command must use run-shell: %q", cmd)
+			}
+			if !strings.Contains(cmd, "notify-closed") {
+				t.Fatalf("hook command must reference notify-closed: %q", cmd)
+			}
+			if !strings.Contains(cmd, "'#{hook_session_name}'") {
+				t.Fatalf("session name must be single-quoted for the inner shell: %q", cmd)
+			}
+			if !strings.Contains(cmd, tc.exe) {
+				t.Fatalf("hook command must embed the binary path: %q", cmd)
+			}
+		})
 	}
-	if !strings.Contains(cmd, "notify-closed") {
-		t.Fatalf("hook command must reference notify-closed: %q", cmd)
+}
+
+// TestSessionClosedHookCommandUsesRealBinary verifies the wrapper resolves the
+// running binary and delegates to hookCommandForExe. The deterministic
+// rejection-branch coverage lives in TestHookCommandForExe above.
+func TestSessionClosedHookCommandUsesRealBinary(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
 	}
-	if !strings.Contains(cmd, "'#{hook_session_name}'") {
-		t.Fatalf("session name must be single-quoted for the inner shell: %q", cmd)
+	if got, want := sessionClosedHookCommand(), hookCommandForExe(exe); got != want {
+		t.Fatalf("sessionClosedHookCommand() = %q, want %q (from real binary path)", got, want)
 	}
 }
 

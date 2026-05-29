@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
@@ -122,7 +123,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if cwd == "" {
 		cwd, err = os.Getwd()
 		if err != nil {
-			return Session{}, err
+			return Session{}, fmt.Errorf("resolve working directory: %w", err)
 		}
 	}
 	// Resolve the working directory to an absolute path once, before it is used
@@ -139,7 +140,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	}
 	env := map[string]string{"UAM_AGENT": a.Name(), "UAM_ID": req.ID}
 	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
-		return Session{}, err
+		return Session{}, fmt.Errorf("create tmux session %s: %w", tmuxName, err)
 	}
 	// Best-effort: apply uam-friendly tmux server settings (mouse off, swallow
 	// Ctrl+Z). This runs AFTER CreateSession so the server exists — applying it
@@ -172,7 +173,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
 	infos, err := a.Tmux.List(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list %s sessions: %w", a.Name(), err)
 	}
 	var out []Session
 	prefix := "uam-" + a.Name() + "-"
@@ -190,7 +191,13 @@ func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
 		// a burst of capture-pane subprocesses.
 		var prRef *PRRef
 		if a.shouldScanPR(info.Name) {
-			capture, _ := a.Tmux.Capture(ctx, info.Name, prCaptureLines)
+			capture, capErr := a.Tmux.Capture(ctx, info.Name, prCaptureLines)
+			if capErr != nil {
+				// Per-session and non-fatal: a failed PR scrape just leaves PR nil
+				// for this tick (mergeStoredMetadata re-hydrates any known PR). Log
+				// at debug so it's diagnosable without spamming the dashboard (F52).
+				log.Debug("PR capture failed", "session", info.Name, "error", capErr)
+			}
 			prRef = ExtractPR(capture)
 		}
 		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.CurrentPath, TmuxSession: info.Name, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: prRef})
@@ -224,7 +231,7 @@ func (a *TmuxAgent) Peek(ctx context.Context, id string) (PeekResult, error) {
 	target := a.target(id)
 	capture, err := a.Tmux.Capture(ctx, target, 200)
 	if err != nil {
-		return PeekResult{}, err
+		return PeekResult{}, fmt.Errorf("peek %s session %s: %w", a.Name(), id, err)
 	}
 	return PeekResult{TailText: capture}, nil
 }
@@ -235,7 +242,7 @@ func (a *TmuxAgent) Reply(ctx context.Context, id, text string) error {
 func (a *TmuxAgent) Attach(id string) (AttachSpec, error) {
 	argv, err := a.Tmux.AttachArgv(a.target(id))
 	if err != nil {
-		return AttachSpec{}, err
+		return AttachSpec{}, fmt.Errorf("attach %s session %s: %w", a.Name(), id, err)
 	}
 	return AttachSpec{Argv: argv}, nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -357,6 +358,21 @@ func sessionClosedHookCommand() string {
 		return ""
 	}
 	if err := execpath.ValidateAbsoluteExecutable(exe); err != nil {
+		return ""
+	}
+	return hookCommandForExe(exe)
+}
+
+// hookCommandForExe builds the session-closed hook command for a given binary
+// path, or returns empty string when the path isn't safe to embed. It is split
+// out from sessionClosedHookCommand so the rejection branch can be table-tested
+// directly without faking os.Executable (F51). The real-file check
+// (ValidateAbsoluteExecutable) stays in the caller; this seam only enforces the
+// quoting-safety rules that govern whether a path can be embedded.
+func hookCommandForExe(exe string) string {
+	// An absolute path is required: the hook is a /bin/sh command string and a
+	// relative path would resolve against tmux's cwd, not uam's install dir.
+	if !filepath.IsAbs(exe) {
 		return ""
 	}
 	// Reject paths with shell metacharacters we'd otherwise need to escape.
