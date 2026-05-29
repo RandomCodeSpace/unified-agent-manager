@@ -203,6 +203,18 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	if len(rem) < 1 {
 		return errors.New("dispatch requires <agent> [#session-name] [prompt]")
 	}
+	// Go's flag parser stops at the first positional, so any flag placed AFTER
+	// <agent> lands in the agent or #name slot instead of taking effect — e.g.
+	// `dispatch fake --safe prompt` would silently fold --safe into the prompt.
+	// Reject a leftover "-"-prefixed token in those two slots. The prompt proper
+	// (rem[2:], or rem[1:] when unnamed) is left untouched so it may contain "--"
+	// (C2-3).
+	if strings.HasPrefix(rem[0], "-") {
+		return fmt.Errorf("dispatch: %q looks like a flag; flags must come before <agent>", rem[0])
+	}
+	if len(rem) > 1 && strings.HasPrefix(rem[1], "-") {
+		return fmt.Errorf("dispatch: %q looks like a flag; flags must come before <agent>", rem[1])
+	}
 	mode := string(store.ModeYolo)
 	if *safe {
 		mode = string(store.ModeSafe)

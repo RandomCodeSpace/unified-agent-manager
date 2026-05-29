@@ -22,25 +22,27 @@ import (
 )
 
 type Model struct {
-	width, height int
-	quitting      bool
-	service       *Service
-	sessions      []adapter.Session
-	selected      int
-	input         string
-	defaultAgent  string
-	message       string
-	peekOpen      bool
-	peekText      string
-	helpOpen      bool
-	confirmStop   bool
-	renaming      bool
-	wizard        bool
-	wizardStep    int
-	wizardAgent   string
-	wizardCwd     string
-	groupByDir    bool
-	execProcess   func(*exec.Cmd, tea.ExecCallback) tea.Cmd
+	width, height  int
+	quitting       bool
+	service        *Service
+	sessions       []adapter.Session
+	selected       int
+	input          string
+	defaultAgent   string
+	message        string
+	peekOpen       bool
+	peekText       string
+	helpOpen       bool
+	confirmStop    bool
+	confirmStopID  string
+	renaming       bool
+	renameTargetID string
+	wizard         bool
+	wizardStep     int
+	wizardAgent    string
+	wizardCwd      string
+	groupByDir     bool
+	execProcess    func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 }
 
 type sessionsLoadedMsg struct {
@@ -186,7 +188,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.handleActionKey(key); handled {
 		return m, cmd
 	}
-	m.appendKeyInput(msg, key)
+	m.appendKeyInput(msg)
 	return m, nil
 }
 
@@ -200,10 +202,13 @@ func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.
 	if m.confirmStop {
 		if key == "y" || key == "enter" {
 			m.confirmStop = false
-			return true, m, m.stopSelectedCmd(true)
+			id := m.confirmStopID
+			m.confirmStopID = ""
+			return true, m, m.stopTargetCmd(id, true)
 		}
 		if key == "n" || key == "esc" {
 			m.confirmStop = false
+			m.confirmStopID = ""
 		}
 		return true, m, nil
 	}
@@ -269,7 +274,10 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "ctrl+r":
 		m.startRename()
 	case "ctrl+x":
-		m.confirmStop = len(m.sessions) > 0
+		if sess, ok := m.selectedSession(); ok {
+			m.confirmStop = true
+			m.confirmStopID = sess.ID
+		}
 	case " ":
 		return true, m.handleSpaceKey(key)
 	case "right", "enter":
@@ -302,11 +310,13 @@ func (m *Model) handleEscKey() tea.Cmd {
 }
 
 func (m *Model) startRename() {
-	if len(m.sessions) == 0 {
+	sess, ok := m.selectedSession()
+	if !ok {
 		return
 	}
 	m.renaming = true
-	m.input = m.sessions[m.selected].DisplayName
+	m.renameTargetID = sess.ID
+	m.input = sess.DisplayName
 }
 
 func (m *Model) handleSpaceKey(key string) tea.Cmd {
@@ -350,39 +360,54 @@ func (m *Model) handleEditKey(key string) {
 }
 
 func (m *Model) backspaceInput() {
-	if len(m.input) > 0 {
-		m.input = m.input[:len(m.input)-1]
+	if r := []rune(m.input); len(r) > 0 {
+		m.input = string(r[:len(r)-1])
 	}
 }
 
-func (m *Model) appendKeyInput(msg tea.KeyMsg, key string) {
-	if msg.Type == tea.KeyRunes || len([]rune(key)) == 1 {
-		m.input += key
-	}
+func (m *Model) appendKeyInput(msg tea.KeyMsg) {
+	m.editText(msg)
 }
 
 func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "enter":
-		id := m.sessions[m.selected].ID
+		sess, ok := m.sessionByID(m.renameTargetID)
 		name := m.input
 		m.renaming = false
+		m.renameTargetID = ""
 		m.input = ""
+		// The target session vanished (killed externally / list emptied) while the
+		// modal was open: close the modal without panicking (F27).
+		if !ok {
+			return m, nil
+		}
+		id := sess.ID
 		return m, func() tea.Msg { return sessionsLoadedMsg{err: m.service.Rename(context.Background(), id, name)} }
 	case "esc":
 		m.renaming = false
+		m.renameTargetID = ""
 		m.input = ""
-	case "backspace":
-		if len(m.input) > 0 {
-			m.input = m.input[:len(m.input)-1]
-		}
 	default:
-		if len(key) == 1 || key == " " {
-			m.input += key
-		}
+		m.editText(msg)
 	}
 	return m, nil
+}
+
+// editText applies a printable-input edit to m.input: it appends pasted/typed
+// runes (KeyRunes without Alt — covers multibyte and bracketed paste), handles
+// Space and Backspace, and ignores Alt-chords and control keys so they never
+// leak as literal text (F29).
+func (m *Model) editText(msg tea.KeyMsg) {
+	switch {
+	case msg.Type == tea.KeyBackspace:
+		m.backspaceInput()
+	case msg.Type == tea.KeySpace:
+		m.input += " "
+	case msg.Type == tea.KeyRunes && !msg.Alt:
+		m.input += string(msg.Runes)
+	}
 }
 
 func (m Model) handleWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -394,7 +419,7 @@ func (m Model) handleWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if cmd, done := m.handleWizardStepKey(key); done {
 		return m, cmd
 	}
-	m.editWizardInput(key)
+	m.editText(msg)
 	return m, nil
 }
 
@@ -451,16 +476,6 @@ func (m *Model) handleWizardPromptKey(key string) (tea.Cmd, bool) {
 	cwd := m.wizardCwd
 	m.closeWizard()
 	return m.dispatchWithNameCwdCmd(spec.Agent, spec.Name, spec.Prompt, cwd), true
-}
-
-func (m *Model) editWizardInput(key string) {
-	if key == "backspace" {
-		m.backspaceInput()
-		return
-	}
-	if len(key) == 1 || key == " " {
-		m.input += key
-	}
 }
 
 func (m *Model) cycleDefaultAgent() {
@@ -527,6 +542,22 @@ func (m Model) selectedSession() (adapter.Session, bool) {
 	}
 	return m.sessions[m.selected], true
 }
+
+// sessionByID returns the session with the given id, falling back to the
+// selected row when id is empty. Modal flows (rename/stop-confirm) snapshot the
+// target id at open time so a refresh that reorders the list mid-modal still
+// acts on the originally-chosen session (C2-1, F29).
+func (m Model) sessionByID(id string) (adapter.Session, bool) {
+	if id == "" {
+		return m.selectedSession()
+	}
+	for _, sess := range m.sessions {
+		if sess.ID == id {
+			return sess, true
+		}
+	}
+	return adapter.Session{}, false
+}
 func (m Model) peekSelectedCmd() tea.Cmd {
 	sess, ok := m.selectedSession()
 	if !ok {
@@ -553,7 +584,14 @@ func (m Model) resumeSelectedCmd() tea.Cmd {
 	}
 }
 func (m Model) stopSelectedCmd(remove bool) tea.Cmd {
-	sess, ok := m.selectedSession()
+	return m.stopTargetCmd("", remove)
+}
+
+// stopTargetCmd stops the session with the snapshotted id, falling back to the
+// selected row when id is empty, so a refresh that reorders the list while the
+// stop-confirm dialog is open still stops the originally-confirmed session (F29).
+func (m Model) stopTargetCmd(id string, remove bool) tea.Cmd {
+	sess, ok := m.sessionByID(id)
 	if !ok {
 		return nil
 	}
@@ -918,7 +956,7 @@ func (m Model) renderHelp() string {
 }
 
 func (m Model) renderConfirm() string {
-	sess, _ := m.selectedSession()
+	sess, _ := m.sessionByID(m.confirmStopID)
 	name := firstNonEmpty(sess.DisplayName, sess.ID, "session")
 	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
 		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +
