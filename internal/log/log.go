@@ -30,6 +30,16 @@ func Init() (io.Closer, error) {
 
 func L() *slog.Logger { return current }
 
+// SetLogger swaps the package logger and returns the previous one, so callers
+// (chiefly tests) can install a capturing handler and restore it afterwards.
+func SetLogger(l *slog.Logger) *slog.Logger {
+	prev := current
+	if l != nil {
+		current = l
+	}
+	return prev
+}
+
 func Debug(msg string, args ...any) { current.Debug(msg, args...) }
 func Info(msg string, args ...any)  { current.Info(msg, args...) }
 func Warn(msg string, args ...any)  { current.Warn(msg, args...) }

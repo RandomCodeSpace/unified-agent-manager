@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/pr"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
@@ -76,6 +77,9 @@ func (s *Service) liveSessions(ctx context.Context) map[string]adapter.Session {
 	for _, a := range s.Registry.Enabled() {
 		sessions, err := a.List(ctx)
 		if err != nil {
+			// One adapter's List failure must not blank the dashboard for the
+			// others, but it shouldn't vanish silently either (F12).
+			log.Warn("listing sessions for adapter failed", "agent", a.Name(), "error", err)
 			continue
 		}
 		for _, sess := range sessions {

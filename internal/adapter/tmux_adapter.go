@@ -107,12 +107,14 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 		tmuxName = fmt.Sprintf("uam-%s-%s", a.Name(), req.ID[:min(8, len(req.ID))])
 	}
 	env := map[string]string{"UAM_AGENT": a.Name(), "UAM_ID": req.ID}
-	// Best-effort: apply uam-friendly tmux server settings (mouse off, swallow
-	// Ctrl+Z). Failures don't prevent the session from being created.
-	_ = a.Tmux.EnsureServerConfig(ctx)
 	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
 		return Session{}, err
 	}
+	// Best-effort: apply uam-friendly tmux server settings (mouse off, swallow
+	// Ctrl+Z). This runs AFTER CreateSession so the server exists — applying it
+	// first on the very first dispatch fails and used to latch that failure
+	// (F25). Failures here don't prevent the session from being created.
+	_ = a.Tmux.EnsureServerConfig(ctx)
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
 	if shouldSendPrompt {
 		if err := a.Tmux.SendLine(ctx, tmuxName, req.Prompt); err != nil {

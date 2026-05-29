@@ -26,6 +26,9 @@ type svcFakeAdapter struct {
 	// fake implements adapter.HasSessionAdapter, returning alive from HasSession.
 	stopErr error
 	alive   bool
+	// F12: simulate a per-adapter List failure so liveSessions can be tested for
+	// logging-then-continue (one bad adapter must not blank the dashboard).
+	listErr error
 }
 
 func (f *svcFakeAdapter) Name() string        { return f.name }
@@ -46,7 +49,9 @@ func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) 
 	f.resumed = &req
 	return adapter.Session{ID: req.ID, AgentType: f.name, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: req.TmuxSession, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
-func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) { return f.sessions, nil }
+func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
+	return f.sessions, f.listErr
+}
 func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
 	return adapter.PeekResult{TailText: "tail"}, nil
 }

@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // ErrInvalidSessionName is returned when a session name fails the allow-list.
@@ -28,8 +30,8 @@ type Client struct {
 	Socket     string
 	Executable string
 
-	configOnce sync.Once
-	configErr  error
+	configMu   sync.Mutex
+	configDone bool
 }
 
 func New(socket string) *Client {
@@ -112,15 +114,28 @@ func commandWithEnv(env map[string]string, command []string) []string {
 func (c *Client) List(ctx context.Context) ([]SessionInfo, error) {
 	out, err := c.run(ctx, "list-sessions", "-F", ListFormat)
 	if err != nil {
-		// tmux exits non-zero when the private server has no sessions.
-		if strings.Contains(err.Error(), "no server running") || strings.Contains(err.Error(), "failed to connect") {
+		// tmux exits non-zero when the private server has no sessions. Different
+		// tmux versions phrase this differently: 3.4 reports the missing socket as
+		// "(No such file or directory)". Match the known no-server phrasings only;
+		// a genuine failure must still propagate.
+		if msg := err.Error(); strings.Contains(msg, "no server running") ||
+			strings.Contains(msg, "failed to connect") ||
+			strings.Contains(msg, "No such file or directory") {
 			return nil, nil
 		}
 		return nil, err
 	}
-	// Server is up — apply uam-friendly settings (sync.Once, no-op after first).
+	// Server is up — apply uam-friendly settings (latches once it succeeds).
 	_ = c.EnsureServerConfig(ctx)
-	return ParseListSessions(out)
+	// A malformed line (e.g. a cwd containing '|') yields the parsed subset plus
+	// ErrMalformedSessionLines; ParseListSessions already logged it. Returning
+	// the subset keeps the healthy sessions visible instead of blanking the
+	// whole list, so the sentinel is intentionally not propagated (F11).
+	sessions, err := ParseListSessions(out)
+	if errors.Is(err, ErrMalformedSessionLines) {
+		return sessions, nil
+	}
+	return sessions, err
 }
 
 func (c *Client) Capture(ctx context.Context, target string, lines int) (string, error) {
@@ -141,9 +156,28 @@ func (c *Client) SendEnter(ctx context.Context, target string) error {
 	return err
 }
 
+// SendLine types text into the target pane and submits it with a single Enter.
+//
+// tmux's `send-keys -l` interprets an embedded newline as Enter, so passing a
+// multi-line prompt as one literal made the agent submit it line-by-line (F13).
+// Instead we trim a trailing newline, then send each interior line as its own
+// literal keystroke separated by a literal "\n" keystroke — no interior Enter
+// events — and submit once at the end. A single-line prompt takes the original
+// one-literal-plus-one-Enter path byte-for-byte.
 func (c *Client) SendLine(ctx context.Context, target, text string) error {
-	if err := c.SendKeysLiteral(ctx, target, text); err != nil {
-		return err
+	text = strings.TrimRight(text, "\n")
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i > 0 {
+			// Send the line separator as its own literal keystroke so it lands
+			// in the input buffer instead of submitting the partial prompt.
+			if err := c.SendKeysLiteral(ctx, target, "\n"); err != nil {
+				return err
+			}
+		}
+		if err := c.SendKeysLiteral(ctx, target, line); err != nil {
+			return err
+		}
 	}
 	return c.SendEnter(ctx, target)
 }
@@ -155,13 +189,23 @@ func (c *Client) Kill(ctx context.Context, target string) error {
 
 // EnsureServerConfig applies session-friendly defaults to the private tmux
 // server: disable mouse mode so the host terminal owns text selection, and
-// swallow Ctrl+Z so it can't suspend the agent in the foreground pane. The
-// configuration is applied exactly once per Client.
+// swallow Ctrl+Z so it can't suspend the agent in the foreground pane.
+//
+// The configuration is applied at most once SUCCESSFULLY. The first dispatch
+// runs before the server exists, so set-option fails; latching that failure
+// (the old sync.Once behaviour) meant the config never applied for the life of
+// the process (F25). Instead we retry until a call succeeds, then latch.
 func (c *Client) EnsureServerConfig(ctx context.Context) error {
-	c.configOnce.Do(func() {
-		c.configErr = c.applyServerConfig(ctx)
-	})
-	return c.configErr
+	c.configMu.Lock()
+	defer c.configMu.Unlock()
+	if c.configDone {
+		return nil
+	}
+	if err := c.applyServerConfig(ctx); err != nil {
+		return err
+	}
+	c.configDone = true
+	return nil
 }
 
 func (c *Client) applyServerConfig(ctx context.Context) error {
@@ -178,9 +222,12 @@ func (c *Client) applyServerConfig(ctx context.Context) error {
 	}
 	// Hook install is best-effort. If we can't resolve a safe binary path,
 	// the rest of uam still works — only the exit-in-session signal is lost,
-	// and the user can recover via Ctrl+X or `uam rm`.
+	// and the user can recover via Ctrl+X or `uam rm`. We log (not return) the
+	// failure so a missing hook is diagnosable without bricking dispatch (F56).
 	if cmd := sessionClosedHookCommand(); cmd != "" {
-		_, _ = c.run(ctx, "set-hook", "-g", "session-closed", cmd)
+		if out, err := c.run(ctx, "set-hook", "-g", "session-closed", cmd); err != nil {
+			log.Warn("installing session-closed hook failed", "error", err, "output", strings.TrimSpace(out))
+		}
 	}
 	return nil
 }

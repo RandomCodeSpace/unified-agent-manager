@@ -199,6 +199,39 @@ exit 0
 	}
 }
 
+// F25 — startSession must create the tmux session BEFORE applying server
+// config. On first dispatch the server doesn't exist yet, so configuring it
+// first fails and (pre-fix) latched the failure forever. Assert new-session
+// precedes set-option in the recorded command log.
+func TestStartSessionConfiguresServerAfterCreate(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+	if _, err := ag.Dispatch(context.Background(), DispatchRequest{Prompt: "hello", Cwd: "/tmp", Mode: "yolo"}); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	logText := func() string { b, _ := os.ReadFile(logPath); return string(b) }()
+	nsIdx := strings.Index(logText, "new-session")
+	soIdx := strings.Index(logText, "set-option")
+	if nsIdx < 0 || soIdx < 0 {
+		t.Fatalf("expected both new-session and set-option in log: %s", logText)
+	}
+	if nsIdx > soIdx {
+		t.Fatalf("CreateSession must precede server config so the server exists: %s", logText)
+	}
+}
+
 func TestTmuxAgentDispatchWithoutPromptSkipsSendKeys(t *testing.T) {
 	dir := t.TempDir()
 	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
