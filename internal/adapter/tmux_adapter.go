@@ -125,6 +125,14 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 			return Session{}, err
 		}
 	}
+	// Resolve the working directory to an absolute path once, before it is used
+	// for both CreateSession (the tmux -c arg) and the returned Session.Cwd that
+	// the store persists. A relative cwd persisted verbatim would be re-resolved
+	// against uam's process cwd on resume, relaunching the agent in the wrong
+	// directory (C2-4).
+	if abs, absErr := filepath.Abs(cwd); absErr == nil {
+		cwd = abs
+	}
 	tmuxName := req.TmuxSession
 	if tmuxName == "" {
 		tmuxName = fmt.Sprintf("uam-%s-%s", a.Name(), req.ID[:min(8, len(req.ID))])
@@ -235,8 +243,6 @@ func (a *TmuxAgent) Stop(ctx context.Context, id string) error { return a.Tmux.K
 func (a *TmuxAgent) HasSession(ctx context.Context, id string) bool {
 	return a.Tmux.HasSession(ctx, a.target(id))
 }
-func (a *TmuxAgent) Rename(ctx context.Context, id, newName string) error       { return nil }
-func (a *TmuxAgent) Subscribe(ctx context.Context) (<-chan SessionEvent, error) { return nil, nil }
 
 // target resolves an id to a tmux -t target. It anchors the name with tmux's
 // `=` exact-match prefix so a longer neighbour that shares the truncated prefix

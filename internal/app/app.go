@@ -906,11 +906,6 @@ type dispatchSpec struct {
 	Prompt string
 }
 
-func parseDispatchInput(input, def string) (string, string) {
-	spec := parseDispatchSpec(input, def)
-	return spec.Prompt, spec.Agent
-}
-
 func parseDispatchSpec(input, def string) dispatchSpec {
 	fields := strings.Fields(input)
 	spec := dispatchSpec{Agent: def}
@@ -926,14 +921,8 @@ func parseDispatchSpec(input, def string) dispatchSpec {
 	return spec
 }
 
-func (m Model) dispatchCmd(agent, prompt string) tea.Cmd {
-	return m.dispatchWithCwdCmd(agent, prompt, "")
-}
 func (m Model) dispatchNamedCmd(agent, name, prompt string) tea.Cmd {
 	return m.dispatchWithNameCwdCmd(agent, name, prompt, "")
-}
-func (m Model) dispatchWithCwdCmd(agent, prompt, cwd string) tea.Cmd {
-	return m.dispatchWithNameCwdCmd(agent, "", prompt, cwd)
 }
 func (m Model) dispatchWithNameCwdCmd(agent, name, prompt, cwd string) tea.Cmd {
 	return func() tea.Msg {

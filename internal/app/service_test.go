@@ -66,11 +66,7 @@ func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error {
 	f.stopped = true
 	return f.stopErr
 }
-func (f *svcFakeAdapter) HasSession(ctx adapter.Context, id string) bool       { return f.alive }
-func (f *svcFakeAdapter) Rename(ctx adapter.Context, id, newName string) error { return nil }
-func (f *svcFakeAdapter) Subscribe(ctx adapter.Context) (<-chan adapter.SessionEvent, error) {
-	return nil, nil
-}
+func (f *svcFakeAdapter) HasSession(ctx adapter.Context, id string) bool { return f.alive }
 
 func TestServiceWorkflow(t *testing.T) {
 	svc, fake := newWorkflowService(t)
@@ -93,7 +89,7 @@ func newWorkflowService(t *testing.T) (*Service, *svcFakeAdapter) {
 
 func assertWorkflowDispatch(t *testing.T, svc *Service) adapter.Session {
 	t.Helper()
-	sess, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo")
+	sess, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +151,7 @@ func TestServicePrintListAndErrors(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
-	if _, err := svc.Dispatch(context.Background(), "missing", "x", "", ""); err == nil {
+	if _, err := svc.DispatchNamed(context.Background(), "missing", "", "x", "", ""); err == nil {
 		t.Fatal("want missing agent error")
 	}
 	if _, _, err := svc.Find(context.Background(), "missing"); err == nil {
@@ -293,7 +289,7 @@ func TestStopSoftCloseFlagsRecordClosedByUser(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	// Soft-close (remove=false) must keep the record and flag it as closed.
@@ -324,7 +320,7 @@ func TestStopRemoveDeletesRecord(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Stop(context.Background(), "12345678", true); err != nil {
@@ -349,7 +345,7 @@ func TestStopRemoveKeepsRecordWhenKillFailsAndPaneAlive(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true, stopErr: errors.New("kill boom"), alive: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	err = svc.Stop(context.Background(), "12345678", true)
@@ -370,7 +366,7 @@ func TestStopSoftCloseKeepsRecordActiveWhenKillFailsAndPaneAlive(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true, stopErr: errors.New("kill boom"), alive: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Stop(context.Background(), "12345678", false); err == nil {
@@ -393,7 +389,7 @@ func TestStopRemoveDeletesRecordWhenKillFailsButPaneGone(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true, stopErr: errors.New("no such session"), alive: false}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Stop(context.Background(), "12345678", true); err != nil {
@@ -413,7 +409,7 @@ func TestStopSoftCloseFlagsRecordWhenKillFailsButPaneGone(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true, stopErr: errors.New("no such session"), alive: false}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Stop(context.Background(), "12345678", false); err != nil {
@@ -433,7 +429,7 @@ func TestNotifyClosedMarksMatchingRecord(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -476,7 +472,7 @@ func TestDispatchReturnsLiveSessionOnPersistFailure(t *testing.T) {
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	// First dispatch creates the lock + config files.
-	if _, err := svc.Dispatch(context.Background(), "fake", "warmup", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "warmup", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	// Make the config dir read-only so the next store write (the tmp-file create)
@@ -572,7 +568,7 @@ func TestResumeBackgroundClearsClosedStatus(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	// User closes the session (soft close), then resumes it.

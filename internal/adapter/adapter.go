@@ -95,11 +95,6 @@ type HasSessionAdapter interface {
 	HasSession(ctx Context, id string) bool
 }
 
-type SessionEvent struct {
-	SessionID string
-	Kind      string
-}
-
 type DispatchRequest struct {
 	Prompt string
 	Cwd    string
@@ -117,6 +112,4 @@ type AgentAdapter interface {
 	Reply(ctx Context, id, text string) error
 	Attach(id string) (AttachSpec, error)
 	Stop(ctx Context, id string) error
-	Rename(ctx Context, id, newName string) error
-	Subscribe(ctx Context) (<-chan SessionEvent, error)
 }

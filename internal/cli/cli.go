@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -177,14 +178,32 @@ func runKillAll(ctx context.Context, kill func(context.Context) error) error {
 }
 
 func runLast(ctx context.Context, svc *app.Service, runTUI func(context.Context, tea.Model) error) error {
-	sessions, _, err := svc.LoadSessions(ctx)
+	// LoadSessions returns the persisted config; the "last" session is the one
+	// with the newest persisted LastSeenAt, not the top sorted row (whose order
+	// is driven by State/Pinned, not recency) (C1-6).
+	_, cfg, err := svc.LoadSessions(ctx)
 	if err != nil {
 		return err
 	}
-	if len(sessions) == 0 {
+	id := lastSeenID(cfg)
+	if id == "" {
 		return errors.New("no sessions")
 	}
-	return execAttach(ctx, svc, sessions[0].ID, runTUI)
+	return execAttach(ctx, svc, id, runTUI)
+}
+
+// lastSeenID returns the id of the record with the maximum persisted LastSeenAt.
+// Ties are broken by the larger id so repeated `uam last` invocations are
+// deterministic. Returns "" when there are no records (C1-6).
+func lastSeenID(cfg store.Config) string {
+	var best store.SessionRecord
+	for _, rec := range cfg.Sessions {
+		if best.ID == "" || rec.LastSeenAt.After(best.LastSeenAt) ||
+			(rec.LastSeenAt.Equal(best.LastSeenAt) && rec.ID > best.ID) {
+			best = rec
+		}
+	}
+	return best.ID
 }
 
 func requireArg(args []string, message string) (string, error) {
@@ -266,8 +285,10 @@ func runNew(ctx context.Context, svc *app.Service) error {
 		agent = a.Name()
 	}
 	fmt.Printf("provider [%s]: ", agent)
-	if line, _ := reader.ReadString('\n'); strings.TrimSpace(line) != "" {
-		agent = strings.TrimSpace(line)
+	if line, err := readLine(reader); err != nil {
+		return fmt.Errorf("read provider: %w", err)
+	} else if line != "" {
+		agent = line
 	}
 	// Re-validate the typed provider: if its CLI is not installed, reconcile it
 	// to an enabled one rather than failing the dispatch on an "unavailable"
@@ -277,15 +298,29 @@ func runNew(ctx context.Context, svc *app.Service) error {
 	if a := svc.Registry.Default(agent); a != nil {
 		agent = a.Name()
 	}
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve working directory: %w", err)
+	}
 	fmt.Printf("workdir [%s]: ", cwd)
-	if line, _ := reader.ReadString('\n'); strings.TrimSpace(line) != "" {
-		cwd = strings.TrimSpace(line)
+	if line, err := readLine(reader); err != nil {
+		return fmt.Errorf("read workdir: %w", err)
+	} else if line != "" {
+		cwd = line
 	}
 	fmt.Print("prompt [#session-name prompt, optional]: ")
-	prompt, _ := reader.ReadString('\n')
-	prompt = strings.TrimSpace(prompt)
-	name, prompt := parseNameAndPrompt(strings.Fields(prompt))
+	// Read the raw prompt line; data and io.EOF can co-arrive on the final read,
+	// so use the returned bytes even when err == io.EOF (F54).
+	raw, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read prompt: %w", err)
+	}
+	// Split off only a leading #name token; preserve the prompt remainder
+	// verbatim so interior whitespace the user typed is not collapsed (C1-3).
+	name, prompt := splitNameFromPrompt(strings.TrimRight(raw, "\r\n"))
+	if strings.TrimSpace(prompt) == "" {
+		return errors.New("new requires a prompt")
+	}
 	sess, err := svc.DispatchNamed(ctx, agent, name, prompt, cwd, string(store.ModeYolo))
 	if err != nil {
 		if sess.ID == "" {
@@ -295,6 +330,34 @@ func runNew(ctx context.Context, svc *app.Service) error {
 	}
 	fmt.Printf("dispatched %s (%s)\n", sess.ID, sess.TmuxSession)
 	return nil
+}
+
+// readLine reads one trimmed input line from r. A trailing io.EOF that arrives
+// with the line's bytes is not an error (the line is still returned); any other
+// read error is surfaced (F54).
+func readLine(r *bufio.Reader) (string, error) {
+	line, err := r.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+// splitNameFromPrompt peels a single leading #name token off the front of a
+// prompt and returns the remainder verbatim. Unlike parseNameAndPrompt it does
+// not tokenize the prompt, so interior whitespace survives (C1-3). The leading
+// "#name " separator (exactly one space) is consumed; everything after it is
+// kept byte-for-byte.
+func splitNameFromPrompt(line string) (name, prompt string) {
+	trimmed := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(trimmed, "#") {
+		return "", line
+	}
+	rest := trimmed[1:]
+	if i := strings.IndexAny(rest, " \t"); i >= 0 {
+		return rest[:i], rest[i+1:]
+	}
+	return rest, ""
 }
 
 func parseNameAndPrompt(parts []string) (string, string) {

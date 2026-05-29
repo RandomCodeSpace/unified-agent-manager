@@ -44,11 +44,7 @@ func (f *cliFakeAdapter) Reply(ctx adapter.Context, id, text string) error { ret
 func (f *cliFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
 }
-func (f *cliFakeAdapter) Stop(ctx adapter.Context, id string) error            { f.stopped = true; return nil }
-func (f *cliFakeAdapter) Rename(ctx adapter.Context, id, newName string) error { return nil }
-func (f *cliFakeAdapter) Subscribe(ctx adapter.Context) (<-chan adapter.SessionEvent, error) {
-	return nil, nil
-}
+func (f *cliFakeAdapter) Stop(ctx adapter.Context, id string) error { f.stopped = true; return nil }
 
 func TestRunDispatchListPeekAndStop(t *testing.T) {
 	svc, fake := newCLITestService(t)

@@ -302,10 +302,6 @@ func SortSessions(sessions []adapter.Session) {
 	})
 }
 
-func (s *Service) Dispatch(ctx context.Context, agentName, prompt, cwd, mode string) (adapter.Session, error) {
-	return s.DispatchNamed(ctx, agentName, "", prompt, cwd, mode)
-}
-
 func (s *Service) DispatchNamed(ctx context.Context, agentName, name, prompt, cwd, mode string) (adapter.Session, error) {
 	if s.Registry == nil {
 		return adapter.Session{}, errors.New("no registry configured")

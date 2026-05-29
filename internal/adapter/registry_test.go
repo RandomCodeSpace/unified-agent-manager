@@ -45,10 +45,8 @@ func (f fakeAdapter) Available() (bool, string) {
 func (f fakeAdapter) Dispatch(ctx Context, req DispatchRequest) (Session, error) {
 	return Session{}, nil
 }
-func (f fakeAdapter) List(ctx Context) ([]Session, error)                { return nil, nil }
-func (f fakeAdapter) Peek(ctx Context, id string) (PeekResult, error)    { return PeekResult{}, nil }
-func (f fakeAdapter) Reply(ctx Context, id, text string) error           { return nil }
-func (f fakeAdapter) Attach(id string) (AttachSpec, error)               { return AttachSpec{}, nil }
-func (f fakeAdapter) Stop(ctx Context, id string) error                  { return nil }
-func (f fakeAdapter) Rename(ctx Context, id, newName string) error       { return nil }
-func (f fakeAdapter) Subscribe(ctx Context) (<-chan SessionEvent, error) { return nil, nil }
+func (f fakeAdapter) List(ctx Context) ([]Session, error)             { return nil, nil }
+func (f fakeAdapter) Peek(ctx Context, id string) (PeekResult, error) { return PeekResult{}, nil }
+func (f fakeAdapter) Reply(ctx Context, id, text string) error        { return nil }
+func (f fakeAdapter) Attach(id string) (AttachSpec, error)            { return AttachSpec{}, nil }
+func (f fakeAdapter) Stop(ctx Context, id string) error               { return nil }

@@ -89,7 +89,7 @@ func TestModelCommandFactories(t *testing.T) {
 	if m.loadSessionsCmd()() == nil {
 		t.Fatal("nil load msg")
 	}
-	if msg := m.dispatchCmd("fake", "prompt")(); msg.(dispatchedMsg).err != nil {
+	if msg := m.dispatchNamedCmd("fake", "", "prompt")(); msg.(dispatchedMsg).err != nil {
 		t.Fatalf("dispatch msg=%+v", msg)
 	}
 	if msg := m.peekSelectedCmd()(); msg.(peekLoadedMsg).text != "tail" {
@@ -238,7 +238,7 @@ func keyMsg(s string) tea.KeyMsg {
 
 func TestServiceNilAndUnavailableBranches(t *testing.T) {
 	svc := NewService(nil, nil)
-	if _, err := svc.Dispatch(context.Background(), "x", "", "", ""); err == nil {
+	if _, err := svc.DispatchNamed(context.Background(), "x", "", "", "", ""); err == nil {
 		t.Fatal("want registry error")
 	}
 	if err := svc.SetUI(func(*store.UISettings) {}); err != nil {

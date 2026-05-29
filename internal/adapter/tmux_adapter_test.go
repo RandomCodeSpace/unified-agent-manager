@@ -77,14 +77,10 @@ func assertAgentInteractions(t *testing.T, ag *TmuxAgent) {
 		func() error { return ag.Reply(context.Background(), "abc12345", "ok") },
 		func() error { _, err := ag.Attach("abc12345"); return err },
 		func() error { return ag.Stop(context.Background(), "abc12345") },
-		func() error { return ag.Rename(context.Background(), "abc12345", "name") },
 	} {
 		if err := action(); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if ch, err := ag.Subscribe(context.Background()); err != nil || ch != nil {
-		t.Fatalf("Subscribe = %v %v", ch, err)
 	}
 }
 

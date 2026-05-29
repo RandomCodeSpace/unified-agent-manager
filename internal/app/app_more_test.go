@@ -73,8 +73,8 @@ func assertSelectionAfterKey(t *testing.T, m *Model, key tea.KeyType, want int) 
 func assertDispatchParsing(t *testing.T, m Model) {
 	t.Helper()
 	m.input = "@fake do work"
-	if prompt, agent := parseDispatchInput(m.input, "claude"); prompt != "do work" || agent != "fake" {
-		t.Fatalf("%q %q", prompt, agent)
+	if spec := parseDispatchSpec(m.input, "claude"); spec.Prompt != "do work" || spec.Agent != "fake" {
+		t.Fatalf("%q %q", spec.Prompt, spec.Agent)
 	}
 	spec := parseDispatchSpec("@fake #my-session do work", "claude")
 	if spec.Agent != "fake" || spec.Name != "my-session" || spec.Prompt != "do work" {
@@ -84,8 +84,8 @@ func assertDispatchParsing(t *testing.T, m Model) {
 	if spec.Agent != "fake" || spec.Name != "my-session" || spec.Prompt != "" {
 		t.Fatalf("named no-prompt spec=%+v", spec)
 	}
-	if prompt, agent := parseDispatchInput("do work", "claude"); prompt != "do work" || agent != "claude" {
-		t.Fatalf("%q %q", prompt, agent)
+	if spec := parseDispatchSpec("do work", "claude"); spec.Prompt != "do work" || spec.Agent != "claude" {
+		t.Fatalf("%q %q", spec.Prompt, spec.Agent)
 	}
 	if sess, ok := m.selectedSession(); !ok || sess.ID != "1" {
 		t.Fatalf("selected session %+v %v", sess, ok)
