@@ -30,6 +30,7 @@ type Model struct {
 	input          string
 	defaultAgent   string
 	message        string
+	messageSetAt   time.Time
 	peekOpen       bool
 	peekText       string
 	helpOpen       bool
@@ -44,6 +45,11 @@ type Model struct {
 	groupByDir     bool
 	execProcess    func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 }
+
+// messageTTL is how long a status/error line stays on screen before a refresh
+// tick clears it. A just-emitted message must survive at least one 2s tick, so
+// the TTL is several ticks long (F53).
+const messageTTL = 8 * time.Second
 
 type sessionsLoadedMsg struct {
 	sessions     []adapter.Session
@@ -100,6 +106,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg), nil
 	case refreshMsg:
+		m.expireMessage(time.Time(msg))
 		return m, tea.Batch(m.loadSessionsCmd(), refreshTick())
 	case sessionsLoadedMsg:
 		return m.handleSessionsLoaded(msg), nil
@@ -122,9 +129,26 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) Model {
 	return m
 }
 
+// setMessage records a status/error line and stamps the time it was set so the
+// refresh tick can TTL-expire it instead of blanket-clearing a just-emitted
+// message (F53).
+func (m *Model) setMessage(text string) {
+	m.message = text
+	m.messageSetAt = time.Now()
+}
+
+// expireMessage clears the status line once it has been on screen longer than
+// messageTTL. now is the refresh-tick timestamp.
+func (m *Model) expireMessage(now time.Time) {
+	if m.message != "" && !m.messageSetAt.IsZero() && now.Sub(m.messageSetAt) >= messageTTL {
+		m.message = ""
+		m.messageSetAt = time.Time{}
+	}
+}
+
 func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	if msg.err != nil {
-		m.message = msg.err.Error()
+		m.setMessage(msg.err.Error())
 		return m
 	}
 	if msg.sessions != nil {
@@ -142,7 +166,7 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 
 func (m Model) handlePeekLoaded(msg peekLoadedMsg) Model {
 	if msg.err != nil {
-		m.message = msg.err.Error()
+		m.setMessage(msg.err.Error())
 	} else {
 		m.peekText = msg.text
 	}
@@ -155,14 +179,14 @@ func (m Model) handleDispatched(msg dispatchedMsg) (tea.Model, tea.Cmd) {
 	// Only a true dispatch failure — no session — aborts with the error (F03).
 	if msg.session.ID == "" {
 		if msg.err != nil {
-			m.message = msg.err.Error()
+			m.setMessage(msg.err.Error())
 		}
 		return m, nil
 	}
 	if msg.err != nil {
-		m.message = "attaching " + msg.session.ID + " (warning: " + msg.err.Error() + ")"
+		m.setMessage("attaching " + msg.session.ID + " (warning: " + msg.err.Error() + ")")
 	} else {
-		m.message = "attaching " + msg.session.ID
+		m.setMessage("attaching " + msg.session.ID)
 	}
 	m.input = ""
 	return m, m.attachSessionCmd(msg.session)
@@ -170,9 +194,9 @@ func (m Model) handleDispatched(msg dispatchedMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleAttachFinished(msg attachFinishedMsg) Model {
 	if msg.err != nil {
-		m.message = "session exited: " + msg.err.Error()
+		m.setMessage("session exited: " + msg.err.Error())
 	} else {
-		m.message = "returned to uam"
+		m.setMessage("returned to uam")
 	}
 	return m
 }
@@ -226,17 +250,30 @@ func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.
 func (m *Model) handleMovementKey(key string) (bool, tea.Cmd) {
 	switch key {
 	case "up":
-		m.moveSelection(-1)
-		return true, nil
+		return true, m.moveSelectionPeek(-1)
 	case "down":
-		m.moveSelection(1)
-		return true, nil
+		return true, m.moveSelectionPeek(1)
 	case "shift+up":
 		return true, m.moveSession(-1)
 	case "shift+down":
 		return true, m.moveSession(1)
 	}
 	return false, nil
+}
+
+// moveSelectionPeek moves the cursor and, when the peek panel is open and the
+// selection actually changed, re-fires the peek for the newly selected session.
+// The stale peek text is blanked synchronously so the panel never shows a frame
+// of the previous session's tail. Gated on peekOpen so plain navigation with the
+// panel closed doesn't trigger an N+1 capture storm (C2-2).
+func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
+	prev := m.selected
+	m.moveSelection(delta)
+	if !m.peekOpen || m.selected == prev {
+		return nil
+	}
+	m.peekText = ""
+	return m.peekSelectedCmd()
 }
 
 func (m *Model) moveSelection(delta int) {
@@ -263,12 +300,12 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 		return true, tea.Quit
 	case "tab":
 		m.cycleDefaultAgent()
-		_ = m.service.SetDefaultAgent(m.defaultAgent)
+		return true, m.persistDefaultAgent()
 	case "?":
 		m.helpOpen = true
 	case "ctrl+s":
 		m.groupByDir = !m.groupByDir
-		_ = m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = m.groupByDir })
+		return true, m.persistGroupByDir()
 	case "ctrl+t":
 		return true, m.pinSelectedCmd()
 	case "ctrl+r":
@@ -327,7 +364,7 @@ func (m *Model) handleSpaceKey(key string) tea.Cmd {
 	// A stopped session has no live tmux pane to peek into — Space restarts it
 	// in the background instead.
 	if sess, ok := m.selectedSession(); ok && sess.ProcAlive == adapter.Exited {
-		m.message = "restarting " + firstNonEmpty(sess.DisplayName, sess.ID)
+		m.setMessage("restarting " + firstNonEmpty(sess.DisplayName, sess.ID))
 		return m.resumeSelectedCmd()
 	}
 	m.peekOpen = !m.peekOpen
@@ -444,9 +481,8 @@ func (m *Model) handleWizardAgentKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "tab":
 		m.cycleDefaultAgent()
-		_ = m.service.SetDefaultAgent(m.defaultAgent)
 		m.wizardAgent = m.defaultAgent
-		return nil, true
+		return m.persistDefaultAgent(), true
 	case "enter":
 		if m.wizardAgent == "" {
 			m.wizardAgent = m.defaultAgent
@@ -585,6 +621,30 @@ func (m Model) resumeSelectedCmd() tea.Cmd {
 }
 func (m Model) stopSelectedCmd(remove bool) tea.Cmd {
 	return m.stopTargetCmd("", remove)
+}
+
+// persistDefaultAgent persists the default-agent choice. On failure it surfaces
+// the error in the status line instead of swallowing it; on success it returns a
+// reload command so the UI reflects the stored config (F55).
+func (m *Model) persistDefaultAgent() tea.Cmd {
+	if err := m.service.SetDefaultAgent(m.defaultAgent); err != nil {
+		m.setMessage("could not save default agent: " + err.Error())
+		return nil
+	}
+	return m.loadSessionsCmd()
+}
+
+// persistGroupByDir persists the group-by-dir toggle. On failure it surfaces the
+// error and reverts the in-memory flag so the UI matches the unchanged stored
+// state; on success it returns a reload command (F55).
+func (m *Model) persistGroupByDir() tea.Cmd {
+	grouped := m.groupByDir
+	if err := m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = grouped }); err != nil {
+		m.groupByDir = !grouped
+		m.setMessage("could not save view setting: " + err.Error())
+		return nil
+	}
+	return m.loadSessionsCmd()
 }
 
 // stopTargetCmd stops the session with the snapshotted id, falling back to the
@@ -846,10 +906,17 @@ func renderRow(s adapter.Session, selected bool, nameWidth, taskWidth int, showT
 	if selected {
 		cursor = brandStyle.Render("▸") + " "
 	}
-	glyph, gs := stateGlyph(s.State)
+	glyph, gs := sessionGlyph(s)
 	pin := ""
 	if s.Pinned {
 		pin = "★ "
+	}
+	// PR status dot in a fixed 1-column slot (blank when the session has no PR)
+	// so the task column stays aligned whether or not a PR is present. Distinct
+	// glyphs per status (not color-only) survive a no-color terminal (F26).
+	prCell := " "
+	if s.PR != nil {
+		prCell = prStatusStyle(s.PR.Status).Render(prStatusDot(s.PR.Status))
 	}
 	nameStyle := titleStyle
 	if selected {
@@ -857,12 +924,18 @@ func renderRow(s adapter.Session, selected bool, nameWidth, taskWidth int, showT
 	}
 	label := truncate(pin+firstNonEmpty(s.DisplayName, s.ID), nameWidth)
 	if showTask {
-		cell := nameStyle.Render(fmt.Sprintf("%-*s", nameWidth, label))
-		return cursor + gs.Render(glyph) + " " + cell + "  " + taskStyle.Render(truncate(promptText(s), taskWidth))
+		// Width-aware padding keeps the task column aligned even when the name
+		// holds wide (CJK/emoji) runes (F28).
+		cell := nameStyle.Render(padRight(label, nameWidth))
+		return cursor + gs.Render(glyph) + " " + cell + " " + prCell + " " + taskStyle.Render(truncate(promptText(s), taskWidth))
 	}
 	// Narrow layout: state glyph + name only — one line per row. The selected
 	// session's task is carried by the details panel, so rows don't repeat it.
-	return cursor + gs.Render(glyph) + " " + nameStyle.Render(label)
+	row := cursor + gs.Render(glyph) + " " + nameStyle.Render(label)
+	if s.PR != nil {
+		row += " " + prCell
+	}
+	return row
 }
 
 func (m Model) renderPeek() string {
@@ -925,7 +998,23 @@ func (m Model) visibleSessionWindow() (int, int) {
 }
 
 func promptText(sess adapter.Session) string {
-	return firstNonEmpty(sess.Prompt, stateLabel(sess.State), "idle")
+	// Fall back to a liveness-derived label (never the raw "Failed" State enum)
+	// so a reboot-survivor row doesn't read as failed when it has no prompt — it
+	// is resumable, not broken (F30).
+	return firstNonEmpty(sess.Prompt, livenessLabel(sess), "idle")
+}
+
+// livenessLabel describes a prompt-less session by its liveness and Closed flag
+// rather than its State enum.
+func livenessLabel(sess adapter.Session) string {
+	switch {
+	case sess.ProcAlive == adapter.Alive:
+		return "running"
+	case sess.Closed:
+		return "closed"
+	default:
+		return "resumable"
+	}
 }
 
 // absCwd resolves a session's working directory to an absolute path.
@@ -980,12 +1069,39 @@ func (m Model) renderWizard() string {
 	return b.String()
 }
 
+// liveGlyphStyle / failGlyphStyle are hoisted to package vars so renderRow does
+// not allocate a fresh lipgloss.Style per row per frame. They keep AdaptiveColor
+// (resolved at render time, not pre-baked) so the palette still adapts to
+// light/dark terminals (F58).
+var (
+	liveGlyphStyle = lipgloss.NewStyle().Bold(true).Foreground(liveColor)
+	failGlyphStyle = lipgloss.NewStyle().Bold(true).Foreground(failColor)
+)
+
+// sessionGlyph picks the row glyph from the session's liveness and Closed flag
+// rather than its State enum, so a reboot-survivor (Exited but not user-closed)
+// renders as a neutral "resumable" dot instead of the red Failed glyph under the
+// ACTIVE group (F30).
+func sessionGlyph(s adapter.Session) (string, lipgloss.Style) {
+	switch {
+	case s.ProcAlive == adapter.Alive:
+		return "⟳", liveGlyphStyle
+	case s.Closed:
+		// User-retired, dead pane: muted resting dot in the CLOSED group.
+		return "•", hintStyle
+	default:
+		// Reboot-survivor / externally-killed but resumable: neutral paused
+		// glyph, NOT the red failure mark.
+		return "◦", hintStyle
+	}
+}
+
 func stateGlyph(s adapter.State) (string, lipgloss.Style) {
 	switch s {
 	case adapter.Active:
-		return "⟳", lipgloss.NewStyle().Bold(true).Foreground(liveColor)
+		return "⟳", liveGlyphStyle
 	case adapter.Failed:
-		return "✕", lipgloss.NewStyle().Bold(true).Foreground(failColor)
+		return "✕", failGlyphStyle
 	default:
 		return "•", hintStyle
 	}
@@ -995,25 +1111,73 @@ func stateLabel(s adapter.State) string {
 	return strings.ToLower(string(s))
 }
 
+// prStatusDot returns a distinct glyph per PR status (not color-only) so the PR
+// state survives a monochrome terminal or a screen scrape: open=hollow circle,
+// merged=filled circle, draft=half circle, closed=cross (F26).
 func prStatusDot(s adapter.PRStatus) string {
 	switch s {
+	case adapter.PROpen:
+		return "○"
 	case adapter.PRMerged:
 		return "●"
 	case adapter.PRDraft:
 		return "◐"
 	case adapter.PRClosed:
-		return "◯"
-	case adapter.PROpen:
-		return "●"
+		return "✕"
 	default:
 		return " "
 	}
 }
 
+// prStatusStyle colours the PR dot by status. Colour is a secondary cue; the
+// glyph in prStatusDot is the primary, color-independent signal (F26).
+func prStatusStyle(s adapter.PRStatus) lipgloss.Style {
+	switch s {
+	case adapter.PRMerged:
+		return liveGlyphStyle
+	case adapter.PRClosed:
+		return failGlyphStyle
+	default:
+		return hintStyle
+	}
+}
+
+// truncate clips s to at most n display columns, measuring with lipgloss.Width
+// so multibyte and wide (CJK/emoji) runes are counted by the columns they
+// occupy rather than their byte length. When clipping happens an ellipsis is
+// appended and the result still fits within n columns (F28).
 func truncate(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > n {
-		return s[:max(0, n-1)] + "…"
+	if n <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= n {
+		return s
+	}
+	// Reserve one column for the ellipsis, then grow rune-by-rune until adding
+	// the next rune would overflow the budget. This keeps wide runes intact and
+	// never slices a multibyte sequence.
+	budget := n - 1
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > budget {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String() + "…"
+}
+
+// padRight pads s with spaces to occupy exactly n display columns. If s already
+// meets or exceeds n columns it is returned unchanged. Display-width padding
+// keeps columns aligned when names contain wide runes, which byte-length-based
+// fmt "%-*s" padding gets wrong (F28).
+func padRight(s string, n int) string {
+	if pad := n - lipgloss.Width(s); pad > 0 {
+		return s + strings.Repeat(" ", pad)
 	}
 	return s
 }
