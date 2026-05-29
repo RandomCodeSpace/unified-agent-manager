@@ -24,7 +24,6 @@ type TmuxAgent struct {
 	DisplayNameValue   string
 	Candidates         []CommandCandidate
 	YoloArgs           []string
-	SafeArgs           []string
 	Tmux               *tmux.Client
 	SessionArgs        func(req ResumeRequest, activity string) []string
 	SkipPromptOnResume bool
@@ -68,9 +67,9 @@ func (a *TmuxAgent) commandForMode(mode string) ([]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s unavailable", a.Name())
 	}
-	if mode == "safe" {
-		cmd = append(cmd, a.SafeArgs...)
-	} else {
+	// Safe mode launches the bare command; no flag is the safe default for
+	// claude/codex. Only non-safe modes append the provider's full-access args.
+	if mode != "safe" {
 		cmd = append(cmd, a.YoloArgs...)
 	}
 	return cmd, nil
