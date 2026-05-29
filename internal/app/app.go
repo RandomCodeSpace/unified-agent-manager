@@ -45,12 +45,44 @@ type Model struct {
 	wizardCwd      string
 	groupByDir     bool
 	execProcess    func(*exec.Cmd, tea.ExecCallback) tea.Cmd
+	// reorderSeq increments on every reorder; a debounced flush tick only
+	// persists when its seq still matches, so a held Shift+arrow coalesces into
+	// one store write instead of one fsync per step. reorderPending marks a
+	// scheduled-but-not-yet-flushed reorder so quit can flush it (F59).
+	reorderSeq     int
+	reorderPending bool
+	// lastPeekAt records, per session id, when its pane was last captured for
+	// the peek panel. The peek-focus ticker re-polls the focused session at most
+	// once per peekFocusInterval; the map is keyed by id (not row index) because
+	// rows reorder every refresh tick (C2-11). peekClock is the injectable clock
+	// for that gate.
+	lastPeekAt map[string]time.Time
+	peekClock  func() time.Time
 }
 
 // messageTTL is how long a status/error line stays on screen before a refresh
 // tick clears it. A just-emitted message must survive at least one 2s tick, so
 // the TTL is several ticks long (F53).
 const messageTTL = 8 * time.Second
+
+// reorderDebounce is how long a reorder waits for a follow-up move before it
+// persists. A held Shift+arrow fires a move per repeat; without the debounce
+// each one is a whole-file JSON encode + fsync + rename. Coalescing them into a
+// single write after the keystrokes settle keeps the store off the hot path
+// (F59).
+const reorderDebounce = 500 * time.Millisecond
+
+// peekTickInterval drives the peek-focus poll. The tick is what makes an open
+// peek panel update live without coupling peek freshness to the slower 2s
+// session refresh (C2-11).
+const peekTickInterval = time.Second
+
+// peekFocusInterval is the minimum spacing between captures of the focused
+// session's pane while the peek panel is open. The peek-focus ticker fires
+// every second; this gate (id-keyed) keeps a focused session from being
+// captured faster than once per interval even if rows reorder under the cursor
+// (C2-11).
+const peekFocusInterval = time.Second
 
 type sessionsLoadedMsg struct {
 	sessions     []adapter.Session
@@ -73,6 +105,16 @@ type attachSpecMsg struct {
 type attachFinishedMsg struct{ err error }
 type refreshMsg time.Time
 
+// peekTickMsg is the peek-focus poll tick. When the peek panel is open it
+// re-captures the focused session's pane (rate-limited per id) so the panel
+// follows live output; when closed it just re-arms (C2-11).
+type peekTickMsg time.Time
+
+// reorderFlushMsg is the debounced reorder-persist tick. It carries the seq of
+// the reorder that scheduled it; the handler persists only when the seq still
+// matches the latest move, dropping ticks superseded by a newer move (F59).
+type reorderFlushMsg struct{ seq int }
+
 func New() Model {
 	st, _ := store.Open(store.DefaultPath())
 	client := tmux.New("uam")
@@ -81,7 +123,7 @@ func New() Model {
 }
 
 func NewWithDeps(st *store.Store, reg *adapter.Registry) Model {
-	return Model{service: NewService(st, reg), defaultAgent: "claude", wizardCwd: ".", execProcess: tea.ExecProcess}
+	return Model{service: NewService(st, reg), defaultAgent: "claude", wizardCwd: ".", execProcess: tea.ExecProcess, lastPeekAt: map[string]time.Time{}, peekClock: time.Now}
 }
 func NewWizard(st *store.Store, reg *adapter.Registry) Model {
 	m := NewWithDeps(st, reg)
@@ -89,10 +131,16 @@ func NewWizard(st *store.Store, reg *adapter.Registry) Model {
 	return m
 }
 
-func (m Model) Init() tea.Cmd { return tea.Batch(m.loadSessionsCmd(), refreshTick()) }
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(m.loadSessionsCmd(), refreshTick(), peekTick())
+}
 
 func refreshTick() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return refreshMsg(t) })
+}
+
+func peekTick() tea.Cmd {
+	return tea.Tick(peekTickInterval, func(t time.Time) tea.Msg { return peekTickMsg(t) })
 }
 
 // refreshStep advances the refresh state machine for one tick. It always
@@ -128,6 +176,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return next, tea.Batch(next.loadSessionsCmd(), refreshTick())
 		}
 		return next, refreshTick()
+	case peekTickMsg:
+		// Re-arm the peek ticker unconditionally; only re-capture the focused
+		// session when the panel is open and the per-id rate limit allows it
+		// (C2-11).
+		next, peekCmd := m.peekFocusStep(time.Time(msg))
+		return next, tea.Batch(peekCmd, peekTick())
+	case reorderFlushMsg:
+		// Persist only if this is the latest reorder; a superseded tick is dropped
+		// so a held Shift+arrow coalesces into one write (F59).
+		if msg.seq != m.reorderSeq {
+			return m, nil
+		}
+		return m, m.flushReorder()
 	case sessionsLoadedMsg:
 		return m.handleSessionsLoaded(msg), nil
 	case peekLoadedMsg:
@@ -306,21 +367,100 @@ func (m *Model) moveSelection(delta int) {
 	}
 }
 
+// peekFocusStep handles a peek-focus tick: when the panel is open it re-captures
+// the focused session's pane at most once per peekFocusInterval (gated by id so
+// a reorder under the cursor can't double-capture), keeping the panel live. It
+// returns the (possibly nil) peek command; the caller re-arms the ticker (C2-11).
+func (m Model) peekFocusStep(now time.Time) (Model, tea.Cmd) {
+	if m.peekClock != nil {
+		now = m.peekClock()
+	}
+	if !m.peekOpen {
+		return m, nil
+	}
+	sess, ok := m.selectedSession()
+	if !ok {
+		return m, nil
+	}
+	if !m.shouldPollFocusedPeek(sess.ID, now) {
+		return m, nil
+	}
+	if m.lastPeekAt == nil {
+		m.lastPeekAt = map[string]time.Time{}
+	}
+	m.lastPeekAt[sess.ID] = now
+	return m, m.peekSelectedCmd()
+}
+
+// shouldPollFocusedPeek reports whether the focused session id is due for a
+// peek capture: never polled, or last polled at least peekFocusInterval ago.
+// Keyed by id so the rate limit follows the session, not the row index (C2-11).
+func (m Model) shouldPollFocusedPeek(id string, now time.Time) bool {
+	if id == "" {
+		return false
+	}
+	last, seen := m.lastPeekAt[id]
+	if !seen {
+		return true
+	}
+	return now.Sub(last) >= peekFocusInterval
+}
+
 func (m *Model) moveSession(delta int) tea.Cmd {
 	next := m.selected + delta
 	if next < 0 || next >= len(m.sessions) {
 		return nil
 	}
+	// SortSessions buckets rows by Closed, then Pinned, before honoring
+	// SortIndex. A swap that crosses either boundary is undone on the next
+	// refresh (the row snaps back to its partition), so reject it and give
+	// honest feedback instead of a move that silently reverts (F34).
+	if !samePartition(m.sessions[m.selected], m.sessions[next]) {
+		m.setMessage("can't reorder across the active/closed or pinned boundary")
+		return nil
+	}
 	m.sessions[m.selected], m.sessions[next] = m.sessions[next], m.sessions[m.selected]
 	m.selected = next
+	return m.scheduleReorderFlush()
+}
+
+// scheduleReorderFlush bumps the reorder seq, marks a flush pending, and arms a
+// debounced tick carrying the new seq. Only the tick whose seq is still current
+// when it fires actually persists, so a burst of moves collapses to one write
+// (F59).
+func (m *Model) scheduleReorderFlush() tea.Cmd {
+	m.reorderSeq++
+	m.reorderPending = true
+	seq := m.reorderSeq
+	return tea.Tick(reorderDebounce, func(time.Time) tea.Msg { return reorderFlushMsg{seq: seq} })
+}
+
+// flushReorder persists the current order if a reorder is pending, clearing the
+// pending flag. It re-reads under flock via UpdateSortOrder (Store.Update), so
+// the flush owns only the SortIndex keys and never clobbers a concurrent
+// mutation with a stale snapshot (F59, F01).
+func (m *Model) flushReorder() tea.Cmd {
+	if !m.reorderPending {
+		return nil
+	}
+	m.reorderPending = false
 	return m.persistOrderCmd()
+}
+
+// samePartition reports whether two rows sort into the same SortSessions
+// partition — they share the same Closed and Pinned flags. Only within a
+// partition does SortIndex (and therefore a manual reorder) take effect (F34).
+func samePartition(a, b adapter.Session) bool {
+	return a.Closed == b.Closed && a.Pinned == b.Pinned
 }
 
 func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
 		m.quitting = true
-		return true, tea.Quit
+		// Flush any pending reorder before exiting so the debounce timer not yet
+		// having fired doesn't lose the manual order (F59).
+		return true, tea.Batch(m.flushReorder(), tea.Quit)
 	case "tab":
 		m.cycleDefaultAgent()
 		return true, m.persistDefaultAgent()
@@ -366,7 +506,8 @@ func (m *Model) handleEscKey() tea.Cmd {
 		return nil
 	}
 	m.quitting = true
-	return tea.Quit
+	// Flush a pending reorder before exiting (F59).
+	return tea.Batch(m.flushReorder(), tea.Quit)
 }
 
 func (m *Model) startRename() {

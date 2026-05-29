@@ -9,10 +9,25 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
+
+// prRescanInterval is how stale a session's last PR scrape may grow before List
+// re-captures its pane. The PR URL is the only thing the per-session capture is
+// for, and it appears once early then never changes — so capturing every 2s
+// refresh tick forked a capture-pane per session per tick for no new signal.
+// First discovery still captures immediately; subsequent ticks within this
+// window reuse the store-persisted PR (re-hydrated by mergeStoredMetadata), and
+// a fresh capture only fires once the window elapses (F16).
+const prRescanInterval = 60 * time.Second
+
+// prCaptureLines is the pane tail captured for PR scraping. A PR URL is emitted
+// near where `gh`/the agent prints it, so a short tail is enough — the 200-line
+// grab the peek path uses is wasteful here (F16).
+const prCaptureLines = 40
 
 type CommandCandidate struct {
 	Display string
@@ -27,13 +42,21 @@ type TmuxAgent struct {
 	Tmux               *tmux.Client
 	SessionArgs        func(req ResumeRequest, activity string) []string
 	SkipPromptOnResume bool
+
+	// now is the clock used to throttle per-session PR captures; overridable in
+	// tests. lastPRScan records, per tmux session name, when its pane was last
+	// captured for PR scraping so List can skip the capture within
+	// prRescanInterval (F16).
+	now        func() time.Time
+	prScanMu   sync.Mutex
+	lastPRScan map[string]time.Time
 }
 
 func NewTmuxAgent(name, display string, candidates []CommandCandidate, yoloArgs []string, client *tmux.Client) *TmuxAgent {
 	if client == nil {
 		client = tmux.New("uam")
 	}
-	return &TmuxAgent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Tmux: client}
+	return &TmuxAgent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Tmux: client, now: time.Now, lastPRScan: map[string]time.Time{}}
 }
 
 func (a *TmuxAgent) Name() string        { return a.NameValue }
@@ -150,12 +173,43 @@ func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
 			continue
 		}
 		id := strings.TrimPrefix(info.Name, prefix)
-		capture, _ := a.Tmux.Capture(ctx, info.Name, 200)
 		state, alive := ClassifyPane(tmux.PaneAlive(info.PanePID))
 		created := time.Unix(info.CreatedUnix, 0)
-		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.CurrentPath, TmuxSession: info.Name, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: ExtractPR(capture)})
+		// Scrape the PR URL only on first discovery or once the rescan window
+		// elapses. On a throttled tick PR stays nil; service.mergeStoredMetadata
+		// re-hydrates it from the persisted record so the dashboard never loses
+		// it (F16). Captures are sequential by design — parallelizing would fork
+		// a burst of capture-pane subprocesses.
+		var prRef *PRRef
+		if a.shouldScanPR(info.Name) {
+			capture, _ := a.Tmux.Capture(ctx, info.Name, prCaptureLines)
+			prRef = ExtractPR(capture)
+		}
+		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.CurrentPath, TmuxSession: info.Name, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: prRef})
 	}
 	return out, nil
+}
+
+// shouldScanPR reports whether the pane named tmuxName is due for a PR scrape
+// and, if so, stamps the scan time. It is the per-session leaky bucket that
+// keeps List from capturing every pane on every refresh tick (F16).
+func (a *TmuxAgent) shouldScanPR(tmuxName string) bool {
+	clock := a.now
+	if clock == nil {
+		clock = time.Now
+	}
+	now := clock()
+	a.prScanMu.Lock()
+	defer a.prScanMu.Unlock()
+	if a.lastPRScan == nil {
+		a.lastPRScan = map[string]time.Time{}
+	}
+	last, seen := a.lastPRScan[tmuxName]
+	if seen && now.Sub(last) < prRescanInterval {
+		return false
+	}
+	a.lastPRScan[tmuxName] = now
+	return true
 }
 
 func (a *TmuxAgent) Peek(ctx context.Context, id string) (PeekResult, error) {

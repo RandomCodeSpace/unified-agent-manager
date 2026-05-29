@@ -31,6 +31,14 @@ const tmuxCallTimeout = 10 * time.Second
 // caller (F17). Kept short so a cancelled call returns promptly.
 const tmuxWaitDelay = 2 * time.Second
 
+// listCacheTTL is how long a List result is reused before re-querying tmux. A
+// single refresh tick calls List once per enabled adapter against the same
+// shared Client; without a cache that is one whole-server list-sessions per
+// adapter per tick. The TTL is short enough that a cached result is always from
+// the current tick, so freshness is unaffected, while N adapter scans collapse
+// to one shell-out (F60).
+const listCacheTTL = 250 * time.Millisecond
+
 // sessionNameRE is the allow-list for tmux session names uam may create. It
 // matches the canonical shape minted by adapter.startSession
 // ("uam-<provider>-<id>"): a lowercase-alphanumeric provider segment and a
@@ -44,13 +52,23 @@ type Client struct {
 
 	configMu   sync.Mutex
 	configDone bool
+
+	// now is the clock used to expire the List cache; overridable in tests.
+	now func() time.Time
+	// listMu guards the cached List result and the time it was taken. The cache
+	// collapses the per-adapter list-sessions storm within a single refresh tick
+	// into one shell-out (F60).
+	listMu       sync.Mutex
+	listCache    []SessionInfo
+	listCachedAt time.Time
+	listCacheOK  bool
 }
 
 func New(socket string) *Client {
 	if socket == "" {
 		socket = "uam"
 	}
-	return &Client{Socket: socket}
+	return &Client{Socket: socket, now: time.Now}
 }
 
 func (c *Client) baseArgs(args ...string) []string {
@@ -134,11 +152,15 @@ func commandWithEnv(env map[string]string, command []string) []string {
 }
 
 func (c *Client) List(ctx context.Context) ([]SessionInfo, error) {
+	if cached, ok := c.cachedList(); ok {
+		return cached, nil
+	}
 	out, err := c.run(ctx, "list-sessions", "-F", ListFormat)
 	if err != nil {
 		// tmux exits non-zero when the private server has no sessions. Match the
 		// known no-server phrasings only; a genuine failure must still propagate.
 		if isNoServerErr(err) {
+			c.storeList(nil)
 			return nil, nil
 		}
 		return nil, err
@@ -151,9 +173,52 @@ func (c *Client) List(ctx context.Context) ([]SessionInfo, error) {
 	// whole list, so the sentinel is intentionally not propagated (F11).
 	sessions, err := ParseListSessions(out)
 	if errors.Is(err, ErrMalformedSessionLines) {
-		return sessions, nil
+		err = nil
 	}
-	return sessions, err
+	if err != nil {
+		return sessions, err
+	}
+	c.storeList(sessions)
+	return cloneSessionInfos(sessions), nil
+}
+
+// cachedList returns a defensive copy of the cached List result when it is
+// still within listCacheTTL, collapsing the per-adapter list-sessions storm in
+// one refresh tick into a single shell-out (F60).
+func (c *Client) cachedList() ([]SessionInfo, bool) {
+	clock := c.now
+	if clock == nil {
+		clock = time.Now
+	}
+	c.listMu.Lock()
+	defer c.listMu.Unlock()
+	if !c.listCacheOK || clock().Sub(c.listCachedAt) >= listCacheTTL {
+		return nil, false
+	}
+	return cloneSessionInfos(c.listCache), true
+}
+
+func (c *Client) storeList(sessions []SessionInfo) {
+	clock := c.now
+	if clock == nil {
+		clock = time.Now
+	}
+	c.listMu.Lock()
+	defer c.listMu.Unlock()
+	c.listCache = cloneSessionInfos(sessions)
+	c.listCachedAt = clock()
+	c.listCacheOK = true
+}
+
+// cloneSessionInfos returns a shallow copy so a caller mutating the returned
+// slice cannot corrupt the cache (SessionInfo holds only value fields).
+func cloneSessionInfos(in []SessionInfo) []SessionInfo {
+	if in == nil {
+		return nil
+	}
+	out := make([]SessionInfo, len(in))
+	copy(out, in)
+	return out
 }
 
 func (c *Client) Capture(ctx context.Context, target string, lines int) (string, error) {
