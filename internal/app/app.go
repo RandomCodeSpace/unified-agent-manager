@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -12,10 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/claude"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
@@ -24,24 +22,71 @@ import (
 type Model struct {
 	width, height int
 	quitting      bool
+	loading       bool
 	service       *Service
 	sessions      []adapter.Session
 	selected      int
 	input         string
 	defaultAgent  string
 	message       string
+	messageSetAt  time.Time
 	peekOpen      bool
 	peekText      string
-	helpOpen      bool
-	confirmStop   bool
-	renaming      bool
-	wizard        bool
-	wizardStep    int
-	wizardAgent   string
-	wizardCwd     string
-	groupByDir    bool
-	execProcess   func(*exec.Cmd, tea.ExecCallback) tea.Cmd
+	// peekTargetID is the session whose pane the open peek panel shows. While
+	// peek is open the command line doubles as a reply composer: typed text +
+	// Enter sends to this session via Service.Reply rather than dispatching a new
+	// agent. Snapshotting the id (mirroring renameTargetID) keeps a reorder under
+	// the cursor from misrouting the reply (F36).
+	peekTargetID   string
+	helpOpen       bool
+	confirmStop    bool
+	confirmStopID  string
+	renaming       bool
+	renameTargetID string
+	wizard         bool
+	wizardStep     int
+	wizardAgent    string
+	wizardCwd      string
+	groupByDir     bool
+	execProcess    func(*exec.Cmd, tea.ExecCallback) tea.Cmd
+	// reorderSeq increments on every reorder; a debounced flush tick only
+	// persists when its seq still matches, so a held Shift+arrow coalesces into
+	// one store write instead of one fsync per step. reorderPending marks a
+	// scheduled-but-not-yet-flushed reorder so quit can flush it (F59).
+	reorderSeq     int
+	reorderPending bool
+	// lastPeekAt records, per session id, when its pane was last captured for
+	// the peek panel. The peek-focus ticker re-polls the focused session at most
+	// once per peekFocusInterval; the map is keyed by id (not row index) because
+	// rows reorder every refresh tick (C2-11). peekClock is the injectable clock
+	// for that gate.
+	lastPeekAt map[string]time.Time
+	peekClock  func() time.Time
 }
+
+// messageTTL is how long a status/error line stays on screen before a refresh
+// tick clears it. A just-emitted message must survive at least one 2s tick, so
+// the TTL is several ticks long (F53).
+const messageTTL = 8 * time.Second
+
+// reorderDebounce is how long a reorder waits for a follow-up move before it
+// persists. A held Shift+arrow fires a move per repeat; without the debounce
+// each one is a whole-file JSON encode + fsync + rename. Coalescing them into a
+// single write after the keystrokes settle keeps the store off the hot path
+// (F59).
+const reorderDebounce = 500 * time.Millisecond
+
+// peekTickInterval drives the peek-focus poll. The tick is what makes an open
+// peek panel update live without coupling peek freshness to the slower 2s
+// session refresh (C2-11).
+const peekTickInterval = time.Second
+
+// peekFocusInterval is the minimum spacing between captures of the focused
+// session's pane while the peek panel is open. The peek-focus ticker fires
+// every second; this gate (id-keyed) keeps a focused session from being
+// captured faster than once per interval even if rows reorder under the cursor
+// (C2-11).
+const peekFocusInterval = time.Second
 
 type sessionsLoadedMsg struct {
 	sessions     []adapter.Session
@@ -64,15 +109,60 @@ type attachSpecMsg struct {
 type attachFinishedMsg struct{ err error }
 type refreshMsg time.Time
 
+// peekTickMsg is the peek-focus poll tick. When the peek panel is open it
+// re-captures the focused session's pane (rate-limited per id) so the panel
+// follows live output; when closed it just re-arms (C2-11).
+type peekTickMsg time.Time
+
+// reorderFlushMsg is the debounced reorder-persist tick. It carries the seq of
+// the reorder that scheduled it; the handler persists only when the seq still
+// matches the latest move, dropping ticks superseded by a newer move (F59).
+type reorderFlushMsg struct{ seq int }
+
+// promptEditedMsg carries the result of editing the wizard prompt in $EDITOR.
+// The editor is launched via tea.ExecProcess (which suspends the TUI, restores
+// the terminal, and resumes cleanly); when it exits this message loads the file
+// contents back into the prompt buffer (C2-8).
+type promptEditedMsg struct {
+	text string
+	err  error
+}
+
 func New() Model {
 	st, _ := store.Open(store.DefaultPath())
 	client := tmux.New("uam")
-	reg := adapter.NewRegistry([]adapter.AgentAdapter{claude.New(client), codex.New(client), copilot.New(client), opencode.New(client)})
+	// Build the registry from the single shared adapter list so the TUI and the
+	// CLI service can never diverge (the old hand-rolled list here omitted
+	// hermes — F14).
+	reg := adapter.NewRegistry(agents.Default(client))
 	return NewWithDeps(st, reg)
 }
 
 func NewWithDeps(st *store.Store, reg *adapter.Registry) Model {
-	return Model{service: NewService(st, reg), defaultAgent: "claude", wizardCwd: ".", execProcess: tea.ExecProcess}
+	m := Model{service: NewService(st, reg), defaultAgent: "claude", wizardCwd: ".", execProcess: tea.ExecProcess, lastPeekAt: map[string]time.Time{}, peekClock: time.Now}
+	// The baked-in "claude" default may not be installed; reconcile it to an
+	// enabled provider so Enter-with-no-input and the prompt hint never point at
+	// a disabled agent (C2-9).
+	m.defaultAgent = m.validateDefaultAgent(m.defaultAgent)
+	return m
+}
+
+// validateDefaultAgent returns candidate when it is an enabled agent, otherwise
+// the registry's chosen default (Registry.Default falls back to the first
+// enabled adapter). When nothing is enabled — or there is no registry — the
+// candidate is returned unchanged so the selector degrades gracefully instead of
+// panicking on a nil Default (C2-9).
+func (m Model) validateDefaultAgent(candidate string) string {
+	if m.service == nil || m.service.Registry == nil {
+		return candidate
+	}
+	if _, ok := m.service.Registry.Get(candidate); ok {
+		return candidate
+	}
+	if a := m.service.Registry.Default(candidate); a != nil {
+		return a.Name()
+	}
+	return candidate
 }
 func NewWizard(st *store.Store, reg *adapter.Registry) Model {
 	m := NewWithDeps(st, reg)
@@ -80,10 +170,30 @@ func NewWizard(st *store.Store, reg *adapter.Registry) Model {
 	return m
 }
 
-func (m Model) Init() tea.Cmd { return tea.Batch(m.loadSessionsCmd(), refreshTick()) }
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(m.loadSessionsCmd(), refreshTick(), peekTick())
+}
 
 func refreshTick() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return refreshMsg(t) })
+}
+
+func peekTick() tea.Cmd {
+	return tea.Tick(peekTickInterval, func(t time.Time) tea.Msg { return peekTickMsg(t) })
+}
+
+// refreshStep advances the refresh state machine for one tick. It always
+// re-arms the ticker (the caller batches that in); it schedules a fresh
+// loadSessionsCmd only when no load is in flight, marking loading=true. This
+// keeps stacked ticks from overlapping loads while never stopping the ticker
+// (F17). startedLoad reports whether a load was scheduled this tick.
+func (m Model) refreshStep(now time.Time) (Model, bool) {
+	m.expireMessage(now)
+	if m.loading {
+		return m, false
+	}
+	m.loading = true
+	return m, true
 }
 
 func (m Model) loadSessionsCmd() tea.Cmd {
@@ -98,7 +208,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg), nil
 	case refreshMsg:
-		return m, tea.Batch(m.loadSessionsCmd(), refreshTick())
+		next, startedLoad := m.refreshStep(time.Time(msg))
+		// The ticker is re-armed unconditionally so refreshes never stop; the
+		// load is added only when one wasn't already in flight (F17).
+		if startedLoad {
+			return next, tea.Batch(next.loadSessionsCmd(), refreshTick())
+		}
+		return next, refreshTick()
+	case peekTickMsg:
+		// Re-arm the peek ticker unconditionally; only re-capture the focused
+		// session when the panel is open and the per-id rate limit allows it
+		// (C2-11).
+		next, peekCmd := m.peekFocusStep(time.Time(msg))
+		return next, tea.Batch(peekCmd, peekTick())
+	case reorderFlushMsg:
+		// Persist only if this is the latest reorder; a superseded tick is dropped
+		// so a held Shift+arrow coalesces into one write (F59).
+		if msg.seq != m.reorderSeq {
+			return m, nil
+		}
+		return m, m.flushReorder()
 	case sessionsLoadedMsg:
 		return m.handleSessionsLoaded(msg), nil
 	case peekLoadedMsg:
@@ -109,6 +238,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.execAttachSpec(msg.spec, msg.err)
 	case attachFinishedMsg:
 		return m.handleAttachFinished(msg), m.loadSessionsCmd()
+	case promptEditedMsg:
+		return m.handlePromptEdited(msg), nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -120,9 +251,29 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) Model {
 	return m
 }
 
+// setMessage records a status/error line and stamps the time it was set so the
+// refresh tick can TTL-expire it instead of blanket-clearing a just-emitted
+// message (F53).
+func (m *Model) setMessage(text string) {
+	m.message = text
+	m.messageSetAt = time.Now()
+}
+
+// expireMessage clears the status line once it has been on screen longer than
+// messageTTL. now is the refresh-tick timestamp.
+func (m *Model) expireMessage(now time.Time) {
+	if m.message != "" && !m.messageSetAt.IsZero() && now.Sub(m.messageSetAt) >= messageTTL {
+		m.message = ""
+		m.messageSetAt = time.Time{}
+	}
+}
+
 func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
+	// Clear the in-flight guard unconditionally — even on error — or a single
+	// failed load wedges the refresh ticker forever (F17).
+	m.loading = false
 	if msg.err != nil {
-		m.message = msg.err.Error()
+		m.setMessage(msg.err.Error())
 		return m
 	}
 	if msg.sessions != nil {
@@ -130,7 +281,10 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 		m.groupByDir = msg.groupByDir
 	}
 	if msg.defaultAgent != "" {
-		m.defaultAgent = msg.defaultAgent
+		// A persisted default may name an agent whose CLI was since uninstalled;
+		// reconcile it to an enabled provider rather than dispatching to a
+		// disabled one (C2-9).
+		m.defaultAgent = m.validateDefaultAgent(msg.defaultAgent)
 	}
 	if m.selected >= len(m.sessions) {
 		m.selected = max(0, len(m.sessions)-1)
@@ -140,7 +294,7 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 
 func (m Model) handlePeekLoaded(msg peekLoadedMsg) Model {
 	if msg.err != nil {
-		m.message = msg.err.Error()
+		m.setMessage(msg.err.Error())
 	} else {
 		m.peekText = msg.text
 	}
@@ -148,21 +302,42 @@ func (m Model) handlePeekLoaded(msg peekLoadedMsg) Model {
 }
 
 func (m Model) handleDispatched(msg dispatchedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.message = msg.err.Error()
+	// A live session (non-empty ID) attaches even when msg.err is set: the agent
+	// is running and the error is advisory (e.g. the record failed to persist).
+	// Only a true dispatch failure — no session — aborts with the error (F03).
+	if msg.session.ID == "" {
+		if msg.err != nil {
+			m.setMessage(msg.err.Error())
+		}
 		return m, nil
 	}
-	m.message = "attaching " + msg.session.ID
+	if msg.err != nil {
+		m.setMessage("attaching " + msg.session.ID + " (warning: " + msg.err.Error() + ")")
+	} else {
+		m.setMessage("attaching " + msg.session.ID)
+	}
 	m.input = ""
 	return m, m.attachSessionCmd(msg.session)
 }
 
 func (m Model) handleAttachFinished(msg attachFinishedMsg) Model {
 	if msg.err != nil {
-		m.message = "session exited: " + msg.err.Error()
+		m.setMessage("session exited: " + msg.err.Error())
 	} else {
-		m.message = "returned to uam"
+		m.setMessage("returned to uam")
 	}
+	return m
+}
+
+// handlePromptEdited loads the text the user composed in $EDITOR back into the
+// wizard prompt buffer. On error the buffer is left untouched and the error is
+// surfaced in the status line (C2-8).
+func (m Model) handlePromptEdited(msg promptEditedMsg) Model {
+	if msg.err != nil {
+		m.setMessage("editor: " + msg.err.Error())
+		return m
+	}
+	m.input = strings.TrimRight(msg.text, "\n")
 	return m
 }
 
@@ -177,7 +352,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.handleActionKey(key); handled {
 		return m, cmd
 	}
-	m.appendKeyInput(msg, key)
+	m.appendKeyInput(msg)
 	return m, nil
 }
 
@@ -191,10 +366,13 @@ func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.
 	if m.confirmStop {
 		if key == "y" || key == "enter" {
 			m.confirmStop = false
-			return true, m, m.stopSelectedCmd(true)
+			id := m.confirmStopID
+			m.confirmStopID = ""
+			return true, m, m.stopTargetCmd(id, true)
 		}
 		if key == "n" || key == "esc" {
 			m.confirmStop = false
+			m.confirmStopID = ""
 		}
 		return true, m, nil
 	}
@@ -212,17 +390,35 @@ func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.
 func (m *Model) handleMovementKey(key string) (bool, tea.Cmd) {
 	switch key {
 	case "up":
-		m.moveSelection(-1)
-		return true, nil
+		return true, m.moveSelectionPeek(-1)
 	case "down":
-		m.moveSelection(1)
-		return true, nil
+		return true, m.moveSelectionPeek(1)
 	case "shift+up":
 		return true, m.moveSession(-1)
 	case "shift+down":
 		return true, m.moveSession(1)
 	}
 	return false, nil
+}
+
+// moveSelectionPeek moves the cursor and, when the peek panel is open and the
+// selection actually changed, re-fires the peek for the newly selected session.
+// The stale peek text is blanked synchronously so the panel never shows a frame
+// of the previous session's tail. Gated on peekOpen so plain navigation with the
+// panel closed doesn't trigger an N+1 capture storm (C2-2).
+func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
+	prev := m.selected
+	m.moveSelection(delta)
+	if !m.peekOpen || m.selected == prev {
+		return nil
+	}
+	// The peek panel follows the cursor; keep the reply target in sync so a reply
+	// goes to the session the user is actually looking at (F36).
+	if sess, ok := m.selectedSession(); ok {
+		m.peekTargetID = sess.ID
+	}
+	m.peekText = ""
+	return m.peekSelectedCmd()
 }
 
 func (m *Model) moveSelection(delta int) {
@@ -232,35 +428,117 @@ func (m *Model) moveSelection(delta int) {
 	}
 }
 
+// peekFocusStep handles a peek-focus tick: when the panel is open it re-captures
+// the focused session's pane at most once per peekFocusInterval (gated by id so
+// a reorder under the cursor can't double-capture), keeping the panel live. It
+// returns the (possibly nil) peek command; the caller re-arms the ticker (C2-11).
+func (m Model) peekFocusStep(now time.Time) (Model, tea.Cmd) {
+	if m.peekClock != nil {
+		now = m.peekClock()
+	}
+	if !m.peekOpen {
+		return m, nil
+	}
+	sess, ok := m.selectedSession()
+	if !ok {
+		return m, nil
+	}
+	if !m.shouldPollFocusedPeek(sess.ID, now) {
+		return m, nil
+	}
+	if m.lastPeekAt == nil {
+		m.lastPeekAt = map[string]time.Time{}
+	}
+	m.lastPeekAt[sess.ID] = now
+	return m, m.peekSelectedCmd()
+}
+
+// shouldPollFocusedPeek reports whether the focused session id is due for a
+// peek capture: never polled, or last polled at least peekFocusInterval ago.
+// Keyed by id so the rate limit follows the session, not the row index (C2-11).
+func (m Model) shouldPollFocusedPeek(id string, now time.Time) bool {
+	if id == "" {
+		return false
+	}
+	last, seen := m.lastPeekAt[id]
+	if !seen {
+		return true
+	}
+	return now.Sub(last) >= peekFocusInterval
+}
+
 func (m *Model) moveSession(delta int) tea.Cmd {
 	next := m.selected + delta
 	if next < 0 || next >= len(m.sessions) {
 		return nil
 	}
+	// SortSessions buckets rows by Closed, then Pinned, before honoring
+	// SortIndex. A swap that crosses either boundary is undone on the next
+	// refresh (the row snaps back to its partition), so reject it and give
+	// honest feedback instead of a move that silently reverts (F34).
+	if !samePartition(m.sessions[m.selected], m.sessions[next]) {
+		m.setMessage("can't reorder across the active/closed or pinned boundary")
+		return nil
+	}
 	m.sessions[m.selected], m.sessions[next] = m.sessions[next], m.sessions[m.selected]
 	m.selected = next
+	return m.scheduleReorderFlush()
+}
+
+// scheduleReorderFlush bumps the reorder seq, marks a flush pending, and arms a
+// debounced tick carrying the new seq. Only the tick whose seq is still current
+// when it fires actually persists, so a burst of moves collapses to one write
+// (F59).
+func (m *Model) scheduleReorderFlush() tea.Cmd {
+	m.reorderSeq++
+	m.reorderPending = true
+	seq := m.reorderSeq
+	return tea.Tick(reorderDebounce, func(time.Time) tea.Msg { return reorderFlushMsg{seq: seq} })
+}
+
+// flushReorder persists the current order if a reorder is pending, clearing the
+// pending flag. It re-reads under flock via UpdateSortOrder (Store.Update), so
+// the flush owns only the SortIndex keys and never clobbers a concurrent
+// mutation with a stale snapshot (F59, F01).
+func (m *Model) flushReorder() tea.Cmd {
+	if !m.reorderPending {
+		return nil
+	}
+	m.reorderPending = false
 	return m.persistOrderCmd()
+}
+
+// samePartition reports whether two rows sort into the same SortSessions
+// partition — they share the same Closed and Pinned flags. Only within a
+// partition does SortIndex (and therefore a manual reorder) take effect (F34).
+func samePartition(a, b adapter.Session) bool {
+	return a.Closed == b.Closed && a.Pinned == b.Pinned
 }
 
 func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	switch key {
 	case "ctrl+c":
 		m.quitting = true
-		return true, tea.Quit
+		// Flush any pending reorder before exiting so the debounce timer not yet
+		// having fired doesn't lose the manual order (F59).
+		return true, tea.Batch(m.flushReorder(), tea.Quit)
 	case "tab":
 		m.cycleDefaultAgent()
-		_ = m.service.SetDefaultAgent(m.defaultAgent)
+		return true, m.persistDefaultAgent()
 	case "?":
 		m.helpOpen = true
 	case "ctrl+s":
 		m.groupByDir = !m.groupByDir
-		_ = m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = m.groupByDir })
+		return true, m.persistGroupByDir()
 	case "ctrl+t":
 		return true, m.pinSelectedCmd()
 	case "ctrl+r":
 		m.startRename()
 	case "ctrl+x":
-		m.confirmStop = len(m.sessions) > 0
+		if sess, ok := m.selectedSession(); ok {
+			m.confirmStop = true
+			m.confirmStopID = sess.ID
+		}
 	case " ":
 		return true, m.handleSpaceKey(key)
 	case "right", "enter":
@@ -281,7 +559,10 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 // then clear the command input, and finally quit the uam TUI.
 func (m *Model) handleEscKey() tea.Cmd {
 	if m.peekOpen {
+		// Esc backs out of the peek/reply composer WITHOUT sending the in-progress
+		// reply (F36).
 		m.peekOpen = false
+		m.peekTargetID = ""
 		return nil
 	}
 	if m.input != "" {
@@ -289,15 +570,18 @@ func (m *Model) handleEscKey() tea.Cmd {
 		return nil
 	}
 	m.quitting = true
-	return tea.Quit
+	// Flush a pending reorder before exiting (F59).
+	return tea.Batch(m.flushReorder(), tea.Quit)
 }
 
 func (m *Model) startRename() {
-	if len(m.sessions) == 0 {
+	sess, ok := m.selectedSession()
+	if !ok {
 		return
 	}
 	m.renaming = true
-	m.input = m.sessions[m.selected].DisplayName
+	m.renameTargetID = sess.ID
+	m.input = sess.DisplayName
 }
 
 func (m *Model) handleSpaceKey(key string) tea.Cmd {
@@ -308,17 +592,31 @@ func (m *Model) handleSpaceKey(key string) tea.Cmd {
 	// A stopped session has no live tmux pane to peek into — Space restarts it
 	// in the background instead.
 	if sess, ok := m.selectedSession(); ok && sess.ProcAlive == adapter.Exited {
-		m.message = "restarting " + firstNonEmpty(sess.DisplayName, sess.ID)
+		m.setMessage("restarting " + firstNonEmpty(sess.DisplayName, sess.ID))
 		return m.resumeSelectedCmd()
 	}
 	m.peekOpen = !m.peekOpen
 	if m.peekOpen {
+		// Snapshot the peeked session so an Enter-to-reply routes to it even if a
+		// refresh reorders the list under the cursor (F36).
+		if sess, ok := m.selectedSession(); ok {
+			m.peekTargetID = sess.ID
+		}
 		return m.peekSelectedCmd()
 	}
+	m.peekTargetID = ""
 	return nil
 }
 
 func (m *Model) handleEnterKey() tea.Cmd {
+	// Reply sub-mode: while the peek panel is open the command line is a reply
+	// composer. Non-empty input + Enter sends to the peeked session via
+	// Service.Reply and re-peeks, instead of dispatching a new agent. Checked
+	// before the dispatch/attach branch so peek+typed-text never spawns a session
+	// (F36).
+	if m.peekOpen && strings.TrimSpace(m.input) != "" {
+		return m.replyToPeekCmd()
+	}
 	if strings.TrimSpace(m.input) != "" {
 		spec := parseDispatchSpec(m.input, m.defaultAgent)
 		return m.dispatchNamedCmd(spec.Agent, spec.Name, spec.Prompt)
@@ -327,6 +625,27 @@ func (m *Model) handleEnterKey() tea.Cmd {
 		return m.attachSelectedCmd()
 	}
 	return nil
+}
+
+// replyToPeekCmd sends the typed input to the peeked session via Service.Reply,
+// clears the composer, and re-peeks so the panel shows the agent's response. The
+// reply target is the snapshotted peekTargetID (falling back to the selected
+// session) so a reorder under the cursor can't misroute it (F36).
+func (m *Model) replyToPeekCmd() tea.Cmd {
+	sess, ok := m.sessionByID(m.peekTargetID)
+	if !ok {
+		return nil
+	}
+	text := m.input
+	m.input = ""
+	id := sess.ID
+	return func() tea.Msg {
+		if err := m.service.Reply(context.Background(), id, text); err != nil {
+			return peekLoadedMsg{err: err}
+		}
+		p, err := m.service.Peek(context.Background(), id)
+		return peekLoadedMsg{text: p.TailText, err: err}
+	}
 }
 
 func (m *Model) handleEditKey(key string) {
@@ -341,39 +660,54 @@ func (m *Model) handleEditKey(key string) {
 }
 
 func (m *Model) backspaceInput() {
-	if len(m.input) > 0 {
-		m.input = m.input[:len(m.input)-1]
+	if r := []rune(m.input); len(r) > 0 {
+		m.input = string(r[:len(r)-1])
 	}
 }
 
-func (m *Model) appendKeyInput(msg tea.KeyMsg, key string) {
-	if msg.Type == tea.KeyRunes || len([]rune(key)) == 1 {
-		m.input += key
-	}
+func (m *Model) appendKeyInput(msg tea.KeyMsg) {
+	m.editText(msg)
 }
 
 func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "enter":
-		id := m.sessions[m.selected].ID
+		sess, ok := m.sessionByID(m.renameTargetID)
 		name := m.input
 		m.renaming = false
+		m.renameTargetID = ""
 		m.input = ""
+		// The target session vanished (killed externally / list emptied) while the
+		// modal was open: close the modal without panicking (F27).
+		if !ok {
+			return m, nil
+		}
+		id := sess.ID
 		return m, func() tea.Msg { return sessionsLoadedMsg{err: m.service.Rename(context.Background(), id, name)} }
 	case "esc":
 		m.renaming = false
+		m.renameTargetID = ""
 		m.input = ""
-	case "backspace":
-		if len(m.input) > 0 {
-			m.input = m.input[:len(m.input)-1]
-		}
 	default:
-		if len(key) == 1 || key == " " {
-			m.input += key
-		}
+		m.editText(msg)
 	}
 	return m, nil
+}
+
+// editText applies a printable-input edit to m.input: it appends pasted/typed
+// runes (KeyRunes without Alt — covers multibyte and bracketed paste), handles
+// Space and Backspace, and ignores Alt-chords and control keys so they never
+// leak as literal text (F29).
+func (m *Model) editText(msg tea.KeyMsg) {
+	switch {
+	case msg.Type == tea.KeyBackspace:
+		m.backspaceInput()
+	case msg.Type == tea.KeySpace:
+		m.input += " "
+	case msg.Type == tea.KeyRunes && !msg.Alt:
+		m.input += string(msg.Runes)
+	}
 }
 
 func (m Model) handleWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -385,7 +719,7 @@ func (m Model) handleWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if cmd, done := m.handleWizardStepKey(key); done {
 		return m, cmd
 	}
-	m.editWizardInput(key)
+	m.editText(msg)
 	return m, nil
 }
 
@@ -410,9 +744,8 @@ func (m *Model) handleWizardAgentKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "tab":
 		m.cycleDefaultAgent()
-		_ = m.service.SetDefaultAgent(m.defaultAgent)
 		m.wizardAgent = m.defaultAgent
-		return nil, true
+		return m.persistDefaultAgent(), true
 	case "enter":
 		if m.wizardAgent == "" {
 			m.wizardAgent = m.defaultAgent
@@ -425,33 +758,129 @@ func (m *Model) handleWizardAgentKey(key string) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleWizardCwdKey(key string) (tea.Cmd, bool) {
-	if key != "enter" {
-		return nil, false
+	switch key {
+	case "tab":
+		// Complete the typed path against the filesystem (C2-8). Marked done so
+		// the literal tab never leaks into the buffer.
+		m.input = globComplete(m.input)
+		return nil, true
+	case "enter":
+		m.wizardCwd = firstNonEmpty(m.input, ".")
+		m.wizardStep = 2
+		m.input = ""
+		return nil, true
 	}
-	m.wizardCwd = firstNonEmpty(m.input, ".")
-	m.wizardStep = 2
-	m.input = ""
-	return nil, true
+	return nil, false
 }
 
 func (m *Model) handleWizardPromptKey(key string) (tea.Cmd, bool) {
-	if key != "enter" {
-		return nil, false
+	switch key {
+	case "ctrl+g":
+		// Compose the prompt in $EDITOR for multi-line input. Launched via
+		// tea.ExecProcess so the TUI screen state is restored cleanly — a raw
+		// exec.Command would corrupt the alt-screen (C2-8).
+		return m.editPromptCmd(), true
+	case "enter":
+		spec := parseDispatchSpec(m.input, firstNonEmpty(m.wizardAgent, m.defaultAgent))
+		cwd := m.wizardCwd
+		m.closeWizard()
+		return m.dispatchWithNameCwdCmd(spec.Agent, spec.Name, spec.Prompt, cwd), true
 	}
-	spec := parseDispatchSpec(m.input, firstNonEmpty(m.wizardAgent, m.defaultAgent))
-	cwd := m.wizardCwd
-	m.closeWizard()
-	return m.dispatchWithNameCwdCmd(spec.Agent, spec.Name, spec.Prompt, cwd), true
+	return nil, false
 }
 
-func (m *Model) editWizardInput(key string) {
-	if key == "backspace" {
-		m.backspaceInput()
-		return
+// editPromptCmd composes the wizard prompt in $EDITOR. It seeds a temp file with
+// the current buffer, launches the editor via the injected runner
+// (tea.ExecProcess in production, which suspends/restores the alt-screen
+// cleanly), and on exit loads the file back via promptEditedMsg. Using
+// exec.Command directly instead would leave the terminal in raw mode and corrupt
+// the TUI (C2-8).
+func (m Model) editPromptCmd() tea.Cmd {
+	runner := m.execProcess
+	if runner == nil {
+		runner = tea.ExecProcess
 	}
-	if len(key) == 1 || key == " " {
-		m.input += key
+	seed := m.input
+	f, err := os.CreateTemp("", "uam-prompt-*.txt")
+	if err != nil {
+		return func() tea.Msg { return promptEditedMsg{err: fmt.Errorf("create prompt buffer: %w", err)} }
 	}
+	path := f.Name()
+	if _, err := f.WriteString(seed); err != nil {
+		_ = f.Close()
+		return func() tea.Msg { return promptEditedMsg{err: fmt.Errorf("seed prompt buffer: %w", err)} }
+	}
+	if err := f.Close(); err != nil {
+		return func() tea.Msg { return promptEditedMsg{err: fmt.Errorf("close prompt buffer: %w", err)} }
+	}
+	editor := firstNonEmpty(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
+	cmd := exec.Command(editor, path) // #nosec G204,G702 -- editor is the user's own $VISUAL/$EDITOR (their environment, not external input), path is a temp file we created; this is the standard "edit in $EDITOR" pattern (git/kubectl).
+	return runner(cmd, func(err error) tea.Msg {
+		defer func() { _ = os.Remove(path) }()
+		if err != nil {
+			return promptEditedMsg{err: fmt.Errorf("editor exited: %w", err)}
+		}
+		data, readErr := os.ReadFile(path) // #nosec G304 -- path is the temp file we just created above.
+		if readErr != nil {
+			return promptEditedMsg{err: fmt.Errorf("read edited prompt: %w", readErr)}
+		}
+		return promptEditedMsg{text: string(data)}
+	})
+}
+
+// isGitRepo reports whether dir is inside a git working tree by walking up the
+// directory tree looking for a .git entry, the way git itself resolves the repo
+// root. Used to warn in the wizard when dispatching outside a repo means there is
+// no checkpoint to recover the agent's work from (C2-8).
+func isGitRepo(dir string) bool {
+	d, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	for {
+		if _, statErr := os.Stat(filepath.Join(d, ".git")); statErr == nil {
+			return true
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return false
+		}
+		d = parent
+	}
+}
+
+// globComplete completes a partially-typed path against the filesystem. It
+// returns the longest unambiguous match (the sole match, or the shared prefix of
+// several); when nothing matches it returns the input unchanged so Tab is a
+// no-op rather than destructive (C2-8).
+func globComplete(input string) string {
+	if input == "" {
+		return input
+	}
+	matches, err := filepath.Glob(input + "*")
+	if err != nil || len(matches) == 0 {
+		return input
+	}
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return longestCommonPrefix(matches)
+}
+
+func longestCommonPrefix(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	prefix := items[0]
+	for _, s := range items[1:] {
+		for !strings.HasPrefix(s, prefix) {
+			prefix = prefix[:len(prefix)-1]
+			if prefix == "" {
+				return ""
+			}
+		}
+	}
+	return prefix
 }
 
 func (m *Model) cycleDefaultAgent() {
@@ -477,11 +906,6 @@ type dispatchSpec struct {
 	Prompt string
 }
 
-func parseDispatchInput(input, def string) (string, string) {
-	spec := parseDispatchSpec(input, def)
-	return spec.Prompt, spec.Agent
-}
-
 func parseDispatchSpec(input, def string) dispatchSpec {
 	fields := strings.Fields(input)
 	spec := dispatchSpec{Agent: def}
@@ -497,14 +921,8 @@ func parseDispatchSpec(input, def string) dispatchSpec {
 	return spec
 }
 
-func (m Model) dispatchCmd(agent, prompt string) tea.Cmd {
-	return m.dispatchWithCwdCmd(agent, prompt, "")
-}
 func (m Model) dispatchNamedCmd(agent, name, prompt string) tea.Cmd {
 	return m.dispatchWithNameCwdCmd(agent, name, prompt, "")
-}
-func (m Model) dispatchWithCwdCmd(agent, prompt, cwd string) tea.Cmd {
-	return m.dispatchWithNameCwdCmd(agent, "", prompt, cwd)
 }
 func (m Model) dispatchWithNameCwdCmd(agent, name, prompt, cwd string) tea.Cmd {
 	return func() tea.Msg {
@@ -517,6 +935,22 @@ func (m Model) selectedSession() (adapter.Session, bool) {
 		return adapter.Session{}, false
 	}
 	return m.sessions[m.selected], true
+}
+
+// sessionByID returns the session with the given id, falling back to the
+// selected row when id is empty. Modal flows (rename/stop-confirm) snapshot the
+// target id at open time so a refresh that reorders the list mid-modal still
+// acts on the originally-chosen session (C2-1, F29).
+func (m Model) sessionByID(id string) (adapter.Session, bool) {
+	if id == "" {
+		return m.selectedSession()
+	}
+	for _, sess := range m.sessions {
+		if sess.ID == id {
+			return sess, true
+		}
+	}
+	return adapter.Session{}, false
 }
 func (m Model) peekSelectedCmd() tea.Cmd {
 	sess, ok := m.selectedSession()
@@ -544,7 +978,38 @@ func (m Model) resumeSelectedCmd() tea.Cmd {
 	}
 }
 func (m Model) stopSelectedCmd(remove bool) tea.Cmd {
-	sess, ok := m.selectedSession()
+	return m.stopTargetCmd("", remove)
+}
+
+// persistDefaultAgent persists the default-agent choice. On failure it surfaces
+// the error in the status line instead of swallowing it; on success it returns a
+// reload command so the UI reflects the stored config (F55).
+func (m *Model) persistDefaultAgent() tea.Cmd {
+	if err := m.service.SetDefaultAgent(m.defaultAgent); err != nil {
+		m.setMessage("could not save default agent: " + err.Error())
+		return nil
+	}
+	return m.loadSessionsCmd()
+}
+
+// persistGroupByDir persists the group-by-dir toggle. On failure it surfaces the
+// error and reverts the in-memory flag so the UI matches the unchanged stored
+// state; on success it returns a reload command (F55).
+func (m *Model) persistGroupByDir() tea.Cmd {
+	grouped := m.groupByDir
+	if err := m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = grouped }); err != nil {
+		m.groupByDir = !grouped
+		m.setMessage("could not save view setting: " + err.Error())
+		return nil
+	}
+	return m.loadSessionsCmd()
+}
+
+// stopTargetCmd stops the session with the snapshotted id, falling back to the
+// selected row when id is empty, so a refresh that reorders the list while the
+// stop-confirm dialog is open still stops the originally-confirmed session (F29).
+func (m Model) stopTargetCmd(id string, remove bool) tea.Cmd {
+	sess, ok := m.sessionByID(id)
 	if !ok {
 		return nil
 	}
@@ -623,6 +1088,7 @@ var (
 	taskColor    = lipgloss.AdaptiveColor{Light: "#475569", Dark: "#AEBACD"}
 	liveColor    = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
 	failColor    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
+	warnColor    = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
 )
 
 var (
@@ -633,6 +1099,7 @@ var (
 	dividerStyle  = lipgloss.NewStyle().Foreground(dividerColor)
 	taskStyle     = lipgloss.NewStyle().Foreground(taskColor)
 	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	warnStyle     = lipgloss.NewStyle().Foreground(warnColor)
 )
 
 // bar is the accent rule that marks the brand and command lines.
@@ -799,10 +1266,17 @@ func renderRow(s adapter.Session, selected bool, nameWidth, taskWidth int, showT
 	if selected {
 		cursor = brandStyle.Render("▸") + " "
 	}
-	glyph, gs := stateGlyph(s.State)
+	glyph, gs := sessionGlyph(s)
 	pin := ""
 	if s.Pinned {
 		pin = "★ "
+	}
+	// PR status dot in a fixed 1-column slot (blank when the session has no PR)
+	// so the task column stays aligned whether or not a PR is present. Distinct
+	// glyphs per status (not color-only) survive a no-color terminal (F26).
+	prCell := " "
+	if s.PR != nil {
+		prCell = prStatusStyle(s.PR.Status).Render(prStatusDot(s.PR.Status))
 	}
 	nameStyle := titleStyle
 	if selected {
@@ -810,12 +1284,18 @@ func renderRow(s adapter.Session, selected bool, nameWidth, taskWidth int, showT
 	}
 	label := truncate(pin+firstNonEmpty(s.DisplayName, s.ID), nameWidth)
 	if showTask {
-		cell := nameStyle.Render(fmt.Sprintf("%-*s", nameWidth, label))
-		return cursor + gs.Render(glyph) + " " + cell + "  " + taskStyle.Render(truncate(promptText(s), taskWidth))
+		// Width-aware padding keeps the task column aligned even when the name
+		// holds wide (CJK/emoji) runes (F28).
+		cell := nameStyle.Render(padRight(label, nameWidth))
+		return cursor + gs.Render(glyph) + " " + cell + " " + prCell + " " + taskStyle.Render(truncate(promptText(s), taskWidth))
 	}
 	// Narrow layout: state glyph + name only — one line per row. The selected
 	// session's task is carried by the details panel, so rows don't repeat it.
-	return cursor + gs.Render(glyph) + " " + nameStyle.Render(label)
+	row := cursor + gs.Render(glyph) + " " + nameStyle.Render(label)
+	if s.PR != nil {
+		row += " " + prCell
+	}
+	return row
 }
 
 func (m Model) renderPeek() string {
@@ -827,6 +1307,15 @@ func (m Model) renderPrompt() string {
 	b.WriteString("\n")
 	if m.renaming {
 		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(m.input) + brandStyle.Render("▏") + "\n")
+	} else if m.peekOpen {
+		// The command line doubles as a reply composer while peek is open: label
+		// it so the sub-mode is discoverable (Enter sends, Esc closes) (F36).
+		field := hintStyle.Render("type a reply…")
+		if m.input != "" {
+			field = titleStyle.Render(m.input)
+		}
+		hints := hintStyle.Render("Enter send  ·  Esc close")
+		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
 	} else {
 		field := hintStyle.Render("type a command…")
 		if m.input != "" {
@@ -878,7 +1367,23 @@ func (m Model) visibleSessionWindow() (int, int) {
 }
 
 func promptText(sess adapter.Session) string {
-	return firstNonEmpty(sess.Prompt, stateLabel(sess.State), "idle")
+	// Fall back to a liveness-derived label (never the raw "Failed" State enum)
+	// so a reboot-survivor row doesn't read as failed when it has no prompt — it
+	// is resumable, not broken (F30).
+	return firstNonEmpty(sess.Prompt, livenessLabel(sess), "idle")
+}
+
+// livenessLabel describes a prompt-less session by its liveness and Closed flag
+// rather than its State enum.
+func livenessLabel(sess adapter.Session) string {
+	switch {
+	case sess.ProcAlive == adapter.Alive:
+		return "running"
+	case sess.Closed:
+		return "closed"
+	default:
+		return "resumable"
+	}
 }
 
 // absCwd resolves a session's working directory to an absolute path.
@@ -909,7 +1414,7 @@ func (m Model) renderHelp() string {
 }
 
 func (m Model) renderConfirm() string {
-	sess, _ := m.selectedSession()
+	sess, _ := m.sessionByID(m.confirmStopID)
 	name := firstNonEmpty(sess.DisplayName, sess.ID, "session")
 	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
 		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +
@@ -929,16 +1434,56 @@ func (m Model) renderWizard() string {
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 3", step+1)) + "\n")
 	b.WriteString("  " + titleStyle.Render(steps[step]) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
-	b.WriteString("  " + hintStyle.Render("Esc cancels") + "\n")
+	switch step {
+	case 1:
+		// Warn when the chosen working directory is not inside a git repo: there
+		// is no checkpoint to recover the agent's work from (C2-8).
+		dir := firstNonEmpty(m.input, ".")
+		if !isGitRepo(dir) {
+			b.WriteString("  " + warnStyle.Render("⚠ not a git repo — no checkpoint to recover the agent's work") + "\n")
+		}
+		b.WriteString("  " + hintStyle.Render("Tab completes a path  ·  Esc cancels") + "\n")
+	case 2:
+		b.WriteString("  " + hintStyle.Render("Ctrl+G opens $EDITOR  ·  Esc cancels") + "\n")
+	default:
+		b.WriteString("  " + hintStyle.Render("Esc cancels") + "\n")
+	}
 	return b.String()
+}
+
+// liveGlyphStyle / failGlyphStyle are hoisted to package vars so renderRow does
+// not allocate a fresh lipgloss.Style per row per frame. They keep AdaptiveColor
+// (resolved at render time, not pre-baked) so the palette still adapts to
+// light/dark terminals (F58).
+var (
+	liveGlyphStyle = lipgloss.NewStyle().Bold(true).Foreground(liveColor)
+	failGlyphStyle = lipgloss.NewStyle().Bold(true).Foreground(failColor)
+)
+
+// sessionGlyph picks the row glyph from the session's liveness and Closed flag
+// rather than its State enum, so a reboot-survivor (Exited but not user-closed)
+// renders as a neutral "resumable" dot instead of the red Failed glyph under the
+// ACTIVE group (F30).
+func sessionGlyph(s adapter.Session) (string, lipgloss.Style) {
+	switch {
+	case s.ProcAlive == adapter.Alive:
+		return "⟳", liveGlyphStyle
+	case s.Closed:
+		// User-retired, dead pane: muted resting dot in the CLOSED group.
+		return "•", hintStyle
+	default:
+		// Reboot-survivor / externally-killed but resumable: neutral paused
+		// glyph, NOT the red failure mark.
+		return "◦", hintStyle
+	}
 }
 
 func stateGlyph(s adapter.State) (string, lipgloss.Style) {
 	switch s {
 	case adapter.Active:
-		return "⟳", lipgloss.NewStyle().Bold(true).Foreground(liveColor)
+		return "⟳", liveGlyphStyle
 	case adapter.Failed:
-		return "✕", lipgloss.NewStyle().Bold(true).Foreground(failColor)
+		return "✕", failGlyphStyle
 	default:
 		return "•", hintStyle
 	}
@@ -948,25 +1493,73 @@ func stateLabel(s adapter.State) string {
 	return strings.ToLower(string(s))
 }
 
+// prStatusDot returns a distinct glyph per PR status (not color-only) so the PR
+// state survives a monochrome terminal or a screen scrape: open=hollow circle,
+// merged=filled circle, draft=half circle, closed=cross (F26).
 func prStatusDot(s adapter.PRStatus) string {
 	switch s {
+	case adapter.PROpen:
+		return "○"
 	case adapter.PRMerged:
 		return "●"
 	case adapter.PRDraft:
 		return "◐"
 	case adapter.PRClosed:
-		return "◯"
-	case adapter.PROpen:
-		return "●"
+		return "✕"
 	default:
 		return " "
 	}
 }
 
+// prStatusStyle colours the PR dot by status. Colour is a secondary cue; the
+// glyph in prStatusDot is the primary, color-independent signal (F26).
+func prStatusStyle(s adapter.PRStatus) lipgloss.Style {
+	switch s {
+	case adapter.PRMerged:
+		return liveGlyphStyle
+	case adapter.PRClosed:
+		return failGlyphStyle
+	default:
+		return hintStyle
+	}
+}
+
+// truncate clips s to at most n display columns, measuring with lipgloss.Width
+// so multibyte and wide (CJK/emoji) runes are counted by the columns they
+// occupy rather than their byte length. When clipping happens an ellipsis is
+// appended and the result still fits within n columns (F28).
 func truncate(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > n {
-		return s[:max(0, n-1)] + "…"
+	if n <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= n {
+		return s
+	}
+	// Reserve one column for the ellipsis, then grow rune-by-rune until adding
+	// the next rune would overflow the budget. This keeps wide runes intact and
+	// never slices a multibyte sequence.
+	budget := n - 1
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > budget {
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String() + "…"
+}
+
+// padRight pads s with spaces to occupy exactly n display columns. If s already
+// meets or exceeds n columns it is returned unchanged. Display-width padding
+// keeps columns aligned when names contain wide runes, which byte-length-based
+// fmt "%-*s" padding gets wrong (F28).
+func padRight(s string, n int) string {
+	if pad := n - lipgloss.Width(s); pad > 0 {
+		return s + strings.Repeat(" ", pad)
 	}
 	return s
 }

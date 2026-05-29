@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,11 +14,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/claude"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/hermes"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -60,6 +57,7 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam peek <id>")
 	fmt.Fprintln(os.Stderr, "  uam stop <id>")
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
+	fmt.Fprintln(os.Stderr, "  uam kill-all                      stop the private tmux server and all sessions")
 	fmt.Fprintln(os.Stderr, "  uam notify-closed <tmux-session>   (internal: tmux session-closed hook)")
 }
 
@@ -76,6 +74,12 @@ func RunWithTUI(ctx context.Context, args []string, runTUI func(context.Context,
 	}
 	svc := NewService(st)
 	if len(args) == 0 {
+		// Best-effort startup prune of long-stale dead records so sessions.json
+		// does not grow unbounded. Server-down-safe (a no-op when no live session
+		// is visible) and advisory: a prune failure must never block launch (F20).
+		if err := svc.PruneStartup(ctx); err != nil {
+			log.Warn("startup prune failed", "err", err)
+		}
 		return runTUI(ctx, app.NewWithDeps(st, svc.Registry))
 	}
 	return runCommand(ctx, svc, args, runTUI)
@@ -101,6 +105,8 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		return runStop(ctx, svc, args[0], args[1:])
 	case "notify-closed":
 		return runNotifyClosed(svc, args[1:])
+	case "kill-all":
+		return runKillAll(ctx, tmux.New("uam").KillServer)
 	case "attach":
 		id, err := requireArg(args[1:], "attach requires <id>")
 		if err != nil {
@@ -159,15 +165,45 @@ func runNotifyClosed(svc *app.Service, args []string) error {
 	return svc.NotifyClosed(tmuxName)
 }
 
+// runKillAll tears down the private tmux server (and every managed session) via
+// the injected killer. uam never auto-kills on TUI quit — reboot-recovery of
+// dead-pane sessions is intentional — so this explicit command is the only
+// teardown path (F24). The killer is idempotent on an already-dead server.
+func runKillAll(ctx context.Context, kill func(context.Context) error) error {
+	if err := kill(ctx); err != nil {
+		return fmt.Errorf("kill-all: %w", err)
+	}
+	fmt.Println("uam tmux server stopped")
+	return nil
+}
+
 func runLast(ctx context.Context, svc *app.Service, runTUI func(context.Context, tea.Model) error) error {
-	sessions, _, err := svc.LoadSessions(ctx)
+	// LoadSessions returns the persisted config; the "last" session is the one
+	// with the newest persisted LastSeenAt, not the top sorted row (whose order
+	// is driven by State/Pinned, not recency) (C1-6).
+	_, cfg, err := svc.LoadSessions(ctx)
 	if err != nil {
 		return err
 	}
-	if len(sessions) == 0 {
+	id := lastSeenID(cfg)
+	if id == "" {
 		return errors.New("no sessions")
 	}
-	return execAttach(ctx, svc, sessions[0].ID, runTUI)
+	return execAttach(ctx, svc, id, runTUI)
+}
+
+// lastSeenID returns the id of the record with the maximum persisted LastSeenAt.
+// Ties are broken by the larger id so repeated `uam last` invocations are
+// deterministic. Returns "" when there are no records (C1-6).
+func lastSeenID(cfg store.Config) string {
+	var best store.SessionRecord
+	for _, rec := range cfg.Sessions {
+		if best.ID == "" || rec.LastSeenAt.After(best.LastSeenAt) ||
+			(rec.LastSeenAt.Equal(best.LastSeenAt) && rec.ID > best.ID) {
+			best = rec
+		}
+	}
+	return best.ID
 }
 
 func requireArg(args []string, message string) (string, error) {
@@ -180,7 +216,15 @@ func requireArg(args []string, message string) (string, error) {
 // NewService wires the app service and supported agent adapters.
 func NewService(st *store.Store) *app.Service {
 	client := tmux.New("uam")
-	reg := adapter.NewRegistry([]adapter.AgentAdapter{claude.New(client), codex.New(client), copilot.New(client), hermes.New(client), opencode.New(client)})
+	// Let migration distinguish reboot-survivors (live pane) from user-stopped
+	// sessions (dead pane) so a v1->v2 upgrade does not auto-resume the latter
+	// on attach (F07). The store stays tmux-free; this only injects the probe.
+	st.SetSessionProbe(func(name string) bool {
+		return client.HasSession(context.Background(), name)
+	})
+	// Build the registry from the single shared adapter list so the CLI service
+	// and the TUI can never diverge on which providers exist (F14).
+	reg := adapter.NewRegistry(agents.Default(client))
 	return app.NewService(st, reg)
 }
 
@@ -203,6 +247,18 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	if len(rem) < 1 {
 		return errors.New("dispatch requires <agent> [#session-name] [prompt]")
 	}
+	// Go's flag parser stops at the first positional, so any flag placed AFTER
+	// <agent> lands in the agent or #name slot instead of taking effect — e.g.
+	// `dispatch fake --safe prompt` would silently fold --safe into the prompt.
+	// Reject a leftover "-"-prefixed token in those two slots. The prompt proper
+	// (rem[2:], or rem[1:] when unnamed) is left untouched so it may contain "--"
+	// (C2-3).
+	if strings.HasPrefix(rem[0], "-") {
+		return fmt.Errorf("dispatch: %q looks like a flag; flags must come before <agent>", rem[0])
+	}
+	if len(rem) > 1 && strings.HasPrefix(rem[1], "-") {
+		return fmt.Errorf("dispatch: %q looks like a flag; flags must come before <agent>", rem[1])
+	}
 	mode := string(store.ModeYolo)
 	if *safe {
 		mode = string(store.ModeSafe)
@@ -210,7 +266,12 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	name, prompt := parseNameAndPrompt(rem[1:])
 	sess, err := svc.DispatchNamed(ctx, rem[0], name, prompt, *cwd, mode)
 	if err != nil {
-		return err
+		// A non-empty session means the agent launched but the record failed to
+		// persist (advisory): report the warning, still emit the id, exit 0 (F03).
+		if sess.ID == "" {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "warning:", err)
 	}
 	fmt.Println(sess.ID)
 	return nil
@@ -224,24 +285,79 @@ func runNew(ctx context.Context, svc *app.Service) error {
 		agent = a.Name()
 	}
 	fmt.Printf("provider [%s]: ", agent)
-	if line, _ := reader.ReadString('\n'); strings.TrimSpace(line) != "" {
-		agent = strings.TrimSpace(line)
+	if line, err := readLine(reader); err != nil {
+		return fmt.Errorf("read provider: %w", err)
+	} else if line != "" {
+		agent = line
 	}
-	cwd, _ := os.Getwd()
+	// Re-validate the typed provider: if its CLI is not installed, reconcile it
+	// to an enabled one rather than failing the dispatch on an "unavailable"
+	// name. Registry.Default returns nil only when nothing is enabled, in which
+	// case the typed value is kept and the dispatch surfaces the real error
+	// (C2-9).
+	if a := svc.Registry.Default(agent); a != nil {
+		agent = a.Name()
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve working directory: %w", err)
+	}
 	fmt.Printf("workdir [%s]: ", cwd)
-	if line, _ := reader.ReadString('\n'); strings.TrimSpace(line) != "" {
-		cwd = strings.TrimSpace(line)
+	if line, err := readLine(reader); err != nil {
+		return fmt.Errorf("read workdir: %w", err)
+	} else if line != "" {
+		cwd = line
 	}
 	fmt.Print("prompt [#session-name prompt, optional]: ")
-	prompt, _ := reader.ReadString('\n')
-	prompt = strings.TrimSpace(prompt)
-	name, prompt := parseNameAndPrompt(strings.Fields(prompt))
+	// Read the raw prompt line; data and io.EOF can co-arrive on the final read,
+	// so use the returned bytes even when err == io.EOF (F54).
+	raw, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read prompt: %w", err)
+	}
+	// Split off only a leading #name token; preserve the prompt remainder
+	// verbatim so interior whitespace the user typed is not collapsed (C1-3).
+	name, prompt := splitNameFromPrompt(strings.TrimRight(raw, "\r\n"))
+	if strings.TrimSpace(prompt) == "" {
+		return errors.New("new requires a prompt")
+	}
 	sess, err := svc.DispatchNamed(ctx, agent, name, prompt, cwd, string(store.ModeYolo))
 	if err != nil {
-		return err
+		if sess.ID == "" {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "warning:", err)
 	}
 	fmt.Printf("dispatched %s (%s)\n", sess.ID, sess.TmuxSession)
 	return nil
+}
+
+// readLine reads one trimmed input line from r. A trailing io.EOF that arrives
+// with the line's bytes is not an error (the line is still returned); any other
+// read error is surfaced (F54).
+func readLine(r *bufio.Reader) (string, error) {
+	line, err := r.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+// splitNameFromPrompt peels a single leading #name token off the front of a
+// prompt and returns the remainder verbatim. Unlike parseNameAndPrompt it does
+// not tokenize the prompt, so interior whitespace survives (C1-3). The leading
+// "#name " separator (exactly one space) is consumed; everything after it is
+// kept byte-for-byte.
+func splitNameFromPrompt(line string) (name, prompt string) {
+	trimmed := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(trimmed, "#") {
+		return "", line
+	}
+	rest := trimmed[1:]
+	if i := strings.IndexAny(rest, " \t"); i >= 0 {
+		return rest[:i], rest[i+1:]
+	}
+	return rest, ""
 }
 
 func parseNameAndPrompt(parts []string) (string, string) {

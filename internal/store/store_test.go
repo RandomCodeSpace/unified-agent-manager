@@ -2,8 +2,10 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -148,6 +150,99 @@ func TestMigrateV1BackfillsStatusActive(t *testing.T) {
 	}
 	if rec.Status != StatusActive {
 		t.Fatalf("status = %q, want %q", rec.Status, StatusActive)
+	}
+}
+
+func TestStoreUpdateIsAtomicUnderConcurrency(t *testing.T) {
+	// Characterizes the existing flock + read-modify-write + atomic-rename
+	// behavior of Store.Update: concurrent writers each inserting a distinct
+	// session key must not lose each other's writes. This is the safety net
+	// that protects the later Update/LoadSessions refactor (F01).
+	const writers = 20
+
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			key := Key("claude", fmt.Sprintf("sess%04d", i))
+			err := s.Update(func(cfg *Config) error {
+				cfg.Sessions[key] = SessionRecord{ID: key, Agent: "claude"}
+				return nil
+			})
+			if err != nil {
+				t.Errorf("Update(%s): %v", key, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Sessions) != writers {
+		t.Fatalf("sessions = %d, want %d (lost writes)", len(cfg.Sessions), writers)
+	}
+	for i := 0; i < writers; i++ {
+		key := Key("claude", fmt.Sprintf("sess%04d", i))
+		if _, ok := cfg.Sessions[key]; !ok {
+			t.Errorf("missing key %q after concurrent updates", key)
+		}
+	}
+}
+
+func TestUpdateSerializesConcurrentWriters_Race(t *testing.T) {
+	// Stronger than the distinct-key case: concurrent writers performing a
+	// read-modify-write on the SAME key must serialize, so every increment
+	// lands. This is the atomic-RMW guarantee LoadSessions (F01) relies on —
+	// it re-reads inside the flock instead of saving a stale whole-config
+	// snapshot.
+	const writers = 25
+
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	key := Key("claude", "shared00")
+	if err := s.Update(func(cfg *Config) error {
+		cfg.Sessions[key] = SessionRecord{ID: "shared00", Agent: "claude"}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func() {
+			defer wg.Done()
+			err := s.Update(func(cfg *Config) error {
+				rec := cfg.Sessions[key]
+				rec.SortIndex++
+				cfg.Sessions[key] = rec
+				return nil
+			})
+			if err != nil {
+				t.Errorf("Update: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Sessions[key].SortIndex; got != writers {
+		t.Fatalf("SortIndex = %d, want %d (lost read-modify-write updates)", got, writers)
 	}
 }
 

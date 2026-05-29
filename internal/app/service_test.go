@@ -22,6 +22,13 @@ type svcFakeAdapter struct {
 	stopped   bool
 	replied   string
 	resumed   *adapter.ResumeRequest
+	// F04: simulate a failed kill (stopErr) and a still-live pane (alive). The
+	// fake implements adapter.HasSessionAdapter, returning alive from HasSession.
+	stopErr error
+	alive   bool
+	// F12: simulate a per-adapter List failure so liveSessions can be tested for
+	// logging-then-continue (one bad adapter must not blank the dashboard).
+	listErr error
 }
 
 func (f *svcFakeAdapter) Name() string        { return f.name }
@@ -42,7 +49,9 @@ func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) 
 	f.resumed = &req
 	return adapter.Session{ID: req.ID, AgentType: f.name, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: req.TmuxSession, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
-func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) { return f.sessions, nil }
+func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
+	return f.sessions, f.listErr
+}
 func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
 	return adapter.PeekResult{TailText: "tail"}, nil
 }
@@ -53,11 +62,11 @@ func (f *svcFakeAdapter) Reply(ctx adapter.Context, id, text string) error {
 func (f *svcFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
 }
-func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error            { f.stopped = true; return nil }
-func (f *svcFakeAdapter) Rename(ctx adapter.Context, id, newName string) error { return nil }
-func (f *svcFakeAdapter) Subscribe(ctx adapter.Context) (<-chan adapter.SessionEvent, error) {
-	return nil, nil
+func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error {
+	f.stopped = true
+	return f.stopErr
 }
+func (f *svcFakeAdapter) HasSession(ctx adapter.Context, id string) bool { return f.alive }
 
 func TestServiceWorkflow(t *testing.T) {
 	svc, fake := newWorkflowService(t)
@@ -80,7 +89,7 @@ func newWorkflowService(t *testing.T) (*Service, *svcFakeAdapter) {
 
 func assertWorkflowDispatch(t *testing.T, svc *Service) adapter.Session {
 	t.Helper()
-	sess, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo")
+	sess, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +151,7 @@ func TestServicePrintListAndErrors(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
-	if _, err := svc.Dispatch(context.Background(), "missing", "x", "", ""); err == nil {
+	if _, err := svc.DispatchNamed(context.Background(), "missing", "", "x", "", ""); err == nil {
 		t.Fatal("want missing agent error")
 	}
 	if _, _, err := svc.Find(context.Background(), "missing"); err == nil {
@@ -280,7 +289,7 @@ func TestStopSoftCloseFlagsRecordClosedByUser(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	// Soft-close (remove=false) must keep the record and flag it as closed.
@@ -311,7 +320,7 @@ func TestStopRemoveDeletesRecord(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Stop(context.Background(), "12345678", true); err != nil {
@@ -326,6 +335,92 @@ func TestStopRemoveDeletesRecord(t *testing.T) {
 	}
 }
 
+// F04 — a failed adapter kill on a still-live pane must NOT delete/flag the
+// record: the session is alive and the record is the only handle to kill it.
+func TestStopRemoveKeepsRecordWhenKillFailsAndPaneAlive(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, stopErr: errors.New("kill boom"), alive: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	err = svc.Stop(context.Background(), "12345678", true)
+	if err == nil {
+		t.Fatal("Stop should surface the kill failure when the pane is still alive")
+	}
+	cfg, _ := st.Load()
+	if _, ok := cfg.Sessions[store.Key("fake", "12345678")]; !ok {
+		t.Fatalf("record must survive when kill fails and pane is alive: %+v", cfg.Sessions)
+	}
+}
+
+func TestStopSoftCloseKeepsRecordActiveWhenKillFailsAndPaneAlive(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, stopErr: errors.New("kill boom"), alive: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Stop(context.Background(), "12345678", false); err == nil {
+		t.Fatal("soft Stop should surface the kill failure when the pane is still alive")
+	}
+	cfg, _ := st.Load()
+	rec := cfg.Sessions[store.Key("fake", "12345678")]
+	if rec.Status == store.StatusClosedByUser {
+		t.Fatalf("record must not be flagged closed when the live pane survived the failed kill: %+v", rec)
+	}
+}
+
+// F04 trap — if the kill fails but the pane is already GONE, Stop must still
+// clean the record up (preserves `uam rm` cleanup of already-dead sessions).
+func TestStopRemoveDeletesRecordWhenKillFailsButPaneGone(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, stopErr: errors.New("no such session"), alive: false}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Stop(context.Background(), "12345678", true); err != nil {
+		t.Fatalf("Stop should succeed when the pane is already gone: %v", err)
+	}
+	cfg, _ := st.Load()
+	if _, ok := cfg.Sessions[store.Key("fake", "12345678")]; ok {
+		t.Fatalf("record should be removed when pane is gone: %+v", cfg.Sessions)
+	}
+}
+
+func TestStopSoftCloseFlagsRecordWhenKillFailsButPaneGone(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, stopErr: errors.New("no such session"), alive: false}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Stop(context.Background(), "12345678", false); err != nil {
+		t.Fatalf("soft Stop should succeed when the pane is already gone: %v", err)
+	}
+	cfg, _ := st.Load()
+	if cfg.Sessions[store.Key("fake", "12345678")].Status != store.StatusClosedByUser {
+		t.Fatalf("record should be flagged closed when pane is gone: %+v", cfg.Sessions[store.Key("fake", "12345678")])
+	}
+}
+
 func TestNotifyClosedMarksMatchingRecord(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "sessions.json"))
@@ -334,7 +429,7 @@ func TestNotifyClosedMarksMatchingRecord(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -362,6 +457,109 @@ func TestNotifyClosedMarksMatchingRecord(t *testing.T) {
 	}
 }
 
+// F03 — when persisting a freshly dispatched session fails, the live session
+// must still be returned (advisory error), and the adapter must NOT be told to
+// Stop it (the agent is running; killing it on a persist hiccup loses work).
+func TestDispatchReturnsLiveSessionOnPersistFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("read-only dir is not enforced for root")
+	}
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	// First dispatch creates the lock + config files.
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "warmup", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	// Make the config dir read-only so the next store write (the tmp-file create)
+	// fails inside Store.Update.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	sess, err := svc.DispatchNamed(context.Background(), "fake", "second", "do work", "/tmp", "yolo")
+	if err == nil {
+		t.Fatal("expected an advisory persist error")
+	}
+	if !strings.Contains(err.Error(), sess.ID) {
+		t.Fatalf("advisory error should reference the live session id %q: %v", sess.ID, err)
+	}
+	if sess.ID == "" || sess.TmuxSession == "" {
+		t.Fatalf("live session must be returned despite persist failure: %+v", sess)
+	}
+	if fake.stopped {
+		t.Fatal("adapter.Stop must NOT be called on a persist failure — the session is live")
+	}
+}
+
+// F03 characterization — the dispatch mode is honoured (not silently forced to
+// yolo) when persisting the record.
+func TestDispatchPersistsRequestedMode(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "do work", "/tmp", "safe"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := st.Load()
+	if got := cfg.Sessions[store.Key("fake", "12345678")].Mode; got != store.ModeSafe {
+		t.Fatalf("persisted mode = %q, want %q (dispatch must not hardcode yolo)", got, store.ModeSafe)
+	}
+}
+
+// C1-2 — renaming a live session whose store record is missing at mutation time
+// must backfill a full record (real ID + tmux name) before applying the field
+// change, not write a zero-value phantom that can never be killed once the pane
+// dies. We drive the no-record path directly through renameRecord so the test is
+// independent of the refresh backfill (which would otherwise mask the bug).
+func TestRenameLiveSessionWithoutStoreRecordBackfillsRecord(t *testing.T) {
+	live := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", TmuxSession: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	svc, st, _ := newLoadService(t, []adapter.Session{live})
+	// Empty store: no record for the live session.
+	if err := st.Save(store.DefaultConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.applyRecordMutation(live, func(rec *store.SessionRecord) { rec.Name = "renamed" }); err != nil {
+		t.Fatalf("rename mutation: %v", err)
+	}
+	cfg, _ := st.Load()
+	rec := cfg.Sessions[store.Key("fake", "aaaa1111")]
+	if rec.ID != "aaaa1111" || rec.TmuxSession != "uam-fake-aaaa1111" {
+		t.Fatalf("rename must backfill a full record, got %+v", rec)
+	}
+	if rec.Name != "renamed" {
+		t.Fatalf("rename did not apply, got name %q", rec.Name)
+	}
+}
+
+func TestTogglePinLiveSessionWithoutStoreRecordBackfillsRecord(t *testing.T) {
+	live := adapter.Session{ID: "bbbb2222", AgentType: "fake", DisplayName: "B", Cwd: "/tmp", TmuxSession: "uam-fake-bbbb2222", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	svc, st, _ := newLoadService(t, []adapter.Session{live})
+	if err := st.Save(store.DefaultConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.applyRecordMutation(live, func(rec *store.SessionRecord) { rec.Pinned = !rec.Pinned }); err != nil {
+		t.Fatalf("toggle pin mutation: %v", err)
+	}
+	cfg, _ := st.Load()
+	rec := cfg.Sessions[store.Key("fake", "bbbb2222")]
+	if rec.ID != "bbbb2222" || rec.TmuxSession != "uam-fake-bbbb2222" {
+		t.Fatalf("toggle pin must backfill a full record, got %+v", rec)
+	}
+	if !rec.Pinned {
+		t.Fatalf("toggle pin did not apply, got %+v", rec)
+	}
+}
+
 func TestResumeBackgroundClearsClosedStatus(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "sessions.json"))
@@ -370,7 +568,7 @@ func TestResumeBackgroundClearsClosedStatus(t *testing.T) {
 	}
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if _, err := svc.Dispatch(context.Background(), "fake", "hello", "/tmp", "yolo"); err != nil {
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "", "hello", "/tmp", "yolo"); err != nil {
 		t.Fatal(err)
 	}
 	// User closes the session (soft close), then resumes it.

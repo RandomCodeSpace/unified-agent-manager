@@ -1,12 +1,15 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
@@ -77,14 +80,10 @@ func assertAgentInteractions(t *testing.T, ag *TmuxAgent) {
 		func() error { return ag.Reply(context.Background(), "abc12345", "ok") },
 		func() error { _, err := ag.Attach("abc12345"); return err },
 		func() error { return ag.Stop(context.Background(), "abc12345") },
-		func() error { return ag.Rename(context.Background(), "abc12345", "name") },
 	} {
 		if err := action(); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if ch, err := ag.Subscribe(context.Background()); err != nil || ch != nil {
-		t.Fatalf("Subscribe = %v %v", ch, err)
 	}
 }
 
@@ -99,6 +98,46 @@ func assertTmuxLifecycleLog(t *testing.T, logPath string) {
 	}
 	if strings.Contains(logText, "exec bash") {
 		t.Fatalf("agent exit should terminate tmux session, log should not keep a fallback shell: %s", logData)
+	}
+}
+
+// F52 — a PR-scrape capture-pane failure must be logged (debug) and stay
+// per-session non-fatal: List still returns the session, just without a PR.
+func TestListLogsCaptureFailureButKeepsSession(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	// list-sessions succeeds; capture-pane fails for the PR scrape.
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$*" in
+  *"list-sessions"*) echo "uam-fake-abc12345|1710000000|0|1|/tmp/repo|fakeagent" ;;
+  *"capture-pane"*) echo "capture boom" >&2; exit 1 ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_LOG", filepath.Join(dir, "tmux.log"))
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+
+	var buf bytes.Buffer
+	prev := log.SetLogger(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer log.SetLogger(prev)
+
+	list, err := ag.List(context.Background())
+	if err != nil {
+		t.Fatalf("a per-session capture failure must not fail List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("session should still be listed despite capture failure, got %d", len(list))
+	}
+	if list[0].PR != nil {
+		t.Fatalf("PR should be nil when capture failed, got %+v", list[0].PR)
+	}
+	if !strings.Contains(buf.String(), "capture") {
+		t.Fatalf("capture failure should be logged, got: %q", buf.String())
 	}
 }
 
@@ -133,6 +172,105 @@ exit 0
 	}
 }
 
+// F19 — a resume/dispatch that creates the tmux session but then fails to send
+// the prompt must roll back the live (prompt-less) session, otherwise it lingers
+// as an orphan the store records as Exited/closed.
+func TestStartSessionRollsBackTmuxOnSendLineFailure(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	// send-keys fails; everything else (new-session, kill-session) succeeds.
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$*" in
+  *"send-keys"*) echo "boom" >&2; exit 1 ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+	_, err := ag.Dispatch(context.Background(), DispatchRequest{Prompt: "hello", Cwd: "/tmp", Mode: "yolo"})
+	if err == nil {
+		t.Fatal("expected dispatch error when send-keys fails")
+	}
+	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
+	if !strings.Contains(logText, "new-session") {
+		t.Fatalf("session should have been created: %s", logText)
+	}
+	if !strings.Contains(logText, "kill-session") {
+		t.Fatalf("send-keys failure must roll back the created session via kill-session: %s", logText)
+	}
+}
+
+// F19 trap — if the rollback Kill itself fails, the caller must still see the
+// original SendLine error (not the kill error).
+func TestStartSessionReturnsSendLineErrorWhenRollbackKillAlsoFails(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$*" in
+  *"send-keys"*) echo "sendboom" >&2; exit 1 ;;
+  *"kill-session"*) echo "killboom" >&2; exit 1 ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+	_, err := ag.Dispatch(context.Background(), DispatchRequest{Prompt: "hello", Cwd: "/tmp", Mode: "yolo"})
+	if err == nil {
+		t.Fatal("expected dispatch error")
+	}
+	if !strings.Contains(err.Error(), "sendboom") {
+		t.Fatalf("error should surface the original send-keys failure, got: %v", err)
+	}
+}
+
+// F25 — startSession must create the tmux session BEFORE applying server
+// config. On first dispatch the server doesn't exist yet, so configuring it
+// first fails and (pre-fix) latched the failure forever. Assert new-session
+// precedes set-option in the recorded command log.
+func TestStartSessionConfiguresServerAfterCreate(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+	if _, err := ag.Dispatch(context.Background(), DispatchRequest{Prompt: "hello", Cwd: "/tmp", Mode: "yolo"}); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	logText := func() string { b, _ := os.ReadFile(logPath); return string(b) }()
+	nsIdx := strings.Index(logText, "new-session")
+	soIdx := strings.Index(logText, "set-option")
+	if nsIdx < 0 || soIdx < 0 {
+		t.Fatalf("expected both new-session and set-option in log: %s", logText)
+	}
+	if nsIdx > soIdx {
+		t.Fatalf("CreateSession must precede server config so the server exists: %s", logText)
+	}
+}
+
 func TestTmuxAgentDispatchWithoutPromptSkipsSendKeys(t *testing.T) {
 	dir := t.TempDir()
 	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
@@ -158,6 +296,111 @@ exit 0
 	logData, _ := os.ReadFile(logPath)
 	if strings.Contains(string(logData), "send-keys") {
 		t.Fatalf("empty prompt should not be sent: %s", logData)
+	}
+}
+
+// F32 — target() must use tmux exact-match (`=` prefix) so a neighbour session
+// whose name shares the truncated prefix is never hit by `-t`. Drive Stop/Peek
+// through a fake tmux and assert the recorded `-t` token is exact-anchored.
+func newTargetingAgent(t *testing.T) (*TmuxAgent, string) {
+	t.Helper()
+	dir := t.TempDir()
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$*" in
+  *"capture-pane"*) printf 'tail\n' ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	return NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client), logPath
+}
+
+func TestTargetUsesExactMatchForFullUUID(t *testing.T) {
+	ag, logPath := newTargetingAgent(t)
+	// A full-UUID id whose first 8 chars name the session.
+	if err := ag.Stop(context.Background(), "abc12345-dead-beef-cafe-0123456789ab"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
+	if !strings.Contains(logText, "-t =uam-fake-abc12345") {
+		t.Fatalf("kill must target the exact session, got: %s", logText)
+	}
+}
+
+func TestTargetUsesExactMatchForCanonicalName(t *testing.T) {
+	ag, logPath := newTargetingAgent(t)
+	// A canonical (already uam-prefixed) name must also be exact-anchored so a
+	// longer neighbour ("uam-fake-abc123450" etc.) is never matched by prefix.
+	if _, err := ag.Peek(context.Background(), "uam-fake-abc12345"); err != nil {
+		t.Fatalf("Peek: %v", err)
+	}
+	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
+	if !strings.Contains(logText, "-t =uam-fake-abc12345") {
+		t.Fatalf("capture must target the exact session, got: %s", logText)
+	}
+}
+
+// F57 — startSession must wrap a CreateSession failure with the tmux session
+// name (boundary context) while preserving the underlying error for errors.Is.
+func TestStartSessionWrapsCreateSessionError(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$*" in
+  *"new-session"*) echo "create boom" >&2; exit 1 ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_LOG", filepath.Join(dir, "tmux.log"))
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+	_, err := ag.Dispatch(context.Background(), DispatchRequest{Prompt: "hi", Cwd: "/tmp", Mode: "yolo"})
+	if err == nil {
+		t.Fatal("expected dispatch error when new-session fails")
+	}
+	if !strings.Contains(err.Error(), "uam-fake-") {
+		t.Fatalf("CreateSession failure must be wrapped with the tmux session name, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "create boom") {
+		t.Fatalf("wrapped error must preserve the underlying cause, got: %v", err)
+	}
+}
+
+// F57 — List must wrap a tmux list failure with the agent name so a caller
+// (and the log) can tell which provider's scan failed.
+func TestListWrapsTmuxListError(t *testing.T) {
+	dir := t.TempDir()
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+case "$*" in
+  *"list-sessions"*) echo "protocol mismatch" >&2; exit 1 ;;
+esac
+exit 0
+`)
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+	_, err := ag.List(context.Background())
+	if err == nil {
+		t.Fatal("expected List error on a genuine list-sessions failure")
+	}
+	if !strings.Contains(err.Error(), "fake") {
+		t.Fatalf("List failure must be wrapped with the agent name, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "protocol mismatch") {
+		t.Fatalf("wrapped error must preserve the underlying cause, got: %v", err)
 	}
 }
 

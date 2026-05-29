@@ -1,0 +1,9 @@
+# Default owners for everything in the repo.
+* @RandomCodeSpace
+
+# Build, release, and CI configuration.
+/Makefile @RandomCodeSpace
+/.goreleaser.yml @RandomCodeSpace
+/.github/ @RandomCodeSpace
+/go.mod @RandomCodeSpace
+/go.sum @RandomCodeSpace
