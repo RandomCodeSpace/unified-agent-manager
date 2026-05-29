@@ -111,7 +111,16 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 	// CLOSED with a live glyph (F18).
 	sess.Closed = rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Exited
 	if rec.PR != nil && sess.PR == nil {
-		sess.PR = &adapter.PRRef{URL: rec.PR.URL, Number: rec.PR.Number, Status: adapter.PRStatus(rec.PR.LastStatus)}
+		// The store schema does not persist Owner/Repo, but the URL is lossless:
+		// re-derive them via the same GitHub PR regex the adapter uses so a
+		// store round-trip never strips them (C2-7). Keep the persisted
+		// Number/Status as the source of truth.
+		ref := &adapter.PRRef{URL: rec.PR.URL, Number: rec.PR.Number, Status: adapter.PRStatus(rec.PR.LastStatus)}
+		if derived := adapter.ExtractPR(rec.PR.URL); derived != nil {
+			ref.Owner = derived.Owner
+			ref.Repo = derived.Repo
+		}
+		sess.PR = ref
 	}
 	return sess
 }
@@ -139,7 +148,7 @@ func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]ada
 				continue
 			}
 			rec = RecordFromSession(sess, store.ModeYolo)
-			cfg.Sessions[key] = rec
+			cfg.PutSession(key, rec)
 			changed = true
 		} else if rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Alive {
 			// Anti-flap: the user closed this session but its pane is still
@@ -236,7 +245,7 @@ func (s *Service) DispatchNamed(ctx context.Context, agentName, name, prompt, cw
 	if s.Store != nil {
 		rec := RecordFromSession(sess, store.Mode(mode))
 		if err := s.Store.Update(func(cfg *store.Config) error {
-			cfg.Sessions[store.Key(sess.AgentType, sess.ID)] = rec
+			cfg.PutSession(store.Key(sess.AgentType, sess.ID), rec)
 			return nil
 		}); err != nil {
 			// Advisory only: the session is live. Killing it because the store

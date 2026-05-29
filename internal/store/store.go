@@ -223,6 +223,25 @@ func DefaultConfig() Config {
 	}
 }
 
+// PutSession inserts or updates rec under key with a guard against the 8-char
+// ShortID map key collapsing two distinct full IDs into one slot (F22). The
+// short key carries only 32 bits of entropy, so two same-agent sessions can
+// collide; without this guard the second write would silently clobber the
+// first, orphaning a live session whose only handle is that record. It returns
+// true on a successful write (no record, or the same full ID) and false (with a
+// log) when an existing record under key carries a different non-empty full ID.
+func (c *Config) PutSession(key string, rec SessionRecord) bool {
+	if c.Sessions == nil {
+		c.Sessions = map[string]SessionRecord{}
+	}
+	if existing, ok := c.Sessions[key]; ok && existing.ID != "" && rec.ID != "" && existing.ID != rec.ID {
+		log.Warn("refusing short-key collision overwrite", "key", key, "existing_id", existing.ID, "incoming_id", rec.ID)
+		return false
+	}
+	c.Sessions[key] = rec
+	return true
+}
+
 func Key(agent, id string) string {
 	return strings.ToLower(agent) + ":" + ShortID(id)
 }
@@ -285,8 +304,15 @@ func (s *Store) loadNoLock() (Config, error) {
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		_ = s.moveAside()
-		return DefaultConfig(), nil
+		// Quarantine the corrupt file before starting fresh. If the move-aside
+		// fails the original is still on disk, so returning DefaultConfig here
+		// would let the next Save overwrite it with defaults and lose the only
+		// copy. Propagate the error instead so the app refuses to clobber it
+		// (F43). normalize guarantees a non-nil Sessions map on the success path.
+		if mvErr := s.moveAside(); mvErr != nil {
+			return Config{}, fmt.Errorf("quarantine corrupt config %s: %w", s.path, mvErr)
+		}
+		return normalize(DefaultConfig()), nil
 	}
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
@@ -477,11 +503,15 @@ func (s *Store) saveNoLock(cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.tmp.%d", s.path, os.Getpid())
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec G304 -- UAM intentionally writes its own config file path.
+	// CreateTemp picks a randomly-suffixed name with O_EXCL in the SAME
+	// directory as the target (filepath.Dir) — same dir is required because a
+	// cross-device rename fails with EXDEV. The random suffix means a stale
+	// orphan from a previously-killed run is never silently reused (F45).
+	f, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp.*")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(cfg); err != nil {
