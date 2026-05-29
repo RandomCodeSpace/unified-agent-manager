@@ -13,11 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/claude"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/hermes"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -207,7 +203,9 @@ func NewService(st *store.Store) *app.Service {
 	st.SetSessionProbe(func(name string) bool {
 		return client.HasSession(context.Background(), name)
 	})
-	reg := adapter.NewRegistry([]adapter.AgentAdapter{claude.New(client), codex.New(client), copilot.New(client), hermes.New(client), opencode.New(client)})
+	// Build the registry from the single shared adapter list so the CLI service
+	// and the TUI can never diverge on which providers exist (F14).
+	reg := adapter.NewRegistry(agents.Default(client))
 	return app.NewService(st, reg)
 }
 
@@ -270,6 +268,14 @@ func runNew(ctx context.Context, svc *app.Service) error {
 	fmt.Printf("provider [%s]: ", agent)
 	if line, _ := reader.ReadString('\n'); strings.TrimSpace(line) != "" {
 		agent = strings.TrimSpace(line)
+	}
+	// Re-validate the typed provider: if its CLI is not installed, reconcile it
+	// to an enabled one rather than failing the dispatch on an "unavailable"
+	// name. Registry.Default returns nil only when nothing is enabled, in which
+	// case the typed value is kept and the dispatch surfaces the real error
+	// (C2-9).
+	if a := svc.Registry.Default(agent); a != nil {
+		agent = a.Name()
 	}
 	cwd, _ := os.Getwd()
 	fmt.Printf("workdir [%s]: ", cwd)

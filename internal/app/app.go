@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -12,28 +13,31 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/claude"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
 
 type Model struct {
-	width, height  int
-	quitting       bool
-	loading        bool
-	service        *Service
-	sessions       []adapter.Session
-	selected       int
-	input          string
-	defaultAgent   string
-	message        string
-	messageSetAt   time.Time
-	peekOpen       bool
-	peekText       string
+	width, height int
+	quitting      bool
+	loading       bool
+	service       *Service
+	sessions      []adapter.Session
+	selected      int
+	input         string
+	defaultAgent  string
+	message       string
+	messageSetAt  time.Time
+	peekOpen      bool
+	peekText      string
+	// peekTargetID is the session whose pane the open peek panel shows. While
+	// peek is open the command line doubles as a reply composer: typed text +
+	// Enter sends to this session via Service.Reply rather than dispatching a new
+	// agent. Snapshotting the id (mirroring renameTargetID) keeps a reorder under
+	// the cursor from misrouting the reply (F36).
+	peekTargetID   string
 	helpOpen       bool
 	confirmStop    bool
 	confirmStopID  string
@@ -115,15 +119,50 @@ type peekTickMsg time.Time
 // matches the latest move, dropping ticks superseded by a newer move (F59).
 type reorderFlushMsg struct{ seq int }
 
+// promptEditedMsg carries the result of editing the wizard prompt in $EDITOR.
+// The editor is launched via tea.ExecProcess (which suspends the TUI, restores
+// the terminal, and resumes cleanly); when it exits this message loads the file
+// contents back into the prompt buffer (C2-8).
+type promptEditedMsg struct {
+	text string
+	err  error
+}
+
 func New() Model {
 	st, _ := store.Open(store.DefaultPath())
 	client := tmux.New("uam")
-	reg := adapter.NewRegistry([]adapter.AgentAdapter{claude.New(client), codex.New(client), copilot.New(client), opencode.New(client)})
+	// Build the registry from the single shared adapter list so the TUI and the
+	// CLI service can never diverge (the old hand-rolled list here omitted
+	// hermes — F14).
+	reg := adapter.NewRegistry(agents.Default(client))
 	return NewWithDeps(st, reg)
 }
 
 func NewWithDeps(st *store.Store, reg *adapter.Registry) Model {
-	return Model{service: NewService(st, reg), defaultAgent: "claude", wizardCwd: ".", execProcess: tea.ExecProcess, lastPeekAt: map[string]time.Time{}, peekClock: time.Now}
+	m := Model{service: NewService(st, reg), defaultAgent: "claude", wizardCwd: ".", execProcess: tea.ExecProcess, lastPeekAt: map[string]time.Time{}, peekClock: time.Now}
+	// The baked-in "claude" default may not be installed; reconcile it to an
+	// enabled provider so Enter-with-no-input and the prompt hint never point at
+	// a disabled agent (C2-9).
+	m.defaultAgent = m.validateDefaultAgent(m.defaultAgent)
+	return m
+}
+
+// validateDefaultAgent returns candidate when it is an enabled agent, otherwise
+// the registry's chosen default (Registry.Default falls back to the first
+// enabled adapter). When nothing is enabled — or there is no registry — the
+// candidate is returned unchanged so the selector degrades gracefully instead of
+// panicking on a nil Default (C2-9).
+func (m Model) validateDefaultAgent(candidate string) string {
+	if m.service == nil || m.service.Registry == nil {
+		return candidate
+	}
+	if _, ok := m.service.Registry.Get(candidate); ok {
+		return candidate
+	}
+	if a := m.service.Registry.Default(candidate); a != nil {
+		return a.Name()
+	}
+	return candidate
 }
 func NewWizard(st *store.Store, reg *adapter.Registry) Model {
 	m := NewWithDeps(st, reg)
@@ -199,6 +238,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.execAttachSpec(msg.spec, msg.err)
 	case attachFinishedMsg:
 		return m.handleAttachFinished(msg), m.loadSessionsCmd()
+	case promptEditedMsg:
+		return m.handlePromptEdited(msg), nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -240,7 +281,10 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 		m.groupByDir = msg.groupByDir
 	}
 	if msg.defaultAgent != "" {
-		m.defaultAgent = msg.defaultAgent
+		// A persisted default may name an agent whose CLI was since uninstalled;
+		// reconcile it to an enabled provider rather than dispatching to a
+		// disabled one (C2-9).
+		m.defaultAgent = m.validateDefaultAgent(msg.defaultAgent)
 	}
 	if m.selected >= len(m.sessions) {
 		m.selected = max(0, len(m.sessions)-1)
@@ -282,6 +326,18 @@ func (m Model) handleAttachFinished(msg attachFinishedMsg) Model {
 	} else {
 		m.setMessage("returned to uam")
 	}
+	return m
+}
+
+// handlePromptEdited loads the text the user composed in $EDITOR back into the
+// wizard prompt buffer. On error the buffer is left untouched and the error is
+// surfaced in the status line (C2-8).
+func (m Model) handlePromptEdited(msg promptEditedMsg) Model {
+	if msg.err != nil {
+		m.setMessage("editor: " + msg.err.Error())
+		return m
+	}
+	m.input = strings.TrimRight(msg.text, "\n")
 	return m
 }
 
@@ -355,6 +411,11 @@ func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
 	m.moveSelection(delta)
 	if !m.peekOpen || m.selected == prev {
 		return nil
+	}
+	// The peek panel follows the cursor; keep the reply target in sync so a reply
+	// goes to the session the user is actually looking at (F36).
+	if sess, ok := m.selectedSession(); ok {
+		m.peekTargetID = sess.ID
 	}
 	m.peekText = ""
 	return m.peekSelectedCmd()
@@ -498,7 +559,10 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 // then clear the command input, and finally quit the uam TUI.
 func (m *Model) handleEscKey() tea.Cmd {
 	if m.peekOpen {
+		// Esc backs out of the peek/reply composer WITHOUT sending the in-progress
+		// reply (F36).
 		m.peekOpen = false
+		m.peekTargetID = ""
 		return nil
 	}
 	if m.input != "" {
@@ -533,12 +597,26 @@ func (m *Model) handleSpaceKey(key string) tea.Cmd {
 	}
 	m.peekOpen = !m.peekOpen
 	if m.peekOpen {
+		// Snapshot the peeked session so an Enter-to-reply routes to it even if a
+		// refresh reorders the list under the cursor (F36).
+		if sess, ok := m.selectedSession(); ok {
+			m.peekTargetID = sess.ID
+		}
 		return m.peekSelectedCmd()
 	}
+	m.peekTargetID = ""
 	return nil
 }
 
 func (m *Model) handleEnterKey() tea.Cmd {
+	// Reply sub-mode: while the peek panel is open the command line is a reply
+	// composer. Non-empty input + Enter sends to the peeked session via
+	// Service.Reply and re-peeks, instead of dispatching a new agent. Checked
+	// before the dispatch/attach branch so peek+typed-text never spawns a session
+	// (F36).
+	if m.peekOpen && strings.TrimSpace(m.input) != "" {
+		return m.replyToPeekCmd()
+	}
 	if strings.TrimSpace(m.input) != "" {
 		spec := parseDispatchSpec(m.input, m.defaultAgent)
 		return m.dispatchNamedCmd(spec.Agent, spec.Name, spec.Prompt)
@@ -547,6 +625,27 @@ func (m *Model) handleEnterKey() tea.Cmd {
 		return m.attachSelectedCmd()
 	}
 	return nil
+}
+
+// replyToPeekCmd sends the typed input to the peeked session via Service.Reply,
+// clears the composer, and re-peeks so the panel shows the agent's response. The
+// reply target is the snapshotted peekTargetID (falling back to the selected
+// session) so a reorder under the cursor can't misroute it (F36).
+func (m *Model) replyToPeekCmd() tea.Cmd {
+	sess, ok := m.sessionByID(m.peekTargetID)
+	if !ok {
+		return nil
+	}
+	text := m.input
+	m.input = ""
+	id := sess.ID
+	return func() tea.Msg {
+		if err := m.service.Reply(context.Background(), id, text); err != nil {
+			return peekLoadedMsg{err: err}
+		}
+		p, err := m.service.Peek(context.Background(), id)
+		return peekLoadedMsg{text: p.TailText, err: err}
+	}
 }
 
 func (m *Model) handleEditKey(key string) {
@@ -659,23 +758,129 @@ func (m *Model) handleWizardAgentKey(key string) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleWizardCwdKey(key string) (tea.Cmd, bool) {
-	if key != "enter" {
-		return nil, false
+	switch key {
+	case "tab":
+		// Complete the typed path against the filesystem (C2-8). Marked done so
+		// the literal tab never leaks into the buffer.
+		m.input = globComplete(m.input)
+		return nil, true
+	case "enter":
+		m.wizardCwd = firstNonEmpty(m.input, ".")
+		m.wizardStep = 2
+		m.input = ""
+		return nil, true
 	}
-	m.wizardCwd = firstNonEmpty(m.input, ".")
-	m.wizardStep = 2
-	m.input = ""
-	return nil, true
+	return nil, false
 }
 
 func (m *Model) handleWizardPromptKey(key string) (tea.Cmd, bool) {
-	if key != "enter" {
-		return nil, false
+	switch key {
+	case "ctrl+g":
+		// Compose the prompt in $EDITOR for multi-line input. Launched via
+		// tea.ExecProcess so the TUI screen state is restored cleanly — a raw
+		// exec.Command would corrupt the alt-screen (C2-8).
+		return m.editPromptCmd(), true
+	case "enter":
+		spec := parseDispatchSpec(m.input, firstNonEmpty(m.wizardAgent, m.defaultAgent))
+		cwd := m.wizardCwd
+		m.closeWizard()
+		return m.dispatchWithNameCwdCmd(spec.Agent, spec.Name, spec.Prompt, cwd), true
 	}
-	spec := parseDispatchSpec(m.input, firstNonEmpty(m.wizardAgent, m.defaultAgent))
-	cwd := m.wizardCwd
-	m.closeWizard()
-	return m.dispatchWithNameCwdCmd(spec.Agent, spec.Name, spec.Prompt, cwd), true
+	return nil, false
+}
+
+// editPromptCmd composes the wizard prompt in $EDITOR. It seeds a temp file with
+// the current buffer, launches the editor via the injected runner
+// (tea.ExecProcess in production, which suspends/restores the alt-screen
+// cleanly), and on exit loads the file back via promptEditedMsg. Using
+// exec.Command directly instead would leave the terminal in raw mode and corrupt
+// the TUI (C2-8).
+func (m Model) editPromptCmd() tea.Cmd {
+	runner := m.execProcess
+	if runner == nil {
+		runner = tea.ExecProcess
+	}
+	seed := m.input
+	f, err := os.CreateTemp("", "uam-prompt-*.txt")
+	if err != nil {
+		return func() tea.Msg { return promptEditedMsg{err: fmt.Errorf("create prompt buffer: %w", err)} }
+	}
+	path := f.Name()
+	if _, err := f.WriteString(seed); err != nil {
+		_ = f.Close()
+		return func() tea.Msg { return promptEditedMsg{err: fmt.Errorf("seed prompt buffer: %w", err)} }
+	}
+	if err := f.Close(); err != nil {
+		return func() tea.Msg { return promptEditedMsg{err: fmt.Errorf("close prompt buffer: %w", err)} }
+	}
+	editor := firstNonEmpty(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
+	cmd := exec.Command(editor, path) // #nosec G204,G702 -- editor is the user's own $VISUAL/$EDITOR (their environment, not external input), path is a temp file we created; this is the standard "edit in $EDITOR" pattern (git/kubectl).
+	return runner(cmd, func(err error) tea.Msg {
+		defer func() { _ = os.Remove(path) }()
+		if err != nil {
+			return promptEditedMsg{err: fmt.Errorf("editor exited: %w", err)}
+		}
+		data, readErr := os.ReadFile(path) // #nosec G304 -- path is the temp file we just created above.
+		if readErr != nil {
+			return promptEditedMsg{err: fmt.Errorf("read edited prompt: %w", readErr)}
+		}
+		return promptEditedMsg{text: string(data)}
+	})
+}
+
+// isGitRepo reports whether dir is inside a git working tree by walking up the
+// directory tree looking for a .git entry, the way git itself resolves the repo
+// root. Used to warn in the wizard when dispatching outside a repo means there is
+// no checkpoint to recover the agent's work from (C2-8).
+func isGitRepo(dir string) bool {
+	d, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	for {
+		if _, statErr := os.Stat(filepath.Join(d, ".git")); statErr == nil {
+			return true
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return false
+		}
+		d = parent
+	}
+}
+
+// globComplete completes a partially-typed path against the filesystem. It
+// returns the longest unambiguous match (the sole match, or the shared prefix of
+// several); when nothing matches it returns the input unchanged so Tab is a
+// no-op rather than destructive (C2-8).
+func globComplete(input string) string {
+	if input == "" {
+		return input
+	}
+	matches, err := filepath.Glob(input + "*")
+	if err != nil || len(matches) == 0 {
+		return input
+	}
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return longestCommonPrefix(matches)
+}
+
+func longestCommonPrefix(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	prefix := items[0]
+	for _, s := range items[1:] {
+		for !strings.HasPrefix(s, prefix) {
+			prefix = prefix[:len(prefix)-1]
+			if prefix == "" {
+				return ""
+			}
+		}
+	}
+	return prefix
 }
 
 func (m *Model) cycleDefaultAgent() {
@@ -894,6 +1099,7 @@ var (
 	taskColor    = lipgloss.AdaptiveColor{Light: "#475569", Dark: "#AEBACD"}
 	liveColor    = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
 	failColor    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
+	warnColor    = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
 )
 
 var (
@@ -904,6 +1110,7 @@ var (
 	dividerStyle  = lipgloss.NewStyle().Foreground(dividerColor)
 	taskStyle     = lipgloss.NewStyle().Foreground(taskColor)
 	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	warnStyle     = lipgloss.NewStyle().Foreground(warnColor)
 )
 
 // bar is the accent rule that marks the brand and command lines.
@@ -1111,6 +1318,15 @@ func (m Model) renderPrompt() string {
 	b.WriteString("\n")
 	if m.renaming {
 		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(m.input) + brandStyle.Render("▏") + "\n")
+	} else if m.peekOpen {
+		// The command line doubles as a reply composer while peek is open: label
+		// it so the sub-mode is discoverable (Enter sends, Esc closes) (F36).
+		field := hintStyle.Render("type a reply…")
+		if m.input != "" {
+			field = titleStyle.Render(m.input)
+		}
+		hints := hintStyle.Render("Enter send  ·  Esc close")
+		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
 	} else {
 		field := hintStyle.Render("type a command…")
 		if m.input != "" {
@@ -1229,7 +1445,20 @@ func (m Model) renderWizard() string {
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 3", step+1)) + "\n")
 	b.WriteString("  " + titleStyle.Render(steps[step]) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
-	b.WriteString("  " + hintStyle.Render("Esc cancels") + "\n")
+	switch step {
+	case 1:
+		// Warn when the chosen working directory is not inside a git repo: there
+		// is no checkpoint to recover the agent's work from (C2-8).
+		dir := firstNonEmpty(m.input, ".")
+		if !isGitRepo(dir) {
+			b.WriteString("  " + warnStyle.Render("⚠ not a git repo — no checkpoint to recover the agent's work") + "\n")
+		}
+		b.WriteString("  " + hintStyle.Render("Tab completes a path  ·  Esc cancels") + "\n")
+	case 2:
+		b.WriteString("  " + hintStyle.Render("Ctrl+G opens $EDITOR  ·  Esc cancels") + "\n")
+	default:
+		b.WriteString("  " + hintStyle.Render("Esc cancels") + "\n")
+	}
 	return b.String()
 }
 
