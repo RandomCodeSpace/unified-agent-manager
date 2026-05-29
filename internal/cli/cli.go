@@ -180,6 +180,12 @@ func requireArg(args []string, message string) (string, error) {
 // NewService wires the app service and supported agent adapters.
 func NewService(st *store.Store) *app.Service {
 	client := tmux.New("uam")
+	// Let migration distinguish reboot-survivors (live pane) from user-stopped
+	// sessions (dead pane) so a v1->v2 upgrade does not auto-resume the latter
+	// on attach (F07). The store stays tmux-free; this only injects the probe.
+	st.SetSessionProbe(func(name string) bool {
+		return client.HasSession(context.Background(), name)
+	})
 	reg := adapter.NewRegistry([]adapter.AgentAdapter{claude.New(client), codex.New(client), copilot.New(client), hermes.New(client), opencode.New(client)})
 	return app.NewService(st, reg)
 }
