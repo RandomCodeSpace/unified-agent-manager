@@ -33,13 +33,31 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 	}
 	live := s.liveSessions(ctx)
 	s.mergeStoredSessions(live, cfg, time.Now())
-	mutated := s.refreshSessionRecords(ctx, live, &cfg)
-	if mutated && s.Store != nil {
-		_ = s.Store.Save(cfg)
-	}
+	// refreshSessionRecords runs pr.Check OUTSIDE any store lock and returns the
+	// records this refresh owns. persistRefresh re-reads inside the flock and
+	// writes only those keys, so a concurrent TogglePin/Rename on a different
+	// session is never clobbered by a stale whole-config Save (F01).
+	updates := s.refreshSessionRecords(ctx, live, &cfg)
+	s.persistRefresh(updates)
 	out := sessionsFromMap(live)
 	SortSessions(out)
 	return out, cfg, nil
+}
+
+// persistRefresh writes the records owned by a refresh back to the store via an
+// atomic read-modify-write. It re-reads the on-disk config inside the lock and
+// overwrites only the supplied keys, leaving every other record (and any
+// concurrent mutation to it) intact.
+func (s *Service) persistRefresh(updates map[string]store.SessionRecord) {
+	if len(updates) == 0 || s.Store == nil {
+		return
+	}
+	_ = s.Store.Update(func(cfg *store.Config) error {
+		for key, rec := range updates {
+			cfg.Sessions[key] = rec
+		}
+		return nil
+	})
 }
 
 func (s *Service) loadConfig() (store.Config, error) {
@@ -83,7 +101,11 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 	sess.Pinned = rec.Pinned
 	sess.Group = rec.Group
 	sess.SortIndex = rec.SortIndex
-	sess.Closed = rec.Status == store.StatusClosedByUser
+	// Closed implies the pane has exited: a user-closed record whose pane is
+	// still alive renders under ACTIVE (the refresh reconciles its persisted
+	// status back to Active). This keeps a live session from showing under
+	// CLOSED with a live glyph (F18).
+	sess.Closed = rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Exited
 	if rec.PR != nil && sess.PR == nil {
 		sess.PR = &adapter.PRRef{URL: rec.PR.URL, Number: rec.PR.Number, Status: adapter.PRStatus(rec.PR.LastStatus)}
 	}
@@ -94,21 +116,45 @@ func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Sessi
 	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
 }
 
-func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) bool {
-	mutated := false
+// refreshSessionRecords reconciles live sessions against the loaded config and
+// returns the records this refresh wants to persist (keyed by store key). It
+// also updates the in-memory cfg and live maps so the returned snapshot is
+// consistent. pr.Check runs here, OUTSIDE any store lock; persistence happens
+// later via persistRefresh's atomic re-read.
+func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) map[string]store.SessionRecord {
+	updates := map[string]store.SessionRecord{}
 	now := time.Now()
 	for key, sess := range live {
 		rec, ok := cfg.Sessions[key]
+		changed := false
 		if !ok || rec.ID == "" {
+			// Backfill a record for a live session we have no (valid) record
+			// for. Guard against an empty session ID so we never persist an
+			// un-killable phantom (C1-1 fix-trap).
+			if sess.ID == "" {
+				continue
+			}
 			rec = RecordFromSession(sess, store.ModeYolo)
-			mutated = true
+			cfg.Sessions[key] = rec
+			changed = true
+		} else if rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Alive {
+			// Anti-flap: the user closed this session but its pane is still
+			// alive, so it belongs in the Active group. Reset the persisted
+			// status to Active, otherwise the next merge re-flags it Closed
+			// and it flaps (F18).
+			rec.Status = store.StatusActive
+			cfg.Sessions[key] = rec
+			changed = true
 		}
 		if updatePRRecord(ctx, key, &sess, &rec, live, now) {
 			cfg.Sessions[key] = rec
-			mutated = true
+			changed = true
+		}
+		if changed {
+			updates[key] = rec
 		}
 	}
-	return mutated
+	return updates
 }
 
 func updatePRRecord(ctx context.Context, key string, sess *adapter.Session, rec *store.SessionRecord, live map[string]adapter.Session, now time.Time) bool {

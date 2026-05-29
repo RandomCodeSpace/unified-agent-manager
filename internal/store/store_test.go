@@ -198,6 +198,54 @@ func TestStoreUpdateIsAtomicUnderConcurrency(t *testing.T) {
 	}
 }
 
+func TestUpdateSerializesConcurrentWriters_Race(t *testing.T) {
+	// Stronger than the distinct-key case: concurrent writers performing a
+	// read-modify-write on the SAME key must serialize, so every increment
+	// lands. This is the atomic-RMW guarantee LoadSessions (F01) relies on —
+	// it re-reads inside the flock instead of saving a stale whole-config
+	// snapshot.
+	const writers = 25
+
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	key := Key("claude", "shared00")
+	if err := s.Update(func(cfg *Config) error {
+		cfg.Sessions[key] = SessionRecord{ID: "shared00", Agent: "claude"}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for i := 0; i < writers; i++ {
+		go func() {
+			defer wg.Done()
+			err := s.Update(func(cfg *Config) error {
+				rec := cfg.Sessions[key]
+				rec.SortIndex++
+				cfg.Sessions[key] = rec
+				return nil
+			})
+			if err != nil {
+				t.Errorf("Update: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Sessions[key].SortIndex; got != writers {
+		t.Fatalf("SortIndex = %d, want %d (lost read-modify-write updates)", got, writers)
+	}
+}
+
 func TestNormalizeBackfillsStatusForExistingSessions(t *testing.T) {
 	// Even at the current schema version, a record with empty Status should
 	// be normalized to Active on every load so downstream consumers never
