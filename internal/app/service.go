@@ -231,7 +231,15 @@ func (s *Service) DispatchNamed(ctx context.Context, agentName, name, prompt, cw
 	}
 	if s.Store != nil {
 		rec := RecordFromSession(sess, store.Mode(mode))
-		_ = s.Store.Update(func(cfg *store.Config) error { cfg.Sessions[store.Key(sess.AgentType, sess.ID)] = rec; return nil })
+		if err := s.Store.Update(func(cfg *store.Config) error {
+			cfg.Sessions[store.Key(sess.AgentType, sess.ID)] = rec
+			return nil
+		}); err != nil {
+			// Advisory only: the session is live. Killing it because the store
+			// hiccupped would discard the user's work; instead surface the live
+			// session plus a wrapped warning so the caller can still attach.
+			return sess, fmt.Errorf("dispatched %s but failed to persist its record: %w", sess.ID, err)
+		}
 	}
 	return sess, nil
 }
@@ -243,7 +251,17 @@ func (s *Service) Stop(ctx context.Context, id string, remove bool) error {
 	}
 	if s.Registry != nil {
 		if a, ok := s.Registry.Get(sess.AgentType); ok && sess.TmuxSession != "" {
-			_ = a.Stop(ctx, sess.ID)
+			if killErr := a.Stop(ctx, sess.ID); killErr != nil {
+				// The kill failed. If the pane is still alive, deleting/flagging
+				// the record would orphan a running session whose only handle is
+				// that record — so abort the mutation and surface the error.
+				// If the pane is already gone (probe says not-alive, or the
+				// adapter can't probe), proceed: this preserves `uam rm` cleanup
+				// of already-dead sessions.
+				if hs, ok := a.(adapter.HasSessionAdapter); ok && hs.HasSession(ctx, sess.ID) {
+					return fmt.Errorf("kill session %s: %w", sess.ID, killErr)
+				}
+			}
 		}
 	}
 	if s.Store == nil {
@@ -303,12 +321,7 @@ func (s *Service) Rename(ctx context.Context, id, name string) error {
 	if err != nil {
 		return err
 	}
-	return s.Store.Update(func(cfg *store.Config) error {
-		rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
-		rec.Name = name
-		cfg.Sessions[store.Key(sess.AgentType, sess.ID)] = rec
-		return nil
-	})
+	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Name = name })
 }
 
 func (s *Service) TogglePin(ctx context.Context, id string) error {
@@ -316,10 +329,26 @@ func (s *Service) TogglePin(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Pinned = !rec.Pinned })
+}
+
+// applyRecordMutation applies mut to the store record for sess inside an atomic
+// read-modify-write. If the record is missing (or a zero-value phantom with no
+// ID) it is backfilled from the live session first, so Rename/TogglePin never
+// persist an empty-ID record that would be un-killable once the pane dies
+// (C1-2). It mirrors ResumeBackground's RecordFromSession backfill.
+func (s *Service) applyRecordMutation(sess adapter.Session, mut func(*store.SessionRecord)) error {
+	if s.Store == nil {
+		return nil
+	}
 	return s.Store.Update(func(cfg *store.Config) error {
-		rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
-		rec.Pinned = !rec.Pinned
-		cfg.Sessions[store.Key(sess.AgentType, sess.ID)] = rec
+		key := store.Key(sess.AgentType, sess.ID)
+		rec := cfg.Sessions[key]
+		if rec.ID == "" {
+			rec = RecordFromSession(sess, store.ModeYolo)
+		}
+		mut(&rec)
+		cfg.Sessions[key] = rec
 		return nil
 	})
 }

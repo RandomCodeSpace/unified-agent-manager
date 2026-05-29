@@ -133,6 +133,72 @@ exit 0
 	}
 }
 
+// F19 — a resume/dispatch that creates the tmux session but then fails to send
+// the prompt must roll back the live (prompt-less) session, otherwise it lingers
+// as an orphan the store records as Exited/closed.
+func TestStartSessionRollsBackTmuxOnSendLineFailure(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	// send-keys fails; everything else (new-session, kill-session) succeeds.
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$*" in
+  *"send-keys"*) echo "boom" >&2; exit 1 ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+	_, err := ag.Dispatch(context.Background(), DispatchRequest{Prompt: "hello", Cwd: "/tmp", Mode: "yolo"})
+	if err == nil {
+		t.Fatal("expected dispatch error when send-keys fails")
+	}
+	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
+	if !strings.Contains(logText, "new-session") {
+		t.Fatalf("session should have been created: %s", logText)
+	}
+	if !strings.Contains(logText, "kill-session") {
+		t.Fatalf("send-keys failure must roll back the created session via kill-session: %s", logText)
+	}
+}
+
+// F19 trap — if the rollback Kill itself fails, the caller must still see the
+// original SendLine error (not the kill error).
+func TestStartSessionReturnsSendLineErrorWhenRollbackKillAlsoFails(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$*" in
+  *"send-keys"*) echo "sendboom" >&2; exit 1 ;;
+  *"kill-session"*) echo "killboom" >&2; exit 1 ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+	_, err := ag.Dispatch(context.Background(), DispatchRequest{Prompt: "hello", Cwd: "/tmp", Mode: "yolo"})
+	if err == nil {
+		t.Fatal("expected dispatch error")
+	}
+	if !strings.Contains(err.Error(), "sendboom") {
+		t.Fatalf("error should surface the original send-keys failure, got: %v", err)
+	}
+}
+
 func TestTmuxAgentDispatchWithoutPromptSkipsSendKeys(t *testing.T) {
 	dir := t.TempDir()
 	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
@@ -158,6 +224,55 @@ exit 0
 	logData, _ := os.ReadFile(logPath)
 	if strings.Contains(string(logData), "send-keys") {
 		t.Fatalf("empty prompt should not be sent: %s", logData)
+	}
+}
+
+// F32 — target() must use tmux exact-match (`=` prefix) so a neighbour session
+// whose name shares the truncated prefix is never hit by `-t`. Drive Stop/Peek
+// through a fake tmux and assert the recorded `-t` token is exact-anchored.
+func newTargetingAgent(t *testing.T) (*TmuxAgent, string) {
+	t.Helper()
+	dir := t.TempDir()
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case "$*" in
+  *"capture-pane"*) printf 'tail\n' ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	return NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client), logPath
+}
+
+func TestTargetUsesExactMatchForFullUUID(t *testing.T) {
+	ag, logPath := newTargetingAgent(t)
+	// A full-UUID id whose first 8 chars name the session.
+	if err := ag.Stop(context.Background(), "abc12345-dead-beef-cafe-0123456789ab"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
+	if !strings.Contains(logText, "-t =uam-fake-abc12345") {
+		t.Fatalf("kill must target the exact session, got: %s", logText)
+	}
+}
+
+func TestTargetUsesExactMatchForCanonicalName(t *testing.T) {
+	ag, logPath := newTargetingAgent(t)
+	// A canonical (already uam-prefixed) name must also be exact-anchored so a
+	// longer neighbour ("uam-fake-abc123450" etc.) is never matched by prefix.
+	if _, err := ag.Peek(context.Background(), "uam-fake-abc12345"); err != nil {
+		t.Fatalf("Peek: %v", err)
+	}
+	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
+	if !strings.Contains(logText, "-t =uam-fake-abc12345") {
+		t.Fatalf("capture must target the exact session, got: %s", logText)
 	}
 }
 

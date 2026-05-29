@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -158,6 +159,39 @@ func TestDispatchedMessageAttachesNewSession(t *testing.T) {
 	}
 	if m.input != "" || !strings.Contains(m.message, "returned to uam") {
 		t.Fatalf("message/input not updated after attach: message=%q input=%q", m.message, m.input)
+	}
+}
+
+// F03 — a dispatch that returns a live session alongside an advisory persist
+// error must still attach (the session is running); the warning surfaces in the
+// status line but does not abort the attach.
+func TestDispatchedAttachesLiveSessionDespiteAdvisoryError(t *testing.T) {
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	m.execProcess = func(cmd *exec.Cmd, cb tea.ExecCallback) tea.Cmd {
+		return func() tea.Msg { return cb(nil) }
+	}
+	model, cmd := m.Update(dispatchedMsg{session: adapter.Session{ID: "abc12345", AgentType: "fake"}, err: errors.New("persist boom")})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("a live session must still attach even with an advisory error")
+	}
+	if _, ok := cmd().(attachSpecMsg); !ok {
+		t.Fatalf("expected attachSpecMsg from the attach command")
+	}
+}
+
+// F03 — a dispatch failure with no live session (empty ID) must NOT attach; it
+// only reports the error.
+func TestDispatchedFailureWithoutSessionDoesNotAttach(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	model, cmd := m.Update(dispatchedMsg{session: adapter.Session{}, err: errors.New("agent unavailable")})
+	m = model.(Model)
+	if cmd != nil {
+		t.Fatal("a failed dispatch with no live session must not attach")
+	}
+	if !strings.Contains(m.message, "agent unavailable") {
+		t.Fatalf("expected error in status line, got %q", m.message)
 	}
 }
 

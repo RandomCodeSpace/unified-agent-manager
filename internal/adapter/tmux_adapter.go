@@ -117,7 +117,12 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
 	if shouldSendPrompt {
 		if err := a.Tmux.SendLine(ctx, tmuxName, req.Prompt); err != nil {
-			return Session{}, err
+			// The session is live but never received its prompt. Roll it back so
+			// it doesn't linger as an orphan the store records as Exited/closed.
+			// Use WithoutCancel so a cancelled dispatch context still tears the
+			// session down; the original SendLine error is what the caller sees.
+			_ = a.Tmux.Kill(context.WithoutCancel(ctx), tmuxName)
+			return Session{}, fmt.Errorf("send prompt to %s: %w", tmuxName, err)
 		}
 	}
 	name := req.Name
@@ -171,15 +176,23 @@ func (a *TmuxAgent) Attach(id string) (AttachSpec, error) {
 	}
 	return AttachSpec{Argv: argv}, nil
 }
-func (a *TmuxAgent) Stop(ctx context.Context, id string) error                  { return a.Tmux.Kill(ctx, a.target(id)) }
+func (a *TmuxAgent) Stop(ctx context.Context, id string) error { return a.Tmux.Kill(ctx, a.target(id)) }
+func (a *TmuxAgent) HasSession(ctx context.Context, id string) bool {
+	return a.Tmux.HasSession(ctx, a.target(id))
+}
 func (a *TmuxAgent) Rename(ctx context.Context, id, newName string) error       { return nil }
 func (a *TmuxAgent) Subscribe(ctx context.Context) (<-chan SessionEvent, error) { return nil, nil }
 
+// target resolves an id to a tmux -t target. It anchors the name with tmux's
+// `=` exact-match prefix so a longer neighbour that shares the truncated prefix
+// is never hit by tmux's default prefix matching (F32). Human-facing prefix
+// lookups stay in Service.Find; internal targeting is always exact.
 func (a *TmuxAgent) target(id string) string {
-	if strings.HasPrefix(id, "uam-") {
-		return id
+	name := id
+	if !strings.HasPrefix(id, "uam-") {
+		name = fmt.Sprintf("uam-%s-%s", a.Name(), id[:min(8, len(id))])
 	}
-	return fmt.Sprintf("uam-%s-%s", a.Name(), id[:min(8, len(id))])
+	return "=" + name
 }
 
 func newID() string {

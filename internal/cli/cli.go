@@ -210,7 +210,12 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	name, prompt := parseNameAndPrompt(rem[1:])
 	sess, err := svc.DispatchNamed(ctx, rem[0], name, prompt, *cwd, mode)
 	if err != nil {
-		return err
+		// A non-empty session means the agent launched but the record failed to
+		// persist (advisory): report the warning, still emit the id, exit 0 (F03).
+		if sess.ID == "" {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "warning:", err)
 	}
 	fmt.Println(sess.ID)
 	return nil
@@ -238,7 +243,10 @@ func runNew(ctx context.Context, svc *app.Service) error {
 	name, prompt := parseNameAndPrompt(strings.Fields(prompt))
 	sess, err := svc.DispatchNamed(ctx, agent, name, prompt, cwd, string(store.ModeYolo))
 	if err != nil {
-		return err
+		if sess.ID == "" {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "warning:", err)
 	}
 	fmt.Printf("dispatched %s (%s)\n", sess.ID, sess.TmuxSession)
 	return nil

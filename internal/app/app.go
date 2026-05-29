@@ -148,11 +148,20 @@ func (m Model) handlePeekLoaded(msg peekLoadedMsg) Model {
 }
 
 func (m Model) handleDispatched(msg dispatchedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		m.message = msg.err.Error()
+	// A live session (non-empty ID) attaches even when msg.err is set: the agent
+	// is running and the error is advisory (e.g. the record failed to persist).
+	// Only a true dispatch failure — no session — aborts with the error (F03).
+	if msg.session.ID == "" {
+		if msg.err != nil {
+			m.message = msg.err.Error()
+		}
 		return m, nil
 	}
-	m.message = "attaching " + msg.session.ID
+	if msg.err != nil {
+		m.message = "attaching " + msg.session.ID + " (warning: " + msg.err.Error() + ")"
+	} else {
+		m.message = "attaching " + msg.session.ID
+	}
 	m.input = ""
 	return m, m.attachSessionCmd(msg.session)
 }
