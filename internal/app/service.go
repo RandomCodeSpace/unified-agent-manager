@@ -8,9 +8,11 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/pr"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
@@ -18,9 +20,32 @@ import (
 type Service struct {
 	Store    *store.Store
 	Registry *adapter.Registry
+	// prInFlight guards the PR-check pass of a refresh so overlapping refreshes
+	// (stacked 2s ticks) do not launch concurrent `gh` subprocesses. A refresh
+	// that fails to acquire it skips the network check and keeps the persisted
+	// PR record; the holder clears it on completion, success or error (F02).
+	prInFlight atomic.Bool
 }
 
 const agentUnavailableFormat = "agent %q unavailable"
+
+// lastSeenRefresh is how stale a live session's persisted LastSeenAt may grow
+// before a refresh re-stamps it. Bumping every tick would write the store on
+// every 2s refresh; gating on staleness keeps LastSeenAt fresh enough that
+// PruneOld never deletes a still-running session while avoiding a write-storm
+// (F20 Stage 1, paired with the idempotent-refresh contract).
+const lastSeenRefresh = time.Minute
+
+// pruneMaxAge is the age past which a dead-pane record is eligible for startup
+// pruning so sessions.json does not grow unbounded. It is deliberately long: a
+// record is only removed when its pane is gone AND it has not been seen for this
+// long (F20 Stage 2).
+const pruneMaxAge = 30 * 24 * time.Hour
+
+// prCheckTimeout bounds a single `gh pr view` call so a hung gh cannot wedge the
+// 2s refresh. It is comfortably under the 60s PR re-check interval, so a
+// timed-out check just defers to the next tick (F02).
+const prCheckTimeout = 4 * time.Second
 
 func NewService(st *store.Store, reg *adapter.Registry) *Service {
 	return &Service{Store: st, Registry: reg}
@@ -33,13 +58,63 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 	}
 	live := s.liveSessions(ctx)
 	s.mergeStoredSessions(live, cfg, time.Now())
-	mutated := s.refreshSessionRecords(ctx, live, &cfg)
-	if mutated && s.Store != nil {
-		_ = s.Store.Save(cfg)
-	}
+	// refreshSessionRecords runs pr.Check OUTSIDE any store lock and returns the
+	// records this refresh owns. persistRefresh re-reads inside the flock and
+	// writes only those keys, so a concurrent TogglePin/Rename on a different
+	// session is never clobbered by a stale whole-config Save (F01).
+	updates := s.refreshSessionRecords(ctx, live, &cfg)
+	s.persistRefresh(updates)
 	out := sessionsFromMap(live)
 	SortSessions(out)
 	return out, cfg, nil
+}
+
+// PruneStartup removes long-stale, dead-pane records from the store so
+// sessions.json does not grow unbounded. It is server-down-safe: a tmux server
+// that is down looks exactly like an empty one (zero live sessions), so with no
+// live session to prove the server is up it skips pruning entirely rather than
+// risk wiping every record during a transient outage. When at least one live
+// session is visible the server is up, and PruneOld then drops records whose
+// pane is gone and that have not been seen within pruneMaxAge (F20 Stage 2).
+func (s *Service) PruneStartup(ctx context.Context) error {
+	if s.Store == nil {
+		return nil
+	}
+	live := s.liveSessions(ctx)
+	if len(live) == 0 {
+		// Unknown server state — don't prune.
+		return nil
+	}
+	liveTmux := make(map[string]struct{}, len(live))
+	for _, sess := range live {
+		if sess.TmuxSession != "" {
+			liveTmux[sess.TmuxSession] = struct{}{}
+		}
+	}
+	exists := func(tmuxName string) bool {
+		_, ok := liveTmux[tmuxName]
+		return ok
+	}
+	return s.Store.Update(func(cfg *store.Config) error {
+		store.PruneOld(cfg, pruneMaxAge, exists)
+		return nil
+	})
+}
+
+// persistRefresh writes the records owned by a refresh back to the store via an
+// atomic read-modify-write. It re-reads the on-disk config inside the lock and
+// overwrites only the supplied keys, leaving every other record (and any
+// concurrent mutation to it) intact.
+func (s *Service) persistRefresh(updates map[string]store.SessionRecord) {
+	if len(updates) == 0 || s.Store == nil {
+		return
+	}
+	_ = s.Store.Update(func(cfg *store.Config) error {
+		for key, rec := range updates {
+			cfg.Sessions[key] = rec
+		}
+		return nil
+	})
 }
 
 func (s *Service) loadConfig() (store.Config, error) {
@@ -58,6 +133,9 @@ func (s *Service) liveSessions(ctx context.Context) map[string]adapter.Session {
 	for _, a := range s.Registry.Enabled() {
 		sessions, err := a.List(ctx)
 		if err != nil {
+			// One adapter's List failure must not blank the dashboard for the
+			// others, but it shouldn't vanish silently either (F12).
+			log.Warn("listing sessions for adapter failed", "agent", a.Name(), "error", err)
 			continue
 		}
 		for _, sess := range sessions {
@@ -83,9 +161,22 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 	sess.Pinned = rec.Pinned
 	sess.Group = rec.Group
 	sess.SortIndex = rec.SortIndex
-	sess.Closed = rec.Status == store.StatusClosedByUser
+	// Closed implies the pane has exited: a user-closed record whose pane is
+	// still alive renders under ACTIVE (the refresh reconciles its persisted
+	// status back to Active). This keeps a live session from showing under
+	// CLOSED with a live glyph (F18).
+	sess.Closed = rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Exited
 	if rec.PR != nil && sess.PR == nil {
-		sess.PR = &adapter.PRRef{URL: rec.PR.URL, Number: rec.PR.Number, Status: adapter.PRStatus(rec.PR.LastStatus)}
+		// The store schema does not persist Owner/Repo, but the URL is lossless:
+		// re-derive them via the same GitHub PR regex the adapter uses so a
+		// store round-trip never strips them (C2-7). Keep the persisted
+		// Number/Status as the source of truth.
+		ref := &adapter.PRRef{URL: rec.PR.URL, Number: rec.PR.Number, Status: adapter.PRStatus(rec.PR.LastStatus)}
+		if derived := adapter.ExtractPR(rec.PR.URL); derived != nil {
+			ref.Owner = derived.Owner
+			ref.Repo = derived.Repo
+		}
+		sess.PR = ref
 	}
 	return sess
 }
@@ -94,21 +185,62 @@ func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Sessi
 	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
 }
 
-func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) bool {
-	mutated := false
+// refreshSessionRecords reconciles live sessions against the loaded config and
+// returns the records this refresh wants to persist (keyed by store key). It
+// also updates the in-memory cfg and live maps so the returned snapshot is
+// consistent. pr.Check runs here, OUTSIDE any store lock; persistence happens
+// later via persistRefresh's atomic re-read.
+func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) map[string]store.SessionRecord {
+	updates := map[string]store.SessionRecord{}
 	now := time.Now()
+	// Acquire the PR-check guard for the duration of this refresh's network pass.
+	// If another refresh already holds it, skip the gh calls (the persisted PR
+	// record is kept) so stacked ticks never launch overlapping gh subprocesses.
+	// Released unconditionally on completion so a single pass never wedges the
+	// guard (F02).
+	doPR := s.prInFlight.CompareAndSwap(false, true)
+	if doPR {
+		defer s.prInFlight.Store(false)
+	}
 	for key, sess := range live {
 		rec, ok := cfg.Sessions[key]
+		changed := false
 		if !ok || rec.ID == "" {
+			// Backfill a record for a live session we have no (valid) record
+			// for. Guard against an empty session ID so we never persist an
+			// un-killable phantom (C1-1 fix-trap).
+			if sess.ID == "" {
+				continue
+			}
 			rec = RecordFromSession(sess, store.ModeYolo)
-			mutated = true
-		}
-		if updatePRRecord(ctx, key, &sess, &rec, live, now) {
+			cfg.PutSession(key, rec)
+			changed = true
+		} else if rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Alive {
+			// Anti-flap: the user closed this session but its pane is still
+			// alive, so it belongs in the Active group. Reset the persisted
+			// status to Active, otherwise the next merge re-flags it Closed
+			// and it flaps (F18).
+			rec.Status = store.StatusActive
 			cfg.Sessions[key] = rec
-			mutated = true
+			changed = true
+		}
+		// Keep LastSeenAt fresh for a still-running pane so staleness-based
+		// pruning never deletes a live session. Gated on the refresh interval so
+		// a long-lived session isn't re-saved on every tick (F20 Stage 1).
+		if sess.ProcAlive == adapter.Alive && now.Sub(rec.LastSeenAt) >= lastSeenRefresh {
+			rec.LastSeenAt = now
+			cfg.Sessions[key] = rec
+			changed = true
+		}
+		if doPR && updatePRRecord(ctx, key, &sess, &rec, live, now) {
+			cfg.Sessions[key] = rec
+			changed = true
+		}
+		if changed {
+			updates[key] = rec
 		}
 	}
-	return mutated
+	return updates
 }
 
 func updatePRRecord(ctx context.Context, key string, sess *adapter.Session, rec *store.SessionRecord, live map[string]adapter.Session, now time.Time) bool {
@@ -116,7 +248,13 @@ func updatePRRecord(ctx context.Context, key string, sess *adapter.Session, rec 
 		return false
 	}
 	status := string(sess.PR.Status)
-	if checked, err := pr.Check(ctx, sess.PR.URL); err == nil && checked != pr.None {
+	// Bound the gh call so a hung process cannot wedge the refresh. On timeout
+	// (or any error) the status is left at the last-known value and LastChecked is
+	// stamped below, arming the 60s guard so the next tick does not immediately
+	// re-launch gh (F02).
+	checkCtx, cancel := context.WithTimeout(ctx, prCheckTimeout)
+	defer cancel()
+	if checked, err := pr.Check(checkCtx, sess.PR.URL); err == nil && checked != pr.None {
 		status = string(checked)
 		sess.PR.Status = adapter.PRStatus(status)
 		live[key] = *sess
@@ -164,10 +302,6 @@ func SortSessions(sessions []adapter.Session) {
 	})
 }
 
-func (s *Service) Dispatch(ctx context.Context, agentName, prompt, cwd, mode string) (adapter.Session, error) {
-	return s.DispatchNamed(ctx, agentName, "", prompt, cwd, mode)
-}
-
 func (s *Service) DispatchNamed(ctx context.Context, agentName, name, prompt, cwd, mode string) (adapter.Session, error) {
 	if s.Registry == nil {
 		return adapter.Session{}, errors.New("no registry configured")
@@ -185,7 +319,15 @@ func (s *Service) DispatchNamed(ctx context.Context, agentName, name, prompt, cw
 	}
 	if s.Store != nil {
 		rec := RecordFromSession(sess, store.Mode(mode))
-		_ = s.Store.Update(func(cfg *store.Config) error { cfg.Sessions[store.Key(sess.AgentType, sess.ID)] = rec; return nil })
+		if err := s.Store.Update(func(cfg *store.Config) error {
+			cfg.PutSession(store.Key(sess.AgentType, sess.ID), rec)
+			return nil
+		}); err != nil {
+			// Advisory only: the session is live. Killing it because the store
+			// hiccupped would discard the user's work; instead surface the live
+			// session plus a wrapped warning so the caller can still attach.
+			return sess, fmt.Errorf("dispatched %s but failed to persist its record: %w", sess.ID, err)
+		}
 	}
 	return sess, nil
 }
@@ -197,7 +339,17 @@ func (s *Service) Stop(ctx context.Context, id string, remove bool) error {
 	}
 	if s.Registry != nil {
 		if a, ok := s.Registry.Get(sess.AgentType); ok && sess.TmuxSession != "" {
-			_ = a.Stop(ctx, sess.ID)
+			if killErr := a.Stop(ctx, sess.ID); killErr != nil {
+				// The kill failed. If the pane is still alive, deleting/flagging
+				// the record would orphan a running session whose only handle is
+				// that record — so abort the mutation and surface the error.
+				// If the pane is already gone (probe says not-alive, or the
+				// adapter can't probe), proceed: this preserves `uam rm` cleanup
+				// of already-dead sessions.
+				if hs, ok := a.(adapter.HasSessionAdapter); ok && hs.HasSession(ctx, sess.ID) {
+					return fmt.Errorf("kill session %s: %w", sess.ID, killErr)
+				}
+			}
 		}
 	}
 	if s.Store == nil {
@@ -257,12 +409,7 @@ func (s *Service) Rename(ctx context.Context, id, name string) error {
 	if err != nil {
 		return err
 	}
-	return s.Store.Update(func(cfg *store.Config) error {
-		rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
-		rec.Name = name
-		cfg.Sessions[store.Key(sess.AgentType, sess.ID)] = rec
-		return nil
-	})
+	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Name = name })
 }
 
 func (s *Service) TogglePin(ctx context.Context, id string) error {
@@ -270,10 +417,26 @@ func (s *Service) TogglePin(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Pinned = !rec.Pinned })
+}
+
+// applyRecordMutation applies mut to the store record for sess inside an atomic
+// read-modify-write. If the record is missing (or a zero-value phantom with no
+// ID) it is backfilled from the live session first, so Rename/TogglePin never
+// persist an empty-ID record that would be un-killable once the pane dies
+// (C1-2). It mirrors ResumeBackground's RecordFromSession backfill.
+func (s *Service) applyRecordMutation(sess adapter.Session, mut func(*store.SessionRecord)) error {
+	if s.Store == nil {
+		return nil
+	}
 	return s.Store.Update(func(cfg *store.Config) error {
-		rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
-		rec.Pinned = !rec.Pinned
-		cfg.Sessions[store.Key(sess.AgentType, sess.ID)] = rec
+		key := store.Key(sess.AgentType, sess.ID)
+		rec := cfg.Sessions[key]
+		if rec.ID == "" {
+			rec = RecordFromSession(sess, store.ModeYolo)
+		}
+		mut(&rec)
+		cfg.Sessions[key] = rec
 		return nil
 	})
 }

@@ -9,10 +9,26 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
+
+// prRescanInterval is how stale a session's last PR scrape may grow before List
+// re-captures its pane. The PR URL is the only thing the per-session capture is
+// for, and it appears once early then never changes — so capturing every 2s
+// refresh tick forked a capture-pane per session per tick for no new signal.
+// First discovery still captures immediately; subsequent ticks within this
+// window reuse the store-persisted PR (re-hydrated by mergeStoredMetadata), and
+// a fresh capture only fires once the window elapses (F16).
+const prRescanInterval = 60 * time.Second
+
+// prCaptureLines is the pane tail captured for PR scraping. A PR URL is emitted
+// near where `gh`/the agent prints it, so a short tail is enough — the 200-line
+// grab the peek path uses is wasteful here (F16).
+const prCaptureLines = 40
 
 type CommandCandidate struct {
 	Display string
@@ -24,17 +40,24 @@ type TmuxAgent struct {
 	DisplayNameValue   string
 	Candidates         []CommandCandidate
 	YoloArgs           []string
-	SafeArgs           []string
 	Tmux               *tmux.Client
 	SessionArgs        func(req ResumeRequest, activity string) []string
 	SkipPromptOnResume bool
+
+	// now is the clock used to throttle per-session PR captures; overridable in
+	// tests. lastPRScan records, per tmux session name, when its pane was last
+	// captured for PR scraping so List can skip the capture within
+	// prRescanInterval (F16).
+	now        func() time.Time
+	prScanMu   sync.Mutex
+	lastPRScan map[string]time.Time
 }
 
 func NewTmuxAgent(name, display string, candidates []CommandCandidate, yoloArgs []string, client *tmux.Client) *TmuxAgent {
 	if client == nil {
 		client = tmux.New("uam")
 	}
-	return &TmuxAgent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Tmux: client}
+	return &TmuxAgent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Tmux: client, now: time.Now, lastPRScan: map[string]time.Time{}}
 }
 
 func (a *TmuxAgent) Name() string        { return a.NameValue }
@@ -68,9 +91,9 @@ func (a *TmuxAgent) commandForMode(mode string) ([]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s unavailable", a.Name())
 	}
-	if mode == "safe" {
-		cmd = append(cmd, a.SafeArgs...)
-	} else {
+	// Safe mode launches the bare command; no flag is the safe default for
+	// claude/codex. Only non-safe modes append the provider's full-access args.
+	if mode != "safe" {
 		cmd = append(cmd, a.YoloArgs...)
 	}
 	return cmd, nil
@@ -100,24 +123,39 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if cwd == "" {
 		cwd, err = os.Getwd()
 		if err != nil {
-			return Session{}, err
+			return Session{}, fmt.Errorf("resolve working directory: %w", err)
 		}
+	}
+	// Resolve the working directory to an absolute path once, before it is used
+	// for both CreateSession (the tmux -c arg) and the returned Session.Cwd that
+	// the store persists. A relative cwd persisted verbatim would be re-resolved
+	// against uam's process cwd on resume, relaunching the agent in the wrong
+	// directory (C2-4).
+	if abs, absErr := filepath.Abs(cwd); absErr == nil {
+		cwd = abs
 	}
 	tmuxName := req.TmuxSession
 	if tmuxName == "" {
 		tmuxName = fmt.Sprintf("uam-%s-%s", a.Name(), req.ID[:min(8, len(req.ID))])
 	}
 	env := map[string]string{"UAM_AGENT": a.Name(), "UAM_ID": req.ID}
-	// Best-effort: apply uam-friendly tmux server settings (mouse off, swallow
-	// Ctrl+Z). Failures don't prevent the session from being created.
-	_ = a.Tmux.EnsureServerConfig(ctx)
 	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
-		return Session{}, err
+		return Session{}, fmt.Errorf("create tmux session %s: %w", tmuxName, err)
 	}
+	// Best-effort: apply uam-friendly tmux server settings (mouse off, swallow
+	// Ctrl+Z). This runs AFTER CreateSession so the server exists — applying it
+	// first on the very first dispatch fails and used to latch that failure
+	// (F25). Failures here don't prevent the session from being created.
+	_ = a.Tmux.EnsureServerConfig(ctx)
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
 	if shouldSendPrompt {
 		if err := a.Tmux.SendLine(ctx, tmuxName, req.Prompt); err != nil {
-			return Session{}, err
+			// The session is live but never received its prompt. Roll it back so
+			// it doesn't linger as an orphan the store records as Exited/closed.
+			// Use WithoutCancel so a cancelled dispatch context still tears the
+			// session down; the original SendLine error is what the caller sees.
+			_ = a.Tmux.Kill(context.WithoutCancel(ctx), tmuxName)
+			return Session{}, fmt.Errorf("send prompt to %s: %w", tmuxName, err)
 		}
 	}
 	name := req.Name
@@ -135,7 +173,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
 	infos, err := a.Tmux.List(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list %s sessions: %w", a.Name(), err)
 	}
 	var out []Session
 	prefix := "uam-" + a.Name() + "-"
@@ -144,19 +182,56 @@ func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
 			continue
 		}
 		id := strings.TrimPrefix(info.Name, prefix)
-		capture, _ := a.Tmux.Capture(ctx, info.Name, 200)
 		state, alive := ClassifyPane(tmux.PaneAlive(info.PanePID))
 		created := time.Unix(info.CreatedUnix, 0)
-		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.CurrentPath, TmuxSession: info.Name, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: ExtractPR(capture)})
+		// Scrape the PR URL only on first discovery or once the rescan window
+		// elapses. On a throttled tick PR stays nil; service.mergeStoredMetadata
+		// re-hydrates it from the persisted record so the dashboard never loses
+		// it (F16). Captures are sequential by design — parallelizing would fork
+		// a burst of capture-pane subprocesses.
+		var prRef *PRRef
+		if a.shouldScanPR(info.Name) {
+			capture, capErr := a.Tmux.Capture(ctx, info.Name, prCaptureLines)
+			if capErr != nil {
+				// Per-session and non-fatal: a failed PR scrape just leaves PR nil
+				// for this tick (mergeStoredMetadata re-hydrates any known PR). Log
+				// at debug so it's diagnosable without spamming the dashboard (F52).
+				log.Debug("PR capture failed", "session", info.Name, "error", capErr)
+			}
+			prRef = ExtractPR(capture)
+		}
+		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.CurrentPath, TmuxSession: info.Name, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: prRef})
 	}
 	return out, nil
+}
+
+// shouldScanPR reports whether the pane named tmuxName is due for a PR scrape
+// and, if so, stamps the scan time. It is the per-session leaky bucket that
+// keeps List from capturing every pane on every refresh tick (F16).
+func (a *TmuxAgent) shouldScanPR(tmuxName string) bool {
+	clock := a.now
+	if clock == nil {
+		clock = time.Now
+	}
+	now := clock()
+	a.prScanMu.Lock()
+	defer a.prScanMu.Unlock()
+	if a.lastPRScan == nil {
+		a.lastPRScan = map[string]time.Time{}
+	}
+	last, seen := a.lastPRScan[tmuxName]
+	if seen && now.Sub(last) < prRescanInterval {
+		return false
+	}
+	a.lastPRScan[tmuxName] = now
+	return true
 }
 
 func (a *TmuxAgent) Peek(ctx context.Context, id string) (PeekResult, error) {
 	target := a.target(id)
 	capture, err := a.Tmux.Capture(ctx, target, 200)
 	if err != nil {
-		return PeekResult{}, err
+		return PeekResult{}, fmt.Errorf("peek %s session %s: %w", a.Name(), id, err)
 	}
 	return PeekResult{TailText: capture}, nil
 }
@@ -167,19 +242,25 @@ func (a *TmuxAgent) Reply(ctx context.Context, id, text string) error {
 func (a *TmuxAgent) Attach(id string) (AttachSpec, error) {
 	argv, err := a.Tmux.AttachArgv(a.target(id))
 	if err != nil {
-		return AttachSpec{}, err
+		return AttachSpec{}, fmt.Errorf("attach %s session %s: %w", a.Name(), id, err)
 	}
 	return AttachSpec{Argv: argv}, nil
 }
-func (a *TmuxAgent) Stop(ctx context.Context, id string) error                  { return a.Tmux.Kill(ctx, a.target(id)) }
-func (a *TmuxAgent) Rename(ctx context.Context, id, newName string) error       { return nil }
-func (a *TmuxAgent) Subscribe(ctx context.Context) (<-chan SessionEvent, error) { return nil, nil }
+func (a *TmuxAgent) Stop(ctx context.Context, id string) error { return a.Tmux.Kill(ctx, a.target(id)) }
+func (a *TmuxAgent) HasSession(ctx context.Context, id string) bool {
+	return a.Tmux.HasSession(ctx, a.target(id))
+}
 
+// target resolves an id to a tmux -t target. It anchors the name with tmux's
+// `=` exact-match prefix so a longer neighbour that shares the truncated prefix
+// is never hit by tmux's default prefix matching (F32). Human-facing prefix
+// lookups stay in Service.Find; internal targeting is always exact.
 func (a *TmuxAgent) target(id string) string {
-	if strings.HasPrefix(id, "uam-") {
-		return id
+	name := id
+	if !strings.HasPrefix(id, "uam-") {
+		name = fmt.Sprintf("uam-%s-%s", a.Name(), id[:min(8, len(id))])
 	}
-	return fmt.Sprintf("uam-%s-%s", a.Name(), id[:min(8, len(id))])
+	return "=" + name
 }
 
 func newID() string {

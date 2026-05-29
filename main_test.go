@@ -109,7 +109,9 @@ func TestRunNew(t *testing.T) {
 	}
 }
 
-func TestRunNewAllowsEmptyPrompt(t *testing.T) {
+// F54 — `uam new` must reject an empty final prompt instead of dispatching an
+// empty-prompt session and exiting 0.
+func TestRunNewRejectsEmptyPrompt(t *testing.T) {
 	dir := setupFakeCLIEnv(t)
 	t.Setenv("UAM_CONFIG_DIR", filepath.Join(dir, "cfg-empty-prompt"))
 	old := os.Stdin
@@ -122,12 +124,12 @@ func TestRunNewAllowsEmptyPrompt(t *testing.T) {
 	os.Stdin = r
 	defer func() { os.Stdin = old }()
 	out := captureStdout(t, func() {
-		if err := run(context.Background(), []string{"new"}); err != nil {
-			t.Fatal(err)
+		if err := run(context.Background(), []string{"new"}); err == nil {
+			t.Fatal("expected run new to reject an empty prompt")
 		}
 	})
-	if !strings.Contains(out, "dispatched") {
-		t.Fatalf("out=%q", out)
+	if strings.Contains(out, "dispatched") {
+		t.Fatalf("a rejected new must not dispatch, out=%q", out)
 	}
 }
 

@@ -87,9 +87,12 @@ type ResumableAdapter interface {
 	Resume(ctx Context, req ResumeRequest) (Session, error)
 }
 
-type SessionEvent struct {
-	SessionID string
-	Kind      string
+// HasSessionAdapter reports whether the agent's underlying session for id is
+// still live. Optional: Service.Stop probes it after a failed kill to avoid
+// deleting/flagging a record whose pane is still running (F04). TmuxAgent
+// implements it for free, so all tmux-backed providers inherit it.
+type HasSessionAdapter interface {
+	HasSession(ctx Context, id string) bool
 }
 
 type DispatchRequest struct {
@@ -109,6 +112,4 @@ type AgentAdapter interface {
 	Reply(ctx Context, id, text string) error
 	Attach(id string) (AttachSpec, error)
 	Stop(ctx Context, id string) error
-	Rename(ctx Context, id, newName string) error
-	Subscribe(ctx Context) (<-chan SessionEvent, error)
 }

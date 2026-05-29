@@ -10,11 +10,11 @@ LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 all: build
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) $(CMD)
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w $(LDFLAGS)" -o bin/$(BINARY) $(CMD)
 
 install:
 	mkdir -p $(GOBIN)
-	go build -ldflags "$(LDFLAGS)" -o $(GOBIN)/$(BINARY) $(CMD)
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w $(LDFLAGS)" -o $(GOBIN)/$(BINARY) $(CMD)
 
 run: build
 	./bin/$(BINARY)

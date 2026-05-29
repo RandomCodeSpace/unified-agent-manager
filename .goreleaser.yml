@@ -1,0 +1,59 @@
+version: 2
+
+project_name: uam
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: uam
+    main: ./cmd/uam
+    binary: uam
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/RandomCodeSpace/unified-agent-manager/internal/version.Override={{ .Version }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: uam
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "SHA256SUMS"
+  algorithm: sha256
+
+sboms:
+  - id: archive
+    artifacts: archive
+
+signs:
+  - id: checksum-cosign
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    output: true
+
+release:
+  draft: false
+  prerelease: auto
+
+changelog:
+  use: github
+  sort: asc

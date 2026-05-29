@@ -7,14 +7,32 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 const CurrentSchemaVersion = 2
 
 const configFileName = "sessions.json"
+
+// UI defaults and bounds. normalize clamps/coerces out-of-range or unknown
+// on-disk values so a hand-edited or corrupt config can never feed an invalid
+// value downstream (F44).
+const (
+	defaultSort      = "state"
+	defaultPeekWidth = 60
+	minPeekWidth     = 20
+	maxPeekWidth     = 200
+)
+
+// knownSorts is the set of sort modes the UI understands; anything else is
+// reset to defaultSort.
+var knownSorts = map[string]struct{}{defaultSort: {}}
 
 type Mode string
 
@@ -38,6 +56,93 @@ type Config struct {
 	DefaultAgent  string                   `json:"default_agent"`
 	Sessions      map[string]SessionRecord `json:"sessions"`
 	UI            UISettings               `json:"ui"`
+
+	// unknown captures any top-level JSON fields written by a newer binary so
+	// they round-trip untouched instead of being silently dropped (F33). It is
+	// never persisted directly — MarshalJSON merges it back into the object.
+	unknown map[string]json.RawMessage
+	// ReadOnly is set when the on-disk file declares a SchemaVersion newer than
+	// this binary understands. The app must not write such a config (doing so
+	// would drop fields it does not model), so Save/Update refuse it (F33). It
+	// is in-memory only and never serialized.
+	ReadOnly bool
+}
+
+// ErrReadOnly is returned by Save/Update when asked to write a config loaded
+// from a newer on-disk schema. Refusing the write prevents an older binary
+// from clobbering fields it does not understand (F33).
+var ErrReadOnly = errors.New("store: config loaded from a newer schema is read-only")
+
+// configAlias mirrors Config without the custom marshaller (and without the
+// in-memory-only fields) so (Un)MarshalJSON can delegate to the stdlib encoder
+// without recursing.
+type configAlias struct {
+	SchemaVersion int                      `json:"schema_version"`
+	DefaultAgent  string                   `json:"default_agent"`
+	Sessions      map[string]SessionRecord `json:"sessions"`
+	UI            UISettings               `json:"ui"`
+}
+
+// knownConfigFields lists the JSON keys Config models directly; everything else
+// is preserved verbatim via the unknown overflow.
+var knownConfigFields = map[string]struct{}{
+	"schema_version": {},
+	"default_agent":  {},
+	"sessions":       {},
+	"ui":             {},
+}
+
+func (c Config) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(configAlias{
+		SchemaVersion: c.SchemaVersion,
+		DefaultAgent:  c.DefaultAgent,
+		Sessions:      c.Sessions,
+		UI:            c.UI,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(c.unknown) == 0 {
+		return base, nil
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	for k, v := range c.unknown {
+		if _, known := knownConfigFields[k]; known {
+			continue
+		}
+		merged[k] = v
+	}
+	return json.Marshal(merged)
+}
+
+func (c *Config) UnmarshalJSON(data []byte) error {
+	var alias configAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	c.SchemaVersion = alias.SchemaVersion
+	c.DefaultAgent = alias.DefaultAgent
+	c.Sessions = alias.Sessions
+	c.UI = alias.UI
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for k := range raw {
+		if _, known := knownConfigFields[k]; known {
+			delete(raw, k)
+		}
+	}
+	if len(raw) == 0 {
+		c.unknown = nil
+	} else {
+		c.unknown = raw
+	}
+	return nil
 }
 
 type UISettings struct {
@@ -70,7 +175,13 @@ type PRRecord struct {
 	LastChecked time.Time `json:"last_checked"`
 }
 
-type Store struct{ path string }
+type Store struct {
+	path string
+	// sessionExists, when set, reports whether a tmux session name is still
+	// live. It is injected by the caller (the store stays tmux-free) and is used
+	// only to reclassify Statusless v1 records during migration (F07).
+	sessionExists func(string) bool
+}
 
 func Open(path string) (*Store, error) {
 	if path == "" {
@@ -81,6 +192,12 @@ func Open(path string) (*Store, error) {
 	}
 	return &Store{path: path}, nil
 }
+
+// SetSessionProbe injects a callback that reports whether a tmux session name is
+// still live. Migration uses it to tell a reboot-survivor (live pane -> stays
+// Active) apart from a user-stopped session (dead pane -> closed-by-user). When
+// unset, migration conservatively keeps the legacy Active behavior (F07).
+func (s *Store) SetSessionProbe(exists func(string) bool) { s.sessionExists = exists }
 
 func (s *Store) Path() string { return s.path }
 
@@ -106,6 +223,25 @@ func DefaultConfig() Config {
 	}
 }
 
+// PutSession inserts or updates rec under key with a guard against the 8-char
+// ShortID map key collapsing two distinct full IDs into one slot (F22). The
+// short key carries only 32 bits of entropy, so two same-agent sessions can
+// collide; without this guard the second write would silently clobber the
+// first, orphaning a live session whose only handle is that record. It returns
+// true on a successful write (no record, or the same full ID) and false (with a
+// log) when an existing record under key carries a different non-empty full ID.
+func (c *Config) PutSession(key string, rec SessionRecord) bool {
+	if c.Sessions == nil {
+		c.Sessions = map[string]SessionRecord{}
+	}
+	if existing, ok := c.Sessions[key]; ok && existing.ID != "" && rec.ID != "" && existing.ID != rec.ID {
+		log.Warn("refusing short-key collision overwrite", "key", key, "existing_id", existing.ID, "incoming_id", rec.ID)
+		return false
+	}
+	c.Sessions[key] = rec
+	return true
+}
+
 func Key(agent, id string) string {
 	return strings.ToLower(agent) + ":" + ShortID(id)
 }
@@ -128,6 +264,9 @@ func (s *Store) Load() (Config, error) {
 }
 
 func (s *Store) Save(cfg Config) error {
+	if cfg.ReadOnly {
+		return ErrReadOnly
+	}
 	unlock, err := s.lock()
 	if err != nil {
 		return err
@@ -146,6 +285,9 @@ func (s *Store) Update(fn func(*Config) error) error {
 	if err != nil {
 		return err
 	}
+	if cfg.ReadOnly {
+		return ErrReadOnly
+	}
 	if err := fn(&cfg); err != nil {
 		return err
 	}
@@ -162,19 +304,127 @@ func (s *Store) loadNoLock() (Config, error) {
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		_ = s.moveAside()
-		return DefaultConfig(), nil
+		// Quarantine the corrupt file before starting fresh. If the move-aside
+		// fails the original is still on disk, so returning DefaultConfig here
+		// would let the next Save overwrite it with defaults and lose the only
+		// copy. Propagate the error instead so the app refuses to clobber it
+		// (F43). normalize guarantees a non-nil Sessions map on the success path.
+		if mvErr := s.moveAside(); mvErr != nil {
+			return Config{}, fmt.Errorf("quarantine corrupt config %s: %w", s.path, mvErr)
+		}
+		return normalize(DefaultConfig()), nil
 	}
+	// A file written by a newer binary carries fields this version does not
+	// model. Surface it read-only (preserving the unknown overflow) instead of
+	// erroring or clobbering it on the next save (F33).
+	if cfg.SchemaVersion > CurrentSchemaVersion {
+		cfg.ReadOnly = true
+		return cfg, nil
+	}
+	dropInvalidRecords(&cfg)
 	if cfg.SchemaVersion < CurrentSchemaVersion {
 		if err := s.copyBackup(); err != nil {
 			return Config{}, err
 		}
+		// Reclassify Statusless v1 records BEFORE normalize backfills them to
+		// Active: a dead-pane record was a user-stopped session and must not
+		// auto-resume on attach (F07). normalize stays unchanged.
+		reclassifyV1Closed(&cfg, s.sessionExists)
 		cfg = migrate(normalize(cfg))
 		if err := s.saveNoLock(cfg); err != nil {
 			return Config{}, err
 		}
 	}
 	return normalize(cfg), nil
+}
+
+// reclassifyV1Closed runs on the RAW pre-normalize config during a v1->v2
+// migration. For each Statusless record it asks the injected probe whether the
+// tmux pane is still alive: a live pane is a reboot survivor (left Statusless so
+// normalize/migrate backfill it to Active), while a dead pane was a deliberately
+// stopped session and is marked closed-by-user so it does not auto-resume. With
+// no probe it is a no-op, preserving the legacy all-Active behavior.
+func reclassifyV1Closed(cfg *Config, exists func(string) bool) {
+	if exists == nil || cfg.SchemaVersion >= 2 {
+		return
+	}
+	for k, rec := range cfg.Sessions {
+		if rec.Status == "" && !exists(rec.TmuxSession) {
+			rec.Status = StatusClosedByUser
+			cfg.Sessions[k] = rec
+		}
+	}
+}
+
+// unsafeArgvChars are the shell metacharacters that must never appear in an ID
+// or tmux session name. Although uam reaches tmux via argv (not a shell — see
+// internal/tmux ShellJoin), these fields are an untrusted-on-disk injection
+// surface for the F05/F06/F09 sinks, so we keep classic shell metacharacters
+// out as defense in depth. Whitespace and control runes are rejected
+// separately. Note `:` is intentionally allowed: it is tmux's target separator
+// but never a shell hazard, and real Key-derived values can carry it.
+const unsafeArgvChars = "'\"`;&|$<>(){}[]*?!#\\~/ \t\n\r"
+
+// prURLRE mirrors the GitHub PR URL shape recognized by the adapter's
+// ExtractPR (internal/adapter/detect.go), anchored end-to-end so a record
+// cannot smuggle in an unrelated or malformed URL.
+var prURLRE = regexp.MustCompile(`^https://github\.com/[^/\s]+/[^/\s]+/pull/\d+$`)
+
+// dropInvalidRecords removes any session record whose untrusted on-disk fields
+// fail validation, logging each drop. It runs on load ONLY (not on the write
+// path via normalize) so a single corrupt or hostile record cannot brick the
+// whole store — the bad record is discarded and the rest survive.
+func dropInvalidRecords(cfg *Config) {
+	for key, rec := range cfg.Sessions {
+		if reason := validateRecord(rec); reason != "" {
+			log.Warn("dropping invalid session record", "key", key, "reason", reason)
+			delete(cfg.Sessions, key)
+		}
+	}
+}
+
+// validateRecord returns a non-empty reason if the record must be dropped, or
+// "" if it is safe to keep. It rejects only the values that carry real risk —
+// shell metacharacters or control runes in the argv-bound ID/TmuxSession
+// fields, a non-absolute or control-char Workdir, and a PR URL that does not
+// match the GitHub PR shape. Empty optional fields are allowed.
+func validateRecord(rec SessionRecord) string {
+	if isUnsafeArgv(rec.ID) {
+		return "unsafe id"
+	}
+	if isUnsafeArgv(rec.TmuxSession) {
+		return "unsafe tmux_session"
+	}
+	if rec.Workdir != "" {
+		if !filepath.IsAbs(rec.Workdir) {
+			return "non-absolute workdir"
+		}
+		if hasControlChar(rec.Workdir) {
+			return "control char in workdir"
+		}
+	}
+	if rec.PR != nil && !prURLRE.MatchString(rec.PR.URL) {
+		return "invalid pr url"
+	}
+	return ""
+}
+
+// isUnsafeArgv reports whether s contains a shell metacharacter or a control
+// rune that has no place in a persisted ID or tmux session name.
+func isUnsafeArgv(s string) bool {
+	if strings.ContainsAny(s, unsafeArgvChars) {
+		return true
+	}
+	return hasControlChar(s)
+}
+
+func hasControlChar(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalize(cfg Config) Config {
@@ -187,19 +437,49 @@ func normalize(cfg Config) Config {
 	if cfg.Sessions == nil {
 		cfg.Sessions = map[string]SessionRecord{}
 	}
-	if cfg.UI.Sort == "" {
-		cfg.UI.Sort = "state"
+	if _, ok := knownSorts[cfg.UI.Sort]; !ok {
+		cfg.UI.Sort = defaultSort
 	}
-	if cfg.UI.PeekWidth == 0 {
-		cfg.UI.PeekWidth = 60
-	}
+	cfg.UI.PeekWidth = clampPeekWidth(cfg.UI.PeekWidth)
 	for k, rec := range cfg.Sessions {
-		if rec.Status == "" {
-			rec.Status = StatusActive
+		if changed := coerceRecord(&rec); changed {
 			cfg.Sessions[k] = rec
 		}
 	}
 	return cfg
+}
+
+// clampPeekWidth coerces an out-of-range peek width back into bounds. A
+// non-positive value (unset or corrupt) falls back to the default; otherwise it
+// is clamped into [minPeekWidth, maxPeekWidth].
+func clampPeekWidth(w int) int {
+	switch {
+	case w <= 0:
+		return defaultPeekWidth
+	case w < minPeekWidth:
+		return minPeekWidth
+	case w > maxPeekWidth:
+		return maxPeekWidth
+	default:
+		return w
+	}
+}
+
+// coerceRecord normalizes a record's enum fields to valid values, reporting
+// whether it changed anything. An empty or unknown Status becomes Active and an
+// unknown Mode becomes yolo — unknown values are NEVER coerced to ClosedByUser
+// or dropped, so a hostile/corrupt status can never silently retire a session.
+func coerceRecord(rec *SessionRecord) bool {
+	changed := false
+	if rec.Status != StatusActive && rec.Status != StatusClosedByUser {
+		rec.Status = StatusActive
+		changed = true
+	}
+	if rec.Mode != ModeYolo && rec.Mode != ModeSafe {
+		rec.Mode = ModeYolo
+		changed = true
+	}
+	return changed
 }
 
 func migrate(cfg Config) Config {
@@ -223,11 +503,15 @@ func (s *Store) saveNoLock(cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.tmp.%d", s.path, os.Getpid())
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // #nosec G304 -- UAM intentionally writes its own config file path.
+	// CreateTemp picks a randomly-suffixed name with O_EXCL in the SAME
+	// directory as the target (filepath.Dir) — same dir is required because a
+	// cross-device rename fails with EXDEV. The random suffix means a stale
+	// orphan from a previously-killed run is never silently reused (F45).
+	f, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp.*")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(cfg); err != nil {
