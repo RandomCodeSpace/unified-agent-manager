@@ -9,9 +9,16 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 )
+
+// ghWaitDelay bounds how long cmd.Wait blocks after the context is cancelled
+// before the child's I/O pipes are force-closed. Without it, a hung `gh` (or a
+// grandchild that inherited the stdout pipe) keeps cmd.Output blocked past the
+// deadline even though CommandContext already signalled the process (F02).
+const ghWaitDelay = 2 * time.Second
 
 var errInvalidURL = errors.New("not a github pull-request url")
 
@@ -76,6 +83,10 @@ func Check(ctx context.Context, url string) (Status, error) {
 	// after the `--` end-of-options separator as the final argv argument, so it
 	// cannot be interpreted as a flag and there is no shell expansion.
 	cmd := exec.CommandContext(ctx, exe, "pr", "view", "--json", "state,isDraft,mergedAt", "--", url)
+	// Reap a hung gh promptly after the context is cancelled: WaitDelay caps how
+	// long cmd.Output waits for the (possibly inherited) I/O pipes before force-
+	// closing them, so a deadline actually unblocks the caller (F02).
+	cmd.WaitDelay = ghWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return None, fmt.Errorf("gh pr view: %w", err)

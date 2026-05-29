@@ -24,6 +24,7 @@ import (
 type Model struct {
 	width, height  int
 	quitting       bool
+	loading        bool
 	service        *Service
 	sessions       []adapter.Session
 	selected       int
@@ -94,6 +95,20 @@ func refreshTick() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return refreshMsg(t) })
 }
 
+// refreshStep advances the refresh state machine for one tick. It always
+// re-arms the ticker (the caller batches that in); it schedules a fresh
+// loadSessionsCmd only when no load is in flight, marking loading=true. This
+// keeps stacked ticks from overlapping loads while never stopping the ticker
+// (F17). startedLoad reports whether a load was scheduled this tick.
+func (m Model) refreshStep(now time.Time) (Model, bool) {
+	m.expireMessage(now)
+	if m.loading {
+		return m, false
+	}
+	m.loading = true
+	return m, true
+}
+
 func (m Model) loadSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
 		sessions, cfg, err := m.service.LoadSessions(context.Background())
@@ -106,8 +121,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg), nil
 	case refreshMsg:
-		m.expireMessage(time.Time(msg))
-		return m, tea.Batch(m.loadSessionsCmd(), refreshTick())
+		next, startedLoad := m.refreshStep(time.Time(msg))
+		// The ticker is re-armed unconditionally so refreshes never stop; the
+		// load is added only when one wasn't already in flight (F17).
+		if startedLoad {
+			return next, tea.Batch(next.loadSessionsCmd(), refreshTick())
+		}
+		return next, refreshTick()
 	case sessionsLoadedMsg:
 		return m.handleSessionsLoaded(msg), nil
 	case peekLoadedMsg:
@@ -147,6 +167,9 @@ func (m *Model) expireMessage(now time.Time) {
 }
 
 func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
+	// Clear the in-flight guard unconditionally — even on error — or a single
+	// failed load wedges the refresh ticker forever (F17).
+	m.loading = false
 	if msg.err != nil {
 		m.setMessage(msg.err.Error())
 		return m

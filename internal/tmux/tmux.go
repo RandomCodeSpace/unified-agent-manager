@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
@@ -18,6 +19,17 @@ import (
 
 // ErrInvalidSessionName is returned when a session name fails the allow-list.
 var ErrInvalidSessionName = fmt.Errorf("session name failed allow-list")
+
+// tmuxCallTimeout is the upper bound on a single tmux invocation. It is an
+// upper bound, not a floor: a tighter caller deadline still wins. Without it a
+// hung tmux (stuck server, lost pty) would block a refresh indefinitely (F17).
+const tmuxCallTimeout = 10 * time.Second
+
+// tmuxWaitDelay is the short grace period after the context is cancelled before
+// the child's I/O pipes are force-closed. Without it CombinedOutput keeps
+// blocking on a pipe a grandchild inherited, so the deadline never unblocks the
+// caller (F17). Kept short so a cancelled call returns promptly.
+const tmuxWaitDelay = 2 * time.Second
 
 // sessionNameRE is the allow-list for tmux session names uam may create. It
 // matches the canonical shape minted by adapter.startSession
@@ -51,12 +63,22 @@ func (c *Client) run(ctx context.Context, args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Bound every tmux invocation so a hung process can't wedge a refresh. This
+	// is an upper bound only — a tighter caller deadline still applies (F17).
+	// Interactive attach does not flow through run (cli execs the argv directly),
+	// so this never caps a foreground session.
+	ctx, cancel := context.WithTimeout(ctx, tmuxCallTimeout)
+	defer cancel()
 	// The tmux path is resolved from fixed system directories or injected as an
 	// absolute test path. tmux's own args are passed via argv (no shell). Where
 	// an arg is itself a /bin/sh command string (the new-session command built
 	// by ShellJoin), every value is POSIX single-quote escaped by shellQuote, so
 	// $(), ``, $VAR, and word-splitting cannot fire inside it.
 	cmd := exec.CommandContext(ctx, exe, c.baseArgs(args...)...) // #nosec G204
+	// Reap a hung tmux promptly once the deadline fires: WaitDelay caps how long
+	// CombinedOutput waits for the (possibly inherited) output pipe before force-
+	// closing it, so the timeout actually unblocks the caller (F17).
+	cmd.WaitDelay = tmuxWaitDelay
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -114,13 +136,9 @@ func commandWithEnv(env map[string]string, command []string) []string {
 func (c *Client) List(ctx context.Context) ([]SessionInfo, error) {
 	out, err := c.run(ctx, "list-sessions", "-F", ListFormat)
 	if err != nil {
-		// tmux exits non-zero when the private server has no sessions. Different
-		// tmux versions phrase this differently: 3.4 reports the missing socket as
-		// "(No such file or directory)". Match the known no-server phrasings only;
-		// a genuine failure must still propagate.
-		if msg := err.Error(); strings.Contains(msg, "no server running") ||
-			strings.Contains(msg, "failed to connect") ||
-			strings.Contains(msg, "No such file or directory") {
+		// tmux exits non-zero when the private server has no sessions. Match the
+		// known no-server phrasings only; a genuine failure must still propagate.
+		if isNoServerErr(err) {
 			return nil, nil
 		}
 		return nil, err
@@ -185,6 +203,34 @@ func (c *Client) SendLine(ctx context.Context, target, text string) error {
 func (c *Client) Kill(ctx context.Context, target string) error {
 	_, err := c.run(ctx, "kill-session", "-t", target)
 	return err
+}
+
+// KillServer tears down the entire private tmux server (and every session it
+// holds) via `tmux -L <socket> kill-server`. It is idempotent: a server that is
+// already down makes tmux exit non-zero with a no-server message, which is
+// treated as success so `uam kill-all` is safe to run repeatedly. A genuine
+// failure still propagates (F24).
+func (c *Client) KillServer(ctx context.Context) error {
+	if _, err := c.run(ctx, "kill-server"); err != nil {
+		if isNoServerErr(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// isNoServerErr reports whether err is tmux's "the private server has no
+// running instance" message. Different tmux versions phrase it differently;
+// 3.4 reports the missing socket as "(No such file or directory)".
+func isNoServerErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no server running") ||
+		strings.Contains(msg, "failed to connect") ||
+		strings.Contains(msg, "No such file or directory")
 }
 
 // EnsureServerConfig applies session-friendly defaults to the private tmux

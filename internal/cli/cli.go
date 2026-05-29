@@ -60,6 +60,7 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam peek <id>")
 	fmt.Fprintln(os.Stderr, "  uam stop <id>")
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
+	fmt.Fprintln(os.Stderr, "  uam kill-all                      stop the private tmux server and all sessions")
 	fmt.Fprintln(os.Stderr, "  uam notify-closed <tmux-session>   (internal: tmux session-closed hook)")
 }
 
@@ -76,6 +77,12 @@ func RunWithTUI(ctx context.Context, args []string, runTUI func(context.Context,
 	}
 	svc := NewService(st)
 	if len(args) == 0 {
+		// Best-effort startup prune of long-stale dead records so sessions.json
+		// does not grow unbounded. Server-down-safe (a no-op when no live session
+		// is visible) and advisory: a prune failure must never block launch (F20).
+		if err := svc.PruneStartup(ctx); err != nil {
+			log.Warn("startup prune failed", "err", err)
+		}
 		return runTUI(ctx, app.NewWithDeps(st, svc.Registry))
 	}
 	return runCommand(ctx, svc, args, runTUI)
@@ -101,6 +108,8 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		return runStop(ctx, svc, args[0], args[1:])
 	case "notify-closed":
 		return runNotifyClosed(svc, args[1:])
+	case "kill-all":
+		return runKillAll(ctx, tmux.New("uam").KillServer)
 	case "attach":
 		id, err := requireArg(args[1:], "attach requires <id>")
 		if err != nil {
@@ -157,6 +166,18 @@ func runNotifyClosed(svc *app.Service, args []string) error {
 		return err
 	}
 	return svc.NotifyClosed(tmuxName)
+}
+
+// runKillAll tears down the private tmux server (and every managed session) via
+// the injected killer. uam never auto-kills on TUI quit — reboot-recovery of
+// dead-pane sessions is intentional — so this explicit command is the only
+// teardown path (F24). The killer is idempotent on an already-dead server.
+func runKillAll(ctx context.Context, kill func(context.Context) error) error {
+	if err := kill(ctx); err != nil {
+		return fmt.Errorf("kill-all: %w", err)
+	}
+	fmt.Println("uam tmux server stopped")
+	return nil
 }
 
 func runLast(ctx context.Context, svc *app.Service, runTUI func(context.Context, tea.Model) error) error {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
@@ -19,9 +20,32 @@ import (
 type Service struct {
 	Store    *store.Store
 	Registry *adapter.Registry
+	// prInFlight guards the PR-check pass of a refresh so overlapping refreshes
+	// (stacked 2s ticks) do not launch concurrent `gh` subprocesses. A refresh
+	// that fails to acquire it skips the network check and keeps the persisted
+	// PR record; the holder clears it on completion, success or error (F02).
+	prInFlight atomic.Bool
 }
 
 const agentUnavailableFormat = "agent %q unavailable"
+
+// lastSeenRefresh is how stale a live session's persisted LastSeenAt may grow
+// before a refresh re-stamps it. Bumping every tick would write the store on
+// every 2s refresh; gating on staleness keeps LastSeenAt fresh enough that
+// PruneOld never deletes a still-running session while avoiding a write-storm
+// (F20 Stage 1, paired with the idempotent-refresh contract).
+const lastSeenRefresh = time.Minute
+
+// pruneMaxAge is the age past which a dead-pane record is eligible for startup
+// pruning so sessions.json does not grow unbounded. It is deliberately long: a
+// record is only removed when its pane is gone AND it has not been seen for this
+// long (F20 Stage 2).
+const pruneMaxAge = 30 * 24 * time.Hour
+
+// prCheckTimeout bounds a single `gh pr view` call so a hung gh cannot wedge the
+// 2s refresh. It is comfortably under the 60s PR re-check interval, so a
+// timed-out check just defers to the next tick (F02).
+const prCheckTimeout = 4 * time.Second
 
 func NewService(st *store.Store, reg *adapter.Registry) *Service {
 	return &Service{Store: st, Registry: reg}
@@ -43,6 +67,38 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 	out := sessionsFromMap(live)
 	SortSessions(out)
 	return out, cfg, nil
+}
+
+// PruneStartup removes long-stale, dead-pane records from the store so
+// sessions.json does not grow unbounded. It is server-down-safe: a tmux server
+// that is down looks exactly like an empty one (zero live sessions), so with no
+// live session to prove the server is up it skips pruning entirely rather than
+// risk wiping every record during a transient outage. When at least one live
+// session is visible the server is up, and PruneOld then drops records whose
+// pane is gone and that have not been seen within pruneMaxAge (F20 Stage 2).
+func (s *Service) PruneStartup(ctx context.Context) error {
+	if s.Store == nil {
+		return nil
+	}
+	live := s.liveSessions(ctx)
+	if len(live) == 0 {
+		// Unknown server state — don't prune.
+		return nil
+	}
+	liveTmux := make(map[string]struct{}, len(live))
+	for _, sess := range live {
+		if sess.TmuxSession != "" {
+			liveTmux[sess.TmuxSession] = struct{}{}
+		}
+	}
+	exists := func(tmuxName string) bool {
+		_, ok := liveTmux[tmuxName]
+		return ok
+	}
+	return s.Store.Update(func(cfg *store.Config) error {
+		store.PruneOld(cfg, pruneMaxAge, exists)
+		return nil
+	})
 }
 
 // persistRefresh writes the records owned by a refresh back to the store via an
@@ -137,6 +193,15 @@ func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Sessi
 func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) map[string]store.SessionRecord {
 	updates := map[string]store.SessionRecord{}
 	now := time.Now()
+	// Acquire the PR-check guard for the duration of this refresh's network pass.
+	// If another refresh already holds it, skip the gh calls (the persisted PR
+	// record is kept) so stacked ticks never launch overlapping gh subprocesses.
+	// Released unconditionally on completion so a single pass never wedges the
+	// guard (F02).
+	doPR := s.prInFlight.CompareAndSwap(false, true)
+	if doPR {
+		defer s.prInFlight.Store(false)
+	}
 	for key, sess := range live {
 		rec, ok := cfg.Sessions[key]
 		changed := false
@@ -159,7 +224,15 @@ func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]ada
 			cfg.Sessions[key] = rec
 			changed = true
 		}
-		if updatePRRecord(ctx, key, &sess, &rec, live, now) {
+		// Keep LastSeenAt fresh for a still-running pane so staleness-based
+		// pruning never deletes a live session. Gated on the refresh interval so
+		// a long-lived session isn't re-saved on every tick (F20 Stage 1).
+		if sess.ProcAlive == adapter.Alive && now.Sub(rec.LastSeenAt) >= lastSeenRefresh {
+			rec.LastSeenAt = now
+			cfg.Sessions[key] = rec
+			changed = true
+		}
+		if doPR && updatePRRecord(ctx, key, &sess, &rec, live, now) {
 			cfg.Sessions[key] = rec
 			changed = true
 		}
@@ -175,7 +248,13 @@ func updatePRRecord(ctx context.Context, key string, sess *adapter.Session, rec 
 		return false
 	}
 	status := string(sess.PR.Status)
-	if checked, err := pr.Check(ctx, sess.PR.URL); err == nil && checked != pr.None {
+	// Bound the gh call so a hung process cannot wedge the refresh. On timeout
+	// (or any error) the status is left at the last-known value and LastChecked is
+	// stamped below, arming the 60s guard so the next tick does not immediately
+	// re-launch gh (F02).
+	checkCtx, cancel := context.WithTimeout(ctx, prCheckTimeout)
+	defer cancel()
+	if checked, err := pr.Check(checkCtx, sess.PR.URL); err == nil && checked != pr.None {
 		status = string(checked)
 		sess.PR.Status = adapter.PRStatus(status)
 		live[key] = *sess
