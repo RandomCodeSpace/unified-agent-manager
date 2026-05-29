@@ -1,0 +1,28 @@
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    vendor: true
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      charmbracelet:
+        patterns:
+          - "github.com/charmbracelet/*"
+          - "github.com/mattn/go-runewidth"
+          - "github.com/rivo/uniseg"
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
