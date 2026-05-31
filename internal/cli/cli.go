@@ -16,6 +16,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/explore"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
@@ -59,6 +60,7 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
 	fmt.Fprintln(os.Stderr, "  uam kill-all                      stop the private tmux server and all sessions")
 	fmt.Fprintln(os.Stderr, "  uam notify-closed <tmux-session>   (internal: tmux session-closed hook)")
+	fmt.Fprintln(os.Stderr, "  uam explore [dir]                  open the jailed file explorer (default: current dir)")
 }
 
 // Run executes the CLI using the default Bubble Tea TUI runner.
@@ -115,6 +117,8 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		return execAttach(ctx, svc, id, runTUI)
 	case "last":
 		return runLast(ctx, svc, runTUI)
+	case "explore":
+		return runExplore(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -175,6 +179,17 @@ func runKillAll(ctx context.Context, kill func(context.Context) error) error {
 	}
 	fmt.Println("uam tmux server stopped")
 	return nil
+}
+
+// runExplore launches the jailed file-explorer rooted at the given directory
+// (default: the current directory). Used both directly and from the tmux
+// <prefix> e split binding.
+func runExplore(args []string) error {
+	dir := "."
+	if len(args) > 0 && args[0] != "" {
+		dir = args[0]
+	}
+	return explore.Run(dir)
 }
 
 func runLast(ctx context.Context, svc *app.Service, runTUI func(context.Context, tea.Model) error) error {
