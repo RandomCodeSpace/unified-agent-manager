@@ -332,6 +332,14 @@ func (c *Client) applyServerConfig(ctx context.Context) error {
 	if _, err := c.run(ctx, "bind-key", "-n", "C-z", "display-message", "Ctrl+Z is disabled in uam sessions; use Ctrl+b d to detach"); err != nil {
 		return fmt.Errorf("bind C-z: %w", err)
 	}
+	// Bind <prefix> e to split the window and open the jailed file explorer rooted
+	// at the current pane's directory. Best-effort: a missing binding doesn't break
+	// sessions. The new pane's -c start dir becomes the explorer's jail root.
+	if cmd := exploreSplitCommand(); cmd != "" {
+		if out, err := c.run(ctx, "bind-key", "e", "split-window", "-h", "-c", "#{pane_current_path}", cmd); err != nil {
+			log.Warn("binding explorer key failed", "error", err, "output", strings.TrimSpace(out))
+		}
+	}
 	// Hook install is best-effort. If we can't resolve a safe binary path,
 	// the rest of uam still works — only the exit-in-session signal is lost,
 	// and the user can recover via Ctrl+X or `uam rm`. We log (not return) the
@@ -389,6 +397,33 @@ func hookCommandForExe(exe string) string {
 	// [a-z0-9-] only; the quoting then merely keeps a benign name as one argv
 	// token.
 	return fmt.Sprintf(`run-shell "%s notify-closed '#{hook_session_name}'"`, exe)
+}
+
+// exploreSplitCommand returns the shell command for the <prefix> e explorer
+// binding, or "" if the uam binary path isn't safe to embed.
+func exploreSplitCommand() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if err := execpath.ValidateAbsoluteExecutable(exe); err != nil {
+		return ""
+	}
+	return exploreSplitCommandForExe(exe)
+}
+
+// exploreSplitCommandForExe builds the `<exe> explore` shell command for the
+// split binding, or "" when the path isn't safe to embed (same quoting rules as
+// hookCommandForExe). Split out so the rejection branch is table-testable
+// without faking os.Executable.
+func exploreSplitCommandForExe(exe string) string {
+	if !filepath.IsAbs(exe) {
+		return ""
+	}
+	if strings.ContainsAny(exe, "\"'\\$`") {
+		return ""
+	}
+	return exe + " explore"
 }
 
 func (c *Client) HasSession(ctx context.Context, target string) bool {

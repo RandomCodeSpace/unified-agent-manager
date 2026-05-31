@@ -272,6 +272,55 @@ func TestHookCommandForExe(t *testing.T) {
 	}
 }
 
+// TestExploreSplitCommandForExe is the testable seam for the <prefix> e
+// binding: same quoting rules as hookCommandForExe, different output shape.
+func TestExploreSplitCommandForExe(t *testing.T) {
+	cases := []struct {
+		name      string
+		exe       string
+		wantEmpty bool
+	}{
+		{"clean absolute path", "/usr/local/bin/uam", false},
+		{"relative path rejected", "uam", true},
+		{"path with dollar rejected", "/opt/u$am/uam", true},
+		{"path with backtick rejected", "/opt/u`am`/uam", true},
+		{"path with single-quote rejected", "/opt/u'am/uam", true},
+		{"path with double-quote rejected", `/opt/u"am/uam`, true},
+		{"path with backslash rejected", `/opt/u\am/uam`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exploreSplitCommandForExe(tc.exe)
+			if tc.wantEmpty {
+				if cmd != "" {
+					t.Fatalf("exploreSplitCommandForExe(%q) = %q, want empty (rejected)", tc.exe, cmd)
+				}
+				return
+			}
+			if cmd == "" {
+				t.Fatalf("exploreSplitCommandForExe(%q) was rejected, want a command", tc.exe)
+			}
+			want := tc.exe + " explore"
+			if cmd != want {
+				t.Fatalf("exploreSplitCommandForExe(%q) = %q, want %q", tc.exe, cmd, want)
+			}
+		})
+	}
+}
+
+// TestExploreSplitCommandUsesRealBinary verifies the wrapper resolves the
+// running binary and delegates to exploreSplitCommandForExe. The deterministic
+// rejection-branch coverage lives in TestExploreSplitCommandForExe above.
+func TestExploreSplitCommandUsesRealBinary(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	if got, want := exploreSplitCommand(), exploreSplitCommandForExe(exe); got != want {
+		t.Fatalf("exploreSplitCommand() = %q, want %q (from real binary path)", got, want)
+	}
+}
+
 // TestSessionClosedHookCommandUsesRealBinary verifies the wrapper resolves the
 // running binary and delegates to hookCommandForExe. The deterministic
 // rejection-branch coverage lives in TestHookCommandForExe above.
