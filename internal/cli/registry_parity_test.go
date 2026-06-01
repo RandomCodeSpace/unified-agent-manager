@@ -13,13 +13,13 @@ import (
 
 // F14 — cli.NewService must register exactly the shared adapter set built by
 // agents.Default (which both it and app.New consume). With every provider's CLI
-// stubbed on PATH, the enabled registry must contain all five — including
+// stubbed on PATH, the enabled registry must contain all six — including
 // hermes, the one the old hand-rolled app.New list dropped. Comparing against
 // agents.Default's pre-availability Name() set is what makes this a parity
 // guard: if a future edit forks the CLI wiring off the shared list, this fails.
 func TestNewServiceRegistryMatchesSharedAdapterSet(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"claude", "codex", "copilot", "hermes", "opencode"} {
+	for _, name := range []string{"claude", "codex", "copilot", "hermes", "omp", "opencode"} {
 		writeCLIExecutable(t, filepath.Join(dir, name))
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
