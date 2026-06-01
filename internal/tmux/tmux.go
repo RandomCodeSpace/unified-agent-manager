@@ -134,6 +134,26 @@ func (c *Client) CreateSession(ctx context.Context, name, cwd string, env map[st
 	return err
 }
 
+// SetSessionLabel records the user-facing label for a live session so tmux's
+// status line, terminal title, and window list show the name the user gave it
+// rather than the canonical uam-<agent>-<id> session name (which must stay
+// machine-parseable — see CreateSession / sessionNameRE). It writes the label
+// to the @uam_label session option (applyServerConfig points status-left and
+// set-titles-string at it, falling back to #S when unset) and renames the
+// session's window to the short name. Cosmetic: callers treat failures as
+// non-fatal.
+func (c *Client) SetSessionLabel(ctx context.Context, session, label, window string) error {
+	if _, err := c.run(ctx, "set-option", "-t", session, "@uam_label", label); err != nil {
+		return fmt.Errorf("set @uam_label for %s: %w", session, err)
+	}
+	if window != "" {
+		if _, err := c.run(ctx, "rename-window", "-t", session, window); err != nil {
+			return fmt.Errorf("rename-window for %s: %w", session, err)
+		}
+	}
+	return nil
+}
+
 func commandWithEnv(env map[string]string, command []string) []string {
 	if len(env) == 0 {
 		return command
@@ -331,6 +351,25 @@ func (c *Client) applyServerConfig(ctx context.Context) error {
 	}
 	if _, err := c.run(ctx, "bind-key", "-n", "C-z", "display-message", "Ctrl+Z is disabled in uam sessions; use Ctrl+b d to detach"); err != nil {
 		return fmt.Errorf("bind C-z: %w", err)
+	}
+	// Surface the user-facing session name (written per-session to @uam_label by
+	// SetSessionLabel) in the status line, terminal title, and window list,
+	// instead of the canonical uam-<agent>-<id> name that stays as #S for uam's
+	// own parsing. automatic-rename/allow-rename are disabled so the running
+	// agent can't clobber the window name. These are cosmetic, so a tmux that
+	// rejects one must not block the rest of the config or its latch — log, not
+	// fail.
+	for _, opt := range [][2]string{
+		{"automatic-rename", "off"},
+		{"allow-rename", "off"},
+		{"status-left-length", "40"},
+		{"status-left", " #{?@uam_label,#{@uam_label},#S} "},
+		{"set-titles", "on"},
+		{"set-titles-string", "#{?@uam_label,#{@uam_label},#S}"},
+	} {
+		if out, err := c.run(ctx, "set-option", "-g", opt[0], opt[1]); err != nil {
+			log.Warn("set tmux display option failed", "option", opt[0], "error", err, "output", strings.TrimSpace(out))
+		}
 	}
 	// Hook install is best-effort. If we can't resolve a safe binary path,
 	// the rest of uam still works — only the exit-in-session signal is lost,

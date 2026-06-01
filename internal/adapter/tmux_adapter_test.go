@@ -101,6 +101,39 @@ func assertTmuxLifecycleLog(t *testing.T, logPath string) {
 	}
 }
 
+// A dispatched session must get a user-facing label: @uam_label (for the tmux
+// status line / title) set to "<name> · <agent>", and its window renamed to
+// the short name — so tmux shows the user's name, not uam-<agent>-<id>. The
+// persisted Session.DisplayName stays the bare name.
+func TestDispatchSetsSessionLabel(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "fakeagent"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TMUX_LOG\"\nexit 0\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, nil, client)
+
+	sess, err := ag.Dispatch(context.Background(), DispatchRequest{Prompt: "hi", Cwd: "/tmp", Mode: "yolo", Name: "tracker"})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if sess.DisplayName != "tracker" {
+		t.Fatalf("DisplayName = %q, want tracker", sess.DisplayName)
+	}
+	data, _ := os.ReadFile(logPath)
+	logText := string(data)
+	if !strings.Contains(logText, "@uam_label tracker · fake") {
+		t.Fatalf("expected @uam_label 'tracker · fake': %s", logText)
+	}
+	if !strings.Contains(logText, "rename-window -t "+sess.TmuxSession+" tracker") {
+		t.Fatalf("expected window rename to tracker: %s", logText)
+	}
+}
+
 // F52 — a PR-scrape capture-pane failure must be logged (debug) and stay
 // per-session non-fatal: List still returns the session, just without a PR.
 func TestListLogsCaptureFailureButKeepsSession(t *testing.T) {

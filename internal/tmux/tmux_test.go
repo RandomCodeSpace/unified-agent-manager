@@ -138,6 +138,52 @@ func TestEnsureServerConfigInstallsSessionClosedHook(t *testing.T) {
 	}
 }
 
+// SetSessionLabel must write the user-facing label to the @uam_label session
+// option and rename the window, so tmux's display shows the user's name while
+// the canonical uam-<agent>-<id> session name (#S) is left untouched.
+func TestSetSessionLabelWritesLabelAndRenamesWindow(t *testing.T) {
+	c, logPath := setupFakeTmuxClient(t)
+	if err := c.SetSessionLabel(context.Background(), "uam-opencode-deadbeef", "tracker · opencode", "tracker"); err != nil {
+		t.Fatalf("SetSessionLabel: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(data)
+	if !strings.Contains(logText, "set-option -t uam-opencode-deadbeef @uam_label tracker · opencode") {
+		t.Fatalf("expected @uam_label set-option: %s", logText)
+	}
+	if !strings.Contains(logText, "rename-window -t uam-opencode-deadbeef tracker") {
+		t.Fatalf("expected rename-window: %s", logText)
+	}
+}
+
+// The private-server config must point tmux's status line and terminal title
+// at @uam_label (with a #S fallback) and disable automatic-rename so the agent
+// can't clobber the user-facing window name.
+func TestEnsureServerConfigSetsDisplayName(t *testing.T) {
+	c, logPath := setupFakeTmuxClient(t)
+	if err := c.EnsureServerConfig(context.Background()); err != nil {
+		t.Fatalf("EnsureServerConfig: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(data)
+	for _, want := range []string{
+		"set-option -g automatic-rename off",
+		"set-option -g status-left",
+		"@uam_label",
+		"set-option -g set-titles-string",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("EnsureServerConfig missing %q: %s", want, logText)
+		}
+	}
+}
+
 // F25 — EnsureServerConfig must not latch a failure. On first dispatch the
 // server doesn't exist yet, so set-option fails; the next call (after the
 // server is up) must retry and succeed rather than caching the earlier error.
