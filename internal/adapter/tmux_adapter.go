@@ -147,6 +147,16 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	// first on the very first dispatch fails and used to latch that failure
 	// (F25). Failures here don't prevent the session from being created.
 	_ = a.Tmux.EnsureServerConfig(ctx)
+	// Surface the user-facing name in tmux's status line, terminal title, and
+	// window list (the canonical uam-<agent>-<id> stays as #S for uam's own
+	// parsing). Cosmetic and best-effort — a failure never affects the session.
+	displayName := req.Name
+	if displayName == "" {
+		displayName = displayNameFromDir(cwd)
+	}
+	if err := a.Tmux.SetSessionLabel(ctx, tmuxName, displayName+" · "+a.Name(), displayName); err != nil {
+		log.Debug("set session label failed", "session", tmuxName, "error", err)
+	}
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
 	if shouldSendPrompt {
 		if err := a.Tmux.SendLine(ctx, tmuxName, req.Prompt); err != nil {
@@ -158,16 +168,12 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 			return Session{}, fmt.Errorf("send prompt to %s: %w", tmuxName, err)
 		}
 	}
-	name := req.Name
-	if name == "" {
-		name = displayNameFromDir(cwd)
-	}
 	now := time.Now()
 	created := req.CreatedAt
 	if created.IsZero() {
 		created = now
 	}
-	return Session{ID: req.ID, AgentType: a.Name(), DisplayName: name, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
+	return Session{ID: req.ID, AgentType: a.Name(), DisplayName: displayName, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
 }
 
 func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
