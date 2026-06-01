@@ -13,6 +13,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/hermes"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/omp"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
@@ -27,6 +28,7 @@ func Default(client *tmux.Client) []adapter.AgentAdapter {
 		codex.New(client),
 		copilot.New(client),
 		hermes.New(client),
+		omp.New(client),
 		opencode.New(client),
 	}
 }

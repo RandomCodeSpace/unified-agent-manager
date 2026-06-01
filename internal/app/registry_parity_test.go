@@ -13,12 +13,12 @@ import (
 
 // F14 — app.New builds its registry from the shared agents.Default list (it used
 // to hand-roll one that omitted hermes). This asserts the TUI-side wiring sees
-// the full five-provider set, the same set cli.NewService consumes, so the two
+// the full six-provider set, the same set cli.NewService consumes, so the two
 // can never drift again. Pre-availability Name() comparison: providers are
 // stubbed on PATH so the registry actually enables them in CI.
 func TestAppRegistryMatchesSharedAdapterSet(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"claude", "codex", "copilot", "hermes", "opencode"} {
+	for _, name := range []string{"claude", "codex", "copilot", "hermes", "omp", "opencode"} {
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 			t.Fatal(err)
@@ -35,7 +35,7 @@ func TestAppRegistryMatchesSharedAdapterSet(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	want := []string{"claude", "codex", "copilot", "hermes", "opencode"}
+	want := []string{"claude", "codex", "copilot", "hermes", "omp", "opencode"}
 	if len(got) != len(want) {
 		t.Fatalf("app registry %v != %v", got, want)
 	}
