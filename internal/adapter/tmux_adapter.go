@@ -142,7 +142,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
 		return Session{}, fmt.Errorf("create tmux session %s: %w", tmuxName, err)
 	}
-	// Best-effort: apply uam-friendly tmux server settings (mouse off, swallow
+	// Best-effort: apply uam-friendly tmux server settings (mouse on, swallow
 	// Ctrl+Z). This runs AFTER CreateSession so the server exists — applying it
 	// first on the very first dispatch fails and used to latch that failure
 	// (F25). Failures here don't prevent the session from being created.

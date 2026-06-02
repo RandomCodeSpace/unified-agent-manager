@@ -327,7 +327,10 @@ exit 0
 		t.Fatalf("DisplayName=%q, want dir-derived name", sess.DisplayName)
 	}
 	logData, _ := os.ReadFile(logPath)
-	if strings.Contains(string(logData), "send-keys") {
+	// `send-keys -t` is the prompt-injection form; the mouse copy/paste config
+	// bindings legitimately contain `send-keys -X`/`-M`, so match the targeted
+	// form rather than the bare substring.
+	if strings.Contains(string(logData), "send-keys -t") {
 		t.Fatalf("empty prompt should not be sent: %s", logData)
 	}
 }
