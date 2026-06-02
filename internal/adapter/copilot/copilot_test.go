@@ -82,7 +82,10 @@ func TestResumeUsesCopilotSessionIDAndDoesNotReplayPrompt(t *testing.T) {
 	if !strings.Contains(logText, "copilot --yolo --resume=abc12345-dead-beef-cafe-0123456789ab") {
 		t.Fatalf("copilot resume should pass the persisted provider session id: %s", logText)
 	}
-	if strings.Contains(logText, "send-keys") || strings.Contains(logText, "fix parser") {
+	// `send-keys -t` is the prompt-injection form; the mouse copy/paste config
+	// bindings legitimately contain `send-keys -X`/`-M`, so match the targeted
+	// form (and the prompt text) rather than the bare substring.
+	if strings.Contains(logText, "send-keys -t") || strings.Contains(logText, "fix parser") {
 		t.Fatalf("resume should not replay the original prompt into the restored session: %s", logText)
 	}
 }

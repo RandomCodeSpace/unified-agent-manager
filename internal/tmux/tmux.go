@@ -320,8 +320,10 @@ func isNoServerErr(err error) bool {
 }
 
 // EnsureServerConfig applies session-friendly defaults to the private tmux
-// server: disable mouse mode so the host terminal owns text selection, and
-// swallow Ctrl+Z so it can't suspend the agent in the foreground pane.
+// server: enable mouse mode so tmux owns selection/paste, install mouse
+// bindings so a drag-select copies to the host clipboard (OSC 52) and right-click
+// pastes tmux's buffer, and swallow Ctrl+Z so it can't suspend the agent in the
+// foreground pane.
 //
 // The configuration is applied at most once SUCCESSFULLY. The first dispatch
 // runs before the server exists, so set-option fails; latching that failure
@@ -341,8 +343,8 @@ func (c *Client) EnsureServerConfig(ctx context.Context) error {
 }
 
 func (c *Client) applyServerConfig(ctx context.Context) error {
-	if _, err := c.run(ctx, "set-option", "-g", "mouse", "off"); err != nil {
-		return fmt.Errorf("set mouse off: %w", err)
+	if _, err := c.run(ctx, "set-option", "-g", "mouse", "on"); err != nil {
+		return fmt.Errorf("set mouse on: %w", err)
 	}
 	// Forward any tmux-side copy to the host terminal's clipboard via OSC 52
 	// so the user can paste outside the session with the usual shortcut.
@@ -351,6 +353,31 @@ func (c *Client) applyServerConfig(ctx context.Context) error {
 	}
 	if _, err := c.run(ctx, "bind-key", "-n", "C-z", "display-message", "Ctrl+Z is disabled in uam sessions; use Ctrl+b d to detach"); err != nil {
 		return fmt.Errorf("bind C-z: %w", err)
+	}
+	// Mouse copy/paste. mouse on lets tmux own selection/paste; these bindings
+	// make a plain drag-select copy to the host clipboard (OSC 52 via
+	// set-clipboard on) and right-click paste tmux's buffer. A tmux that rejects
+	// one must not block the rest of the config or its latch — log, not fail.
+	for _, b := range [][]string{
+		// Plain drag enters tmux copy-mode, overriding the default that would
+		// forward the drag to a mouse-reporting agent. The agent keeps click and
+		// wheel (mouse on still forwards those); only the drag is taken by tmux,
+		// for selection. Accepted trade-off so a select-drag copies with no
+		// modifier. Wheel is left to tmux's mouse-on default (forwards to the
+		// agent, or scrolls history for a non-mouse pane).
+		{"bind-key", "-T", "root", "MouseDrag1Pane", "copy-mode", "-M"},
+		// On drag release in copy-mode, pipe selection to a tmux buffer; with
+		// set-clipboard on this emits OSC 52 to the host clipboard. (These match
+		// tmux defaults; set explicitly for resilience.)
+		{"bind-key", "-T", "copy-mode", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel"},
+		{"bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane", "send-keys", "-X", "copy-pipe-and-cancel"},
+		// Right-click pastes tmux's buffer (bracketed via -p). Overrides the
+		// default tmux >=3.0 context menu bound on MouseDown3Pane.
+		{"bind-key", "-T", "root", "MouseDown3Pane", "paste-buffer", "-p"},
+	} {
+		if out, err := c.run(ctx, b...); err != nil {
+			log.Warn("set tmux mouse binding failed", "binding", strings.Join(b, " "), "error", err, "output", strings.TrimSpace(out))
+		}
 	}
 	// Surface the user-facing session name (written per-session to @uam_label by
 	// SetSessionLabel) in the status line, terminal title, and window list,

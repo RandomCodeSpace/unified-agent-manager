@@ -70,7 +70,10 @@ func TestResumeAppendsContinueAndDoesNotReplayPrompt(t *testing.T) {
 		strings.Contains(logText, "--resume") {
 		t.Fatalf("claude resume must not pass the uam UUID as a flag arg: %s", logText)
 	}
-	if strings.Contains(logText, "send-keys") || strings.Contains(logText, "fix parser") {
+	// `send-keys -t` is the prompt-injection form; the mouse copy/paste config
+	// bindings legitimately contain `send-keys -X`/`-M`, so match the targeted
+	// form (and the prompt text) rather than the bare substring.
+	if strings.Contains(logText, "send-keys -t") || strings.Contains(logText, "fix parser") {
 		t.Fatalf("resume should not replay the original prompt: %s", logText)
 	}
 }
