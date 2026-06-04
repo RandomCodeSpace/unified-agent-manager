@@ -147,7 +147,7 @@ func shellAliasCommand(ctx context.Context, cmd []string) ([]string, error) {
 	if !filepath.IsAbs(shell) {
 		return nil, fmt.Errorf("invalid SHELL %q: must be absolute for command alias fallback", shell)
 	}
-	check := exec.CommandContext(ctx, shell, "-ic", "type "+tmux.ShellJoin([]string{cmd[0]})+" >/dev/null 2>&1") // #nosec G204 -- shell is the user's configured absolute shell; alias name is validated before reaching this path.
+	check := exec.CommandContext(ctx, shell, "-ic", "type "+tmux.ShellJoin([]string{cmd[0]})+" >/dev/null 2>&1") // #nosec G204,G702 -- shell is the user's configured absolute shell; alias name is validated and shell-quoted before reaching this path.
 	if err := check.Run(); err != nil {
 		return nil, fmt.Errorf("command alias %q not found on PATH or in interactive shell: %w", cmd[0], err)
 	}
