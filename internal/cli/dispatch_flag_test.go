@@ -22,6 +22,7 @@ func TestRunDispatchRejectsFlagsAfterAgent(t *testing.T) {
 		{"short flag after agent", []string{"fake", "-x", "do", "work"}},
 		{"flag in agent slot", []string{"--safe"}},
 		{"cwd flag after agent", []string{"fake", "--cwd", "/tmp", "do", "work"}},
+		{"alias flag after agent", []string{"fake", "--alias", "codex-fast", "do", "work"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,6 +53,7 @@ func TestRunDispatchAcceptsValidFormsAndPreservesInteriorDashes(t *testing.T) {
 		{"interior double dash", []string{"fake", "fix", "the", "--", "flag", "bug"}, "", "fix the -- flag bug", store.ModeYolo},
 		{"safe before agent", []string{"--safe", "fake", "do", "work"}, "", "do work", store.ModeSafe},
 		{"cwd before agent", []string{"--cwd", "/tmp", "fake", "go"}, "", "go", store.ModeYolo},
+		{"alias before agent", []string{"--alias", "codex-fast", "fake", "go"}, "", "go", store.ModeYolo},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,6 +66,9 @@ func TestRunDispatchAcceptsValidFormsAndPreservesInteriorDashes(t *testing.T) {
 				t.Fatalf("expected exactly one dispatched session, got %d", len(fake.sessions))
 			}
 			sess := fake.sessions[0]
+			if strings.Contains(tc.name, "alias") && sess.CommandAlias != "codex-fast" {
+				t.Fatalf("command alias = %q, want codex-fast", sess.CommandAlias)
+			}
 			if sess.Prompt != tc.wantPrompt {
 				t.Fatalf("prompt = %q, want %q", sess.Prompt, tc.wantPrompt)
 			}

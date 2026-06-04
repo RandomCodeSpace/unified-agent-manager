@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -40,18 +41,19 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	cfg := DefaultConfig()
 	cfg.Sessions[Key("claude", "12345678")] = SessionRecord{
-		ID:          "12345678-1234-4234-9234-123456789abc",
-		Agent:       "claude",
-		Name:        "fix tests",
-		Mode:        ModeYolo,
-		Workdir:     "/tmp/repo",
-		TmuxSession: "uam-claude-12345678",
-		CreatedAt:   now,
-		LastSeenAt:  now,
-		Pinned:      true,
-		Group:       "repo",
-		SortIndex:   7,
-		PR:          &PRRecord{URL: "https://github.com/o/r/pull/1", Number: 1, LastStatus: "open", LastChecked: now},
+		ID:           "12345678-1234-4234-9234-123456789abc",
+		Agent:        "claude",
+		CommandAlias: "ghcp",
+		Name:         "fix tests",
+		Mode:         ModeYolo,
+		Workdir:      "/tmp/repo",
+		TmuxSession:  "uam-claude-12345678",
+		CreatedAt:    now,
+		LastSeenAt:   now,
+		Pinned:       true,
+		Group:        "repo",
+		SortIndex:    7,
+		PR:           &PRRecord{URL: "https://github.com/o/r/pull/1", Number: 1, LastStatus: "open", LastChecked: now},
 	}
 	if err := s.Save(cfg); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -61,8 +63,25 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	got := loaded.Sessions[Key("claude", "12345678")]
-	if got.Name != "fix tests" || !got.Pinned || got.PR == nil || got.PR.Number != 1 {
+	if got.Name != "fix tests" || got.CommandAlias != "ghcp" || !got.Pinned || got.PR == nil || got.PR.Number != 1 {
 		t.Fatalf("loaded record mismatch: %+v", got)
+	}
+}
+
+func TestSessionRecordCommandAliasJSONOmitEmpty(t *testing.T) {
+	withoutAlias, err := json.Marshal(SessionRecord{ID: "id", Agent: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(withoutAlias), "command_alias") {
+		t.Fatalf("empty command alias should be omitted: %s", withoutAlias)
+	}
+	withAlias, err := json.Marshal(SessionRecord{ID: "id", Agent: "fake", CommandAlias: "ghcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(withAlias), `"command_alias":"ghcp"`) {
+		t.Fatalf("command alias should be serialized: %s", withAlias)
 	}
 }
 
@@ -150,6 +169,43 @@ func TestMigrateV1BackfillsStatusActive(t *testing.T) {
 	}
 	if rec.Status != StatusActive {
 		t.Fatalf("status = %q, want %q", rec.Status, StatusActive)
+	}
+}
+
+func TestMigrateV2ToV3PreservesCommandAlias(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	old := map[string]any{
+		"schema_version": 2,
+		"sessions": map[string]any{
+			"copilot:abcd1234": map[string]any{
+				"id":            "abcd1234",
+				"agent":         "copilot",
+				"command_alias": "ghcp",
+				"tmux_session":  "uam-copilot-abcd1234",
+				"workdir":       "/tmp/repo",
+				"status":        "active",
+			},
+		},
+	}
+	data, _ := json.Marshal(old)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("schema = %d, want %d", cfg.SchemaVersion, CurrentSchemaVersion)
+	}
+	rec := cfg.Sessions["copilot:abcd1234"]
+	if rec.CommandAlias != "ghcp" {
+		t.Fatalf("command alias = %q, want ghcp", rec.CommandAlias)
 	}
 }
 

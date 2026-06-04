@@ -157,6 +157,7 @@ func (s *Service) mergeStoredSessions(live map[string]adapter.Session, cfg store
 
 func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.Session {
 	sess.DisplayName = firstNonEmpty(rec.Name, sess.DisplayName)
+	sess.CommandAlias = firstNonEmpty(rec.CommandAlias, sess.CommandAlias)
 	sess.Prompt = firstNonEmpty(rec.Prompt, sess.Prompt)
 	sess.Pinned = rec.Pinned
 	sess.Group = rec.Group
@@ -182,7 +183,7 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 }
 
 func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Session {
-	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
+	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, CommandAlias: rec.CommandAlias, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
 }
 
 // refreshSessionRecords reconciles live sessions against the loaded config and
@@ -203,34 +204,9 @@ func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]ada
 		defer s.prInFlight.Store(false)
 	}
 	for key, sess := range live {
-		rec, ok := cfg.Sessions[key]
-		changed := false
-		if !ok || rec.ID == "" {
-			// Backfill a record for a live session we have no (valid) record
-			// for. Guard against an empty session ID so we never persist an
-			// un-killable phantom (C1-1 fix-trap).
-			if sess.ID == "" {
-				continue
-			}
-			rec = RecordFromSession(sess, store.ModeYolo)
-			cfg.PutSession(key, rec)
-			changed = true
-		} else if rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Alive {
-			// Anti-flap: the user closed this session but its pane is still
-			// alive, so it belongs in the Active group. Reset the persisted
-			// status to Active, otherwise the next merge re-flags it Closed
-			// and it flaps (F18).
-			rec.Status = store.StatusActive
-			cfg.Sessions[key] = rec
-			changed = true
-		}
-		// Keep LastSeenAt fresh for a still-running pane so staleness-based
-		// pruning never deletes a live session. Gated on the refresh interval so
-		// a long-lived session isn't re-saved on every tick (F20 Stage 1).
-		if sess.ProcAlive == adapter.Alive && now.Sub(rec.LastSeenAt) >= lastSeenRefresh {
-			rec.LastSeenAt = now
-			cfg.Sessions[key] = rec
-			changed = true
+		rec, changed, keep := reconcileRefreshRecord(cfg, key, sess, now)
+		if !keep {
+			continue
 		}
 		if doPR && updatePRRecord(ctx, key, &sess, &rec, live, now) {
 			cfg.Sessions[key] = rec
@@ -241,6 +217,38 @@ func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]ada
 		}
 	}
 	return updates
+}
+
+func reconcileRefreshRecord(cfg *store.Config, key string, sess adapter.Session, now time.Time) (store.SessionRecord, bool, bool) {
+	rec, ok := cfg.Sessions[key]
+	changed := false
+	if !ok || rec.ID == "" {
+		// Backfill a record for a live session we have no (valid) record for.
+		// Guard against an empty session ID so we never persist an un-killable
+		// phantom (C1-1 fix-trap).
+		if sess.ID == "" {
+			return rec, false, false
+		}
+		rec = RecordFromSession(sess, store.ModeYolo)
+		cfg.PutSession(key, rec)
+		changed = true
+	} else if rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Alive {
+		// Anti-flap: the user closed this session but its pane is still alive, so
+		// it belongs in the Active group. Reset the persisted status to Active,
+		// otherwise the next merge re-flags it Closed and it flaps (F18).
+		rec.Status = store.StatusActive
+		cfg.Sessions[key] = rec
+		changed = true
+	}
+	// Keep LastSeenAt fresh for a still-running pane so staleness-based pruning
+	// never deletes a live session. Gated on the refresh interval so a long-lived
+	// session isn't re-saved on every tick (F20 Stage 1).
+	if sess.ProcAlive == adapter.Alive && now.Sub(rec.LastSeenAt) >= lastSeenRefresh {
+		rec.LastSeenAt = now
+		cfg.Sessions[key] = rec
+		changed = true
+	}
+	return rec, changed, true
 }
 
 func updatePRRecord(ctx context.Context, key string, sess *adapter.Session, rec *store.SessionRecord, live map[string]adapter.Session, now time.Time) bool {
@@ -303,6 +311,10 @@ func SortSessions(sessions []adapter.Session) {
 }
 
 func (s *Service) DispatchNamed(ctx context.Context, agentName, name, prompt, cwd, mode string) (adapter.Session, error) {
+	return s.DispatchNamedWithAlias(ctx, agentName, "", name, prompt, cwd, mode)
+}
+
+func (s *Service) DispatchNamedWithAlias(ctx context.Context, agentName, commandAlias, name, prompt, cwd, mode string) (adapter.Session, error) {
 	if s.Registry == nil {
 		return adapter.Session{}, errors.New("no registry configured")
 	}
@@ -313,7 +325,7 @@ func (s *Service) DispatchNamed(ctx context.Context, agentName, name, prompt, cw
 	if mode == "" {
 		mode = string(store.ModeYolo)
 	}
-	sess, err := a.Dispatch(ctx, adapter.DispatchRequest{Name: name, Prompt: prompt, Cwd: cwd, Mode: mode})
+	sess, err := a.Dispatch(ctx, adapter.DispatchRequest{Name: name, CommandAlias: commandAlias, Prompt: prompt, Cwd: cwd, Mode: mode})
 	if err != nil {
 		return adapter.Session{}, err
 	}
@@ -337,20 +349,8 @@ func (s *Service) Stop(ctx context.Context, id string, remove bool) error {
 	if err != nil {
 		return err
 	}
-	if s.Registry != nil {
-		if a, ok := s.Registry.Get(sess.AgentType); ok && sess.TmuxSession != "" {
-			if killErr := a.Stop(ctx, sess.ID); killErr != nil {
-				// The kill failed. If the pane is still alive, deleting/flagging
-				// the record would orphan a running session whose only handle is
-				// that record — so abort the mutation and surface the error.
-				// If the pane is already gone (probe says not-alive, or the
-				// adapter can't probe), proceed: this preserves `uam rm` cleanup
-				// of already-dead sessions.
-				if hs, ok := a.(adapter.HasSessionAdapter); ok && hs.HasSession(ctx, sess.ID) {
-					return fmt.Errorf("kill session %s: %w", sess.ID, killErr)
-				}
-			}
-		}
+	if err := s.stopAdapterSession(ctx, sess); err != nil {
+		return err
 	}
 	if s.Store == nil {
 		return nil
@@ -374,6 +374,27 @@ func (s *Service) Stop(ctx context.Context, id string, remove bool) error {
 		cfg.Sessions[key] = rec
 		return nil
 	})
+}
+
+func (s *Service) stopAdapterSession(ctx context.Context, sess adapter.Session) error {
+	if s.Registry == nil || sess.TmuxSession == "" {
+		return nil
+	}
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return nil
+	}
+	if killErr := a.Stop(ctx, sess.ID); killErr != nil {
+		// The kill failed. If the pane is still alive, deleting/flagging the
+		// record would orphan a running session whose only handle is that record —
+		// so abort the mutation and surface the error. If the pane is already gone
+		// (probe says not-alive, or the adapter can't probe), proceed: this
+		// preserves `uam rm` cleanup of already-dead sessions.
+		if hs, ok := a.(adapter.HasSessionAdapter); ok && hs.HasSession(ctx, sess.ID) {
+			return fmt.Errorf("kill session %s: %w", sess.ID, killErr)
+		}
+	}
+	return nil
 }
 
 // NotifyClosed flags the record whose tmux name matches tmuxSession as
@@ -461,9 +482,21 @@ func (s *Service) Find(ctx context.Context, id string) (adapter.Session, store.C
 		return adapter.Session{}, cfg, err
 	}
 	for _, sess := range sessions {
-		if sess.ID == id || strings.HasPrefix(sess.ID, id) || sess.TmuxSession == id || strings.HasPrefix(sess.TmuxSession, id) {
+		if sess.ID == id || sess.TmuxSession == id {
 			return sess, cfg, nil
 		}
+	}
+	var match adapter.Session
+	for _, sess := range sessions {
+		if strings.HasPrefix(sess.ID, id) || strings.HasPrefix(sess.TmuxSession, id) {
+			if match.ID != "" {
+				return adapter.Session{}, cfg, fmt.Errorf("session %q is ambiguous; matches multiple sessions", id)
+			}
+			match = sess
+		}
+	}
+	if match.ID != "" {
+		return match, cfg, nil
 	}
 	return adapter.Session{}, cfg, fmt.Errorf("session %q not found", id)
 }
@@ -531,7 +564,7 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 	if rec.ID == "" {
 		rec = RecordFromSession(sess, store.ModeYolo)
 	}
-	resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), TmuxSession: rec.TmuxSession, CreatedAt: rec.CreatedAt})
+	resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), TmuxSession: rec.TmuxSession, CreatedAt: rec.CreatedAt})
 	if err != nil {
 		return err
 	}
@@ -546,6 +579,7 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 		}
 		rec.TmuxSession = resumed.TmuxSession
 		rec.Workdir = resumed.Cwd
+		rec.CommandAlias = firstNonEmpty(rec.CommandAlias, resumed.CommandAlias)
 		rec.LastSeenAt = time.Now()
 		// Resuming a closed_by_user session reactivates it. The tmux hook
 		// will flip Status back to closed_by_user on the next exit.
@@ -578,7 +612,7 @@ func RecordFromSession(sess adapter.Session, mode store.Mode) store.SessionRecor
 	if sess.Closed {
 		status = store.StatusClosedByUser
 	}
-	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, Name: name, Prompt: sess.Prompt, Mode: mode, Workdir: sess.Cwd, TmuxSession: sess.TmuxSession, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex, Status: status}
+	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, CommandAlias: sess.CommandAlias, Name: name, Prompt: sess.Prompt, Mode: mode, Workdir: sess.Cwd, TmuxSession: sess.TmuxSession, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex, Status: status}
 }
 
 func (s *Service) UpdateSortOrder(sessions []adapter.Session) error {

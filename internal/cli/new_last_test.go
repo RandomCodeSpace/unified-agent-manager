@@ -24,19 +24,19 @@ func TestRunNewPreservesPromptWhitespace(t *testing.T) {
 	}{
 		{
 			name:       "double spaces preserved",
-			stdin:      "fake\n/tmp\nfix  the   parser\n",
+			stdin:      "fake\n\n/tmp\nfix  the   parser\n",
 			wantName:   "",
 			wantPrompt: "fix  the   parser",
 		},
 		{
 			name:       "named prompt keeps interior spacing",
-			stdin:      "fake\n/tmp\n#bugfix do  this   thing\n",
+			stdin:      "fake\n\n/tmp\n#bugfix do  this   thing\n",
 			wantName:   "bugfix",
 			wantPrompt: "do  this   thing",
 		},
 		{
 			name:       "leading whitespace after name preserved",
-			stdin:      "fake\n/tmp\n#bugfix   indented\n",
+			stdin:      "fake\n\n/tmp\n#bugfix   indented\n",
 			wantName:   "bugfix",
 			wantPrompt: "  indented",
 		},
@@ -68,29 +68,28 @@ func TestRunNewPreservesPromptWhitespace(t *testing.T) {
 	}
 }
 
-// F54 — `uam new` must reject an empty final prompt (EOF / blank input) instead
-// of dispatching an empty-prompt session and exiting 0.
-func TestRunNewRejectsEmptyPrompt(t *testing.T) {
+// F54 — `uam new` keeps the prompt optional: EOF, a blank line, or whitespace
+// only still creates a prompt-less session instead of aborting.
+func TestRunNewAllowsEmptyPrompt(t *testing.T) {
 	cases := []struct {
 		name  string
 		stdin string
 	}{
 		{"empty stdin (EOF)", ""},
-		{"blank prompt line", "fake\n/tmp\n\n"},
-		{"whitespace-only prompt", "fake\n/tmp\n   \n"},
+		{"blank prompt line", "fake\n\n/tmp\n\n"},
+		{"whitespace-only prompt", "fake\n\n/tmp\n   \n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, fake := newCLITestService(t)
-			var err error
 			withCLIStdin(t, tc.stdin, func() {
-				_ = captureCLIStdout(t, func() { err = runNew(context.Background(), svc) })
+				_ = captureCLIStdout(t, func() { must(t, runNew(context.Background(), svc)) })
 			})
-			if err == nil {
-				t.Fatal("expected runNew to reject an empty prompt")
+			if len(fake.sessions) != 1 {
+				t.Fatalf("expected one prompt-less session, got %d", len(fake.sessions))
 			}
-			if len(fake.sessions) != 0 {
-				t.Fatalf("a rejected new must not dispatch a session, got %d", len(fake.sessions))
+			if fake.sessions[0].Prompt != "" {
+				t.Fatalf("prompt = %q, want empty", fake.sessions[0].Prompt)
 			}
 		})
 	}
@@ -100,7 +99,7 @@ func TestRunNewRejectsEmptyPrompt(t *testing.T) {
 // last line (no trailing newline) must still be used.
 func TestRunNewUsesPromptOnEOFWithoutNewline(t *testing.T) {
 	svc, fake := newCLITestService(t)
-	withCLIStdin(t, "fake\n/tmp\nlast line no newline", func() {
+	withCLIStdin(t, "fake\n\n/tmp\nlast line no newline", func() {
 		_ = captureCLIStdout(t, func() { must(t, runNew(context.Background(), svc)) })
 	})
 	if len(fake.sessions) != 1 {
@@ -108,6 +107,24 @@ func TestRunNewUsesPromptOnEOFWithoutNewline(t *testing.T) {
 	}
 	if fake.sessions[0].Prompt != "last line no newline" {
 		t.Fatalf("prompt = %q, want %q", fake.sessions[0].Prompt, "last line no newline")
+	}
+}
+
+func TestRunNewReadsCommandAliasBeforeWorkdir(t *testing.T) {
+	svc, fake := newCLITestService(t)
+	out := captureCLIStdout(t, func() {
+		withCLIStdin(t, "fake\ncodex-fast\n/tmp\ndo work\n", func() { must(t, runNew(context.Background(), svc)) })
+	})
+	aliasPrompt := strings.Index(out, "command alias [default]: ")
+	workdirPrompt := strings.Index(out, "workdir [")
+	if aliasPrompt < 0 || workdirPrompt < 0 || aliasPrompt > workdirPrompt {
+		t.Fatalf("alias prompt was not before workdir prompt; out=%q", out)
+	}
+	if len(fake.sessions) != 1 {
+		t.Fatalf("expected one dispatched session, got %d", len(fake.sessions))
+	}
+	if fake.sessions[0].CommandAlias != "codex-fast" {
+		t.Fatalf("command alias = %q, want codex-fast", fake.sessions[0].CommandAlias)
 	}
 }
 

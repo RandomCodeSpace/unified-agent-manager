@@ -2,20 +2,21 @@
 
 ## Context
 
-The repository `/home/dev/projects/unified-agent-manager` contains a Go implementation of a **terminal UI that replicates Claude Code's "agent view" (`claude agents`) experience but works across multiple coding-agent CLIs in one unified dashboard** — Claude Code, OpenAI Codex, GitHub Copilot CLI, Hermes Agent, and OpenCode.
+The repository `/home/dev/projects/unified-agent-manager` contains a Go implementation of a **terminal UI that replicates Claude Code's "agent view" (`claude agents`) experience but works across multiple coding-agent CLIs in one unified dashboard** — Claude Code, OpenAI Codex, GitHub Copilot CLI, Hermes Agent, OpenCode, and Oh My Pi.
 
-Why: Claude Code has a great background-session dashboard (see https://code.claude.com/docs/en/agent-view), but it only manages Claude sessions. Developers who use Codex, Copilot, Hermes, or OpenCode alongside Claude have to context-switch between tools. A unified TUI lets you dispatch, peek, attach, and stop sessions across all of them from one screen, with the same UX patterns: rows grouped by state (Needs input / Working / Completed / Ready for review), Space to peek, Enter to attach, Ctrl+X to stop, PR status dots, pin/rename/group, etc.
+Why: Claude Code has a great background-session dashboard (see https://code.claude.com/docs/en/agent-view), but it only manages Claude sessions. Developers who use Codex, Copilot, Hermes, OpenCode, or Oh My Pi alongside Claude have to context-switch between tools. A unified TUI lets you dispatch, peek, attach, and stop sessions across all of them from one screen, with the same UX patterns: rows grouped as Active or Closed, Space to peek, Enter to attach, Ctrl+X to stop, PR status dots, pin/rename/group, etc.
 
-Intended outcome: a single-binary CLI called `uam` that opens an agent-view-style TUI showing every Claude and Codex session on the machine, with feature parity for the core operations the reference UX provides.
+Intended outcome: a single-binary CLI called `uam` that opens an agent-view-style TUI showing managed sessions across supported providers, with feature parity for the core operations the reference UX provides.
 
 ## Key Decisions (confirmed with user)
 
 - **Stack:** Go + Bubble Tea (single static binary; matches lazygit/gh dash distribution model; Bubble Tea's Elm-style model maps cleanly to the event-driven nature of the dashboard).
-- **Uniform tmux backend for every agent.** Codex/Copilot/Hermes/OpenCode have no UAM supervisor; the user chose uniformity over Claude's first-class supervisor advantage. Every session — Claude, Codex, Copilot, Hermes, OpenCode — runs interactively inside its own tmux session on private socket `-L uam`, named `uam-<agent>-<id>`. State for all of them is derived by capturing pane content. We give up Claude's `state.json` but get one mental model, one code path for attach/peek/reply/stop, and one set of bugs.
-- **Adapter abstraction:** All backends sit behind a common `AgentAdapter` interface. Adding a new CLI later (Aider, etc.) is a matter of dropping in a new package under `internal/adapter/<name>/` with its own `detect.go` patterns.
-- **Supported agents at launch:** Claude Code (`claude`), OpenAI Codex (`codex`), GitHub Copilot CLI (`gh copilot` / `copilot`), Hermes Agent (`hermes`), OpenCode (`opencode`). Each is one adapter package.
-- **Session storage** modeled on [`RandomCodeSpace/ctm`](https://github.com/RandomCodeSpace/ctm)'s `~/.config/ctm/sessions.json` pattern: a single JSON file at `~/.config/uam/sessions.json` with atomic write (temp + rename), flock-based locking, schema versioning with auto-migration, and `.bak.<unix-nano>` backups on schema upgrade. Each record holds `id` (uuid), `name`, `agent`, `mode` (always `yolo` for now), `workdir`, `tmux_session`, `created_at`, `last_seen_at`, `pinned`, `group`, `sort_index`, plus cached PR info. Live state (Working/NeedsInput/...) is NEVER persisted — adapters re-derive it from tmux every refresh.
-- **Always yolo mode.** Every session is launched with the provider's "full access / skip permissions" flag — `claude --dangerously-skip-permissions`, `codex --sandbox danger-full-access`, Copilot agent mode with auto-approval, `hermes --tui --yolo`, and `opencode` equivalent. We rely entirely on each provider's own safety mechanisms (Codex's sandbox, Claude's own guardrails, etc.); UAM does NOT layer its own git-checkpoint commits on top. If a provider offers a checkpoint feature natively, it's used as-is.
+- **Uniform tmux backend for every agent.** Codex/Copilot/Hermes/OpenCode have no UAM supervisor; the user chose uniformity over Claude's first-class supervisor advantage. Every session — Claude, Codex, Copilot, Hermes, OpenCode, Oh My Pi — runs interactively inside its own tmux session on private socket `-L uam`, named `uam-<agent>-<id>`. Runtime classification is liveness-only: `ClassifyPane` maps pane PID liveness to `adapter.Active`/`adapter.Failed` and `adapter.Alive`/`adapter.Exited`. Pane capture is still used for peek/reply and PR URL scraping.
+- **Adapter abstraction:** All backends sit behind a common `AgentAdapter` interface. Current provider packages are thin registrations around the shared `adapter.TmuxAgent`; adding a new CLI later is mostly adding another `internal/adapter/<name>/` factory with command candidates and yolo args.
+- **Supported agents at launch:** Claude Code (`claude`), OpenAI Codex (`codex`), GitHub Copilot CLI (`gh copilot` / `copilot`), Hermes Agent (`hermes`), OpenCode (`opencode`), and Oh My Pi (`omp`). Each is one adapter package.
+- **Session storage** modeled on [`RandomCodeSpace/ctm`](https://github.com/RandomCodeSpace/ctm)'s `~/.config/ctm/sessions.json` pattern: a single JSON file at `~/.config/uam/sessions.json` with atomic write (temp + rename), flock-based locking, schema versioning with auto-migration, and `.bak.<unix-nano>` backups on schema upgrade. Each record holds `id` (uuid), `name`, `agent`, `mode`, `workdir`, `tmux_session`, `created_at`, `last_seen_at`, `pinned`, `group`, `sort_index`, `status`, plus cached PR info. Runtime liveness is not persisted. Store `status` distinguishes active records from records closed by the user (`store.StatusClosedByUser`); the UI groups by this as Active/Closed.
+- **Yolo mode where providers support it.** Sessions are launched with the provider's full-access / auto-approval flag when one is configured: `claude --dangerously-skip-permissions`, `codex --sandbox danger-full-access`, `copilot --yolo`, and `omp --auto-approve`. Providers without a confirmed yolo flag (`hermes`, `opencode`) launch bare. We rely entirely on each provider's own safety mechanisms (Codex's sandbox, Claude's own guardrails, etc.); UAM does NOT layer its own git-checkpoint commits on top. If a provider offers a checkpoint feature natively, it's used as-is.
+- **Command aliases.** A dispatch can override the provider launch command while keeping the canonical provider identity: `uam dispatch --alias ghcp copilot ...`, `uam new`'s command-alias prompt, or TUI input like `@copilot:ghcp ...`. The alias is persisted as `command_alias` and passed back into provider resume. Launch resolution prefers a real executable on `PATH`; if not found, UAM runs the alias through the user's interactive shell so profile aliases/functions can work.
 - **Easy mode.** A guided wizard (`uam new` with no args, or `e` keybinding inside the TUI) walks the user through: 1) pick provider, 2) confirm or change workdir, 3) enter prompt. Each step uses Bubble Tea's list/input components. The wizard skips disabled providers (capability probe failed at startup). Power users can still bypass with `uam dispatch <agent> "<prompt>"` or by typing `@<agent> <prompt>` directly into the TUI's dispatch input.
 - **Build order:** Full phased plan (Phase 0 → Phase 12), implemented in this repository as a cohesive MVP.
 
@@ -27,58 +28,50 @@ unified-agent-manager/
 ├── go.mod / go.sum
 ├── Makefile                       # build, lint, test, install
 ├── .golangci.yml
-├── main.go                        # entrypoint
+├── main.go                        # compatibility shim
+├── cmd/uam/main.go                # real uam entrypoint
 ├── internal/
 │   ├── app/
-│   │   ├── app.go                 # top-level Bubble Tea Model
-│   │   ├── messages.go            # tea.Msg types
-│   │   └── keymap.go              # central key bindings
-│   ├── ui/
-│   │   ├── table.go               # grouped sessions table
-│   │   ├── dispatch.go            # bottom prompt input
-│   │   ├── peek.go                # peek/reply side panel
-│   │   ├── help.go                # ? overlay
-│   │   ├── styles.go              # lipgloss colors, state icons
-│   │   └── format.go              # time, truncation, PR dot
+│   │   ├── app.go                 # service layer + Bubble Tea Model/rendering
+│   │   └── service.go             # session orchestration and store merge logic
 │   ├── adapter/
 │   │   ├── adapter.go             # AgentAdapter interface + Session/State types
+│   │   ├── tmux_adapter.go        # shared TmuxAgent implementation
+│   │   ├── detect.go              # liveness-only ClassifyPane + PR URL extraction
 │   │   ├── registry.go            # name → adapter resolution
-│   │   ├── claude/{claude.go, detect.go, patterns.go, pr.go}
-│   │   ├── codex/{codex.go, detect.go, patterns.go}
-│   │   ├── copilot/{copilot.go, detect.go, patterns.go}
-│   │   ├── hermes/{hermes.go, detect.go, patterns.go}
-│   │   └── opencode/{opencode.go, detect.go, patterns.go}
+│   │   ├── claude/claude.go
+│   │   ├── codex/codex.go
+│   │   ├── copilot/copilot.go
+│   │   ├── hermes/hermes.go
+│   │   ├── omp/omp.go
+│   │   └── opencode/opencode.go
 │   ├── tmux/{tmux.go, parse.go}   # ONLY place that shells out to tmux
-│   ├── store/{store.go, schema.go, migrate.go, flock.go}
-│   ├── wizard/easy.go             # guided "uam new" provider→workdir→prompt flow
+│   ├── store/store.go             # JSON store, migration, flock, backups
 │   ├── pr/gh.go                   # optional `gh pr view` for PR dot
-│   ├── refresh/scheduler.go       # tick + fsnotify + per-session backoff
 │   └── log/log.go                 # file logger at ~/.cache/uam/uam.log
-└── test/                          # adapter/tmux/store tests
 ```
 
 ## Core Types (`internal/adapter/adapter.go`)
 
 ```
-State:        NeedsInput | Working | Completed | ReadyForReview | Failed | Idle
+State:        Active | Failed
 ProcLiveness: Alive | Exited
 PRStatus:     None | Open | Merged | Closed | Draft
 
 Session struct {
-  ID, AgentType, DisplayName, Cwd string
+  ID, AgentType, DisplayName, Prompt, Cwd, TmuxSession string
   State State
   ProcAlive ProcLiveness
-  Activity string         // one-line row summary
   LastChange, CreatedAt time.Time
   PR *PRRef
   Pinned bool
   Group string
   SortIndex int
+  Closed bool             // mirrors store.StatusClosedByUser for UI grouping
 }
 
 PeekResult struct {
-  TailText, Summary string
-  AwaitingInput bool
+  TailText string
 }
 ```
 
@@ -86,17 +79,17 @@ PeekResult struct {
 
 ```
 Name() string
-Dispatch(ctx, prompt, cwd) (Session, error)
+DisplayName() string
+Available() (bool, string)
+Dispatch(ctx, DispatchRequest) (Session, error)
 List(ctx) ([]Session, error)
 Peek(ctx, id) (PeekResult, error)
 Reply(ctx, id, text) error
 Attach(id) (AttachSpec, error)        // app suspends TUI and execs argv
 Stop(ctx, id) error
-Rename(ctx, id, newName) error
-Subscribe(ctx) (<-chan SessionEvent, error)   // nil channel = poll-only
 ```
 
-Adapters are stateless about live state — they always re-read truth from tmux. Our own metadata (pin, rename, group, SortIndex, PR cache) is overlaid by `store` after each adapter call.
+Adapters are stateless about runtime liveness — they always re-read pane PID truth from tmux. Our own metadata (pin, rename, group, SortIndex, closed status, PR cache) is overlaid by `store` after each adapter call.
 
 ## Yolo Mode (no UAM-managed checkpoints)
 
@@ -106,118 +99,35 @@ UAM launches every session with the provider's "full access / skip permissions" 
 |---|---|
 | Claude | `claude --dangerously-skip-permissions` |
 | Codex | `codex --sandbox danger-full-access` |
-| Copilot | `copilot --autopilot` |
-| Hermes Agent | `hermes --tui --yolo` |
-| OpenCode | `opencode --auto-approve` (or current equivalent) |
+| Copilot | `copilot --yolo` |
+| Hermes Agent | `hermes` |
+| Oh My Pi | `omp --auto-approve` |
+| OpenCode | `opencode` |
 
 If the user wants safe mode for one dispatch, `uam dispatch --safe <agent> "<prompt>"` drops the yolo flag and lets the provider run with its default prompts.
 
-## ClaudeAdapter (`internal/adapter/claude/`)
+## Provider Adapters (`internal/adapter/{claude,codex,copilot,hermes,omp,opencode}/`)
 
-Runs `claude` interactively inside its own tmux session in yolo mode. Same mechanics as the other adapters; only the inner CLI and its pane-scrape patterns differ.
+Each provider package registers command candidates and yolo arguments, then delegates to the shared `adapter.TmuxAgent`. The shared adapter handles dispatch, resume, command aliases, list, peek, reply, attach, stop, liveness classification, and PR URL scraping.
 
-- **Dispatch:**
-  ```
-  tmux -L uam new-session -d -s uam-claude-<id> -c <cwd> -x 200 -y 50 \
-    'env UAM_AGENT=claude UAM_ID=<id> claude --dangerously-skip-permissions'
-  tmux -L uam send-keys -t uam-claude-<id> -l -- "<prompt>"
-  tmux -L uam send-keys -t uam-claude-<id> Enter
-  ```
-- **List:** `tmux -L uam list-sessions -F ...`, filter `uam-claude-` prefix.
-- **Peek:** `tmux -L uam capture-pane -p -t <name> -S -200 -J`, then `detect.Classify(lines)` (Claude-specific patterns).
-- **Reply:** `send-keys -l -- "<text>"` then `send-keys Enter`. For multiple-choice prompts where Claude shows numbered options, allow sending a single digit + Enter.
-- **Attach:** `AttachSpec{argv: ["tmux", "-L", "uam", "attach", "-t", "uam-claude-<id>"]}` via `tea.ExecProcess`.
-- **Stop:** `tmux -L uam kill-session -t uam-claude-<id>`.
-- **State detection** (`claude/detect.go`) — same `Classify(lines) -> (State, ProcAlive, summary)` shape as Codex, but tuned to Claude's TUI:
-  1. Pane process is no longer `claude` (it's `bash`) → `Completed` + `Exited`.
-  2. Trailing lines show Claude's permission/tool-approval prompt or `Do you want to`/numbered-choice block → `NeedsInput`.
-  3. Trailing line has Claude's spinner glyphs (`✻`/`✽` animated frames) or a tool-running indicator → `Working`.
-  4. Trailing line is Claude's idle prompt (`>`, `Try`, etc.) with no spinner → `Completed`.
-  5. Error markers (`Error:`, red banner text) without a prompt → `Failed`.
-  6. Pane content hash unchanged for >15s when last classification was `Working` → demote to `Completed`.
-- **Patterns** (`claude/patterns.go`): same versioned struct as Codex but populated with Claude-specific glyphs/regex. The user can override via config without recompiling.
-- **PR detection:** regex `https://github.com/.../pull/\d+` against last ~500 captured lines; first match wins, cached in store, refreshed via `internal/pr` at most every 60s.
-
-## CopilotAdapter (`internal/adapter/copilot/`)
-
-Runs GitHub Copilot CLI's interactive/agent mode inside tmux. Command is whichever of `gh copilot` or `copilot` is on PATH (probed at startup).
-
-- **Dispatch:**
-  ```
-  tmux -L uam new-session -d -s uam-copilot-<id> -c <cwd> -x 200 -y 50 \
-    'env UAM_AGENT=copilot UAM_ID=<id> <copilot-cmd> --autopilot'
-  tmux -L uam send-keys -t uam-copilot-<id> -l -- "<prompt>"
-  tmux -L uam send-keys -t uam-copilot-<id> Enter
-  ```
-- **List/Peek/Reply/Attach/Stop:** identical shape to ClaudeAdapter, swap session prefix to `uam-copilot-`.
-- **State detection** (`copilot/detect.go`): Copilot CLI shows a distinct prompt indicator and offers Run/Explain/Revise choices when it suggests a command — `NeedsInput` fires on those choice prompts. Spinner detection from the `Thinking...` / `Generating...` strings. Idle state when the trailing line is the prompt sigil with no spinner.
-- **PR detection:** same regex as the others.
-- **Capability probe:** if neither `gh copilot` nor `copilot` resolves on PATH, the adapter is disabled at startup and its agent option is removed from the dispatch selector.
-
-## HermesAdapter (`internal/adapter/hermes/`)
-
-Runs Hermes Agent's terminal UI inside tmux. UAM always includes Hermes' explicit TUI flag so the managed session opens the interactive interface.
-
-- **Dispatch:**
-  ```
-  tmux -L uam new-session -d -s uam-hermes-<id> -c <cwd> -x 200 -y 50 \
-    'env UAM_AGENT=hermes UAM_ID=<id> hermes --tui --yolo'
-  tmux -L uam send-keys -t uam-hermes-<id> -l -- "<prompt>"
-  tmux -L uam send-keys -t uam-hermes-<id> Enter
-  ```
-- **List/Peek/Reply/Attach/Stop:** identical shape, prefix `uam-hermes-`.
-- **State detection / PR detection:** uses the shared tmux pane classifier and PR URL regex.
-- **Capability probe:** if `hermes` is not on PATH, the adapter is disabled and removed from the dispatch selector.
-
-## OpenCodeAdapter (`internal/adapter/opencode/`)
-
-Runs `opencode` interactively inside tmux. Same shape as the others.
-
-- **Dispatch:**
-  ```
-  tmux -L uam new-session -d -s uam-opencode-<id> -c <cwd> -x 200 -y 50 \
-    'env UAM_AGENT=opencode UAM_ID=<id> opencode --auto-approve'
-  tmux -L uam send-keys -t uam-opencode-<id> -l -- "<prompt>"
-  tmux -L uam send-keys -t uam-opencode-<id> Enter
-  ```
-- **List/Peek/Reply/Attach/Stop:** identical shape, prefix `uam-opencode-`.
-- **State detection** (`opencode/detect.go`): OpenCode's TUI uses its own spinner and prompt patterns; capture last 200 lines and classify via the same `Classify(lines) -> (State, ProcAlive, summary)` shape. `NeedsInput` triggers on tool-approval / file-edit confirmation prompts; `Failed` on red error banners.
-- **PR detection:** same regex.
-- **Capability probe:** if `opencode` is not on PATH, the adapter is disabled and removed from the dispatch selector.
+- **Dispatch:** creates `uam-<agent>-<id>` under `tmux -L uam`, sets `UAM_AGENT`/`UAM_ID`, starts the provider command, and sends the prompt literally with `send-keys -l`.
+- **List:** `tmux -L uam list-sessions -F ...`, filter `uam-<agent>-` prefix.
+- **Peek:** `tmux -L uam capture-pane -p -t <name> -S -200 -J`.
+- **Reply:** `send-keys -l -- "<text>"` then `send-keys Enter`.
+- **Attach:** `AttachSpec{argv: ["tmux", "-L", "uam", "attach", "-t", "uam-<agent>-<id>"]}` via `tea.ExecProcess`.
+- **Stop:** `tmux -L uam kill-session -t uam-<agent>-<id>`.
+- **State detection:** shared `adapter.ClassifyPane(paneAlive)` returns `Active`/`Alive` when the pane PID is live and `Failed`/`Exited` when it is not. It deliberately does not inspect pane text.
+- **PR detection:** regex `https://github.com/.../pull/\d+` against a captured pane tail; first match wins, cached in store, refreshed via `internal/pr` at most every 60s.
+- **Capability probe:** unavailable provider commands are disabled at startup and removed from the dispatch selector.
+- **Command alias:** `DispatchRequest.CommandAlias` replaces the provider command for that session only. `exec.LookPath` wins when the alias is an executable; otherwise `SHELL -ic` is used as a fallback for profile aliases/functions. Unsafe alias names containing shell metacharacters are rejected before launch.
 
 ### What we give up by not using `claude --bg`
 
-- No structured `state.json` — we screen-scrape instead.
-- No first-class "Ready for review" surfaced by Claude's daemon — we infer it from PR-URL presence + PR status, same as Codex.
+- No structured `state.json` — UAM uses tmux liveness and persisted metadata instead.
+- No first-class "Ready for review" surfaced by Claude's daemon — UAM shows PR status separately from lifecycle grouping.
 - No automatic daemon-managed lifecycle (idle timeout, auto-respawn) — tmux sessions live until killed.
 
 These are acceptable for uniformity. If we later add a `--claude-native` flag, it can opt back into the supervisor backend behind the same `AgentAdapter` interface.
-
-## CodexAdapter (`internal/adapter/codex/`)
-
-- **Dispatch:**
-  ```
-  tmux -L uam new-session -d -s uam-codex-<id> -c <cwd> -x 200 -y 50 \
-    'env UAM_AGENT=codex UAM_ID=<id> codex --sandbox danger-full-access'
-  tmux -L uam send-keys -t uam-codex-<id> -l -- "<prompt>"
-  tmux -L uam send-keys -t uam-codex-<id> Enter
-  ```
-  `-l` (literal) is critical so shell metacharacters aren't expanded. Fixed `-x 200 -y 50` so capture is deterministic regardless of who attaches.
-- **List:** `tmux -L uam list-sessions -F '#{session_name}|#{session_created}|...'`, filter `uam-codex-` prefix.
-- **Peek:** `tmux -L uam capture-pane -p -t <name> -S -200 -J`.
-- **Reply:** same `send-keys -l` + `Enter` pattern.
-- **Attach:** `AttachSpec{argv: ["tmux", "-L", "uam", "attach", "-t", "uam-codex-<id>"]}` via `tea.ExecProcess`.
-- **Stop:** `tmux -L uam kill-session -t uam-codex-<id>`.
-- **State detection** (`detect.go`) — pure function `Classify(lines []string) (State, ProcAlive, summary)`:
-  1. Pane process no longer `codex` → `Completed` + `Exited`.
-  2. Trailing lines match known Codex approval/continue prompt regex → `NeedsInput`.
-  3. Trailing line has spinner glyph (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` etc.) or known status string → `Working`.
-  4. Trailing line is the Codex idle prompt sigil (`>`, `❯`) → `Completed`.
-  5. Error markers without a prompt → `Failed`.
-  6. Else: `Working` if pane content hash changed within 10s, else `Completed`.
-  Summary = longest non-blank line in last 20 lines that isn't pure whitespace/spinner.
-- **Patterns** live in `patterns.go` as a versioned struct (`Spinners`, `PromptSigils`, `NeedsInputRegex`, ...) so we can tune without code churn.
-- **Optional v2:** `--classifier=llm` flag pipes last 50 lines to `claude -p` for `{state, summary}` JSON. Off by default.
 
 ## tmux Wrapper (`internal/tmux/tmux.go`)
 
@@ -234,17 +144,18 @@ All commands use private socket `-L uam` to isolate from the user's own tmux ser
 | Exists | `tmux -L uam has-session -t <name>` |
 | Pid alive | `tmux -L uam display -p -t <name> '#{pane_pid}'` then `kill -0 <pid>` |
 
-## Easy Mode Wizard (`internal/wizard/easy.go`)
+## Easy Mode Wizard (`internal/app/app.go`)
 
-Triggered by `uam new` (no args) from the shell, or pressing `e` from the TUI's table view. A three-step Bubble Tea sub-model:
+Triggered by `uam new` (no args) from the shell, or pressing `e` from the TUI's table view. A four-step Bubble Tea sub-model:
 
 1. **Pick provider** — list of enabled adapters (capability-probed at startup). Disabled providers are greyed out with the reason ("not on PATH"). Default selection is `default_agent` from `sessions.json`.
-2. **Pick workdir** — text input prefilled with the current `cwd`; `Tab` for filesystem completion; warn if the path is not a git repo (means no checkpoint will be created).
-3. **Enter prompt** — multiline input; `Ctrl+G` opens `$EDITOR` for a longer prompt; `Enter` sends, `Esc` cancels back to step 2.
+2. **Optional command alias** — blank uses the provider's default command; a value like `ghcp` is persisted as `command_alias` and reused on resume.
+3. **Pick workdir** — text input prefilled with the current `cwd`; `Tab` for filesystem completion; warn if the path is not a git repo (means no checkpoint will be created).
+4. **Enter prompt** — multiline input; `Ctrl+G` opens `$EDITOR` for a longer prompt; `Enter` sends, `Esc` cancels back to step 3.
 
 On submit: call the chosen adapter's `Dispatch`; after tmux session creation succeeds, write the session record to `sessions.json` (yolo mode). The new row appears immediately in the TUI.
 
-Power users skip the wizard with `uam dispatch <agent> "<prompt>"` or by typing `@<agent> <prompt>` into the TUI's dispatch input directly.
+Power users skip the wizard with `uam dispatch <agent> "<prompt>"`, `uam dispatch --alias ghcp copilot "<prompt>"`, or by typing `@<agent>[:alias] <prompt>` into the TUI's dispatch input directly.
 
 ## Session Resume (`internal/app` + adapters)
 
@@ -268,6 +179,7 @@ All subcommands share the TUI's code paths via `internal/app`:
 | `uam new` | Run the easy-mode wizard |
 | `uam dispatch <agent> "<prompt>"` | Headless dispatch; prints session id |
 | `uam dispatch --safe <agent> "<prompt>"` | Skip the provider's yolo flag |
+| `uam dispatch --alias ghcp copilot "<prompt>"` | Dispatch Copilot using command alias `ghcp` |
 | `uam attach <name-or-id>` | Resume session per the flow above |
 | `uam last` | Attach to most recent session |
 | `uam ls` | List sessions (one row per session, machine-readable with `--json`) |
@@ -279,23 +191,21 @@ All subcommands share the TUI's code paths via `internal/app`:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ unified-agent-manager   14 sessions   ●5 working  ●2 need input      │
+│ unified-agent-manager   14 sessions   Active 12   Closed 2           │
 ├──────────────────────────────────────────────────────────────────────┤
-│ NEEDS INPUT (2)                                                      │
-│  ● ◐ codex   refactor auth     approving git diff…   2m   ◐ open PR  │
-│  ● ◐ claude  fix flaky test    waiting for permission 15s            │
+│ ACTIVE (12)                                                          │
+│  ● ◐ codex   refactor auth     /home/user/repo       2m   ◐ open PR  │
+│  ●   claude  fix flaky test    /home/user/repo       15s             │
 │                                                                      │
-│ WORKING (5) ...                                                      │
-│ COMPLETED (5) ...                                                    │
-│ READY FOR REVIEW (2) ...                                             │
+│ CLOSED (2) ...                                                       │
 ├──────────────────────────────────────────────────────────────────────┤
 │ > _                                    [Enter] dispatch  [?] help    │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Icon: shape = process liveness (`●` alive, `◯` exited); color = state (yellow=needs input, blue=working, green=completed, purple=review, red=failed, grey=idle). PR dot: yellow=open, green=merged, purple=draft, grey=closed/none.
+Rows are grouped by the persisted closed flag: Active means not `store.StatusClosedByUser`, Closed means user-retired. Row glyphs reflect process liveness (`●` alive, `◯` exited) and closed status. PR dot: yellow=open, green=merged, purple=draft, grey=closed/none.
 
-### Keybindings (`internal/app/keymap.go`)
+### Keybindings (`internal/app/app.go`)
 
 | Key | Action |
 |---|---|
@@ -328,12 +238,13 @@ Path: `${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json`. Pattern adopted directl
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "default_agent": "claude",
   "sessions": {
     "claude:3d99e759": {
       "id": "3d99e759-...",
       "agent": "claude",
+      "command_alias": "claude-fast",
       "name": "fix flaky test",
       "mode": "yolo",
       "workdir": "/home/user/repo",
@@ -343,6 +254,7 @@ Path: `${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json`. Pattern adopted directl
       "pinned": true,
       "group": "repo",
       "sort_index": 0,
+      "status": "active",
       "pr": { "url": "...", "number": 42, "last_status": "open", "last_checked": "..." }
     }
   },
@@ -352,17 +264,18 @@ Path: `${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json`. Pattern adopted directl
 
 Invariants:
 - Composite key `agent:short_id` prevents cross-adapter id collisions.
-- Live state (Working/NeedsInput/Completed/Failed) is NEVER persisted — adapters re-derive it from tmux on every refresh.
-- Startup: prune entries whose tmux session no longer exists AND `last_seen_at` is older than 7 days.
+- `command_alias` is optional and scoped to the launch command; the canonical `agent` field remains the provider key used for grouping, tmux session names, and adapter selection.
+- Runtime liveness (`Active`/`Failed`, `Alive`/`Exited`) is never persisted — adapters re-derive it from tmux on every refresh.
+- `status` is persisted and drives UI grouping: active records stay in Active, `closed_by_user` records move to Closed.
 
-## Refresh Strategy (`internal/refresh/scheduler.go`)
+## Refresh Strategy (`internal/app/app.go`)
 
 Two signal sources merged into one Bubble Tea message stream:
 
-1. **Polling (tmux, both adapters):** every 2s, `tmux -L uam list-sessions` for appear/disappear of any `uam-*` session; for each visible session, `Peek` (capture-pane + classify) at most every 5s (per-session leaky bucket).
-2. **Slow tick (PR status):** every 60s per session with a known PR URL, fetch `gh pr view --json state,isDraft,mergedAt` (only if `gh` is on PATH).
+1. **Polling (tmux-backed adapters):** every 2s, list tmux sessions and classify each pane by PID liveness only. Pane capture is not used for lifecycle state.
+2. **PR scraping/status:** `TmuxAgent` captures a short pane tail for PR URL discovery with a per-session 60s rescan window; sessions with a known PR URL refresh `gh pr view --json state,isDraft,mergedAt` when `gh` is on PATH.
 
-Row-summary display cap: at most one update every 15s per row (matches Claude's documented cadence). Internal classification can update faster than the displayed text. While a session is peek-focused, its poll interval drops to 1s.
+While a session is peek-focused, its pane capture refreshes at most once per second so the peek panel follows live output without tying lifecycle state to pane text.
 
 ## Phased Build Order
 
@@ -371,13 +284,13 @@ Row-summary display cap: at most one update every 15s per row (matches Claude's 
 | 0 | Skeleton: `go mod init`, Makefile, file logger, empty Bubble Tea app | 0.5 |
 | 1 | `internal/store` (ctm-style: atomic write, flock, schema version, migrate, .bak) + `internal/tmux` wrapper on private socket `-L uam` | 1.5 |
 | 2 | ClaudeAdapter dispatch (yolo flag) / list / attach / stop; `uam dispatch`, `uam ls`, `uam attach`, `uam last`, `uam rm` subcommands | 2 |
-| 3 | TUI MVP: table, dispatch input, attach/stop key handlers; row colors by state (still flat list) | 1 |
+| 3 | TUI MVP: table, dispatch input, attach/stop key handlers; rows grouped Active/Closed | 1 |
 | 4 | Peek + Reply for Claude via capture-pane + send-keys; 2s tick scheduler | 1 |
-| 5 | Claude `detect.go` patterns + state grouping (Needs input / Working / Completed / Review) | 1.5 |
-| 6 | CodexAdapter (same shape, codex-specific patterns, `--sandbox danger-full-access`) + `@<agent>` selector | 1.5 |
-| 7 | CopilotAdapter + OpenCodeAdapter (same shape, their own `detect.go`, yolo flags, capability probe to hide unavailable agents) | 2 |
+| 5 | Shared liveness-only `ClassifyPane` + Active/Closed grouping | 1.5 |
+| 6 | CodexAdapter (`--sandbox danger-full-access`) + `@<agent>` selector | 1.5 |
+| 7 | CopilotAdapter + OpenCodeAdapter + capability probe to hide unavailable agents | 2 |
 | 8 | Easy-mode wizard (`uam new` + `e` keybinding) | 1 |
-| 9 | State-detection polish across all four: pane-hash demotion, `Failed` markers, optional `--classifier=llm` | 1.5 |
+| 9 | Liveness/status polish, closed-by-user handling, and resume behavior | 1.5 |
 | 10 | PR status dot via `gh` (all adapters) | 1 |
 | 11 | Pin / rename / group-by-dir / reorder, persisted to store | 1 |
 | 12 | `?` overlay, confirm overlays, prune-old, README screencast | 1 |
@@ -390,18 +303,15 @@ Total ≈ 15.5 working days (added store hardening, easy-mode wizard, Copilot + 
 - `/home/user/unified-agent-manager/internal/app/app.go`
 - `/home/user/unified-agent-manager/internal/adapter/adapter.go`
 - `/home/user/unified-agent-manager/internal/adapter/claude/claude.go`
-- `/home/user/unified-agent-manager/internal/adapter/claude/detect.go`
 - `/home/user/unified-agent-manager/internal/adapter/codex/codex.go`
-- `/home/user/unified-agent-manager/internal/adapter/codex/detect.go`
 - `/home/user/unified-agent-manager/internal/adapter/copilot/copilot.go`
-- `/home/user/unified-agent-manager/internal/adapter/copilot/detect.go`
+- `/home/user/unified-agent-manager/internal/adapter/hermes/hermes.go`
+- `/home/user/unified-agent-manager/internal/adapter/omp/omp.go`
 - `/home/user/unified-agent-manager/internal/adapter/opencode/opencode.go`
-- `/home/user/unified-agent-manager/internal/adapter/opencode/detect.go`
+- `/home/user/unified-agent-manager/internal/adapter/tmux_adapter.go`
+- `/home/user/unified-agent-manager/internal/adapter/detect.go`
 - `/home/user/unified-agent-manager/internal/tmux/tmux.go`
 - `/home/user/unified-agent-manager/internal/store/store.go`
-- `/home/user/unified-agent-manager/internal/store/migrate.go`
-- `/home/user/unified-agent-manager/internal/wizard/easy.go`
-- `/home/user/unified-agent-manager/internal/refresh/scheduler.go`
 
 ## Reused Patterns / External Reference
 
@@ -419,25 +329,25 @@ Per-phase manual tests (Phase N is "done" only when its test passes end to end):
 |---|---|
 | 1 | `uam` → type "list files" Enter → `tmux -L uam ls` shows `uam-claude-<id>` → row appears in TUI → `Enter` attaches into the live Claude session → detach (Ctrl-b d) → back in TUI → `Ctrl+X` removes row → `tmux -L uam ls` no longer shows it |
 | 2 | Dispatch a prompt that asks a question → `Space` opens peek showing the captured pane tail → type answer + Enter → peek refreshes with Claude's next message within 2s |
-| 3 | Dispatch three jobs in different states (one mid-tool, one awaiting permission, one idle) — rows grouped under right headers with correct colors; timestamps update at most every 15s |
+| 3 | Dispatch jobs and stop one through UAM — live records stay under Active, user-retired records move under Closed |
 | 4 | `tmux -L uam ls` lists both `uam-claude-<id>` and `uam-codex-<id>` sessions; external `tmux -L uam kill-session` on either makes the row disappear within one tick |
 | 5 | Copilot/OpenCode agents appear in dispatch selector only when their CLIs are on PATH; dispatching to each spawns `uam-copilot-<id>` / `uam-opencode-<id>` and round-trips dispatch/peek/reply/attach/stop |
-| 5 | Leave a Codex session at idle prompt → row turns green within 15s; trigger spinner → row turns blue within 2s; cause an error → row turns red |
+| 5 | Kill a managed pane externally → liveness becomes Exited/Failed without relying on pane text; attach can resume active records |
 | 6 | Have an agent open a PR → dot appears yellow; close PR via `gh` → dot turns grey within 60s |
 | 7 | Pin a session; restart `uam` → pin survives. Rename a session → tmux name unchanged, display name updates. Toggle group-by-dir → rows regroup by `cwd` basename |
 | 8 | `uam --help`, `uam ls`, `uam dispatch claude "hi"`, `uam stop <id>` all behave like their TUI equivalents |
+| 9 | `uam dispatch --alias ghcp copilot "hi"`, `uam new` with alias `ghcp`, and TUI `@copilot:ghcp hi` all persist `command_alias`; killing the tmux session and attaching resumes with the same alias |
 
 Automated tests focus on these pure layers:
 - `internal/store` — JSON round-trip
 - `internal/tmux/parse.go` — parse `list-sessions -F` output
-- `internal/adapter/claude/detect.go` — classification against captured Claude pane fixtures
-- `internal/adapter/codex/detect.go` — classification against captured Codex pane fixtures
-- `internal/adapter/copilot/detect.go` — classification against captured Copilot pane fixtures
-- `internal/adapter/opencode/detect.go` — classification against captured OpenCode pane fixtures
+- `internal/adapter/detect.go` — liveness-only classification and PR URL extraction
+- `internal/adapter/tmux_adapter.go` — shared tmux adapter behavior
+- command alias coverage — CLI flag parsing, `uam new` alias step, TUI `@agent:alias` parsing, store JSON round-trip/merge, resume reuse, PATH executable preference, shell fallback, unsafe alias rejection
 
 ## Risks / Caveats
 
-- **Pattern fragility.** Both Claude's and Codex's prompt sigils, spinner glyphs, and "needs input" wording are unstable surfaces — they change with CLI updates. `patterns.go` for each adapter MUST be table-tested and easy to override via config without recompiling. Phase 5 budgets a full day for tuning against captured fixtures.
-- **No supervisor for either agent.** A machine reboot or tmux server kill drops every session. We do not attempt to restore Claude sessions via `claude --resume <sessionId>` in MVP (Claude no longer manages them for us). A future enhancement could pair tmux session names with Claude session IDs and re-spawn on startup.
+- **Limited lifecycle signal.** Liveness-only classification avoids fragile pane scraping, but it cannot distinguish working, idle, or waiting-for-input states. Peek remains the source of detail.
+- **No supervisor for managed providers.** A machine reboot or tmux server kill drops every session. UAM resumes through provider-specific commands when available, but tmux remains the runtime backbone.
 - **Permission modes.** Auto-accepting permissions for unattended sessions is intentionally NOT plumbed in MVP. Both CLIs handle this themselves; we don't override.
-- **TTY sizing.** `-x 200 -y 50` is a deterministic but fixed size. Very wide TUIs that wrap differently could confuse pattern matching; we capture with `-J` (join wrapped lines) to mitigate, but Phase 5 should validate on multiple terminal widths.
+- **TTY sizing.** `-x 200 -y 50` is a deterministic but fixed size. Very wide TUIs can wrap differently in peek output, but lifecycle state no longer depends on parsing that output.

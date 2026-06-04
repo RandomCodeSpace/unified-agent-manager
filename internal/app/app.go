@@ -46,6 +46,7 @@ type Model struct {
 	wizard         bool
 	wizardStep     int
 	wizardAgent    string
+	wizardAlias    string
 	wizardCwd      string
 	groupByDir     bool
 	execProcess    func(*exec.Cmd, tea.ExecCallback) tea.Cmd
@@ -619,7 +620,7 @@ func (m *Model) handleEnterKey() tea.Cmd {
 	}
 	if strings.TrimSpace(m.input) != "" {
 		spec := parseDispatchSpec(m.input, m.defaultAgent)
-		return m.dispatchNamedCmd(spec.Agent, spec.Name, spec.Prompt)
+		return m.dispatchNamedCmd(spec.Agent, spec.Alias, spec.Name, spec.Prompt)
 	}
 	if len(m.sessions) > 0 {
 		return m.attachSelectedCmd()
@@ -656,6 +657,7 @@ func (m *Model) handleEditKey(key string) {
 	m.wizard = true
 	m.wizardStep = 0
 	m.input = ""
+	m.wizardAlias = ""
 	m.wizardCwd = "."
 }
 
@@ -733,8 +735,10 @@ func (m *Model) handleWizardStepKey(key string) (tea.Cmd, bool) {
 	case 0:
 		return m.handleWizardAgentKey(key)
 	case 1:
-		return m.handleWizardCwdKey(key)
+		return m.handleWizardAliasKey(key)
 	case 2:
+		return m.handleWizardCwdKey(key)
+	case 3:
 		return m.handleWizardPromptKey(key)
 	}
 	return nil, false
@@ -751,6 +755,17 @@ func (m *Model) handleWizardAgentKey(key string) (tea.Cmd, bool) {
 			m.wizardAgent = m.defaultAgent
 		}
 		m.wizardStep = 1
+		m.input = m.wizardAlias
+		return nil, true
+	}
+	return nil, false
+}
+
+func (m *Model) handleWizardAliasKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "enter":
+		m.wizardAlias = strings.TrimSpace(m.input)
+		m.wizardStep = 2
 		m.input = m.wizardCwd
 		return nil, true
 	}
@@ -766,7 +781,7 @@ func (m *Model) handleWizardCwdKey(key string) (tea.Cmd, bool) {
 		return nil, true
 	case "enter":
 		m.wizardCwd = firstNonEmpty(m.input, ".")
-		m.wizardStep = 2
+		m.wizardStep = 3
 		m.input = ""
 		return nil, true
 	}
@@ -782,9 +797,12 @@ func (m *Model) handleWizardPromptKey(key string) (tea.Cmd, bool) {
 		return m.editPromptCmd(), true
 	case "enter":
 		spec := parseDispatchSpec(m.input, firstNonEmpty(m.wizardAgent, m.defaultAgent))
+		if spec.Alias == "" {
+			spec.Alias = m.wizardAlias
+		}
 		cwd := m.wizardCwd
 		m.closeWizard()
-		return m.dispatchWithNameCwdCmd(spec.Agent, spec.Name, spec.Prompt, cwd), true
+		return m.dispatchWithNameCwdCmd(spec.Agent, spec.Alias, spec.Name, spec.Prompt, cwd), true
 	}
 	return nil, false
 }
@@ -902,31 +920,50 @@ func (m *Model) cycleDefaultAgent() {
 
 type dispatchSpec struct {
 	Agent  string
+	Alias  string
 	Name   string
 	Prompt string
 }
 
 func parseDispatchSpec(input, def string) dispatchSpec {
-	fields := strings.Fields(input)
 	spec := dispatchSpec{Agent: def}
-	if len(fields) > 0 && strings.HasPrefix(fields[0], "@") {
-		spec.Agent = strings.TrimPrefix(fields[0], "@")
-		fields = fields[1:]
+	rest := strings.TrimLeft(input, " \t")
+	if token, next, ok := consumeDispatchToken(rest, "@"); ok {
+		spec.Agent, spec.Alias = splitAgentAlias(token)
+		rest = next
 	}
-	if len(fields) > 0 && strings.HasPrefix(fields[0], "#") {
-		spec.Name = strings.TrimPrefix(fields[0], "#")
-		fields = fields[1:]
+	if token, next, ok := consumeDispatchToken(rest, "#"); ok {
+		spec.Name = token
+		rest = next
 	}
-	spec.Prompt = strings.Join(fields, " ")
+	spec.Prompt = rest
 	return spec
 }
 
-func (m Model) dispatchNamedCmd(agent, name, prompt string) tea.Cmd {
-	return m.dispatchWithNameCwdCmd(agent, name, prompt, "")
+func splitAgentAlias(token string) (agent, alias string) {
+	if agent, alias, ok := strings.Cut(token, ":"); ok {
+		return agent, alias
+	}
+	return token, ""
 }
-func (m Model) dispatchWithNameCwdCmd(agent, name, prompt, cwd string) tea.Cmd {
+
+func consumeDispatchToken(input, prefix string) (token, rest string, ok bool) {
+	if !strings.HasPrefix(input, prefix) {
+		return "", input, false
+	}
+	withoutPrefix := input[len(prefix):]
+	if i := strings.IndexAny(withoutPrefix, " \t"); i >= 0 {
+		return withoutPrefix[:i], strings.TrimLeft(withoutPrefix[i:], " \t"), true
+	}
+	return withoutPrefix, "", true
+}
+
+func (m Model) dispatchNamedCmd(agent, alias, name, prompt string) tea.Cmd {
+	return m.dispatchWithNameCwdCmd(agent, alias, name, prompt, "")
+}
+func (m Model) dispatchWithNameCwdCmd(agent, alias, name, prompt, cwd string) tea.Cmd {
 	return func() tea.Msg {
-		sess, err := m.service.DispatchNamed(context.Background(), agent, name, prompt, cwd, string(store.ModeYolo))
+		sess, err := m.service.DispatchNamedWithAlias(context.Background(), agent, alias, name, prompt, cwd, string(store.ModeYolo))
 		return dispatchedMsg{session: sess, err: err}
 	}
 }
@@ -1226,8 +1263,8 @@ func (m Model) renderTable() string {
 	// reboot-survivors that will resume on attach) and Closed (the user
 	// explicitly retired these via uam stop, exit-in-session, or external
 	// tmux kill-session).
-	g1 := m.renderGroup("ACTIVE", active, start, end, false, nameWidth, taskWidth, showTask)
-	g2 := m.renderGroup("CLOSED", closed, start, end, true, nameWidth, taskWidth, showTask)
+	g1 := m.renderGroup(groupRenderOptions{label: "ACTIVE", total: active, start: start, end: end, wantClosed: false, nameWidth: nameWidth, taskWidth: taskWidth, showTask: showTask})
+	g2 := m.renderGroup(groupRenderOptions{label: "CLOSED", total: closed, start: start, end: end, wantClosed: true, nameWidth: nameWidth, taskWidth: taskWidth, showTask: showTask})
 	b.WriteString(g1)
 	if g1 != "" && g2 != "" {
 		b.WriteString("\n")
@@ -1239,22 +1276,33 @@ func (m Model) renderTable() string {
 	return b.String()
 }
 
+type groupRenderOptions struct {
+	label      string
+	total      int
+	start      int
+	end        int
+	wantClosed bool
+	nameWidth  int
+	taskWidth  int
+	showTask   bool
+}
+
 // renderGroup renders the windowed sessions whose Closed flag matches
 // wantClosed under a section header. Empty groups render nothing.
-func (m Model) renderGroup(label string, total, start, end int, wantClosed bool, nameWidth, taskWidth int, showTask bool) string {
+func (m Model) renderGroup(opts groupRenderOptions) string {
 	var rows []string
-	for i := start; i < end; i++ {
+	for i := opts.start; i < opts.end; i++ {
 		s := m.sessions[i]
-		if s.Closed != wantClosed {
+		if s.Closed != opts.wantClosed {
 			continue
 		}
-		rows = append(rows, renderRow(s, i == m.selected, nameWidth, taskWidth, showTask))
+		rows = append(rows, renderRow(s, i == m.selected, opts.nameWidth, opts.taskWidth, opts.showTask))
 	}
 	if len(rows) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(m.renderSection(label, fmt.Sprintf("%d", total)) + "\n")
+	b.WriteString(m.renderSection(opts.label, fmt.Sprintf("%d", opts.total)) + "\n")
 	for _, r := range rows {
 		b.WriteString(r + "\n")
 	}
@@ -1403,7 +1451,7 @@ func (m Model) renderHelp() string {
 		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
 		"Ctrl+X  stop/remove      Ctrl+S  group-by-dir",
 		"e  new session       Esc  quit",
-		"dispatch:  @agent #name prompt   (name & prompt optional)",
+		"dispatch:  @agent:alias #name prompt   (alias, name & prompt optional)",
 	}
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("Keys:") + "\n")
@@ -1424,6 +1472,7 @@ func (m Model) renderConfirm() string {
 func (m Model) renderWizard() string {
 	steps := []string{
 		"provider — Tab cycles, Enter confirms:  " + firstNonEmpty(m.wizardAgent, m.defaultAgent),
+		"command alias — blank uses provider default:  " + m.input,
 		"working directory:  " + m.input,
 		"#name prompt — both optional:  " + m.input,
 	}
@@ -1432,10 +1481,10 @@ func (m Model) renderWizard() string {
 		step = 0
 	}
 	var b strings.Builder
-	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 3", step+1)) + "\n")
+	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 4", step+1)) + "\n")
 	b.WriteString("  " + titleStyle.Render(steps[step]) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
 	switch step {
-	case 1:
+	case 2:
 		// Warn when the chosen working directory is not inside a git repo: there
 		// is no checkpoint to recover the agent's work from (C2-8).
 		dir := firstNonEmpty(m.input, ".")
@@ -1443,7 +1492,7 @@ func (m Model) renderWizard() string {
 			b.WriteString("  " + warnStyle.Render("⚠ not a git repo — no checkpoint to recover the agent's work") + "\n")
 		}
 		b.WriteString("  " + hintStyle.Render("Tab completes a path  ·  Esc cancels") + "\n")
-	case 2:
+	case 3:
 		b.WriteString("  " + hintStyle.Render("Ctrl+G opens $EDITOR  ·  Esc cancels") + "\n")
 	default:
 		b.WriteString("  " + hintStyle.Render("Esc cancels") + "\n")

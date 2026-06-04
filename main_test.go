@@ -95,7 +95,7 @@ func TestRunNew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = w.WriteString("claude\n/tmp\nfrom wizard\n")
+	_, _ = w.WriteString("claude\n\n/tmp\nfrom wizard\n")
 	_ = w.Close()
 	os.Stdin = r
 	defer func() { os.Stdin = old }()
@@ -109,27 +109,44 @@ func TestRunNew(t *testing.T) {
 	}
 }
 
-// F54 — `uam new` must reject an empty final prompt instead of dispatching an
-// empty-prompt session and exiting 0.
-func TestRunNewRejectsEmptyPrompt(t *testing.T) {
+// F54 — `uam new` keeps the prompt optional: a blank final prompt dispatches a
+// prompt-less session and exits 0.
+func TestRunNewAllowsEmptyPrompt(t *testing.T) {
 	dir := setupFakeCLIEnv(t)
-	t.Setenv("UAM_CONFIG_DIR", filepath.Join(dir, "cfg-empty-prompt"))
+	cfgDir := filepath.Join(dir, "cfg-empty-prompt")
+	t.Setenv("UAM_CONFIG_DIR", cfgDir)
 	old := os.Stdin
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = w.WriteString("claude\n/tmp\n\n")
+	_, _ = w.WriteString("claude\n\n/tmp\n\n")
 	_ = w.Close()
 	os.Stdin = r
 	defer func() { os.Stdin = old }()
 	out := captureStdout(t, func() {
-		if err := run(context.Background(), []string{"new"}); err == nil {
-			t.Fatal("expected run new to reject an empty prompt")
+		if err := run(context.Background(), []string{"new"}); err != nil {
+			t.Fatal(err)
 		}
 	})
-	if strings.Contains(out, "dispatched") {
-		t.Fatalf("a rejected new must not dispatch, out=%q", out)
+	if !strings.Contains(out, "dispatched") {
+		t.Fatalf("new should dispatch without a prompt, out=%q", out)
+	}
+	st, err := store.Open(filepath.Join(cfgDir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(cfg.Sessions))
+	}
+	for _, rec := range cfg.Sessions {
+		if rec.Prompt != "" {
+			t.Fatalf("prompt = %q, want empty", rec.Prompt)
+		}
 	}
 }
 

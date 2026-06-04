@@ -3,6 +3,7 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -202,6 +203,160 @@ exit 0
 		if !strings.Contains(logText, want) {
 			t.Fatalf("resume log missing %q: %s", want, logText)
 		}
+	}
+}
+
+func TestTmuxAgentCommandAliasOnPathReplacesDefaultCommand(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "ghcp"), "#!/bin/sh\nexit 0\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+exit 0
+`)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", []CommandCandidate{{Display: "fakeagent", Args: []string{"fakeagent"}}}, []string{"--yolo"}, client)
+	ag.SessionArgs = func(req ResumeRequest, activity string) []string { return []string{"--session", req.ID} }
+
+	sess, err := ag.Dispatch(context.Background(), DispatchRequest{CommandAlias: "ghcp", Cwd: "/tmp", Mode: "yolo"})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if sess.AgentType != "fake" || sess.CommandAlias != "ghcp" {
+		t.Fatalf("alias dispatch should keep agent type and alias, got %+v", sess)
+	}
+	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
+	if !strings.Contains(logText, filepath.Join(dir, "ghcp")+" --yolo --session "+sess.ID) {
+		t.Fatalf("alias on PATH should launch resolved alias command with yolo/session args: %s", logText)
+	}
+	if strings.Contains(logText, "fakeagent") {
+		t.Fatalf("alias should replace the default candidate, got: %s", logText)
+	}
+}
+
+func TestTmuxAgentCommandAliasFallsBackToInteractiveShell(t *testing.T) {
+	dir := t.TempDir()
+	shellPath := filepath.Join(dir, "shell")
+	writeExecutable(t, shellPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$SHELL_LOG"
+case "$*" in
+  *"type ghcp"*) exit 0 ;;
+esac
+exit 1
+`)
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_LOG"
+exit 0
+`)
+	t.Setenv("PATH", dir)
+	t.Setenv("SHELL", shellPath)
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+	t.Setenv("SHELL_LOG", filepath.Join(dir, "shell.log"))
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", nil, []string{"--yolo"}, client)
+	ag.SessionArgs = func(req ResumeRequest, activity string) []string { return []string{"two words", "semi;colon"} }
+
+	if _, err := ag.Dispatch(context.Background(), DispatchRequest{CommandAlias: "ghcp", Cwd: "/tmp", Mode: "yolo"}); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	logData, _ := os.ReadFile(logPath)
+	logText := string(logData)
+	if !strings.Contains(logText, shellPath+" -ic") || !strings.Contains(logText, "ghcp --yolo") {
+		t.Fatalf("missing interactive shell fallback: %s", logText)
+	}
+	if !strings.Contains(logText, "'two words'") || !strings.Contains(logText, "'semi;colon'") {
+		t.Fatalf("fallback must shell-quote non-alias args: %s", logText)
+	}
+	shellData, _ := os.ReadFile(filepath.Join(dir, "shell.log"))
+	if !strings.Contains(string(shellData), "type ghcp") {
+		t.Fatalf("fallback should preflight alias in interactive shell: %s", shellData)
+	}
+}
+
+func TestTmuxAgentCommandAliasMissingFromShellFailsBeforeCreate(t *testing.T) {
+	dir := t.TempDir()
+	shellPath := filepath.Join(dir, "shell")
+	writeExecutable(t, shellPath, "#!/bin/sh\nexit 1\n")
+	tmuxPath := filepath.Join(dir, "tmux")
+	writeExecutable(t, tmuxPath, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TMUX_LOG\"\nexit 0\n")
+	t.Setenv("PATH", dir)
+	t.Setenv("SHELL", shellPath)
+	logPath := filepath.Join(dir, "tmux.log")
+	t.Setenv("TMUX_LOG", logPath)
+	client := tmux.New("uam")
+	client.Executable = tmuxPath
+	ag := NewTmuxAgent("fake", "Fake Agent", nil, nil, client)
+
+	_, err := ag.Dispatch(context.Background(), DispatchRequest{CommandAlias: "ghcp", Cwd: "/tmp", Mode: "yolo"})
+	if err == nil || !strings.Contains(err.Error(), "not found on PATH or in interactive shell") {
+		t.Fatalf("Dispatch error = %v, want missing alias", err)
+	}
+	if data, _ := os.ReadFile(logPath); len(data) != 0 {
+		t.Fatalf("tmux session should not be created for missing alias: %s", data)
+	}
+}
+
+func TestTmuxAgentRejectsUnsafeCommandAlias(t *testing.T) {
+	ag := NewTmuxAgent("fake", "Fake Agent", nil, nil, nil)
+	for _, alias := range []string{"-ghcp", "gh/cp", "gh cp", "gh;cp", "gh$cp", "gh`cp`"} {
+		t.Run(alias, func(t *testing.T) {
+			_, err := ag.Dispatch(context.Background(), DispatchRequest{CommandAlias: alias})
+			if err == nil || !strings.Contains(err.Error(), "invalid command alias") {
+				t.Fatalf("Dispatch error = %v, want invalid alias", err)
+			}
+		})
+	}
+}
+
+func TestDispatchReturnsRandomIDError(t *testing.T) {
+	wantErr := errors.New("random unavailable")
+	ag := NewTmuxAgent("fake", "Fake Agent", nil, nil, nil)
+	ag.randomReader = errReader{err: wantErr}
+
+	_, err := ag.Dispatch(context.Background(), DispatchRequest{})
+	if err == nil {
+		t.Fatal("expected dispatch error when random ID generation fails")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("dispatch error should wrap random reader error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "generate session id") {
+		t.Fatalf("dispatch error should include ID generation context, got: %v", err)
+	}
+}
+
+func TestResumeReturnsRandomIDErrorWhenIDMissing(t *testing.T) {
+	wantErr := errors.New("random unavailable")
+	ag := NewTmuxAgent("fake", "Fake Agent", nil, nil, nil)
+	ag.randomReader = errReader{err: wantErr}
+
+	_, err := ag.Resume(context.Background(), ResumeRequest{})
+	if err == nil {
+		t.Fatal("expected resume error when random ID generation fails")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("resume error should wrap random reader error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "generate session id") {
+		t.Fatalf("resume error should include ID generation context, got: %v", err)
+	}
+}
+
+func TestNewIDKeepsUUIDFormat(t *testing.T) {
+	id, err := newID(bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}))
+	if err != nil {
+		t.Fatalf("newID: %v", err)
+	}
+	if id != "00010203-0405-4607-8809-0a0b0c0d0e0f" {
+		t.Fatalf("id = %q, want UUID v4 format with version/variant bits", id)
 	}
 }
 
@@ -468,4 +623,12 @@ func writeExecutable(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type errReader struct {
+	err error
+}
+
+func (r errReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
