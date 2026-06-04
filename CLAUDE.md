@@ -27,13 +27,12 @@ cmd/uam, main.go            entrypoints (main.go = compat shim)
 internal/cli                argument routing, command dispatch
 internal/app                Service (business logic) + Bubble Tea Model
 internal/adapter            AgentAdapter interface, shared TmuxAgent,
-                            Registry, pane state classification (detect.go)
+                            Registry, liveness classification (detect.go)
 internal/adapter/<provider> per-agent factories (claude, codex, copilot,
-                            hermes, opencode) — each ~10 lines
+                            hermes, omp, opencode) — each ~10 lines
 internal/tmux               all tmux shell-out logic
 internal/store              sessions.json: flock, atomic write, migration
 internal/pr                 optional `gh pr view` status lookup
-internal/refresh            refresh ticker policy
 internal/{log,version,execpath}  support packages
 ```
 
@@ -51,6 +50,7 @@ Providers are capability-probed at startup; unavailable CLIs are hidden.
 - **`#nosec` annotations** are deliberate and documented inline — preserve
   the rationale comment when editing nearby code.
 - **Store writes** must stay atomic (temp file + rename) and flock-guarded.
+- **Command aliases** are launch-command overrides, not provider names. Preserve the canonical `agent`, persist aliases as `command_alias`, prefer PATH executables, and keep the interactive-shell fallback for profile aliases/functions.
 - New providers: add an `internal/adapter/<name>` factory using
   `adapter.NewTmuxAgent`, register it in `cli.NewService`.
 
@@ -62,5 +62,9 @@ Run before declaring work done:
 ```sh
 go vet ./... && gofmt -l . && go test ./...
 ```
+
+For command alias changes, cover `uam dispatch --alias`, `uam new`'s alias
+prompt, TUI `@agent:alias`, `command_alias` persistence, resume reuse, PATH
+executable preference, shell fallback, and unsafe alias rejection.
 
 CI also runs `govulncheck`, `gosec`, SonarCloud, and CodeQL on `main`/PRs.

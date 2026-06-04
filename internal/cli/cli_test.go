@@ -32,7 +32,7 @@ func (f *cliFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
-	sess := adapter.Session{ID: "abc12345", AgentType: "fake", DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	sess := adapter.Session{ID: "abc12345", AgentType: "fake", CommandAlias: req.CommandAlias, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	f.sessions = append(f.sessions, sess)
 	return sess, nil
 }
@@ -80,6 +80,14 @@ func TestCLIArgumentValidationAndParsing(t *testing.T) {
 	if name != "" || prompt != "do work" {
 		t.Fatalf("name=%q prompt=%q", name, prompt)
 	}
+	name, prompt = parseNameAndPrompt([]string{"#name", "do   work", "\twith tabs"})
+	if name != "name" || prompt != "do   work \twith tabs" {
+		t.Fatalf("name=%q prompt=%q", name, prompt)
+	}
+	name, prompt = parseNameAndPrompt([]string{"do   work", "\twith tabs"})
+	if name != "" || prompt != "do   work \twith tabs" {
+		t.Fatalf("name=%q prompt=%q", name, prompt)
+	}
 }
 
 func TestRunWithTUIHelpVersionAndDefault(t *testing.T) {
@@ -125,7 +133,7 @@ func TestRunCommandAttachLastAndNew(t *testing.T) {
 		t.Fatalf("TUI calls=%d", tuiCalls)
 	}
 	out := captureCLIStdout(t, func() {
-		withCLIStdin(t, "fake\n/tmp\n#from-new prompt\n", func() { must(t, runNew(context.Background(), svc)) })
+		withCLIStdin(t, "fake\n\n/tmp\n#from-new prompt\n", func() { must(t, runNew(context.Background(), svc)) })
 	})
 	if !strings.Contains(out, "dispatched") {
 		t.Fatalf("new output=%q", out)

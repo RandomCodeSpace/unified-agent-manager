@@ -137,7 +137,7 @@ func TestRenameIgnoresAltChord(t *testing.T) {
 func TestWizardInputAcceptsMultibyteAndIgnoresAlt(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.wizard = true
-	m.wizardStep = 2
+	m.wizardStep = 3
 	m.input = ""
 	model, _ := m.handleWizardKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("café 世界")})
 	m = model.(Model)

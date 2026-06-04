@@ -45,20 +45,21 @@ type PRRef struct {
 }
 
 type Session struct {
-	ID          string
-	AgentType   string
-	DisplayName string
-	Prompt      string
-	Cwd         string
-	TmuxSession string
-	State       State
-	ProcAlive   ProcLiveness
-	LastChange  time.Time
-	CreatedAt   time.Time
-	PR          *PRRef
-	Pinned      bool
-	Group       string
-	SortIndex   int
+	ID           string
+	AgentType    string
+	CommandAlias string
+	DisplayName  string
+	Prompt       string
+	Cwd          string
+	TmuxSession  string
+	State        State
+	ProcAlive    ProcLiveness
+	LastChange   time.Time
+	CreatedAt    time.Time
+	PR           *PRRef
+	Pinned       bool
+	Group        string
+	SortIndex    int
 	// Closed mirrors store.StatusClosedByUser: true when the user retired
 	// this session through uam (`uam stop`, exit-in-session via the tmux
 	// hook, or an external `tmux kill-session`). False otherwise — including
@@ -74,13 +75,14 @@ type PeekResult struct {
 type AttachSpec struct{ Argv []string }
 
 type ResumeRequest struct {
-	ID          string
-	Name        string
-	Prompt      string
-	Cwd         string
-	Mode        string
-	TmuxSession string
-	CreatedAt   time.Time
+	ID           string
+	Name         string
+	CommandAlias string
+	Prompt       string
+	Cwd          string
+	Mode         string
+	TmuxSession  string
+	CreatedAt    time.Time
 }
 
 type ResumableAdapter interface {
@@ -96,10 +98,11 @@ type HasSessionAdapter interface {
 }
 
 type DispatchRequest struct {
-	Prompt string
-	Cwd    string
-	Mode   string
-	Name   string
+	Prompt       string
+	Cwd          string
+	Mode         string
+	Name         string
+	CommandAlias string
 }
 
 type AgentAdapter interface {

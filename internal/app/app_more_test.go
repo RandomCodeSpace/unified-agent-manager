@@ -80,11 +80,22 @@ func assertDispatchParsing(t *testing.T, m Model) {
 	if spec.Agent != "fake" || spec.Name != "my-session" || spec.Prompt != "do work" {
 		t.Fatalf("spec=%+v", spec)
 	}
+	spec = parseDispatchSpec("@fake:review #my-session do work", "claude")
+	if spec.Agent != "fake" || spec.Alias != "review" || spec.Name != "my-session" || spec.Prompt != "do work" {
+		t.Fatalf("alias spec=%+v", spec)
+	}
+	spec = parseDispatchSpec("@fake   #my-session   do   work\twith tabs", "claude")
+	if spec.Agent != "fake" || spec.Alias != "" || spec.Name != "my-session" || spec.Prompt != "do   work\twith tabs" {
+		t.Fatalf("spaced spec=%+v", spec)
+	}
 	spec = parseDispatchSpec("@fake #my-session", "claude")
 	if spec.Agent != "fake" || spec.Name != "my-session" || spec.Prompt != "" {
 		t.Fatalf("named no-prompt spec=%+v", spec)
 	}
 	if spec := parseDispatchSpec("do work", "claude"); spec.Prompt != "do work" || spec.Agent != "claude" {
+		t.Fatalf("%q %q", spec.Prompt, spec.Agent)
+	}
+	if spec := parseDispatchSpec("do   work\twith tabs", "claude"); spec.Prompt != "do   work\twith tabs" || spec.Agent != "claude" {
 		t.Fatalf("%q %q", spec.Prompt, spec.Agent)
 	}
 	if sess, ok := m.selectedSession(); !ok || sess.ID != "1" {
@@ -269,6 +280,9 @@ func TestWizardAndRenameKeys(t *testing.T) {
 	m = model.(Model)
 	if m.wizardStep != 1 {
 		t.Fatalf("step=%d", m.wizardStep)
+	}
+	if m.input != "" {
+		t.Fatalf("alias input=%q", m.input)
 	}
 	model, _ = m.handleWizardKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	m = model.(Model)

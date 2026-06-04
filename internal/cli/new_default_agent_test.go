@@ -14,7 +14,7 @@ func TestRunNewReconcilesDisabledTypedProvider(t *testing.T) {
 	svc, _ := newCLITestService(t) // only "fake" is enabled
 	out := captureCLIStdout(t, func() {
 		// Type a disabled provider ("claude") at the prompt.
-		withCLIStdin(t, "claude\n/tmp\ndo work\n", func() { must(t, runNew(context.Background(), svc)) })
+		withCLIStdin(t, "claude\n\n/tmp\ndo work\n", func() { must(t, runNew(context.Background(), svc)) })
 	})
 	if !strings.Contains(out, "dispatched") {
 		t.Fatalf("new should dispatch after reconciling the typed provider; out=%q", out)
@@ -25,7 +25,7 @@ func TestRunNewReconcilesDisabledTypedProvider(t *testing.T) {
 func TestRunNewKeepsEnabledTypedProvider(t *testing.T) {
 	svc, fake := newCLITestService(t)
 	captureCLIStdout(t, func() {
-		withCLIStdin(t, "fake\n/tmp\ndo work\n", func() { must(t, runNew(context.Background(), svc)) })
+		withCLIStdin(t, "fake\n\n/tmp\ndo work\n", func() { must(t, runNew(context.Background(), svc)) })
 	})
 	if len(fake.sessions) == 0 {
 		t.Fatal("dispatch to the enabled typed provider should have created a session")

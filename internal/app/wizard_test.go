@@ -83,7 +83,7 @@ func TestGlobCompleteNoMatchKeepsInput(t *testing.T) {
 func TestWizardWorkdirShowsNoGitWarning(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.wizard = true
-	m.wizardStep = 1
+	m.wizardStep = 2
 	m.input = t.TempDir() // not a git repo
 	out := m.renderWizard()
 	if !strings.Contains(strings.ToLower(out), "checkpoint") && !strings.Contains(strings.ToLower(out), "not a git") {
@@ -100,12 +100,39 @@ func TestWizardWorkdirTabCompletes(t *testing.T) {
 	}
 	m := NewWithDeps(nil, nil)
 	m.wizard = true
-	m.wizardStep = 1
+	m.wizardStep = 2
 	m.input = filepath.Join(dir, "compl")
 	model, _ := m.handleWizardKey(keyMsg("tab"))
 	m = model.(Model)
 	if m.input != target {
 		t.Fatalf("Tab should complete the path to %q, got %q", target, m.input)
+	}
+}
+
+func TestWizardAliasStepBetweenProviderAndWorkdir(t *testing.T) {
+	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
+	m.wizard = true
+	m.defaultAgent = "fake"
+	m.wizardCwd = "."
+
+	model, _ := m.handleWizardKey(keyMsg("enter"))
+	m = model.(Model)
+	if m.wizardStep != 1 || m.input != "" {
+		t.Fatalf("after provider step=%d input=%q", m.wizardStep, m.input)
+	}
+
+	model, _ = m.handleWizardKey(keyMsg("enter"))
+	m = model.(Model)
+	if m.wizardAlias != "" || m.wizardStep != 2 || m.input != "." {
+		t.Fatalf("blank alias should advance to workdir with default command, alias=%q step=%d input=%q", m.wizardAlias, m.wizardStep, m.input)
+	}
+
+	m.wizardStep = 1
+	m.input = "review"
+	model, _ = m.handleWizardKey(keyMsg("enter"))
+	m = model.(Model)
+	if m.wizardAlias != "review" || m.wizardStep != 2 {
+		t.Fatalf("alias step alias=%q step=%d", m.wizardAlias, m.wizardStep)
 	}
 }
 
@@ -115,7 +142,7 @@ func TestWizardWorkdirTabCompletes(t *testing.T) {
 func TestWizardCtrlGOpensEditorAndLoadsResult(t *testing.T) {
 	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
 	m.wizard = true
-	m.wizardStep = 2
+	m.wizardStep = 3
 	m.input = ""
 
 	// Capture the command tea.ExecProcess would have run; simulate the editor by

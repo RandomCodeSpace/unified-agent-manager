@@ -16,7 +16,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 const configFileName = "sessions.json"
 
@@ -152,20 +152,21 @@ type UISettings struct {
 }
 
 type SessionRecord struct {
-	ID          string    `json:"id"`
-	Agent       string    `json:"agent"`
-	Name        string    `json:"name"`
-	Prompt      string    `json:"prompt,omitempty"`
-	Mode        Mode      `json:"mode"`
-	Workdir     string    `json:"workdir"`
-	TmuxSession string    `json:"tmux_session"`
-	CreatedAt   time.Time `json:"created_at"`
-	LastSeenAt  time.Time `json:"last_seen_at"`
-	Pinned      bool      `json:"pinned"`
-	Group       string    `json:"group"`
-	SortIndex   int       `json:"sort_index"`
-	Status      Status    `json:"status,omitempty"`
-	PR          *PRRecord `json:"pr,omitempty"`
+	ID           string    `json:"id"`
+	Agent        string    `json:"agent"`
+	CommandAlias string    `json:"command_alias,omitempty"`
+	Name         string    `json:"name"`
+	Prompt       string    `json:"prompt,omitempty"`
+	Mode         Mode      `json:"mode"`
+	Workdir      string    `json:"workdir"`
+	TmuxSession  string    `json:"tmux_session"`
+	CreatedAt    time.Time `json:"created_at"`
+	LastSeenAt   time.Time `json:"last_seen_at"`
+	Pinned       bool      `json:"pinned"`
+	Group        string    `json:"group"`
+	SortIndex    int       `json:"sort_index"`
+	Status       Status    `json:"status,omitempty"`
+	PR           *PRRecord `json:"pr,omitempty"`
 }
 
 type PRRecord struct {
@@ -406,7 +407,23 @@ func validateRecord(rec SessionRecord) string {
 	if rec.PR != nil && !prURLRE.MatchString(rec.PR.URL) {
 		return "invalid pr url"
 	}
+	if rec.CommandAlias != "" && !isSafeCommandAlias(rec.CommandAlias) {
+		return "unsafe command_alias"
+	}
 	return ""
+}
+
+func isSafeCommandAlias(alias string) bool {
+	if alias == "" || strings.HasPrefix(alias, "-") {
+		return false
+	}
+	for _, r := range alias {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // isUnsafeArgv reports whether s contains a shell metacharacter or a control
