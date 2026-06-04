@@ -89,7 +89,7 @@ func TestModelCommandFactories(t *testing.T) {
 	if m.loadSessionsCmd()() == nil {
 		t.Fatal("nil load msg")
 	}
-	if msg := m.dispatchNamedCmd("fake", "", "prompt")(); msg.(dispatchedMsg).err != nil {
+	if msg := m.dispatchNamedCmd("fake", "", "", "prompt")(); msg.(dispatchedMsg).err != nil {
 		t.Fatalf("dispatch msg=%+v", msg)
 	}
 	if msg := m.peekSelectedCmd()(); msg.(peekLoadedMsg).text != "tail" {
@@ -192,6 +192,8 @@ func TestRenameAndWizardEnterBranches(t *testing.T) {
 	m.wizard = true
 	m.wizardStep = 0
 	m.defaultAgent = "fake"
+	model, _ = m.handleWizardKey(keyMsg("enter"))
+	m = model.(Model)
 	model, _ = m.handleWizardKey(keyMsg("enter"))
 	m = model.(Model)
 	m.input = "/tmp"

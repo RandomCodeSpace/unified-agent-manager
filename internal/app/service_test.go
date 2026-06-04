@@ -43,11 +43,11 @@ func (f *svcFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
-	return adapter.Session{ID: "12345678", AgentType: f.name, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), TmuxSession: "uam-" + f.name + "-12345678", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
+	return adapter.Session{ID: "12345678", AgentType: f.name, CommandAlias: req.CommandAlias, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), TmuxSession: "uam-" + f.name + "-12345678", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) (adapter.Session, error) {
 	f.resumed = &req
-	return adapter.Session{ID: req.ID, AgentType: f.name, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: req.TmuxSession, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
+	return adapter.Session{ID: req.ID, AgentType: f.name, CommandAlias: req.CommandAlias, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: req.TmuxSession, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
 	return f.sessions, f.listErr
@@ -113,6 +113,38 @@ func assertWorkflowLoadAndFind(t *testing.T, svc *Service, idPrefix string) []ad
 		t.Fatalf("found=%+v err=%v", found, err)
 	}
 	return list
+}
+
+func TestServiceFindRejectsAmbiguousPrefix(t *testing.T) {
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{
+		{ID: "abc12345", AgentType: "fake", DisplayName: "one", TmuxSession: "uam-fake-abc12345", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "abc67890", AgentType: "fake", DisplayName: "two", TmuxSession: "uam-fake-abc67890", State: adapter.Active, CreatedAt: time.Now()},
+	}}
+	svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+	_, _, err := svc.Find(context.Background(), "abc")
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") || !strings.Contains(err.Error(), "abc") {
+		t.Fatalf("Find ambiguous prefix error = %v", err)
+	}
+}
+
+func TestServiceFindExactMatchWinsOverAmbiguousPrefix(t *testing.T) {
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{
+		{ID: "abc", AgentType: "fake", DisplayName: "exact-id", TmuxSession: "uam-fake-exact", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "abc67890", AgentType: "fake", DisplayName: "prefix-id", TmuxSession: "uam-fake-prefix", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "def12345", AgentType: "fake", DisplayName: "exact-tmux", TmuxSession: "uam-fake-abc", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "def67890", AgentType: "fake", DisplayName: "prefix-tmux", TmuxSession: "uam-fake-abc-extra", State: adapter.Active, CreatedAt: time.Now()},
+	}}
+	svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+	found, _, err := svc.Find(context.Background(), "abc")
+	if err != nil || found.DisplayName != "exact-id" {
+		t.Fatalf("Find exact ID = %+v err=%v", found, err)
+	}
+	found, _, err = svc.Find(context.Background(), "uam-fake-abc")
+	if err != nil || found.DisplayName != "exact-tmux" {
+		t.Fatalf("Find exact tmux session = %+v err=%v", found, err)
+	}
 }
 
 func assertWorkflowMetadataMutations(t *testing.T, svc *Service, list []adapter.Session) {
@@ -192,6 +224,27 @@ func TestServicePersistsPromptAndReportsDeadTmuxRecord(t *testing.T) {
 	}
 }
 
+func TestServicePersistsAndMergesCommandAlias(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "12345678", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-12345678", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}}}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.DispatchNamedWithAlias(context.Background(), "fake", "ghcp", "bugfix", "fix parser", "/tmp/project", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := st.Load()
+	if got := cfg.Sessions[store.Key("fake", "12345678")].CommandAlias; got != "ghcp" {
+		t.Fatalf("persisted alias = %q, want ghcp", got)
+	}
+	sessions, _, err := svc.LoadSessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].CommandAlias != "ghcp" || sessions[0].AgentType != "fake" {
+		t.Fatalf("merged session alias/type = %+v", sessions)
+	}
+}
+
 func TestAttachSpecResumesDeadSessionFromMetadata(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
@@ -202,7 +255,7 @@ func TestAttachSpecResumesDeadSessionFromMetadata(t *testing.T) {
 		SchemaVersion: store.CurrentSchemaVersion,
 		DefaultAgent:  "fake",
 		Sessions: map[string]store.SessionRecord{
-			"fake:abc12345": {ID: "abc12345-dead-beef-cafe-0123456789ab", Agent: "fake", Name: "bugfix", Prompt: "fix parser", Mode: store.ModeYolo, Workdir: "/tmp/project", TmuxSession: "uam-fake-abc12345", CreatedAt: created},
+			"fake:abc12345": {ID: "abc12345-dead-beef-cafe-0123456789ab", Agent: "fake", CommandAlias: "ghcp", Name: "bugfix", Prompt: "fix parser", Mode: store.ModeYolo, Workdir: "/tmp/project", TmuxSession: "uam-fake-abc12345", CreatedAt: created},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -218,7 +271,7 @@ func TestAttachSpecResumesDeadSessionFromMetadata(t *testing.T) {
 	if fake.resumed == nil {
 		t.Fatal("dead metadata-backed session should be resumed before attach")
 	}
-	if fake.resumed.ID != "abc12345-dead-beef-cafe-0123456789ab" || fake.resumed.Name != "bugfix" || fake.resumed.Prompt != "fix parser" || fake.resumed.Cwd != "/tmp/project" || fake.resumed.Mode != "yolo" || fake.resumed.TmuxSession != "uam-fake-abc12345" {
+	if fake.resumed.ID != "abc12345-dead-beef-cafe-0123456789ab" || fake.resumed.Name != "bugfix" || fake.resumed.CommandAlias != "ghcp" || fake.resumed.Prompt != "fix parser" || fake.resumed.Cwd != "/tmp/project" || fake.resumed.Mode != "yolo" || fake.resumed.TmuxSession != "uam-fake-abc12345" {
 		t.Fatalf("resume metadata = %+v", fake.resumed)
 	}
 }
@@ -230,8 +283,8 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	if sessions[0].ID != "p" || sessions[1].ID != "live" {
 		t.Fatalf("order=%+v", sessions)
 	}
-	rec := RecordFromSession(adapter.Session{ID: "id", AgentType: "fake", Prompt: "do work", Cwd: "/tmp", TmuxSession: "tm", CreatedAt: now}, "")
-	if rec.Mode != store.ModeYolo || rec.Name != "id" || rec.Prompt != "do work" {
+	rec := RecordFromSession(adapter.Session{ID: "id", AgentType: "fake", CommandAlias: "ghcp", Prompt: "do work", Cwd: "/tmp", TmuxSession: "tm", CreatedAt: now}, "")
+	if rec.Mode != store.ModeYolo || rec.Name != "id" || rec.CommandAlias != "ghcp" || rec.Prompt != "do work" {
 		t.Fatalf("rec=%+v", rec)
 	}
 	if rec.Status != store.StatusActive {

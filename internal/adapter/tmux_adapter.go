@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +44,7 @@ type TmuxAgent struct {
 	Tmux               *tmux.Client
 	SessionArgs        func(req ResumeRequest, activity string) []string
 	SkipPromptOnResume bool
+	randomReader       io.Reader
 
 	// now is the clock used to throttle per-session PR captures; overridable in
 	// tests. lastPRScan records, per tmux session name, when its pane was last
@@ -57,7 +59,7 @@ func NewTmuxAgent(name, display string, candidates []CommandCandidate, yoloArgs 
 	if client == nil {
 		client = tmux.New("uam")
 	}
-	return &TmuxAgent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Tmux: client, now: time.Now, lastPRScan: map[string]time.Time{}}
+	return &TmuxAgent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Tmux: client, randomReader: rand.Reader, now: time.Now, lastPRScan: map[string]time.Time{}}
 }
 
 func (a *TmuxAgent) Name() string        { return a.NameValue }
@@ -91,48 +93,98 @@ func (a *TmuxAgent) commandForMode(mode string) ([]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s unavailable", a.Name())
 	}
+	return commandWithModeArgs(cmd, mode, a.YoloArgs), nil
+}
+
+func (a *TmuxAgent) commandForRequest(ctx context.Context, req ResumeRequest, extra []string) ([]string, error) {
+	if req.CommandAlias == "" {
+		cmd, err := a.commandForMode(req.Mode)
+		if err != nil {
+			return nil, err
+		}
+		return append(cmd, extra...), nil
+	}
+	if err := validateCommandAlias(req.CommandAlias); err != nil {
+		return nil, err
+	}
+	cmd := commandWithModeArgs([]string{req.CommandAlias}, req.Mode, a.YoloArgs)
+	cmd = append(cmd, extra...)
+	if path, err := exec.LookPath(req.CommandAlias); err == nil {
+		cmd[0] = path
+		return cmd, nil
+	}
+	return shellAliasCommand(ctx, cmd)
+}
+
+func commandWithModeArgs(cmd []string, mode string, yoloArgs []string) []string {
+	cmd = append([]string{}, cmd...)
 	// Safe mode launches the bare command; no flag is the safe default for
 	// claude/codex. Only non-safe modes append the provider's full-access args.
 	if mode != "safe" {
-		cmd = append(cmd, a.YoloArgs...)
+		cmd = append(cmd, yoloArgs...)
 	}
-	return cmd, nil
+	return cmd
+}
+
+func validateCommandAlias(alias string) error {
+	if alias == "" || strings.HasPrefix(alias, "-") {
+		return fmt.Errorf("invalid command alias %q", alias)
+	}
+	for _, r := range alias {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.' {
+			continue
+		}
+		return fmt.Errorf("invalid command alias %q", alias)
+	}
+	return nil
+}
+
+func shellAliasCommand(ctx context.Context, cmd []string) ([]string, error) {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	if !filepath.IsAbs(shell) {
+		return nil, fmt.Errorf("invalid SHELL %q: must be absolute for command alias fallback", shell)
+	}
+	check := exec.CommandContext(ctx, shell, "-ic", "type "+tmux.ShellJoin([]string{cmd[0]})+" >/dev/null 2>&1") // #nosec G204 -- shell is the user's configured absolute shell; alias name is validated before reaching this path.
+	if err := check.Run(); err != nil {
+		return nil, fmt.Errorf("command alias %q not found on PATH or in interactive shell: %w", cmd[0], err)
+	}
+	return []string{shell, "-ic", tmux.ShellJoin(cmd)}, nil
 }
 
 func (a *TmuxAgent) Dispatch(ctx context.Context, req DispatchRequest) (Session, error) {
-	id := newID()
-	return a.startSession(ctx, ResumeRequest{ID: id, Name: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, Mode: req.Mode}, "dispatched")
+	id, err := newID(a.randomReader)
+	if err != nil {
+		return Session{}, fmt.Errorf("generate session id: %w", err)
+	}
+	return a.startSession(ctx, ResumeRequest{ID: id, Name: req.Name, CommandAlias: req.CommandAlias, Prompt: req.Prompt, Cwd: req.Cwd, Mode: req.Mode}, "dispatched")
 }
 
 func (a *TmuxAgent) Resume(ctx context.Context, req ResumeRequest) (Session, error) {
 	if req.ID == "" {
-		req.ID = newID()
+		id, err := newID(a.randomReader)
+		if err != nil {
+			return Session{}, fmt.Errorf("generate session id: %w", err)
+		}
+		req.ID = id
 	}
 	return a.startSession(ctx, req, "resumed")
 }
 
 func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activity string) (Session, error) {
-	cmd, err := a.commandForMode(req.Mode)
+	extra := []string{}
+	if a.SessionArgs != nil {
+		extra = append(extra, a.SessionArgs(req, activity)...)
+	}
+	cmd, err := a.commandForRequest(ctx, req, extra)
 	if err != nil {
 		return Session{}, err
 	}
-	if a.SessionArgs != nil {
-		cmd = append(cmd, a.SessionArgs(req, activity)...)
-	}
-	cwd := req.Cwd
-	if cwd == "" {
-		cwd, err = os.Getwd()
-		if err != nil {
-			return Session{}, fmt.Errorf("resolve working directory: %w", err)
-		}
-	}
-	// Resolve the working directory to an absolute path once, before it is used
-	// for both CreateSession (the tmux -c arg) and the returned Session.Cwd that
-	// the store persists. A relative cwd persisted verbatim would be re-resolved
-	// against uam's process cwd on resume, relaunching the agent in the wrong
-	// directory (C2-4).
-	if abs, absErr := filepath.Abs(cwd); absErr == nil {
-		cwd = abs
+	cwd, err := resolveSessionCwd(req.Cwd)
+	if err != nil {
+		return Session{}, err
 	}
 	tmuxName := req.TmuxSession
 	if tmuxName == "" {
@@ -142,7 +194,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
 		return Session{}, fmt.Errorf("create tmux session %s: %w", tmuxName, err)
 	}
-	// Best-effort: apply uam-friendly tmux server settings (mouse on, swallow
+	// Best-effort: apply uam-friendly tmux server settings (mouse/clipboard,
 	// Ctrl+Z). This runs AFTER CreateSession so the server exists — applying it
 	// first on the very first dispatch fails and used to latch that failure
 	// (F25). Failures here don't prevent the session from being created.
@@ -173,7 +225,26 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if created.IsZero() {
 		created = now
 	}
-	return Session{ID: req.ID, AgentType: a.Name(), DisplayName: displayName, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
+	return Session{ID: req.ID, AgentType: a.Name(), CommandAlias: req.CommandAlias, DisplayName: displayName, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
+}
+
+func resolveSessionCwd(cwd string) (string, error) {
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("resolve working directory: %w", err)
+		}
+	}
+	// Resolve the working directory to an absolute path once, before it is used
+	// for both CreateSession (the tmux -c arg) and the returned Session.Cwd that
+	// the store persists. A relative cwd persisted verbatim would be re-resolved
+	// against uam's process cwd on resume, relaunching the agent in the wrong
+	// directory (C2-4).
+	if abs, err := filepath.Abs(cwd); err == nil {
+		cwd = abs
+	}
+	return cwd, nil
 }
 
 func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
@@ -269,15 +340,18 @@ func (a *TmuxAgent) target(id string) string {
 	return "=" + name
 }
 
-func newID() string {
+func newID(random io.Reader) (string, error) {
+	if random == nil {
+		random = rand.Reader
+	}
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
+	if _, err := io.ReadFull(random, b); err != nil {
+		return "", err
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	h := hex.EncodeToString(b)
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32], nil
 }
 
 // displayNameFromDir derives a default session name from the working

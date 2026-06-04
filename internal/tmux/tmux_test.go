@@ -184,10 +184,10 @@ func TestEnsureServerConfigSetsDisplayName(t *testing.T) {
 	}
 }
 
-// The private-server config must enable mouse mode and install the copy/paste
-// bindings: a plain drag enters copy-mode, the selection is copy-pipe-and-cancel'd
-// to a buffer (OSC 52 via set-clipboard on), and right-click pastes that buffer.
-func TestEnsureServerConfigEnablesMouseCopyPaste(t *testing.T) {
+// The private-server config must let wheel events scroll tmux pane history
+// instead of leaking to full-screen agent prompts as history navigation, while
+// keeping tmux-side OSC 52 clipboard sync enabled.
+func TestEnsureServerConfigEnablesMousePaneScrollback(t *testing.T) {
 	c, logPath := setupFakeTmuxClient(t)
 	if err := c.EnsureServerConfig(context.Background()); err != nil {
 		t.Fatalf("EnsureServerConfig: %v", err)
@@ -200,48 +200,15 @@ func TestEnsureServerConfigEnablesMouseCopyPaste(t *testing.T) {
 	for _, want := range []string{
 		"set-option -g mouse on",
 		"set-option -g set-clipboard on",
-		"root MouseDrag1Pane copy-mode",
-		"copy-pipe-and-cancel",
-		"MouseDown3Pane paste-buffer",
 	} {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("EnsureServerConfig missing %q: %s", want, logText)
 		}
 	}
-}
-
-// A failing mouse-binding install must be logged (best-effort, non-fatal)
-// rather than breaking the config latch — otherwise a rejected binding would
-// re-run the whole config on every List tick.
-func TestApplyServerConfigLogsMouseBindFailure(t *testing.T) {
-	dir := t.TempDir()
-	script := filepath.Join(dir, "tmux")
-	// Everything succeeds except any Mouse binding, which fails.
-	if err := os.WriteFile(script, []byte(`#!/bin/sh
-printf '%s\n' "$*" >> "$TMUX_LOG"
-case "$*" in
-  *Mouse*) echo "mouse boom" >&2; exit 1 ;;
-esac
-exit 0
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("TMUX_LOG", filepath.Join(dir, "log"))
-	c := New("uam")
-	c.Executable = script
-
-	var buf bytes.Buffer
-	prev := log.SetLogger(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	defer log.SetLogger(prev)
-
-	// Binding failure is non-fatal: EnsureServerConfig still returns nil so the
-	// success latch holds.
-	if err := c.EnsureServerConfig(context.Background()); err != nil {
-		t.Fatalf("mouse binding failure must stay non-fatal, got: %v", err)
-	}
-	if !strings.Contains(buf.String(), "mouse binding") {
-		t.Fatalf("mouse binding failure should be logged, got: %q", buf.String())
+	for _, unwanted := range []string{"MouseDrag1Pane", "MouseDown3Pane", "copy-pipe-and-cancel"} {
+		if strings.Contains(logText, unwanted) {
+			t.Fatalf("EnsureServerConfig should not install custom mouse clipboard binding %q: %s", unwanted, logText)
+		}
 	}
 }
 

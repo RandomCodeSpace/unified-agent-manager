@@ -21,16 +21,17 @@ Status: **complete MVP across PLAN.md Phases 0–12**.
 - Agent adapters for:
   - Claude Code: `claude --dangerously-skip-permissions`
   - Codex: `codex --sandbox danger-full-access`
-  - GitHub Copilot CLI: `copilot --autopilot` or `gh copilot --autopilot`
-  - Hermes Agent: `hermes --tui --yolo`
-  - Oh My Pi: `omp`
-  - OpenCode: `opencode --auto-approve`
+  - GitHub Copilot CLI: `copilot --yolo`
+  - Hermes Agent: `hermes`
+  - Oh My Pi: `omp --auto-approve`
+  - OpenCode: `opencode`
 - Persistent metadata at `${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json`
 - Atomic JSON writes, flock locking, schema migration backups, corrupt-file self-healing
-- TUI grouping by session state: Needs Input, Working, Review, Failed, Completed
+- TUI grouping by session record status: Active and Closed
 - Peek/reply/attach/stop flows backed by tmux `capture-pane` and `send-keys`
 - Pin, rename, group-by-dir toggle, and persisted manual reorder
-- PR URL detection from pane output plus optional `gh pr view` status refresh
+- Liveness-only pane classification (`Active`/`Failed`, `Alive`/`Exited`) plus PR URL detection from pane output and optional `gh pr view` status refresh
+- Optional command aliases for provider launch commands, persisted as `command_alias` and reused on resume
 - Shell commands for automation
 
 ## Build
@@ -54,8 +55,9 @@ unavailable providers are hidden from the TUI dispatch selector.
 ```sh
 uam                              # open TUI
 uam new                          # guided terminal dispatch flow
-uam dispatch [--safe] <agent> "prompt"
+uam dispatch [--safe] [--alias <command>] <agent> "prompt"
 uam dispatch --cwd /path/to/repo claude "fix flaky tests"
+uam dispatch --alias ghcp copilot "review this branch"
 uam ls [--json]
 uam peek <id>
 uam attach <id>
@@ -73,6 +75,7 @@ uam rm <id>                      # kill tmux session and remove record
 | `Enter` / `→` | Attach selected session |
 | Type prompt + `Enter` | Dispatch to default agent |
 | `@codex prompt` | Dispatch to a specific agent |
+| `@copilot:ghcp prompt` | Dispatch Copilot using command alias `ghcp` |
 | `Tab` | Cycle default agent |
 | `Space` | Toggle peek panel |
 | `Ctrl+T` | Pin selected session |
@@ -85,6 +88,12 @@ uam rm <id>                      # kill tmux session and remove record
 | `Esc` | Close overlay / clear input / quit |
 
 ## Development
+
+Command aliases are launch-command overrides, not provider names. UAM first
+prefers a real executable on `PATH` with that alias name; if none exists, it
+falls back to an interactive shell so profile aliases/functions can resolve.
+Alias-backed sessions persist the chosen command as `command_alias` in
+`sessions.json` and use it again on resume.
 
 ```sh
 go test ./...
@@ -110,8 +119,7 @@ Core packages:
 
 - `internal/store`: sessions JSON, locking, migration, backups
 - `internal/tmux`: all tmux shell-out logic
-- `internal/adapter`: shared adapter interfaces, tmux adapter, state detection
+- `internal/adapter`: shared adapter interfaces, `TmuxAgent`, liveness-only pane classification, PR URL extraction
 - `internal/adapter/{claude,codex,copilot,hermes,omp,opencode}`: provider registrations
 - `internal/app`: service layer and Bubble Tea model
 - `internal/pr`: optional GitHub PR status lookup
-- `internal/refresh`: refresh ticker policy

@@ -158,6 +158,39 @@ func TestLoadDropsRecordWithControlCharWorkdir(t *testing.T) {
 	}
 }
 
+func TestLoadDropsRecordWithUnsafeCommandAlias(t *testing.T) {
+	rec := goodRecord()
+	rec["command_alias"] = "ghcp;rm"
+	s := writeConfig(t, map[string]any{
+		"claude:12345678": goodRecord(),
+		"claude:badalias": rec,
+	})
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := cfg.Sessions["claude:badalias"]; ok {
+		t.Fatal("record with unsafe command_alias was NOT dropped")
+	}
+	if _, ok := cfg.Sessions["claude:12345678"]; !ok {
+		t.Fatal("valid sibling record was wrongly dropped")
+	}
+}
+
+func TestLoadKeepsSafeCommandAlias(t *testing.T) {
+	rec := goodRecord()
+	rec["command_alias"] = "ghcp.local"
+	s := writeConfig(t, map[string]any{"claude:12345678": rec})
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := cfg.Sessions["claude:12345678"]
+	if got.CommandAlias != "ghcp.local" {
+		t.Fatalf("command alias = %q, want ghcp.local", got.CommandAlias)
+	}
+}
+
 // --- GREEN accept-tests: legitimate records must survive load unchanged. ---
 
 func TestLoadKeepsCanonicalUUIDRecord(t *testing.T) {

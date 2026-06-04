@@ -49,7 +49,7 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  uam                              open the TUI")
 	fmt.Fprintln(os.Stderr, "  uam new                          guided dispatch wizard")
-	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] <agent> [#session-name] [prompt]")
+	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] [--alias <name>] <agent> [#session-name] [prompt]")
 	fmt.Fprintln(os.Stderr, "  uam attach <name-or-id>")
 	fmt.Fprintln(os.Stderr, "  uam last")
 	fmt.Fprintln(os.Stderr, "  uam version")
@@ -239,6 +239,7 @@ func RunTUI(ctx context.Context, model tea.Model) error {
 func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	fs := flag.NewFlagSet("dispatch", flag.ContinueOnError)
 	safe := fs.Bool("safe", false, "use provider default permission mode")
+	alias := fs.String("alias", "", "command alias")
 	cwd := fs.String("cwd", "", "working directory")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -264,7 +265,7 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 		mode = string(store.ModeSafe)
 	}
 	name, prompt := parseNameAndPrompt(rem[1:])
-	sess, err := svc.DispatchNamed(ctx, rem[0], name, prompt, *cwd, mode)
+	sess, err := svc.DispatchNamedWithAlias(ctx, rem[0], *alias, name, prompt, *cwd, mode)
 	if err != nil {
 		// A non-empty session means the agent launched but the record failed to
 		// persist (advisory): report the warning, still emit the id, exit 0 (F03).
@@ -298,6 +299,11 @@ func runNew(ctx context.Context, svc *app.Service) error {
 	if a := svc.Registry.Default(agent); a != nil {
 		agent = a.Name()
 	}
+	fmt.Print("command alias [default]: ")
+	alias, err := readLine(reader)
+	if err != nil {
+		return fmt.Errorf("read command alias: %w", err)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("resolve working directory: %w", err)
@@ -319,9 +325,9 @@ func runNew(ctx context.Context, svc *app.Service) error {
 	// verbatim so interior whitespace the user typed is not collapsed (C1-3).
 	name, prompt := splitNameFromPrompt(strings.TrimRight(raw, "\r\n"))
 	if strings.TrimSpace(prompt) == "" {
-		return errors.New("new requires a prompt")
+		prompt = ""
 	}
-	sess, err := svc.DispatchNamed(ctx, agent, name, prompt, cwd, string(store.ModeYolo))
+	sess, err := svc.DispatchNamedWithAlias(ctx, agent, alias, name, prompt, cwd, string(store.ModeYolo))
 	if err != nil {
 		if sess.ID == "" {
 			return err
@@ -344,10 +350,9 @@ func readLine(r *bufio.Reader) (string, error) {
 }
 
 // splitNameFromPrompt peels a single leading #name token off the front of a
-// prompt and returns the remainder verbatim. Unlike parseNameAndPrompt it does
-// not tokenize the prompt, so interior whitespace survives (C1-3). The leading
-// "#name " separator (exactly one space) is consumed; everything after it is
-// kept byte-for-byte.
+// prompt and returns the remainder verbatim. It does not tokenize the prompt, so
+// interior whitespace survives (C1-3). The leading "#name " separator (exactly
+// one space) is consumed; everything after it is kept byte-for-byte.
 func splitNameFromPrompt(line string) (name, prompt string) {
 	trimmed := strings.TrimLeft(line, " \t")
 	if !strings.HasPrefix(trimmed, "#") {
@@ -364,10 +369,7 @@ func parseNameAndPrompt(parts []string) (string, string) {
 	if len(parts) == 0 {
 		return "", ""
 	}
-	if strings.HasPrefix(parts[0], "#") {
-		return strings.TrimPrefix(parts[0], "#"), strings.Join(parts[1:], " ")
-	}
-	return "", strings.Join(parts, " ")
+	return splitNameFromPrompt(strings.Join(parts, " "))
 }
 
 func execAttach(ctx context.Context, svc *app.Service, id string, runTUI func(context.Context, tea.Model) error) error {
