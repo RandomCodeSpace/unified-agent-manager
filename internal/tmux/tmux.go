@@ -348,6 +348,24 @@ func (c *Client) applyServerConfig(ctx context.Context) error {
 	if _, err := c.run(ctx, tmuxSetOption, "-g", "mouse", "on"); err != nil {
 		return fmt.Errorf("set mouse on: %w", err)
 	}
+	// tmux 3.4 ships no default WheelUpPane/WheelDownPane binding (only the
+	// status-line wheel), so `mouse on` alone makes tmux capture wheel events
+	// without scrolling anything — they leak to the agent prompt as history
+	// navigation. Restore the classic pane-wheel binding: enter copy-mode and
+	// scroll history, forwarding the wheel to the app only when it has grabbed
+	// the mouse or the pane is already in copy-mode. (`send-keys -M` is a no-op
+	// for an app that never enabled mouse reporting, so it can't leak to the
+	// prompt.) Best-effort: a tmux too old for the syntax must not brick
+	// dispatch or its latch — log, not fail.
+	for _, b := range [][]string{
+		{"bind-key", "-T", "root", "WheelUpPane", "if-shell", "-F",
+			"#{||:#{pane_in_mode},#{mouse_any_flag}}", "send-keys -M", "copy-mode -e"},
+		{"bind-key", "-T", "root", "WheelDownPane", "send-keys", "-M"},
+	} {
+		if out, err := c.run(ctx, b...); err != nil {
+			log.Warn("set tmux wheel binding failed", "binding", strings.Join(b, " "), "error", err, "output", strings.TrimSpace(out))
+		}
+	}
 	// Forward any tmux-side copy to the host terminal's clipboard via OSC 52
 	// so the user can paste outside the session with the usual shortcut.
 	if _, err := c.run(ctx, tmuxSetOption, "-g", "set-clipboard", "on"); err != nil {
