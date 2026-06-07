@@ -186,7 +186,10 @@ func TestEnsureServerConfigSetsDisplayName(t *testing.T) {
 
 // The private-server config must let wheel events scroll tmux pane history
 // instead of leaking to full-screen agent prompts as history navigation, while
-// keeping tmux-side OSC 52 clipboard sync enabled.
+// keeping tmux-side OSC 52 clipboard sync enabled. tmux 3.4 ships no default
+// WheelUpPane/WheelDownPane binding (only the status-line wheel), so `mouse on`
+// alone captures wheel events without scrolling anything; the pane wheel must be
+// bound explicitly to drive copy-mode scrollback.
 func TestEnsureServerConfigEnablesMousePaneScrollback(t *testing.T) {
 	c, logPath := setupFakeTmuxClient(t)
 	if err := c.EnsureServerConfig(context.Background()); err != nil {
@@ -200,6 +203,12 @@ func TestEnsureServerConfigEnablesMousePaneScrollback(t *testing.T) {
 	for _, want := range []string{
 		"set-option -g mouse on",
 		"set-option -g set-clipboard on",
+		// Wheel over a pane enters copy-mode and scrolls history (forwarding to
+		// the app only when it grabbed the mouse or the pane is already in copy
+		// mode), instead of leaking to the agent prompt as input navigation.
+		"bind-key -T root WheelUpPane",
+		"copy-mode -e",
+		"bind-key -T root WheelDownPane send-keys -M",
 	} {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("EnsureServerConfig missing %q: %s", want, logText)
