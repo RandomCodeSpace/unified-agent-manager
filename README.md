@@ -125,6 +125,11 @@ agent's PTY:
 
 - `Ctrl+B d` detaches and returns to the dashboard (`Ctrl+B Ctrl+B` sends a
   literal `Ctrl+B` to the agent)
+- `←` (left arrow) also detaches when you haven't typed anything since the
+  last submit/clear — tap it to hop back to the dashboard. Inside a draft it
+  moves the cursor as usual, and after history/menu navigation it stays
+  passthrough until the next `Enter`/`Esc`. Set `UAM_ATTACH_BACK_DETACH=0`
+  to disable.
 - The session keeps running after you detach or close the terminal
 - `Ctrl+Z` is swallowed while attached — suspending an agent inside a detached
   session would leave it impossible to foreground

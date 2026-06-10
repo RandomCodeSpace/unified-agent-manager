@@ -297,3 +297,44 @@ func TestAttachStreamsAndDetaches(t *testing.T) {
 		t.Fatalf("missing detach notice: %q", out)
 	}
 }
+
+// The left-arrow quick detach works end to end through the real attach
+// client: with nothing typed since attach, a bare left arrow detaches.
+func TestAttachLeftArrowDetaches(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-77778888"
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "echo up; sleep 60"}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- runAttach(c.Dir, name, stdinR, stdoutW) }()
+	if _, err := stdinW.Write([]byte("\x1b[D")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runAttach: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("left arrow did not detach")
+	}
+	_ = stdoutW.Close()
+	buf := make([]byte, 64*1024)
+	n, _ := stdoutR.Read(buf)
+	if !strings.Contains(string(buf[:n]), "[uam: detached]") {
+		t.Fatalf("missing detach notice: %q", string(buf[:n]))
+	}
+	if !c.HasSession(ctx, name) {
+		t.Fatal("session must keep running after quick detach")
+	}
+}
