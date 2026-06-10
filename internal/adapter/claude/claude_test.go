@@ -107,3 +107,74 @@ func writeExecutable(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+// newSeedingClaudeAdapter installs a fake claude whose --help advertises
+// --session-id, enabling the exact-session seeding path.
+func newSeedingClaudeAdapter(t *testing.T) (adapter.AgentAdapter, *adaptertest.Backend) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo '  --session-id <uuid>  Use a specific session ID'; fi\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	be := &adaptertest.Backend{}
+	return New(be), be
+}
+
+// Dispatch must seed claude's session id with the uam UUID when the installed
+// claude supports --session-id, and record it as the provider session id so a
+// later resume can target the exact conversation.
+func TestDispatchSeedsSessionIDWhenSupported(t *testing.T) {
+	a, be := newSeedingClaudeAdapter(t)
+	sess, err := a.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: "/tmp", Mode: "yolo"})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	argv := be.CommandLog()
+	if !strings.Contains(argv, "--session-id "+sess.ID) {
+		t.Fatalf("dispatch should seed --session-id with the uam id: %s", argv)
+	}
+	if sess.ProviderSessionID != sess.ID {
+		t.Fatalf("ProviderSessionID = %q, want the seeded uam id %q", sess.ProviderSessionID, sess.ID)
+	}
+}
+
+// An older claude whose --help does not advertise --session-id must get the
+// bare argv (no unknown flag that would kill the agent at startup).
+func TestDispatchSkipsSessionIDWhenUnsupported(t *testing.T) {
+	a, be := newTestClaudeAdapter(t)
+	sess, err := a.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: "/tmp", Mode: "yolo"})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if argv := be.CommandLog(); strings.Contains(argv, "--session-id") {
+		t.Fatalf("unsupported claude must not receive --session-id: %s", argv)
+	}
+	if sess.ProviderSessionID != "" {
+		t.Fatalf("ProviderSessionID = %q, want empty without seeding", sess.ProviderSessionID)
+	}
+}
+
+// A record carrying a seeded provider session id must resume that EXACT
+// session (--resume <id>), not the cwd's most recent conversation
+// (--continue) — two uam sessions in one directory must not collapse into the
+// same claude conversation on resume.
+func TestResumeTargetsExactSeededSession(t *testing.T) {
+	a, be := newSeedingClaudeAdapter(t)
+	resumable := a.(adapter.ResumableAdapter)
+	_, err := resumable.Resume(context.Background(), adapter.ResumeRequest{
+		ID: "abc12345-dead-beef-cafe-0123456789ab", Cwd: "/tmp", Mode: "yolo",
+		SessionName: "uam-claude-abc12345", ProviderSessionID: "abc12345-dead-beef-cafe-0123456789ab",
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	argv := be.CommandLog()
+	if !strings.Contains(argv, "--resume abc12345-dead-beef-cafe-0123456789ab") {
+		t.Fatalf("resume should target the seeded session id: %s", argv)
+	}
+	if strings.Contains(argv, "--continue") {
+		t.Fatalf("exact resume must not fall back to --continue: %s", argv)
+	}
+}

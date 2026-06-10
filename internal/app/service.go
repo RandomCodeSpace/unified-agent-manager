@@ -166,6 +166,7 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 	sess.DisplayName = firstNonEmpty(rec.Name, sess.DisplayName)
 	sess.CommandAlias = firstNonEmpty(rec.CommandAlias, sess.CommandAlias)
 	sess.Prompt = firstNonEmpty(rec.Prompt, sess.Prompt)
+	sess.ProviderSessionID = firstNonEmpty(rec.ProviderSessionID, sess.ProviderSessionID)
 	sess.Pinned = rec.Pinned
 	sess.Group = rec.Group
 	sess.SortIndex = rec.SortIndex
@@ -190,7 +191,7 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 }
 
 func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Session {
-	return adapter.Session{ExitCode: rec.LastExitCode, ID: rec.ID, AgentType: rec.Agent, CommandAlias: rec.CommandAlias, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, SessionName: rec.SessionName, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
+	return adapter.Session{ExitCode: rec.LastExitCode, ProviderSessionID: rec.ProviderSessionID, ID: rec.ID, AgentType: rec.Agent, CommandAlias: rec.CommandAlias, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, SessionName: rec.SessionName, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
 }
 
 // refreshSessionRecords reconciles live sessions against the loaded config and
@@ -570,7 +571,7 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 	if rec.ID == "" {
 		rec = RecordFromSession(sess, store.ModeYolo)
 	}
-	resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), SessionName: rec.SessionName, CreatedAt: rec.CreatedAt})
+	resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), SessionName: rec.SessionName, ProviderSessionID: rec.ProviderSessionID, CreatedAt: rec.CreatedAt})
 	if err != nil {
 		return err
 	}
@@ -586,6 +587,7 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 		rec.SessionName = resumed.SessionName
 		rec.Workdir = resumed.Cwd
 		rec.CommandAlias = firstNonEmpty(rec.CommandAlias, resumed.CommandAlias)
+		rec.ProviderSessionID = firstNonEmpty(resumed.ProviderSessionID, rec.ProviderSessionID)
 		rec.LastSeenAt = time.Now()
 		// Resuming a closed_by_user session reactivates it. The session host
 		// will flip Status back to closed_by_user on the next exit.
@@ -618,7 +620,7 @@ func RecordFromSession(sess adapter.Session, mode store.Mode) store.SessionRecor
 	if sess.Closed {
 		status = store.StatusClosedByUser
 	}
-	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, CommandAlias: sess.CommandAlias, Name: name, Prompt: sess.Prompt, Mode: mode, Workdir: sess.Cwd, SessionName: sess.SessionName, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex, Status: status}
+	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, CommandAlias: sess.CommandAlias, Name: name, Prompt: sess.Prompt, Mode: mode, Workdir: sess.Cwd, SessionName: sess.SessionName, ProviderSessionID: sess.ProviderSessionID, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex, Status: status}
 }
 
 func (s *Service) UpdateSortOrder(sessions []adapter.Session) error {

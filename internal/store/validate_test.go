@@ -301,3 +301,19 @@ func TestLoadKeepsMigratedRecord(t *testing.T) {
 		t.Fatalf("status = %q, want %q", rec.Status, StatusActive)
 	}
 }
+
+// The provider session id is passed as a resume argv value; anything outside
+// the UUID alphabet must drop the record on load.
+func TestValidateRejectsUnsafeProviderSessionID(t *testing.T) {
+	rec := SessionRecord{ID: "abc12345", Agent: "claude", SessionName: "uam-claude-abc12345", Workdir: "/tmp"}
+	rec.ProviderSessionID = "abc12345-dead-beef-cafe-0123456789ab"
+	if reason := validateRecord(rec); reason != "" {
+		t.Fatalf("UUID provider session id should pass, got %q", reason)
+	}
+	for _, bad := range []string{"--continue", "x; rm -rf /", "id with space", "$(boom)"} {
+		rec.ProviderSessionID = bad
+		if reason := validateRecord(rec); reason == "" {
+			t.Fatalf("provider session id %q must be rejected", bad)
+		}
+	}
+}

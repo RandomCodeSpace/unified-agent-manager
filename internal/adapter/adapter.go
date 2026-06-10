@@ -52,14 +52,19 @@ type Session struct {
 	Prompt       string
 	Cwd          string
 	SessionName  string
-	State        State
-	ProcAlive    ProcLiveness
-	LastChange   time.Time
-	CreatedAt    time.Time
-	PR           *PRRef
-	Pinned       bool
-	Group        string
-	SortIndex    int
+	// ProviderSessionID is the agent CLI's own session identifier, recorded
+	// when the provider lets uam seed or learn it (e.g. claude --session-id).
+	// It upgrades resume from "most recent conversation in this cwd" to an
+	// exact-session resume.
+	ProviderSessionID string
+	State             State
+	ProcAlive         ProcLiveness
+	LastChange        time.Time
+	CreatedAt         time.Time
+	PR                *PRRef
+	Pinned            bool
+	Group             string
+	SortIndex         int
 	// ExitCode is the agent process's exit status from its most recent close
 	// (-1 when it died on a signal), recorded by the session host. Nil while
 	// the session is live or when no exit has been observed.
@@ -86,7 +91,11 @@ type ResumeRequest struct {
 	Cwd          string
 	Mode         string
 	SessionName  string
-	CreatedAt    time.Time
+	// ProviderSessionID is the persisted provider-side session id, when one
+	// was recorded at dispatch; providers that support exact resume use it
+	// instead of their "most recent" heuristic.
+	ProviderSessionID string
+	CreatedAt         time.Time
 }
 
 type ResumableAdapter interface {

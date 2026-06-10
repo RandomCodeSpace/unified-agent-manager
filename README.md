@@ -135,6 +135,22 @@ agent's PTY:
   session would leave it impossible to foreground
 - Several terminals can attach to the same session at once
 
+## Resuming sessions
+
+Detach/reattach never restarts anything — the agent keeps running under its
+host and attach is a plain reconnect (this is the tmux property, kept).
+Resume only applies to sessions whose process is gone (reboot, `uam stop`):
+
+- **Claude Code**: uam seeds claude's session id with the uam id at dispatch
+  (`--session-id`, when the installed claude supports it) and resumes that
+  exact conversation with `--resume <id>` — several sessions in the same
+  directory each resume their own conversation. Sessions dispatched before
+  this feature (or with an older claude) fall back to `--continue`.
+- **Codex**: `codex resume --last` (the codex CLI cannot preset session ids
+  yet). **Copilot**: exact resume via `--resume=<id>`. **omp/opencode**: `-c`.
+- After a reboot, records survive in the store and resume on attach — a
+  scenario where a tmux session would simply be gone.
+
 ## Session storage
 
 `uam` stores session metadata at:

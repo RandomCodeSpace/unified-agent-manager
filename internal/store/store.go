@@ -169,6 +169,11 @@ type SessionRecord struct {
 	Group       string    `json:"group"`
 	SortIndex   int       `json:"sort_index"`
 	Status      Status    `json:"status,omitempty"`
+	// ProviderSessionID is the agent CLI's own session id, recorded when the
+	// provider lets uam seed it at dispatch (e.g. claude --session-id). A
+	// resume can then target the exact provider session instead of the
+	// provider's "most recent" heuristic.
+	ProviderSessionID string `json:"provider_session_id,omitempty"`
 	// LastExitCode records the agent process's exit status from the most
 	// recent close (-1 when it died on a signal). Pointer so records from
 	// older schemas stay distinguishable from a real exit 0.
@@ -421,8 +426,18 @@ func validateRecord(rec SessionRecord) string {
 	if rec.CommandAlias != "" && !isSafeCommandAlias(rec.CommandAlias) {
 		return "unsafe command_alias"
 	}
+	// The provider session id is passed as a resume argv value; constrain it
+	// to the UUID alphabet so a hand-edited record cannot smuggle a flag or
+	// shell hazard into the agent's command line.
+	if rec.ProviderSessionID != "" && !providerSessionIDRE.MatchString(rec.ProviderSessionID) {
+		return "unsafe provider_session_id"
+	}
 	return ""
 }
+
+// providerSessionIDRE constrains persisted provider session ids to the UUID
+// alphabet (hex and dashes), the shape every supported provider uses.
+var providerSessionIDRE = regexp.MustCompile(`^[0-9a-fA-F-]{1,64}$`)
 
 func isSafeCommandAlias(alias string) bool {
 	if alias == "" || strings.HasPrefix(alias, "-") {

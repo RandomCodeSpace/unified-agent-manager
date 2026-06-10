@@ -55,12 +55,17 @@ type Backend interface {
 // backend. It was previously named TmuxAgent; the lifecycle contract is
 // unchanged, only the backend is now uam's own session hosts.
 type Agent struct {
-	NameValue          string
-	DisplayNameValue   string
-	Candidates         []CommandCandidate
-	YoloArgs           []string
-	Backend            Backend
-	SessionArgs        func(req ResumeRequest, activity string) []string
+	NameValue        string
+	DisplayNameValue string
+	Candidates       []CommandCandidate
+	YoloArgs         []string
+	Backend          Backend
+	SessionArgs      func(req ResumeRequest, activity string) []string
+	// ProviderSession optionally reports the provider-side session id that
+	// the launched agent will use (e.g. the uuid claude was seeded with via
+	// --session-id), or "" when unknown. It is persisted so a later resume
+	// can target the exact provider session (F-resume).
+	ProviderSession    func(req ResumeRequest, activity string) string
 	SkipPromptOnResume bool
 	randomReader       io.Reader
 
@@ -239,7 +244,13 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 	if created.IsZero() {
 		created = now
 	}
-	return Session{ID: req.ID, AgentType: a.Name(), CommandAlias: req.CommandAlias, DisplayName: displayName, Prompt: req.Prompt, Cwd: cwd, SessionName: sessionName, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
+	providerID := req.ProviderSessionID
+	if a.ProviderSession != nil {
+		if id := a.ProviderSession(req, activity); id != "" {
+			providerID = id
+		}
+	}
+	return Session{ID: req.ID, AgentType: a.Name(), CommandAlias: req.CommandAlias, DisplayName: displayName, Prompt: req.Prompt, Cwd: cwd, SessionName: sessionName, ProviderSessionID: providerID, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
 }
 
 func resolveSessionCwd(cwd string) (string, error) {
