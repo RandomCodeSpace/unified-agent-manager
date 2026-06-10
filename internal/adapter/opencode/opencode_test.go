@@ -61,3 +61,19 @@ func TestNewWiresSessionArgs(t *testing.T) {
 		t.Fatal("expected SkipPromptOnResume to be true")
 	}
 }
+
+// A recorded provider session id must resume that exact opencode session
+// (--session ses_...) instead of the project's most recent (-c).
+func TestResumeTargetsExactSessionWhenIDKnown(t *testing.T) {
+	ag, ok := New(nil).(*adapter.Agent)
+	if !ok {
+		t.Fatalf("expected *adapter.Agent")
+	}
+	got := ag.SessionArgs(adapter.ResumeRequest{ProviderSessionID: "ses_2132323b6ffe"}, "resumed")
+	if len(got) != 2 || got[0] != "--session" || got[1] != "ses_2132323b6ffe" {
+		t.Fatalf("resume args = %v, want exact --session", got)
+	}
+	if got := ag.SessionArgs(adapter.ResumeRequest{}, "resumed"); len(got) != 1 || got[0] != "-c" {
+		t.Fatalf("resume args without id = %v, want -c fallback", got)
+	}
+}

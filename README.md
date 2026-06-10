@@ -146,8 +146,12 @@ Resume only applies to sessions whose process is gone (reboot, `uam stop`):
   exact conversation with `--resume <id>` — several sessions in the same
   directory each resume their own conversation. Sessions dispatched before
   this feature (or with an older claude) fall back to `--continue`.
-- **Codex**: `codex resume --last` (the codex CLI cannot preset session ids
-  yet). **Copilot**: exact resume via `--resume=<id>`. **omp/opencode**: `-c`.
+- **Copilot**: exact resume — the session is named with the uam id at
+  dispatch (`--name`) and resumed by that exact name (`--resume=<id>`).
+- **Codex / OpenCode**: these CLIs cannot preset session ids yet, so resume
+  uses their "most recent" mode (`codex resume --last`, `opencode -c`). When
+  an opencode record carries a `provider_session_id` (`ses_...`), uam resumes
+  that exact session via `--session`. **omp**: `-c`.
 - After a reboot, records survive in the store and resume on attach — a
   scenario where a tmux session would simply be gone.
 

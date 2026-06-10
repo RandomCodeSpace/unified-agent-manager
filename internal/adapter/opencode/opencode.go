@@ -20,8 +20,15 @@ var yoloArgs []string
 // opencode rows share a cwd, all of them resume to the same
 // most-recent session — a limitation of opencode's CLI surface, not
 // of this wiring.
-func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
+// sessionArgs picks opencode's resume flags. opencode supports exact resume
+// (`--session ses_...`) but cannot preset the id at launch, so uam only knows
+// it when a provider session id was recorded some other way; otherwise resume
+// falls back to `-c` (continue the project's last session).
+func sessionArgs(req adapter.ResumeRequest, activity string) []string {
 	if activity == "resumed" {
+		if req.ProviderSessionID != "" {
+			return []string{"--session", req.ProviderSessionID}
+		}
 		return []string{"-c"}
 	}
 	return nil

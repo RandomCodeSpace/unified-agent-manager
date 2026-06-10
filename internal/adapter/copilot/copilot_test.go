@@ -89,3 +89,16 @@ func newTestCopilotAdapter(t *testing.T) (adapter.AgentAdapter, *adaptertest.Bac
 	be := &adaptertest.Backend{}
 	return New(be), be
 }
+
+// Dispatch must record the seeded session name as the provider session id so
+// the store reflects exactly what --resume will target.
+func TestDispatchRecordsProviderSessionID(t *testing.T) {
+	a, _ := newTestCopilotAdapter(t)
+	sess, err := a.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: "/tmp", Mode: "yolo"})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if sess.ProviderSessionID != sess.ID {
+		t.Fatalf("ProviderSessionID = %q, want the uam id %q", sess.ProviderSessionID, sess.ID)
+	}
+}

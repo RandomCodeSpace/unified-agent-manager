@@ -306,11 +306,13 @@ func TestLoadKeepsMigratedRecord(t *testing.T) {
 // the UUID alphabet must drop the record on load.
 func TestValidateRejectsUnsafeProviderSessionID(t *testing.T) {
 	rec := SessionRecord{ID: "abc12345", Agent: "claude", SessionName: "uam-claude-abc12345", Workdir: "/tmp"}
-	rec.ProviderSessionID = "abc12345-dead-beef-cafe-0123456789ab"
-	if reason := validateRecord(rec); reason != "" {
-		t.Fatalf("UUID provider session id should pass, got %q", reason)
+	for _, good := range []string{"abc12345-dead-beef-cafe-0123456789ab", "ses_2132323b6ffeuRlYHhPcU8DaZ6"} {
+		rec.ProviderSessionID = good
+		if reason := validateRecord(rec); reason != "" {
+			t.Fatalf("provider session id %q should pass, got %q", good, reason)
+		}
 	}
-	for _, bad := range []string{"--continue", "x; rm -rf /", "id with space", "$(boom)"} {
+	for _, bad := range []string{"--continue", "-leadingdash", "x; rm -rf /", "id with space", "$(boom)"} {
 		rec.ProviderSessionID = bad
 		if reason := validateRecord(rec); reason == "" {
 			t.Fatalf("provider session id %q must be rejected", bad)

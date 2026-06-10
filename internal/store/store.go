@@ -427,17 +427,19 @@ func validateRecord(rec SessionRecord) string {
 		return "unsafe command_alias"
 	}
 	// The provider session id is passed as a resume argv value; constrain it
-	// to the UUID alphabet so a hand-edited record cannot smuggle a flag or
-	// shell hazard into the agent's command line.
+	// so a hand-edited record cannot smuggle a flag or shell hazard into the
+	// agent's command line.
 	if rec.ProviderSessionID != "" && !providerSessionIDRE.MatchString(rec.ProviderSessionID) {
 		return "unsafe provider_session_id"
 	}
 	return ""
 }
 
-// providerSessionIDRE constrains persisted provider session ids to the UUID
-// alphabet (hex and dashes), the shape every supported provider uses.
-var providerSessionIDRE = regexp.MustCompile(`^[0-9a-fA-F-]{1,64}$`)
+// providerSessionIDRE constrains persisted provider session ids to the id
+// alphabets the supported providers use — claude/codex UUIDs and opencode
+// "ses_..." ids — with no shell metacharacters and no leading dash (a value
+// starting with '-' could be parsed as a flag by the agent CLI).
+var providerSessionIDRE = regexp.MustCompile(`^[0-9A-Za-z_][0-9A-Za-z_-]{0,63}$`)
 
 func isSafeCommandAlias(alias string) bool {
 	if alias == "" || strings.HasPrefix(alias, "-") {
