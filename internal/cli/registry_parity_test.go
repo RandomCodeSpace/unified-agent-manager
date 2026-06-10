@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
 // F14 — cli.NewService must register exactly the shared adapter set built by
@@ -37,7 +37,7 @@ func TestNewServiceRegistryMatchesSharedAdapterSet(t *testing.T) {
 	sort.Strings(got)
 
 	want := make([]string, 0)
-	for _, a := range agents.Default(tmux.New("uam")) {
+	for _, a := range agents.Default(session.NewClient()) {
 		want = append(want, a.Name())
 	}
 	sort.Strings(want)

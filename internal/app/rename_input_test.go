@@ -65,8 +65,8 @@ func TestRenameEnterOnEmptiedListDoesNotPanic(t *testing.T) {
 // target session id is snapshotted at startRename and resolved at Enter.
 func TestRenameTargetsOriginalSessionAfterReorder(t *testing.T) {
 	live := []adapter.Session{
-		{ID: "alpha", AgentType: "fake", DisplayName: "alpha", TmuxSession: "uam-fake-alpha", State: adapter.Active, CreatedAt: time.Now()},
-		{ID: "beta", AgentType: "fake", DisplayName: "beta", TmuxSession: "uam-fake-beta", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "alpha", AgentType: "fake", DisplayName: "alpha", SessionName: "uam-fake-alpha", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "beta", AgentType: "fake", DisplayName: "beta", SessionName: "uam-fake-beta", State: adapter.Active, CreatedAt: time.Now()},
 	}
 	m, st := renameTestModel(t, live)
 	m.selected = 0
@@ -155,8 +155,8 @@ func TestWizardInputAcceptsMultibyteAndIgnoresAlt(t *testing.T) {
 // opened, not whatever row a refresh reorder slid under the cursor.
 func TestStopConfirmTargetsOriginalSessionAfterReorder(t *testing.T) {
 	live := []adapter.Session{
-		{ID: "alpha", AgentType: "fake", DisplayName: "alpha", TmuxSession: "uam-fake-alpha", State: adapter.Active, CreatedAt: time.Now()},
-		{ID: "beta", AgentType: "fake", DisplayName: "beta", TmuxSession: "uam-fake-beta", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "alpha", AgentType: "fake", DisplayName: "alpha", SessionName: "uam-fake-alpha", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "beta", AgentType: "fake", DisplayName: "beta", SessionName: "uam-fake-beta", State: adapter.Active, CreatedAt: time.Now()},
 	}
 	m, st := renameTestModel(t, live)
 	m.selected = 0

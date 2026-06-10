@@ -17,7 +17,7 @@ func replyTestModel(t *testing.T) (Model, *svcFakeAdapter) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions := []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}}
+	sessions := []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", SessionName: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}}
 	fake := &svcFakeAdapter{name: "fake", available: true, sessions: sessions}
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	m.sessions = append([]adapter.Session(nil), sessions...)

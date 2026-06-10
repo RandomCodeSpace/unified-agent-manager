@@ -2,7 +2,6 @@ package omp
 
 import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
 // omp (Oh My Pi, github.com/can1357/oh-my-pi) launches bare: a plain `omp`
@@ -27,8 +26,8 @@ func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
 	return nil
 }
 
-func New(client *tmux.Client) adapter.AgentAdapter {
-	a := adapter.NewTmuxAgent("omp", "Oh My Pi", []adapter.CommandCandidate{{Display: "omp", Args: []string{"omp"}}}, yoloArgs, client)
+func New(backend adapter.Backend) adapter.AgentAdapter {
+	a := adapter.NewAgent("omp", "Oh My Pi", []adapter.CommandCandidate{{Display: "omp", Args: []string{"omp"}}}, yoloArgs, backend)
 	a.SessionArgs = sessionArgs
 	a.SkipPromptOnResume = true
 	return a

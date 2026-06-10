@@ -2,7 +2,6 @@ package opencode
 
 import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
 // opencode has no CLI flag for auto-approval / yolo: permission
@@ -28,8 +27,8 @@ func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
 	return nil
 }
 
-func New(client *tmux.Client) adapter.AgentAdapter {
-	a := adapter.NewTmuxAgent("opencode", "OpenCode", []adapter.CommandCandidate{{Display: "opencode", Args: []string{"opencode"}}}, yoloArgs, client)
+func New(backend adapter.Backend) adapter.AgentAdapter {
+	a := adapter.NewAgent("opencode", "OpenCode", []adapter.CommandCandidate{{Display: "opencode", Args: []string{"opencode"}}}, yoloArgs, backend)
 	a.SessionArgs = sessionArgs
 	a.SkipPromptOnResume = true
 	return a

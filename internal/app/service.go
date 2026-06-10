@@ -69,30 +69,29 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 	return out, cfg, nil
 }
 
-// PruneStartup removes long-stale, dead-pane records from the store so
-// sessions.json does not grow unbounded. It is server-down-safe: a tmux server
-// that is down looks exactly like an empty one (zero live sessions), so with no
-// live session to prove the server is up it skips pruning entirely rather than
-// risk wiping every record during a transient outage. When at least one live
-// session is visible the server is up, and PruneOld then drops records whose
-// pane is gone and that have not been seen within pruneMaxAge (F20 Stage 2).
+// PruneStartup removes long-stale, dead records from the store so
+// sessions.json does not grow unbounded. It is outage-safe: pruning only runs
+// when at least one live session is visible, so a transient failure to scan
+// the session runtime directory (which looks exactly like "no sessions") can
+// never wipe every record. PruneOld then drops records whose process is gone
+// and that have not been seen within pruneMaxAge (F20 Stage 2).
 func (s *Service) PruneStartup(ctx context.Context) error {
 	if s.Store == nil {
 		return nil
 	}
 	live := s.liveSessions(ctx)
 	if len(live) == 0 {
-		// Unknown server state — don't prune.
+		// No live session visible — could be a scan failure; don't prune.
 		return nil
 	}
-	liveTmux := make(map[string]struct{}, len(live))
+	liveNames := make(map[string]struct{}, len(live))
 	for _, sess := range live {
-		if sess.TmuxSession != "" {
-			liveTmux[sess.TmuxSession] = struct{}{}
+		if sess.SessionName != "" {
+			liveNames[sess.SessionName] = struct{}{}
 		}
 	}
-	exists := func(tmuxName string) bool {
-		_, ok := liveTmux[tmuxName]
+	exists := func(sessionName string) bool {
+		_, ok := liveNames[sessionName]
 		return ok
 	}
 	return s.Store.Update(func(cfg *store.Config) error {
@@ -156,6 +155,14 @@ func (s *Service) mergeStoredSessions(live map[string]adapter.Session, cfg store
 }
 
 func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.Session {
+	// A live session only knows the 8-char id embedded in its session name;
+	// the record carries the full UUID. Restore it so Find can match the full
+	// id the dispatch command printed — without this, peek/stop/attach by full
+	// id fail exactly while the session is alive (they worked once it died,
+	// because dead rows are built from the record).
+	if rec.ID != "" && strings.HasPrefix(rec.ID, sess.ID) {
+		sess.ID = rec.ID
+	}
 	sess.DisplayName = firstNonEmpty(rec.Name, sess.DisplayName)
 	sess.CommandAlias = firstNonEmpty(rec.CommandAlias, sess.CommandAlias)
 	sess.Prompt = firstNonEmpty(rec.Prompt, sess.Prompt)
@@ -183,7 +190,7 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 }
 
 func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Session {
-	return adapter.Session{ID: rec.ID, AgentType: rec.Agent, CommandAlias: rec.CommandAlias, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, TmuxSession: rec.TmuxSession, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
+	return adapter.Session{ExitCode: rec.LastExitCode, ID: rec.ID, AgentType: rec.Agent, CommandAlias: rec.CommandAlias, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, SessionName: rec.SessionName, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
 }
 
 // refreshSessionRecords reconciles live sessions against the loaded config and
@@ -377,7 +384,7 @@ func (s *Service) Stop(ctx context.Context, id string, remove bool) error {
 }
 
 func (s *Service) stopAdapterSession(ctx context.Context, sess adapter.Session) error {
-	if s.Registry == nil || sess.TmuxSession == "" {
+	if s.Registry == nil || sess.SessionName == "" {
 		return nil
 	}
 	a, ok := s.Registry.Get(sess.AgentType)
@@ -397,21 +404,20 @@ func (s *Service) stopAdapterSession(ctx context.Context, sess adapter.Session) 
 	return nil
 }
 
-// NotifyClosed flags the record whose tmux name matches tmuxSession as
-// user-closed. It is the entry point for the `uam notify-closed` CLI
-// subcommand wired into tmux's session-closed hook: when the user types
-// `exit` in a session (or someone runs `tmux -L uam kill-session`), tmux
-// destroys the session and fires this so the status survives the close.
+// NotifyClosed flags the record whose backend session name matches as
+// user-closed. It backs the `uam notify-closed` CLI subcommand. Session hosts
+// normally mark records closed in-process when their agent exits
+// (store.MarkSessionClosed); this stays as the scriptable entry point.
 //
 // Idempotent: a no-op if the record is already StatusClosedByUser or if
 // no record matches (e.g., uam already deleted it via Ctrl+X / `uam rm`).
-func (s *Service) NotifyClosed(tmuxSession string) error {
-	if s.Store == nil || tmuxSession == "" {
+func (s *Service) NotifyClosed(sessionName string) error {
+	if s.Store == nil || sessionName == "" {
 		return nil
 	}
 	return s.Store.Update(func(cfg *store.Config) error {
 		for key, rec := range cfg.Sessions {
-			if rec.TmuxSession != tmuxSession {
+			if rec.SessionName != sessionName {
 				continue
 			}
 			if rec.Status == store.StatusClosedByUser {
@@ -482,13 +488,13 @@ func (s *Service) Find(ctx context.Context, id string) (adapter.Session, store.C
 		return adapter.Session{}, cfg, err
 	}
 	for _, sess := range sessions {
-		if sess.ID == id || sess.TmuxSession == id {
+		if sess.ID == id || sess.SessionName == id {
 			return sess, cfg, nil
 		}
 	}
 	var match adapter.Session
 	for _, sess := range sessions {
-		if strings.HasPrefix(sess.ID, id) || strings.HasPrefix(sess.TmuxSession, id) {
+		if strings.HasPrefix(sess.ID, id) || strings.HasPrefix(sess.SessionName, id) {
 			if match.ID != "" {
 				return adapter.Session{}, cfg, fmt.Errorf("session %q is ambiguous; matches multiple sessions", id)
 			}
@@ -542,8 +548,8 @@ func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec
 	return a.Attach(sess.ID)
 }
 
-// ResumeBackground restarts a stopped session's tmux session without attaching
-// to it. It is a no-op when the session is already running.
+// ResumeBackground restarts a stopped session's backend session without
+// attaching to it. It is a no-op when the session is already running.
 func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 	sess, cfg, err := s.Find(ctx, id)
 	if err != nil {
@@ -564,7 +570,7 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 	if rec.ID == "" {
 		rec = RecordFromSession(sess, store.ModeYolo)
 	}
-	resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), TmuxSession: rec.TmuxSession, CreatedAt: rec.CreatedAt})
+	resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), SessionName: rec.SessionName, CreatedAt: rec.CreatedAt})
 	if err != nil {
 		return err
 	}
@@ -577,11 +583,11 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 		if rec.ID == "" {
 			rec = RecordFromSession(resumed, store.ModeYolo)
 		}
-		rec.TmuxSession = resumed.TmuxSession
+		rec.SessionName = resumed.SessionName
 		rec.Workdir = resumed.Cwd
 		rec.CommandAlias = firstNonEmpty(rec.CommandAlias, resumed.CommandAlias)
 		rec.LastSeenAt = time.Now()
-		// Resuming a closed_by_user session reactivates it. The tmux hook
+		// Resuming a closed_by_user session reactivates it. The session host
 		// will flip Status back to closed_by_user on the next exit.
 		rec.Status = store.StatusActive
 		cfg.Sessions[key] = rec
@@ -612,7 +618,7 @@ func RecordFromSession(sess adapter.Session, mode store.Mode) store.SessionRecor
 	if sess.Closed {
 		status = store.StatusClosedByUser
 	}
-	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, CommandAlias: sess.CommandAlias, Name: name, Prompt: sess.Prompt, Mode: mode, Workdir: sess.Cwd, TmuxSession: sess.TmuxSession, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex, Status: status}
+	return store.SessionRecord{ID: sess.ID, Agent: sess.AgentType, CommandAlias: sess.CommandAlias, Name: name, Prompt: sess.Prompt, Mode: mode, Workdir: sess.Cwd, SessionName: sess.SessionName, CreatedAt: sess.CreatedAt, LastSeenAt: time.Now(), Pinned: sess.Pinned, Group: sess.Group, SortIndex: sess.SortIndex, Status: status}
 }
 
 func (s *Service) UpdateSortOrder(sessions []adapter.Session) error {

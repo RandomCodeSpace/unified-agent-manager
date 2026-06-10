@@ -14,8 +14,9 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
 
@@ -130,8 +131,14 @@ type promptEditedMsg struct {
 }
 
 func New() Model {
-	st, _ := store.Open(store.DefaultPath())
-	client := tmux.New("uam")
+	st, err := store.Open(store.DefaultPath())
+	if err != nil {
+		// The TUI degrades gracefully with a nil store (nothing persists), but
+		// that must not happen silently — log it so "my sessions vanished" is
+		// diagnosable.
+		log.Warn("open store failed; running without persistence", "error", err)
+	}
+	client := session.NewClient()
 	// Build the registry from the single shared adapter list so the TUI and the
 	// CLI service can never diverge (the old hand-rolled list here omitted
 	// hermes — F14).
@@ -280,6 +287,17 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	if msg.sessions != nil {
 		m.sessions = msg.sessions
 		m.groupByDir = msg.groupByDir
+		// Drop peek throttle stamps for sessions that no longer exist so the
+		// map cannot grow without bound across many session lifetimes.
+		live := make(map[string]struct{}, len(m.sessions))
+		for _, sess := range m.sessions {
+			live[sess.ID] = struct{}{}
+		}
+		for id := range m.lastPeekAt {
+			if _, ok := live[id]; !ok {
+				delete(m.lastPeekAt, id)
+			}
+		}
 	}
 	if msg.defaultAgent != "" {
 		// A persisted default may name an agent whose CLI was since uninstalled;
@@ -590,7 +608,7 @@ func (m *Model) handleSpaceKey(key string) tea.Cmd {
 		m.input += key
 		return nil
 	}
-	// A stopped session has no live tmux pane to peek into — Space restarts it
+	// A stopped session has no live process to peek into — Space restarts it
 	// in the background instead.
 	if sess, ok := m.selectedSession(); ok && sess.ProcAlive == adapter.Exited {
 		m.setMessage("restarting " + firstNonEmpty(sess.DisplayName, sess.ID))
@@ -1000,7 +1018,7 @@ func (m Model) peekSelectedCmd() tea.Cmd {
 	}
 }
 
-// resumeSelectedCmd restarts the selected session's tmux session in the
+// resumeSelectedCmd restarts the selected session's backend session in the
 // background, then reloads so it moves into the ACTIVE group.
 func (m Model) resumeSelectedCmd() tea.Cmd {
 	sess, ok := m.selectedSession()
@@ -1261,8 +1279,8 @@ func (m Model) renderTable() string {
 	}
 	// Two groups: Active (anything not flagged closed_by_user — including
 	// reboot-survivors that will resume on attach) and Closed (the user
-	// explicitly retired these via uam stop, exit-in-session, or external
-	// tmux kill-session).
+	// explicitly retired these via uam stop, exit-in-session, or an external
+	// kill).
 	g1 := m.renderGroup(groupRenderOptions{label: "ACTIVE", total: active, start: start, end: end, wantClosed: false, nameWidth: nameWidth, taskWidth: taskWidth, showTask: showTask})
 	g2 := m.renderGroup(groupRenderOptions{label: "CLOSED", total: closed, start: start, end: end, wantClosed: true, nameWidth: nameWidth, taskWidth: taskWidth, showTask: showTask})
 	b.WriteString(g1)

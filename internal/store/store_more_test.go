@@ -33,7 +33,7 @@ func TestPathsUpdatePruneAndHelpers(t *testing.T) {
 		t.Fatal("helpers")
 	}
 	if err := s.Update(func(cfg *Config) error {
-		cfg.Sessions["a:old"] = SessionRecord{ID: "old", Agent: "a", TmuxSession: "missing", LastSeenAt: time.Now().Add(-10 * 24 * time.Hour)}
+		cfg.Sessions["a:old"] = SessionRecord{ID: "old", Agent: "a", SessionName: "missing", LastSeenAt: time.Now().Add(-10 * 24 * time.Hour)}
 		return nil
 	}); err != nil {
 		t.Fatal(err)

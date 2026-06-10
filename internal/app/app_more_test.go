@@ -209,8 +209,8 @@ func TestDispatchedFailureWithoutSessionDoesNotAttach(t *testing.T) {
 func TestViewShowsDetailsOnTopAndTaskInTable(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
-		{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "fix the parser", Cwd: "/tmp/project", TmuxSession: "uam-fake-1", ProcAlive: adapter.Alive},
-		{ID: "2", AgentType: "fake", DisplayName: "old", Prompt: "old prompt", Cwd: "/tmp/old", TmuxSession: "uam-fake-2", ProcAlive: adapter.Exited, Closed: true},
+		{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "fix the parser", Cwd: "/tmp/project", SessionName: "uam-fake-1", ProcAlive: adapter.Alive},
+		{ID: "2", AgentType: "fake", DisplayName: "old", Prompt: "old prompt", Cwd: "/tmp/old", SessionName: "uam-fake-2", ProcAlive: adapter.Exited, Closed: true},
 	}
 	view := m.View()
 	if !strings.Contains(view, "cwd: /tmp/project") {

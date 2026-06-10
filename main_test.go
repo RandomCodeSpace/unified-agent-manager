@@ -11,9 +11,24 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/cli"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
+
+// TestMain doubles as the session host/attach entry point: the native backend
+// spawns os.Executable() with the internal __host/__attach subcommands, and
+// under `go test` that executable is this test binary. Routing those argv
+// shapes into the real CLI makes the dispatch/peek/stop tests below exercise
+// the actual session backend end to end.
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && (os.Args[1] == "__host" || os.Args[1] == "__attach") {
+		cli.Main()
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 func TestRunHelpAndList(t *testing.T) {
 	dir := setupFakeCLIConfig(t, "cfg")
@@ -259,17 +274,18 @@ func TestUsageAndNewService(t *testing.T) {
 func setupFakeCLIEnv(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	writeFileMode(t, filepath.Join(dir, "claude"), "#!/bin/sh\nexit 0\n", 0o755)
-	tmuxPath := filepath.Join(dir, "tmux")
-	writeFileMode(t, tmuxPath, `#!/bin/sh
-case "$*" in
-  *"list-sessions"*) exit 0 ;;
-  *"capture-pane"*) echo "pane" ;;
-esac
-exit 0
-`, 0o755)
-	t.Setenv("UAM_TMUX_BIN", tmuxPath)
+	// A long-lived fake agent: prints a recognizable line for peek asserts and
+	// then idles so the session stays alive for list/stop/attach paths.
+	writeFileMode(t, filepath.Join(dir, "claude"), "#!/bin/sh\necho pane\nexec sleep 60\n", 0o755)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("UAM_CACHE_DIR", filepath.Join(dir, "cache"))
+	sessDir := filepath.Join(dir, "runtime")
+	t.Setenv("UAM_SESSION_DIR", sessDir)
+	t.Cleanup(func() {
+		c := session.NewClient()
+		c.Dir = sessDir
+		_ = c.KillAll(context.Background())
+	})
 	return dir
 }
 

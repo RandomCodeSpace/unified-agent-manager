@@ -10,7 +10,8 @@
 
 `uam` is a terminal dashboard for managing multiple coding-agent CLIs from one place.
 It gives you a single TUI for launching, peeking, replying to, attaching to, and
-stopping long-running agent sessions backed by a private tmux server.
+stopping long-running agent sessions — no tmux (or any other multiplexer)
+required.
 
 Supported providers:
 
@@ -23,11 +24,13 @@ Supported providers:
 
 ## What it does
 
-- Runs each managed session inside `tmux -L uam`
+- Runs each managed session under its own lightweight, detached host process
+  (a PTY + terminal emulator + Unix socket) — sessions keep running when the
+  TUI exits, exactly like a tmux server, with no external dependency
 - Shows active and closed sessions in one dashboard
-- Lets you peek at recent output without attaching
+- Lets you peek at recent output without attaching (4000 lines of scrollback)
 - Sends replies back into running agent sessions
-- Persists session metadata across restarts
+- Persists session metadata across restarts, including each agent's exit code
 - Supports pinning, renaming, manual reorder, and group-by-directory
 - Detects GitHub PR URLs from agent output and can refresh PR state when `gh` is available
 - Supports per-session command aliases such as a custom Copilot launcher
@@ -35,8 +38,10 @@ Supported providers:
 ## Requirements
 
 - Go 1.24+ to build from source
-- tmux 3.x
 - Any provider CLI you want to manage already installed and authenticated
+
+That's it — agents are spawned directly under uam's own session hosts, so
+there is nothing else to install.
 
 Providers are capability-probed at runtime. If a CLI is missing, `uam` hides it
 from the dispatch UI instead of failing the whole app.
@@ -87,9 +92,9 @@ uam ls [--json]
 uam peek <id>
 uam attach <name-or-id>
 uam last
-uam stop <id>                    # kill tmux session, keep record
-uam rm <id>                      # kill tmux session and remove record
-uam kill-all                     # stop the private tmux server and all sessions
+uam stop <id>                    # kill the session, keep record
+uam rm <id>                      # kill the session and remove record
+uam kill-all                     # stop every managed session
 uam version
 ```
 
@@ -113,6 +118,18 @@ uam version
 | `?` | Open help |
 | `Esc` | Close overlays, clear input, or quit |
 
+## Attached sessions
+
+`uam attach` (or `Enter` in the TUI) bridges your terminal straight to the
+agent's PTY:
+
+- `Ctrl+B d` detaches and returns to the dashboard (`Ctrl+B Ctrl+B` sends a
+  literal `Ctrl+B` to the agent)
+- The session keeps running after you detach or close the terminal
+- `Ctrl+Z` is swallowed while attached — suspending an agent inside a detached
+  session would leave it impossible to foreground
+- Several terminals can attach to the same session at once
+
 ## Session storage
 
 `uam` stores session metadata at:
@@ -123,6 +140,14 @@ ${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json
 
 Writes are atomic and lock-protected. If the file needs migration or recovery,
 `uam` creates backup files next to it.
+
+Per-session runtime state (control sockets and state files) lives in
+`$XDG_RUNTIME_DIR/uam` (override with `UAM_SESSION_DIR`), created owner-only.
+
+> Upgrading from a tmux-backed release: sessions still running inside the old
+> `tmux -L uam` server are not visible to the native backend. Finish or stop
+> them first (`tmux -L uam kill-server`); stored session records carry over
+> unchanged and remain resumable.
 
 ## Safety model
 

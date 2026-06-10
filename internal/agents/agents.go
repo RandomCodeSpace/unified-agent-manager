@@ -3,7 +3,7 @@
 // wiring (internal/cli) build their registry from Default so the two can never
 // drift — previously each hand-maintained its own list and app.New silently
 // omitted hermes (F14). It is a leaf package: the providers import
-// internal/adapter and internal/tmux, and nothing imports back into agents, so
+// internal/adapter and internal/session, and nothing imports back into agents, so
 // there is no import cycle.
 package agents
 
@@ -15,20 +15,19 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/hermes"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/omp"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
-// Default returns every supported agent adapter, built against client. The
-// returned slice is the pre-availability list (it is not LookPath-filtered);
-// callers pass it to adapter.NewRegistry, which probes Available() and hides
-// the ones whose CLI is not installed.
-func Default(client *tmux.Client) []adapter.AgentAdapter {
+// Default returns every supported agent adapter, built against the shared
+// session backend. The returned slice is the pre-availability list (it is not
+// LookPath-filtered); callers pass it to adapter.NewRegistry, which probes
+// Available() and hides the ones whose CLI is not installed.
+func Default(backend adapter.Backend) []adapter.AgentAdapter {
 	return []adapter.AgentAdapter{
-		claude.New(client),
-		codex.New(client),
-		copilot.New(client),
-		hermes.New(client),
-		omp.New(client),
-		opencode.New(client),
+		claude.New(backend),
+		codex.New(backend),
+		copilot.New(backend),
+		hermes.New(backend),
+		omp.New(backend),
+		opencode.New(backend),
 	}
 }

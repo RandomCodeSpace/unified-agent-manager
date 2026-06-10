@@ -65,7 +65,7 @@ func TestRenderDetailsShowsPromptOnMobileOnly(t *testing.T) {
 		DisplayName: "bugfix",
 		Prompt:      "fix the parser",
 		Cwd:         "/tmp/repo",
-		TmuxSession: "uam-claude-abc12345",
+		SessionName: "uam-claude-abc12345",
 		ProcAlive:   adapter.Alive,
 		State:       adapter.Active,
 		CreatedAt:   time.Date(2026, time.May, 18, 7, 4, 0, 0, time.UTC),

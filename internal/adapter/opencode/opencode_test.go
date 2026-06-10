@@ -21,9 +21,9 @@ func TestNew(t *testing.T) {
 // pane on dispatch. Regression guard.
 func TestNoYoloArgs(t *testing.T) {
 	got := New(nil)
-	ta, ok := got.(*adapter.TmuxAgent)
+	ta, ok := got.(*adapter.Agent)
 	if !ok {
-		t.Fatalf("expected *adapter.TmuxAgent, got %T", got)
+		t.Fatalf("expected *adapter.Agent, got %T", got)
 	}
 	if len(ta.YoloArgs) != 0 {
 		t.Fatalf("opencode YoloArgs must be empty, got %v", ta.YoloArgs)
@@ -50,9 +50,9 @@ func TestSessionArgsAppendsContinueOnResume(t *testing.T) {
 // flag, starting a fresh TUI instead of resuming the prior session.
 func TestNewWiresSessionArgs(t *testing.T) {
 	got := New(nil)
-	ta, ok := got.(*adapter.TmuxAgent)
+	ta, ok := got.(*adapter.Agent)
 	if !ok {
-		t.Fatalf("expected *adapter.TmuxAgent, got %T", got)
+		t.Fatalf("expected *adapter.Agent, got %T", got)
 	}
 	if ta.SessionArgs == nil {
 		t.Fatal("expected SessionArgs to be wired")

@@ -14,21 +14,22 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 )
 
 // prRescanInterval is how stale a session's last PR scrape may grow before List
-// re-captures its pane. The PR URL is the only thing the per-session capture is
-// for, and it appears once early then never changes — so capturing every 2s
-// refresh tick forked a capture-pane per session per tick for no new signal.
-// First discovery still captures immediately; subsequent ticks within this
-// window reuse the store-persisted PR (re-hydrated by mergeStoredMetadata), and
-// a fresh capture only fires once the window elapses (F16).
+// re-captures its output. The PR URL is the only thing the per-session capture
+// is for, and it appears once early then never changes — so capturing every 2s
+// refresh tick burned a capture round-trip per session per tick for no new
+// signal. First discovery still captures immediately; subsequent ticks within
+// this window reuse the store-persisted PR (re-hydrated by
+// mergeStoredMetadata), and a fresh capture only fires once the window elapses
+// (F16).
 const prRescanInterval = 60 * time.Second
 
-// prCaptureLines is the pane tail captured for PR scraping. A PR URL is emitted
-// near where `gh`/the agent prints it, so a short tail is enough — the 200-line
-// grab the peek path uses is wasteful here (F16).
+// prCaptureLines is the output tail captured for PR scraping. A PR URL is
+// emitted near where `gh`/the agent prints it, so a short tail is enough — the
+// 200-line grab the peek path uses is wasteful here (F16).
 const prCaptureLines = 40
 
 type CommandCandidate struct {
@@ -36,36 +37,54 @@ type CommandCandidate struct {
 	Args    []string
 }
 
-type TmuxAgent struct {
+// Backend is the session-management surface an Agent drives: create / list /
+// capture / reply / kill / attach against uam's native session hosts
+// (internal/session.Client in production, fakes in tests).
+type Backend interface {
+	CreateSession(ctx context.Context, name, cwd string, env map[string]string, command []string) error
+	SetSessionLabel(ctx context.Context, name, label string) error
+	List(ctx context.Context) ([]session.Info, error)
+	Capture(ctx context.Context, name string, lines int) (string, error)
+	SendLine(ctx context.Context, name, text string) error
+	Kill(ctx context.Context, name string) error
+	HasSession(ctx context.Context, name string) bool
+	AttachArgv(name string) ([]string, error)
+}
+
+// Agent adapts one provider CLI (claude, codex, ...) onto the shared session
+// backend. It was previously named TmuxAgent; the lifecycle contract is
+// unchanged, only the backend is now uam's own session hosts.
+type Agent struct {
 	NameValue          string
 	DisplayNameValue   string
 	Candidates         []CommandCandidate
 	YoloArgs           []string
-	Tmux               *tmux.Client
+	Backend            Backend
 	SessionArgs        func(req ResumeRequest, activity string) []string
 	SkipPromptOnResume bool
 	randomReader       io.Reader
 
 	// now is the clock used to throttle per-session PR captures; overridable in
-	// tests. lastPRScan records, per tmux session name, when its pane was last
+	// tests. lastPRScan records, per session name, when its output was last
 	// captured for PR scraping so List can skip the capture within
-	// prRescanInterval (F16).
+	// prRescanInterval (F16). List prunes entries whose session is gone so the
+	// map cannot grow without bound across many session lifetimes.
 	now        func() time.Time
 	prScanMu   sync.Mutex
 	lastPRScan map[string]time.Time
 }
 
-func NewTmuxAgent(name, display string, candidates []CommandCandidate, yoloArgs []string, client *tmux.Client) *TmuxAgent {
-	if client == nil {
-		client = tmux.New("uam")
+func NewAgent(name, display string, candidates []CommandCandidate, yoloArgs []string, backend Backend) *Agent {
+	if backend == nil {
+		backend = session.NewClient()
 	}
-	return &TmuxAgent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Tmux: client, randomReader: rand.Reader, now: time.Now, lastPRScan: map[string]time.Time{}}
+	return &Agent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Backend: backend, randomReader: rand.Reader, now: time.Now, lastPRScan: map[string]time.Time{}}
 }
 
-func (a *TmuxAgent) Name() string        { return a.NameValue }
-func (a *TmuxAgent) DisplayName() string { return a.DisplayNameValue }
+func (a *Agent) Name() string        { return a.NameValue }
+func (a *Agent) DisplayName() string { return a.DisplayNameValue }
 
-func (a *TmuxAgent) Available() (bool, string) {
+func (a *Agent) Available() (bool, string) {
 	_, ok := a.resolveCommand()
 	if ok {
 		return true, ""
@@ -76,7 +95,7 @@ func (a *TmuxAgent) Available() (bool, string) {
 	return false, fmt.Sprintf("%s not on PATH", a.Candidates[0].Display)
 }
 
-func (a *TmuxAgent) resolveCommand() ([]string, bool) {
+func (a *Agent) resolveCommand() ([]string, bool) {
 	for _, c := range a.Candidates {
 		if len(c.Args) == 0 {
 			continue
@@ -88,7 +107,7 @@ func (a *TmuxAgent) resolveCommand() ([]string, bool) {
 	return nil, false
 }
 
-func (a *TmuxAgent) commandForMode(mode string) ([]string, error) {
+func (a *Agent) commandForMode(mode string) ([]string, error) {
 	cmd, ok := a.resolveCommand()
 	if !ok {
 		return nil, fmt.Errorf("%s unavailable", a.Name())
@@ -96,7 +115,7 @@ func (a *TmuxAgent) commandForMode(mode string) ([]string, error) {
 	return commandWithModeArgs(cmd, mode, a.YoloArgs), nil
 }
 
-func (a *TmuxAgent) commandForRequest(ctx context.Context, req ResumeRequest, extra []string) ([]string, error) {
+func (a *Agent) commandForRequest(ctx context.Context, req ResumeRequest, extra []string) ([]string, error) {
 	if req.CommandAlias == "" {
 		cmd, err := a.commandForMode(req.Mode)
 		if err != nil {
@@ -147,14 +166,14 @@ func shellAliasCommand(ctx context.Context, cmd []string) ([]string, error) {
 	if !filepath.IsAbs(shell) {
 		return nil, fmt.Errorf("invalid SHELL %q: must be absolute for command alias fallback", shell)
 	}
-	check := exec.CommandContext(ctx, shell, "-ic", "type "+tmux.ShellJoin([]string{cmd[0]})+" >/dev/null 2>&1") // #nosec G204,G702 -- shell is the user's configured absolute shell; alias name is validated and shell-quoted before reaching this path.
+	check := exec.CommandContext(ctx, shell, "-ic", "type "+ShellJoin([]string{cmd[0]})+" >/dev/null 2>&1") // #nosec G204,G702 -- shell is the user's configured absolute shell; alias name is validated and shell-quoted before reaching this path.
 	if err := check.Run(); err != nil {
 		return nil, fmt.Errorf("command alias %q not found on PATH or in interactive shell: %w", cmd[0], err)
 	}
-	return []string{shell, "-ic", tmux.ShellJoin(cmd)}, nil
+	return []string{shell, "-ic", ShellJoin(cmd)}, nil
 }
 
-func (a *TmuxAgent) Dispatch(ctx context.Context, req DispatchRequest) (Session, error) {
+func (a *Agent) Dispatch(ctx context.Context, req DispatchRequest) (Session, error) {
 	id, err := newID(a.randomReader)
 	if err != nil {
 		return Session{}, fmt.Errorf("generate session id: %w", err)
@@ -162,7 +181,7 @@ func (a *TmuxAgent) Dispatch(ctx context.Context, req DispatchRequest) (Session,
 	return a.startSession(ctx, ResumeRequest{ID: id, Name: req.Name, CommandAlias: req.CommandAlias, Prompt: req.Prompt, Cwd: req.Cwd, Mode: req.Mode}, "dispatched")
 }
 
-func (a *TmuxAgent) Resume(ctx context.Context, req ResumeRequest) (Session, error) {
+func (a *Agent) Resume(ctx context.Context, req ResumeRequest) (Session, error) {
 	if req.ID == "" {
 		id, err := newID(a.randomReader)
 		if err != nil {
@@ -173,7 +192,7 @@ func (a *TmuxAgent) Resume(ctx context.Context, req ResumeRequest) (Session, err
 	return a.startSession(ctx, req, "resumed")
 }
 
-func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activity string) (Session, error) {
+func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity string) (Session, error) {
 	extra := []string{}
 	if a.SessionArgs != nil {
 		extra = append(extra, a.SessionArgs(req, activity)...)
@@ -186,38 +205,33 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if err != nil {
 		return Session{}, err
 	}
-	tmuxName := req.TmuxSession
-	if tmuxName == "" {
-		tmuxName = fmt.Sprintf("uam-%s-%s", a.Name(), req.ID[:min(8, len(req.ID))])
+	sessionName := req.SessionName
+	if sessionName == "" {
+		sessionName = fmt.Sprintf("uam-%s-%s", a.Name(), req.ID[:min(8, len(req.ID))])
 	}
 	env := map[string]string{"UAM_AGENT": a.Name(), "UAM_ID": req.ID}
-	if err := a.Tmux.CreateSession(ctx, tmuxName, cwd, env, cmd); err != nil {
-		return Session{}, fmt.Errorf("create tmux session %s: %w", tmuxName, err)
+	if err := a.Backend.CreateSession(ctx, sessionName, cwd, env, cmd); err != nil {
+		return Session{}, fmt.Errorf("create session %s: %w", sessionName, err)
 	}
-	// Best-effort: apply uam-friendly tmux server settings (mouse/clipboard,
-	// Ctrl+Z). This runs AFTER CreateSession so the server exists — applying it
-	// first on the very first dispatch fails and used to latch that failure
-	// (F25). Failures here don't prevent the session from being created.
-	_ = a.Tmux.EnsureServerConfig(ctx)
-	// Surface the user-facing name in tmux's status line, terminal title, and
-	// window list (the canonical uam-<agent>-<id> stays as #S for uam's own
-	// parsing). Cosmetic and best-effort — a failure never affects the session.
+	// Surface the user-facing name in attached terminals' titles (the
+	// canonical uam-<agent>-<id> stays the machine-parseable session name).
+	// Cosmetic and best-effort — a failure never affects the session.
 	displayName := req.Name
 	if displayName == "" {
 		displayName = displayNameFromDir(cwd)
 	}
-	if err := a.Tmux.SetSessionLabel(ctx, tmuxName, displayName+" · "+a.Name(), displayName); err != nil {
-		log.Debug("set session label failed", "session", tmuxName, "error", err)
+	if err := a.Backend.SetSessionLabel(ctx, sessionName, displayName+" · "+a.Name()); err != nil {
+		log.Debug("set session label failed", "session", sessionName, "error", err)
 	}
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
 	if shouldSendPrompt {
-		if err := a.Tmux.SendLine(ctx, tmuxName, req.Prompt); err != nil {
+		if err := a.Backend.SendLine(ctx, sessionName, req.Prompt); err != nil {
 			// The session is live but never received its prompt. Roll it back so
 			// it doesn't linger as an orphan the store records as Exited/closed.
 			// Use WithoutCancel so a cancelled dispatch context still tears the
 			// session down; the original SendLine error is what the caller sees.
-			_ = a.Tmux.Kill(context.WithoutCancel(ctx), tmuxName)
-			return Session{}, fmt.Errorf("send prompt to %s: %w", tmuxName, err)
+			_ = a.Backend.Kill(context.WithoutCancel(ctx), sessionName)
+			return Session{}, fmt.Errorf("send prompt to %s: %w", sessionName, err)
 		}
 	}
 	now := time.Now()
@@ -225,7 +239,7 @@ func (a *TmuxAgent) startSession(ctx context.Context, req ResumeRequest, activit
 	if created.IsZero() {
 		created = now
 	}
-	return Session{ID: req.ID, AgentType: a.Name(), CommandAlias: req.CommandAlias, DisplayName: displayName, Prompt: req.Prompt, Cwd: cwd, TmuxSession: tmuxName, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
+	return Session{ID: req.ID, AgentType: a.Name(), CommandAlias: req.CommandAlias, DisplayName: displayName, Prompt: req.Prompt, Cwd: cwd, SessionName: sessionName, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
 }
 
 func resolveSessionCwd(cwd string) (string, error) {
@@ -237,38 +251,40 @@ func resolveSessionCwd(cwd string) (string, error) {
 		}
 	}
 	// Resolve the working directory to an absolute path once, before it is used
-	// for both CreateSession (the tmux -c arg) and the returned Session.Cwd that
-	// the store persists. A relative cwd persisted verbatim would be re-resolved
-	// against uam's process cwd on resume, relaunching the agent in the wrong
-	// directory (C2-4).
+	// for both CreateSession and the returned Session.Cwd that the store
+	// persists. A relative cwd persisted verbatim would be re-resolved against
+	// uam's process cwd on resume, relaunching the agent in the wrong directory
+	// (C2-4).
 	if abs, err := filepath.Abs(cwd); err == nil {
 		cwd = abs
 	}
 	return cwd, nil
 }
 
-func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
-	infos, err := a.Tmux.List(ctx)
+func (a *Agent) List(ctx context.Context) ([]Session, error) {
+	infos, err := a.Backend.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list %s sessions: %w", a.Name(), err)
 	}
 	var out []Session
 	prefix := "uam-" + a.Name() + "-"
+	seen := make(map[string]struct{}, len(infos))
 	for _, info := range infos {
 		if !strings.HasPrefix(info.Name, prefix) {
 			continue
 		}
+		seen[info.Name] = struct{}{}
 		id := strings.TrimPrefix(info.Name, prefix)
-		state, alive := ClassifyPane(tmux.PaneAlive(info.PanePID))
+		state, alive := ClassifyPane(info.Alive)
 		created := time.Unix(info.CreatedUnix, 0)
 		// Scrape the PR URL only on first discovery or once the rescan window
 		// elapses. On a throttled tick PR stays nil; service.mergeStoredMetadata
 		// re-hydrates it from the persisted record so the dashboard never loses
-		// it (F16). Captures are sequential by design — parallelizing would fork
-		// a burst of capture-pane subprocesses.
+		// it (F16). Captures are sequential by design — parallelizing would fire
+		// a burst of capture round-trips.
 		var prRef *PRRef
 		if a.shouldScanPR(info.Name) {
-			capture, capErr := a.Tmux.Capture(ctx, info.Name, prCaptureLines)
+			capture, capErr := a.Backend.Capture(ctx, info.Name, prCaptureLines)
 			if capErr != nil {
 				// Per-session and non-fatal: a failed PR scrape just leaves PR nil
 				// for this tick (mergeStoredMetadata re-hydrates any known PR). Log
@@ -277,15 +293,16 @@ func (a *TmuxAgent) List(ctx context.Context) ([]Session, error) {
 			}
 			prRef = ExtractPR(capture)
 		}
-		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.CurrentPath, TmuxSession: info.Name, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: prRef})
+		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.Cwd, SessionName: info.Name, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: prRef})
 	}
+	a.prunePRScan(seen)
 	return out, nil
 }
 
-// shouldScanPR reports whether the pane named tmuxName is due for a PR scrape
+// shouldScanPR reports whether the session named name is due for a PR scrape
 // and, if so, stamps the scan time. It is the per-session leaky bucket that
-// keeps List from capturing every pane on every refresh tick (F16).
-func (a *TmuxAgent) shouldScanPR(tmuxName string) bool {
+// keeps List from capturing every session on every refresh tick (F16).
+func (a *Agent) shouldScanPR(name string) bool {
 	clock := a.now
 	if clock == nil {
 		clock = time.Now
@@ -296,48 +313,58 @@ func (a *TmuxAgent) shouldScanPR(tmuxName string) bool {
 	if a.lastPRScan == nil {
 		a.lastPRScan = map[string]time.Time{}
 	}
-	last, seen := a.lastPRScan[tmuxName]
+	last, seen := a.lastPRScan[name]
 	if seen && now.Sub(last) < prRescanInterval {
 		return false
 	}
-	a.lastPRScan[tmuxName] = now
+	a.lastPRScan[name] = now
 	return true
 }
 
-func (a *TmuxAgent) Peek(ctx context.Context, id string) (PeekResult, error) {
-	target := a.target(id)
-	capture, err := a.Tmux.Capture(ctx, target, 200)
+// prunePRScan drops scan stamps for sessions no longer live so the throttle
+// map cannot grow without bound across many session lifetimes.
+func (a *Agent) prunePRScan(live map[string]struct{}) {
+	a.prScanMu.Lock()
+	defer a.prScanMu.Unlock()
+	for name := range a.lastPRScan {
+		if _, ok := live[name]; !ok {
+			delete(a.lastPRScan, name)
+		}
+	}
+}
+
+func (a *Agent) Peek(ctx context.Context, id string) (PeekResult, error) {
+	capture, err := a.Backend.Capture(ctx, a.target(id), 200)
 	if err != nil {
 		return PeekResult{}, fmt.Errorf("peek %s session %s: %w", a.Name(), id, err)
 	}
 	return PeekResult{TailText: capture}, nil
 }
 
-func (a *TmuxAgent) Reply(ctx context.Context, id, text string) error {
-	return a.Tmux.SendLine(ctx, a.target(id), text)
+func (a *Agent) Reply(ctx context.Context, id, text string) error {
+	return a.Backend.SendLine(ctx, a.target(id), text)
 }
-func (a *TmuxAgent) Attach(id string) (AttachSpec, error) {
-	argv, err := a.Tmux.AttachArgv(a.target(id))
+func (a *Agent) Attach(id string) (AttachSpec, error) {
+	argv, err := a.Backend.AttachArgv(a.target(id))
 	if err != nil {
 		return AttachSpec{}, fmt.Errorf("attach %s session %s: %w", a.Name(), id, err)
 	}
 	return AttachSpec{Argv: argv}, nil
 }
-func (a *TmuxAgent) Stop(ctx context.Context, id string) error { return a.Tmux.Kill(ctx, a.target(id)) }
-func (a *TmuxAgent) HasSession(ctx context.Context, id string) bool {
-	return a.Tmux.HasSession(ctx, a.target(id))
+func (a *Agent) Stop(ctx context.Context, id string) error { return a.Backend.Kill(ctx, a.target(id)) }
+func (a *Agent) HasSession(ctx context.Context, id string) bool {
+	return a.Backend.HasSession(ctx, a.target(id))
 }
 
-// target resolves an id to a tmux -t target. It anchors the name with tmux's
-// `=` exact-match prefix so a longer neighbour that shares the truncated prefix
-// is never hit by tmux's default prefix matching (F32). Human-facing prefix
-// lookups stay in Service.Find; internal targeting is always exact.
-func (a *TmuxAgent) target(id string) string {
-	name := id
-	if !strings.HasPrefix(id, "uam-") {
-		name = fmt.Sprintf("uam-%s-%s", a.Name(), id[:min(8, len(id))])
+// target resolves an id to its canonical session name. Matching is always
+// exact: the backend looks sessions up by full name, so a longer neighbour
+// sharing the truncated prefix can never be hit (F32). Human-facing prefix
+// lookups stay in Service.Find.
+func (a *Agent) target(id string) string {
+	if strings.HasPrefix(id, "uam-") {
+		return id
 	}
-	return "=" + name
+	return fmt.Sprintf("uam-%s-%s", a.Name(), id[:min(8, len(id))])
 }
 
 func newID(random io.Reader) (string, error) {

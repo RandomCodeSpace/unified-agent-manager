@@ -2,7 +2,6 @@ package claude
 
 import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
 // sessionArgs appends claude's `--continue` flag on resume so picking "Resume"
@@ -17,8 +16,8 @@ func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
 	return nil
 }
 
-func New(client *tmux.Client) adapter.AgentAdapter {
-	a := adapter.NewTmuxAgent("claude", "Claude Code", []adapter.CommandCandidate{{Display: "claude", Args: []string{"claude"}}}, []string{"--dangerously-skip-permissions"}, client)
+func New(backend adapter.Backend) adapter.AgentAdapter {
+	a := adapter.NewAgent("claude", "Claude Code", []adapter.CommandCandidate{{Display: "claude", Args: []string{"claude"}}}, []string{"--dangerously-skip-permissions"}, backend)
 	a.SessionArgs = sessionArgs
 	a.SkipPromptOnResume = true
 	return a

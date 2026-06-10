@@ -43,11 +43,11 @@ func (f *svcFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
-	return adapter.Session{ID: "12345678", AgentType: f.name, CommandAlias: req.CommandAlias, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), TmuxSession: "uam-" + f.name + "-12345678", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
+	return adapter.Session{ID: "12345678", AgentType: f.name, CommandAlias: req.CommandAlias, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), SessionName: "uam-" + f.name + "-12345678", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) (adapter.Session, error) {
 	f.resumed = &req
-	return adapter.Session{ID: req.ID, AgentType: f.name, CommandAlias: req.CommandAlias, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: req.TmuxSession, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
+	return adapter.Session{ID: req.ID, AgentType: f.name, CommandAlias: req.CommandAlias, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, SessionName: req.SessionName, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
 	return f.sessions, f.listErr
@@ -83,7 +83,7 @@ func newWorkflowService(t *testing.T) (*Service, *svcFakeAdapter) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "live0001", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-live0001", State: adapter.Active, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/1", Number: 1, Status: adapter.PROpen}}}}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "live0001", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", SessionName: "uam-fake-live0001", State: adapter.Active, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/1", Number: 1, Status: adapter.PROpen}}}}
 	return NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake})), fake
 }
 
@@ -117,8 +117,8 @@ func assertWorkflowLoadAndFind(t *testing.T, svc *Service, idPrefix string) []ad
 
 func TestServiceFindRejectsAmbiguousPrefix(t *testing.T) {
 	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{
-		{ID: "abc12345", AgentType: "fake", DisplayName: "one", TmuxSession: "uam-fake-abc12345", State: adapter.Active, CreatedAt: time.Now()},
-		{ID: "abc67890", AgentType: "fake", DisplayName: "two", TmuxSession: "uam-fake-abc67890", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "abc12345", AgentType: "fake", DisplayName: "one", SessionName: "uam-fake-abc12345", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "abc67890", AgentType: "fake", DisplayName: "two", SessionName: "uam-fake-abc67890", State: adapter.Active, CreatedAt: time.Now()},
 	}}
 	svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 
@@ -130,10 +130,10 @@ func TestServiceFindRejectsAmbiguousPrefix(t *testing.T) {
 
 func TestServiceFindExactMatchWinsOverAmbiguousPrefix(t *testing.T) {
 	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{
-		{ID: "abc", AgentType: "fake", DisplayName: "exact-id", TmuxSession: "uam-fake-exact", State: adapter.Active, CreatedAt: time.Now()},
-		{ID: "abc67890", AgentType: "fake", DisplayName: "prefix-id", TmuxSession: "uam-fake-prefix", State: adapter.Active, CreatedAt: time.Now()},
-		{ID: "def12345", AgentType: "fake", DisplayName: "exact-tmux", TmuxSession: "uam-fake-abc", State: adapter.Active, CreatedAt: time.Now()},
-		{ID: "def67890", AgentType: "fake", DisplayName: "prefix-tmux", TmuxSession: "uam-fake-abc-extra", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "abc", AgentType: "fake", DisplayName: "exact-id", SessionName: "uam-fake-exact", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "abc67890", AgentType: "fake", DisplayName: "prefix-id", SessionName: "uam-fake-prefix", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "def12345", AgentType: "fake", DisplayName: "exact-tmux", SessionName: "uam-fake-abc", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "def67890", AgentType: "fake", DisplayName: "prefix-tmux", SessionName: "uam-fake-abc-extra", State: adapter.Active, CreatedAt: time.Now()},
 	}}
 	svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 
@@ -227,7 +227,7 @@ func TestServicePersistsPromptAndReportsDeadTmuxRecord(t *testing.T) {
 func TestServicePersistsAndMergesCommandAlias(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
-	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "12345678", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-fake-12345678", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}}}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "12345678", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", SessionName: "uam-fake-12345678", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}}}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	if _, err := svc.DispatchNamedWithAlias(context.Background(), "fake", "ghcp", "bugfix", "fix parser", "/tmp/project", "yolo"); err != nil {
 		t.Fatal(err)
@@ -255,7 +255,7 @@ func TestAttachSpecResumesDeadSessionFromMetadata(t *testing.T) {
 		SchemaVersion: store.CurrentSchemaVersion,
 		DefaultAgent:  "fake",
 		Sessions: map[string]store.SessionRecord{
-			"fake:abc12345": {ID: "abc12345-dead-beef-cafe-0123456789ab", Agent: "fake", CommandAlias: "ghcp", Name: "bugfix", Prompt: "fix parser", Mode: store.ModeYolo, Workdir: "/tmp/project", TmuxSession: "uam-fake-abc12345", CreatedAt: created},
+			"fake:abc12345": {ID: "abc12345-dead-beef-cafe-0123456789ab", Agent: "fake", CommandAlias: "ghcp", Name: "bugfix", Prompt: "fix parser", Mode: store.ModeYolo, Workdir: "/tmp/project", SessionName: "uam-fake-abc12345", CreatedAt: created},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -271,7 +271,7 @@ func TestAttachSpecResumesDeadSessionFromMetadata(t *testing.T) {
 	if fake.resumed == nil {
 		t.Fatal("dead metadata-backed session should be resumed before attach")
 	}
-	if fake.resumed.ID != "abc12345-dead-beef-cafe-0123456789ab" || fake.resumed.Name != "bugfix" || fake.resumed.CommandAlias != "ghcp" || fake.resumed.Prompt != "fix parser" || fake.resumed.Cwd != "/tmp/project" || fake.resumed.Mode != "yolo" || fake.resumed.TmuxSession != "uam-fake-abc12345" {
+	if fake.resumed.ID != "abc12345-dead-beef-cafe-0123456789ab" || fake.resumed.Name != "bugfix" || fake.resumed.CommandAlias != "ghcp" || fake.resumed.Prompt != "fix parser" || fake.resumed.Cwd != "/tmp/project" || fake.resumed.Mode != "yolo" || fake.resumed.SessionName != "uam-fake-abc12345" {
 		t.Fatalf("resume metadata = %+v", fake.resumed)
 	}
 }
@@ -283,7 +283,7 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	if sessions[0].ID != "p" || sessions[1].ID != "live" {
 		t.Fatalf("order=%+v", sessions)
 	}
-	rec := RecordFromSession(adapter.Session{ID: "id", AgentType: "fake", CommandAlias: "ghcp", Prompt: "do work", Cwd: "/tmp", TmuxSession: "tm", CreatedAt: now}, "")
+	rec := RecordFromSession(adapter.Session{ID: "id", AgentType: "fake", CommandAlias: "ghcp", Prompt: "do work", Cwd: "/tmp", SessionName: "tm", CreatedAt: now}, "")
 	if rec.Mode != store.ModeYolo || rec.Name != "id" || rec.CommandAlias != "ghcp" || rec.Prompt != "do work" {
 		t.Fatalf("rec=%+v", rec)
 	}
@@ -542,7 +542,7 @@ func TestDispatchReturnsLiveSessionOnPersistFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), sess.ID) {
 		t.Fatalf("advisory error should reference the live session id %q: %v", sess.ID, err)
 	}
-	if sess.ID == "" || sess.TmuxSession == "" {
+	if sess.ID == "" || sess.SessionName == "" {
 		t.Fatalf("live session must be returned despite persist failure: %+v", sess)
 	}
 	if fake.stopped {
@@ -575,7 +575,7 @@ func TestDispatchPersistsRequestedMode(t *testing.T) {
 // dies. We drive the no-record path directly through renameRecord so the test is
 // independent of the refresh backfill (which would otherwise mask the bug).
 func TestRenameLiveSessionWithoutStoreRecordBackfillsRecord(t *testing.T) {
-	live := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", TmuxSession: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	live := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", SessionName: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})
 	// Empty store: no record for the live session.
 	if err := st.Save(store.DefaultConfig()); err != nil {
@@ -586,7 +586,7 @@ func TestRenameLiveSessionWithoutStoreRecordBackfillsRecord(t *testing.T) {
 	}
 	cfg, _ := st.Load()
 	rec := cfg.Sessions[store.Key("fake", "aaaa1111")]
-	if rec.ID != "aaaa1111" || rec.TmuxSession != "uam-fake-aaaa1111" {
+	if rec.ID != "aaaa1111" || rec.SessionName != "uam-fake-aaaa1111" {
 		t.Fatalf("rename must backfill a full record, got %+v", rec)
 	}
 	if rec.Name != "renamed" {
@@ -595,7 +595,7 @@ func TestRenameLiveSessionWithoutStoreRecordBackfillsRecord(t *testing.T) {
 }
 
 func TestTogglePinLiveSessionWithoutStoreRecordBackfillsRecord(t *testing.T) {
-	live := adapter.Session{ID: "bbbb2222", AgentType: "fake", DisplayName: "B", Cwd: "/tmp", TmuxSession: "uam-fake-bbbb2222", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	live := adapter.Session{ID: "bbbb2222", AgentType: "fake", DisplayName: "B", Cwd: "/tmp", SessionName: "uam-fake-bbbb2222", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})
 	if err := st.Save(store.DefaultConfig()); err != nil {
 		t.Fatal(err)
@@ -605,7 +605,7 @@ func TestTogglePinLiveSessionWithoutStoreRecordBackfillsRecord(t *testing.T) {
 	}
 	cfg, _ := st.Load()
 	rec := cfg.Sessions[store.Key("fake", "bbbb2222")]
-	if rec.ID != "bbbb2222" || rec.TmuxSession != "uam-fake-bbbb2222" {
+	if rec.ID != "bbbb2222" || rec.SessionName != "uam-fake-bbbb2222" {
 		t.Fatalf("toggle pin must backfill a full record, got %+v", rec)
 	}
 	if !rec.Pinned {

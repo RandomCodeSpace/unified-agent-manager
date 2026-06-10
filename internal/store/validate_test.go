@@ -47,7 +47,7 @@ func goodRecord() map[string]any {
 	}
 }
 
-func TestLoadDropsRecordWithMetacharTmuxSession(t *testing.T) {
+func TestLoadDropsRecordWithMetacharSessionName(t *testing.T) {
 	s := writeConfig(t, map[string]any{
 		"claude:12345678": goodRecord(),
 		"claude:evil1234": map[string]any{
@@ -203,7 +203,7 @@ func TestLoadKeepsCanonicalUUIDRecord(t *testing.T) {
 	if !ok {
 		t.Fatal("canonical UUID-style record was wrongly dropped")
 	}
-	if rec.ID != "12345678-1234-4234-9234-123456789abc" || rec.TmuxSession != "uam-claude-12345678" {
+	if rec.ID != "12345678-1234-4234-9234-123456789abc" || rec.SessionName != "uam-claude-12345678" {
 		t.Fatalf("record mutated: %+v", rec)
 	}
 }

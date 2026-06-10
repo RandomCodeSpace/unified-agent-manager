@@ -17,8 +17,8 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
 
@@ -57,8 +57,8 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam peek <id>")
 	fmt.Fprintln(os.Stderr, "  uam stop <id>")
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
-	fmt.Fprintln(os.Stderr, "  uam kill-all                      stop the private tmux server and all sessions")
-	fmt.Fprintln(os.Stderr, "  uam notify-closed <tmux-session>   (internal: tmux session-closed hook)")
+	fmt.Fprintln(os.Stderr, "  uam kill-all                      stop every managed session")
+	fmt.Fprintln(os.Stderr, "  uam notify-closed <session-name>   (internal: flag a record user-closed)")
 }
 
 // Run executes the CLI using the default Bubble Tea TUI runner.
@@ -106,7 +106,14 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 	case "notify-closed":
 		return runNotifyClosed(svc, args[1:])
 	case "kill-all":
-		return runKillAll(ctx, tmux.New("uam").KillServer)
+		return runKillAll(ctx, session.NewClient().KillAll)
+	case "__host":
+		// Internal: the detached per-session host process (see
+		// internal/session). Spawned by CreateSession, never typed by hand.
+		return session.RunHost(args[1:])
+	case "__attach":
+		// Internal: the interactive attach client run by AttachSpec argv.
+		return session.RunAttach(args[1:])
 	case "attach":
 		id, err := requireArg(args[1:], "attach requires <id>")
 		if err != nil {
@@ -150,30 +157,27 @@ func runStop(ctx context.Context, svc *app.Service, cmd string, args []string) e
 	return svc.Stop(ctx, id, cmd == "rm")
 }
 
-// runNotifyClosed is invoked from tmux's session-closed hook via:
-//
-//	tmux set-hook -g session-closed 'run-shell "<uam-bin> notify-closed #{hook_session_name}"'
-//
-// It flags the matching record as user-closed so exit-in-session and external
-// `tmux kill-session` calls aren't mistaken for reboot-killed sessions on
-// the next uam launch. Idempotent; safe to run repeatedly.
+// runNotifyClosed flags the matching record as user-closed. Session hosts
+// mark records closed in-process when their agent exits, so uam itself no
+// longer shells out to this; it stays for scripts and older tmux hooks that
+// still call it. Idempotent; safe to run repeatedly.
 func runNotifyClosed(svc *app.Service, args []string) error {
-	tmuxName, err := requireArg(args, "notify-closed requires <tmux-session>")
+	name, err := requireArg(args, "notify-closed requires <session-name>")
 	if err != nil {
 		return err
 	}
-	return svc.NotifyClosed(tmuxName)
+	return svc.NotifyClosed(name)
 }
 
-// runKillAll tears down the private tmux server (and every managed session) via
-// the injected killer. uam never auto-kills on TUI quit — reboot-recovery of
-// dead-pane sessions is intentional — so this explicit command is the only
-// teardown path (F24). The killer is idempotent on an already-dead server.
+// runKillAll tears down every managed session via the injected killer. uam
+// never auto-kills on TUI quit — reboot-recovery of dead sessions is
+// intentional — so this explicit command is the only teardown path (F24). The
+// killer is idempotent when nothing is running.
 func runKillAll(ctx context.Context, kill func(context.Context) error) error {
 	if err := kill(ctx); err != nil {
 		return fmt.Errorf("kill-all: %w", err)
 	}
-	fmt.Println("uam tmux server stopped")
+	fmt.Println("all uam sessions stopped")
 	return nil
 }
 
@@ -215,10 +219,11 @@ func requireArg(args []string, message string) (string, error) {
 
 // NewService wires the app service and supported agent adapters.
 func NewService(st *store.Store) *app.Service {
-	client := tmux.New("uam")
-	// Let migration distinguish reboot-survivors (live pane) from user-stopped
-	// sessions (dead pane) so a v1->v2 upgrade does not auto-resume the latter
-	// on attach (F07). The store stays tmux-free; this only injects the probe.
+	client := session.NewClient()
+	// Let migration distinguish reboot-survivors (live session) from
+	// user-stopped sessions (dead) so a v1->v2 upgrade does not auto-resume the
+	// latter on attach (F07). The store stays backend-free; this only injects
+	// the probe.
 	st.SetSessionProbe(func(name string) bool {
 		return client.HasSession(context.Background(), name)
 	})
@@ -334,7 +339,7 @@ func runNew(ctx context.Context, svc *app.Service) error {
 		}
 		fmt.Fprintln(os.Stderr, "warning:", err)
 	}
-	fmt.Printf("dispatched %s (%s)\n", sess.ID, sess.TmuxSession)
+	fmt.Printf("dispatched %s (%s)\n", sess.ID, sess.SessionName)
 	return nil
 }
 

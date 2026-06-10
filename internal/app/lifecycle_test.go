@@ -14,14 +14,14 @@ import (
 // running. Without this, an old CreatedAt + never-updated LastSeenAt makes a
 // long-running live session look prunable.
 func TestLastSeenAtBumpedForLiveSessions(t *testing.T) {
-	live := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", TmuxSession: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now().Add(-30 * 24 * time.Hour)}
+	live := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", SessionName: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now().Add(-30 * 24 * time.Hour)}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})
 
 	// Seed a stale record for the same live session: LastSeenAt far in the past.
 	key := store.Key("fake", "aaaa1111")
 	stale := time.Now().Add(-30 * 24 * time.Hour)
 	if err := st.Update(func(cfg *store.Config) error {
-		cfg.Sessions[key] = store.SessionRecord{ID: "aaaa1111", Agent: "fake", Name: "A", TmuxSession: "uam-fake-aaaa1111", Status: store.StatusActive, LastSeenAt: stale}
+		cfg.Sessions[key] = store.SessionRecord{ID: "aaaa1111", Agent: "fake", Name: "A", SessionName: "uam-fake-aaaa1111", Status: store.StatusActive, LastSeenAt: stale}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -52,7 +52,7 @@ func TestStartupPruneSkipsWhenServerDown(t *testing.T) {
 	key := store.Key("fake", "bbbb2222")
 	old := time.Now().Add(-90 * 24 * time.Hour)
 	if err := st.Update(func(cfg *store.Config) error {
-		cfg.Sessions[key] = store.SessionRecord{ID: "bbbb2222", Agent: "fake", Name: "B", TmuxSession: "uam-fake-bbbb2222", Status: store.StatusActive, LastSeenAt: old}
+		cfg.Sessions[key] = store.SessionRecord{ID: "bbbb2222", Agent: "fake", Name: "B", SessionName: "uam-fake-bbbb2222", Status: store.StatusActive, LastSeenAt: old}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -73,15 +73,15 @@ func TestStartupPruneSkipsWhenServerDown(t *testing.T) {
 // F20 Stage 2 — when the server is up (at least one live session proves it),
 // startup pruning removes a stale, dead-pane record but keeps the live one.
 func TestStartupPruneRemovesStaleDeadRecordWhenServerUp(t *testing.T) {
-	live := adapter.Session{ID: "cccc3333", AgentType: "fake", DisplayName: "C", Cwd: "/tmp", TmuxSession: "uam-fake-cccc3333", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	live := adapter.Session{ID: "cccc3333", AgentType: "fake", DisplayName: "C", Cwd: "/tmp", SessionName: "uam-fake-cccc3333", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})
 
 	liveKey := store.Key("fake", "cccc3333")
 	deadKey := store.Key("fake", "dddd4444")
 	old := time.Now().Add(-90 * 24 * time.Hour)
 	if err := st.Update(func(cfg *store.Config) error {
-		cfg.Sessions[liveKey] = store.SessionRecord{ID: "cccc3333", Agent: "fake", Name: "C", TmuxSession: "uam-fake-cccc3333", Status: store.StatusActive, LastSeenAt: time.Now()}
-		cfg.Sessions[deadKey] = store.SessionRecord{ID: "dddd4444", Agent: "fake", Name: "D", TmuxSession: "uam-fake-dddd4444", Status: store.StatusActive, LastSeenAt: old}
+		cfg.Sessions[liveKey] = store.SessionRecord{ID: "cccc3333", Agent: "fake", Name: "C", SessionName: "uam-fake-cccc3333", Status: store.StatusActive, LastSeenAt: time.Now()}
+		cfg.Sessions[deadKey] = store.SessionRecord{ID: "dddd4444", Agent: "fake", Name: "D", SessionName: "uam-fake-dddd4444", Status: store.StatusActive, LastSeenAt: old}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

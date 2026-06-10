@@ -32,7 +32,7 @@ func (f *cliFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
-	sess := adapter.Session{ID: "abc12345", AgentType: "fake", CommandAlias: req.CommandAlias, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: req.Cwd, TmuxSession: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	sess := adapter.Session{ID: "abc12345", AgentType: "fake", CommandAlias: req.CommandAlias, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: req.Cwd, SessionName: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	f.sessions = append(f.sessions, sess)
 	return sess, nil
 }
@@ -153,7 +153,7 @@ func TestRunNotifyClosedFlagsRecord(t *testing.T) {
 	if id == "" {
 		t.Fatal("dispatch did not return an id")
 	}
-	// Hook payload is the tmux session name, not the agent id.
+	// The notify payload is the backend session name, not the agent id.
 	if err := runNotifyClosed(svc, []string{"uam-fake-" + id}); err != nil {
 		t.Fatalf("notify-closed: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestRunNotifyClosedFlagsRecord(t *testing.T) {
 func TestRunNotifyClosedRequiresName(t *testing.T) {
 	svc, _ := newCLITestService(t)
 	if err := runNotifyClosed(svc, nil); err == nil {
-		t.Fatal("notify-closed without tmux name should fail")
+		t.Fatal("notify-closed without a session name should fail")
 	}
 }
 

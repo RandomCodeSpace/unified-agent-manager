@@ -2,7 +2,6 @@ package codex
 
 import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
 // sessionArgs appends codex's `resume --last` subcommand on resume so picking
@@ -17,8 +16,8 @@ func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
 	return nil
 }
 
-func New(client *tmux.Client) adapter.AgentAdapter {
-	a := adapter.NewTmuxAgent("codex", "OpenAI Codex", []adapter.CommandCandidate{{Display: "codex", Args: []string{"codex"}}}, []string{"--sandbox", "danger-full-access"}, client)
+func New(backend adapter.Backend) adapter.AgentAdapter {
+	a := adapter.NewAgent("codex", "OpenAI Codex", []adapter.CommandCandidate{{Display: "codex", Args: []string{"codex"}}}, []string{"--sandbox", "danger-full-access"}, backend)
 	a.SessionArgs = sessionArgs
 	a.SkipPromptOnResume = true
 	return a
