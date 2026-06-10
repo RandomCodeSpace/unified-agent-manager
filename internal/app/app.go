@@ -1469,6 +1469,7 @@ func (m Model) renderHelp() string {
 		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
 		"Ctrl+X  stop/remove      Ctrl+S  group-by-dir",
 		"e  new session       Esc  quit",
+		"in session:  ← detach (when input empty)    Ctrl+B d  detach",
 		"dispatch:  @agent:alias #name prompt   (alias, name & prompt optional)",
 	}
 	var b strings.Builder
