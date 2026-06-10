@@ -146,8 +146,18 @@ ${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json
 Writes are atomic and lock-protected. If the file needs migration or recovery,
 `uam` creates backup files next to it.
 
-Per-session runtime state (control sockets and state files) lives in
-`$XDG_RUNTIME_DIR/uam` (override with `UAM_SESSION_DIR`), created owner-only.
+Per-session runtime state (control sockets and state files) lives in a
+per-user directory under the system temp dir — `/tmp/uam-<uid>` on most
+systems (override with `UAM_SESSION_DIR`) — created owner-only and verified
+to be owned by you. The temp dir is used instead of `$XDG_RUNTIME_DIR`
+deliberately: logind wipes the runtime dir when your last login session ends,
+which would strand detached sessions that survive logout (the same reason
+tmux lives in `/tmp/tmux-<uid>`). Hosts periodically refresh their files'
+timestamps so age-based `/tmp` cleanup never collects a long-idle session.
+
+Note for distros with `KillUserProcesses=yes` in logind.conf: any detached
+process — uam session hosts and tmux alike — is killed at logout unless you
+run `loginctl enable-linger`.
 
 > Upgrading from a tmux-backed release: sessions still running inside the old
 > `tmux -L uam` server are not visible to the native backend. Finish or stop

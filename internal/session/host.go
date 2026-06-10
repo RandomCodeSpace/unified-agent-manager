@@ -127,7 +127,7 @@ func runHost(dir, name, cwd, label string, envs, command []string, ready *os.Fil
 	if err := EnsureDir(dir); err != nil {
 		return err
 	}
-	if st, err := readState(dir, name); err == nil && ProcAlive(st.HostPID) {
+	if st, err := readState(dir, name); err == nil && st.hostAlive() {
 		return fmt.Errorf("session %s already exists (host pid %d)", name, st.HostPID)
 	}
 	// Stale leftovers from a crashed host: safe to clear, the pid is gone.
@@ -161,7 +161,9 @@ func runHost(dir, name, cwd, label string, envs, command []string, ready *os.Fil
 	h.state = State{
 		Name:        name,
 		HostPID:     os.Getpid(),
+		HostStart:   procStartTime(os.Getpid()),
 		ChildPID:    cmd.Process.Pid,
+		ChildStart:  procStartTime(cmd.Process.Pid),
 		CreatedUnix: time.Now().Unix(),
 		Cwd:         cwd,
 		Label:       label,
@@ -178,6 +180,7 @@ func runHost(dir, name, cwd, label string, envs, command []string, ready *os.Fil
 
 	go h.acceptLoop(ln)
 	go h.signalLoop()
+	go h.freshenLoop()
 
 	h.pumpPTY()
 
@@ -224,6 +227,34 @@ func (h *host) pumpPTY() {
 		}
 		if err != nil {
 			return
+		}
+	}
+}
+
+// freshenInterval is how often the host bumps its runtime files' timestamps.
+// The default runtime dir lives under the shared temp dir, where
+// systemd-tmpfiles removes entries untouched for ~10 days; periodic touches
+// keep a long-idle session's socket and state file from being aged out (the
+// same cleanup famously eats idle tmux sockets).
+const freshenInterval = 6 * time.Hour
+
+// freshenLoop periodically re-stamps the state file and socket mtimes until
+// the session shuts down. Best-effort: a failed touch only matters on systems
+// that both age temp files and idle a session for days.
+func (h *host) freshenLoop() {
+	ticker := time.NewTicker(freshenInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.exited:
+			return
+		case <-ticker.C:
+			now := time.Now()
+			for _, path := range []string{statePath(h.dir, h.name), SocketPath(h.dir, h.name)} {
+				if err := os.Chtimes(path, now, now); err != nil {
+					log.Debug("freshen runtime file failed", "path", path, "error", err)
+				}
+			}
 		}
 	}
 }

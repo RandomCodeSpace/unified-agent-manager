@@ -171,8 +171,8 @@ func (c *Client) List(_ context.Context) ([]Info, error) {
 			log.Warn("skipping unreadable session state", "file", e.Name(), "error", err)
 			continue
 		}
-		if !ProcAlive(st.HostPID) {
-			if ProcAlive(st.ChildPID) {
+		if !st.hostAlive() {
+			if st.childAlive() {
 				// Host crashed but the agent is still winding down (it gets
 				// SIGHUP when the PTY master closed). Keep it visible and
 				// leave the files for the next sweep.
@@ -198,7 +198,7 @@ func infoFromState(st State) Info {
 		CreatedUnix: st.CreatedUnix,
 		ChildPID:    st.ChildPID,
 		Cwd:         cwd,
-		Alive:       ProcAlive(st.ChildPID),
+		Alive:       st.childAlive(),
 	}
 }
 
@@ -248,9 +248,11 @@ func (c *Client) Kill(ctx context.Context, name string) error {
 	}
 	// State exists but the socket path failed: the host is wedged, crashed,
 	// or mid-shutdown. Escalate directly and wait for both processes to go.
-	if ProcAlive(st.HostPID) {
+	// The start-time-verified probes matter most here: a recycled PID must
+	// never be signalled as if it were the session.
+	if st.hostAlive() {
 		_ = syscall.Kill(st.HostPID, syscall.SIGTERM)
-	} else if ProcAlive(st.ChildPID) {
+	} else if st.childAlive() {
 		// Orphaned agent (host crashed): signal its process group directly.
 		if err := syscall.Kill(-st.ChildPID, syscall.SIGTERM); err != nil {
 			_ = syscall.Kill(st.ChildPID, syscall.SIGTERM)
@@ -258,7 +260,7 @@ func (c *Client) Kill(ctx context.Context, name string) error {
 	}
 	deadline := time.Now().Add(callTimeout)
 	for time.Now().Before(deadline) {
-		if !ProcAlive(st.ChildPID) && !ProcAlive(st.HostPID) {
+		if !st.childAlive() && !st.hostAlive() {
 			removeSessionFiles(c.Dir, name)
 			return nil
 		}
@@ -290,7 +292,7 @@ func (c *Client) KillAll(ctx context.Context) error {
 // HasSession reports whether a live host exists for name.
 func (c *Client) HasSession(_ context.Context, name string) bool {
 	st, err := readState(c.Dir, name)
-	return err == nil && ProcAlive(st.HostPID)
+	return err == nil && st.hostAlive()
 }
 
 // SetSessionLabel records the user-facing label for a live session; the host

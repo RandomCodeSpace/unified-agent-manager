@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -36,16 +37,19 @@ func ValidateName(name string) error {
 }
 
 // DefaultDir returns the runtime directory holding per-session sockets and
-// state files. Resolution order: $UAM_SESSION_DIR, $XDG_RUNTIME_DIR/uam, then
-// a per-UID directory under the system temp dir. Unix socket paths must stay
-// short (the sockaddr_un limit is ~104 bytes), which rules out deep home
-// paths.
+// state files: $UAM_SESSION_DIR if set, else a per-UID directory under the
+// system temp dir (like tmux's /tmp/tmux-<uid>).
+//
+// $XDG_RUNTIME_DIR is deliberately NOT used: systemd-logind deletes it when
+// the user's last login session ends, not only on reboot — which would strand
+// still-running detached hosts (they survive logout) with no socket or state
+// file, and a later "resume" would spawn duplicates. The temp dir survives
+// logout and is cleared on reboot, matching the hosts' actual lifetime. Unix
+// socket paths must also stay short (the sockaddr_un limit is ~104 bytes),
+// which rules out deep home paths.
 func DefaultDir() string {
 	if v := os.Getenv("UAM_SESSION_DIR"); v != "" {
 		return v
-	}
-	if v := os.Getenv("XDG_RUNTIME_DIR"); v != "" {
-		return filepath.Join(v, "uam")
 	}
 	return filepath.Join(os.TempDir(), "uam-"+strconv.Itoa(os.Getuid()))
 }
@@ -53,9 +57,23 @@ func DefaultDir() string {
 // EnsureDir creates the runtime directory owner-only. The 0700 mode is the
 // security boundary: sockets and state files inside inherit protection from
 // it, so another local user can neither attach to a session nor inject input.
+// Because the default parent is the sticky shared temp dir, the directory is
+// also verified to be a real directory (not a symlink) owned by the current
+// user — a foreign pre-created /tmp/uam-<uid> is refused, like tmux refuses a
+// foreign /tmp/tmux-<uid>.
 func EnsureDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create session dir %s: %w", dir, err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("stat session dir %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("session dir %s is not a directory", dir)
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("session dir %s is owned by uid %d, not the current user", dir, st.Uid)
 	}
 	// MkdirAll is a no-op on an existing directory; re-assert the mode so a
 	// pre-existing world-readable dir cannot silently expose sockets. 0700 is
@@ -70,14 +88,26 @@ func EnsureDir(dir string) error {
 // native replacement for `tmux list-sessions` output: List scans these files
 // to enumerate live sessions without dialing every socket.
 type State struct {
-	Name        string   `json:"name"`
-	HostPID     int      `json:"host_pid"`
+	Name    string `json:"name"`
+	HostPID int    `json:"host_pid"`
+	// HostStart / ChildStart are the processes' kernel start times
+	// (/proc/<pid>/stat field 22, in clock ticks since boot; 0 where
+	// unavailable). They disambiguate a recycled PID from the original
+	// process, so a stale state file can never make uam treat — or worse,
+	// signal — an unrelated process as a session.
+	HostStart   int64    `json:"host_start,omitempty"`
 	ChildPID    int      `json:"child_pid"`
+	ChildStart  int64    `json:"child_start,omitempty"`
 	CreatedUnix int64    `json:"created_unix"`
 	Cwd         string   `json:"cwd"`
 	Label       string   `json:"label,omitempty"`
 	Command     []string `json:"command"`
 }
+
+// hostAlive / childAlive are the start-time-verified liveness probes for a
+// persisted state record.
+func (st State) hostAlive() bool  { return procAliveWithStart(st.HostPID, st.HostStart) }
+func (st State) childAlive() bool { return procAliveWithStart(st.ChildPID, st.ChildStart) }
 
 // Info is one live session as reported by List.
 type Info struct {
@@ -135,6 +165,49 @@ func ProcAlive(pid int) bool {
 		return false
 	}
 	return syscall.Kill(pid, 0) == nil
+}
+
+// procAliveWithStart is ProcAlive hardened against PID reuse: when a start
+// time was recorded AND the live process's start time is readable, they must
+// match. Where /proc is unavailable (e.g. macOS) either side reads as 0 and
+// the check degrades to the plain signal-0 probe.
+func procAliveWithStart(pid int, start int64) bool {
+	if !ProcAlive(pid) {
+		return false
+	}
+	if start == 0 {
+		return true
+	}
+	current := procStartTime(pid)
+	return current == 0 || current == start
+}
+
+// procStartTime returns the kernel start time of pid (clock ticks since boot,
+// /proc/<pid>/stat field 22), or 0 when unavailable.
+func procStartTime(pid int) int64 {
+	if pid <= 0 {
+		return 0
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0
+	}
+	// comm (field 2) is parenthesized and may itself contain spaces or ')',
+	// so split after the LAST ')'. starttime is overall field 22, i.e. index
+	// 19 of the fields that follow comm.
+	rest := string(data)
+	if i := strings.LastIndexByte(rest, ')'); i >= 0 {
+		rest = rest[i+1:]
+	}
+	fields := strings.Fields(rest)
+	if len(fields) < 20 {
+		return 0
+	}
+	v, err := strconv.ParseInt(fields[19], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 // procCwd returns the live working directory of pid via /proc (Linux). On
