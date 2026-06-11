@@ -4,8 +4,9 @@
 // plain-text tail the way `tmux capture-pane -p -J` used to. It models only
 // what peek/capture needs — a character grid, scrollback history, cursor
 // motion, erase/insert/delete, scroll regions, and the alternate screen.
-// Colors and attributes (SGR) are parsed and discarded: capture output is
-// plain text by contract, exactly like the old capture-pane path.
+// Colors and attributes (SGR) are tracked per cell so Redraw can repaint a
+// re-attaching client faithfully; Capture output stays plain text by
+// contract, exactly like the old capture-pane path.
 package vterm
 
 import (
@@ -38,6 +39,9 @@ type Terminal struct {
 	state   parseState
 	seq     []byte
 	partial []byte
+
+	// cur is the current SGR state; printed cells and BCE fills carry it.
+	cur attr
 }
 
 // bufLine is one captured line: its text and whether it is the soft-wrap
@@ -273,17 +277,17 @@ func (t *Terminal) dispatchCSI(params string, final byte) {
 	case 'J':
 		t.eraseDisplay(arg(0, 0) /* default 0 even when params empty */)
 	case 'K':
-		s.eraseLine(argDefault(n, 0, 0), t.cols)
+		s.eraseLine(argDefault(n, 0, 0), t.cols, t.bceFill())
 	case 'L':
-		s.insertLines(arg(0, 1))
+		s.insertLines(arg(0, 1), t.bceFill())
 	case 'M':
-		s.deleteLines(arg(0, 1))
+		s.deleteLines(arg(0, 1), t.bceFill())
 	case '@':
-		s.insertChars(arg(0, 1), t.cols)
+		s.insertChars(arg(0, 1), t.cols, t.bceFill())
 	case 'P':
-		s.deleteChars(arg(0, 1), t.cols)
+		s.deleteChars(arg(0, 1), t.cols, t.bceFill())
 	case 'X':
-		s.eraseChars(arg(0, 1), t.cols)
+		s.eraseChars(arg(0, 1), t.cols, t.bceFill())
 	case 'S':
 		for i := 0; i < arg(0, 1); i++ {
 			t.scrollUp()
@@ -315,9 +319,19 @@ func (t *Terminal) dispatchCSI(params string, final byte) {
 	case 'u':
 		s.x, s.y = min(s.savedX, t.cols-1), min(s.savedY, t.rows-1)
 		s.pendingWrap = false
-	case 'm', 'n', 'q', 't', 'g', 'c':
-		// SGR, reports, cursor style, window ops, tab clears: no grid effect.
+	case 'm':
+		if !private {
+			t.applySGR(params)
+		}
+	case 'n', 'q', 't', 'g', 'c':
+		// Reports, cursor style, window ops, tab clears: no grid effect.
 	}
+}
+
+// bceFill is the cell erases reveal: blank, carrying the current background
+// (xterm's back-color-erase), so colored bars and panels replay intact.
+func (t *Terminal) bceFill() cell {
+	return cell{a: attr{bg: t.cur.bg}}
 }
 
 // argDefault is arg() but distinguishing "no parameter" from explicit 0 is
@@ -367,7 +381,7 @@ func (t *Terminal) switchAlt(on bool) {
 	if on {
 		s := t.main
 		s.savedX, s.savedY = s.x, s.y
-		t.alt.clearAll()
+		t.alt.clearAll(t.bceFill())
 		t.alt.x, t.alt.y = 0, 0
 		t.onAlt = true
 		return
@@ -394,9 +408,9 @@ func (t *Terminal) print(r rune) {
 		s.x = 0
 		t.lineFeed(true)
 	}
-	s.cells[s.y][s.x] = r
+	s.cells[s.y][s.x] = cell{r: r, a: t.cur}
 	if w == 2 && s.x+1 < t.cols {
-		s.cells[s.y][s.x+1] = 0
+		s.cells[s.y][s.x+1] = cell{a: t.cur}
 	}
 	s.x += w
 	if s.x >= t.cols {
@@ -432,7 +446,7 @@ func (t *Terminal) scrollUp() {
 	copy(s.cells[top:bot], s.cells[top+1:bot+1])
 	copy(s.wrapped[top:bot], s.wrapped[top+1:bot+1])
 	s.cells[bot] = rec
-	clearRow(s.cells[bot])
+	clearRow(s.cells[bot], t.bceFill())
 	s.wrapped[bot] = false
 }
 
@@ -443,7 +457,7 @@ func (t *Terminal) scrollDownRegion() {
 	copy(s.cells[top+1:bot+1], s.cells[top:bot])
 	copy(s.wrapped[top+1:bot+1], s.wrapped[top:bot])
 	s.cells[top] = rec
-	clearRow(s.cells[top])
+	clearRow(s.cells[top], t.bceFill())
 	s.wrapped[top] = false
 }
 
@@ -469,21 +483,22 @@ func (t *Terminal) pushHistory(l bufLine) {
 
 func (t *Terminal) eraseDisplay(mode int) {
 	s := t.active()
+	fill := t.bceFill()
 	switch mode {
 	case 0:
-		s.eraseLine(0, t.cols)
+		s.eraseLine(0, t.cols, fill)
 		for y := s.y + 1; y < t.rows; y++ {
-			clearRow(s.cells[y])
+			clearRow(s.cells[y], fill)
 			s.wrapped[y] = false
 		}
 	case 1:
-		s.eraseLine(1, t.cols)
+		s.eraseLine(1, t.cols, fill)
 		for y := 0; y < s.y; y++ {
-			clearRow(s.cells[y])
+			clearRow(s.cells[y], fill)
 			s.wrapped[y] = false
 		}
 	case 2, 3:
-		s.clearAll()
+		s.clearAll(fill)
 	}
 }
 
@@ -492,6 +507,7 @@ func (t *Terminal) reset() {
 	t.main = newScreen(t.cols, t.rows)
 	t.alt = newScreen(t.cols, t.rows)
 	t.state = stGround
+	t.cur = attr{}
 }
 
 // Resize changes the grid size, preserving as much content as fits. Scroll
@@ -553,25 +569,51 @@ func (t *Terminal) Capture(maxLines int) string {
 }
 
 // Redraw returns an ANSI byte sequence that repaints the current screen on a
-// fresh terminal: clear, draw every row, and park the cursor. The session host
-// sends it to a newly attached client so the user sees the live screen
-// immediately (a follow-up resize nudge makes full-screen TUIs repaint with
-// their own colors).
+// fresh terminal: reset attributes, clear, draw every row with the SGR state
+// each cell was written with, and park the cursor. The session host sends it
+// to a newly attached client so the user sees the live screen — colors
+// included — immediately.
 func (t *Terminal) Redraw() []byte {
 	s := t.active()
 	var b strings.Builder
-	b.WriteString("\x1b[2J\x1b[H")
+	b.WriteString("\x1b[0m\x1b[2J\x1b[H")
 	last := t.rows - 1
 	for ; last >= 0; last-- {
-		if rowText(s.cells[last]) != "" {
+		if !rowBlank(s.cells[last]) {
 			break
 		}
 	}
+	cur := attr{}
 	for y := 0; y <= last; y++ {
 		if y > 0 {
 			b.WriteString("\r\n")
 		}
-		b.WriteString(rowText(s.cells[y]))
+		row := s.cells[y]
+		end := len(row) - 1
+		for ; end >= 0; end-- {
+			if row[end].visible() {
+				break
+			}
+		}
+		for x := 0; x <= end; x++ {
+			c := row[x]
+			if c.r == 0 && x > 0 && runewidth.RuneWidth(row[x-1].r) == 2 {
+				// Wide-rune continuation: no extra column.
+				continue
+			}
+			if c.a != cur {
+				b.WriteString(c.a.sgr())
+				cur = c.a
+			}
+			r := c.r
+			if r == 0 {
+				r = ' '
+			}
+			b.WriteRune(r)
+		}
+	}
+	if cur != (attr{}) {
+		b.WriteString("\x1b[0m")
 	}
 	b.WriteString("\x1b[" + strconv.Itoa(s.y+1) + ";" + strconv.Itoa(s.x+1) + "H")
 	return []byte(b.String())
@@ -579,7 +621,7 @@ func (t *Terminal) Redraw() []byte {
 
 // screen is one character grid (main or alternate).
 type screen struct {
-	cells   [][]rune
+	cells   [][]cell
 	wrapped []bool
 	x, y    int
 	// pendingWrap defers the wrap after writing the last column (DECAWM
@@ -590,16 +632,16 @@ type screen struct {
 }
 
 func newScreen(cols, rows int) *screen {
-	s := &screen{cells: make([][]rune, rows), wrapped: make([]bool, rows), bottom: rows - 1}
+	s := &screen{cells: make([][]cell, rows), wrapped: make([]bool, rows), bottom: rows - 1}
 	for i := range s.cells {
-		s.cells[i] = make([]rune, cols)
+		s.cells[i] = make([]cell, cols)
 	}
 	return s
 }
 
-func (s *screen) clearAll() {
+func (s *screen) clearAll(fill cell) {
 	for y := range s.cells {
-		clearRow(s.cells[y])
+		clearRow(s.cells[y], fill)
 		s.wrapped[y] = false
 	}
 }
@@ -614,23 +656,23 @@ func (s *screen) moveY(d int) {
 	s.pendingWrap = false
 }
 
-func (s *screen) eraseLine(mode, cols int) {
+func (s *screen) eraseLine(mode, cols int, fill cell) {
 	row := s.cells[s.y]
 	switch mode {
 	case 0:
 		for x := s.x; x < cols; x++ {
-			row[x] = 0
+			row[x] = fill
 		}
 	case 1:
 		for x := 0; x <= s.x && x < cols; x++ {
-			row[x] = 0
+			row[x] = fill
 		}
 	case 2:
-		clearRow(row)
+		clearRow(row, fill)
 	}
 }
 
-func (s *screen) insertLines(n int) {
+func (s *screen) insertLines(n int, fill cell) {
 	if s.y < s.top || s.y > s.bottom {
 		return
 	}
@@ -639,12 +681,12 @@ func (s *screen) insertLines(n int) {
 		copy(s.cells[s.y+1:s.bottom+1], s.cells[s.y:s.bottom])
 		copy(s.wrapped[s.y+1:s.bottom+1], s.wrapped[s.y:s.bottom])
 		s.cells[s.y] = rec
-		clearRow(s.cells[s.y])
+		clearRow(s.cells[s.y], fill)
 		s.wrapped[s.y] = false
 	}
 }
 
-func (s *screen) deleteLines(n int) {
+func (s *screen) deleteLines(n int, fill cell) {
 	if s.y < s.top || s.y > s.bottom {
 		return
 	}
@@ -653,31 +695,31 @@ func (s *screen) deleteLines(n int) {
 		copy(s.cells[s.y:s.bottom], s.cells[s.y+1:s.bottom+1])
 		copy(s.wrapped[s.y:s.bottom], s.wrapped[s.y+1:s.bottom+1])
 		s.cells[s.bottom] = rec
-		clearRow(s.cells[s.bottom])
+		clearRow(s.cells[s.bottom], fill)
 		s.wrapped[s.bottom] = false
 	}
 }
 
-func (s *screen) insertChars(n, cols int) {
+func (s *screen) insertChars(n, cols int, fill cell) {
 	row := s.cells[s.y]
 	for i := 0; i < n; i++ {
 		copy(row[s.x+1:cols], row[s.x:cols-1])
-		row[s.x] = 0
+		row[s.x] = fill
 	}
 }
 
-func (s *screen) deleteChars(n, cols int) {
+func (s *screen) deleteChars(n, cols int, fill cell) {
 	row := s.cells[s.y]
 	for i := 0; i < n; i++ {
 		copy(row[s.x:cols-1], row[s.x+1:cols])
-		row[cols-1] = 0
+		row[cols-1] = fill
 	}
 }
 
-func (s *screen) eraseChars(n, cols int) {
+func (s *screen) eraseChars(n, cols int, fill cell) {
 	row := s.cells[s.y]
 	for x := s.x; x < s.x+n && x < cols; x++ {
-		row[x] = 0
+		row[x] = fill
 	}
 }
 
@@ -687,7 +729,9 @@ func (s *screen) resize(cols, rows, oldCols, oldRows int, pushTop bool, t *Termi
 	if rows < oldRows {
 		drop := oldRows - rows
 		// Keep the cursor visible: drop blank rows from the bottom first.
-		for drop > 0 && oldRows-1 > s.y && rowText(s.cells[oldRows-1]) == "" {
+		// rowBlank (not rowText) so a BCE-colored blank row survives the
+		// shrink the same way Redraw would paint it.
+		for drop > 0 && oldRows-1 > s.y && rowBlank(s.cells[oldRows-1]) {
 			s.cells = s.cells[:oldRows-1]
 			s.wrapped = s.wrapped[:oldRows-1]
 			oldRows--
@@ -705,13 +749,13 @@ func (s *screen) resize(cols, rows, oldCols, oldRows int, pushTop bool, t *Termi
 		}
 	}
 	for len(s.cells) < rows {
-		s.cells = append(s.cells, make([]rune, cols))
+		s.cells = append(s.cells, make([]cell, cols))
 		s.wrapped = append(s.wrapped, false)
 	}
 	for i := range s.cells {
 		row := s.cells[i]
 		if len(row) < cols {
-			grown := make([]rune, cols)
+			grown := make([]cell, cols)
 			copy(grown, row)
 			s.cells[i] = grown
 		} else if len(row) > cols {
@@ -726,18 +770,19 @@ func (s *screen) resize(cols, rows, oldCols, oldRows int, pushTop bool, t *Termi
 	s.savedY = clamp(s.savedY, 0, rows-1)
 }
 
-func clearRow(row []rune) {
+func clearRow(row []cell, fill cell) {
 	for i := range row {
-		row[i] = 0
+		row[i] = fill
 	}
 }
 
-// rowText renders a grid row as a string: zero cells inside the line become
-// spaces, trailing blanks are trimmed.
-func rowText(row []rune) string {
+// rowText renders a grid row as plain text: zero cells inside the line become
+// spaces, trailing blanks are trimmed, attributes are ignored (the Capture
+// contract).
+func rowText(row []cell) string {
 	last := len(row) - 1
 	for ; last >= 0; last-- {
-		if row[last] != 0 && row[last] != ' ' {
+		if row[last].r != 0 && row[last].r != ' ' {
 			break
 		}
 	}
@@ -746,11 +791,11 @@ func rowText(row []rune) string {
 	}
 	var b strings.Builder
 	for x := 0; x <= last; x++ {
-		r := row[x]
+		r := row[x].r
 		if r == 0 {
 			// A zero cell is either an erased cell or a wide-rune
 			// continuation; the continuation contributes no extra column.
-			if x > 0 && runewidth.RuneWidth(row[x-1]) == 2 {
+			if x > 0 && runewidth.RuneWidth(row[x-1].r) == 2 {
 				continue
 			}
 			r = ' '
