@@ -5,8 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
@@ -295,6 +298,182 @@ func TestAttachStreamsAndDetaches(t *testing.T) {
 	}
 	if !strings.Contains(out, "[uam: detached]") {
 		t.Fatalf("missing detach notice: %q", out)
+	}
+	// Terminal-state ownership is tty-only: piped output must stay free of
+	// alternate-screen switches.
+	if strings.Contains(out, "\x1b[?1049") {
+		t.Fatalf("non-tty attach must not emit alt-screen sequences: %q", out)
+	}
+}
+
+// On a real terminal the attach client must own the screen the way
+// `tmux attach` did: bridge the session inside its own alternate screen (so
+// the replay's clear and live agent output never land on the user's primary
+// screen — the buffer uam's TUI reveals again when it exits), and on detach
+// reset the modes an agent could have leaked (mouse tracking, bracketed
+// paste, kitty keyboard, hidden cursor) before handing the primary screen
+// back. Regression test for the post-tmux rendering bugs: corrupted TUI after
+// attach/detach and session residue left on the terminal after quitting uam.
+func TestAttachOwnsTerminalStateOnTTY(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-aaaa9999"
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "echo banner; sleep 60"}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitFor(t, "banner", func() bool {
+		out, _ := c.Capture(ctx, name, 10)
+		return strings.Contains(out, "banner")
+	})
+
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ptmx.Close(); _ = tty.Close() }()
+
+	done := make(chan error, 1)
+	go func() { done <- runAttach(c.Dir, name, tty, tty) }()
+
+	var mu sync.Mutex
+	var got []byte
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := ptmx.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				got = append(got, buf[:n]...)
+				mu.Unlock()
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+	snapshot := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return string(got)
+	}
+
+	waitFor(t, "replay banner", func() bool { return strings.Contains(snapshot(), "banner") })
+	pre := snapshot()
+	enter := strings.Index(pre, "\x1b[?1049h")
+	if enter < 0 {
+		t.Fatalf("tty attach must enter its own alternate screen: %q", pre)
+	}
+	if clear := strings.Index(pre, "\x1b[2J"); clear >= 0 && clear < enter {
+		t.Fatalf("replay clear must land inside the alt screen, not on the primary: %q", pre)
+	}
+
+	if _, err := ptmx.Write([]byte{0x02, 'd'}); err != nil { // Ctrl+B d
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runAttach: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("detach chord did not detach")
+	}
+	waitFor(t, "detach notice", func() bool { return strings.Contains(snapshot(), "[uam: detached]") })
+	full := snapshot()
+	exit := strings.Index(full, "\x1b[?1049l")
+	if exit < 0 {
+		t.Fatalf("detach must leave the alternate screen: %q", full)
+	}
+	for _, reset := range []string{
+		"\x1b[?1000;1002;1003;1004;1005;1006;1015l", // mouse tracking + focus reporting off
+		"\x1b[?2004l", // bracketed paste off
+		"\x1b[?25h",   // cursor visible
+	} {
+		idx := strings.Index(full, reset)
+		if idx < 0 {
+			t.Fatalf("detach must reset leakable terminal modes (missing %q): %q", reset, full)
+		}
+		if idx > exit {
+			t.Fatalf("mode reset %q must precede the alt-screen exit: %q", reset, full)
+		}
+	}
+	if note := strings.Index(full, "[uam: detached]"); note < exit {
+		t.Fatalf("detach notice must print on the restored primary screen: %q", full)
+	}
+	if !c.HasSession(ctx, name) {
+		t.Fatal("session must keep running after detach")
+	}
+}
+
+// Detaching while the agent is mid-burst must not scribble the primary
+// screen: bytes still buffered in the host→terminal pump at detach time have
+// to be drained inside the alternate screen, so nothing follows the
+// alt-screen exit except the detach notice.
+func TestAttachDetachDrainsPumpBeforeScreenRestore(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-bbbb0000"
+	err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "i=0; while [ $i -lt 2000 ]; do echo spam$i; i=$((i+1)); done; sleep 60"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ptmx.Close(); _ = tty.Close() }()
+
+	done := make(chan error, 1)
+	go func() { done <- runAttach(c.Dir, name, tty, tty) }()
+
+	var mu sync.Mutex
+	var got []byte
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := ptmx.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				got = append(got, buf[:n]...)
+				mu.Unlock()
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+	snapshot := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return string(got)
+	}
+
+	// Detach as soon as the burst starts flowing, while plenty of it is
+	// still in flight between the host and the terminal.
+	waitFor(t, "burst start", func() bool { return strings.Contains(snapshot(), "spam") })
+	if _, err := ptmx.Write([]byte{0x02, 'd'}); err != nil { // Ctrl+B d
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runAttach: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("detach chord did not detach")
+	}
+	waitFor(t, "detach notice", func() bool { return strings.Contains(snapshot(), "[uam: detached]") })
+	full := snapshot()
+	exit := strings.LastIndex(full, "\x1b[?1049l")
+	if exit < 0 {
+		t.Fatalf("detach must leave the alternate screen: %q", full)
+	}
+	// The note is written after termios are restored, so the pty line
+	// discipline may ONLCR-translate its newlines — compare CR-insensitively.
+	tail := strings.ReplaceAll(full[exit+len("\x1b[?1049l"):], "\r", "")
+	if tail != "\n[uam: detached]\n" {
+		t.Fatalf("only the detach notice may follow the alt-screen exit, got %q", tail)
 	}
 }
 
