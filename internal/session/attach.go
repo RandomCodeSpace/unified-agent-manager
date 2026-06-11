@@ -200,20 +200,30 @@ func backDetachEnabled() bool {
 // (believed) empty.
 //
 // uam is a byte bridge and cannot see the agent's real input box, so "empty"
-// is approximated locally: typedSinceClear flips on anything that could put
-// text in the box (printables, tab, history/menu navigation via forwarded
-// escape sequences) and resets on the keys that submit or clear it (Enter,
-// Esc, Ctrl+C, Ctrl+U). A bare left arrow while clear detaches; inside a
-// draft it keeps moving the cursor. Ctrl+B d always detaches regardless.
+// is approximated locally: typed counts the runes put into the box, backspace
+// deletes one (so deleting the whole draft re-arms the quick detach), and
+// unknown latches on anything whose effect cannot be counted (tab completion,
+// history/menu navigation via forwarded escape sequences, a literal prefix
+// byte) until a key that submits or clears the box (Enter, Esc, Ctrl+C,
+// Ctrl+U). A bare left arrow while the box is believed empty detaches; inside
+// a draft it keeps moving the cursor. Ctrl+B d always detaches regardless.
 type stdinFilter struct {
 	backDetach bool
 	// pendingPrefix is set after Ctrl+B, waiting for the chord's second key.
 	pendingPrefix bool
 	// esc accumulates a partial escape sequence (possibly across reads).
 	esc []byte
-	// typedSinceClear approximates "the agent's input box is non-empty".
-	typedSinceClear bool
+	// typed approximates the number of runes in the agent's input box.
+	typed int
+	// unknown latches when the box may hold text typed cannot account for.
+	unknown bool
 }
+
+// boxEmpty reports whether the agent's input box is believed empty.
+func (f *stdinFilter) boxEmpty() bool { return !f.unknown && f.typed == 0 }
+
+// clearBox resets the estimate on keys that submit or clear the input box.
+func (f *stdinFilter) clearBox() { f.typed, f.unknown = 0, false }
 
 // maxEscLen bounds escape-sequence accumulation; anything longer is flushed
 // through verbatim rather than parsed.
@@ -257,10 +267,10 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 				return out, true
 			case detachPrefix:
 				out = append(out, detachPrefix)
-				f.typedSinceClear = true
+				f.unknown = true
 			default:
 				out = append(out, detachPrefix, b)
-				f.typedSinceClear = true
+				f.unknown = true
 			}
 			continue
 		}
@@ -286,16 +296,29 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 			if i == len(chunk)-1 {
 				out = append(out, 0x1b)
 				f.esc = nil
-				f.typedSinceClear = false
+				f.clearBox()
 			}
 		case '\r', '\n', 0x03, 0x15:
 			// Enter submits; Ctrl+C and Ctrl+U clear the input box.
 			out = append(out, b)
-			f.typedSinceClear = false
+			f.clearBox()
+		case 0x08, 0x7f:
+			// Backspace deletes one rune; deleting the whole draft re-arms
+			// the quick detach. On an empty box it is a no-op.
+			out = append(out, b)
+			if f.typed > 0 {
+				f.typed--
+			}
+		case '\t':
+			// Tab completion can insert text uam cannot count; disarm until
+			// the next submit/clear.
+			out = append(out, b)
+			f.unknown = true
 		default:
 			out = append(out, b)
-			if b >= 0x20 || b == '\t' {
-				f.typedSinceClear = true
+			// Count one per rune: skip UTF-8 continuation bytes.
+			if b >= 0x20 && b&0xc0 != 0x80 {
+				f.typed++
 			}
 		}
 	}
@@ -310,20 +333,20 @@ func (f *stdinFilter) escByte(out []byte, b byte) ([]byte, bool) {
 		if len(f.esc) > maxEscLen {
 			out = append(out, f.esc...)
 			f.esc = nil
-			f.typedSinceClear = true
+			f.unknown = true
 		}
 		return out, false
 	}
 	seq := f.esc
 	f.esc = nil
-	if f.backDetach && !f.typedSinceClear && isLeftArrow(seq) {
+	if f.backDetach && f.boxEmpty() && isLeftArrow(seq) {
 		return out, true
 	}
 	// Any other navigation may recall history or move through a menu, either
 	// of which can leave text in the input box — be conservative and require
 	// a fresh submit/clear before the quick detach re-arms.
 	out = append(out, seq...)
-	f.typedSinceClear = true
+	f.unknown = true
 	return out, false
 }
 
