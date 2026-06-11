@@ -27,6 +27,32 @@ const detachPrefix = 0x02
 // binding C-z to a warning.
 const ctrlZ = 0x1a
 
+// The attach client is a verbatim byte bridge: the host replay opens with a
+// clear-screen and every escape sequence the agent emits while a client is
+// attached lands on the user's real terminal. `tmux attach` confined all of
+// that by running the session inside its own alternate screen and resetting
+// modes on detach; without the same ownership the session scribbles over the
+// user's primary screen (still visible after uam exits) and leaked modes
+// corrupt the TUI that resumes after detach.
+
+// screenEnter opens the attach client's own alternate screen, saving the
+// primary screen and cursor underneath.
+const screenEnter = "\x1b[?1049h"
+
+// screenExit resets every mode the agent could have toggled mid-attach, then
+// leaves the alternate screen. Terminals ignore sequences they don't
+// implement, so the suffix is safe to emit unconditionally.
+const screenExit = "\x1b[<u" + // pop the kitty keyboard flags agents push
+	"\x1b[=0;1u" + // and zero them in case the agent pushed more than once
+	"\x1b[?1000;1002;1003;1004;1005;1006;1015l" + // mouse tracking + focus reporting off
+	"\x1b[?2004l" + // bracketed paste off
+	"\x1b[?2026l" + // synchronized output off
+	"\x1b[!p" + // DECSTR: cursor keys, origin, margins, SGR, insert mode
+	"\x1b>" + // numeric keypad (DECKPNM; DECSTR leaves keypad mode alone)
+	"\x1b(B" + // G0 charset back to ASCII
+	"\x1b[?25h" + // cursor visible
+	"\x1b[?1049l" // leave the alt screen: primary buffer and cursor restored
+
 // RunAttach is the entry point of `uam __attach`: it puts the terminal in raw
 // mode and bridges it to a session host — the native replacement for
 // `tmux attach`. It returns when the user detaches (Ctrl+B d, or a bare left
@@ -69,20 +95,42 @@ func runAttach(dir, name string, stdin *os.File, stdout *os.File) error {
 		return fmt.Errorf("attach %s: %s", name, resp.Err)
 	}
 
-	restore := func() {}
+	var ttyState *term.State
 	if term.IsTerminal(stdin.Fd()) {
 		state, err := term.MakeRaw(stdin.Fd())
 		if err != nil {
 			return fmt.Errorf("set raw mode: %w", err)
 		}
-		var once sync.Once
-		restore = func() { once.Do(func() { _ = term.Restore(stdin.Fd(), state) }) }
-		defer restore()
+		ttyState = state
 	}
+	ownScreen := term.IsTerminal(stdout.Fd())
+	if ownScreen {
+		_, _ = stdout.WriteString(screenEnter)
+	}
+	var once sync.Once
+	restore := func() {
+		once.Do(func() {
+			if ownScreen {
+				_, _ = stdout.WriteString(screenExit)
+			}
+			if ttyState != nil {
+				_ = term.Restore(stdin.Fd(), ttyState)
+			}
+		})
+	}
+	defer restore()
 
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
 	defer signal.Stop(winch)
+
+	// An external SIGINT/SIGTERM/SIGHUP must restore the screen and termios
+	// like a detach would, or the terminal is left raw on the agent's output.
+	// Ctrl+C inside the session never lands here: raw mode clears ISIG, so it
+	// reaches the agent as a plain byte.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(quit)
 	go func() {
 		for range winch {
 			if w, h, err := term.GetSize(stdout.Fd()); err == nil {
@@ -100,11 +148,13 @@ func runAttach(dir, name string, stdin *os.File, stdout *os.File) error {
 	}()
 
 	// host → terminal (the main loop): ends when the host closes the
-	// connection (agent exited) or the user detached.
+	// connection (agent exited) or the user detached. done is closed once the
+	// pump has fully drained, so a second receive never blocks.
 	done := make(chan error, 1)
 	go func() {
 		_, err := io.Copy(stdout, br)
 		done <- err
+		close(done)
 	}()
 	var note string
 	select {
@@ -113,7 +163,17 @@ func runAttach(dir, name string, stdin *os.File, stdout *os.File) error {
 		note = "detached"
 	case <-done:
 		note = "session ended"
+	case <-quit:
+		_ = writeFrame(conn, frameDetach, nil)
+		note = "detached"
 	}
+	// Stop the host→terminal pump and drain it before restoring the screen:
+	// bytes still buffered from the socket must land inside the alternate
+	// screen, not on the primary screen revealed after screenExit. On the
+	// session-ended path the pump has already finished and done is closed, so
+	// this returns immediately.
+	_ = conn.Close()
+	<-done
 	restore()
 	_, _ = fmt.Fprintf(stdout, "\r\n[uam: %s]\r\n", note)
 	return nil
