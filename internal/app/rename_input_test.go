@@ -199,3 +199,53 @@ func TestStopConfirmTargetsOriginalSessionAfterReorder(t *testing.T) {
 		t.Fatalf("stop targeted the reordered session beta instead of alpha")
 	}
 }
+
+// The stop-confirm dialog also offers restart: `r` stops the agent process
+// and resumes it in place, targeting the originally-confirmed session (same
+// F29 snapshot semantics as stop).
+func TestStopConfirmRestartsOriginalSessionAfterReorder(t *testing.T) {
+	live := []adapter.Session{
+		{ID: "alpha", AgentType: "fake", DisplayName: "alpha", SessionName: "uam-fake-alpha", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()},
+		{ID: "beta", AgentType: "fake", DisplayName: "beta", SessionName: "uam-fake-beta", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()},
+	}
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: live, stopRemoves: true}
+	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	m.sessions = append([]adapter.Session(nil), live...)
+	m.selected = 0
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.Sessions[store.Key("fake", "alpha")] = RecordFromSession(live[0], store.ModeYolo)
+		cfg.Sessions[store.Key("fake", "beta")] = RecordFromSession(live[1], store.ModeYolo)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Open the confirm dialog on alpha (index 0), then a refresh reorders.
+	if handled, _ := m.handleActionKey("ctrl+x"); !handled || !m.confirmStop {
+		t.Fatal("ctrl+x should open confirm")
+	}
+	m.sessions = []adapter.Session{live[1], live[0]}
+	m.selected = 0
+
+	_, model, cmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")}, "r")
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("expected a restart command from confirm r")
+	}
+	if m.confirmStop {
+		t.Fatal("confirm dialog must close after r")
+	}
+	cmd()
+
+	if !fake.stopped {
+		t.Fatal("restart must stop the live agent process")
+	}
+	if fake.resumed == nil || fake.resumed.ID != "alpha" {
+		t.Fatalf("restart must resume the originally-confirmed session alpha, got %+v", fake.resumed)
+	}
+}

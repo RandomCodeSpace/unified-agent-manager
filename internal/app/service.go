@@ -549,6 +549,23 @@ func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec
 	return a.Attach(sess.ID)
 }
 
+// Restart replaces a session's agent process while keeping its identity: a
+// running backend session is stopped (soft close, record kept), then resumed
+// under the same name with the provider's resume args so the agent picks its
+// conversation back up. A session that is already stopped simply resumes.
+func (s *Service) Restart(ctx context.Context, id string) error {
+	sess, _, err := s.Find(ctx, id)
+	if err != nil {
+		return err
+	}
+	if sess.ProcAlive == adapter.Alive {
+		if err := s.Stop(ctx, id, false); err != nil {
+			return err
+		}
+	}
+	return s.ResumeBackground(ctx, id)
+}
+
 // ResumeBackground restarts a stopped session's backend session without
 // attaching to it. It is a no-op when the session is already running.
 func (s *Service) ResumeBackground(ctx context.Context, id string) error {

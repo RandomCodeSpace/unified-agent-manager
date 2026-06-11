@@ -194,6 +194,13 @@ func runHost(dir, name, cwd, label string, envs, command []string, ready *os.Fil
 		}
 	}
 	close(h.exited)
+	// Release the socket path while it is still ours: closing the listener
+	// unlinks it, and leaving that to the deferred Close would unlink AFTER
+	// cleaned has signalled — i.e. after Kill has returned and a replacement
+	// host (restart) may have created its own socket at the same path,
+	// leaving that new host running but unreachable. Established connections
+	// (the kill responder) are unaffected.
+	_ = ln.Close()
 	h.shutdown(exitCode)
 	close(h.cleaned)
 	// Give pending kill responders a moment to flush their replies before the

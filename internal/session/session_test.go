@@ -66,6 +66,42 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
+// Killing a session and immediately recreating it under the same name (the
+// restart flow) must leave the replacement's socket intact: the old host's
+// deferred listener Close used to unlink the socket path when its process
+// exited ~50ms AFTER Kill had already returned — deleting the socket the
+// replacement host had just created, leaving a running but unreachable host.
+func TestRecreateAfterKillKeepsSocket(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-cccc1111"
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "sleep 60"}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	st, err := readState(c.Dir, name)
+	if err != nil {
+		t.Fatalf("readState: %v", err)
+	}
+	oldHost, oldStart := st.HostPID, st.HostStart
+	if err := c.Kill(ctx, name); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "sleep 60"}); err != nil {
+		t.Fatalf("recreate: %v", err)
+	}
+	// Wait for the OLD host process to fully exit — its deferred cleanup is
+	// what used to unlink the new socket — then the socket must still exist
+	// and answer.
+	waitFor(t, "old host exit", func() bool { return !procAliveWithStart(oldHost, oldStart) })
+	time.Sleep(20 * time.Millisecond) // let any buggy deferred unlink land
+	if _, err := os.Stat(SocketPath(c.Dir, name)); err != nil {
+		t.Fatalf("replacement socket gone after old host exit: %v", err)
+	}
+	if _, err := c.Capture(ctx, name, 5); err != nil {
+		t.Fatalf("peek after recreate: %v", err)
+	}
+}
+
 func TestCreateListCaptureSendKill(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()

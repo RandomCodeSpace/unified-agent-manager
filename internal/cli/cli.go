@@ -56,6 +56,7 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam ls [--json]")
 	fmt.Fprintln(os.Stderr, "  uam peek <id>")
 	fmt.Fprintln(os.Stderr, "  uam stop <id>")
+	fmt.Fprintln(os.Stderr, "  uam restart <id>                  stop the agent and resume it in place")
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
 	fmt.Fprintln(os.Stderr, "  uam kill-all                      stop every managed session")
 	fmt.Fprintln(os.Stderr, "  uam notify-closed <session-name>   (internal: flag a record user-closed)")
@@ -103,6 +104,8 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		return runPeek(ctx, svc, args[1:])
 	case "stop", "rm":
 		return runStop(ctx, svc, args[0], args[1:])
+	case "restart":
+		return runRestart(ctx, svc, args[1:])
 	case "notify-closed":
 		return runNotifyClosed(svc, args[1:])
 	case "kill-all":
@@ -155,6 +158,16 @@ func runStop(ctx context.Context, svc *app.Service, cmd string, args []string) e
 		return err
 	}
 	return svc.Stop(ctx, id, cmd == "rm")
+}
+
+// runRestart stops the session's agent process and resumes it in place: same
+// session name and record, with the provider's resume args.
+func runRestart(ctx context.Context, svc *app.Service, args []string) error {
+	id, err := requireArg(args, "restart requires <id>")
+	if err != nil {
+		return err
+	}
+	return svc.Restart(ctx, id)
 }
 
 // runNotifyClosed flags the matching record as user-closed. Session hosts
