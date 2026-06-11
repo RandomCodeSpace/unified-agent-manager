@@ -199,8 +199,8 @@ func TestRedrawPaintsScreenAndCursor(t *testing.T) {
 	term := New(20, 5, 0)
 	feed(t, term, "row1\r\nrow2")
 	out := string(term.Redraw())
-	if !strings.HasPrefix(out, "\x1b[2J\x1b[H") {
-		t.Fatalf("redraw must clear first: %q", out)
+	if !strings.HasPrefix(out, "\x1b[0m\x1b[2J\x1b[H") {
+		t.Fatalf("redraw must reset attributes and clear first: %q", out)
 	}
 	if !strings.Contains(out, "row1\r\nrow2") {
 		t.Fatalf("redraw missing content: %q", out)
@@ -346,5 +346,101 @@ func TestScrollRegionReverseWrapAndKeypadIgnored(t *testing.T) {
 	feed(t, term, "\x1b=\x1b>\x1b(Bvisible")
 	if got := term.Capture(10); got != "visible\n" {
 		t.Fatalf("ignored escapes: %q", got)
+	}
+}
+
+// Re-attach repaints the screen from the emulator grid, so the grid must
+// remember SGR attributes and Redraw must re-emit them — otherwise every
+// re-attach turns the session black and white until the agent happens to
+// repaint. Capture stays plain text by contract.
+func TestRedrawReplaysColors(t *testing.T) {
+	term := New(60, 5, 0)
+	feed(t, term, "\x1b[1;32mgreen\x1b[0m plain \x1b[38;5;196mred256\x1b[0m \x1b[48;2;10;20;30mtruebg\x1b[0m")
+	out := string(term.Redraw())
+	for _, want := range []string{
+		"\x1b[0;1;32mgreen",           // bold + 16-color fg
+		"\x1b[0m plain ",              // explicit reset between styled runs
+		"\x1b[0;38;5;196mred256",      // 256-color fg
+		"\x1b[0;48;2;10;20;30mtruebg", // truecolor bg
+		"truebg\x1b[0m\x1b[",          // attributes reset before the cursor park
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("redraw missing %q: %q", want, out)
+		}
+	}
+	if got := term.Capture(10); strings.Contains(got, "\x1b") {
+		t.Fatalf("capture must stay plain text: %q", got)
+	}
+}
+
+// Bright (90–107) and basic background colors round-trip through the grid.
+func TestRedrawReplaysBrightAndBackgroundColors(t *testing.T) {
+	term := New(40, 3, 0)
+	feed(t, term, "\x1b[93;44mwarn\x1b[0m")
+	out := string(term.Redraw())
+	if !strings.Contains(out, "\x1b[0;93;44mwarn") {
+		t.Fatalf("bright fg + bg lost: %q", out)
+	}
+}
+
+// SGR attribute-off codes clear only their attribute.
+func TestSGRAttributeOffCodes(t *testing.T) {
+	term := New(40, 3, 0)
+	feed(t, term, "\x1b[1;4;31mab\x1b[22;24mcd")
+	out := string(term.Redraw())
+	if !strings.Contains(out, "\x1b[0;1;4;31mab") {
+		t.Fatalf("bold+underline+red lost: %q", out)
+	}
+	if !strings.Contains(out, "\x1b[0;31mcd") {
+		t.Fatalf("22/24 must clear bold/underline but keep color: %q", out)
+	}
+}
+
+// Colon-separated SGR sub-parameters (kitty/newer emitters) parse the same as
+// the semicolon forms.
+func TestSGRColonSubparameters(t *testing.T) {
+	term := New(40, 3, 0)
+	feed(t, term, "\x1b[38:5:99mX\x1b[0m \x1b[38:2::1:2:3mY\x1b[0m \x1b[4:0mZ")
+	out := string(term.Redraw())
+	if !strings.Contains(out, "\x1b[0;38;5;99mX") {
+		t.Fatalf("colon 256-color form lost: %q", out)
+	}
+	if !strings.Contains(out, "\x1b[0;38;2;1;2;3mY") {
+		t.Fatalf("colon truecolor form lost: %q", out)
+	}
+	if strings.Contains(out, "\x1b[0;4mZ") {
+		t.Fatalf("4:0 must mean underline off: %q", out)
+	}
+}
+
+// Erases fill with the current background (BCE), so a TUI that paints colored
+// bars via SGR-bg + erase replays with its background intact.
+func TestRedrawPreservesBackgroundColorErase(t *testing.T) {
+	term := New(10, 3, 0)
+	feed(t, term, "\x1b[44m\x1b[2J\x1b[Hab")
+	out := string(term.Redraw())
+	if !strings.Contains(out, "\x1b[0;44mab") {
+		t.Fatalf("text on erased bg lost its background: %q", out)
+	}
+	// The erased remainder of the row paints as spaces in the same bg run
+	// (no attribute switch), and bg-only rows below are not trimmed.
+	if !strings.Contains(out, "ab"+strings.Repeat(" ", 8)+"\r\n") {
+		t.Fatalf("erased cells must replay as bg-colored spaces: %q", out)
+	}
+	if rows := strings.Count(out, "\r\n") + 1; rows != 3 {
+		t.Fatalf("bg-colored blank rows must not be trimmed, got %d rows: %q", rows, out)
+	}
+	if got := term.Capture(10); strings.Contains(got, "\x1b") {
+		t.Fatalf("capture must stay plain text: %q", got)
+	}
+}
+
+// EL with a background color extends that background to the end of the line.
+func TestEraseLineUsesCurrentBackground(t *testing.T) {
+	term := New(8, 2, 0)
+	feed(t, term, "xy\x1b[42m\x1b[K")
+	out := string(term.Redraw())
+	if !strings.Contains(out, "xy\x1b[0;42m"+strings.Repeat(" ", 6)) {
+		t.Fatalf("EL must fill with current bg: %q", out)
 	}
 }
