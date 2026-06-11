@@ -93,6 +93,7 @@ uam peek <id>
 uam attach <name-or-id>
 uam last
 uam stop <id>                    # kill the session, keep record
+uam restart <id>                 # stop the agent and resume it in place
 uam rm <id>                      # kill the session and remove record
 uam kill-all                     # stop every managed session
 uam version
@@ -111,7 +112,7 @@ uam version
 | `Space` | Toggle peek panel |
 | `Ctrl+T` | Pin selected session |
 | `Ctrl+R` | Rename selected session |
-| `Ctrl+X` | Stop or remove the selected session with confirmation |
+| `Ctrl+X` | Stop, restart, or remove the selected session with confirmation |
 | `Ctrl+S` | Toggle group-by-directory |
 | `Shift+↑/↓` | Reorder rows |
 | `e` | Open the guided dispatch wizard |

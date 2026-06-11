@@ -29,6 +29,10 @@ type svcFakeAdapter struct {
 	// F12: simulate a per-adapter List failure so liveSessions can be tested for
 	// logging-then-continue (one bad adapter must not blank the dashboard).
 	listErr error
+	// stopRemoves makes Stop drop the live sessions, mirroring the real
+	// backend where Kill returns only after the host is fully gone — so a
+	// restart's resume step sees the session as dead.
+	stopRemoves bool
 }
 
 func (f *svcFakeAdapter) Name() string        { return f.name }
@@ -64,6 +68,9 @@ func (f *svcFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 }
 func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error {
 	f.stopped = true
+	if f.stopRemoves {
+		f.sessions = nil
+	}
 	return f.stopErr
 }
 func (f *svcFakeAdapter) HasSession(ctx adapter.Context, id string) bool { return f.alive }
@@ -636,6 +643,65 @@ func TestResumeBackgroundClearsClosedStatus(t *testing.T) {
 	cfg, _ := st.Load()
 	if cfg.Sessions[store.Key("fake", "12345678")].Status != store.StatusActive {
 		t.Fatalf("status after resume = %q, want %q", cfg.Sessions[store.Key("fake", "12345678")].Status, store.StatusActive)
+	}
+}
+
+// Restart replaces a live session's agent process in place: stop the backend
+// session, then resume it under the same identity (id, session name, record)
+// with the provider's resume args.
+func TestRestartStopsThenResumesLiveSession(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, stopRemoves: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	live, err := svc.DispatchNamed(context.Background(), "fake", "tracker", "hello", "/tmp", "yolo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.sessions = []adapter.Session{live}
+	if err := svc.Restart(context.Background(), "12345678"); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if !fake.stopped {
+		t.Fatal("restart must stop the live backend session first")
+	}
+	if fake.resumed == nil {
+		t.Fatal("restart must resume the session after stopping it")
+	}
+	if fake.resumed.ID != "12345678" || fake.resumed.SessionName != "uam-fake-12345678" {
+		t.Fatalf("restart must keep the session identity, resumed %+v", fake.resumed)
+	}
+	cfg, _ := st.Load()
+	if cfg.Sessions[store.Key("fake", "12345678")].Status != store.StatusActive {
+		t.Fatalf("record must stay active after restart, got %q", cfg.Sessions[store.Key("fake", "12345678")].Status)
+	}
+}
+
+// Restarting a session that is already stopped skips the stop and just
+// resumes it — an idempotent restart.
+func TestRestartOfStoppedSessionJustResumes(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if _, err := svc.DispatchNamed(context.Background(), "fake", "tracker", "hello", "/tmp", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	// No live session listed: the agent already exited.
+	if err := svc.Restart(context.Background(), "12345678"); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if fake.stopped {
+		t.Fatal("restart of a stopped session must not call Stop")
+	}
+	if fake.resumed == nil {
+		t.Fatal("restart of a stopped session must resume it")
 	}
 }
 

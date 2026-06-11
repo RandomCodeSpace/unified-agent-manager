@@ -21,6 +21,7 @@ import (
 type cliFakeAdapter struct {
 	sessions []adapter.Session
 	stopped  bool
+	resumed  bool
 }
 
 func (f *cliFakeAdapter) Name() string        { return "fake" }
@@ -44,7 +45,21 @@ func (f *cliFakeAdapter) Reply(ctx adapter.Context, id, text string) error { ret
 func (f *cliFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
 }
-func (f *cliFakeAdapter) Stop(ctx adapter.Context, id string) error { f.stopped = true; return nil }
+
+// Stop drops the live sessions, mirroring the real backend where Kill
+// returns only after the host is fully gone.
+func (f *cliFakeAdapter) Stop(ctx adapter.Context, id string) error {
+	f.stopped = true
+	f.sessions = nil
+	return nil
+}
+
+func (f *cliFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) (adapter.Session, error) {
+	f.resumed = true
+	sess := adapter.Session{ID: req.ID, AgentType: "fake", DisplayName: req.Name, Cwd: req.Cwd, SessionName: req.SessionName, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	f.sessions = append(f.sessions, sess)
+	return sess, nil
+}
 
 func TestRunDispatchListPeekAndStop(t *testing.T) {
 	svc, fake := newCLITestService(t)
@@ -61,6 +76,19 @@ func TestRunDispatchListPeekAndStop(t *testing.T) {
 	must(t, runStop(context.Background(), svc, "stop", []string{id}))
 	if !fake.stopped {
 		t.Fatal("fake adapter was not stopped")
+	}
+}
+
+// restart stops the live agent process and resumes the session in place.
+func TestRunRestart(t *testing.T) {
+	svc, fake := newCLITestService(t)
+	id := dispatchAndCaptureID(t, svc, []string{"--cwd", "/tmp", "fake", "#bugfix", "fix", "thing"})
+	must(t, runRestart(context.Background(), svc, []string{id}))
+	if !fake.stopped || !fake.resumed {
+		t.Fatalf("restart must stop then resume: stopped=%v resumed=%v", fake.stopped, fake.resumed)
+	}
+	if err := runRestart(context.Background(), svc, nil); err == nil {
+		t.Fatal("restart without id should fail")
 	}
 }
 

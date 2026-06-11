@@ -389,6 +389,12 @@ func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.
 			m.confirmStopID = ""
 			return true, m, m.stopTargetCmd(id, true)
 		}
+		if key == "r" {
+			m.confirmStop = false
+			id := m.confirmStopID
+			m.confirmStopID = ""
+			return true, m, m.restartTargetCmd(id)
+		}
 		if key == "n" || key == "esc" {
 			m.confirmStop = false
 			m.confirmStopID = ""
@@ -1073,6 +1079,22 @@ func (m Model) stopTargetCmd(id string, remove bool) tea.Cmd {
 		return sessionsLoadedMsg{err: err}
 	}
 }
+
+// restartTargetCmd restarts the session with the snapshotted id (same F29
+// fallback as stopTargetCmd): the agent process is stopped and resumed in
+// place, keeping the session's name and provider conversation.
+func (m Model) restartTargetCmd(id string) tea.Cmd {
+	sess, ok := m.sessionByID(id)
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		if err := m.service.Restart(context.Background(), sess.ID); err != nil {
+			return sessionsLoadedMsg{err: err}
+		}
+		return m.loadSessionsCmd()()
+	}
+}
 func (m Model) pinSelectedCmd() tea.Cmd {
 	sess, ok := m.selectedSession()
 	if !ok {
@@ -1467,7 +1489,7 @@ func (m Model) renderHelp() string {
 	rows := []string{
 		"↑/↓  move        Enter/→  attach        Space  peek",
 		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
-		"Ctrl+X  stop/remove      Ctrl+S  group-by-dir",
+		"Ctrl+X  stop/restart/remove      Ctrl+S  group-by-dir",
 		"e  new session       Esc  quit",
 		"in session:  ← detach (when input empty)    Ctrl+B d  detach",
 		"dispatch:  @agent:alias #name prompt   (alias, name & prompt optional)",
@@ -1485,7 +1507,7 @@ func (m Model) renderConfirm() string {
 	name := firstNonEmpty(sess.DisplayName, sess.ID, "session")
 	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
 		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +
-		"   " + brandStyle.Render("y") + hintStyle.Render(" / ") + titleStyle.Render("N") + "\n"
+		"   " + brandStyle.Render("y") + hintStyle.Render(" / restart ") + brandStyle.Render("r") + hintStyle.Render(" / ") + titleStyle.Render("N") + "\n"
 }
 
 func (m Model) renderWizard() string {
