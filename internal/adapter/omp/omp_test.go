@@ -18,9 +18,9 @@ func TestNew(t *testing.T) {
 // subcommand); the auto-approve flag rides in YoloArgs, not the candidate.
 func TestNewUsesBareOmpCommand(t *testing.T) {
 	got := New(nil)
-	ta, ok := got.(*adapter.TmuxAgent)
+	ta, ok := got.(*adapter.Agent)
 	if !ok {
-		t.Fatalf("expected *adapter.TmuxAgent, got %T", got)
+		t.Fatalf("expected *adapter.Agent, got %T", got)
 	}
 	if len(ta.Candidates) != 1 {
 		t.Fatalf("candidates = %+v", ta.Candidates)
@@ -35,9 +35,9 @@ func TestNewUsesBareOmpCommand(t *testing.T) {
 // tool-call approval — matching claude/codex/copilot.
 func TestYoloArgsUsesAutoApprove(t *testing.T) {
 	got := New(nil)
-	ta, ok := got.(*adapter.TmuxAgent)
+	ta, ok := got.(*adapter.Agent)
 	if !ok {
-		t.Fatalf("expected *adapter.TmuxAgent, got %T", got)
+		t.Fatalf("expected *adapter.Agent, got %T", got)
 	}
 	if want := []string{"--auto-approve"}; !reflect.DeepEqual(ta.YoloArgs, want) {
 		t.Fatalf("YoloArgs = %v, want %v", ta.YoloArgs, want)
@@ -59,9 +59,9 @@ func TestSessionArgsAppendsContinueOnResume(t *testing.T) {
 // "Resume" continues omp's prior session instead of starting a fresh TUI.
 func TestNewWiresSessionArgs(t *testing.T) {
 	got := New(nil)
-	ta, ok := got.(*adapter.TmuxAgent)
+	ta, ok := got.(*adapter.Agent)
 	if !ok {
-		t.Fatalf("expected *adapter.TmuxAgent, got %T", got)
+		t.Fatalf("expected *adapter.Agent, got %T", got)
 	}
 	if ta.SessionArgs == nil {
 		t.Fatal("expected SessionArgs to be wired")

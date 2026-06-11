@@ -21,8 +21,8 @@ func TestPutSessionRefusesShortKeyCollisionWithDifferentFullID(t *testing.T) {
 		t.Fatalf("test precondition: expected colliding short keys, got %q vs %q", keyA, keyB)
 	}
 
-	recA := SessionRecord{ID: idA, Agent: "claude", TmuxSession: "uam-claude-a"}
-	recB := SessionRecord{ID: idB, Agent: "claude", TmuxSession: "uam-claude-b"}
+	recA := SessionRecord{ID: idA, Agent: "claude", SessionName: "uam-claude-a"}
+	recB := SessionRecord{ID: idB, Agent: "claude", SessionName: "uam-claude-b"}
 
 	if !cfg.PutSession(keyA, recA) {
 		t.Fatalf("first PutSession must succeed (no existing record)")
@@ -60,7 +60,7 @@ func TestShortKeyJoinsLiveSessionToFullUUIDStoredRecord(t *testing.T) {
 	cfg := DefaultConfig()
 	fullID := "abcdef12-aaaa-1111-aaaa-111111111111"
 	key := Key("claude", fullID)
-	rec := SessionRecord{ID: fullID, Agent: "claude", TmuxSession: "uam-claude-x"}
+	rec := SessionRecord{ID: fullID, Agent: "claude", SessionName: "uam-claude-x"}
 	if !cfg.PutSession(key, rec) {
 		t.Fatalf("PutSession must succeed")
 	}

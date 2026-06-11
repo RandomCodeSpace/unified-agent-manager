@@ -134,9 +134,9 @@ func TestRunNewReadsCommandAliasBeforeWorkdir(t *testing.T) {
 func TestLastSeenIDSelectsMaxLastSeenAt(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	cfg := store.Config{Sessions: map[string]store.SessionRecord{
-		store.Key("fake", "aaaaaaaa"): {ID: "aaaaaaaa", Agent: "fake", TmuxSession: "uam-fake-aaaaaaaa", LastSeenAt: base},
-		store.Key("fake", "bbbbbbbb"): {ID: "bbbbbbbb", Agent: "fake", TmuxSession: "uam-fake-bbbbbbbb", LastSeenAt: base.Add(2 * time.Hour)},
-		store.Key("fake", "cccccccc"): {ID: "cccccccc", Agent: "fake", TmuxSession: "uam-fake-cccccccc", LastSeenAt: base.Add(time.Hour)},
+		store.Key("fake", "aaaaaaaa"): {ID: "aaaaaaaa", Agent: "fake", SessionName: "uam-fake-aaaaaaaa", LastSeenAt: base},
+		store.Key("fake", "bbbbbbbb"): {ID: "bbbbbbbb", Agent: "fake", SessionName: "uam-fake-bbbbbbbb", LastSeenAt: base.Add(2 * time.Hour)},
+		store.Key("fake", "cccccccc"): {ID: "cccccccc", Agent: "fake", SessionName: "uam-fake-cccccccc", LastSeenAt: base.Add(time.Hour)},
 	}}
 	if got := lastSeenID(cfg); got != "bbbbbbbb" {
 		t.Fatalf("lastSeenID = %q, want bbbbbbbb (max last_seen_at)", got)

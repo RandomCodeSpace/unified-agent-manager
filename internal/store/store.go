@@ -152,20 +152,32 @@ type UISettings struct {
 }
 
 type SessionRecord struct {
-	ID           string    `json:"id"`
-	Agent        string    `json:"agent"`
-	CommandAlias string    `json:"command_alias,omitempty"`
-	Name         string    `json:"name"`
-	Prompt       string    `json:"prompt,omitempty"`
-	Mode         Mode      `json:"mode"`
-	Workdir      string    `json:"workdir"`
-	TmuxSession  string    `json:"tmux_session"`
-	CreatedAt    time.Time `json:"created_at"`
-	LastSeenAt   time.Time `json:"last_seen_at"`
-	Pinned       bool      `json:"pinned"`
-	Group        string    `json:"group"`
-	SortIndex    int       `json:"sort_index"`
-	Status       Status    `json:"status,omitempty"`
+	ID           string `json:"id"`
+	Agent        string `json:"agent"`
+	CommandAlias string `json:"command_alias,omitempty"`
+	Name         string `json:"name"`
+	Prompt       string `json:"prompt,omitempty"`
+	Mode         Mode   `json:"mode"`
+	Workdir      string `json:"workdir"`
+	// SessionName is the backend session name ("uam-<agent>-<id>"). The JSON
+	// key keeps its historical "tmux_session" spelling so configs written by
+	// tmux-backed releases load unchanged.
+	SessionName string    `json:"tmux_session"`
+	CreatedAt   time.Time `json:"created_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
+	Pinned      bool      `json:"pinned"`
+	Group       string    `json:"group"`
+	SortIndex   int       `json:"sort_index"`
+	Status      Status    `json:"status,omitempty"`
+	// ProviderSessionID is the agent CLI's own session id, recorded when the
+	// provider lets uam seed it at dispatch (e.g. claude --session-id). A
+	// resume can then target the exact provider session instead of the
+	// provider's "most recent" heuristic.
+	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	// LastExitCode records the agent process's exit status from the most
+	// recent close (-1 when it died on a signal). Pointer so records from
+	// older schemas stay distinguishable from a real exit 0.
+	LastExitCode *int      `json:"last_exit_code,omitempty"`
 	PR           *PRRecord `json:"pr,omitempty"`
 }
 
@@ -178,9 +190,10 @@ type PRRecord struct {
 
 type Store struct {
 	path string
-	// sessionExists, when set, reports whether a tmux session name is still
-	// live. It is injected by the caller (the store stays tmux-free) and is used
-	// only to reclassify Statusless v1 records during migration (F07).
+	// sessionExists, when set, reports whether a backend session name is
+	// still live. It is injected by the caller (the store stays backend-free)
+	// and is used only to reclassify Statusless v1 records during migration
+	// (F07).
 	sessionExists func(string) bool
 }
 
@@ -194,10 +207,10 @@ func Open(path string) (*Store, error) {
 	return &Store{path: path}, nil
 }
 
-// SetSessionProbe injects a callback that reports whether a tmux session name is
-// still live. Migration uses it to tell a reboot-survivor (live pane -> stays
-// Active) apart from a user-stopped session (dead pane -> closed-by-user). When
-// unset, migration conservatively keeps the legacy Active behavior (F07).
+// SetSessionProbe injects a callback that reports whether a backend session
+// name is still live. Migration uses it to tell a reboot-survivor (live ->
+// stays Active) apart from a user-stopped session (dead -> closed-by-user).
+// When unset, migration conservatively keeps the legacy Active behavior (F07).
 func (s *Store) SetSessionProbe(exists func(string) bool) { s.sessionExists = exists }
 
 func (s *Store) Path() string { return s.path }
@@ -341,7 +354,7 @@ func (s *Store) loadNoLock() (Config, error) {
 
 // reclassifyV1Closed runs on the RAW pre-normalize config during a v1->v2
 // migration. For each Statusless record it asks the injected probe whether the
-// tmux pane is still alive: a live pane is a reboot survivor (left Statusless so
+// session is still alive: a live one is a reboot survivor (left Statusless so
 // normalize/migrate backfill it to Active), while a dead pane was a deliberately
 // stopped session and is marked closed-by-user so it does not auto-resume. With
 // no probe it is a no-op, preserving the legacy all-Active behavior.
@@ -350,7 +363,7 @@ func reclassifyV1Closed(cfg *Config, exists func(string) bool) {
 		return
 	}
 	for k, rec := range cfg.Sessions {
-		if rec.Status == "" && !exists(rec.TmuxSession) {
+		if rec.Status == "" && !exists(rec.SessionName) {
 			rec.Status = StatusClosedByUser
 			cfg.Sessions[k] = rec
 		}
@@ -358,12 +371,12 @@ func reclassifyV1Closed(cfg *Config, exists func(string) bool) {
 }
 
 // unsafeArgvChars are the shell metacharacters that must never appear in an ID
-// or tmux session name. Although uam reaches tmux via argv (not a shell — see
-// internal/tmux ShellJoin), these fields are an untrusted-on-disk injection
-// surface for the F05/F06/F09 sinks, so we keep classic shell metacharacters
-// out as defense in depth. Whitespace and control runes are rejected
-// separately. Note `:` is intentionally allowed: it is tmux's target separator
-// but never a shell hazard, and real Key-derived values can carry it.
+// or backend session name. The native backend execs argv directly (no shell)
+// and session names are further allow-listed by session.ValidateName, but
+// these fields are untrusted on disk, so classic shell metacharacters stay
+// rejected as defense in depth. Whitespace and control runes are rejected
+// separately. Note `:` is intentionally allowed: it is never a shell hazard,
+// and real Key-derived values can carry it.
 const unsafeArgvChars = "'\"`;&|$<>(){}[]*?!#\\~/ \t\n\r"
 
 // prURLRE mirrors the GitHub PR URL shape recognized by the adapter's
@@ -386,14 +399,17 @@ func dropInvalidRecords(cfg *Config) {
 
 // validateRecord returns a non-empty reason if the record must be dropped, or
 // "" if it is safe to keep. It rejects only the values that carry real risk —
-// shell metacharacters or control runes in the argv-bound ID/TmuxSession
+// shell metacharacters or control runes in the argv-bound ID/SessionName
 // fields, a non-absolute or control-char Workdir, and a PR URL that does not
 // match the GitHub PR shape. Empty optional fields are allowed.
+//
+// The on-disk JSON key for SessionName remains "tmux_session" for backward
+// compatibility, which is why the drop reasons below keep that spelling.
 func validateRecord(rec SessionRecord) string {
 	if isUnsafeArgv(rec.ID) {
 		return "unsafe id"
 	}
-	if isUnsafeArgv(rec.TmuxSession) {
+	if isUnsafeArgv(rec.SessionName) {
 		return "unsafe tmux_session"
 	}
 	if rec.Workdir != "" {
@@ -410,8 +426,20 @@ func validateRecord(rec SessionRecord) string {
 	if rec.CommandAlias != "" && !isSafeCommandAlias(rec.CommandAlias) {
 		return "unsafe command_alias"
 	}
+	// The provider session id is passed as a resume argv value; constrain it
+	// so a hand-edited record cannot smuggle a flag or shell hazard into the
+	// agent's command line.
+	if rec.ProviderSessionID != "" && !providerSessionIDRE.MatchString(rec.ProviderSessionID) {
+		return "unsafe provider_session_id"
+	}
 	return ""
 }
+
+// providerSessionIDRE constrains persisted provider session ids to the id
+// alphabets the supported providers use — claude/codex UUIDs and opencode
+// "ses_..." ids — with no shell metacharacters and no leading dash (a value
+// starting with '-' could be parsed as a flag by the agent CLI).
+var providerSessionIDRE = regexp.MustCompile(`^[0-9A-Za-z_][0-9A-Za-z_-]{0,63}$`)
 
 func isSafeCommandAlias(alias string) bool {
 	if alias == "" || strings.HasPrefix(alias, "-") {
@@ -427,7 +455,7 @@ func isSafeCommandAlias(alias string) bool {
 }
 
 // isUnsafeArgv reports whether s contains a shell metacharacter or a control
-// rune that has no place in a persisted ID or tmux session name.
+// rune that has no place in a persisted ID or session name.
 func isUnsafeArgv(s string) bool {
 	if strings.ContainsAny(s, unsafeArgvChars) {
 		return true
@@ -585,10 +613,34 @@ func (s *Store) copyBackup() error {
 
 func (s *Store) moveAside() error { return os.Rename(s.path, s.backupPath()) }
 
+// MarkSessionClosed flags the record whose backend session name matches as
+// user-closed and records the agent's exit code. It is what a session host
+// calls when its agent exits — the native replacement for the tmux
+// session-closed hook driving `uam notify-closed`. Idempotent and a no-op
+// when no record matches (e.g. uam already deleted it via `uam rm`).
+func (s *Store) MarkSessionClosed(sessionName string, exitCode int) error {
+	if sessionName == "" {
+		return nil
+	}
+	return s.Update(func(cfg *Config) error {
+		for key, rec := range cfg.Sessions {
+			if rec.SessionName != sessionName {
+				continue
+			}
+			rec.Status = StatusClosedByUser
+			code := exitCode
+			rec.LastExitCode = &code
+			cfg.Sessions[key] = rec
+			return nil
+		}
+		return nil
+	})
+}
+
 func PruneOld(cfg *Config, maxAge time.Duration, exists func(string) bool) {
 	cutoff := time.Now().Add(-maxAge)
 	for key, rec := range cfg.Sessions {
-		if rec.LastSeenAt.Before(cutoff) && !exists(rec.TmuxSession) {
+		if rec.LastSeenAt.Before(cutoff) && !exists(rec.SessionName) {
 			delete(cfg.Sessions, key)
 		}
 	}

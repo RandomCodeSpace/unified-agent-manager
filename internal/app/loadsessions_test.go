@@ -32,13 +32,13 @@ func newLoadService(t *testing.T, sessions []adapter.Session) (*Service, *store.
 // A, so B's pin survives.
 func TestLoadSessionsRefreshDoesNotClobberConcurrentPin(t *testing.T) {
 	// Live session A has no store record -> refresh must backfill it (a write).
-	liveA := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", TmuxSession: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	liveA := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", SessionName: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{liveA})
 
 	// Record B belongs to a different session and is already persisted, unpinned.
 	keyB := store.Key("fake", "bbbb2222")
 	if err := st.Update(func(cfg *store.Config) error {
-		cfg.Sessions[keyB] = store.SessionRecord{ID: "bbbb2222", Agent: "fake", Name: "B", TmuxSession: "uam-fake-bbbb2222"}
+		cfg.Sessions[keyB] = store.SessionRecord{ID: "bbbb2222", Agent: "fake", Name: "B", SessionName: "uam-fake-bbbb2222"}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed B: %v", err)
@@ -78,12 +78,12 @@ func TestLoadSessionsRefreshDoesNotClobberConcurrentPin(t *testing.T) {
 // F01 (-race) — concurrent LoadSessions refreshes and TogglePin calls must not
 // race and must not lose the final pin state.
 func TestLoadSessionsConcurrentWithTogglePin_Race(t *testing.T) {
-	liveA := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", TmuxSession: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	liveA := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", SessionName: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{liveA})
 
 	keyB := store.Key("fake", "bbbb2222")
 	if err := st.Update(func(cfg *store.Config) error {
-		cfg.Sessions[keyB] = store.SessionRecord{ID: "bbbb2222", Agent: "fake", Name: "B", TmuxSession: "uam-fake-bbbb2222", Pinned: true}
+		cfg.Sessions[keyB] = store.SessionRecord{ID: "bbbb2222", Agent: "fake", Name: "B", SessionName: "uam-fake-bbbb2222", Pinned: true}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed B: %v", err)
@@ -113,7 +113,7 @@ func TestLoadSessionsConcurrentWithTogglePin_Race(t *testing.T) {
 
 // C1-1 — a live session lacking a store record must be backfilled and persisted.
 func TestRefreshBackfillsOrphanRecord(t *testing.T) {
-	live := adapter.Session{ID: "cccc3333", AgentType: "fake", DisplayName: "orphan", Cwd: "/tmp", TmuxSession: "uam-fake-cccc3333", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	live := adapter.Session{ID: "cccc3333", AgentType: "fake", DisplayName: "orphan", Cwd: "/tmp", SessionName: "uam-fake-cccc3333", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})
 
 	if _, _, err := svc.LoadSessions(context.Background()); err != nil {
@@ -127,7 +127,7 @@ func TestRefreshBackfillsOrphanRecord(t *testing.T) {
 	if !ok {
 		t.Fatalf("orphan live session was not backfilled into the store: %+v", cfg.Sessions)
 	}
-	if rec.ID != "cccc3333" || rec.TmuxSession != "uam-fake-cccc3333" {
+	if rec.ID != "cccc3333" || rec.SessionName != "uam-fake-cccc3333" {
 		t.Fatalf("backfilled record is malformed: %+v", rec)
 	}
 }
@@ -135,7 +135,7 @@ func TestRefreshBackfillsOrphanRecord(t *testing.T) {
 // C1-1 — once a record exists, repeated refreshes with no real change must not
 // rewrite the store (no write-storm of no-op saves).
 func TestRefreshIsIdempotentNoRedundantSave(t *testing.T) {
-	live := adapter.Session{ID: "dddd4444", AgentType: "fake", DisplayName: "d", Cwd: "/tmp", TmuxSession: "uam-fake-dddd4444", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	live := adapter.Session{ID: "dddd4444", AgentType: "fake", DisplayName: "d", Cwd: "/tmp", SessionName: "uam-fake-dddd4444", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})
 
 	// First load backfills.
@@ -179,13 +179,13 @@ func TestRefreshDoesNotPersistEmptyIDRecord(t *testing.T) {
 // F18 — a session the user closed but whose pane is still alive must reconcile
 // to Active (it renders under ACTIVE, not CLOSED, because Closed => Exited).
 func TestLoadSessionsReconcilesLiveUserClosedSessionToActive(t *testing.T) {
-	live := adapter.Session{ID: "eeee5555", AgentType: "fake", DisplayName: "e", Cwd: "/tmp", TmuxSession: "uam-fake-eeee5555", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	live := adapter.Session{ID: "eeee5555", AgentType: "fake", DisplayName: "e", Cwd: "/tmp", SessionName: "uam-fake-eeee5555", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})
 
 	// Persist a record flagged closed-by-user even though the pane is alive.
 	key := store.Key("fake", "eeee5555")
 	if err := st.Update(func(cfg *store.Config) error {
-		cfg.Sessions[key] = store.SessionRecord{ID: "eeee5555", Agent: "fake", Name: "e", TmuxSession: "uam-fake-eeee5555", Status: store.StatusClosedByUser}
+		cfg.Sessions[key] = store.SessionRecord{ID: "eeee5555", Agent: "fake", Name: "e", SessionName: "uam-fake-eeee5555", Status: store.StatusClosedByUser}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -212,12 +212,12 @@ func TestLoadSessionsReconcilesLiveUserClosedSessionToActive(t *testing.T) {
 // F18 anti-flap — the persisted Status of a closed record whose pane survived
 // the close must be reset to Active so it does not flap back to Closed.
 func TestLoadSessionsResetsPersistedStatusWhenLivePaneSurvivesClose(t *testing.T) {
-	live := adapter.Session{ID: "ffff6666", AgentType: "fake", DisplayName: "f", Cwd: "/tmp", TmuxSession: "uam-fake-ffff6666", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	live := adapter.Session{ID: "ffff6666", AgentType: "fake", DisplayName: "f", Cwd: "/tmp", SessionName: "uam-fake-ffff6666", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})
 
 	key := store.Key("fake", "ffff6666")
 	if err := st.Update(func(cfg *store.Config) error {
-		cfg.Sessions[key] = store.SessionRecord{ID: "ffff6666", Agent: "fake", Name: "f", TmuxSession: "uam-fake-ffff6666", Status: store.StatusClosedByUser}
+		cfg.Sessions[key] = store.SessionRecord{ID: "ffff6666", Agent: "fake", Name: "f", SessionName: "uam-fake-ffff6666", Status: store.StatusClosedByUser}
 		return nil
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

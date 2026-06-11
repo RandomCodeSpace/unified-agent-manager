@@ -51,20 +51,29 @@ type Session struct {
 	DisplayName  string
 	Prompt       string
 	Cwd          string
-	TmuxSession  string
-	State        State
-	ProcAlive    ProcLiveness
-	LastChange   time.Time
-	CreatedAt    time.Time
-	PR           *PRRef
-	Pinned       bool
-	Group        string
-	SortIndex    int
+	SessionName  string
+	// ProviderSessionID is the agent CLI's own session identifier, recorded
+	// when the provider lets uam seed or learn it (e.g. claude --session-id).
+	// It upgrades resume from "most recent conversation in this cwd" to an
+	// exact-session resume.
+	ProviderSessionID string
+	State             State
+	ProcAlive         ProcLiveness
+	LastChange        time.Time
+	CreatedAt         time.Time
+	PR                *PRRef
+	Pinned            bool
+	Group             string
+	SortIndex         int
+	// ExitCode is the agent process's exit status from its most recent close
+	// (-1 when it died on a signal), recorded by the session host. Nil while
+	// the session is live or when no exit has been observed.
+	ExitCode *int
 	// Closed mirrors store.StatusClosedByUser: true when the user retired
-	// this session through uam (`uam stop`, exit-in-session via the tmux
-	// hook, or an external `tmux kill-session`). False otherwise — including
-	// for dead-pane sessions left over from a reboot, which remain in the
-	// Active group and resume on attach.
+	// this session through uam (`uam stop`, or exit-in-session — the host
+	// marks the record closed when the agent exits). False otherwise —
+	// including for dead sessions left over from a reboot, which remain in
+	// the Active group and resume on attach.
 	Closed bool
 }
 
@@ -81,8 +90,12 @@ type ResumeRequest struct {
 	Prompt       string
 	Cwd          string
 	Mode         string
-	TmuxSession  string
-	CreatedAt    time.Time
+	SessionName  string
+	// ProviderSessionID is the persisted provider-side session id, when one
+	// was recorded at dispatch; providers that support exact resume use it
+	// instead of their "most recent" heuristic.
+	ProviderSessionID string
+	CreatedAt         time.Time
 }
 
 type ResumableAdapter interface {
@@ -91,8 +104,8 @@ type ResumableAdapter interface {
 
 // HasSessionAdapter reports whether the agent's underlying session for id is
 // still live. Optional: Service.Stop probes it after a failed kill to avoid
-// deleting/flagging a record whose pane is still running (F04). TmuxAgent
-// implements it for free, so all tmux-backed providers inherit it.
+// deleting/flagging a record whose process is still running (F04). Agent
+// implements it for free, so every provider inherits it.
 type HasSessionAdapter interface {
 	HasSession(ctx Context, id string) bool
 }

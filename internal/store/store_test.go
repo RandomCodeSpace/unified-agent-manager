@@ -47,7 +47,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		Name:         "fix tests",
 		Mode:         ModeYolo,
 		Workdir:      "/tmp/repo",
-		TmuxSession:  "uam-claude-12345678",
+		SessionName:  "uam-claude-12345678",
 		CreatedAt:    now,
 		LastSeenAt:   now,
 		Pinned:       true,

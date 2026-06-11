@@ -8,7 +8,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 )
 
 // F14 — app.New builds its registry from the shared agents.Default list (it used
@@ -26,7 +26,7 @@ func TestAppRegistryMatchesSharedAdapterSet(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	client := tmux.New("uam")
+	client := session.NewClient()
 	reg := adapter.NewRegistry(agents.Default(client))
 
 	got := make([]string, 0)

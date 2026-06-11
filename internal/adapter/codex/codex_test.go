@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/adaptertest"
 )
 
 func TestNew(t *testing.T) {
@@ -22,9 +22,9 @@ func TestNew(t *testing.T) {
 // TestYoloArgs locks in codex's full-access flags exactly. A drift here
 // silently changes the sandbox posture of dispatched sessions.
 func TestYoloArgs(t *testing.T) {
-	ta, ok := New(nil).(*adapter.TmuxAgent)
+	ta, ok := New(nil).(*adapter.Agent)
 	if !ok {
-		t.Fatalf("expected *adapter.TmuxAgent")
+		t.Fatalf("expected *adapter.Agent")
 	}
 	if got, want := ta.YoloArgs, []string{"--sandbox", "danger-full-access"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("YoloArgs = %v, want %v", got, want)
@@ -35,9 +35,9 @@ func TestYoloArgs(t *testing.T) {
 // SkipPromptOnResume. Without this wiring, picking "Resume" on a codex row
 // would relaunch a fresh agent (no resume) AND re-fire the original prompt.
 func TestNewWiresSessionArgs(t *testing.T) {
-	ta, ok := New(nil).(*adapter.TmuxAgent)
+	ta, ok := New(nil).(*adapter.Agent)
 	if !ok {
-		t.Fatalf("expected *adapter.TmuxAgent")
+		t.Fatalf("expected *adapter.Agent")
 	}
 	if ta.SessionArgs == nil {
 		t.Fatal("expected SessionArgs to be wired")
@@ -51,80 +51,59 @@ func TestNewWiresSessionArgs(t *testing.T) {
 // row must use codex's `resume --last` and must NOT replay the original prompt
 // into the restored session, nor pass the uam UUID.
 func TestResumeAppendsResumeLastAndDoesNotReplayPrompt(t *testing.T) {
-	a, logPath := newTestCodexAdapter(t)
+	a, be := newTestCodexAdapter(t)
 	resumable, ok := a.(adapter.ResumableAdapter)
 	if !ok {
 		t.Fatal("codex adapter should be resumable")
 	}
-	_, err := resumable.Resume(context.Background(), adapter.ResumeRequest{ID: "abc12345-dead-beef-cafe-0123456789ab", Prompt: "fix parser", Cwd: "/tmp", Mode: "yolo", TmuxSession: "uam-codex-abc12345"})
+	_, err := resumable.Resume(context.Background(), adapter.ResumeRequest{ID: "abc12345-dead-beef-cafe-0123456789ab", Prompt: "fix parser", Cwd: "/tmp", Mode: "yolo", SessionName: "uam-codex-abc12345"})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	logText := readLog(t, logPath)
-	if !strings.Contains(logText, "codex --sandbox danger-full-access resume --last") {
-		t.Fatalf("codex resume should append resume --last: %s", logText)
+	argv := be.CommandLog()
+	if !strings.Contains(argv, "codex --sandbox danger-full-access resume --last") {
+		t.Fatalf("codex resume should append resume --last: %s", argv)
 	}
 	// The uam UUID may appear in the UAM_ID env var, but must never be passed
 	// as a flag argument to codex (no resume <uuid> / --resume <uuid>).
-	if strings.Contains(logText, "resume --last abc12345-dead-beef-cafe-0123456789ab") ||
-		strings.Contains(logText, "--resume") {
-		t.Fatalf("codex resume must not pass the uam UUID as a flag arg: %s", logText)
+	if strings.Contains(argv, "resume --last abc12345-dead-beef-cafe-0123456789ab") ||
+		strings.Contains(argv, "--resume") {
+		t.Fatalf("codex resume must not pass the uam UUID as a flag arg: %s", argv)
 	}
-	// `send-keys -t` is the prompt-injection form; the mouse copy/paste config
-	// bindings legitimately contain `send-keys -X`/`-M`, so match the targeted
-	// form (and the prompt text) rather than the bare substring.
-	if strings.Contains(logText, "send-keys -t") || strings.Contains(logText, "fix parser") {
-		t.Fatalf("resume should not replay the original prompt: %s", logText)
+	if sends := be.CallsOf("send"); len(sends) != 0 {
+		t.Fatalf("resume should not replay the original prompt: %+v", sends)
 	}
 }
 
 // TestDispatchUnchanged_sendsPromptNoResume: dispatch keeps its byte-identical
 // argv (no resume) and still sends the prompt.
 func TestDispatchUnchanged_sendsPromptNoResume(t *testing.T) {
-	a, logPath := newTestCodexAdapter(t)
+	a, be := newTestCodexAdapter(t)
 	_, err := a.Dispatch(context.Background(), adapter.DispatchRequest{Prompt: "fix parser", Cwd: "/tmp", Mode: "yolo"})
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	logText := readLog(t, logPath)
-	if strings.Contains(logText, "resume --last") {
-		t.Fatalf("dispatch must not append resume --last: %s", logText)
+	if argv := be.CommandLog(); strings.Contains(argv, "resume --last") {
+		t.Fatalf("dispatch must not append resume --last: %s", argv)
 	}
-	if !strings.Contains(logText, "send-keys") || !strings.Contains(logText, "fix parser") {
-		t.Fatalf("dispatch should send the prompt: %s", logText)
+	sends := be.CallsOf("send")
+	if len(sends) != 1 || sends[0].Text != "fix parser" {
+		t.Fatalf("dispatch should send the prompt: %+v", sends)
 	}
 }
 
-func newTestCodexAdapter(t *testing.T) (adapter.AgentAdapter, string) {
+func newTestCodexAdapter(t *testing.T) (adapter.AgentAdapter, *adaptertest.Backend) {
 	t.Helper()
 	dir := t.TempDir()
-	writeExecutable(t, filepath.Join(dir, "codex"), "#!/bin/sh\nexit 0\n")
-	tmuxPath := filepath.Join(dir, "tmux")
-	writeExecutable(t, tmuxPath, `#!/bin/sh
-printf '%s\n' "$*" >> "$TMUX_LOG"
-exit 0
-`)
+	writeExecutable(t, filepath.Join(dir, "codex"))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	logPath := filepath.Join(dir, "tmux.log")
-	t.Setenv("TMUX_LOG", logPath)
-
-	client := tmux.New("uam")
-	client.Executable = tmuxPath
-	return New(client), logPath
+	be := &adaptertest.Backend{}
+	return New(be), be
 }
 
-func readLog(t *testing.T, path string) string {
+func writeExecutable(t *testing.T, path string) {
 	t.Helper()
-	logData, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(logData)
-}
-
-func writeExecutable(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

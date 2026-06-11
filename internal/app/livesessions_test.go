@@ -35,7 +35,7 @@ func TestLiveSessionsLogsAdapterListFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	healthy := &svcFakeAdapter{name: "healthy", available: true, sessions: []adapter.Session{
-		{ID: "live0001", AgentType: "healthy", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-healthy-live0001", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "live0001", AgentType: "healthy", DisplayName: "live", Cwd: "/tmp", SessionName: "uam-healthy-live0001", State: adapter.Active, CreatedAt: time.Now()},
 	}}
 	broken := &svcFakeAdapter{name: "broken", available: true, listErr: errors.New("tmux exploded")}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{healthy, broken}))
@@ -61,7 +61,7 @@ func TestLiveSessionsDoesNotWarnOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	healthy := &svcFakeAdapter{name: "healthy", available: true, sessions: []adapter.Session{
-		{ID: "live0001", AgentType: "healthy", DisplayName: "live", Cwd: "/tmp", TmuxSession: "uam-healthy-live0001", State: adapter.Active, CreatedAt: time.Now()},
+		{ID: "live0001", AgentType: "healthy", DisplayName: "live", Cwd: "/tmp", SessionName: "uam-healthy-live0001", State: adapter.Active, CreatedAt: time.Now()},
 	}}
 	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{healthy}))
 

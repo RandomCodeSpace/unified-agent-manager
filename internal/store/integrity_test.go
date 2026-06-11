@@ -24,7 +24,7 @@ func writeV1Config(t *testing.T, path string, sessions map[string]any) {
 	}
 }
 
-func TestMigrateV1_DeadTmuxSession_BecomesClosedByUser(t *testing.T) {
+func TestMigrateV1_DeadSessionName_BecomesClosedByUser(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sessions.json")
 	writeV1Config(t, path, map[string]any{
@@ -54,7 +54,7 @@ func TestMigrateV1_DeadTmuxSession_BecomesClosedByUser(t *testing.T) {
 	}
 }
 
-func TestMigrateV1_LiveTmuxSession_StaysActive(t *testing.T) {
+func TestMigrateV1_LiveSessionName_StaysActive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sessions.json")
 	writeV1Config(t, path, map[string]any{

@@ -2,7 +2,6 @@ package hermes
 
 import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
 )
 
 // hermes is launched bare. `--tui` fails to start the agent, and like
@@ -11,6 +10,6 @@ import (
 // session list. Launch as plain `hermes` until a real flag is confirmed.
 var yoloArgs []string
 
-func New(client *tmux.Client) adapter.AgentAdapter {
-	return adapter.NewTmuxAgent("hermes", "Hermes Agent", []adapter.CommandCandidate{{Display: "hermes", Args: []string{"hermes"}}}, yoloArgs, client)
+func New(backend adapter.Backend) adapter.AgentAdapter {
+	return adapter.NewAgent("hermes", "Hermes Agent", []adapter.CommandCandidate{{Display: "hermes", Args: []string{"hermes"}}}, yoloArgs, backend)
 }

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/tmux"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 )
 
 // F14 — Default is the single source of truth for the adapter list. It must
@@ -13,7 +13,7 @@ import (
 // on the raw pre-availability list (Enabled() would be LookPath-filtered to
 // empty in CI).
 func TestDefaultBuildsAllProviders(t *testing.T) {
-	client := tmux.New("uam")
+	client := session.NewClient()
 	got := make([]string, 0)
 	for _, a := range Default(client) {
 		got = append(got, a.Name())
@@ -34,7 +34,7 @@ func TestDefaultBuildsAllProviders(t *testing.T) {
 // F14 — the brief calls out hermes specifically because the old hand-maintained
 // app.New list omitted it; assert it is present.
 func TestDefaultIncludesHermes(t *testing.T) {
-	client := tmux.New("uam")
+	client := session.NewClient()
 	for _, a := range Default(client) {
 		if a.Name() == "hermes" {
 			return

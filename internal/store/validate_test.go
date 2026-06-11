@@ -47,7 +47,7 @@ func goodRecord() map[string]any {
 	}
 }
 
-func TestLoadDropsRecordWithMetacharTmuxSession(t *testing.T) {
+func TestLoadDropsRecordWithMetacharSessionName(t *testing.T) {
 	s := writeConfig(t, map[string]any{
 		"claude:12345678": goodRecord(),
 		"claude:evil1234": map[string]any{
@@ -203,7 +203,7 @@ func TestLoadKeepsCanonicalUUIDRecord(t *testing.T) {
 	if !ok {
 		t.Fatal("canonical UUID-style record was wrongly dropped")
 	}
-	if rec.ID != "12345678-1234-4234-9234-123456789abc" || rec.TmuxSession != "uam-claude-12345678" {
+	if rec.ID != "12345678-1234-4234-9234-123456789abc" || rec.SessionName != "uam-claude-12345678" {
 		t.Fatalf("record mutated: %+v", rec)
 	}
 }
@@ -299,5 +299,23 @@ func TestLoadKeepsMigratedRecord(t *testing.T) {
 	}
 	if rec.Status != StatusActive {
 		t.Fatalf("status = %q, want %q", rec.Status, StatusActive)
+	}
+}
+
+// The provider session id is passed as a resume argv value; anything outside
+// the UUID alphabet must drop the record on load.
+func TestValidateRejectsUnsafeProviderSessionID(t *testing.T) {
+	rec := SessionRecord{ID: "abc12345", Agent: "claude", SessionName: "uam-claude-abc12345", Workdir: "/tmp"}
+	for _, good := range []string{"abc12345-dead-beef-cafe-0123456789ab", "ses_2132323b6ffeuRlYHhPcU8DaZ6"} {
+		rec.ProviderSessionID = good
+		if reason := validateRecord(rec); reason != "" {
+			t.Fatalf("provider session id %q should pass, got %q", good, reason)
+		}
+	}
+	for _, bad := range []string{"--continue", "-leadingdash", "x; rm -rf /", "id with space", "$(boom)"} {
+		rec.ProviderSessionID = bad
+		if reason := validateRecord(rec); reason == "" {
+			t.Fatalf("provider session id %q must be rejected", bad)
+		}
 	}
 }

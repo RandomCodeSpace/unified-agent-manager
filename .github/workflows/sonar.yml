@@ -30,7 +30,7 @@ jobs:
           cache: true
 
       - name: Run tests with coverage
-        run: go test -covermode=atomic -coverprofile=coverage.out ./...
+        run: go test -covermode=atomic -coverprofile=coverage.out -coverpkg=./... ./...
 
       - name: Run SonarCloud scan
         if: env.SONAR_TOKEN != ''

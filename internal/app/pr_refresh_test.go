@@ -31,7 +31,7 @@ func TestUpdatePRRecordWritesLastCheckedOnTimeout(t *testing.T) {
 	// gh sleeps long enough to blow the per-check timeout.
 	writeFakeGH(t, "#!/bin/sh\nsleep 30\n")
 
-	live := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", TmuxSession: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/1", Number: 1, Status: adapter.PROpen}}
+	live := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "A", Cwd: "/tmp", SessionName: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/1", Number: 1, Status: adapter.PROpen}}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})
 
 	before := time.Now()
@@ -72,7 +72,7 @@ func TestRefreshDoesNotStackConcurrentLoads(t *testing.T) {
 	t.Setenv("UAM_GH_BIN", gh)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	live := adapter.Session{ID: "bbbb2222", AgentType: "fake", DisplayName: "B", Cwd: "/tmp", TmuxSession: "uam-fake-bbbb2222", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/2", Number: 2, Status: adapter.PROpen}}
+	live := adapter.Session{ID: "bbbb2222", AgentType: "fake", DisplayName: "B", Cwd: "/tmp", SessionName: "uam-fake-bbbb2222", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/2", Number: 2, Status: adapter.PROpen}}
 	svc, _, _ := newLoadService(t, []adapter.Session{live})
 
 	var wg sync.WaitGroup

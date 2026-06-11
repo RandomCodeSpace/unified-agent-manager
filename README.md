@@ -10,7 +10,8 @@
 
 `uam` is a terminal dashboard for managing multiple coding-agent CLIs from one place.
 It gives you a single TUI for launching, peeking, replying to, attaching to, and
-stopping long-running agent sessions backed by a private tmux server.
+stopping long-running agent sessions — no tmux (or any other multiplexer)
+required.
 
 Supported providers:
 
@@ -23,20 +24,24 @@ Supported providers:
 
 ## What it does
 
-- Runs each managed session inside `tmux -L uam`
+- Runs each managed session under its own lightweight, detached host process
+  (a PTY + terminal emulator + Unix socket) — sessions keep running when the
+  TUI exits, exactly like a tmux server, with no external dependency
 - Shows active and closed sessions in one dashboard
-- Lets you peek at recent output without attaching
+- Lets you peek at recent output without attaching (4000 lines of scrollback)
 - Sends replies back into running agent sessions
-- Persists session metadata across restarts
+- Persists session metadata across restarts, including each agent's exit code
 - Supports pinning, renaming, manual reorder, and group-by-directory
 - Detects GitHub PR URLs from agent output and can refresh PR state when `gh` is available
 - Supports per-session command aliases such as a custom Copilot launcher
 
 ## Requirements
 
-- Go 1.24+ to build from source
-- tmux 3.x
+- Go 1.25+ to build from source (the pinned toolchain downloads automatically)
 - Any provider CLI you want to manage already installed and authenticated
+
+That's it — agents are spawned directly under uam's own session hosts, so
+there is nothing else to install.
 
 Providers are capability-probed at runtime. If a CLI is missing, `uam` hides it
 from the dispatch UI instead of failing the whole app.
@@ -87,9 +92,9 @@ uam ls [--json]
 uam peek <id>
 uam attach <name-or-id>
 uam last
-uam stop <id>                    # kill tmux session, keep record
-uam rm <id>                      # kill tmux session and remove record
-uam kill-all                     # stop the private tmux server and all sessions
+uam stop <id>                    # kill the session, keep record
+uam rm <id>                      # kill the session and remove record
+uam kill-all                     # stop every managed session
 uam version
 ```
 
@@ -113,6 +118,43 @@ uam version
 | `?` | Open help |
 | `Esc` | Close overlays, clear input, or quit |
 
+## Attached sessions
+
+`uam attach` (or `Enter` in the TUI) bridges your terminal straight to the
+agent's PTY:
+
+- `Ctrl+B d` detaches and returns to the dashboard (`Ctrl+B Ctrl+B` sends a
+  literal `Ctrl+B` to the agent)
+- `←` (left arrow) also detaches when you haven't typed anything since the
+  last submit/clear — tap it to hop back to the dashboard. Inside a draft it
+  moves the cursor as usual, and after history/menu navigation it stays
+  passthrough until the next `Enter`/`Esc`. Set `UAM_ATTACH_BACK_DETACH=0`
+  to disable.
+- The session keeps running after you detach or close the terminal
+- `Ctrl+Z` is swallowed while attached — suspending an agent inside a detached
+  session would leave it impossible to foreground
+- Several terminals can attach to the same session at once
+
+## Resuming sessions
+
+Detach/reattach never restarts anything — the agent keeps running under its
+host and attach is a plain reconnect (this is the tmux property, kept).
+Resume only applies to sessions whose process is gone (reboot, `uam stop`):
+
+- **Claude Code**: uam seeds claude's session id with the uam id at dispatch
+  (`--session-id`, when the installed claude supports it) and resumes that
+  exact conversation with `--resume <id>` — several sessions in the same
+  directory each resume their own conversation. Sessions dispatched before
+  this feature (or with an older claude) fall back to `--continue`.
+- **Copilot**: exact resume — the session is named with the uam id at
+  dispatch (`--name`) and resumed by that exact name (`--resume=<id>`).
+- **Codex / OpenCode**: these CLIs cannot preset session ids yet, so resume
+  uses their "most recent" mode (`codex resume --last`, `opencode -c`). When
+  an opencode record carries a `provider_session_id` (`ses_...`), uam resumes
+  that exact session via `--session`. **omp**: `-c`.
+- After a reboot, records survive in the store and resume on attach — a
+  scenario where a tmux session would simply be gone.
+
 ## Session storage
 
 `uam` stores session metadata at:
@@ -123,6 +165,24 @@ ${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json
 
 Writes are atomic and lock-protected. If the file needs migration or recovery,
 `uam` creates backup files next to it.
+
+Per-session runtime state (control sockets and state files) lives in a
+per-user directory under the system temp dir — `/tmp/uam-<uid>` on most
+systems (override with `UAM_SESSION_DIR`) — created owner-only and verified
+to be owned by you. The temp dir is used instead of `$XDG_RUNTIME_DIR`
+deliberately: logind wipes the runtime dir when your last login session ends,
+which would strand detached sessions that survive logout (the same reason
+tmux lives in `/tmp/tmux-<uid>`). Hosts periodically refresh their files'
+timestamps so age-based `/tmp` cleanup never collects a long-idle session.
+
+Note for distros with `KillUserProcesses=yes` in logind.conf: any detached
+process — uam session hosts and tmux alike — is killed at logout unless you
+run `loginctl enable-linger`.
+
+> Upgrading from a tmux-backed release: sessions still running inside the old
+> `tmux -L uam` server are not visible to the native backend. Finish or stop
+> them first (`tmux -L uam kill-server`); stored session records carry over
+> unchanged and remain resumable.
 
 ## Safety model
 

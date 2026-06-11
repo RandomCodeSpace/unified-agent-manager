@@ -21,9 +21,9 @@ func TestNew(t *testing.T) {
 // pane on dispatch. Regression guard.
 func TestNoYoloArgs(t *testing.T) {
 	got := New(nil)
-	ta, ok := got.(*adapter.TmuxAgent)
+	ta, ok := got.(*adapter.Agent)
 	if !ok {
-		t.Fatalf("expected *adapter.TmuxAgent, got %T", got)
+		t.Fatalf("expected *adapter.Agent, got %T", got)
 	}
 	if len(ta.YoloArgs) != 0 {
 		t.Fatalf("opencode YoloArgs must be empty, got %v", ta.YoloArgs)
@@ -50,14 +50,30 @@ func TestSessionArgsAppendsContinueOnResume(t *testing.T) {
 // flag, starting a fresh TUI instead of resuming the prior session.
 func TestNewWiresSessionArgs(t *testing.T) {
 	got := New(nil)
-	ta, ok := got.(*adapter.TmuxAgent)
+	ta, ok := got.(*adapter.Agent)
 	if !ok {
-		t.Fatalf("expected *adapter.TmuxAgent, got %T", got)
+		t.Fatalf("expected *adapter.Agent, got %T", got)
 	}
 	if ta.SessionArgs == nil {
 		t.Fatal("expected SessionArgs to be wired")
 	}
 	if !ta.SkipPromptOnResume {
 		t.Fatal("expected SkipPromptOnResume to be true")
+	}
+}
+
+// A recorded provider session id must resume that exact opencode session
+// (--session ses_...) instead of the project's most recent (-c).
+func TestResumeTargetsExactSessionWhenIDKnown(t *testing.T) {
+	ag, ok := New(nil).(*adapter.Agent)
+	if !ok {
+		t.Fatalf("expected *adapter.Agent")
+	}
+	got := ag.SessionArgs(adapter.ResumeRequest{ProviderSessionID: "ses_2132323b6ffe"}, "resumed")
+	if len(got) != 2 || got[0] != "--session" || got[1] != "ses_2132323b6ffe" {
+		t.Fatalf("resume args = %v, want exact --session", got)
+	}
+	if got := ag.SessionArgs(adapter.ResumeRequest{}, "resumed"); len(got) != 1 || got[0] != "-c" {
+		t.Fatalf("resume args without id = %v, want -c fallback", got)
 	}
 }
