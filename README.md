@@ -37,7 +37,7 @@ Supported providers:
 
 ## Requirements
 
-- Go 1.24+ to build from source
+- Go 1.25+ to build from source (the pinned toolchain downloads automatically)
 - Any provider CLI you want to manage already installed and authenticated
 
 That's it — agents are spawned directly under uam's own session hosts, so
