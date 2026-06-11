@@ -273,3 +273,17 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+// The internal __host/__attach subcommands are routed through runCommand;
+// invalid input must surface as errors rather than silently doing nothing.
+func TestRunCommandInternalSubcommands(t *testing.T) {
+	t.Setenv("UAM_SESSION_DIR", t.TempDir())
+	svc, _ := newCLITestService(t)
+	noTUI := func(context.Context, tea.Model) error { return nil }
+	if err := runCommand(context.Background(), svc, []string{"__host", "--name", "bad name", "--", "/bin/true"}, noTUI); err == nil {
+		t.Fatal("__host with an invalid name must fail")
+	}
+	if err := runCommand(context.Background(), svc, []string{"__attach"}, noTUI); err == nil {
+		t.Fatal("__attach without a session must fail")
+	}
+}

@@ -225,3 +225,126 @@ func TestBackspaceAndTab(t *testing.T) {
 		t.Fatalf("Capture = %q", got)
 	}
 }
+
+func TestNewClampsDegenerateSizes(t *testing.T) {
+	term := New(0, -1, -5)
+	cols, rows := term.Size()
+	if cols != 1 || rows != 1 {
+		t.Fatalf("Size = %d,%d, want clamped 1,1", cols, rows)
+	}
+	feed(t, term, "x")
+	if got := term.Capture(10); got != "x\n" {
+		t.Fatalf("Capture = %q", got)
+	}
+}
+
+func TestCursorSaveRestoreAndIndexEscapes(t *testing.T) {
+	term := New(20, 5, 0)
+	feed(t, term, "abc\x1b7XY\x1b8Z") // save at col 4, write XY, restore, Z overwrites X
+	if got := term.Capture(10); got != "abcZY\n" {
+		t.Fatalf("ESC 7/8: %q", got)
+	}
+	term = New(20, 5, 0)
+	feed(t, term, "top\x1bEnext")
+	if got := term.Capture(10); got != "top\nnext\n" {
+		t.Fatalf("ESC E: %q", got)
+	}
+	// ESC M at the top scrolls the region down (reverse index).
+	term = New(20, 3, 0)
+	feed(t, term, "one\r\ntwo\x1b[1;1H\x1bMzero")
+	if got := term.Capture(10); got != "zero\none\ntwo\n" {
+		t.Fatalf("ESC M: %q", got)
+	}
+	// CSI S / T scroll the screen up and down.
+	term = New(20, 3, 10)
+	feed(t, term, "a\r\nb\r\nc\x1b[1S\x1b[1T")
+	if got := term.Capture(10); !strings.Contains(got, "b\nc\n") {
+		t.Fatalf("CSI S/T: %q", got)
+	}
+}
+
+func TestResetClearsEverything(t *testing.T) {
+	term := New(20, 3, 10)
+	feed(t, term, "junk\r\nmore\x1bcfresh")
+	if got := term.Capture(10); !strings.HasSuffix(got, "fresh\n") {
+		t.Fatalf("ESC c: %q", got)
+	}
+}
+
+func TestRelativeCursorMoves(t *testing.T) {
+	term := New(20, 5, 0)
+	// Write, move up/left/down/right and overwrite deterministically.
+	feed(t, term, "aaaa\r\nbbbb\x1b[1A\x1b[2DX\x1b[1B\x1b[1CY")
+	got := term.Capture(10)
+	if !strings.Contains(got, "aX") || !strings.Contains(got, "Y") {
+		t.Fatalf("relative moves: %q", got)
+	}
+	// CSI E/F: next/previous line to column 1.
+	term = New(20, 5, 0)
+	feed(t, term, "one\x1b[1Etwo\x1b[1Fzero")
+	if got := term.Capture(10); got != "zero\ntwo\n" {
+		t.Fatalf("CSI E/F: %q", got)
+	}
+}
+
+func TestInsertCharsAndEraseVariants(t *testing.T) {
+	term := New(20, 4, 0)
+	feed(t, term, "abcdef\x1b[1;3H\x1b[2@") // insert 2 blanks at col 3
+	if got := term.Capture(10); got != "ab  cdef\n" {
+		t.Fatalf("ICH: %q", got)
+	}
+	feed(t, term, "\x1b[1;3H\x1b[2X") // erase 2 chars in place
+	if got := term.Capture(10); got != "ab  cdef\n" {
+		t.Fatalf("ECH: %q", got)
+	}
+	// EL mode 1: erase from start of line through cursor.
+	term = New(20, 4, 0)
+	feed(t, term, "abcdef\x1b[1;3H\x1b[1K")
+	if got := term.Capture(10); got != "   def\n" {
+		t.Fatalf("EL1: %q", got)
+	}
+	// ED mode 1: erase from start of display through cursor.
+	term = New(20, 4, 0)
+	feed(t, term, "top\r\nmid\r\nbot\x1b[2;2H\x1b[1J")
+	if got := term.Capture(10); !strings.Contains(got, "bot") || strings.Contains(got, "top") {
+		t.Fatalf("ED1: %q", got)
+	}
+}
+
+func TestLegacyAltScreenAndDCS(t *testing.T) {
+	term := New(20, 4, 10)
+	feed(t, term, "main\x1b[?47halt47\x1b[?47l")
+	if got := term.Capture(10); !strings.Contains(got, "main") || strings.Contains(got, "alt47") {
+		t.Fatalf("?47 alt screen: %q", got)
+	}
+	// DCS payloads are consumed without touching the grid; ESC \ terminates.
+	feed(t, term, "\x1bPsome dcs payload\x1b\\after")
+	if got := term.Capture(10); !strings.Contains(got, "after") || strings.Contains(got, "payload") {
+		t.Fatalf("DCS: %q", got)
+	}
+	// OSC terminated by ST (ESC \) instead of BEL.
+	feed(t, term, "\x1b]0;title\x1b\\!")
+	if got := term.Capture(10); !strings.Contains(got, "after!") {
+		t.Fatalf("OSC ST: %q", got)
+	}
+}
+
+func TestMalformedCSIRecovers(t *testing.T) {
+	term := New(20, 3, 0)
+	// An oversized parameter string overflows the buffer and is abandoned;
+	// an ESC inside a CSI restarts sequence parsing.
+	feed(t, term, "\x1b["+strings.Repeat("1;", 40)+"mok")
+	feed(t, term, "\x1b[12\x1b[31mred")
+	if got := term.Capture(10); !strings.Contains(got, "ok") || !strings.Contains(got, "red") {
+		t.Fatalf("malformed CSI: %q", got)
+	}
+}
+
+func TestScrollRegionReverseWrapAndKeypadIgnored(t *testing.T) {
+	term := New(20, 4, 0)
+	// Keypad mode escapes and charset designators are consumed silently.
+	feed(t, term, "\x1b=\x1b>\x1b(Bvisible")
+	if got := term.Capture(10); got != "visible\n" {
+		t.Fatalf("ignored escapes: %q", got)
+	}
+}
