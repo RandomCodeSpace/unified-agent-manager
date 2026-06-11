@@ -134,3 +134,59 @@ func TestCtrlZSwallowed(t *testing.T) {
 		t.Fatalf("Ctrl+Z must be swallowed, out=%q", out)
 	}
 }
+
+// Deleting everything you typed re-arms the quick detach: the filter tracks
+// an approximate rune count, so a backspaced-empty input box behaves like an
+// untouched one.
+func TestBackspacedEmptyDraftReArmsQuickDetach(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	if _, detach := runFilter(t, f, "ab\x7f\x7f"); detach {
+		t.Fatal("typing and deleting must not detach by itself")
+	}
+	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+		t.Fatal("left arrow after deleting the whole draft should detach")
+	}
+}
+
+func TestPartialDeleteStaysDisarmed(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	if _, detach := runFilter(t, f, "ab\x7f", "\x1b[D"); detach {
+		t.Fatal("left arrow with a char still in the box must not detach")
+	}
+}
+
+func TestExtraBackspacesAtEmptyStayArmed(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	// Backspace on an empty box is a no-op; more deletes than chars typed
+	// must not wedge the estimate below zero.
+	if _, detach := runFilter(t, f, "\x7f\x7fa\x7f\x7f\x7f", "\x1b[D"); !detach {
+		t.Fatal("left arrow after over-deleting should still detach")
+	}
+}
+
+func TestMultibyteRuneDeletesWithOneBackspace(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	// é is two bytes but one rune: a single backspace empties the box.
+	if _, detach := runFilter(t, f, "é\x7f", "\x1b[D"); !detach {
+		t.Fatal("left arrow after deleting a multibyte rune should detach")
+	}
+}
+
+func TestCtrlHBackspaceAlsoDeletes(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	if _, detach := runFilter(t, f, "a\x08", "\x1b[D"); !detach {
+		t.Fatal("Ctrl+H backspace should re-arm like DEL")
+	}
+}
+
+// Tab completion can insert text uam cannot count; backspaces afterwards must
+// not re-arm — only a submit/clear does.
+func TestTabDisarmsUntilClear(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	if _, detach := runFilter(t, f, "a\t\x7f\x7f", "\x1b[D"); detach {
+		t.Fatal("backspaces after a tab must not re-arm the quick detach")
+	}
+	if _, detach := runFilter(t, f, "\x15", "\x1b[D"); !detach {
+		t.Fatal("Ctrl+U after a tab should re-arm")
+	}
+}
