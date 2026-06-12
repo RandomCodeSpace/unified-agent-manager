@@ -190,3 +190,108 @@ func TestTabDisarmsUntilClear(t *testing.T) {
 		t.Fatal("Ctrl+U after a tab should re-arm")
 	}
 }
+
+// Agents query the terminal (Ink-based ones request the cursor position on
+// every render) and the replies arrive on stdin mixed with real keystrokes.
+// Replies never reach the agent's input box, so they must pass through
+// without disarming the left-arrow quick detach.
+func TestTerminalRepliesDoNotDisarm(t *testing.T) {
+	replies := []string{
+		"\x1b[24;80R",                   // CPR: cursor position report
+		"\x1b[?64;1;2;6;9;15;18;21;22c", // DA1: primary device attributes
+		"\x1b[?1u",                      // kitty keyboard flags report
+		"\x1b[0n",                       // DSR: terminal OK
+		"\x1b[?2004;1$y",                // DECRPM: mode report
+	}
+	for _, reply := range replies {
+		f := &stdinFilter{backDetach: true}
+		out, detach := runFilter(t, f, reply)
+		if detach || out != reply {
+			t.Fatalf("reply %q must pass through untouched, out=%q detach=%v", reply, out, detach)
+		}
+		if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+			t.Fatalf("left arrow after reply %q should still detach", reply)
+		}
+	}
+}
+
+// OSC and DCS replies (color queries, XTGETTCAP) carry free-form payloads;
+// counting those bytes as typed runes would wedge the quick detach.
+func TestStringRepliesDoNotDisarm(t *testing.T) {
+	replies := []string{
+		"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\", // OSC color reply, ST-terminated
+		"\x1b]10;rgb:ffff/ffff/ffff\x07",   // OSC color reply, BEL-terminated
+		"\x1bP1+r524742=38\x1b\\",          // DCS XTGETTCAP reply
+	}
+	for _, reply := range replies {
+		f := &stdinFilter{backDetach: true}
+		out, detach := runFilter(t, f, reply)
+		if detach || out != reply {
+			t.Fatalf("string reply %q must pass through untouched, out=%q detach=%v", reply, out, detach)
+		}
+		if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+			t.Fatalf("left arrow after string reply %q should still detach", reply)
+		}
+	}
+}
+
+func TestStringReplySplitAcrossReads(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	out, detach := runFilter(t, f, "\x1b]11;rgb:1e", "1e/1e1e/1e1e\x1b", "\\", "\x1b[D")
+	if !detach {
+		t.Fatal("left arrow after a split string reply should still detach")
+	}
+	if out != "\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\" {
+		t.Fatalf("split reply must be forwarded intact, out=%q", out)
+	}
+}
+
+func TestMouseEventsDoNotDisarm(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	wheel := "\x1b[<64;10;20M\x1b[<65;10;20m" // SGR wheel press + release
+	out, detach := runFilter(t, f, wheel)
+	if detach || out != wheel {
+		t.Fatalf("mouse events must pass through untouched, out=%q detach=%v", out, detach)
+	}
+	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+		t.Fatal("left arrow after mouse events should still detach")
+	}
+}
+
+func TestFocusEventsDoNotDisarm(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	out, detach := runFilter(t, f, "\x1b[I\x1b[O") // focus in + out
+	if detach || out != "\x1b[I\x1b[O" {
+		t.Fatalf("focus events must pass through untouched, out=%q detach=%v", out, detach)
+	}
+	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+		t.Fatal("left arrow after focus events should still detach")
+	}
+}
+
+// Real navigation keys still poison the estimate even with replies neutral:
+// only terminal-generated traffic is exempt.
+func TestArrowAndFunctionKeysStillDisarm(t *testing.T) {
+	for _, key := range []string{"\x1b[A", "\x1b[B", "\x1b[Z", "\x1bOP", "\x1bf"} {
+		f := &stdinFilter{backDetach: true}
+		if _, detach := runFilter(t, f, key, "\x1b[D"); detach {
+			t.Fatalf("left arrow after key %q must not detach", key)
+		}
+	}
+}
+
+// Deliberate trade-off, pinned: xterm's modified F3 (CSI 1;2R) shares its
+// grammar with a cursor position report at row 1 col 2, and no parameter
+// heuristic separates them without misreading common cursor positions. The
+// filter sides with CPR (constant Ink traffic) over modified F3 (bound to
+// text entry by no supported agent) — see seqPoisons.
+func TestModifiedF3ReadsAsCursorReply(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	out, detach := runFilter(t, f, "\x1b[1;2R")
+	if detach || out != "\x1b[1;2R" {
+		t.Fatalf("CSI 1;2R must pass through untouched, out=%q detach=%v", out, detach)
+	}
+	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+		t.Fatal("left arrow after a CPR-shaped sequence should still detach")
+	}
+}
