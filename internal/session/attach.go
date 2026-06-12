@@ -36,8 +36,12 @@ const ctrlZ = 0x1a
 // corrupt the TUI that resumes after detach.
 
 // screenEnter opens the attach client's own alternate screen, saving the
-// primary screen and cursor underneath.
-const screenEnter = "\x1b[?1049h"
+// primary screen and cursor underneath, then disables alternate scroll mode
+// (?1007, default-on in VTE terminals): on the alt screen with mouse
+// reporting off it turns wheel motion into arrow keys typed into the agent.
+// The user's setting is saved first (XTSAVE) and restored by screenExit;
+// terminals without ?1007 ignore all three sequences.
+const screenEnter = "\x1b[?1049h" + "\x1b[?1007s" + "\x1b[?1007l"
 
 // screenExit resets every mode the agent could have toggled mid-attach, then
 // leaves the alternate screen. Terminals ignore sequences they don't
@@ -51,6 +55,7 @@ const screenExit = "\x1b[<u" + // pop the kitty keyboard flags agents push
 	"\x1b>" + // numeric keypad (DECKPNM; DECSTR leaves keypad mode alone)
 	"\x1b(B" + // G0 charset back to ASCII
 	"\x1b[?25h" + // cursor visible
+	"\x1b[?1007r" + // alternate scroll back to the user's saved setting (XTRESTORE)
 	"\x1b[?1049l" // leave the alt screen: primary buffer and cursor restored
 
 // RunAttach is the entry point of `uam __attach`: it puts the terminal in raw
@@ -207,6 +212,13 @@ func backDetachEnabled() bool {
 // byte) until a key that submits or clears the box (Enter, Esc, Ctrl+C,
 // Ctrl+U). A bare left arrow while the box is believed empty detaches; inside
 // a draft it keeps moving the cursor. Ctrl+B d always detaches regardless.
+//
+// Not everything on stdin is a keystroke: agents query the terminal (Ink
+// re-requests the cursor position every render) and the replies — CPR, DA1,
+// kitty flags, OSC/DCS strings — arrive on the same fd, as do mouse and
+// focus events. Terminal-generated traffic never reaches the agent's input
+// box, so it is forwarded without touching the estimate (see seqPoisons);
+// counting it would wedge the quick detach until the next Enter.
 type stdinFilter struct {
 	backDetach bool
 	// pendingPrefix is set after Ctrl+B, waiting for the chord's second key.
@@ -217,6 +229,14 @@ type stdinFilter struct {
 	typed int
 	// unknown latches when the box may hold text typed cannot account for.
 	unknown bool
+	// strActive marks an OSC/DCS/SOS/PM/APC string sequence being consumed
+	// verbatim (a terminal reply to an agent query); strBel allows the OSC
+	// BEL terminator, strEsc tracks a possible ST (ESC \), and strLen caps
+	// runaway sequences at maxStrLen.
+	strActive bool
+	strBel    bool
+	strEsc    bool
+	strLen    int
 }
 
 // boxEmpty reports whether the agent's input box is believed empty.
@@ -226,8 +246,13 @@ func (f *stdinFilter) boxEmpty() bool { return !f.unknown && f.typed == 0 }
 func (f *stdinFilter) clearBox() { f.typed, f.unknown = 0, false }
 
 // maxEscLen bounds escape-sequence accumulation; anything longer is flushed
-// through verbatim rather than parsed.
-const maxEscLen = 8
+// through verbatim rather than parsed. Sized for terminal replies, not just
+// keystrokes — a DA1 attribute list runs ~40 bytes.
+const maxEscLen = 64
+
+// maxStrLen bounds string-sequence (OSC/DCS) consumption the same way;
+// color-query and XTGETTCAP replies stay well under it.
+const maxStrLen = 4096
 
 // pumpStdin forwards terminal input to the host, filtering the detach chord,
 // Ctrl+Z, and (when enabled) the left-arrow quick detach. It returns when the
@@ -260,6 +285,10 @@ func pumpStdin(stdin io.Reader, conn net.Conn, backDetach bool) {
 func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 	out = make([]byte, 0, len(chunk)+1)
 	for i, b := range chunk {
+		if f.strActive {
+			out = f.strByte(out, b)
+			continue
+		}
 		if f.pendingPrefix {
 			f.pendingPrefix = false
 			switch b {
@@ -329,6 +358,19 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 // updated forward buffer and whether the left-arrow quick detach fired.
 func (f *stdinFilter) escByte(out []byte, b byte) ([]byte, bool) {
 	f.esc = append(f.esc, b)
+	if len(f.esc) == 2 {
+		switch b {
+		case ']', 'P', 'X', '^', '_':
+			// OSC/DCS/SOS/PM/APC: a string sequence — in practice a terminal
+			// reply to an agent query (OSC 10/11 colors, DCS XTGETTCAP).
+			// Hand off to strByte, which consumes it through its terminator.
+			out = append(out, f.esc...)
+			f.strActive, f.strBel = true, b == ']'
+			f.strEsc, f.strLen = false, len(f.esc)
+			f.esc = nil
+			return out, false
+		}
+	}
 	if !escComplete(f.esc) {
 		if len(f.esc) > maxEscLen {
 			out = append(out, f.esc...)
@@ -342,12 +384,71 @@ func (f *stdinFilter) escByte(out []byte, b byte) ([]byte, bool) {
 	if f.backDetach && f.boxEmpty() && isLeftArrow(seq) {
 		return out, true
 	}
-	// Any other navigation may recall history or move through a menu, either
-	// of which can leave text in the input box — be conservative and require
-	// a fresh submit/clear before the quick detach re-arms.
 	out = append(out, seq...)
-	f.unknown = true
+	if seqPoisons(seq) {
+		// Navigation may recall history or move through a menu, either of
+		// which can leave text in the input box — be conservative and require
+		// a fresh submit/clear before the quick detach re-arms.
+		f.unknown = true
+	}
 	return out, false
+}
+
+// strByte consumes one byte of an in-flight string sequence, forwarding it
+// verbatim. The sequence ends at ST (ESC \) or, for OSC only, BEL. Reply
+// payloads are not keystrokes, so the input-box estimate stays untouched; a
+// sequence exceeding maxStrLen is assumed malformed and poisons it instead.
+func (f *stdinFilter) strByte(out []byte, b byte) []byte {
+	out = append(out, b)
+	f.strLen++
+	switch {
+	case f.strEsc:
+		if b == '\\' { // ST: sequence complete
+			f.strActive, f.strEsc = false, false
+			return out
+		}
+		f.strEsc = b == 0x1b
+	case b == 0x1b:
+		f.strEsc = true
+	case b == 0x07 && f.strBel: // BEL terminates OSC
+		f.strActive = false
+		return out
+	}
+	if f.strLen > maxStrLen {
+		f.strActive, f.strEsc = false, false
+		f.unknown = true
+	}
+	return out
+}
+
+// seqPoisons reports whether a completed escape sequence may change the
+// agent's input box. Keystrokes (arrows, function keys, alt/meta chords) can
+// recall history or navigate menus, so they poison the empty-box estimate;
+// terminal replies (cursor position, device attributes, kitty flags, mode
+// reports) and terminal events (mouse, focus) never reach the input box and
+// stay neutral.
+func seqPoisons(seq []byte) bool {
+	if len(seq) < 3 || seq[1] != '[' {
+		return true // SS3 keys and alt/meta chords are real input
+	}
+	switch seq[2] {
+	case '<', '?', '>':
+		// Private-parameter CSI: SGR mouse (CSI < ... M/m), DEC replies
+		// (CSI ? ... c/u/n, CSI ? ... $y) — none are keystrokes.
+		return false
+	}
+	switch seq[len(seq)-1] {
+	case 'R', 'c', 'n', 'y', 't', 'I', 'O', 'M':
+		// CPR, device attributes, status reports, mode/window reports,
+		// focus in/out, legacy mouse. Known xterm grammar collision: a
+		// modified F3 (CSI 1;2R) is indistinguishable from a CPR at row 1
+		// col 2, and either parameter heuristic misreads common cursor
+		// positions. CPR wins — Ink agents request it on every render,
+		// while no supported agent binds modified F3 to text entry, and a
+		// misfired quick detach leaves the draft intact in the agent.
+		return false
+	}
+	return true
 }
 
 // escComplete reports whether esc (starting with ESC, len >= 2) is a full

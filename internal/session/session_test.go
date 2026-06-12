@@ -402,6 +402,11 @@ func TestAttachOwnsTerminalStateOnTTY(t *testing.T) {
 	if clear := strings.Index(pre, "\x1b[2J"); clear >= 0 && clear < enter {
 		t.Fatalf("replay clear must land inside the alt screen, not on the primary: %q", pre)
 	}
+	// Alternate scroll mode (?1007) turns mouse wheel motion into arrow keys
+	// on the alt screen; left enabled, scrolling types into the agent.
+	if scroll := strings.Index(pre, "\x1b[?1007l"); scroll < 0 || scroll < enter {
+		t.Fatalf("attach must disable alternate scroll inside its alt screen: %q", pre)
+	}
 
 	if _, err := ptmx.Write([]byte{0x02, 'd'}); err != nil { // Ctrl+B d
 		t.Fatal(err)
@@ -424,6 +429,7 @@ func TestAttachOwnsTerminalStateOnTTY(t *testing.T) {
 		"\x1b[?1000;1002;1003;1004;1005;1006;1015l", // mouse tracking + focus reporting off
 		"\x1b[?2004l", // bracketed paste off
 		"\x1b[?25h",   // cursor visible
+		"\x1b[?1007r", // alternate scroll restored to the user's saved setting
 	} {
 		idx := strings.Index(full, reset)
 		if idx < 0 {
