@@ -519,6 +519,78 @@ func TestAttachDetachDrainsPumpBeforeScreenRestore(t *testing.T) {
 	}
 }
 
+// On re-attach the agent's input-affecting private modes (application cursor
+// keys, mouse tracking) must come back. The agent sets them live only on its
+// first paint; the attach client resets them on detach, so the host's Redraw
+// has to replay them or arrows and wheel scroll die on every re-entry.
+// Regression test for the resume/re-attach mode-loss bug.
+func TestReattachReplaysAgentPrivateModes(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-cccc1111"
+	// The agent enables application cursor keys + SGR mouse, prints a banner,
+	// then idles — the modes land in the host's vterm before any attach.
+	cmd := []string{"/bin/sh", "-c", "printf '\\033[?1h\\033[?1000h\\033[?1006h'; echo banner; sleep 60"}
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, cmd); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	attachOnce := func() string {
+		ptmx, tty, err := pty.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ptmx.Close(); _ = tty.Close() }()
+		done := make(chan error, 1)
+		go func() { done <- runAttach(c.Dir, name, tty, tty) }()
+		var mu sync.Mutex
+		var got []byte
+		go func() {
+			buf := make([]byte, 4096)
+			for {
+				n, rerr := ptmx.Read(buf)
+				if n > 0 {
+					mu.Lock()
+					got = append(got, buf[:n]...)
+					mu.Unlock()
+				}
+				if rerr != nil {
+					return
+				}
+			}
+		}()
+		snapshot := func() string {
+			mu.Lock()
+			defer mu.Unlock()
+			return string(got)
+		}
+		waitFor(t, "replay banner", func() bool { return strings.Contains(snapshot(), "banner") })
+		out := snapshot()
+		if _, err := ptmx.Write([]byte{0x02, 'd'}); err != nil { // Ctrl+B d
+			t.Fatal(err)
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("runAttach: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("detach chord did not detach")
+		}
+		return out
+	}
+
+	if first := attachOnce(); !strings.Contains(first, "banner") {
+		t.Fatalf("first attach missing banner: %q", first)
+	}
+	second := attachOnce()
+	for _, want := range []string{"\x1b[?1h", "\x1b[?1000h", "\x1b[?1006h"} {
+		if !strings.Contains(second, want) {
+			t.Fatalf("re-attach must replay agent private mode %q: %q", want, second)
+		}
+	}
+}
+
 // The left-arrow quick detach works end to end through the real attach
 // client: with nothing typed since attach, a bare left arrow detaches.
 func TestAttachLeftArrowDetaches(t *testing.T) {
