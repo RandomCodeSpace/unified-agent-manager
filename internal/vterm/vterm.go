@@ -42,6 +42,17 @@ type Terminal struct {
 
 	// cur is the current SGR state; printed cells and BCE fills carry it.
 	cur attr
+
+	// privModes records the on/off state of the input- and cursor-affecting
+	// DEC private modes in replayModes (application cursor keys, mouse
+	// tracking, bracketed paste, focus reporting, cursor visibility). The
+	// agent sets these live on first attach; Redraw replays the active ones
+	// so a re-attaching client lands in the same state. Modes outside the
+	// set (and alt-screen, handled by onAlt) are not tracked.
+	privModes map[int]bool
+	// appKeypad is DECKPAM (ESC =); the numeric default (ESC >) needs no
+	// replay. Tracked alongside privModes because screenExit resets it too.
+	appKeypad bool
 }
 
 // bufLine is one captured line: its text and whether it is the soft-wrap
@@ -79,6 +90,7 @@ func New(cols, rows, maxHistory int) *Terminal {
 		main:       newScreen(cols, rows),
 		alt:        newScreen(cols, rows),
 		maxHistory: maxHistory,
+		privModes:  map[int]bool{},
 	}
 }
 
@@ -189,8 +201,10 @@ func (t *Terminal) stepEsc(r rune) {
 		t.reverseIndex()
 	case 'c':
 		t.reset()
-	case '=', '>':
-		// Keypad modes: ignored.
+	case '=':
+		t.appKeypad = true // DECKPAM
+	case '>':
+		t.appKeypad = false // DECKPNM (numeric, the default)
 	}
 }
 
@@ -362,14 +376,29 @@ func csiParams(s string) []int {
 	return out
 }
 
+// replayModes are the input- and cursor-affecting DEC private modes Redraw
+// re-emits, in a deterministic order. The agent's attach client tears all of
+// these down on detach (mouse + bracketed paste explicitly, DECCKM via
+// DECSTR, cursor visibility via ?25h), so without replay a re-attaching
+// client is left in default mode while the still-running agent expects them.
+var replayModes = []int{1, 25, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004}
+
+// modeDefaultOn reports a private mode's power-on default: only cursor
+// visibility (?25) is on by default, so it is the only mode Redraw replays in
+// its reset (l) form; the rest replay only when active.
+func modeDefaultOn(p int) bool { return p == 25 }
+
 func (t *Terminal) setPrivateMode(params []int, on bool) {
 	for _, p := range params {
 		switch p {
 		case 47, 1047, 1049:
 			t.switchAlt(on)
-		case 25, 2004, 1000, 1002, 1003, 1004, 1005, 1006, 7:
-			// Cursor visibility, bracketed paste, mouse reporting, autowrap:
-			// no effect on captured text.
+		case 1, 25, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004:
+			// Input/cursor modes: tracked so Redraw can restore them on
+			// re-attach (they don't affect captured text). See replayModes.
+			t.privModes[p] = on
+		case 7:
+			// Autowrap: no effect on captured text and not replayed.
 		}
 	}
 }
@@ -508,6 +537,8 @@ func (t *Terminal) reset() {
 	t.alt = newScreen(t.cols, t.rows)
 	t.state = stGround
 	t.cur = attr{}
+	t.privModes = map[int]bool{}
+	t.appKeypad = false
 }
 
 // Resize changes the grid size, preserving as much content as fits. Scroll
@@ -577,6 +608,7 @@ func (t *Terminal) Redraw() []byte {
 	s := t.active()
 	var b strings.Builder
 	b.WriteString("\x1b[0m\x1b[2J\x1b[H")
+	t.writeReplayModes(&b)
 	last := t.rows - 1
 	for ; last >= 0; last-- {
 		if !rowBlank(s.cells[last]) {
@@ -617,6 +649,29 @@ func (t *Terminal) Redraw() []byte {
 	}
 	b.WriteString("\x1b[" + strconv.Itoa(s.y+1) + ";" + strconv.Itoa(s.x+1) + "H")
 	return []byte(b.String())
+}
+
+// writeReplayModes emits the tracked private modes that differ from their
+// power-on default, plus application keypad, before the grid content so a
+// re-attaching terminal is in the agent's expected state. Alt-screen and SGR
+// are handled elsewhere (the attach client owns ?1049; Redraw paints SGR).
+func (t *Terminal) writeReplayModes(b *strings.Builder) {
+	for _, p := range replayModes {
+		on, seen := t.privModes[p]
+		if !seen || on == modeDefaultOn(p) {
+			continue
+		}
+		b.WriteString("\x1b[?")
+		b.WriteString(strconv.Itoa(p))
+		if on {
+			b.WriteByte('h')
+		} else {
+			b.WriteByte('l')
+		}
+	}
+	if t.appKeypad {
+		b.WriteString("\x1b=")
+	}
 }
 
 // screen is one character grid (main or alternate).

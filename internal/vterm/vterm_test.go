@@ -444,3 +444,116 @@ func TestEraseLineUsesCurrentBackground(t *testing.T) {
 		t.Fatalf("EL must fill with current bg: %q", out)
 	}
 }
+
+// A re-attaching client gets a fresh Redraw; the agent's input-affecting DEC
+// private modes are set live only on the first attach, so Redraw must replay
+// the ones still active or arrows (application cursor keys) and wheel scroll
+// (mouse reporting) break on every re-attach.
+func TestRedrawReplaysApplicationCursorKeys(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[?1h") // DECCKM on
+	if out := string(term.Redraw()); !strings.Contains(out, "\x1b[?1h") {
+		t.Fatalf("Redraw must replay application cursor keys: %q", out)
+	}
+}
+
+func TestRedrawReplaysMouseModes(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[?1000;1002;1003;1006h") // tracking + SGR encoding
+	out := string(term.Redraw())
+	for _, want := range []string{"\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("Redraw must replay mouse mode %q: %q", want, out)
+		}
+	}
+}
+
+func TestRedrawReplaysBracketedPasteAndFocus(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[?2004h\x1b[?1004h")
+	out := string(term.Redraw())
+	if !strings.Contains(out, "\x1b[?2004h") || !strings.Contains(out, "\x1b[?1004h") {
+		t.Fatalf("Redraw must replay bracketed paste and focus reporting: %q", out)
+	}
+}
+
+func TestRedrawReplaysHiddenCursor(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[?25l") // cursor hidden by the agent
+	if out := string(term.Redraw()); !strings.Contains(out, "\x1b[?25l") {
+		t.Fatalf("Redraw must replay a hidden cursor: %q", out)
+	}
+	// A visible cursor is the terminal default; do not emit a redundant ?25h.
+	vis := New(20, 3, 0)
+	feed(t, vis, "\x1b[?25l\x1b[?25h")
+	if out := string(vis.Redraw()); strings.Contains(out, "\x1b[?25") {
+		t.Fatalf("Redraw must not emit cursor-visibility at the default: %q", out)
+	}
+}
+
+func TestRedrawReplaysApplicationKeypad(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b=") // DECKPAM
+	if out := string(term.Redraw()); !strings.Contains(out, "\x1b=") {
+		t.Fatalf("Redraw must replay application keypad: %q", out)
+	}
+	num := New(20, 3, 0)
+	feed(t, num, "\x1b=\x1b>") // app then back to numeric
+	if out := string(num.Redraw()); strings.Contains(out, "\x1b=") {
+		t.Fatalf("Redraw must not replay keypad at the numeric default: %q", out)
+	}
+}
+
+func TestRedrawOmitsModesAtTheirDefault(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "hello")
+	out := string(term.Redraw())
+	for _, none := range []string{"\x1b[?1h", "\x1b[?1000h", "\x1b[?1006h", "\x1b[?2004h", "\x1b[?1004h", "\x1b[?25l", "\x1b="} {
+		if strings.Contains(out, none) {
+			t.Fatalf("fresh terminal must not replay default-off mode %q: %q", none, out)
+		}
+	}
+}
+
+func TestRedrawDropsModesTurnedBackOff(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[?1h\x1b[?1000h\x1b[?1l\x1b[?1000l") // on then off
+	out := string(term.Redraw())
+	if strings.Contains(out, "\x1b[?1h") || strings.Contains(out, "\x1b[?1000h") {
+		t.Fatalf("Redraw must not replay modes the agent turned back off: %q", out)
+	}
+}
+
+func TestResetClearsReplayedModes(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[?1h\x1b[?1000h\x1b=")
+	feed(t, term, "\x1bc") // RIS full reset
+	out := string(term.Redraw())
+	if strings.Contains(out, "\x1b[?1h") || strings.Contains(out, "\x1b[?1000h") || strings.Contains(out, "\x1b=") {
+		t.Fatalf("RIS must clear tracked modes: %q", out)
+	}
+}
+
+// Modes are global to the terminal, not per-screen: a full-screen TUI sets
+// DECCKM after entering its alternate screen, and Redraw must still replay it
+// once the agent is back (or while it is on either screen).
+func TestRedrawReplaysModesSetOnAltScreen(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[?1049h\x1b[?1h\x1b[?1000h") // enter alt, then set modes
+	if out := string(term.Redraw()); !strings.Contains(out, "\x1b[?1h") || !strings.Contains(out, "\x1b[?1000h") {
+		t.Fatalf("modes set on the alt screen must still replay: %q", out)
+	}
+}
+
+// The replayed modes must precede the grid content so the terminal is in the
+// right state before the cursor is parked and the agent's next output lands.
+func TestRedrawModesPrecedeContent(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[?1hHI")
+	out := string(term.Redraw())
+	mode := strings.Index(out, "\x1b[?1h")
+	content := strings.Index(out, "HI")
+	if mode < 0 || content < 0 || mode > content {
+		t.Fatalf("mode replay must come before content (mode=%d content=%d): %q", mode, content, out)
+	}
+}
