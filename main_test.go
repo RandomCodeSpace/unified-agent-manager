@@ -105,6 +105,13 @@ func assertNonEmptyRunOutput(t *testing.T, args []string, message string) {
 func TestRunNew(t *testing.T) {
 	dir := setupFakeCLIEnv(t)
 	t.Setenv("UAM_CONFIG_DIR", filepath.Join(dir, "cfg2"))
+	oldRunTUI := runTUIFn
+	defer func() { runTUIFn = oldRunTUI }()
+	returnedToTUI := false
+	runTUIFn = func(ctx context.Context, model tea.Model) error {
+		returnedToTUI = true
+		return nil
+	}
 	old := os.Stdin
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -114,13 +121,13 @@ func TestRunNew(t *testing.T) {
 	_ = w.Close()
 	os.Stdin = r
 	defer func() { os.Stdin = old }()
-	out := captureStdout(t, func() {
+	captureStdout(t, func() {
 		if err := run(context.Background(), []string{"new"}); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(out, "dispatched") {
-		t.Fatalf("out=%q", out)
+	if !returnedToTUI {
+		t.Fatal("new should attach and then return to UAM TUI")
 	}
 }
 
@@ -130,6 +137,13 @@ func TestRunNewAllowsEmptyPrompt(t *testing.T) {
 	dir := setupFakeCLIEnv(t)
 	cfgDir := filepath.Join(dir, "cfg-empty-prompt")
 	t.Setenv("UAM_CONFIG_DIR", cfgDir)
+	oldRunTUI := runTUIFn
+	defer func() { runTUIFn = oldRunTUI }()
+	returnedToTUI := false
+	runTUIFn = func(ctx context.Context, model tea.Model) error {
+		returnedToTUI = true
+		return nil
+	}
 	old := os.Stdin
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -139,13 +153,13 @@ func TestRunNewAllowsEmptyPrompt(t *testing.T) {
 	_ = w.Close()
 	os.Stdin = r
 	defer func() { os.Stdin = old }()
-	out := captureStdout(t, func() {
+	captureStdout(t, func() {
 		if err := run(context.Background(), []string{"new"}); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(out, "dispatched") {
-		t.Fatalf("new should dispatch without a prompt, out=%q", out)
+	if !returnedToTUI {
+		t.Fatal("new should attach and then return to UAM TUI")
 	}
 	st, err := store.Open(filepath.Join(cfgDir, "sessions.json"))
 	if err != nil {

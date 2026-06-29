@@ -68,7 +68,7 @@ Open the dashboard:
 uam
 ```
 
-Guided dispatch flow:
+Guided dispatch flow, using OpenCode by default when it is available, then opening the created session immediately:
 
 ```sh
 uam new
@@ -86,7 +86,7 @@ uam dispatch --alias ghcp copilot "review this branch"
 
 ```sh
 uam                              # open the TUI
-uam new                          # guided dispatch wizard
+uam new                          # guided dispatch wizard, then attach
 uam dispatch [--safe] [--alias <name>] <agent> [#session-name] [prompt]
 uam ls [--json]
 uam peek <id>

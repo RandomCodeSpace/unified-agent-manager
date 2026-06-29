@@ -11,7 +11,7 @@ import (
 // falls back to the registry's chosen default so Enter-with-no-input and the
 // prompt hint target a provider that actually exists.
 func TestNewWithDepsFallsBackToEnabledWhenDefaultNotEnabled(t *testing.T) {
-	// Only "codex" is enabled; the baked-in default "claude" is not.
+	// Only "codex" is enabled; the baked-in OpenCode default is not.
 	reg := adapter.NewRegistry([]adapter.AgentAdapter{
 		&svcFakeAdapter{name: "codex", available: true},
 		&svcFakeAdapter{name: "claude", available: false},
@@ -53,8 +53,8 @@ func TestHandleSessionsLoadedKeepsEnabledDefaultAgent(t *testing.T) {
 // and must leave the baked-in default in place.
 func TestDefaultAgentValidationNilRegistryDoesNotPanic(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	if m.defaultAgent != "claude" {
-		t.Fatalf("nil-registry default = %q, want %q", m.defaultAgent, "claude")
+	if m.defaultAgent != "opencode" {
+		t.Fatalf("nil-registry default = %q, want %q", m.defaultAgent, "opencode")
 	}
 	m = m.handleSessionsLoaded(sessionsLoadedMsg{defaultAgent: "anything"})
 	if m.defaultAgent != "anything" {
@@ -66,7 +66,7 @@ func TestDefaultAgentValidationNilRegistryDoesNotPanic(t *testing.T) {
 	// kept (no enabled agent to fall back to).
 	empty := adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "codex", available: false}})
 	m2 := NewWithDeps(nil, empty)
-	if m2.defaultAgent != "claude" {
-		t.Fatalf("none-enabled default = %q, want baked-in %q kept", m2.defaultAgent, "claude")
+	if m2.defaultAgent != "opencode" {
+		t.Fatalf("none-enabled default = %q, want baked-in %q kept", m2.defaultAgent, "opencode")
 	}
 }

@@ -22,6 +22,7 @@ type cliFakeAdapter struct {
 	sessions []adapter.Session
 	stopped  bool
 	resumed  bool
+	attached []string
 }
 
 func (f *cliFakeAdapter) Name() string        { return "fake" }
@@ -43,6 +44,7 @@ func (f *cliFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResul
 }
 func (f *cliFakeAdapter) Reply(ctx adapter.Context, id, text string) error { return nil }
 func (f *cliFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
+	f.attached = append(f.attached, id)
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
 }
 
@@ -60,6 +62,8 @@ func (f *cliFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) 
 	f.sessions = append(f.sessions, sess)
 	return sess, nil
 }
+
+func noopRunTUI(context.Context, tea.Model) error { return nil }
 
 func TestRunDispatchListPeekAndStop(t *testing.T) {
 	svc, fake := newCLITestService(t)
@@ -144,7 +148,7 @@ func TestRunWithTUIHelpVersionAndDefault(t *testing.T) {
 }
 
 func TestRunCommandAttachLastAndNew(t *testing.T) {
-	svc, _ := newCLITestService(t)
+	svc, fake := newCLITestService(t)
 	id := dispatchAndCaptureID(t, svc, []string{"fake", "attachable"})
 	var tuiCalls int
 	runTUI := func(ctx context.Context, model tea.Model) error {
@@ -161,10 +165,16 @@ func TestRunCommandAttachLastAndNew(t *testing.T) {
 		t.Fatalf("TUI calls=%d", tuiCalls)
 	}
 	out := captureCLIStdout(t, func() {
-		withCLIStdin(t, "fake\n\n/tmp\n#from-new prompt\n", func() { must(t, runNew(context.Background(), svc)) })
+		withCLIStdin(t, "fake\n\n/tmp\n#from-new prompt\n", func() { must(t, runNew(context.Background(), svc, runTUI)) })
 	})
-	if !strings.Contains(out, "dispatched") {
-		t.Fatalf("new output=%q", out)
+	if !strings.Contains(out, "abc12345") {
+		t.Fatalf("new should attach the created session, output=%q", out)
+	}
+	if tuiCalls != 3 {
+		t.Fatalf("TUI calls=%d, want 3", tuiCalls)
+	}
+	if len(fake.attached) == 0 || fake.attached[len(fake.attached)-1] != "abc12345" {
+		t.Fatalf("new did not attach created session, attached=%v", fake.attached)
 	}
 }
 

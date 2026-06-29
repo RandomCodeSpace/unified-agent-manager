@@ -92,7 +92,7 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		Usage()
 		return nil
 	case "new":
-		return runNew(ctx, svc)
+		return runNew(ctx, svc, runTUI)
 	case "version", "--version":
 		fmt.Println(version.String())
 		return nil
@@ -296,7 +296,7 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	return nil
 }
 
-func runNew(ctx context.Context, svc *app.Service) error {
+func runNew(ctx context.Context, svc *app.Service, runTUI func(context.Context, tea.Model) error) error {
 	reader := bufio.NewReader(os.Stdin)
 	cfg, _ := svc.Store.Load()
 	agent := cfg.DefaultAgent
@@ -352,8 +352,10 @@ func runNew(ctx context.Context, svc *app.Service) error {
 		}
 		fmt.Fprintln(os.Stderr, "warning:", err)
 	}
-	fmt.Printf("dispatched %s (%s)\n", sess.ID, sess.SessionName)
-	return nil
+	if sess.ID == "" {
+		return errors.New("new: dispatched session has empty id")
+	}
+	return execAttach(ctx, svc, sess.ID, runTUI)
 }
 
 // readLine reads one trimmed input line from r. A trailing io.EOF that arrives
@@ -402,6 +404,7 @@ func execAttach(ctx context.Context, svc *app.Service, id string, runTUI func(co
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), session.AttachQuietEnv+"=1")
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "uam: session exited: %v\n", err)
 	}

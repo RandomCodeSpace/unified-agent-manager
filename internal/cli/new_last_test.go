@@ -45,7 +45,7 @@ func TestRunNewPreservesPromptWhitespace(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, fake := newCLITestService(t)
 			withCLIStdin(t, tc.stdin, func() {
-				_ = captureCLIStdout(t, func() { must(t, runNew(context.Background(), svc)) })
+				_ = captureCLIStdout(t, func() { must(t, runNew(context.Background(), svc, noopRunTUI)) })
 			})
 			if len(fake.sessions) != 1 {
 				t.Fatalf("expected one dispatched session, got %d", len(fake.sessions))
@@ -83,7 +83,7 @@ func TestRunNewAllowsEmptyPrompt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, fake := newCLITestService(t)
 			withCLIStdin(t, tc.stdin, func() {
-				_ = captureCLIStdout(t, func() { must(t, runNew(context.Background(), svc)) })
+				_ = captureCLIStdout(t, func() { must(t, runNew(context.Background(), svc, noopRunTUI)) })
 			})
 			if len(fake.sessions) != 1 {
 				t.Fatalf("expected one prompt-less session, got %d", len(fake.sessions))
@@ -100,7 +100,7 @@ func TestRunNewAllowsEmptyPrompt(t *testing.T) {
 func TestRunNewUsesPromptOnEOFWithoutNewline(t *testing.T) {
 	svc, fake := newCLITestService(t)
 	withCLIStdin(t, "fake\n\n/tmp\nlast line no newline", func() {
-		_ = captureCLIStdout(t, func() { must(t, runNew(context.Background(), svc)) })
+		_ = captureCLIStdout(t, func() { must(t, runNew(context.Background(), svc, noopRunTUI)) })
 	})
 	if len(fake.sessions) != 1 {
 		t.Fatalf("expected one dispatched session, got %d", len(fake.sessions))
@@ -113,7 +113,7 @@ func TestRunNewUsesPromptOnEOFWithoutNewline(t *testing.T) {
 func TestRunNewReadsCommandAliasBeforeWorkdir(t *testing.T) {
 	svc, fake := newCLITestService(t)
 	out := captureCLIStdout(t, func() {
-		withCLIStdin(t, "fake\ncodex-fast\n/tmp\ndo work\n", func() { must(t, runNew(context.Background(), svc)) })
+		withCLIStdin(t, "fake\ncodex-fast\n/tmp\ndo work\n", func() { must(t, runNew(context.Background(), svc, noopRunTUI)) })
 	})
 	aliasPrompt := strings.Index(out, "command alias [default]: ")
 	workdirPrompt := strings.Index(out, "workdir [")

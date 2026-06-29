@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -20,6 +21,14 @@ func TestModelViewBasics(t *testing.T) {
 	}
 	if strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
 		t.Fatalf("view should hide textual tmux liveness: %s", out)
+	}
+}
+
+func TestNewWithDepsStartsFromOpenCodeDefault(t *testing.T) {
+	fake := &svcFakeAdapter{name: "opencode", available: true}
+	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if m.defaultAgent != "opencode" {
+		t.Fatalf("default agent = %q, want opencode", m.defaultAgent)
 	}
 }
 
@@ -136,8 +145,10 @@ func TestDispatchedMessageAttachesNewSession(t *testing.T) {
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	var gotArgs []string
+	var gotEnv []string
 	m.execProcess = func(cmd *exec.Cmd, cb tea.ExecCallback) tea.Cmd {
 		gotArgs = append([]string(nil), cmd.Args...)
+		gotEnv = append([]string(nil), cmd.Env...)
 		return func() tea.Msg { return cb(nil) }
 	}
 
@@ -168,9 +179,22 @@ func TestDispatchedMessageAttachesNewSession(t *testing.T) {
 	if !reflect.DeepEqual(gotArgs, want) {
 		t.Fatalf("attach args = %v, want %v", gotArgs, want)
 	}
+	if !envContains(gotEnv, session.AttachQuietEnv, "1") {
+		t.Fatalf("attach command env missing %s=1: %v", session.AttachQuietEnv, gotEnv)
+	}
 	if m.input != "" || !strings.Contains(m.message, "returned to uam") {
 		t.Fatalf("message/input not updated after attach: message=%q input=%q", m.message, m.input)
 	}
+}
+
+func envContains(env []string, key, value string) bool {
+	want := key + "=" + value
+	for _, item := range env {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 // F03 — a dispatch that returns a live session alongside an advisory persist

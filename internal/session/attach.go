@@ -21,6 +21,12 @@ import (
 // sends a literal Ctrl+B to the agent.
 const detachPrefix = 0x02
 
+const AttachQuietEnv = "UAM_ATTACH_QUIET"
+
+type attachOptions struct {
+	quiet bool
+}
+
 // ctrlZ is swallowed by the attach client: letting it through would SIGTSTP
 // the agent inside its own detached session, where nothing can ever
 // foreground it again — the same trap the old tmux config disarmed by
@@ -71,10 +77,14 @@ func RunAttach(args []string) error {
 	if fs.NArg() < 1 {
 		return errors.New("attach requires a session name")
 	}
-	return runAttach(*dir, fs.Arg(0), os.Stdin, os.Stdout)
+	return runAttachWithOptions(*dir, fs.Arg(0), os.Stdin, os.Stdout, attachOptions{quiet: os.Getenv(AttachQuietEnv) == "1"})
 }
 
 func runAttach(dir, name string, stdin *os.File, stdout *os.File) error {
+	return runAttachWithOptions(dir, name, stdin, stdout, attachOptions{})
+}
+
+func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opts attachOptions) error {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
@@ -180,7 +190,9 @@ func runAttach(dir, name string, stdin *os.File, stdout *os.File) error {
 	_ = conn.Close()
 	<-done
 	restore()
-	_, _ = fmt.Fprintf(stdout, "\r\n[uam: %s]\r\n", note)
+	if !opts.quiet {
+		_, _ = fmt.Fprintf(stdout, "\r\n[uam: %s]\r\n", note)
+	}
 	return nil
 }
 

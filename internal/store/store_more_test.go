@@ -66,7 +66,7 @@ func TestNormalizeMigrateBackupMoveAside(t *testing.T) {
 	dir := t.TempDir()
 	s := &Store{path: filepath.Join(dir, "sessions.json")}
 	cfg := normalize(Config{})
-	if cfg.SchemaVersion != CurrentSchemaVersion || cfg.DefaultAgent != "claude" || cfg.UI.PeekWidth != 60 || cfg.Sessions == nil {
+	if cfg.SchemaVersion != CurrentSchemaVersion || cfg.DefaultAgent != "opencode" || cfg.UI.PeekWidth != 60 || cfg.Sessions == nil {
 		t.Fatalf("bad normalize %+v", cfg)
 	}
 	old := Config{SchemaVersion: 0}
