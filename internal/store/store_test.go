@@ -24,7 +24,7 @@ func TestLoadMissingReturnsDefaultConfig(t *testing.T) {
 	if cfg.SchemaVersion != CurrentSchemaVersion {
 		t.Fatalf("schema = %d, want %d", cfg.SchemaVersion, CurrentSchemaVersion)
 	}
-	if cfg.DefaultAgent != "claude" {
+	if cfg.DefaultAgent != "opencode" {
 		t.Fatalf("default agent = %q", cfg.DefaultAgent)
 	}
 	if cfg.Sessions == nil {

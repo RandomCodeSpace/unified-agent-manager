@@ -24,6 +24,7 @@ const configFileName = "sessions.json"
 // on-disk values so a hand-edited or corrupt config can never feed an invalid
 // value downstream (F44).
 const (
+	DefaultAgentName = "opencode"
 	defaultSort      = "state"
 	defaultPeekWidth = 60
 	minPeekWidth     = 20
@@ -231,7 +232,7 @@ func DefaultPath() string {
 func DefaultConfig() Config {
 	return Config{
 		SchemaVersion: CurrentSchemaVersion,
-		DefaultAgent:  "claude",
+		DefaultAgent:  DefaultAgentName,
 		Sessions:      map[string]SessionRecord{},
 		UI:            UISettings{Sort: "state", PeekWidth: 60},
 	}
@@ -477,7 +478,7 @@ func normalize(cfg Config) Config {
 		cfg.SchemaVersion = CurrentSchemaVersion
 	}
 	if cfg.DefaultAgent == "" {
-		cfg.DefaultAgent = "claude"
+		cfg.DefaultAgent = DefaultAgentName
 	}
 	if cfg.Sessions == nil {
 		cfg.Sessions = map[string]SessionRecord{}

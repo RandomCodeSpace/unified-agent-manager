@@ -519,6 +519,73 @@ func TestAttachDetachDrainsPumpBeforeScreenRestore(t *testing.T) {
 	}
 }
 
+func TestAttachQuietSuppressesPrimaryScreenNotice(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-abcd2222"
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "echo banner; sleep 60"}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitFor(t, "banner", func() bool {
+		out, _ := c.Capture(ctx, name, 10)
+		return strings.Contains(out, "banner")
+	})
+
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ptmx.Close(); _ = tty.Close() }()
+
+	done := make(chan error, 1)
+	go func() { done <- runAttachWithOptions(c.Dir, name, tty, tty, attachOptions{quiet: true}) }()
+
+	var mu sync.Mutex
+	var got []byte
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := ptmx.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				got = append(got, buf[:n]...)
+				mu.Unlock()
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+	snapshot := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return string(got)
+	}
+
+	waitFor(t, "replay banner", func() bool { return strings.Contains(snapshot(), "banner") })
+	if _, err := ptmx.Write([]byte{0x02, 'd'}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runAttach: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("detach chord did not detach")
+	}
+
+	full := snapshot()
+	exit := strings.LastIndex(full, "\x1b[?1049l")
+	if exit < 0 {
+		t.Fatalf("detach must leave the alternate screen: %q", full)
+	}
+	tail := strings.ReplaceAll(full[exit+len("\x1b[?1049l"):], "\r", "")
+	if strings.Contains(tail, "[uam:") {
+		t.Fatalf("quiet attach must not print a primary-screen notice, tail=%q full=%q", tail, full)
+	}
+}
+
 // On re-attach the agent's input-affecting private modes (application cursor
 // keys, mouse tracking) must come back. The agent sets them live only on its
 // first paint; the attach client resets them on detach, so the host's Redraw
