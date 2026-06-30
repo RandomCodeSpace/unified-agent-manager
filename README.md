@@ -125,7 +125,9 @@ uam version
 agent's PTY:
 
 - `Ctrl+B d` detaches and returns to the dashboard (`Ctrl+B Ctrl+B` sends a
-  literal `Ctrl+B` to the agent)
+  literal `Ctrl+B` to the agent; `Ctrl+B c` sends a literal `Ctrl+C`)
+- Plain `Ctrl+C` is swallowed while attached so terminal copy shortcuts do not
+  cancel the agent
 - `←` (left arrow) also detaches when you haven't typed anything since the
   last submit/clear — tap it to hop back to the dashboard. Inside a draft it
   moves the cursor as usual, and after history/menu navigation it stays

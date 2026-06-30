@@ -574,6 +574,7 @@ func TestAttachQuietSuppressesPrimaryScreenNotice(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("detach chord did not detach")
 	}
+	waitFor(t, "alternate screen exit", func() bool { return strings.Contains(snapshot(), "\x1b[?1049l") })
 
 	full := snapshot()
 	exit := strings.LastIndex(full, "\x1b[?1049l")
