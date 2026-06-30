@@ -17,9 +17,11 @@ import (
 )
 
 // detachPrefix is the attach client's escape key (Ctrl+B, tmux's default
-// prefix, kept for muscle memory). Prefix then `d` detaches; prefix twice
-// sends a literal Ctrl+B to the agent.
+// prefix, kept for muscle memory). Prefix then `d` detaches, prefix then `c`
+// sends a literal Ctrl+C to the agent, and prefix twice sends a literal Ctrl+B.
 const detachPrefix = 0x02
+
+const ctrlC = 0x03
 
 const AttachQuietEnv = "UAM_ATTACH_QUIET"
 
@@ -221,9 +223,11 @@ func backDetachEnabled() bool {
 // deletes one (so deleting the whole draft re-arms the quick detach), and
 // unknown latches on anything whose effect cannot be counted (tab completion,
 // history/menu navigation via forwarded escape sequences, a literal prefix
-// byte) until a key that submits or clears the box (Enter, Esc, Ctrl+C,
-// Ctrl+U). A bare left arrow while the box is believed empty detaches; inside
-// a draft it keeps moving the cursor. Ctrl+B d always detaches regardless.
+// byte) until a key that submits or clears the box (Enter, Esc, Ctrl+U). Plain
+// Ctrl+C is swallowed so terminal copy shortcuts cannot cancel the agent;
+// Ctrl+B c sends a literal Ctrl+C when an explicit interrupt is needed. A bare
+// left arrow while the box is believed empty detaches; inside a draft it keeps
+// moving the cursor. Ctrl+B d always detaches regardless.
 //
 // Not everything on stdin is a keystroke: agents query the terminal (Ink
 // re-requests the cursor position every render) and the replies — CPR, DA1,
@@ -306,6 +310,9 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 			switch b {
 			case 'd':
 				return out, true
+			case 'c':
+				out = append(out, ctrlC)
+				f.clearBox()
 			case detachPrefix:
 				out = append(out, detachPrefix)
 				f.unknown = true
@@ -339,8 +346,12 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 				f.esc = nil
 				f.clearBox()
 			}
-		case '\r', '\n', 0x03, 0x15:
-			// Enter submits; Ctrl+C and Ctrl+U clear the input box.
+		case ctrlC:
+			// Swallowed so terminal copy cannot cancel the agent. Use Ctrl+B c
+			// when a literal interrupt needs to be sent through.
+			f.clearBox()
+		case '\r', '\n', 0x15:
+			// Enter submits; Ctrl+U clears the input box.
 			out = append(out, b)
 			f.clearBox()
 		case 0x08, 0x7f:

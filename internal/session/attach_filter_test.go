@@ -88,6 +88,22 @@ func TestCtrlCAndCtrlUReArm(t *testing.T) {
 	}
 }
 
+func TestCtrlCSwallowedForTerminalCopy(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	out, detach := runFilter(t, f, "\x03")
+	if detach || out != "" {
+		t.Fatalf("plain Ctrl+C must not reach the agent, out=%q detach=%v", out, detach)
+	}
+}
+
+func TestChordCSendsLiteralCtrlC(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	out, detach := runFilter(t, f, "\x02c")
+	if detach || out != "\x03" {
+		t.Fatalf("Ctrl+B c should forward a literal Ctrl+C, out=%q detach=%v", out, detach)
+	}
+}
+
 func TestModifiedLeftArrowPassesThrough(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
 	out, detach := runFilter(t, f, "\x1b[1;2D") // shift-left
