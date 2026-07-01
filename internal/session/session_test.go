@@ -447,6 +447,159 @@ func TestAttachOwnsTerminalStateOnTTY(t *testing.T) {
 	}
 }
 
+type attachedPTY struct {
+	ptmx     *os.File
+	done     chan error
+	snapshot func() string
+}
+
+func startQuietAttach(t *testing.T, dir, name string, cols, rows uint16) *attachedPTY {
+	t.Helper()
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ptmx.Close(); _ = tty.Close() })
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- runAttachWithOptions(dir, name, tty, tty, attachOptions{quiet: true}) }()
+	return &attachedPTY{ptmx: ptmx, done: done, snapshot: capturePTYOutput(ptmx)}
+}
+
+func capturePTYOutput(ptmx *os.File) func() string {
+	var mu sync.Mutex
+	var got []byte
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := ptmx.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				got = append(got, buf[:n]...)
+				mu.Unlock()
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+	return func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return string(got)
+	}
+}
+
+func (a *attachedPTY) Snapshot() string { return a.snapshot() }
+
+func (a *attachedPTY) Detach(t *testing.T) {
+	t.Helper()
+	if _, err := a.ptmx.Write([]byte{0x02, 'd'}); err != nil { // Ctrl+B d
+		t.Fatal(err)
+	}
+	select {
+	case err := <-a.done:
+		if err != nil {
+			t.Fatalf("runAttach: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("detach chord did not detach")
+	}
+}
+
+func TestResizeNudgeBounds(t *testing.T) {
+	cols, rows, ok := resizeNudge(80, 24)
+	if !ok || cols != 80 || rows != 23 {
+		t.Fatalf("row nudge = %dx%d %v, want 80x23 true", cols, rows, ok)
+	}
+
+	cols, rows, ok = resizeNudge(2, 1)
+	if !ok || cols != 1 || rows != 1 {
+		t.Fatalf("column nudge = %dx%d %v, want 1x1 true", cols, rows, ok)
+	}
+
+	if _, _, ok := resizeNudge(1, 1); ok {
+		t.Fatal("1x1 terminal must not be nudged")
+	}
+	if _, _, ok := resizeNudge(0, 24); ok {
+		t.Fatal("invalid terminal size must not be nudged")
+	}
+
+	h := &host{}
+	h.applyResizeLocked(0, 24)
+	h.applyPTYSizeLocked(80, 0)
+}
+
+func TestAttachReplayUsesCurrentTerminalSize(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-eeee9999"
+	cmd := []string{"/bin/sh", "-c", "printf '\033[999;1Hedge\033[999;999H'; sleep 60"}
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, cmd); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitFor(t, "edge", func() bool {
+		out, _ := c.Capture(ctx, name, 10)
+		return strings.Contains(out, "edge")
+	})
+
+	attached := startQuietAttach(t, c.Dir, name, 80, 24)
+	waitFor(t, "initial replay cursor", func() bool {
+		out := attached.Snapshot()
+		return strings.Contains(out, "\x1b[24;80H") || strings.Contains(out, "\x1b[50;200H")
+	})
+	out := attached.Snapshot()
+	if !strings.Contains(out, "edge") {
+		t.Fatalf("attach replay missing edge marker: %q", out)
+	}
+	if !strings.Contains(out, "\x1b[24;80H") {
+		t.Fatalf("attach replay must park cursor using attached terminal size: %q", out)
+	}
+	if strings.Contains(out, "\x1b[50;200H") {
+		t.Fatalf("attach replay must not use detached terminal size: %q", out)
+	}
+	attached.Detach(t)
+}
+
+func TestSameSizeAttachNudgeDoesNotTruncateReplay(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-dddd9999"
+	cmd := []string{"/bin/sh", "-c", `while IFS= read -r line; do [ "$line" = paint ] && printf '\033[Htop-row-safe\033[24;1Hbottom-row-guard\033[H'; done`}
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, cmd); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	attachOnce := func(what string, ready func(string) bool) string {
+		attached := startQuietAttach(t, c.Dir, name, 80, 24)
+		waitFor(t, what, func() bool { return ready(attached.Snapshot()) })
+		out := attached.Snapshot()
+		attached.Detach(t)
+		return out
+	}
+
+	attachOnce("initial empty replay", func(out string) bool {
+		return strings.Contains(out, "\x1b[1;1H")
+	})
+	if err := c.SendLine(ctx, name, "paint"); err != nil {
+		t.Fatalf("SendLine: %v", err)
+	}
+	waitFor(t, "painted screen", func() bool {
+		out, _ := c.Capture(ctx, name, 30)
+		return strings.Contains(out, "top-row-safe") && strings.Contains(out, "bottom-row-guard")
+	})
+
+	out := attachOnce("same-size replay", func(out string) bool {
+		return strings.Contains(out, "bottom-row-guard")
+	})
+	if !strings.Contains(out, "top-row-safe") {
+		t.Fatalf("same-size attach replay lost top-row content: %q", out)
+	}
+}
+
 // Detaching while the agent is mid-burst must not scribble the primary
 // screen: bytes still buffered in the host→terminal pump at detach time have
 // to be drained inside the alternate screen, so nothing follows the

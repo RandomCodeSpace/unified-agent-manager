@@ -366,14 +366,42 @@ func titleSequence(label string) string {
 	return "\x1b]0;" + clean + "\x07"
 }
 
-func (h *host) applyResize(cols, rows int) {
-	if cols <= 0 || rows <= 0 || cols > 1000 || rows > 1000 {
+func validSize(cols, rows int) bool {
+	return cols > 0 && rows > 0 && cols <= 1000 && rows <= 1000
+}
+
+func resizeNudge(cols, rows int) (int, int, bool) {
+	if !validSize(cols, rows) {
+		return 0, 0, false
+	}
+	if rows > 1 {
+		return cols, rows - 1, true
+	}
+	if cols > 1 {
+		return cols - 1, rows, true
+	}
+	return 0, 0, false
+}
+
+func (h *host) applyResizeLocked(cols, rows int) {
+	if !validSize(cols, rows) {
 		return
 	}
+	h.term.Resize(cols, rows)
+	h.applyPTYSizeLocked(cols, rows)
+}
+
+func (h *host) applyPTYSizeLocked(cols, rows int) {
+	if !validSize(cols, rows) {
+		return
+	}
+	_ = pty.Setsize(h.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}) // #nosec G115 -- bounds checked above
+}
+
+func (h *host) applyResize(cols, rows int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.term.Resize(cols, rows)
-	_ = pty.Setsize(h.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}) // #nosec G115 -- bounds checked above
+	h.applyResizeLocked(cols, rows)
 }
 
 func (h *host) handleAttach(conn net.Conn, br *bufio.Reader, req request) {
@@ -387,24 +415,25 @@ func (h *host) handleAttach(conn net.Conn, br *bufio.Reader, req request) {
 		_ = conn.Close()
 		return
 	}
-	// Register and queue the screen replay atomically, so no live broadcast
-	// can interleave ahead of it. The replay paints the current screen
-	// immediately; the follow-up resize makes full-screen TUIs repaint
-	// themselves with real colors/attributes.
+	// Apply the attaching geometry, then register and queue the screen replay
+	// atomically so no live broadcast can interleave ahead of it.
 	h.mu.Lock()
-	curCols, curRows := h.term.Size()
+	if validSize(req.Cols, req.Rows) {
+		curCols, curRows := h.term.Size()
+		if req.Cols == curCols && req.Rows == curRows {
+			// Same geometry produces no SIGWINCH; nudge the size so the
+			// agent's TUI still repaints for the new viewer without truncating
+			// the replay buffer before Redraw.
+			if cols, rows, ok := resizeNudge(req.Cols, req.Rows); ok {
+				h.applyPTYSizeLocked(cols, rows)
+			}
+		}
+		h.applyResizeLocked(req.Cols, req.Rows)
+	}
 	cl.out <- append([]byte(titleSequence(label)), h.term.Redraw()...)
 	h.clients[cl] = struct{}{}
 	h.mu.Unlock()
 	go h.attachWriter(cl)
-	if req.Cols > 0 && req.Rows > 0 {
-		if req.Cols == curCols && req.Rows == curRows {
-			// Same geometry produces no SIGWINCH; nudge the size so the
-			// agent's TUI still repaints for the new viewer.
-			h.applyResize(req.Cols, req.Rows-1)
-		}
-		h.applyResize(req.Cols, req.Rows)
-	}
 	h.attachReader(cl, br)
 }
 
