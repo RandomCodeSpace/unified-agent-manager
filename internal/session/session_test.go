@@ -510,6 +510,29 @@ func (a *attachedPTY) Detach(t *testing.T) {
 	}
 }
 
+func TestResizeNudgeBounds(t *testing.T) {
+	cols, rows, ok := resizeNudge(80, 24)
+	if !ok || cols != 80 || rows != 23 {
+		t.Fatalf("row nudge = %dx%d %v, want 80x23 true", cols, rows, ok)
+	}
+
+	cols, rows, ok = resizeNudge(2, 1)
+	if !ok || cols != 1 || rows != 1 {
+		t.Fatalf("column nudge = %dx%d %v, want 1x1 true", cols, rows, ok)
+	}
+
+	if _, _, ok := resizeNudge(1, 1); ok {
+		t.Fatal("1x1 terminal must not be nudged")
+	}
+	if _, _, ok := resizeNudge(0, 24); ok {
+		t.Fatal("invalid terminal size must not be nudged")
+	}
+
+	h := &host{}
+	h.applyResizeLocked(0, 24)
+	h.applyPTYSizeLocked(80, 0)
+}
+
 func TestAttachReplayUsesCurrentTerminalSize(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
