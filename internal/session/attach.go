@@ -461,7 +461,10 @@ func newAttachOutputFilter(dst io.Writer, mouse bool) *attachOutputFilter {
 }
 
 func (f *attachOutputFilter) Write(p []byte) (int, error) {
-	out := make([]byte, 0, len(p)+len(f.pending))
+	// Ordinary output never exceeds the input length. A split control sequence
+	// can add the small pending prefix back, in which case append grows the
+	// buffer safely instead of computing a potentially overflowing capacity.
+	out := make([]byte, 0, len(p))
 	for _, b := range p {
 		switch {
 		case len(f.pending) == 0:
