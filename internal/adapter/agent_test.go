@@ -99,6 +99,27 @@ func TestDispatchSetsSessionLabel(t *testing.T) {
 	}
 }
 
+func TestDispatchSanitizesLabelButPreservesPrompt(t *testing.T) {
+	ag, be := newLifecycleAgent(t)
+	name := "bug\x1b]52;c;YQ==\x07fix\nnow"
+	prompt := "keep \x1b[31mraw\x1b[0m\nexactly"
+	sess, err := ag.Dispatch(context.Background(), DispatchRequest{Name: name, Prompt: prompt, Cwd: "/tmp", Mode: "yolo"})
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if sess.DisplayName != name || sess.Prompt != prompt {
+		t.Fatalf("persisted metadata changed: name=%q prompt=%q", sess.DisplayName, sess.Prompt)
+	}
+	labels := be.CallsOf("label")
+	if len(labels) != 1 || labels[0].Label != "bugfix now · fake" {
+		t.Fatalf("label calls = %+v", labels)
+	}
+	sends := be.CallsOf("send")
+	if len(sends) != 1 || sends[0].Text != prompt {
+		t.Fatalf("prompt delivery changed: %+v", sends)
+	}
+}
+
 // F52 — a per-session capture failure during the PR scrape is non-fatal: the
 // session stays in the List result with PR nil.
 func TestListKeepsSessionWhenCaptureFails(t *testing.T) {

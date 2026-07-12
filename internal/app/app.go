@@ -14,6 +14,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -1271,7 +1272,7 @@ func (m Model) renderDetails() string {
 	if _, _, showTask := m.tableWidths(); !showTask {
 		b.WriteString("    " + taskStyle.Render(truncate(promptText(sess), max(8, m.contentWidth()-6))) + "\n")
 	}
-	b.WriteString("    " + hintStyle.Render("agent: "+firstNonEmpty(sess.AgentType, "?")) + "\n")
+	b.WriteString("    " + hintStyle.Render("agent: "+displaytext.Sanitize(firstNonEmpty(sess.AgentType, "?"))) + "\n")
 	if !sess.CreatedAt.IsZero() {
 		b.WriteString("    " + hintStyle.Render("created: "+sess.CreatedAt.Format("Jan 02 15:04")) + "\n")
 	}
@@ -1395,26 +1396,26 @@ func (m Model) renderPrompt() string {
 	var b strings.Builder
 	b.WriteString("\n")
 	if m.renaming {
-		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(m.input) + brandStyle.Render("▏") + "\n")
+		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render("▏") + "\n")
 	} else if m.peekOpen {
 		// The command line doubles as a reply composer while peek is open: label
 		// it so the sub-mode is discoverable (Enter sends, Esc closes) (F36).
 		field := hintStyle.Render("type a reply…")
 		if m.input != "" {
-			field = titleStyle.Render(m.input)
+			field = titleStyle.Render(displaytext.Sanitize(m.input))
 		}
 		hints := hintStyle.Render("Enter send  ·  Esc close")
 		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
 	} else {
 		field := hintStyle.Render("type a command…")
 		if m.input != "" {
-			field = titleStyle.Render(m.input)
+			field = titleStyle.Render(displaytext.Sanitize(m.input))
 		}
 		hints := hintStyle.Render(m.defaultAgent + "  ·  ? help  ·  e new  ·  Esc quit")
 		b.WriteString(bar() + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
 	}
 	if m.message != "" {
-		b.WriteString("  " + hintStyle.Render(m.message) + "\n")
+		b.WriteString("  " + hintStyle.Render(displaytext.Sanitize(m.message)) + "\n")
 	}
 	return b.String()
 }
@@ -1481,9 +1482,9 @@ func absCwd(cwd string) string {
 		return "?"
 	}
 	if abs, err := filepath.Abs(cwd); err == nil {
-		return abs
+		return displaytext.Sanitize(abs)
 	}
-	return cwd
+	return displaytext.Sanitize(cwd)
 }
 
 func (m Model) renderHelp() string {
@@ -1505,7 +1506,7 @@ func (m Model) renderHelp() string {
 
 func (m Model) renderConfirm() string {
 	sess, _ := m.sessionByID(m.confirmStopID)
-	name := firstNonEmpty(sess.DisplayName, sess.ID, "session")
+	name := displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID, "session"))
 	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
 		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +
 		"   " + brandStyle.Render("y") + hintStyle.Render(" / restart ") + brandStyle.Render("r") + hintStyle.Render(" / ") + titleStyle.Render("N") + "\n"
@@ -1524,7 +1525,7 @@ func (m Model) renderWizard() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 4", step+1)) + "\n")
-	b.WriteString("  " + titleStyle.Render(steps[step]) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
+	b.WriteString("  " + titleStyle.Render(displaytext.Sanitize(steps[step])) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
 	switch step {
 	case 2:
 		// Warn when the chosen working directory is not inside a git repo: there
@@ -1620,7 +1621,7 @@ func prStatusStyle(s adapter.PRStatus) lipgloss.Style {
 // occupy rather than their byte length. When clipping happens an ellipsis is
 // appended and the result still fits within n columns (F28).
 func truncate(s string, n int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
+	s = displaytext.Sanitize(s)
 	if n <= 0 {
 		return ""
 	}

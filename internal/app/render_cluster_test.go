@@ -87,6 +87,29 @@ func TestTruncateNeverEmitsMojibake(t *testing.T) {
 	}
 }
 
+func TestRenderedMetadataCannotInjectTerminalControls(t *testing.T) {
+	sess := adapter.Session{
+		ID:          "1",
+		AgentType:   "fake\x1b[2J",
+		DisplayName: "safe\x1b]52;c;YQ==\x07name",
+		Prompt:      "fix\nthis\x1b[31m now",
+		Cwd:         "/tmp/evil\x1b[Hrepo",
+		ProcAlive:   adapter.Alive,
+	}
+	m := Model{width: 100, sessions: []adapter.Session{sess}, selected: 0, confirmStopID: "1"}
+	out := m.renderDetails() + renderRow(sess, false, 30, 40, true) + m.renderConfirm()
+	for _, unsafe := range []string{"\x1b[2J", "\x1b]52", "\x1b[31m", "\x1b[H"} {
+		if strings.Contains(out, unsafe) {
+			t.Fatalf("rendered control sequence %q: %q", unsafe, out)
+		}
+	}
+	for _, want := range []string{"safename", "fix this now", "/tmp/evilrepo"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("sanitized text missing %q: %q", want, out)
+		}
+	}
+}
+
 // F28 — the task column must stay aligned even when a row's name contains wide
 // characters: byte-length padding would push the task cell out of alignment.
 func TestRenderRowAlignsTaskColumnForMultibyte(t *testing.T) {

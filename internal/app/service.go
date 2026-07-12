@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/pr"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -623,7 +624,13 @@ func (s *Service) PrintList(ctx context.Context, asJSON bool) error {
 		return json.NewEncoder(os.Stdout).Encode(sessions)
 	}
 	for _, sess := range sessions {
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\n", sess.ID, sess.AgentType, sess.State, sess.DisplayName, sess.Cwd)
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\n",
+			displaytext.Sanitize(sess.ID),
+			displaytext.Sanitize(sess.AgentType),
+			displaytext.Sanitize(string(sess.State)),
+			displaytext.Sanitize(sess.DisplayName),
+			displaytext.Sanitize(sess.Cwd),
+		)
 	}
 	return nil
 }

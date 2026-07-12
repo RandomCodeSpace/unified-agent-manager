@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 )
@@ -225,7 +226,7 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 	if displayName == "" {
 		displayName = displayNameFromDir(cwd)
 	}
-	if err := a.Backend.SetSessionLabel(ctx, sessionName, displayName+" · "+a.Name()); err != nil {
+	if err := a.Backend.SetSessionLabel(ctx, sessionName, displaytext.Sanitize(displayName+" · "+a.Name())); err != nil {
 		log.Debug("set session label failed", "session", sessionName, "error", err)
 	}
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
