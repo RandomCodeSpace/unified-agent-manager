@@ -96,6 +96,70 @@ func TestAttachOutputFilterSplitAndFlush(t *testing.T) {
 	}
 }
 
+func TestAttachOutputFilterRestartsAfterAbortedCSI(t *testing.T) {
+	for _, mode := range []string{"47", "1047", "1049"} {
+		for _, final := range []string{"h", "l"} {
+			input := []byte("\x1b[12\x1b[?" + mode + final)
+			want := []byte("\x1b[12\x18") // CAN terminates the forwarded incomplete CSI.
+			for split := 0; split <= len(input); split++ {
+				if got := filterHostOutput(t, true, input[:split], input[split:]); !bytes.Equal(got, want) {
+					t.Fatalf("mode=%s%s split=%d got %q, want %q", mode, final, split, got, want)
+				}
+			}
+		}
+	}
+}
+
+func TestAttachOutputFilterAbortedCSIMultiChunkAndEOF(t *testing.T) {
+	input := []byte("\x1b[12\x1b[?1049l")
+	chunks := make([][]byte, 0, len(input))
+	for i := range input {
+		chunks = append(chunks, input[i:i+1])
+	}
+	if got, want := filterHostOutput(t, true, chunks...), []byte("\x1b[12\x18"); !bytes.Equal(got, want) {
+		t.Fatalf("byte chunks = %q, want %q", got, want)
+	}
+	for _, incomplete := range []string{"\x1b[12\x1b", "\x1b[12\x1b[", "\x1b[12\x1b[?1049"} {
+		if got := string(filterHostOutput(t, false, []byte(incomplete))); got != incomplete {
+			t.Fatalf("EOF changed incomplete %q to %q", incomplete, got)
+		}
+	}
+	nonOwned := "\x1b[12\x1b[?2004h"
+	if got := string(filterHostOutput(t, true, []byte(nonOwned))); got != nonOwned {
+		t.Fatalf("non-owned abort sequence changed to %q", got)
+	}
+}
+
+func TestAttachOutputFilterRestartsAtCapEdge(t *testing.T) {
+	for _, prefixLen := range []int{maxAttachCSI, maxAttachCSI + 1} {
+		prefix := "\x1b[" + strings.Repeat("1", prefixLen-2)
+		input := []byte(prefix + "\x1b[?1049l")
+		want := []byte(prefix + "\x18")
+		for split := 0; split <= len(input); split++ {
+			if got := filterHostOutput(t, false, input[:split], input[split:]); !bytes.Equal(got, want) {
+				t.Fatalf("prefix=%d split=%d tail=%q, want CAN-terminated prefix", prefixLen, split, got[len(got)-min(16, len(got)):])
+			}
+		}
+	}
+}
+
+func TestAttachOutputFilterPreservesMalformedPrivateModes(t *testing.T) {
+	for _, input := range []string{
+		"\x1b[?1:2;1049h",
+		"\x1b[?abc;1049h",
+		"\x1b[?1;;1049h",
+		"\x1b[?;1049h",
+		"\x1b[?1;1049$h",
+		"\x1b[?1.2;1049l",
+	} {
+		for split := 0; split <= len(input); split++ {
+			if got := string(filterHostOutput(t, false, []byte(input[:split]), []byte(input[split:]))); got != input {
+				t.Fatalf("input=%q split=%d changed to %q", input, split, got)
+			}
+		}
+	}
+}
+
 type failingWriter struct{ err error }
 
 func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
@@ -104,6 +168,34 @@ func TestAttachOutputFilterPropagatesDownstreamError(t *testing.T) {
 	want := errors.New("write failed")
 	if _, err := io.WriteString(newAttachOutputFilter(failingWriter{want}, false), "plain"); !errors.Is(err, want) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+type chunkWriter struct {
+	bytes.Buffer
+	max int
+}
+
+func (w *chunkWriter) Write(p []byte) (int, error) {
+	if len(p) > w.max {
+		p = p[:w.max]
+	}
+	return w.Buffer.Write(p)
+}
+
+func TestAttachOutputFilterHandlesPartialDownstreamWrites(t *testing.T) {
+	var dst chunkWriter
+	dst.max = 2
+	f := newAttachOutputFilter(&dst, false)
+	input := []byte("部署\x1b[?1;1000;2004;1049h tail")
+	if n, err := f.Write(input); err != nil || n != len(input) {
+		t.Fatalf("Write = %d, %v", n, err)
+	}
+	if err := f.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := dst.String(), "部署\x1b[?1;2004h tail"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
@@ -161,7 +253,8 @@ func TestAttachOutputFilterPreservesUnrelatedControls(t *testing.T) {
 	for _, input := range [][]byte{
 		[]byte("\x1b[31mred\x1b[0m"), []byte("\x1b[?1004h\x1b[?1007l\x1b[?2004h"),
 		[]byte("\x1b[?1000$p\x1b[?1000$y"), []byte("\x1b]0;title\a"),
-		[]byte("\x1bP$qm\x1b\\"), []byte("部署 café 🚀\r\n"),
+		[]byte("\x1bP$qm\x1b\\"), []byte("部署 café 🚀؛\r\n"),
+		{0x9b, '?', '1', '0', '4', '9', 'l'},
 	} {
 		if got := filterHostOutput(t, false, input); !bytes.Equal(got, input) {
 			t.Fatalf("%q changed to %q", input, got)

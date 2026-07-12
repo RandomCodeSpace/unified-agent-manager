@@ -449,9 +449,11 @@ var attachMouseModes = map[string]bool{"1000": true, "1002": true, "1003": true,
 // the attach screen and optionally leaves mouse modes under terminal control.
 // Only seven-bit DEC private h/l sequences are rewritten.
 type attachOutputFilter struct {
-	dst     io.Writer
-	mouse   bool
-	pending []byte
+	dst          io.Writer
+	mouse        bool
+	pending      []byte
+	abortedCSI   bool
+	forwardedCSI bool
 }
 
 func newAttachOutputFilter(dst io.Writer, mouse bool) *attachOutputFilter {
@@ -465,8 +467,13 @@ func (f *attachOutputFilter) Write(p []byte) (int, error) {
 		case len(f.pending) == 0:
 			if b == 0x1b {
 				f.pending = append(f.pending, b)
+				f.abortedCSI = f.forwardedCSI
+				f.forwardedCSI = false
 			} else {
 				out = append(out, b)
+				if f.forwardedCSI && b >= 0x40 && b <= 0x7e {
+					f.forwardedCSI = false
+				}
 			}
 		case len(f.pending) == 1:
 			if b == '[' {
@@ -474,20 +481,39 @@ func (f *attachOutputFilter) Write(p []byte) (int, error) {
 			} else {
 				out = append(out, f.pending...)
 				f.pending = f.pending[:0]
+				f.abortedCSI = false
 				if b == 0x1b {
 					f.pending = append(f.pending, b)
 				} else {
 					out = append(out, b)
 				}
 			}
+		case b == 0x1b:
+			// ESC aborts an in-flight CSI in a real terminal. Flush the old
+			// prefix and retain this ESC as the start of a new filterable
+			// sequence instead of letting its '[' terminate the old CSI.
+			out = append(out, f.pending...)
+			f.pending = append(f.pending[:0], b)
+			f.abortedCSI = true
 		default:
 			f.pending = append(f.pending, b)
 			if b >= 0x40 && b <= 0x7e {
-				out = append(out, f.rewriteCSI(f.pending)...)
+				rewritten := f.rewriteCSI(f.pending)
+				if len(rewritten) == 0 && f.abortedCSI {
+					// The filtered ESC would otherwise leave the previously
+					// forwarded incomplete CSI active. CAN is the standard CSI
+					// cancellation control and cannot begin another sequence.
+					out = append(out, 0x18)
+				} else {
+					out = append(out, rewritten...)
+				}
 				f.pending = f.pending[:0]
+				f.abortedCSI = false
 			} else if len(f.pending) > maxAttachCSI {
 				out = append(out, f.pending...)
 				f.pending = f.pending[:0]
+				f.abortedCSI = false
+				f.forwardedCSI = true
 			}
 		}
 	}
@@ -513,6 +539,11 @@ func (f *attachOutputFilter) rewriteCSI(seq []byte) []byte {
 	for _, param := range params {
 		if len(param) == 0 {
 			return seq
+		}
+		for _, b := range param {
+			if b < '0' || b > '9' {
+				return seq
+			}
 		}
 		key := string(param)
 		if attachAltModes[key] || (!f.mouse && attachMouseModes[key]) {
