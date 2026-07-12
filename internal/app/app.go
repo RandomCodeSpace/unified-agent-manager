@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -63,6 +64,12 @@ type Model struct {
 	// scheduled-but-not-yet-flushed reorder so quit can flush it (F59).
 	reorderSeq     int
 	reorderPending bool
+	reorderDirty   map[sessionIdentity]struct{}
+	// Test seams for proving persistence/reload sequencing without timing a
+	// filesystem lock. Production leaves both nil and uses Service directly.
+	persistSortIndices func([]adapter.Session) error
+	reloadSessions     func() sessionsLoadedMsg
+	groupToggle        *groupToggleCoordinator
 	// lastPeekAt records, per session id, when its pane was last captured for
 	// the peek panel. The peek-focus ticker re-polls the focused session at most
 	// once per peekFocusInterval; the map is keyed by id (not row index) because
@@ -128,6 +135,23 @@ type peekTickMsg time.Time
 // the reorder that scheduled it; the handler persists only when the seq still
 // matches the latest move, dropping ticks superseded by a newer move (F59).
 type reorderFlushMsg struct{ seq int }
+
+type sessionIdentity struct {
+	agent string
+	id    string
+}
+
+type groupToggleCoordinator struct {
+	mu         sync.Mutex
+	generation uint64
+}
+
+type groupToggleResultMsg struct {
+	generation uint64
+	grouped    bool
+	loaded     sessionsLoadedMsg
+	err        error
+}
 
 // promptEditedMsg carries the result of editing the wizard prompt in $EDITOR.
 // The editor is launched via tea.ExecProcess (which suspends the TUI, restores
@@ -212,6 +236,9 @@ func (m Model) refreshStep(now time.Time) (Model, bool) {
 
 func (m Model) loadSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
+		if m.reloadSessions != nil {
+			return m.reloadSessions()
+		}
 		sessions, cfg, err := m.service.LoadSessions(context.Background())
 		return sessionsLoadedMsg{sessions: sessions, defaultAgent: cfg.DefaultAgent, groupByDir: cfg.UI.GroupByDir, err: err}
 	}
@@ -260,6 +287,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.flushReorder()
+	case groupToggleResultMsg:
+		if !m.isLatestGroupToggle(msg.generation) {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.setGroupByDir(!msg.grouped)
+			m.setMessage("could not save view setting: " + msg.err.Error())
+			return m, nil
+		}
+		return m.handleSessionsLoaded(msg.loaded), nil
 	case sessionsLoadedMsg:
 		return m.handleSessionsLoaded(msg), nil
 	case peekLoadedMsg:
@@ -314,7 +351,7 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 		selectedAgent, selectedID = sess.AgentType, sess.ID
 	}
 	if msg.sessions != nil {
-		m.sessions = msg.sessions
+		m.sessions = projectSessions(msg.sessions, msg.groupByDir)
 		m.groupByDir = msg.groupByDir
 		// Drop peek throttle stamps for sessions that no longer exist so the
 		// map cannot grow without bound across many session lifetimes.
@@ -544,6 +581,16 @@ func (m *Model) moveSession(delta int) tea.Cmd {
 		m.setMessage("can't reorder across the active/closed or pinned boundary")
 		return nil
 	}
+	if m.groupByDir && workspaceKey(m.sessions[m.selected].Cwd) != workspaceKey(m.sessions[next].Cwd) {
+		m.setMessage("can't reorder across workspace groups")
+		return nil
+	}
+	groupStart, groupEnd := m.reorderGroupBounds(m.selected)
+	if reorderGroupHasCollidingIndices(m.sessions[groupStart:groupEnd]) {
+		m.normalizeReorderGroup(groupStart, groupEnd)
+	}
+	m.sessions[m.selected].SortIndex, m.sessions[next].SortIndex = m.sessions[next].SortIndex, m.sessions[m.selected].SortIndex
+	m.markReorderDirty(m.sessions[m.selected], m.sessions[next])
 	m.sessions[m.selected], m.sessions[next] = m.sessions[next], m.sessions[m.selected]
 	m.selected = next
 	return m.scheduleReorderFlush()
@@ -568,8 +615,76 @@ func (m *Model) flushReorder() tea.Cmd {
 	if !m.reorderPending {
 		return nil
 	}
+	return m.persistSortIndicesCmd(m.captureReorderDirty())
+}
+
+func (m *Model) captureReorderDirty() []adapter.Session {
+	dirty := make([]adapter.Session, 0, len(m.reorderDirty))
+	for _, sess := range m.sessions {
+		if _, ok := m.reorderDirty[sessionIdentity{agent: sess.AgentType, id: sess.ID}]; ok {
+			dirty = append(dirty, sess)
+		}
+	}
 	m.reorderPending = false
-	return m.persistOrderCmd()
+	m.reorderDirty = nil
+	return dirty
+}
+
+func (m *Model) markReorderDirty(sessions ...adapter.Session) {
+	if m.reorderDirty == nil {
+		m.reorderDirty = make(map[sessionIdentity]struct{})
+	}
+	for _, sess := range sessions {
+		m.reorderDirty[sessionIdentity{agent: sess.AgentType, id: sess.ID}] = struct{}{}
+	}
+}
+
+func (m Model) reorderGroupBounds(index int) (int, int) {
+	start, end := index, index+1
+	for start > 0 && m.sameReorderGroup(m.sessions[index], m.sessions[start-1]) {
+		start--
+	}
+	for end < len(m.sessions) && m.sameReorderGroup(m.sessions[index], m.sessions[end]) {
+		end++
+	}
+	return start, end
+}
+
+func (m Model) sameReorderGroup(a, b adapter.Session) bool {
+	return samePartition(a, b) && (!m.groupByDir || workspaceKey(a.Cwd) == workspaceKey(b.Cwd))
+}
+
+func reorderGroupHasCollidingIndices(sessions []adapter.Session) bool {
+	seen := make(map[int]struct{}, len(sessions))
+	for _, sess := range sessions {
+		if _, ok := seen[sess.SortIndex]; ok {
+			return true
+		}
+		seen[sess.SortIndex] = struct{}{}
+	}
+	return false
+}
+
+func (m *Model) normalizeReorderGroup(start, end int) {
+	used := make(map[int]struct{}, len(m.sessions)-(end-start))
+	for i, sess := range m.sessions {
+		if i < start || i >= end {
+			used[sess.SortIndex] = struct{}{}
+		}
+	}
+	next := m.sessions[start].SortIndex
+	for i := start; i < end; i++ {
+		for {
+			if _, exists := used[next]; !exists {
+				break
+			}
+			next++
+		}
+		m.sessions[i].SortIndex = next
+		m.markReorderDirty(m.sessions[i])
+		used[next] = struct{}{}
+		next++
+	}
 }
 
 // samePartition reports whether two rows sort into the same SortSessions
@@ -592,8 +707,14 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 	case "ctrl+s":
-		m.groupByDir = !m.groupByDir
-		return true, m.persistGroupByDir()
+		grouped := !m.groupByDir
+		generation := m.nextGroupToggleGeneration()
+		var dirty []adapter.Session
+		if m.reorderPending {
+			dirty = m.captureReorderDirty()
+		}
+		m.setGroupByDir(grouped)
+		return true, m.persistGroupToggleCmd(dirty, grouped, generation)
 	case "ctrl+t":
 		return true, m.pinSelectedCmd()
 	case "ctrl+r":
@@ -1120,11 +1241,29 @@ func (m *Model) persistDefaultAgent() tea.Cmd {
 func (m *Model) persistGroupByDir() tea.Cmd {
 	grouped := m.groupByDir
 	if err := m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = grouped }); err != nil {
-		m.groupByDir = !grouped
+		m.setGroupByDir(!grouped)
 		m.setMessage("could not save view setting: " + err.Error())
 		return nil
 	}
 	return m.loadSessionsCmd()
+}
+
+func (m *Model) setGroupByDir(grouped bool) {
+	selectedAgent, selectedID := "", ""
+	if sess, ok := m.selectedSession(); ok {
+		selectedAgent, selectedID = sess.AgentType, sess.ID
+	}
+	canonical := append([]adapter.Session(nil), m.sessions...)
+	SortSessions(canonical)
+	m.sessions = projectSessions(canonical, grouped)
+	m.groupByDir = grouped
+	for i, sess := range m.sessions {
+		if sess.AgentType == selectedAgent && sess.ID == selectedID {
+			m.selected = i
+			return
+		}
+	}
+	m.selected = max(0, min(m.selected, len(m.sessions)-1))
 }
 
 // stopTargetCmd stops the session with the snapshotted id, falling back to the
@@ -1236,7 +1375,61 @@ func (m Model) execAttachSpec(spec adapter.AttachSpec, err error) tea.Cmd {
 
 func (m Model) persistOrderCmd() tea.Cmd {
 	sessions := append([]adapter.Session(nil), m.sessions...)
-	return func() tea.Msg { return sessionsLoadedMsg{err: m.service.UpdateSortOrder(sessions)} }
+	return m.persistSortIndicesCmd(sessions)
+}
+
+func (m Model) persistSortIndicesCmd(sessions []adapter.Session) tea.Cmd {
+	sessions = append([]adapter.Session(nil), sessions...)
+	return func() tea.Msg { return sessionsLoadedMsg{err: m.updateSortIndices(sessions)} }
+}
+
+func (m Model) updateSortIndices(sessions []adapter.Session) error {
+	if m.persistSortIndices != nil {
+		return m.persistSortIndices(sessions)
+	}
+	return m.service.UpdateSortIndices(sessions)
+}
+
+func (m *Model) nextGroupToggleGeneration() uint64 {
+	if m.groupToggle == nil {
+		m.groupToggle = &groupToggleCoordinator{}
+	}
+	m.groupToggle.mu.Lock()
+	defer m.groupToggle.mu.Unlock()
+	m.groupToggle.generation++
+	return m.groupToggle.generation
+}
+
+func (m Model) isLatestGroupToggle(generation uint64) bool {
+	if m.groupToggle == nil {
+		return false
+	}
+	m.groupToggle.mu.Lock()
+	defer m.groupToggle.mu.Unlock()
+	return generation == m.groupToggle.generation
+}
+
+func (m Model) persistGroupToggleCmd(sessions []adapter.Session, grouped bool, generation uint64) tea.Cmd {
+	sessions = append([]adapter.Session(nil), sessions...)
+	return func() tea.Msg {
+		if len(sessions) > 0 {
+			if err := m.updateSortIndices(sessions); err != nil {
+				return groupToggleResultMsg{generation: generation, grouped: grouped, err: err}
+			}
+		}
+		m.groupToggle.mu.Lock()
+		if generation != m.groupToggle.generation {
+			m.groupToggle.mu.Unlock()
+			return groupToggleResultMsg{generation: generation, grouped: grouped}
+		}
+		err := m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = grouped })
+		m.groupToggle.mu.Unlock()
+		if err != nil {
+			return groupToggleResultMsg{generation: generation, grouped: grouped, err: err}
+		}
+		loaded, _ := m.loadSessionsCmd()().(sessionsLoadedMsg)
+		return groupToggleResultMsg{generation: generation, grouped: grouped, loaded: loaded}
+	}
 }
 
 // ─── theme ───────────────────────────────────────────────────────────────
@@ -1522,6 +1715,9 @@ func (m Model) sessionListLines(width, budget int, class LayoutClass) []string {
 	if budget <= 0 {
 		return nil
 	}
+	if m.groupByDir {
+		return m.groupedSessionListLines(width, budget, class)
+	}
 	if len(m.sessions) == 0 {
 		return takeLines([]string{m.renderSectionAtWidth("SESSIONS", "0", width), "  " + hintStyle.Render("no sessions")}, budget)
 	}
@@ -1711,6 +1907,15 @@ func (m Model) renderDetails() string {
 func (m Model) renderTable() string {
 	var b strings.Builder
 	b.WriteString("\n")
+	if m.groupByDir {
+		budget := max(2, len(m.sessions)*3+4)
+		lines := m.groupedSessionListLines(m.contentWidth(), budget, m.layoutClass())
+		b.WriteString(strings.Join(lines, "\n"))
+		if len(lines) > 0 {
+			b.WriteString("\n")
+		}
+		return b.String()
+	}
 	if len(m.sessions) == 0 {
 		b.WriteString(m.renderSection("SESSIONS", "0") + "\n")
 		b.WriteString("  " + hintStyle.Render("no sessions — type a prompt, @agent #name prompt, or press e") + "\n")

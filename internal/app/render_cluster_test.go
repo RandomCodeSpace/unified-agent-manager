@@ -354,7 +354,12 @@ func TestTabSurfacesSetDefaultAgentError(t *testing.T) {
 func TestGroupByDirToggleSurfacesSetUIError(t *testing.T) {
 	st := readOnlyStore(t)
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "a", available: true}}))
-	model, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("group toggle should persist asynchronously")
+	}
+	model, _ = m.Update(cmd())
 	m = model.(Model)
 	if m.message == "" {
 		t.Fatal("a failed SetUI must surface an error in the status line")

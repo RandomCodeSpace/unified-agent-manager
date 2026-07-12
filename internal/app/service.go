@@ -1133,6 +1133,27 @@ func (s *Service) UpdateSortOrder(sessions []adapter.Session) error {
 	})
 }
 
+// UpdateSortIndices persists the explicit canonical positions carried by each
+// session. Grouped presentation order is not itself a global sort order: only
+// the pair moved inside a workspace has its positions exchanged.
+func (s *Service) UpdateSortIndices(sessions []adapter.Session) error {
+	if s.Store == nil {
+		return nil
+	}
+	return s.Store.Update(func(cfg *store.Config) error {
+		for _, sess := range sessions {
+			key := store.Key(sess.AgentType, sess.ID)
+			rec := cfg.Sessions[key]
+			if rec.ID == "" {
+				rec = RecordFromSession(sess, store.ModeYolo)
+			}
+			rec.SortIndex = sess.SortIndex
+			cfg.Sessions[key] = rec
+		}
+		return nil
+	})
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if strings.TrimSpace(v) != "" {
