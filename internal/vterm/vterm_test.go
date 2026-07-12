@@ -340,6 +340,68 @@ func TestMalformedCSIRecovers(t *testing.T) {
 	}
 }
 
+func TestHugeCSICountsAreClampedToTheGrid(t *testing.T) {
+	const huge = "999999999999999999999"
+	for _, tc := range []struct {
+		name, setup, hugeOp, boundedOp string
+	}{
+		{"IL", "one\r\ntwo\r\nthree\r\nfour\x1b[1;1H", "\x1b[" + huge + "L", "\x1b[4L"},
+		{"DL", "one\r\ntwo\r\nthree\r\nfour\x1b[1;1H", "\x1b[" + huge + "M", "\x1b[4M"},
+		{"ICH", "abcdefgh\x1b[1;1H", "\x1b[" + huge + "@", "\x1b[8@"},
+		{"DCH", "abcdefgh\x1b[1;1H", "\x1b[" + huge + "P", "\x1b[8P"},
+		{"ECH", "abcdefgh\x1b[1;1H", "\x1b[" + huge + "X", "\x1b[8X"},
+		{"SU", "one\r\ntwo\r\nthree\r\nfour", "\x1b[" + huge + "S", "\x1b[4S"},
+		{"SD", "one\r\ntwo\r\nthree\r\nfour", "\x1b[" + huge + "T", "\x1b[4T"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hugeTerm, boundedTerm := New(8, 4, 0), New(8, 4, 0)
+			feed(t, hugeTerm, tc.setup+tc.hugeOp)
+			feed(t, boundedTerm, tc.setup+tc.boundedOp)
+			if got, want := string(hugeTerm.Redraw()), string(boundedTerm.Redraw()); got != want {
+				t.Fatalf("huge count differs from grid-sized count:\n got %q\nwant %q", got, want)
+			}
+		})
+	}
+}
+
+func BenchmarkHostileCSICounts(b *testing.B) {
+	seq := []byte("\x1b[999999999999999999999S\x1b[999999999999999999999L\x1b[999999999999999999999P")
+	for b.Loop() {
+		term := New(120, 40, 200)
+		_, _ = term.Write(seq)
+	}
+}
+
+func BenchmarkOrdinaryTerminalStream(b *testing.B) {
+	stream := []byte("\x1b[32mready\x1b[0m> go test ./...\r\nok  package  0.123s\r\n")
+	term := New(120, 40, 500)
+	b.SetBytes(int64(len(stream)))
+	b.ResetTimer()
+	for b.Loop() {
+		_, _ = term.Write(stream)
+	}
+}
+
+func FuzzTerminalInput(f *testing.F) {
+	for _, seed := range [][]byte{
+		[]byte("plain\r\ntext"),
+		[]byte("café 世界 🚀"),
+		[]byte("\x1b[999999999999999999999S"),
+		[]byte("\x1b]0;title\x07visible"),
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input []byte) {
+		term := New(80, 24, 100)
+		if _, err := term.Write(input); err != nil {
+			t.Fatal(err)
+		}
+		if got := term.Capture(100); len(got) > 80*(24+100)*4 {
+			t.Fatalf("capture exceeded screen/history bound: %d bytes", len(got))
+		}
+	})
+}
+
 func TestScrollRegionReverseWrapAndKeypadIgnored(t *testing.T) {
 	term := New(20, 4, 0)
 	// Keypad mode escapes and charset designators are consumed silently.

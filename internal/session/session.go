@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 	"syscall"
 )
 
@@ -65,6 +64,37 @@ func EnsureDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create session dir %s: %w", dir, err)
 	}
+	if err := verifyDirIdentity(dir); err != nil {
+		return err
+	}
+	// MkdirAll is a no-op on an existing directory. Creation paths retain the
+	// historical repair behavior for a directory owned by this user; read and
+	// control paths use VerifyDir and fail closed instead.
+	if err := os.Chmod(dir, 0o700); err != nil { // #nosec G302 -- directory needs the execute bit; owner-only.
+		return fmt.Errorf("restrict session dir %s: %w", dir, err)
+	}
+	return VerifyDir(dir)
+}
+
+// VerifyDir validates an existing runtime directory without changing it.
+// The directory is the local authorization boundary around session sockets
+// and state, so every read/control path must call this before trusting files
+// beneath it.
+func VerifyDir(dir string) error {
+	if err := verifyDirIdentity(dir); err != nil {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("stat session dir %s: %w", dir, err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		return fmt.Errorf("session dir %s has unsafe mode %04o; want 0700", dir, info.Mode().Perm())
+	}
+	return nil
+}
+
+func verifyDirIdentity(dir string) error {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return fmt.Errorf("stat session dir %s: %w", dir, err)
@@ -75,12 +105,6 @@ func EnsureDir(dir string) error {
 	if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
 		return fmt.Errorf("session dir %s is owned by uid %d, not the current user", dir, st.Uid)
 	}
-	// MkdirAll is a no-op on an existing directory; re-assert the mode so a
-	// pre-existing world-readable dir cannot silently expose sockets. 0700 is
-	// required (not 0600): the owner must traverse the directory.
-	if err := os.Chmod(dir, 0o700); err != nil { // #nosec G302 -- directory needs the execute bit; owner-only.
-		return fmt.Errorf("restrict session dir %s: %w", dir, err)
-	}
 	return nil
 }
 
@@ -90,9 +114,9 @@ func EnsureDir(dir string) error {
 type State struct {
 	Name    string `json:"name"`
 	HostPID int    `json:"host_pid"`
-	// HostStart / ChildStart are the processes' kernel start times
-	// (/proc/<pid>/stat field 22, in clock ticks since boot; 0 where
-	// unavailable). They disambiguate a recycled PID from the original
+	// HostStart / ChildStart are platform-specific stable process identities
+	// derived from kernel start times (0 where unavailable). They disambiguate
+	// a recycled PID from the original
 	// process, so a stale state file can never make uam treat — or worse,
 	// signal — an unrelated process as a session.
 	HostStart   int64    `json:"host_start,omitempty"`
@@ -129,6 +153,12 @@ func statePath(dir, name string) string { return filepath.Join(dir, name+".json"
 func SocketPath(dir, name string) string { return filepath.Join(dir, name+".sock") }
 
 func writeState(dir string, st State) error {
+	if err := VerifyDir(dir); err != nil {
+		return err
+	}
+	if err := ValidateName(st.Name); err != nil {
+		return err
+	}
 	data, err := json.Marshal(st)
 	if err != nil {
 		return err
@@ -142,7 +172,23 @@ func writeState(dir string, st State) error {
 }
 
 func readState(dir, name string) (State, error) {
-	data, err := os.ReadFile(statePath(dir, name))
+	if err := ValidateName(name); err != nil {
+		return State{}, err
+	}
+	if err := VerifyDir(dir); err != nil {
+		return State{}, err
+	}
+	path := statePath(dir, name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return State{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return State{}, fmt.Errorf("session state %s is not a regular file", name)
+	}
+	// name has passed the strict canonical allow-list and dir has passed the
+	// owner-only identity check above, so path cannot escape the runtime dir.
+	data, err := os.ReadFile(path) // #nosec G304 -- validated name within a verified owner-only directory.
 	if err != nil {
 		return State{}, err
 	}
@@ -150,12 +196,25 @@ func readState(dir, name string) (State, error) {
 	if err := json.Unmarshal(data, &st); err != nil {
 		return State{}, fmt.Errorf("parse session state %s: %w", name, err)
 	}
+	if st.Name != name {
+		return State{}, fmt.Errorf("session state name %q does not match file name %q", st.Name, name)
+	}
 	return st, nil
 }
 
-func removeSessionFiles(dir, name string) {
-	_ = os.Remove(statePath(dir, name))
-	_ = os.Remove(SocketPath(dir, name))
+func removeSessionFiles(dir, name string) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	if err := VerifyDir(dir); err != nil {
+		return err
+	}
+	for _, path := range []string{statePath(dir, name), SocketPath(dir, name)} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // ProcAlive reports whether pid is a live process (signal-0 probe). It is the
@@ -168,9 +227,10 @@ func ProcAlive(pid int) bool {
 }
 
 // procAliveWithStart is ProcAlive hardened against PID reuse: when a start
-// time was recorded AND the live process's start time is readable, they must
-// match. Where /proc is unavailable (e.g. macOS) either side reads as 0 and
-// the check degrades to the plain signal-0 probe.
+// identity was recorded AND the live process's identity is readable, they
+// must match. This intentionally remains permissive for display compatibility:
+// missing identity degrades to the plain signal-0 probe. Signaling paths use
+// procIdentityMatches instead.
 func procAliveWithStart(pid int, start int64) bool {
 	if !ProcAlive(pid) {
 		return false
@@ -182,32 +242,15 @@ func procAliveWithStart(pid int, start int64) bool {
 	return current == 0 || current == start
 }
 
-// procStartTime returns the kernel start time of pid (clock ticks since boot,
-// /proc/<pid>/stat field 22), or 0 when unavailable.
-func procStartTime(pid int) int64 {
-	if pid <= 0 {
-		return 0
+// procIdentityMatches is the fail-closed process identity check used before
+// PID-based fallback signaling. Both recorded and live identities must be
+// available and equal; liveness alone is never authorization to signal.
+func procIdentityMatches(pid int, recorded int64) bool {
+	if pid <= 0 || recorded == 0 || !ProcAlive(pid) {
+		return false
 	}
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return 0
-	}
-	// comm (field 2) is parenthesized and may itself contain spaces or ')',
-	// so split after the LAST ')'. starttime is overall field 22, i.e. index
-	// 19 of the fields that follow comm.
-	rest := string(data)
-	if i := strings.LastIndexByte(rest, ')'); i >= 0 {
-		rest = rest[i+1:]
-	}
-	fields := strings.Fields(rest)
-	if len(fields) < 20 {
-		return 0
-	}
-	v, err := strconv.ParseInt(fields[19], 10, 64)
-	if err != nil {
-		return 0
-	}
-	return v
+	current := procStartTime(pid)
+	return current != 0 && current == recorded
 }
 
 // procCwd returns the live working directory of pid via /proc (Linux). On

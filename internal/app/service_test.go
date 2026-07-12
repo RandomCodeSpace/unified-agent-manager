@@ -189,7 +189,12 @@ func assertWorkflowAdapterActions(t *testing.T, svc *Service, fake *svcFakeAdapt
 func TestServicePrintListAndErrors(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
-	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
+	unsafeName := "safe\x1b]52;c;YQ==\x07name"
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{
+		ID: "live0001", AgentType: "fake", DisplayName: unsafeName, Cwd: "/tmp/evil\x1b[2Jrepo",
+		SessionName: "uam-fake-live0001", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now(),
+	}}}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	if _, err := svc.DispatchNamed(context.Background(), "missing", "", "x", "", ""); err == nil {
 		t.Fatal("want missing agent error")
 	}
@@ -201,7 +206,7 @@ func TestServicePrintListAndErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(out, "[") {
+	if !strings.Contains(out, "[") || !strings.Contains(out, `\u001b]52`) {
 		t.Fatalf("json out=%q", out)
 	}
 	out = captureStdout(t, func() {
@@ -209,7 +214,9 @@ func TestServicePrintListAndErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	_ = out
+	if strings.Contains(out, "\x1b") || !strings.Contains(out, "safename") || !strings.Contains(out, "/tmp/evilrepo") {
+		t.Fatalf("plain text output was not sanitized: %q", out)
+	}
 }
 
 func TestServicePersistsPromptAndReportsDeadTmuxRecord(t *testing.T) {

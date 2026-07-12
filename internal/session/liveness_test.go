@@ -1,6 +1,9 @@
 package session
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +12,183 @@ import (
 	"syscall"
 	"testing"
 )
+
+func FuzzStateDecoding(f *testing.F) {
+	for _, seed := range [][]byte{
+		[]byte(`{"name":"uam-fake-aabbccdd","host_pid":1,"host_start":2}`),
+		[]byte(`{"name":"../escape","host_pid":1}`),
+		[]byte(`null`),
+		[]byte(`{"unknown":{"nested":true}}`),
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var state State
+		if err := json.Unmarshal(data, &state); err != nil {
+			return
+		}
+		encoded, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded State
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.Name != state.Name || decoded.HostPID != state.HostPID || decoded.HostStart != state.HostStart {
+			t.Fatalf("state round trip changed identity: before=%+v after=%+v", state, decoded)
+		}
+	})
+}
+
+func TestVerifyDirRejectsUnsafeRuntimeDirectories(t *testing.T) {
+	parent := t.TempDir()
+
+	missing := filepath.Join(parent, "missing")
+	if err := VerifyDir(missing); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("VerifyDir missing error = %v, want os.ErrNotExist", err)
+	}
+
+	permissive := filepath.Join(parent, "permissive")
+	if err := os.Mkdir(permissive, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(permissive, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyDir(permissive); err == nil {
+		t.Fatal("VerifyDir must reject a group/world-accessible runtime directory")
+	}
+	info, err := os.Stat(permissive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("VerifyDir mutated mode to %o, want read-only verification", got)
+	}
+
+	target := filepath.Join(parent, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(parent, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyDir(link); err == nil {
+		t.Fatal("VerifyDir must reject a symlink runtime directory")
+	}
+}
+
+func TestListMissingDirIsEmptyButUnsafeDirFailsClosed(t *testing.T) {
+	c := &Client{Dir: filepath.Join(t.TempDir(), "missing")}
+	infos, err := c.List(context.Background())
+	if err != nil || len(infos) != 0 {
+		t.Fatalf("List missing dir = (%v, %v), want empty success", infos, err)
+	}
+
+	if err := os.Mkdir(c.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(c.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.List(context.Background()); err == nil {
+		t.Fatal("List must reject an unsafe existing runtime directory")
+	}
+	info, err := os.Stat(c.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("List repaired unsafe mode to %o instead of failing closed", got)
+	}
+}
+
+func TestStateReadRejectsMismatchedNameAndNonRegularFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "runtime")
+	if err := EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	requested := "uam-fake-aabbccdd"
+	mismatch := []byte(`{"name":"uam-fake-deadbeef","host_pid":1}`)
+	if err := os.WriteFile(statePath(dir, requested), mismatch, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readState(dir, requested); err == nil {
+		t.Fatal("readState must reject a state whose embedded name differs from its filename")
+	}
+
+	if err := os.Remove(statePath(dir, requested)); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(target, []byte(`{"name":"`+requested+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, statePath(dir, requested)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readState(dir, requested); err == nil {
+		t.Fatal("readState must reject symlink state files")
+	}
+}
+
+func TestControlPathsRejectUnsafeRuntimeDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "runtime")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Dir: dir}
+	if _, err := c.Capture(context.Background(), "uam-fake-aabbccdd", 1); err == nil || !strings.Contains(err.Error(), "unsafe mode") {
+		t.Fatalf("Capture error = %v, want unsafe directory rejection before dialing", err)
+	}
+	if c.HasSession(context.Background(), "uam-fake-aabbccdd") {
+		t.Fatal("HasSession must not trust state in an unsafe runtime directory")
+	}
+	stdin, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close() }()
+	stdout, err := os.CreateTemp(t.TempDir(), "attach-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdout.Close() }()
+	if err := runAttach(dir, "uam-fake-aabbccdd", stdin, stdout); err == nil || !strings.Contains(err.Error(), "unsafe mode") {
+		t.Fatalf("runAttach error = %v, want unsafe directory rejection before dialing", err)
+	}
+}
+
+func TestRemoveSessionFilesRejectsUnsafeRuntimeDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "runtime")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	name := "uam-fake-aabbccdd"
+	state := statePath(dir, name)
+	socket := SocketPath(dir, name)
+	for _, path := range []string{state, socket} {
+		if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeSessionFiles(dir, name); err == nil {
+		t.Fatal("removeSessionFiles must reject an unsafe runtime directory")
+	}
+	for _, path := range []string{state, socket} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("unsafe cleanup removed %s: %v", path, err)
+		}
+	}
+}
 
 func TestDefaultDirResolution(t *testing.T) {
 	t.Setenv("UAM_SESSION_DIR", "/custom/dir")
@@ -83,6 +263,41 @@ func TestProcAliveWithStartDetectsPIDReuse(t *testing.T) {
 	}
 	if procAliveWithStart(-1, real) {
 		t.Fatal("invalid pid must read dead")
+	}
+}
+
+func TestProcIdentityMatchesRequiresRecordedAndCurrentIdentity(t *testing.T) {
+	pid := os.Getpid()
+	real := procStartTime(pid)
+	if real == 0 {
+		t.Skip("process start identity unavailable on this platform")
+	}
+	if !procIdentityMatches(pid, real) {
+		t.Fatal("matching nonzero process identity must be accepted")
+	}
+	if procIdentityMatches(pid, 0) {
+		t.Fatal("zero recorded identity must fail closed for signaling")
+	}
+	if procIdentityMatches(pid, real+1) {
+		t.Fatal("mismatched process identity must fail closed for signaling")
+	}
+}
+
+func TestKillRefusesPIDFallbackWithoutVerifiedIdentity(t *testing.T) {
+	c := newTestClient(t)
+	if err := EnsureDir(c.Dir); err != nil {
+		t.Fatal(err)
+	}
+	name := "uam-fake-1d1d1d1d"
+	if err := writeState(c.Dir, State{Name: name, HostPID: os.Getpid(), HostStart: 0}); err != nil {
+		t.Fatal(err)
+	}
+	err := c.Kill(t.Context(), name)
+	if err == nil || !strings.Contains(err.Error(), "cannot verify process identity") {
+		t.Fatalf("Kill error = %v, want explicit process-identity safety error", err)
+	}
+	if !ProcAlive(os.Getpid()) {
+		t.Fatal("Kill signaled the test process despite missing identity")
 	}
 }
 

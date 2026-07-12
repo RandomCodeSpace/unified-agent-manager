@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // Wire protocol between the client (uam TUI/CLI) and a session host.
@@ -72,14 +73,45 @@ func readJSONLine(r *bufio.Reader, v any) error {
 func writeFrame(w io.Writer, kind byte, payload []byte) error {
 	hdr := [5]byte{kind}
 	binary.BigEndian.PutUint32(hdr[1:], uint32(len(payload))) // #nosec G115 -- payload length is bounded by callers
-	if _, err := w.Write(hdr[:]); err != nil {
+	if err := writeAll(w, hdr[:]); err != nil {
 		return err
 	}
 	if len(payload) == 0 {
 		return nil
 	}
-	_, err := w.Write(payload)
-	return err
+	return writeAll(w, payload)
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
+// frameWriter serializes complete attach frames. A frame is two physical
+// writes (header then payload), so protecting individual net.Conn.Write calls
+// is insufficient when stdin, resize, and detach goroutines share a socket.
+type frameWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func newFrameWriter(w io.Writer) *frameWriter { return &frameWriter{w: w} }
+
+func (w *frameWriter) WriteFrame(kind byte, payload []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return writeFrame(w.w, kind, payload)
 }
 
 func readFrame(r io.Reader) (byte, []byte, error) {

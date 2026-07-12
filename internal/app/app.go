@@ -14,6 +14,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -110,6 +111,8 @@ type attachSpecMsg struct {
 }
 type attachFinishedMsg struct{ err error }
 type refreshMsg time.Time
+type prRefreshMsg time.Time
+type prRefreshedMsg struct{ err error }
 
 // peekTickMsg is the peek-focus poll tick. When the peek panel is open it
 // re-captures the focused session's pane (rate-limited per id) so the panel
@@ -142,7 +145,7 @@ func New() Model {
 	// Build the registry from the single shared adapter list so the TUI and the
 	// CLI service can never diverge (the old hand-rolled list here omitted
 	// hermes — F14).
-	reg := adapter.NewRegistry(agents.Default(client))
+	reg := adapter.NewRegistryWithBackend(client, agents.Default(client))
 	return NewWithDeps(st, reg)
 }
 
@@ -172,18 +175,16 @@ func (m Model) validateDefaultAgent(candidate string) string {
 	}
 	return candidate
 }
-func NewWizard(st *store.Store, reg *adapter.Registry) Model {
-	m := NewWithDeps(st, reg)
-	m.wizard = true
-	return m
-}
-
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadSessionsCmd(), refreshTick(), peekTick())
+	return tea.Batch(m.loadSessionsCmd(), refreshTick(), peekTick(), prRefreshTick(100*time.Millisecond))
 }
 
 func refreshTick() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return refreshMsg(t) })
+}
+
+func prRefreshTick(after time.Duration) tea.Cmd {
+	return tea.Tick(after, func(t time.Time) tea.Msg { return prRefreshMsg(t) })
 }
 
 func peekTick() tea.Cmd {
@@ -211,6 +212,12 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 	}
 }
 
+func (m Model) refreshPRCmd() tea.Cmd {
+	return func() tea.Msg {
+		return prRefreshedMsg{err: m.service.RefreshPRStatuses(context.Background())}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -223,6 +230,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return next, tea.Batch(next.loadSessionsCmd(), refreshTick())
 		}
 		return next, refreshTick()
+	case prRefreshMsg:
+		return m, tea.Batch(m.refreshPRCmd(), prRefreshTick(prRefreshAge))
+	case prRefreshedMsg:
+		if msg.err != nil {
+			log.Warn("refresh pull-request statuses failed", "error", msg.err)
+			return m, nil
+		}
+		if m.loading {
+			return m, nil
+		}
+		m.loading = true
+		return m, m.loadSessionsCmd()
 	case peekTickMsg:
 		// Re-arm the peek ticker unconditionally; only re-capture the focused
 		// session when the panel is open and the per-id rate limit allows it
@@ -1038,9 +1057,6 @@ func (m Model) resumeSelectedCmd() tea.Cmd {
 		return m.loadSessionsCmd()()
 	}
 }
-func (m Model) stopSelectedCmd(remove bool) tea.Cmd {
-	return m.stopTargetCmd("", remove)
-}
 
 // persistDefaultAgent persists the default-agent choice. On failure it surfaces
 // the error in the status line instead of swallowing it; on success it returns a
@@ -1271,7 +1287,7 @@ func (m Model) renderDetails() string {
 	if _, _, showTask := m.tableWidths(); !showTask {
 		b.WriteString("    " + taskStyle.Render(truncate(promptText(sess), max(8, m.contentWidth()-6))) + "\n")
 	}
-	b.WriteString("    " + hintStyle.Render("agent: "+firstNonEmpty(sess.AgentType, "?")) + "\n")
+	b.WriteString("    " + hintStyle.Render("agent: "+displaytext.Sanitize(firstNonEmpty(sess.AgentType, "?"))) + "\n")
 	if !sess.CreatedAt.IsZero() {
 		b.WriteString("    " + hintStyle.Render("created: "+sess.CreatedAt.Format("Jan 02 15:04")) + "\n")
 	}
@@ -1395,26 +1411,26 @@ func (m Model) renderPrompt() string {
 	var b strings.Builder
 	b.WriteString("\n")
 	if m.renaming {
-		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(m.input) + brandStyle.Render("▏") + "\n")
+		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render("▏") + "\n")
 	} else if m.peekOpen {
 		// The command line doubles as a reply composer while peek is open: label
 		// it so the sub-mode is discoverable (Enter sends, Esc closes) (F36).
 		field := hintStyle.Render("type a reply…")
 		if m.input != "" {
-			field = titleStyle.Render(m.input)
+			field = titleStyle.Render(displaytext.Sanitize(m.input))
 		}
 		hints := hintStyle.Render("Enter send  ·  Esc close")
 		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
 	} else {
 		field := hintStyle.Render("type a command…")
 		if m.input != "" {
-			field = titleStyle.Render(m.input)
+			field = titleStyle.Render(displaytext.Sanitize(m.input))
 		}
 		hints := hintStyle.Render(m.defaultAgent + "  ·  ? help  ·  e new  ·  Esc quit")
 		b.WriteString(bar() + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
 	}
 	if m.message != "" {
-		b.WriteString("  " + hintStyle.Render(m.message) + "\n")
+		b.WriteString("  " + hintStyle.Render(displaytext.Sanitize(m.message)) + "\n")
 	}
 	return b.String()
 }
@@ -1481,9 +1497,9 @@ func absCwd(cwd string) string {
 		return "?"
 	}
 	if abs, err := filepath.Abs(cwd); err == nil {
-		return abs
+		return displaytext.Sanitize(abs)
 	}
-	return cwd
+	return displaytext.Sanitize(cwd)
 }
 
 func (m Model) renderHelp() string {
@@ -1505,7 +1521,7 @@ func (m Model) renderHelp() string {
 
 func (m Model) renderConfirm() string {
 	sess, _ := m.sessionByID(m.confirmStopID)
-	name := firstNonEmpty(sess.DisplayName, sess.ID, "session")
+	name := displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID, "session"))
 	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
 		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +
 		"   " + brandStyle.Render("y") + hintStyle.Render(" / restart ") + brandStyle.Render("r") + hintStyle.Render(" / ") + titleStyle.Render("N") + "\n"
@@ -1524,7 +1540,7 @@ func (m Model) renderWizard() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 4", step+1)) + "\n")
-	b.WriteString("  " + titleStyle.Render(steps[step]) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
+	b.WriteString("  " + titleStyle.Render(displaytext.Sanitize(steps[step])) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
 	switch step {
 	case 2:
 		// Warn when the chosen working directory is not inside a git repo: there
@@ -1569,21 +1585,6 @@ func sessionGlyph(s adapter.Session) (string, lipgloss.Style) {
 	}
 }
 
-func stateGlyph(s adapter.State) (string, lipgloss.Style) {
-	switch s {
-	case adapter.Active:
-		return "⟳", liveGlyphStyle
-	case adapter.Failed:
-		return "✕", failGlyphStyle
-	default:
-		return "•", hintStyle
-	}
-}
-
-func stateLabel(s adapter.State) string {
-	return strings.ToLower(string(s))
-}
-
 // prStatusDot returns a distinct glyph per PR status (not color-only) so the PR
 // state survives a monochrome terminal or a screen scrape: open=hollow circle,
 // merged=filled circle, draft=half circle, closed=cross (F26).
@@ -1620,7 +1621,7 @@ func prStatusStyle(s adapter.PRStatus) lipgloss.Style {
 // occupy rather than their byte length. When clipping happens an ellipsis is
 // appended and the result still fits within n columns (F28).
 func truncate(s string, n int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
+	s = displaytext.Sanitize(s)
 	if n <= 0 {
 		return ""
 	}

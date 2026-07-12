@@ -75,6 +75,27 @@ func TestTruncateIsWidthAware(t *testing.T) {
 	}
 }
 
+func TestTruncateUnicodeGolden(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		cols int
+		want string
+	}{
+		{name: "emoji", in: "🚀🚀🚀", cols: 5, want: "🚀🚀…"},
+		{name: "combining", in: "e\u0301clair", cols: 3, want: "e\u0301c…"},
+		{name: "cjk", in: "你好世界", cols: 5, want: "你好…"},
+		{name: "narrow", in: "anything", cols: 1, want: "…"},
+		{name: "pasted-multibyte-name", in: "部署 café 🚀", cols: 10, want: "部署 café…"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := truncate(tc.in, tc.cols); got != tc.want {
+				t.Fatalf("truncate(%q, %d) = %q, want %q", tc.in, tc.cols, got, tc.want)
+			}
+		})
+	}
+}
+
 // F28 — truncate must not chop a multibyte rune mid-sequence (the old byte-slice
 // path produced mojibake on the boundary).
 func TestTruncateNeverEmitsMojibake(t *testing.T) {
@@ -83,6 +104,29 @@ func TestTruncateNeverEmitsMojibake(t *testing.T) {
 		got := truncate(in, n)
 		if !utf8.ValidString(got) {
 			t.Fatalf("truncate(%q,%d)=%q is not valid UTF-8", in, n, got)
+		}
+	}
+}
+
+func TestRenderedMetadataCannotInjectTerminalControls(t *testing.T) {
+	sess := adapter.Session{
+		ID:          "1",
+		AgentType:   "fake\x1b[2J",
+		DisplayName: "safe\x1b]52;c;YQ==\x07name",
+		Prompt:      "fix\nthis\x1b[31m now",
+		Cwd:         "/tmp/evil\x1b[Hrepo",
+		ProcAlive:   adapter.Alive,
+	}
+	m := Model{width: 100, sessions: []adapter.Session{sess}, selected: 0, confirmStopID: "1"}
+	out := m.renderDetails() + renderRow(sess, false, 30, 40, true) + m.renderConfirm()
+	for _, unsafe := range []string{"\x1b[2J", "\x1b]52", "\x1b[31m", "\x1b[H"} {
+		if strings.Contains(out, unsafe) {
+			t.Fatalf("rendered control sequence %q: %q", unsafe, out)
+		}
+	}
+	for _, want := range []string{"safename", "fix this now", "/tmp/evilrepo"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("sanitized text missing %q: %q", want, out)
 		}
 	}
 }
@@ -155,9 +199,8 @@ func TestStateGlyphDistinguishesResumableFromFailed(t *testing.T) {
 	if live == resumable {
 		t.Fatalf("a live session and a resumable dead session must use distinct glyphs (both %q)", live)
 	}
-	failGlyph, _ := stateGlyph(adapter.Failed)
-	if resumable == failGlyph {
-		t.Fatalf("a reboot-survivor resumable session must not use the red Failed glyph %q", failGlyph)
+	if resumable == "✕" {
+		t.Fatal("a reboot-survivor resumable session must not use the failure glyph")
 	}
 	_ = closed
 }
@@ -169,9 +212,8 @@ func TestRenderRowResumableSessionNotMarkedFailed(t *testing.T) {
 	if strings.Contains(strings.ToLower(row), "failed") {
 		t.Fatalf("resumable row should not show the literal \"failed\": %q", row)
 	}
-	failGlyph, _ := stateGlyph(adapter.Failed)
-	if strings.Contains(row, failGlyph) {
-		t.Fatalf("resumable row should not show the red Failed glyph %q: %q", failGlyph, row)
+	if strings.Contains(row, "✕") {
+		t.Fatalf("resumable row should not show the failure glyph: %q", row)
 	}
 }
 

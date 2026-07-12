@@ -11,11 +11,13 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/creack/pty"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/vterm"
@@ -42,6 +44,12 @@ const killGrace = 1500 * time.Millisecond
 // this far behind the PTY stream (dead TCP-equivalent: a wedged terminal) is
 // disconnected rather than allowed to stall the session.
 const attachBufFrames = 512
+
+const (
+	markClosedRetryWindow = 2 * time.Second
+	markClosedRetryBase   = 25 * time.Millisecond
+	markClosedRetryMax    = 400 * time.Millisecond
+)
 
 // RunHost is the entry point of the detached per-session host process
 // (`uam __host`). It starts the agent command under a PTY, mirrors all output
@@ -100,8 +108,9 @@ type host struct {
 	// escalation stops there. cleaned is closed after shutdown has also
 	// removed the runtime files, so a Kill reply means the session is fully
 	// gone — a List immediately after must not see leftovers.
-	exited  chan struct{}
-	cleaned chan struct{}
+	exited   chan struct{}
+	cleaned  chan struct{}
+	stopping atomic.Bool
 }
 
 type attachClient struct {
@@ -131,7 +140,9 @@ func runHost(dir, name, cwd, label string, envs, command []string, ready *os.Fil
 		return fmt.Errorf("session %s already exists (host pid %d)", name, st.HostPID)
 	}
 	// Stale leftovers from a crashed host: safe to clear, the pid is gone.
-	removeSessionFiles(dir, name)
+	if err := removeSessionFiles(dir, name); err != nil {
+		return fmt.Errorf("remove stale session files: %w", err)
+	}
 
 	ln, err := net.Listen("unix", SocketPath(dir, name))
 	if err != nil {
@@ -271,6 +282,7 @@ func (h *host) signalLoop() {
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	<-ch
 	// Forward termination to the agent; the normal exit path then runs.
+	h.stopping.Store(true)
 	h.terminateChild()
 }
 
@@ -313,6 +325,7 @@ func (h *host) handleConn(conn net.Conn) {
 		_ = writeJSONLine(conn, response{OK: true})
 		_ = conn.Close()
 	case opKill:
+		h.stopping.Store(true)
 		h.terminateChild()
 		select {
 		case <-h.cleaned:
@@ -357,13 +370,7 @@ func (h *host) setLabel(label string) {
 // titleSequence sets the terminal title via OSC 0 — the native stand-in for
 // tmux's set-titles-string showing the user-facing session label.
 func titleSequence(label string) string {
-	clean := strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, label)
-	return "\x1b]0;" + clean + "\x07"
+	return "\x1b]0;" + displaytext.Sanitize(label) + "\x07"
 }
 
 func validSize(cols, rows int) bool {
@@ -512,23 +519,49 @@ func (h *host) signalChild(sig syscall.Signal) {
 // closed (the native replacement for the tmux session-closed hook), tell any
 // attached clients, and remove the runtime files.
 func (h *host) shutdown(exitCode int) {
-	h.markClosed(exitCode)
 	h.mu.Lock()
 	for cl := range h.clients {
 		delete(h.clients, cl)
 		cl.drop()
 	}
 	h.mu.Unlock()
-	removeSessionFiles(h.dir, h.name)
+	if err := removeSessionFiles(h.dir, h.name); err != nil {
+		log.Warn("remove session files failed", "session", h.name, "error", err)
+	}
+	h.markClosed(exitCode)
 }
 
 func (h *host) markClosed(exitCode int) {
-	st, err := store.Open(store.DefaultPath())
+	deadline := time.Now().Add(markClosedRetryWindow)
+	delay := markClosedRetryBase
+	var lastErr error
+	for {
+		st, err := store.Open(store.DefaultPath())
+		if err == nil {
+			var matched bool
+			matched, err = st.TryMarkSessionClosed(h.name, exitCode)
+			if err == nil && matched {
+				return
+			}
+		}
+		if h.stopping.Load() && err == nil {
+			return
+		}
+		lastErr = err
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			h.logMarkClosedFailure(lastErr)
+			return
+		}
+		time.Sleep(min(delay, remaining))
+		delay = min(delay*2, markClosedRetryMax)
+	}
+}
+
+func (h *host) logMarkClosedFailure(err error) {
 	if err != nil {
-		log.Warn("open store to mark session closed failed", "session", h.name, "error", err)
+		log.Warn("mark session closed failed after retry", "session", h.name, "error", err)
 		return
 	}
-	if err := st.MarkSessionClosed(h.name, exitCode); err != nil {
-		log.Warn("mark session closed failed", "session", h.name, "error", err)
-	}
+	log.Warn("mark session closed record not found before retry deadline", "session", h.name)
 }

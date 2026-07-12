@@ -262,22 +262,25 @@ func (t *Terminal) dispatchCSI(params string, final byte) {
 		}
 		return def
 	}
+	boundedArg := func(i, def, limit int) int {
+		return min(arg(i, def), limit)
+	}
 	s := t.active()
 	switch final {
 	case 'A':
-		s.moveY(-arg(0, 1))
+		s.moveY(-boundedArg(0, 1, t.rows))
 	case 'B', 'e':
-		s.moveY(arg(0, 1))
+		s.moveY(boundedArg(0, 1, t.rows))
 	case 'C', 'a':
-		s.moveX(arg(0, 1))
+		s.moveX(boundedArg(0, 1, t.cols))
 	case 'D':
-		s.moveX(-arg(0, 1))
+		s.moveX(-boundedArg(0, 1, t.cols))
 	case 'E':
 		s.x = 0
-		s.moveY(arg(0, 1))
+		s.moveY(boundedArg(0, 1, t.rows))
 	case 'F':
 		s.x = 0
-		s.moveY(-arg(0, 1))
+		s.moveY(-boundedArg(0, 1, t.rows))
 	case 'G', '`':
 		s.x = clamp(arg(0, 1)-1, 0, t.cols-1)
 		s.pendingWrap = false
@@ -293,23 +296,19 @@ func (t *Terminal) dispatchCSI(params string, final byte) {
 	case 'K':
 		s.eraseLine(argDefault(n, 0, 0), t.cols, t.bceFill())
 	case 'L':
-		s.insertLines(arg(0, 1), t.bceFill())
+		s.insertLines(boundedArg(0, 1, s.bottom-s.y+1), t.bceFill())
 	case 'M':
 		s.deleteLines(arg(0, 1), t.bceFill())
 	case '@':
-		s.insertChars(arg(0, 1), t.cols, t.bceFill())
+		s.insertChars(boundedArg(0, 1, t.cols-s.x), t.cols, t.bceFill())
 	case 'P':
 		s.deleteChars(arg(0, 1), t.cols, t.bceFill())
 	case 'X':
-		s.eraseChars(arg(0, 1), t.cols, t.bceFill())
+		s.eraseChars(boundedArg(0, 1, t.cols-s.x), t.cols, t.bceFill())
 	case 'S':
-		for i := 0; i < arg(0, 1); i++ {
-			t.scrollUp()
-		}
+		t.scrollUpN(boundedArg(0, 1, s.bottom-s.top+1))
 	case 'T':
-		for i := 0; i < arg(0, 1); i++ {
-			t.scrollDownRegion()
-		}
+		t.scrollDownRegionN(boundedArg(0, 1, s.bottom-s.top+1))
 	case 'r':
 		top := clamp(arg(0, 1)-1, 0, t.rows-1)
 		bot := clamp(arg(1, t.rows)-1, 0, t.rows-1)
@@ -366,15 +365,24 @@ func csiParams(s string) []int {
 	for _, p := range parts {
 		v := 0
 		for _, c := range p {
-			if c < '0' || c > '9' || v > 1<<20 {
+			if c < '0' || c > '9' {
 				break
 			}
-			v = v*10 + int(c-'0')
+			digit := int(c - '0')
+			if v > (maxCSIParam-digit)/10 {
+				v = maxCSIParam
+				continue
+			}
+			v = v*10 + digit
 		}
 		out = append(out, v)
 	}
 	return out
 }
+
+// Keep parsed arithmetic comfortably away from integer overflow. Grid-affecting
+// operations are clamped further to their row/column dimensions at dispatch.
+const maxCSIParam = int(^uint(0)>>1) / 2
 
 // replayModes are the input- and cursor-affecting DEC private modes Redraw
 // re-emits, in a deterministic order. The agent's attach client tears all of
@@ -466,28 +474,71 @@ func (t *Terminal) lineFeed(wrapped bool) {
 // scrollUp shifts the scroll region up one row. On the main screen with a
 // full-height region the departing top row enters scrollback history.
 func (t *Terminal) scrollUp() {
+	t.scrollUpN(1)
+}
+
+func (t *Terminal) scrollUpN(n int) {
 	s := t.active()
-	if !t.onAlt && s.top == 0 && s.bottom == t.rows-1 && t.maxHistory > 0 {
-		t.pushHistory(bufLine{text: rowText(s.cells[0]), wrapped: s.wrapped[0]})
-	}
 	top, bot := s.top, s.bottom
-	rec := s.cells[top]
-	copy(s.cells[top:bot], s.cells[top+1:bot+1])
-	copy(s.wrapped[top:bot], s.wrapped[top+1:bot+1])
-	s.cells[bot] = rec
-	clearRow(s.cells[bot], t.bceFill())
-	s.wrapped[bot] = false
+	n = clamp(n, 0, bot-top+1)
+	if n == 0 {
+		return
+	}
+	if n == 1 {
+		if !t.onAlt && top == 0 && bot == t.rows-1 && t.maxHistory > 0 {
+			t.pushHistory(bufLine{text: rowText(s.cells[top]), wrapped: s.wrapped[top]})
+		}
+		recycled := s.cells[top]
+		copy(s.cells[top:bot], s.cells[top+1:bot+1])
+		copy(s.wrapped[top:bot], s.wrapped[top+1:bot+1])
+		s.cells[bot] = recycled
+		clearRow(s.cells[bot], t.bceFill())
+		s.wrapped[bot] = false
+		return
+	}
+	if !t.onAlt && top == 0 && bot == t.rows-1 && t.maxHistory > 0 {
+		for i := top; i < top+n; i++ {
+			t.pushHistory(bufLine{text: rowText(s.cells[i]), wrapped: s.wrapped[i]})
+		}
+	}
+	recycled := append([][]cell(nil), s.cells[top:top+n]...)
+	copy(s.cells[top:bot-n+1], s.cells[top+n:bot+1])
+	copy(s.cells[bot-n+1:bot+1], recycled)
+	copy(s.wrapped[top:bot-n+1], s.wrapped[top+n:bot+1])
+	for i := bot - n + 1; i <= bot; i++ {
+		clearRow(s.cells[i], t.bceFill())
+		s.wrapped[i] = false
+	}
 }
 
 func (t *Terminal) scrollDownRegion() {
+	t.scrollDownRegionN(1)
+}
+
+func (t *Terminal) scrollDownRegionN(n int) {
 	s := t.active()
 	top, bot := s.top, s.bottom
-	rec := s.cells[bot]
-	copy(s.cells[top+1:bot+1], s.cells[top:bot])
-	copy(s.wrapped[top+1:bot+1], s.wrapped[top:bot])
-	s.cells[top] = rec
-	clearRow(s.cells[top], t.bceFill())
-	s.wrapped[top] = false
+	n = clamp(n, 0, bot-top+1)
+	if n == 0 {
+		return
+	}
+	if n == 1 {
+		recycled := s.cells[bot]
+		copy(s.cells[top+1:bot+1], s.cells[top:bot])
+		copy(s.wrapped[top+1:bot+1], s.wrapped[top:bot])
+		s.cells[top] = recycled
+		clearRow(s.cells[top], t.bceFill())
+		s.wrapped[top] = false
+		return
+	}
+	recycled := append([][]cell(nil), s.cells[bot-n+1:bot+1]...)
+	copy(s.cells[top+n:bot+1], s.cells[top:bot-n+1])
+	copy(s.cells[top:top+n], recycled)
+	copy(s.wrapped[top+n:bot+1], s.wrapped[top:bot-n+1])
+	for i := top; i < top+n; i++ {
+		clearRow(s.cells[i], t.bceFill())
+		s.wrapped[i] = false
+	}
 }
 
 func (t *Terminal) reverseIndex() {
@@ -731,13 +782,26 @@ func (s *screen) insertLines(n int, fill cell) {
 	if s.y < s.top || s.y > s.bottom {
 		return
 	}
-	for i := 0; i < n; i++ {
-		rec := s.cells[s.bottom]
+	n = clamp(n, 0, s.bottom-s.y+1)
+	if n == 0 {
+		return
+	}
+	if n == 1 {
+		recycled := s.cells[s.bottom]
 		copy(s.cells[s.y+1:s.bottom+1], s.cells[s.y:s.bottom])
 		copy(s.wrapped[s.y+1:s.bottom+1], s.wrapped[s.y:s.bottom])
-		s.cells[s.y] = rec
+		s.cells[s.y] = recycled
 		clearRow(s.cells[s.y], fill)
 		s.wrapped[s.y] = false
+		return
+	}
+	recycled := append([][]cell(nil), s.cells[s.bottom-n+1:s.bottom+1]...)
+	copy(s.cells[s.y+n:s.bottom+1], s.cells[s.y:s.bottom-n+1])
+	copy(s.cells[s.y:s.y+n], recycled)
+	copy(s.wrapped[s.y+n:s.bottom+1], s.wrapped[s.y:s.bottom-n+1])
+	for i := s.y; i < s.y+n; i++ {
+		clearRow(s.cells[i], fill)
+		s.wrapped[i] = false
 	}
 }
 
@@ -745,35 +809,51 @@ func (s *screen) deleteLines(n int, fill cell) {
 	if s.y < s.top || s.y > s.bottom {
 		return
 	}
-	for i := 0; i < n; i++ {
-		rec := s.cells[s.y]
+	n = clamp(n, 0, s.bottom-s.y+1)
+	if n == 0 {
+		return
+	}
+	if n == 1 {
+		recycled := s.cells[s.y]
 		copy(s.cells[s.y:s.bottom], s.cells[s.y+1:s.bottom+1])
 		copy(s.wrapped[s.y:s.bottom], s.wrapped[s.y+1:s.bottom+1])
-		s.cells[s.bottom] = rec
+		s.cells[s.bottom] = recycled
 		clearRow(s.cells[s.bottom], fill)
 		s.wrapped[s.bottom] = false
+		return
+	}
+	recycled := append([][]cell(nil), s.cells[s.y:s.y+n]...)
+	copy(s.cells[s.y:s.bottom-n+1], s.cells[s.y+n:s.bottom+1])
+	copy(s.cells[s.bottom-n+1:s.bottom+1], recycled)
+	copy(s.wrapped[s.y:s.bottom-n+1], s.wrapped[s.y+n:s.bottom+1])
+	for i := s.bottom - n + 1; i <= s.bottom; i++ {
+		clearRow(s.cells[i], fill)
+		s.wrapped[i] = false
 	}
 }
 
 func (s *screen) insertChars(n, cols int, fill cell) {
 	row := s.cells[s.y]
-	for i := 0; i < n; i++ {
-		copy(row[s.x+1:cols], row[s.x:cols-1])
-		row[s.x] = fill
+	n = clamp(n, 0, cols-s.x)
+	copy(row[s.x+n:cols], row[s.x:cols-n])
+	for i := s.x; i < s.x+n; i++ {
+		row[i] = fill
 	}
 }
 
 func (s *screen) deleteChars(n, cols int, fill cell) {
 	row := s.cells[s.y]
-	for i := 0; i < n; i++ {
-		copy(row[s.x:cols-1], row[s.x+1:cols])
-		row[cols-1] = fill
+	n = clamp(n, 0, cols-s.x)
+	copy(row[s.x:cols-n], row[s.x+n:cols])
+	for i := cols - n; i < cols; i++ {
+		row[i] = fill
 	}
 }
 
 func (s *screen) eraseChars(n, cols int, fill cell) {
 	row := s.cells[s.y]
-	for x := s.x; x < s.x+n && x < cols; x++ {
+	n = clamp(n, 0, cols-s.x)
+	for x := s.x; x < s.x+n; x++ {
 		row[x] = fill
 	}
 }
