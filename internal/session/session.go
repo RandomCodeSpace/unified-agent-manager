@@ -65,6 +65,37 @@ func EnsureDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create session dir %s: %w", dir, err)
 	}
+	if err := verifyDirIdentity(dir); err != nil {
+		return err
+	}
+	// MkdirAll is a no-op on an existing directory. Creation paths retain the
+	// historical repair behavior for a directory owned by this user; read and
+	// control paths use VerifyDir and fail closed instead.
+	if err := os.Chmod(dir, 0o700); err != nil { // #nosec G302 -- directory needs the execute bit; owner-only.
+		return fmt.Errorf("restrict session dir %s: %w", dir, err)
+	}
+	return VerifyDir(dir)
+}
+
+// VerifyDir validates an existing runtime directory without changing it.
+// The directory is the local authorization boundary around session sockets
+// and state, so every read/control path must call this before trusting files
+// beneath it.
+func VerifyDir(dir string) error {
+	if err := verifyDirIdentity(dir); err != nil {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("stat session dir %s: %w", dir, err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		return fmt.Errorf("session dir %s has unsafe mode %04o; want 0700", dir, info.Mode().Perm())
+	}
+	return nil
+}
+
+func verifyDirIdentity(dir string) error {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return fmt.Errorf("stat session dir %s: %w", dir, err)
@@ -74,12 +105,6 @@ func EnsureDir(dir string) error {
 	}
 	if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
 		return fmt.Errorf("session dir %s is owned by uid %d, not the current user", dir, st.Uid)
-	}
-	// MkdirAll is a no-op on an existing directory; re-assert the mode so a
-	// pre-existing world-readable dir cannot silently expose sockets. 0700 is
-	// required (not 0600): the owner must traverse the directory.
-	if err := os.Chmod(dir, 0o700); err != nil { // #nosec G302 -- directory needs the execute bit; owner-only.
-		return fmt.Errorf("restrict session dir %s: %w", dir, err)
 	}
 	return nil
 }
@@ -129,6 +154,12 @@ func statePath(dir, name string) string { return filepath.Join(dir, name+".json"
 func SocketPath(dir, name string) string { return filepath.Join(dir, name+".sock") }
 
 func writeState(dir string, st State) error {
+	if err := VerifyDir(dir); err != nil {
+		return err
+	}
+	if err := ValidateName(st.Name); err != nil {
+		return err
+	}
 	data, err := json.Marshal(st)
 	if err != nil {
 		return err
@@ -142,7 +173,21 @@ func writeState(dir string, st State) error {
 }
 
 func readState(dir, name string) (State, error) {
-	data, err := os.ReadFile(statePath(dir, name))
+	if err := ValidateName(name); err != nil {
+		return State{}, err
+	}
+	if err := VerifyDir(dir); err != nil {
+		return State{}, err
+	}
+	path := statePath(dir, name)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return State{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return State{}, fmt.Errorf("session state %s is not a regular file", name)
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return State{}, err
 	}
@@ -150,12 +195,25 @@ func readState(dir, name string) (State, error) {
 	if err := json.Unmarshal(data, &st); err != nil {
 		return State{}, fmt.Errorf("parse session state %s: %w", name, err)
 	}
+	if st.Name != name {
+		return State{}, fmt.Errorf("session state name %q does not match file name %q", st.Name, name)
+	}
 	return st, nil
 }
 
-func removeSessionFiles(dir, name string) {
-	_ = os.Remove(statePath(dir, name))
-	_ = os.Remove(SocketPath(dir, name))
+func removeSessionFiles(dir, name string) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	if err := VerifyDir(dir); err != nil {
+		return err
+	}
+	for _, path := range []string{statePath(dir, name), SocketPath(dir, name)} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // ProcAlive reports whether pid is a live process (signal-0 probe). It is the

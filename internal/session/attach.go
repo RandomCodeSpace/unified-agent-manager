@@ -90,6 +90,9 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	if err := ValidateName(name); err != nil {
 		return err
 	}
+	if err := VerifyDir(dir); err != nil {
+		return err
+	}
 	conn, err := net.Dial("unix", SocketPath(dir, name))
 	if err != nil {
 		return fmt.Errorf("session %s is not running: %w", name, err)
@@ -111,6 +114,7 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	if !resp.OK {
 		return fmt.Errorf("attach %s: %s", name, resp.Err)
 	}
+	frames := newFrameWriter(conn)
 
 	var ttyState *term.State
 	if term.IsTerminal(stdin.Fd()) {
@@ -151,7 +155,7 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	go func() {
 		for range winch {
 			if w, h, err := term.GetSize(stdout.Fd()); err == nil {
-				_ = writeFrame(conn, frameResize, resizePayload(w, h))
+				_ = frames.WriteFrame(frameResize, resizePayload(w, h))
 			}
 		}
 	}()
@@ -160,7 +164,7 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	// cannot be interrupted; when the session ends the process exits anyway.
 	detached := make(chan struct{})
 	go func() {
-		pumpStdin(stdin, conn, backDetachEnabled())
+		pumpStdin(stdin, frames, backDetachEnabled())
 		close(detached)
 	}()
 
@@ -176,12 +180,12 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	var note string
 	select {
 	case <-detached:
-		_ = writeFrame(conn, frameDetach, nil)
+		_ = frames.WriteFrame(frameDetach, nil)
 		note = "detached"
 	case <-done:
 		note = "session ended"
 	case <-quit:
-		_ = writeFrame(conn, frameDetach, nil)
+		_ = frames.WriteFrame(frameDetach, nil)
 		note = "detached"
 	}
 	// Stop the host→terminal pump and drain it before restoring the screen:
@@ -273,7 +277,7 @@ const maxStrLen = 4096
 // pumpStdin forwards terminal input to the host, filtering the detach chord,
 // Ctrl+Z, and (when enabled) the left-arrow quick detach. It returns when the
 // user detaches or stdin/conn fails.
-func pumpStdin(stdin io.Reader, conn net.Conn, backDetach bool) {
+func pumpStdin(stdin io.Reader, frames *frameWriter, backDetach bool) {
 	f := &stdinFilter{backDetach: backDetach}
 	buf := make([]byte, 4096)
 	for {
@@ -281,7 +285,7 @@ func pumpStdin(stdin io.Reader, conn net.Conn, backDetach bool) {
 		if n > 0 {
 			out, detach := f.filter(buf[:n])
 			if len(out) > 0 {
-				if werr := writeFrame(conn, frameStdin, out); werr != nil {
+				if werr := frames.WriteFrame(frameStdin, out); werr != nil {
 					return
 				}
 			}

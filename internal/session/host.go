@@ -131,7 +131,9 @@ func runHost(dir, name, cwd, label string, envs, command []string, ready *os.Fil
 		return fmt.Errorf("session %s already exists (host pid %d)", name, st.HostPID)
 	}
 	// Stale leftovers from a crashed host: safe to clear, the pid is gone.
-	removeSessionFiles(dir, name)
+	if err := removeSessionFiles(dir, name); err != nil {
+		return fmt.Errorf("remove stale session files: %w", err)
+	}
 
 	ln, err := net.Listen("unix", SocketPath(dir, name))
 	if err != nil {
@@ -519,7 +521,9 @@ func (h *host) shutdown(exitCode int) {
 		cl.drop()
 	}
 	h.mu.Unlock()
-	removeSessionFiles(h.dir, h.name)
+	if err := removeSessionFiles(h.dir, h.name); err != nil {
+		log.Warn("remove session files failed", "session", h.name, "error", err)
+	}
 }
 
 func (h *host) markClosed(exitCode int) {

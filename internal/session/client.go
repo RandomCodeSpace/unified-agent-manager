@@ -153,6 +153,12 @@ func sortedKeys(m map[string]string) []string {
 // files — no subprocess, no socket round-trips. Leftovers from a crashed host
 // are swept once both the host and its agent are gone.
 func (c *Client) List(_ context.Context) ([]Info, error) {
+	if err := VerifyDir(c.Dir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
 	entries, err := os.ReadDir(c.Dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -179,7 +185,7 @@ func (c *Client) List(_ context.Context) ([]Info, error) {
 				out = append(out, infoFromState(st))
 				continue
 			}
-			removeSessionFiles(c.Dir, name)
+			_ = removeSessionFiles(c.Dir, name)
 			continue
 		}
 		out = append(out, infoFromState(st))
@@ -261,7 +267,7 @@ func (c *Client) Kill(ctx context.Context, name string) error {
 	deadline := time.Now().Add(callTimeout)
 	for time.Now().Before(deadline) {
 		if !st.childAlive() && !st.hostAlive() {
-			removeSessionFiles(c.Dir, name)
+			_ = removeSessionFiles(c.Dir, name)
 			return nil
 		}
 		select {
@@ -318,6 +324,9 @@ func (c *Client) roundTrip(ctx context.Context, name string, req request) (respo
 		return response{}, err
 	}
 	name = strings.TrimPrefix(name, "=")
+	if err := VerifyDir(c.Dir); err != nil {
+		return response{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	var d net.Dialer
