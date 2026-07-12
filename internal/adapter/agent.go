@@ -278,6 +278,13 @@ func (a *Agent) List(ctx context.Context) ([]Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list %s sessions: %w", a.Name(), err)
 	}
+	return a.ListFromSnapshot(ctx, infos)
+}
+
+// ListFromSnapshot filters a shared backend snapshot for this provider. The
+// registry uses it to scan the runtime directory once per refresh while custom
+// adapters that only implement List retain their existing behavior.
+func (a *Agent) ListFromSnapshot(ctx context.Context, infos []session.Info) ([]Session, error) {
 	var out []Session
 	prefix := "uam-" + a.Name() + "-"
 	seen := make(map[string]struct{}, len(infos))

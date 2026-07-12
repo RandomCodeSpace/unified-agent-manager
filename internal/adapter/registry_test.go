@@ -1,6 +1,13 @@
 package adapter
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/adaptertest"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
+)
 
 func TestRegistryDefaultAndDisabledReasons(t *testing.T) {
 	r := NewRegistry([]AgentAdapter{fakeAdapter{name: "b", available: true}, fakeAdapter{name: "a", available: true}, fakeAdapter{name: "x", available: false}})
@@ -26,6 +33,27 @@ func TestRegistrySkipsUnavailableAdapters(t *testing.T) {
 	}
 	if _, ok := r.Get("missing"); ok {
 		t.Fatal("missing adapter should not resolve")
+	}
+}
+
+func TestRegistryListAllUsesSingleBackendSnapshot(t *testing.T) {
+	backend := &adaptertest.Backend{Sessions: []session.Info{
+		{Name: "uam-a-aaaa1111", CreatedUnix: time.Now().Unix(), Alive: true},
+		{Name: "uam-b-bbbb2222", CreatedUnix: time.Now().Unix(), Alive: true},
+	}}
+	a := NewAgent("a", "A", []CommandCandidate{{Display: "sh", Args: []string{"/bin/sh"}}}, nil, backend)
+	b := NewAgent("b", "B", []CommandCandidate{{Display: "sh", Args: []string{"/bin/sh"}}}, nil, backend)
+	r := NewRegistryWithBackend(backend, []AgentAdapter{a, b})
+
+	sessions, err := r.ListAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2: %+v", len(sessions), sessions)
+	}
+	if got := len(backend.CallsOf("list")); got != 1 {
+		t.Fatalf("backend List calls = %d, want 1", got)
 	}
 }
 

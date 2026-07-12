@@ -242,7 +242,7 @@ func NewService(st *store.Store) *app.Service {
 	})
 	// Build the registry from the single shared adapter list so the CLI service
 	// and the TUI can never diverge on which providers exist (F14).
-	reg := adapter.NewRegistry(agents.Default(client))
+	reg := adapter.NewRegistryWithBackend(client, agents.Default(client))
 	return app.NewService(st, reg)
 }
 
