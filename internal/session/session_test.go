@@ -309,6 +309,14 @@ func TestSetSessionLabelPersistsToState(t *testing.T) {
 	})
 }
 
+func TestTitleSequenceSanitizesTerminalControls(t *testing.T) {
+	got := titleSequence("safe\u009d0;forged\a red\nnow")
+	want := "\x1b]0;safe red now\x07"
+	if got != want {
+		t.Fatalf("titleSequence = %q, want %q", got, want)
+	}
+}
+
 func TestListSweepsStaleStateFiles(t *testing.T) {
 	c := newTestClient(t)
 	if err := EnsureDir(c.Dir); err != nil {
