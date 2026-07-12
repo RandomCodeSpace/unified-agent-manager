@@ -186,7 +186,9 @@ func readState(dir, name string) (State, error) {
 	if !info.Mode().IsRegular() {
 		return State{}, fmt.Errorf("session state %s is not a regular file", name)
 	}
-	data, err := os.ReadFile(path)
+	// name has passed the strict canonical allow-list and dir has passed the
+	// owner-only identity check above, so path cannot escape the runtime dir.
+	data, err := os.ReadFile(path) // #nosec G304 -- validated name within a verified owner-only directory.
 	if err != nil {
 		return State{}, err
 	}

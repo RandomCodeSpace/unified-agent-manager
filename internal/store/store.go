@@ -583,7 +583,9 @@ func (s *Store) saveNoLock(cfg Config) error {
 }
 
 func syncDir(dir string) error {
-	f, err := os.Open(dir)
+	// dir is the containing directory of Store.path; opening that configured
+	// path is the intended durability operation, not user-controlled inclusion.
+	f, err := os.Open(dir) // #nosec G304 -- Store intentionally fsyncs its configured parent directory.
 	if err != nil {
 		return fmt.Errorf("open store directory for sync: %w", err)
 	}
