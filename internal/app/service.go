@@ -123,26 +123,30 @@ func (s *Service) persistRefresh(updates map[string]refreshPatch) error {
 	}
 	return s.Store.Update(func(cfg *store.Config) error {
 		for key, patch := range updates {
-			rec, exists := cfg.Sessions[key]
-			if (!exists || rec.ID == "") && patch.create != nil {
-				rec = *patch.create
-			}
-			if patch.status != nil {
-				rec.Status = *patch.status
-			}
-			if patch.lastSeenAt != nil {
-				rec.LastSeenAt = *patch.lastSeenAt
-			}
-			if patch.clearPR {
-				rec.PR = nil
-			} else if patch.pr != nil {
-				pr := *patch.pr
-				rec.PR = &pr
-			}
-			cfg.Sessions[key] = rec
+			applyRefreshPatch(cfg, key, patch)
 		}
 		return nil
 	})
+}
+
+func applyRefreshPatch(cfg *store.Config, key string, patch refreshPatch) {
+	rec, exists := cfg.Sessions[key]
+	if (!exists || rec.ID == "") && patch.create != nil {
+		rec = *patch.create
+	}
+	if patch.status != nil {
+		rec.Status = *patch.status
+	}
+	if patch.lastSeenAt != nil {
+		rec.LastSeenAt = *patch.lastSeenAt
+	}
+	if patch.clearPR {
+		rec.PR = nil
+	} else if patch.pr != nil {
+		pr := *patch.pr
+		rec.PR = &pr
+	}
+	cfg.Sessions[key] = rec
 }
 
 func (s *Service) loadConfig() (store.Config, error) {
@@ -362,25 +366,41 @@ func (s *Service) RefreshPRStatuses(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now()
+	jobs := stalePRRefreshJobs(sessions, cfg, time.Now())
+	if len(jobs) == 0 {
+		return nil
+	}
+	results := runPRRefreshJobs(ctx, jobs, firstPRChecker(s.checkPR))
+	if err := s.persistPRRefreshResults(results); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+func stalePRRefreshJobs(sessions []adapter.Session, cfg store.Config, now time.Time) []prRefreshJob {
 	jobs := make([]prRefreshJob, 0, len(sessions))
 	for _, sess := range sessions {
 		if sess.PR == nil {
 			continue
 		}
-		rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
+		key := store.Key(sess.AgentType, sess.ID)
+		rec := cfg.Sessions[key]
 		if rec.PR != nil && rec.PR.URL == sess.PR.URL && now.Sub(rec.PR.LastChecked) < prRefreshAge {
 			continue
 		}
-		jobs = append(jobs, prRefreshJob{key: store.Key(sess.AgentType, sess.ID), ref: *sess.PR})
+		jobs = append(jobs, prRefreshJob{key: key, ref: *sess.PR})
 	}
-	if len(jobs) == 0 {
-		return nil
+	return jobs
+}
+
+func firstPRChecker(checker func(context.Context, string) (pr.Status, error)) func(context.Context, string) (pr.Status, error) {
+	if checker != nil {
+		return checker
 	}
-	checker := s.checkPR
-	if checker == nil {
-		checker = pr.Check
-	}
+	return pr.Check
+}
+
+func runPRRefreshJobs(ctx context.Context, jobs []prRefreshJob, checker func(context.Context, string) (pr.Status, error)) []prRefreshResult {
 	jobCh := make(chan prRefreshJob)
 	resultCh := make(chan prRefreshResult, len(jobs))
 	workers := min(prRefreshWorkers, len(jobs))
@@ -390,14 +410,7 @@ func (s *Service) RefreshPRStatuses(ctx context.Context) error {
 		go func() {
 			defer wg.Done()
 			for job := range jobCh {
-				status := job.ref.Status
-				checkCtx, checkCancel := context.WithTimeout(ctx, prCheckTimeout)
-				checked, checkErr := checkPRWithContext(checkCtx, checker, job.ref.URL)
-				checkCancel()
-				if checkErr == nil && checked != pr.None {
-					status = adapterStatus(checked)
-				}
-				resultCh <- prRefreshResult{key: job.key, record: store.PRRecord{URL: job.ref.URL, Number: job.ref.Number, LastStatus: string(status), LastChecked: time.Now()}}
+				resultCh <- runPRRefreshJob(ctx, job, checker)
 			}
 		}()
 	}
@@ -417,7 +430,22 @@ func (s *Service) RefreshPRStatuses(ctx context.Context) error {
 	for result := range resultCh {
 		results = append(results, result)
 	}
-	updateErr := s.Store.Update(func(cfg *store.Config) error {
+	return results
+}
+
+func runPRRefreshJob(ctx context.Context, job prRefreshJob, checker func(context.Context, string) (pr.Status, error)) prRefreshResult {
+	status := job.ref.Status
+	checkCtx, checkCancel := context.WithTimeout(ctx, prCheckTimeout)
+	checked, checkErr := checkPRWithContext(checkCtx, checker, job.ref.URL)
+	checkCancel()
+	if checkErr == nil && checked != pr.None {
+		status = adapterStatus(checked)
+	}
+	return prRefreshResult{key: job.key, record: store.PRRecord{URL: job.ref.URL, Number: job.ref.Number, LastStatus: string(status), LastChecked: time.Now()}}
+}
+
+func (s *Service) persistPRRefreshResults(results []prRefreshResult) error {
+	return s.Store.Update(func(cfg *store.Config) error {
 		for _, result := range results {
 			rec, ok := cfg.Sessions[result.key]
 			if !ok || rec.PR == nil || rec.PR.URL != result.record.URL {
@@ -429,10 +457,6 @@ func (s *Service) RefreshPRStatuses(ctx context.Context) error {
 		}
 		return nil
 	})
-	if updateErr != nil {
-		return updateErr
-	}
-	return ctx.Err()
 }
 
 func adapterStatus(status pr.Status) adapter.PRStatus {

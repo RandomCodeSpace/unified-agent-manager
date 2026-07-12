@@ -550,14 +550,18 @@ func (h *host) markClosed(exitCode int) {
 		lastErr = err
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			if lastErr != nil {
-				log.Warn("mark session closed failed after retry", "session", h.name, "error", lastErr)
-			} else {
-				log.Warn("mark session closed record not found before retry deadline", "session", h.name)
-			}
+			h.logMarkClosedFailure(lastErr)
 			return
 		}
 		time.Sleep(min(delay, remaining))
 		delay = min(delay*2, markClosedRetryMax)
 	}
+}
+
+func (h *host) logMarkClosedFailure(err error) {
+	if err != nil {
+		log.Warn("mark session closed failed after retry", "session", h.name, "error", err)
+		return
+	}
+	log.Warn("mark session closed record not found before retry deadline", "session", h.name)
 }

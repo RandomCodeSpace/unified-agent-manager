@@ -219,16 +219,7 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 	if err := a.Backend.CreateSession(ctx, sessionName, cwd, env, cmd); err != nil {
 		return Session{}, fmt.Errorf("create session %s: %w", sessionName, err)
 	}
-	// Surface the user-facing name in attached terminals' titles (the
-	// canonical uam-<agent>-<id> stays the machine-parseable session name).
-	// Cosmetic and best-effort — a failure never affects the session.
-	displayName := req.Name
-	if displayName == "" {
-		displayName = displayNameFromDir(cwd)
-	}
-	if err := a.Backend.SetSessionLabel(ctx, sessionName, displaytext.Sanitize(displayName+" · "+a.Name())); err != nil {
-		log.Debug("set session label failed", "session", sessionName, "error", err)
-	}
+	displayName := a.setSessionDisplayLabel(ctx, sessionName, req.Name, cwd)
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
 	if shouldSendPrompt {
 		if err := a.Backend.SendLine(ctx, sessionName, req.Prompt); err != nil {
@@ -252,6 +243,20 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 		}
 	}
 	return Session{ID: req.ID, AgentType: a.Name(), CommandAlias: req.CommandAlias, DisplayName: displayName, Prompt: req.Prompt, Cwd: cwd, SessionName: sessionName, ProviderSessionID: providerID, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
+}
+
+// setSessionDisplayLabel surfaces the user-facing name in attached terminal
+// titles while keeping the canonical session name machine-parseable. It is
+// cosmetic and best-effort: failure never changes session startup.
+func (a *Agent) setSessionDisplayLabel(ctx context.Context, sessionName, requestedName, cwd string) string {
+	displayName := requestedName
+	if displayName == "" {
+		displayName = displayNameFromDir(cwd)
+	}
+	if err := a.Backend.SetSessionLabel(ctx, sessionName, displaytext.Sanitize(displayName+" · "+a.Name())); err != nil {
+		log.Debug("set session label failed", "session", sessionName, "error", err)
+	}
+	return displayName
 }
 
 func resolveSessionCwd(cwd string) (string, error) {

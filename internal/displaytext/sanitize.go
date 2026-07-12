@@ -45,16 +45,7 @@ func Sanitize(s string) string {
 func step(state parseState, r rune, b *strings.Builder) parseState {
 	switch state {
 	case escape:
-		switch r {
-		case '[':
-			return csi
-		case ']', 'P', 'X', '^', '_':
-			return controlString
-		case 0x1b:
-			return escape
-		default:
-			return appendGround(r, b)
-		}
+		return stepEscape(r, b)
 	case csi:
 		if r == 0x1b {
 			return escape
@@ -64,14 +55,7 @@ func step(state parseState, r rune, b *strings.Builder) parseState {
 		}
 		return csi
 	case controlString:
-		switch r {
-		case 0x07, 0x9c:
-			return ground
-		case 0x1b:
-			return controlStringEscape
-		default:
-			return controlString
-		}
+		return stepControlString(r)
 	case controlStringEscape:
 		if r == '\\' || r == 0x9c || r == 0x07 {
 			return ground
@@ -82,6 +66,30 @@ func step(state parseState, r rune, b *strings.Builder) parseState {
 		return controlString
 	default:
 		return appendGround(r, b)
+	}
+}
+
+func stepEscape(r rune, b *strings.Builder) parseState {
+	switch r {
+	case '[':
+		return csi
+	case ']', 'P', 'X', '^', '_':
+		return controlString
+	case 0x1b:
+		return escape
+	default:
+		return appendGround(r, b)
+	}
+}
+
+func stepControlString(r rune) parseState {
+	switch r {
+	case 0x07, 0x9c:
+		return ground
+	case 0x1b:
+		return controlStringEscape
+	default:
+		return controlString
 	}
 }
 
