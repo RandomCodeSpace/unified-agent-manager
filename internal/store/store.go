@@ -442,7 +442,7 @@ func validateRecord(rec SessionRecord) string {
 	// The provider session id is passed as a resume argv value; constrain it
 	// so a hand-edited record cannot smuggle a flag or shell hazard into the
 	// agent's command line.
-	if rec.ProviderSessionID != "" && !providerSessionIDRE.MatchString(rec.ProviderSessionID) {
+	if rec.ProviderSessionID != "" && !ValidProviderSessionID(rec.ProviderSessionID) {
 		return "unsafe provider_session_id"
 	}
 	return ""
@@ -453,6 +453,11 @@ func validateRecord(rec SessionRecord) string {
 // "ses_..." ids — with no shell metacharacters and no leading dash (a value
 // starting with '-' could be parsed as a flag by the agent CLI).
 var providerSessionIDRE = regexp.MustCompile(`^[0-9A-Za-z_][0-9A-Za-z_-]{0,63}$`)
+
+// ValidProviderSessionID is the schema-v3 provider identity grammar. Runtime
+// discovery must use this same boundary so it cannot persist a value that a
+// later load would reject by dropping the containing session record.
+func ValidProviderSessionID(id string) bool { return providerSessionIDRE.MatchString(id) }
 
 func isSafeCommandAlias(alias string) bool {
 	if alias == "" || strings.HasPrefix(alias, "-") {
@@ -679,6 +684,9 @@ func (s *Store) TryRecordSessionExit(exit SessionExit) (bool, error) {
 			}
 			code := exit.ExitCode
 			rec.LastExitCode = &code
+			if exit.ProviderSessionID != "" {
+				rec.ProviderSessionID = exit.ProviderSessionID
+			}
 			cfg.Sessions[key] = rec
 			matched = true
 			return nil

@@ -148,6 +148,29 @@ func TestTryRecordSessionExitPreservesResumeLifecycle(t *testing.T) {
 	}
 }
 
+func TestTryRecordSessionExitUpdatesOnlyNonEmptyProviderIdentity(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(cfg *Config) error {
+		cfg.Sessions["fake:deadbeef"] = SessionRecord{ID: "deadbeef", Agent: "fake", SessionName: "uam-fake-deadbeef", ProviderSessionID: "ses_old"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TryRecordSessionExit(SessionExit{SessionName: "uam-fake-deadbeef", ProviderSessionID: "ses_new"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TryRecordSessionExit(SessionExit{SessionName: "uam-fake-deadbeef"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := s.Load()
+	if got := cfg.Sessions["fake:deadbeef"].ProviderSessionID; got != "ses_new" {
+		t.Fatalf("id=%q", got)
+	}
+}
+
 func TestSyncDirAcceptsStoreDirectoryAndRejectsMissingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	if err := syncDir(dir); err != nil {

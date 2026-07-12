@@ -62,14 +62,20 @@ type Agent struct {
 	YoloArgs         []string
 	Backend          Backend
 	SessionArgs      func(req ResumeRequest, activity string) []string
+	// PrepareLaunch runs after cwd and canonical session-name resolution.
+	// Preparation args run first; legacy SessionArgs are appended after them.
+	// Preparation identity overrides ProviderSession, which overrides the
+	// request's stored identity. Core UAM env keys cannot be overridden.
+	PrepareLaunch PrepareLaunchFunc
 	// ProviderSession optionally reports the provider-side session id that
 	// the launched agent will use (e.g. the uuid claude was seeded with via
 	// --session-id), or "" when unknown. It is persisted so a later resume
 	// can target the exact provider session (F-resume).
-	ProviderSession    func(req ResumeRequest, activity string) string
-	ResumeKindFor      func(req ResumeRequest) ResumeKind
-	SkipPromptOnResume bool
-	randomReader       io.Reader
+	ProviderSession       func(req ResumeRequest, activity string) string
+	LiveProviderSessionID func(sessionName string) (string, error)
+	ResumeKindFor         func(req ResumeRequest) ResumeKind
+	SkipPromptOnResume    bool
+	randomReader          io.Reader
 
 	// now is the clock used to throttle per-session PR captures; overridable in
 	// tests. lastPRScan records, per session name, when its output was last
@@ -213,13 +219,26 @@ func (a *Agent) ResumeKind(req ResumeRequest) ResumeKind {
 }
 
 func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity string) (Session, error) {
-	extra := []string{}
-	if a.SessionArgs != nil {
-		extra = append(extra, a.SessionArgs(req, activity)...)
-	}
-	cmd, err := a.commandForRequest(ctx, req, extra)
-	if err != nil {
-		return Session{}, err
+	// Preparation hooks may probe provider executables. Reject aliases before
+	// they can observe or execute an untrusted path/name; commandForRequest
+	// retains the same validation as defense in depth.
+	if req.CommandAlias != "" {
+		if err := validateCommandAlias(req.CommandAlias); err != nil {
+			return Session{}, err
+		}
+		if path, err := exec.LookPath(req.CommandAlias); err == nil {
+			if abs, absErr := filepath.Abs(path); absErr == nil {
+				path = abs
+			}
+			req.ExecutablePath = path
+		}
+	} else if command, ok := a.resolveCommand(); ok {
+		if path, err := exec.LookPath(command[0]); err == nil {
+			if abs, absErr := filepath.Abs(path); absErr == nil {
+				path = abs
+			}
+			req.ExecutablePath = path
+		}
 	}
 	cwd, err := resolveSessionCwd(req.Cwd)
 	if err != nil {
@@ -229,7 +248,27 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 	if sessionName == "" {
 		sessionName = fmt.Sprintf("uam-%s-%s", a.Name(), req.ID[:min(8, len(req.ID))])
 	}
-	env := map[string]string{"UAM_AGENT": a.Name(), "UAM_ID": req.ID}
+	preparation := LaunchPreparation{}
+	if a.PrepareLaunch != nil {
+		preparation, err = a.PrepareLaunch(ctx, req, activity, sessionName, cwd)
+		if err != nil {
+			return Session{}, fmt.Errorf("prepare %s launch: %w", a.Name(), err)
+		}
+	}
+	extra := append([]string{}, preparation.ExtraArgs...)
+	if a.SessionArgs != nil {
+		extra = append(extra, a.SessionArgs(req, activity)...)
+	}
+	cmd, err := a.commandForRequest(ctx, req, extra)
+	if err != nil {
+		return Session{}, err
+	}
+	env := make(map[string]string, len(preparation.Env)+2)
+	for key, value := range preparation.Env {
+		env[key] = value
+	}
+	env["UAM_AGENT"] = a.Name()
+	env["UAM_ID"] = req.ID
 	if err := a.Backend.CreateSession(ctx, sessionName, cwd, env, cmd); err != nil {
 		return Session{}, fmt.Errorf("create session %s: %w", sessionName, err)
 	}
@@ -255,6 +294,9 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 		if id := a.ProviderSession(req, activity); id != "" {
 			providerID = id
 		}
+	}
+	if preparation.ProviderSessionID != "" {
+		providerID = preparation.ProviderSessionID
 	}
 	return Session{ID: req.ID, AgentType: a.Name(), CommandAlias: req.CommandAlias, DisplayName: displayName, Prompt: req.Prompt, Cwd: cwd, SessionName: sessionName, ProviderSessionID: providerID, State: Active, ProcAlive: Alive, CreatedAt: created, LastChange: now}, nil
 }
@@ -331,7 +373,16 @@ func (a *Agent) ListFromSnapshot(ctx context.Context, infos []session.Info) ([]S
 			}
 			prRef = ExtractPR(capture)
 		}
-		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.Cwd, SessionName: info.Name, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: prRef})
+		providerID := ""
+		if a.LiveProviderSessionID != nil {
+			var discoverErr error
+			providerID, discoverErr = a.LiveProviderSessionID(info.Name)
+			if discoverErr != nil {
+				log.Debug("provider identity discovery failed", "session", info.Name, "error", discoverErr)
+				providerID = ""
+			}
+		}
+		out = append(out, Session{ID: id, AgentType: a.Name(), DisplayName: id, Cwd: info.Cwd, SessionName: info.Name, ProviderSessionID: providerID, State: state, ProcAlive: alive, LastChange: time.Now(), CreatedAt: created, PR: prRef})
 	}
 	a.prunePRScan(seen)
 	return out, nil

@@ -187,6 +187,34 @@ func TestNaturalAgentCrashRemainsResumableAndRecordsFailure(t *testing.T) {
 	})
 }
 
+func TestImmediateExitRecordsProviderIdentityHandoff(t *testing.T) {
+	c := newTestClient(t)
+	name := "uam-opencode-a1b2c3d4"
+	st, err := store.Open(store.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession("opencode:a1b2c3d4", store.SessionRecord{ID: "a1b2c3d4", Agent: "opencode", Name: "n", SessionName: name, Status: store.StatusActive})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handoff := filepath.Join(t.TempDir(), "identity.json")
+	command := `umask 077; printf '{"provider_session_id":"ses_fast123"}' > "$` + ProviderIdentityFileEnv + `"; exit 0`
+	if err := c.CreateSession(context.Background(), name, t.TempDir(), map[string]string{ProviderIdentityFileEnv: handoff}, []string{"/bin/sh", "-c", command}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "fast identity exit persisted", func() bool {
+		cfg, err := st.Load()
+		if err != nil {
+			return false
+		}
+		rec := cfg.Sessions["opencode:a1b2c3d4"]
+		return rec.LastExitCode != nil && *rec.LastExitCode == 0 && rec.ProviderSessionID == "ses_fast123"
+	})
+}
+
 func TestNaturalAgentExitBeforeRecordPersistenceEventuallyRecordsExit(t *testing.T) {
 	c := newTestClient(t)
 	shortDir, err := os.MkdirTemp("", "uam-exit-")

@@ -13,6 +13,11 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/claude"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/omp"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
@@ -799,6 +804,57 @@ func TestHeuristicResumeRejectsAmbiguousWorkspaceUnlessAllowed(t *testing.T) {
 	}
 	if fake.resumed == nil {
 		t.Fatal("allow-latest must launch heuristic resume")
+	}
+}
+
+func TestProductionProviderResumeKindMatrixThroughAmbiguityGuard(t *testing.T) {
+	tests := []struct {
+		name, provider, providerID string
+		newAdapter                 func() adapter.AgentAdapter
+		isolatedOMP                bool
+		wantAmbiguous              bool
+	}{
+		{"opencode exact", "opencode", "ses_known123", func() adapter.AgentAdapter { return opencode.New(nil) }, false, false},
+		{"opencode fallback", "opencode", "", func() adapter.AgentAdapter { return opencode.New(nil) }, false, true},
+		{"claude exact", "claude", "abc12345-dead-beef-cafe-0123456789ab", func() adapter.AgentAdapter { return claude.New(nil) }, false, false},
+		{"claude fallback", "claude", "", func() adapter.AgentAdapter { return claude.New(nil) }, false, true},
+		{"omp isolated", "omp", "", func() adapter.AgentAdapter { return omp.New(nil) }, true, false},
+		{"omp legacy", "omp", "", func() adapter.AgentAdapter { return omp.New(nil) }, false, true},
+		{"codex remains heuristic", "codex", "legacy-value", func() adapter.AgentAdapter { return codex.New(nil) }, false, true},
+		{"copilot derives exact UAM name", "copilot", "", func() adapter.AgentAdapter { return copilot.New(nil) }, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", state)
+			id, other := "11111111-dead-beef-cafe-0123456789ab", "22222222-dead-beef-cafe-0123456789ab"
+			if tt.isolatedOMP {
+				dir := filepath.Join(state, "uam", "providers", "omp", id)
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				for path := filepath.Join(state, "uam"); path != dir; {
+					if err := os.Chmod(path, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					next := filepath.Join(path, strings.Split(strings.TrimPrefix(dir, path+string(os.PathSeparator)), string(os.PathSeparator))[0])
+					path = next
+				}
+			}
+			cfg := store.DefaultConfig()
+			for _, candidate := range []string{id, other} {
+				providerID := ""
+				if candidate == id {
+					providerID = tt.providerID
+				}
+				cfg.PutSession(store.Key(tt.provider, candidate), store.SessionRecord{ID: candidate, Agent: tt.provider, Workdir: "/tmp/project", SessionName: "uam-" + tt.provider + "-" + candidate[:8], ProviderSessionID: providerID, Status: store.StatusActive})
+			}
+			svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{tt.newAdapter()}))
+			_, _, _, err := svc.prepareResume(adapter.Session{ID: id, AgentType: tt.provider}, cfg, ResumeOptions{})
+			if got := errors.Is(err, ErrAmbiguousResume); got != tt.wantAmbiguous {
+				t.Fatalf("error=%v ambiguous=%v want=%v", err, got, tt.wantAmbiguous)
+			}
+		})
 	}
 }
 

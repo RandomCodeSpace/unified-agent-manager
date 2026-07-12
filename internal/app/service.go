@@ -111,11 +111,12 @@ func (s *Service) PruneStartup(ctx context.Context) error {
 // overwrites only the supplied keys, leaving every other record (and any
 // concurrent mutation to it) intact.
 type refreshPatch struct {
-	create     *store.SessionRecord
-	status     *store.Status
-	lastSeenAt *time.Time
-	pr         *store.PRRecord
-	clearPR    bool
+	create            *store.SessionRecord
+	status            *store.Status
+	lastSeenAt        *time.Time
+	pr                *store.PRRecord
+	clearPR           bool
+	providerSessionID *string
 }
 
 func (s *Service) persistRefresh(updates map[string]refreshPatch) error {
@@ -146,6 +147,9 @@ func applyRefreshPatch(cfg *store.Config, key string, patch refreshPatch) {
 	} else if patch.pr != nil {
 		pr := *patch.pr
 		rec.PR = &pr
+	}
+	if patch.providerSessionID != nil {
+		rec.ProviderSessionID = *patch.providerSessionID
 	}
 	cfg.Sessions[key] = rec
 }
@@ -197,7 +201,9 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 	sess.DisplayName = firstNonEmpty(rec.Name, sess.DisplayName)
 	sess.CommandAlias = firstNonEmpty(rec.CommandAlias, sess.CommandAlias)
 	sess.Prompt = firstNonEmpty(rec.Prompt, sess.Prompt)
-	sess.ProviderSessionID = firstNonEmpty(rec.ProviderSessionID, sess.ProviderSessionID)
+	// A non-empty live identity is authoritative; an empty discovery result is
+	// a transient absence and must not erase a known stored identity.
+	sess.ProviderSessionID = firstNonEmpty(sess.ProviderSessionID, rec.ProviderSessionID)
 	sess.Pinned = rec.Pinned
 	sess.Group = rec.Group
 	sess.SortIndex = rec.SortIndex
@@ -276,6 +282,10 @@ func makeRefreshPatch(before, after store.SessionRecord, existed bool) refreshPa
 			patch.pr = &pr
 		}
 	}
+	if after.ProviderSessionID != "" && before.ProviderSessionID != after.ProviderSessionID {
+		providerID := after.ProviderSessionID
+		patch.providerSessionID = &providerID
+	}
 	return patch
 }
 
@@ -312,6 +322,11 @@ func reconcileRefreshRecord(cfg *store.Config, key string, sess adapter.Session,
 	// session isn't re-saved on every tick (F20 Stage 1).
 	if sess.ProcAlive == adapter.Alive && now.Sub(rec.LastSeenAt) >= lastSeenRefresh {
 		rec.LastSeenAt = now
+		cfg.Sessions[key] = rec
+		changed = true
+	}
+	if sess.ProviderSessionID != "" && sess.ProviderSessionID != rec.ProviderSessionID {
+		rec.ProviderSessionID = sess.ProviderSessionID
 		cfg.Sessions[key] = rec
 		changed = true
 	}

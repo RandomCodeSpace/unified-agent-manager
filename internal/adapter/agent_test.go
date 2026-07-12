@@ -151,6 +151,65 @@ func TestAgentResumeUsesPersistedMetadata(t *testing.T) {
 	}
 }
 
+func TestPrepareLaunchRunsAfterIdentityResolutionAndMergesWithoutMutation(t *testing.T) {
+	ag, be := newLifecycleAgent(t)
+	extra := []string{"--prepared"}
+	preparedEnv := map[string]string{"EXTRA": "value", "UAM_AGENT": "override"}
+	ag.PrepareLaunch = func(_ Context, req ResumeRequest, activity, sessionName, cwd string) (LaunchPreparation, error) {
+		if activity != "resumed" || sessionName != "uam-fake-abc12345" || cwd != "/tmp" || req.ID == "" {
+			t.Fatalf("preparation inputs: activity=%q name=%q cwd=%q req=%+v", activity, sessionName, cwd, req)
+		}
+		return LaunchPreparation{ExtraArgs: extra, Env: preparedEnv, ProviderSessionID: "provider-live"}, nil
+	}
+	ag.SessionArgs = func(ResumeRequest, string) []string { return []string{"--legacy"} }
+	sess, err := ag.Resume(context.Background(), ResumeRequest{ID: "abc12345", Cwd: "/tmp", Mode: "safe", SessionName: "uam-fake-abc12345"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := be.CallsOf("create")[0]
+	if got := strings.Join(create.Command, " "); !strings.HasSuffix(got, "--prepared --legacy") {
+		t.Fatalf("hook precedence argv=%q", got)
+	}
+	if create.Env["EXTRA"] != "value" || create.Env["UAM_AGENT"] != "fake" || create.Env["UAM_ID"] != "abc12345" {
+		t.Fatalf("merged env=%v", create.Env)
+	}
+	if sess.ProviderSessionID != "provider-live" {
+		t.Fatalf("provider id=%q", sess.ProviderSessionID)
+	}
+	extra[0], preparedEnv["EXTRA"] = "mutated", "mutated"
+	if create.Command[len(create.Command)-2] != "--prepared" || create.Env["EXTRA"] != "value" {
+		t.Fatalf("backend inputs alias hook-owned data: %+v", create)
+	}
+}
+
+func TestPrepareLaunchFailureCreatesNoSession(t *testing.T) {
+	ag, be := newLifecycleAgent(t)
+	ag.PrepareLaunch = func(Context, ResumeRequest, string, string, string) (LaunchPreparation, error) {
+		return LaunchPreparation{}, errors.New("prepare exploded")
+	}
+	_, err := ag.Dispatch(context.Background(), DispatchRequest{Cwd: "/tmp"})
+	if err == nil || !strings.Contains(err.Error(), "prepare exploded") {
+		t.Fatalf("Dispatch error=%v", err)
+	}
+	if got := be.CallsOf("create"); len(got) != 0 {
+		t.Fatalf("preparation failure created session: %+v", got)
+	}
+}
+
+func TestListFromSnapshotUsesLiveProviderIdentity(t *testing.T) {
+	ag, _ := newLifecycleAgent(t)
+	ag.LiveProviderSessionID = func(name string) (string, error) {
+		if name != "uam-fake-abc12345" {
+			t.Fatalf("name=%q", name)
+		}
+		return "ses_live", nil
+	}
+	got, err := ag.ListFromSnapshot(context.Background(), []session.Info{{Name: "uam-fake-abc12345", Cwd: "/tmp", Alive: true}})
+	if err != nil || len(got) != 1 || got[0].ProviderSessionID != "ses_live" {
+		t.Fatalf("ListFromSnapshot=%+v, %v", got, err)
+	}
+}
+
 // An alias resolvable via LookPath replaces the default command argv[0] with
 // the alias's absolute path; mode args still apply.
 func TestAgentCommandAliasOnPathReplacesDefaultCommand(t *testing.T) {

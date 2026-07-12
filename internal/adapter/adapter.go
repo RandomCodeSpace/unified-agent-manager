@@ -97,7 +97,22 @@ type ResumeRequest struct {
 	// instead of their "most recent" heuristic.
 	ProviderSessionID string
 	CreatedAt         time.Time
+	// ExecutablePath is transient launch metadata populated by Agent only
+	// after alias validation and PATH resolution. Preparation hooks may probe
+	// it; it is never persisted.
+	ExecutablePath string
 }
+
+// LaunchPreparation is provider-owned launch metadata computed after the
+// canonical backend identity and cwd are known, but before any session is
+// created. Slices and maps are copied by Agent before use.
+type LaunchPreparation struct {
+	ExtraArgs         []string
+	Env               map[string]string
+	ProviderSessionID string
+}
+
+type PrepareLaunchFunc func(ctx Context, req ResumeRequest, activity, sessionName, cwd string) (LaunchPreparation, error)
 
 type ResumeKind string
 
