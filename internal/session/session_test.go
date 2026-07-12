@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -962,15 +963,8 @@ func TestAttachMouseOffFiltersReplayedProviderModes(t *testing.T) {
 	snapshot := func() string { mu.Lock(); defer mu.Unlock(); return string(output) }
 	waitFor(t, "mouse policy marker", func() bool { return strings.Contains(snapshot(), "mouse-policy-marker") })
 	beforeDetach := snapshot()
-	for _, preserved := range []string{"\x1b[?1h", "\x1b[?2004h"} {
-		if !strings.Contains(beforeDetach, preserved) {
-			t.Fatalf("missing preserved mode %q: %q", preserved, beforeDetach)
-		}
-	}
-	for _, filtered := range []string{"\x1b[?1000h", "\x1b[?1006h"} {
-		if strings.Contains(beforeDetach, filtered) {
-			t.Fatalf("provider mouse mode leaked %q: %q", filtered, beforeDetach)
-		}
+	if err := validateMouseOffAttachOutput(beforeDetach); err != nil {
+		t.Fatalf("mouse-off attach output: %v: %q", err, beforeDetach)
 	}
 	if _, err := ptmx.Write([]byte{detachPrefix, 'd'}); err != nil {
 		t.Fatal(err)
@@ -983,6 +977,81 @@ func TestAttachMouseOffFiltersReplayedProviderModes(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("detach timed out")
 	}
+}
+
+func TestValidateMouseOffAttachOutputAcceptsGroupedDarwinModes(t *testing.T) {
+	for _, darwinOutput := range []string{
+		screenEnter + "\x1b[2J\x1b[H\x1b[?1;2004hmouse-policy-marker",
+		screenEnter + "\x1b[?2004;1hmouse-policy-marker",
+	} {
+		if err := validateMouseOffAttachOutput(darwinOutput); err != nil {
+			t.Fatalf("equivalent grouped private modes rejected: %v", err)
+		}
+	}
+}
+
+func TestValidateMouseOffAttachOutputRejectsWeakenedEvidence(t *testing.T) {
+	tests := []struct{ name, output string }{
+		{"missing outer screen", "\x1b[?1;2004hmouse-policy-marker"},
+		{"missing cursor mode", screenEnter + "\x1b[?2004hmouse-policy-marker"},
+		{"missing paste mode", screenEnter + "\x1b[?1hmouse-policy-marker"},
+		{"mouse combined", screenEnter + "\x1b[?1;1000;2004hmouse-policy-marker"},
+		{"provider alt enable", screenEnter + "\x1b[?1;47;2004hmouse-policy-marker"},
+		{"second outer enable", screenEnter + "\x1b[?1;1049;2004hmouse-policy-marker"},
+		{"provider alt disable", screenEnter + "\x1b[?1047l\x1b[?1;2004hmouse-policy-marker"},
+		{"missing payload", screenEnter + "\x1b[?1;2004h"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateMouseOffAttachOutput(tt.output); err == nil {
+				t.Fatalf("invalid output accepted: %q", tt.output)
+			}
+		})
+	}
+}
+
+func validateMouseOffAttachOutput(output string) error {
+	if !strings.HasPrefix(output, screenEnter) {
+		return fmt.Errorf("missing attach-owned outer screen")
+	}
+	body := output[len(screenEnter):]
+	marker := strings.Index(body, "mouse-policy-marker")
+	if marker < 0 {
+		return fmt.Errorf("missing provider payload marker")
+	}
+	body = body[:marker]
+	foundEnabled := map[string]bool{}
+	for i := 0; i+3 < len(body); i++ {
+		if body[i] != 0x1b || body[i+1] != '[' || body[i+2] != '?' {
+			continue
+		}
+		final := i + 3
+		for final < len(body) && (body[final] < 0x40 || body[final] > 0x7e) {
+			final++
+		}
+		if final == len(body) || (body[final] != 'h' && body[final] != 'l') {
+			continue
+		}
+		params := strings.Split(body[i+3:final], ";")
+		for _, param := range params {
+			switch param {
+			case "47", "1047", "1049":
+				return fmt.Errorf("provider alternate-screen mode %s%c leaked", param, body[final])
+			case "1000", "1002", "1003", "1005", "1006", "1015":
+				return fmt.Errorf("provider mouse mode %s%c leaked", param, body[final])
+			}
+			if body[final] == 'h' {
+				foundEnabled[param] = true
+			}
+		}
+		i = final
+	}
+	for _, mode := range []string{"1", "2004"} {
+		if !foundEnabled[mode] {
+			return fmt.Errorf("missing preserved provider mode %s", mode)
+		}
+	}
+	return nil
 }
 
 // The left-arrow quick detach works end to end through the real attach
