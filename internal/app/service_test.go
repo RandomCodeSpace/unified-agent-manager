@@ -1027,6 +1027,12 @@ func TestProductionProviderResumeKindMatrixThroughAmbiguityGuard(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			executable := filepath.Join(binDir, tt.provider)
+			if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", binDir)
 			state := t.TempDir()
 			t.Setenv("XDG_STATE_HOME", state)
 			id, other := "11111111-dead-beef-cafe-0123456789ab", "22222222-dead-beef-cafe-0123456789ab"
@@ -1053,8 +1059,12 @@ func TestProductionProviderResumeKindMatrixThroughAmbiguityGuard(t *testing.T) {
 			}
 			svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{tt.newAdapter()}))
 			_, _, _, err := svc.prepareResume(adapter.Session{ID: id, AgentType: tt.provider}, cfg, ResumeOptions{})
-			if got := errors.Is(err, ErrAmbiguousResume); got != tt.wantAmbiguous {
-				t.Fatalf("error=%v ambiguous=%v want=%v", err, got, tt.wantAmbiguous)
+			if tt.wantAmbiguous {
+				if !errors.Is(err, ErrAmbiguousResume) {
+					t.Fatalf("error=%v, want ErrAmbiguousResume", err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 	}
