@@ -84,11 +84,16 @@ func TestTUIExitCleanupIsMinimalAndOrdered(t *testing.T) {
 	}
 }
 
-type quittingModel struct{}
+type resizeSynchronizedQuitModel struct{}
 
-func (quittingModel) Init() tea.Cmd                         { return tea.Quit }
-func (m quittingModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
-func (quittingModel) View() string                          { return "dashboard-marker" }
+func (resizeSynchronizedQuitModel) Init() tea.Cmd { return nil }
+func (m resizeSynchronizedQuitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.WindowSizeMsg); ok {
+		return m, tea.Quit
+	}
+	return m, nil
+}
+func (resizeSynchronizedQuitModel) View() string { return "dashboard-marker" }
 
 func TestRunTUICleansPrimaryLineAfterBubbleTeaExit(t *testing.T) {
 	ptmx, tty, err := pty.Open()
@@ -104,7 +109,10 @@ func TestRunTUICleansPrimaryLineAfterBubbleTeaExit(t *testing.T) {
 	var out bytes.Buffer
 	readDone := make(chan struct{})
 	go func() { _, _ = io.Copy(&out, ptmx); close(readDone) }()
-	if err := RunTUI(context.Background(), quittingModel{}); err != nil {
+	// Bubble Tea starts its initial size query in an untracked goroutine. Quit
+	// only after its WindowSizeMsg establishes that the PTY Fd query completed;
+	// then closing our test-owned slave cannot race that query.
+	if err := RunTUI(context.Background(), resizeSynchronizedQuitModel{}); err != nil {
 		t.Fatal(err)
 	}
 	os.Stdout = oldStdout
