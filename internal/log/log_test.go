@@ -158,4 +158,11 @@ func TestCacheDirFallbacks(t *testing.T) {
 	if got := cacheDir(); got != filepath.Join(dir, "uam") {
 		t.Fatalf("%s", got)
 	}
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("HOME", dir)
+	if got := cacheDir(); got != filepath.Join(dir, ".cache", "uam") {
+		t.Fatalf("home cache dir = %s", got)
+	}
+	UseStderr(nil)
+	Debug("stderr fallback debug path")
 }

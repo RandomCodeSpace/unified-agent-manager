@@ -17,6 +17,7 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/vterm"
@@ -369,13 +370,7 @@ func (h *host) setLabel(label string) {
 // titleSequence sets the terminal title via OSC 0 — the native stand-in for
 // tmux's set-titles-string showing the user-facing session label.
 func titleSequence(label string) string {
-	clean := strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, label)
-	return "\x1b]0;" + clean + "\x07"
+	return "\x1b]0;" + displaytext.Sanitize(label) + "\x07"
 }
 
 func validSize(cols, rows int) bool {
@@ -555,14 +550,18 @@ func (h *host) markClosed(exitCode int) {
 		lastErr = err
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			if lastErr != nil {
-				log.Warn("mark session closed failed after retry", "session", h.name, "error", lastErr)
-			} else {
-				log.Warn("mark session closed record not found before retry deadline", "session", h.name)
-			}
+			h.logMarkClosedFailure(lastErr)
 			return
 		}
 		time.Sleep(min(delay, remaining))
 		delay = min(delay*2, markClosedRetryMax)
 	}
+}
+
+func (h *host) logMarkClosedFailure(err error) {
+	if err != nil {
+		log.Warn("mark session closed failed after retry", "session", h.name, "error", err)
+		return
+	}
+	log.Warn("mark session closed record not found before retry deadline", "session", h.name)
 }

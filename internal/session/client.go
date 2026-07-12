@@ -168,30 +168,34 @@ func (c *Client) List(_ context.Context) ([]Info, error) {
 	}
 	var out []Info
 	for _, e := range entries {
-		name, isState := strings.CutSuffix(e.Name(), ".json")
-		if !isState || ValidateName(name) != nil {
-			continue
+		if info, keep := c.infoFromStateEntry(e); keep {
+			out = append(out, info)
 		}
-		st, err := readState(c.Dir, name)
-		if err != nil {
-			log.Warn("skipping unreadable session state", "file", e.Name(), "error", err)
-			continue
-		}
-		if !st.hostAlive() {
-			if st.childAlive() {
-				// Host crashed but the agent is still winding down (it gets
-				// SIGHUP when the PTY master closed). Keep it visible and
-				// leave the files for the next sweep.
-				out = append(out, infoFromState(st))
-				continue
-			}
-			_ = removeSessionFiles(c.Dir, name)
-			continue
-		}
-		out = append(out, infoFromState(st))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func (c *Client) infoFromStateEntry(entry os.DirEntry) (Info, bool) {
+	name, isState := strings.CutSuffix(entry.Name(), ".json")
+	if !isState || ValidateName(name) != nil {
+		return Info{}, false
+	}
+	st, err := readState(c.Dir, name)
+	if err != nil {
+		log.Warn("skipping unreadable session state", "file", entry.Name(), "error", err)
+		return Info{}, false
+	}
+	if st.hostAlive() {
+		return infoFromState(st), true
+	}
+	if st.childAlive() {
+		// Host crashed but the agent is still winding down. Keep it visible
+		// and leave the runtime files for the next sweep.
+		return infoFromState(st), true
+	}
+	_ = removeSessionFiles(c.Dir, name)
+	return Info{}, false
 }
 
 func infoFromState(st State) Info {
@@ -257,19 +261,8 @@ func (c *Client) Kill(ctx context.Context, name string) error {
 	// A live PID is not sufficient authority to signal: fallback control paths
 	// require a nonzero matching start identity so a recycled PID can never be
 	// signalled as if it were the session.
-	if ProcAlive(st.HostPID) {
-		if !procIdentityMatches(st.HostPID, st.HostStart) {
-			return fmt.Errorf("kill session %s: cannot verify process identity for host pid %d", name, st.HostPID)
-		}
-		_ = syscall.Kill(st.HostPID, syscall.SIGTERM)
-	} else if ProcAlive(st.ChildPID) {
-		if !procIdentityMatches(st.ChildPID, st.ChildStart) {
-			return fmt.Errorf("kill session %s: cannot verify process identity for child pid %d", name, st.ChildPID)
-		}
-		// Orphaned agent (host crashed): signal its process group directly.
-		if err := syscall.Kill(-st.ChildPID, syscall.SIGTERM); err != nil {
-			_ = syscall.Kill(st.ChildPID, syscall.SIGTERM)
-		}
+	if err := signalVerifiedFallback(name, st); err != nil {
+		return err
 	}
 	deadline := time.Now().Add(callTimeout)
 	for time.Now().Before(deadline) {
@@ -284,6 +277,27 @@ func (c *Client) Kill(ctx context.Context, name string) error {
 		}
 	}
 	return fmt.Errorf("kill session %s: still running", name)
+}
+
+func signalVerifiedFallback(name string, st State) error {
+	if ProcAlive(st.HostPID) {
+		if !procIdentityMatches(st.HostPID, st.HostStart) {
+			return fmt.Errorf("kill session %s: cannot verify process identity for host pid %d", name, st.HostPID)
+		}
+		_ = syscall.Kill(st.HostPID, syscall.SIGTERM)
+		return nil
+	}
+	if !ProcAlive(st.ChildPID) {
+		return nil
+	}
+	if !procIdentityMatches(st.ChildPID, st.ChildStart) {
+		return fmt.Errorf("kill session %s: cannot verify process identity for child pid %d", name, st.ChildPID)
+	}
+	// Orphaned agent (host crashed): signal its process group directly.
+	if err := syscall.Kill(-st.ChildPID, syscall.SIGTERM); err != nil {
+		_ = syscall.Kill(st.ChildPID, syscall.SIGTERM)
+	}
+	return nil
 }
 
 // KillAll terminates every managed session. It replaces `tmux kill-server`

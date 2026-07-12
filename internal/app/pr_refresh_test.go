@@ -170,6 +170,28 @@ func TestAdapterStatusMapping(t *testing.T) {
 	}
 }
 
+func TestCheckPRWithContextReturnsWhenCheckerIgnoresCancellation(t *testing.T) {
+	release := make(chan struct{})
+	checkerDone := make(chan struct{})
+	checker := func(context.Context, string) (pr.Status, error) {
+		defer close(checkerDone)
+		<-release
+		return pr.Merged, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	status, err := checkPRWithContext(ctx, checker, "https://github.com/o/r/pull/5")
+	if !errors.Is(err, context.DeadlineExceeded) || status != pr.None {
+		t.Fatalf("checkPRWithContext = (%q, %v), want deadline", status, err)
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("cancellation-ignoring checker blocked for %v", elapsed)
+	}
+	close(release)
+	<-checkerDone
+}
+
 func BenchmarkRefreshPRStatuses(b *testing.B) {
 	sessions := make([]adapter.Session, 20)
 	for i := range sessions {

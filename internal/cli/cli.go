@@ -145,14 +145,8 @@ func runWithoutStore(ctx context.Context, args []string) (bool, error) {
 
 func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI func(context.Context, tea.Model) error) error {
 	switch args[0] {
-	case "-h", "--help", "help":
-		Usage()
-		return nil
 	case "new":
 		return runNew(ctx, svc, runTUI)
-	case "version", "--version":
-		fmt.Println(version.String())
-		return nil
 	case "dispatch":
 		return RunDispatch(ctx, svc, args[1:])
 	case "ls", "list":
@@ -165,15 +159,6 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		return runRestart(ctx, svc, args[1:])
 	case "notify-closed":
 		return runNotifyClosed(svc, args[1:])
-	case "kill-all":
-		return runKillAll(ctx, session.NewClient().KillAll)
-	case "__host":
-		// Internal: the detached per-session host process (see
-		// internal/session). Spawned by CreateSession, never typed by hand.
-		return session.RunHost(args[1:])
-	case "__attach":
-		// Internal: the interactive attach client run by AttachSpec argv.
-		return session.RunAttach(args[1:])
 	case "attach":
 		id, err := requireArg(args[1:], "attach requires <id>")
 		if err != nil {

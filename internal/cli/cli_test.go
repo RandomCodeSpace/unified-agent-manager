@@ -403,16 +403,14 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// The internal __host/__attach subcommands are routed through runCommand;
+// The internal __host/__attach subcommands are routed before store access;
 // invalid input must surface as errors rather than silently doing nothing.
-func TestRunCommandInternalSubcommands(t *testing.T) {
+func TestRunWithoutStoreInternalSubcommands(t *testing.T) {
 	t.Setenv("UAM_SESSION_DIR", secureSessionDir(t))
-	svc, _ := newCLITestService(t)
-	noTUI := func(context.Context, tea.Model) error { return nil }
-	if err := runCommand(context.Background(), svc, []string{"__host", "--name", "bad name", "--", "/bin/true"}, noTUI); err == nil {
+	if handled, err := runWithoutStore(context.Background(), []string{"__host", "--name", "bad name", "--", "/bin/true"}); !handled || err == nil {
 		t.Fatal("__host with an invalid name must fail")
 	}
-	if err := runCommand(context.Background(), svc, []string{"__attach"}, noTUI); err == nil {
+	if handled, err := runWithoutStore(context.Background(), []string{"__attach"}); !handled || err == nil {
 		t.Fatal("__attach without a session must fail")
 	}
 }
