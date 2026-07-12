@@ -141,6 +141,53 @@ func TestModelUpdateMessages(t *testing.T) {
 	}
 }
 
+func TestPRRefreshCommandsAndMessages(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	msg, ok := m.refreshPRCmd()().(prRefreshedMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("refreshPRCmd message = %#v", msg)
+	}
+
+	model, cmd := m.Update(prRefreshedMsg{})
+	m = model.(Model)
+	if !m.loading || cmd == nil {
+		t.Fatalf("successful PR refresh did not schedule cached reload: loading=%v cmd=%v", m.loading, cmd)
+	}
+	model, cmd = m.Update(prRefreshedMsg{})
+	if cmd != nil || !model.(Model).loading {
+		t.Fatal("PR refresh overlapped an in-flight cached reload")
+	}
+
+	m.loading = false
+	model, cmd = m.Update(prRefreshedMsg{err: errors.New("refresh failed")})
+	if cmd != nil || model.(Model).loading {
+		t.Fatal("failed PR refresh should keep cached sessions without scheduling a reload")
+	}
+}
+
+func TestRenderPeekAndLongestCommonPrefix(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	m.peekText = "one\ntwo\nthree\nfour\nfive\nsix"
+	m.height = 9
+	peek := m.renderPeek()
+	if !strings.Contains(peek, "PEEK") || strings.Contains(peek, "one") || !strings.Contains(peek, "six") {
+		t.Fatalf("renderPeek = %q", peek)
+	}
+	for _, tc := range []struct {
+		items []string
+		want  string
+	}{
+		{items: nil, want: ""},
+		{items: []string{"alpha"}, want: "alpha"},
+		{items: []string{"alpha", "alpine", "alps"}, want: "alp"},
+		{items: []string{"one", "two"}, want: ""},
+	} {
+		if got := longestCommonPrefix(tc.items); got != tc.want {
+			t.Fatalf("longestCommonPrefix(%q) = %q, want %q", tc.items, got, tc.want)
+		}
+	}
+}
+
 func TestDispatchedMessageAttachesNewSession(t *testing.T) {
 	fake := &svcFakeAdapter{name: "fake", available: true}
 	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))

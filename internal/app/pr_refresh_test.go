@@ -124,3 +124,47 @@ func TestRefreshPRStatusesPreservesLastKnownStatusOnCheckerError(t *testing.T) {
 		t.Fatalf("last known PR state was not preserved: %+v", rec.PR)
 	}
 }
+
+func TestRefreshPRStatusesSkipsFreshRecords(t *testing.T) {
+	live := adapter.Session{ID: "dddd4444", AgentType: "fake", DisplayName: "D", Cwd: "/tmp", SessionName: "uam-fake-dddd4444", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now(), PR: &adapter.PRRef{URL: "https://github.com/o/r/pull/4", Number: 4, Status: adapter.PROpen}}
+	svc, st, _ := newLoadService(t, []adapter.Session{live})
+	if _, _, err := svc.LoadSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(cfg *store.Config) error {
+		rec := cfg.Sessions[store.Key("fake", live.ID)]
+		rec.PR.LastChecked = time.Now()
+		cfg.Sessions[store.Key("fake", live.ID)] = rec
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	svc.checkPR = func(context.Context, string) (pr.Status, error) {
+		calls.Add(1)
+		return pr.Closed, nil
+	}
+	if err := svc.RefreshPRStatuses(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("fresh PR record triggered %d checks", calls.Load())
+	}
+}
+
+func TestAdapterStatusMapping(t *testing.T) {
+	for _, tc := range []struct {
+		in   pr.Status
+		want adapter.PRStatus
+	}{
+		{pr.Open, adapter.PROpen},
+		{pr.Merged, adapter.PRMerged},
+		{pr.Closed, adapter.PRClosed},
+		{pr.Draft, adapter.PRDraft},
+		{pr.None, adapter.PRNone},
+	} {
+		if got := adapterStatus(tc.in); got != tc.want {
+			t.Fatalf("adapterStatus(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
