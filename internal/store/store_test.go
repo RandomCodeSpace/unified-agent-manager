@@ -109,6 +109,68 @@ func TestTryMarkSessionClosedReportsWhetherRecordMatched(t *testing.T) {
 	}
 }
 
+func TestTryRecordSessionExitPreservesResumeLifecycle(t *testing.T) {
+	tests := []struct {
+		name       string
+		exit       SessionExit
+		wantStatus Status
+		wantCode   int
+	}{
+		{name: "natural success", exit: SessionExit{SessionName: "uam-fake-deadbeef", ExitCode: 0}, wantStatus: StatusActive, wantCode: 0},
+		{name: "natural crash", exit: SessionExit{SessionName: "uam-fake-deadbeef", ExitCode: 9}, wantStatus: StatusActive, wantCode: 9},
+		{name: "explicit stop", exit: SessionExit{SessionName: "uam-fake-deadbeef", ExitCode: -1, UAMInitiated: true}, wantStatus: StatusClosedByUser, wantCode: -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Update(func(cfg *Config) error {
+				cfg.Sessions["fake:deadbeef"] = SessionRecord{ID: "deadbeef", Agent: "fake", SessionName: tt.exit.SessionName, Status: StatusActive}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			matched, err := s.TryRecordSessionExit(tt.exit)
+			if err != nil || !matched {
+				t.Fatalf("matched=%v err=%v", matched, err)
+			}
+			cfg, err := s.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := cfg.Sessions["fake:deadbeef"]
+			if rec.Status != tt.wantStatus || rec.LastExitCode == nil || *rec.LastExitCode != tt.wantCode {
+				t.Fatalf("record=%+v, want status=%q code=%d", rec, tt.wantStatus, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestTryRecordSessionExitUpdatesOnlyNonEmptyProviderIdentity(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(cfg *Config) error {
+		cfg.Sessions["fake:deadbeef"] = SessionRecord{ID: "deadbeef", Agent: "fake", SessionName: "uam-fake-deadbeef", ProviderSessionID: "ses_old"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TryRecordSessionExit(SessionExit{SessionName: "uam-fake-deadbeef", ProviderSessionID: "ses_new"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TryRecordSessionExit(SessionExit{SessionName: "uam-fake-deadbeef"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := s.Load()
+	if got := cfg.Sessions["fake:deadbeef"].ProviderSessionID; got != "ses_new" {
+		t.Fatalf("id=%q", got)
+	}
+}
+
 func TestSyncDirAcceptsStoreDirectoryAndRejectsMissingDirectory(t *testing.T) {
 	dir := t.TempDir()
 	if err := syncDir(dir); err != nil {

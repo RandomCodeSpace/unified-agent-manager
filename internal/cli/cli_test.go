@@ -14,6 +14,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/creack/pty"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
@@ -67,6 +68,68 @@ func (f *cliFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) 
 
 func noopRunTUI(context.Context, tea.Model) error { return nil }
 
+func TestTUIExitCleanupIsMinimalAndOrdered(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeTUIExitCleanup(&out); err != nil {
+		t.Fatal(err)
+	}
+	want := "\x1b[0m\x1b[?1000;1002;1003;1004;1005;1006;1015l\x1b[?2004l\x1b[?25h\x1b[2K\r"
+	if out.String() != want {
+		t.Fatalf("cleanup = %q, want %q", out.String(), want)
+	}
+	for _, forbidden := range []string{"\x1b[2J", "\x1b[3J", "\x1bc", "\x1b[?1049l"} {
+		if strings.Contains(out.String(), forbidden) {
+			t.Fatalf("cleanup contains destructive sequence %q", forbidden)
+		}
+	}
+}
+
+type resizeSynchronizedQuitModel struct{}
+
+func (resizeSynchronizedQuitModel) Init() tea.Cmd { return nil }
+func (m resizeSynchronizedQuitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.WindowSizeMsg); ok {
+		return m, tea.Quit
+	}
+	return m, nil
+}
+func (resizeSynchronizedQuitModel) View() string { return "dashboard-marker" }
+
+func TestRunTUICleansPrimaryLineAfterBubbleTeaExit(t *testing.T) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ptmx.Close() }()
+	oldStdout := os.Stdout
+	oldStdin := os.Stdin
+	os.Stdout = tty
+	os.Stdin = tty
+	t.Cleanup(func() { os.Stdout, os.Stdin = oldStdout, oldStdin })
+	var out bytes.Buffer
+	readDone := make(chan struct{})
+	go func() { _, _ = io.Copy(&out, ptmx); close(readDone) }()
+	// Bubble Tea starts its initial size query in an untracked goroutine. Quit
+	// only after its WindowSizeMsg establishes that the PTY Fd query completed;
+	// then closing our test-owned slave cannot race that query.
+	if err := RunTUI(context.Background(), resizeSynchronizedQuitModel{}); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = oldStdout
+	os.Stdin = oldStdin
+	_ = tty.Close()
+	<-readDone
+	got := out.String()
+	cleanupAt := strings.LastIndex(got, tuiExitCleanup)
+	altExitAt := strings.LastIndex(got, "\x1b[?1049l")
+	if cleanupAt < 0 || altExitAt < 0 || cleanupAt <= altExitAt {
+		t.Fatalf("cleanup not after Bubble Tea alt exit: %q", got)
+	}
+	if got[cleanupAt:] != tuiExitCleanup {
+		t.Fatalf("unexpected bytes after cleanup: %q", got[cleanupAt:])
+	}
+}
+
 func TestRunDispatchListPeekAndStop(t *testing.T) {
 	svc, fake := newCLITestService(t)
 	id := dispatchAndCaptureID(t, svc, []string{"--cwd", "/tmp", "fake", "#bugfix", "fix", "thing"})
@@ -95,6 +158,18 @@ func TestRunRestart(t *testing.T) {
 	}
 	if err := runRestart(context.Background(), svc, nil); err == nil {
 		t.Fatal("restart without id should fail")
+	}
+}
+
+func TestAttachAndRestartAcceptAllowLatest(t *testing.T) {
+	svc, fake := newCLITestService(t)
+	id := dispatchAndCaptureID(t, svc, []string{"--cwd", "/tmp", "fake", "work"})
+	must(t, runRestart(context.Background(), svc, []string{"--allow-latest", id}))
+	if !fake.resumed {
+		t.Fatal("restart --allow-latest did not resume")
+	}
+	if err := runCommand(context.Background(), svc, []string{"attach", "--allow-latest", id}, noopRunTUI); err != nil {
+		t.Fatalf("attach --allow-latest: %v", err)
 	}
 }
 

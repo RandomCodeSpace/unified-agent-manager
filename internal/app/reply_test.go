@@ -47,6 +47,32 @@ func TestReplyFromPeekSendsToService(t *testing.T) {
 	}
 }
 
+func TestPeekReplySnapshotKeepsProviderAcrossDuplicateIDRefresh(t *testing.T) {
+	id := "same0003"
+	claudeSession := adapter.Session{ID: id, AgentType: "claude", DisplayName: "claude", SessionName: "uam-claude-same0003", ProcAlive: adapter.Alive}
+	codexSession := adapter.Session{ID: id, AgentType: "codex", DisplayName: "codex", SessionName: "uam-codex-same0003", ProcAlive: adapter.Alive}
+	claude := &svcFakeAdapter{name: "claude", available: true, sessions: []adapter.Session{claudeSession}}
+	codex := &svcFakeAdapter{name: "codex", available: true, sessions: []adapter.Session{codexSession}}
+	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{claude, codex}))
+	m.sessions = []adapter.Session{claudeSession, codexSession}
+	m.selected = 1
+	if cmd := m.handleSpaceKey(" "); cmd == nil {
+		t.Fatal("opening peek should issue exact peek command")
+	}
+	// A refresh moves the other provider's colliding ID under the old index.
+	m.sessions = []adapter.Session{codexSession, claudeSession}
+	m.selected = 1
+	m.input = "selected provider only"
+	cmd := m.replyToPeekCmd()
+	if cmd == nil {
+		t.Fatal("expected reply command")
+	}
+	cmd()
+	if claude.replied != "" || codex.replied != "selected provider only" {
+		t.Fatalf("reply crossed provider: claude=%q codex=%q", claude.replied, codex.replied)
+	}
+}
+
 // F36 — sending a reply clears the input so the composer is ready for the next
 // line, and the peek panel stays open (re-peeked) to show the agent's response.
 func TestReplyFromPeekClearsInputAndKeepsPeekOpen(t *testing.T) {

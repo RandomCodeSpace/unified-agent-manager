@@ -2,15 +2,18 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
@@ -23,6 +26,7 @@ import (
 
 type Model struct {
 	width, height int
+	sizeKnown     bool
 	quitting      bool
 	loading       bool
 	service       *Service
@@ -39,25 +43,39 @@ type Model struct {
 	// Enter sends to this session via Service.Reply rather than dispatching a new
 	// agent. Snapshotting the id (mirroring renameTargetID) keeps a reorder under
 	// the cursor from misrouting the reply (F36).
-	peekTargetID   string
-	helpOpen       bool
-	confirmStop    bool
-	confirmStopID  string
-	renaming       bool
-	renameTargetID string
-	wizard         bool
-	wizardStep     int
-	wizardAgent    string
-	wizardAlias    string
-	wizardCwd      string
-	groupByDir     bool
-	execProcess    func(*exec.Cmd, tea.ExecCallback) tea.Cmd
+	peekTargetID        string
+	peekTargetAgent     string
+	helpOpen            bool
+	confirmStop         bool
+	confirmStopID       string
+	confirmStopAgent    string
+	confirmLatest       bool
+	confirmLatestAgent  string
+	confirmLatestID     string
+	confirmLatestName   string
+	confirmLatestAction latestAction
+	renaming            bool
+	renameTargetID      string
+	renameTargetAgent   string
+	wizard              bool
+	wizardStep          int
+	wizardAgent         string
+	wizardAlias         string
+	wizardCwd           string
+	groupByDir          bool
+	execProcess         func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 	// reorderSeq increments on every reorder; a debounced flush tick only
 	// persists when its seq still matches, so a held Shift+arrow coalesces into
 	// one store write instead of one fsync per step. reorderPending marks a
 	// scheduled-but-not-yet-flushed reorder so quit can flush it (F59).
 	reorderSeq     int
 	reorderPending bool
+	reorderDirty   map[sessionIdentity]struct{}
+	// Test seams for proving persistence/reload sequencing without timing a
+	// filesystem lock. Production leaves both nil and uses Service directly.
+	persistSortIndices func([]adapter.Session) error
+	reloadSessions     func() sessionsLoadedMsg
+	groupToggle        *groupToggleCoordinator
 	// lastPeekAt records, per session id, when its pane was last captured for
 	// the peek panel. The peek-focus ticker re-polls the focused session at most
 	// once per peekFocusInterval; the map is keyed by id (not row index) because
@@ -110,6 +128,21 @@ type attachSpecMsg struct {
 	err  error
 }
 type attachFinishedMsg struct{ err error }
+type latestAction string
+
+const (
+	latestResume  latestAction = "resume"
+	latestAttach  latestAction = "attach"
+	latestRestart latestAction = "restart"
+)
+
+type latestRequiredMsg struct {
+	action latestAction
+	agent  string
+	id     string
+	name   string
+	err    error
+}
 type refreshMsg time.Time
 type prRefreshMsg time.Time
 type prRefreshedMsg struct{ err error }
@@ -123,6 +156,23 @@ type peekTickMsg time.Time
 // the reorder that scheduled it; the handler persists only when the seq still
 // matches the latest move, dropping ticks superseded by a newer move (F59).
 type reorderFlushMsg struct{ seq int }
+
+type sessionIdentity struct {
+	agent string
+	id    string
+}
+
+type groupToggleCoordinator struct {
+	mu         sync.Mutex
+	generation uint64
+}
+
+type groupToggleResultMsg struct {
+	generation uint64
+	grouped    bool
+	loaded     sessionsLoadedMsg
+	err        error
+}
 
 // promptEditedMsg carries the result of editing the wizard prompt in $EDITOR.
 // The editor is launched via tea.ExecProcess (which suspends the TUI, restores
@@ -207,6 +257,9 @@ func (m Model) refreshStep(now time.Time) (Model, bool) {
 
 func (m Model) loadSessionsCmd() tea.Cmd {
 	return func() tea.Msg {
+		if m.reloadSessions != nil {
+			return m.reloadSessions()
+		}
 		sessions, cfg, err := m.service.LoadSessions(context.Background())
 		return sessionsLoadedMsg{sessions: sessions, defaultAgent: cfg.DefaultAgent, groupByDir: cfg.UI.GroupByDir, err: err}
 	}
@@ -255,6 +308,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.flushReorder()
+	case groupToggleResultMsg:
+		if !m.isLatestGroupToggle(msg.generation) {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.setGroupByDir(!msg.grouped)
+			m.setMessage("could not save view setting: " + msg.err.Error())
+			return m, nil
+		}
+		return m.handleSessionsLoaded(msg.loaded), nil
 	case sessionsLoadedMsg:
 		return m.handleSessionsLoaded(msg), nil
 	case peekLoadedMsg:
@@ -264,7 +327,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case attachSpecMsg:
 		return m, m.execAttachSpec(msg.spec, msg.err)
 	case attachFinishedMsg:
-		return m.handleAttachFinished(msg), m.loadSessionsCmd()
+		return m.handleAttachFinished(msg), tea.Batch(m.loadSessionsCmd(), tea.ClearScreen, tea.WindowSize())
+	case latestRequiredMsg:
+		if !errors.Is(msg.err, ErrAmbiguousResume) {
+			m.setMessage(msg.err.Error())
+			return m, nil
+		}
+		m.confirmLatest = true
+		m.confirmLatestAction = msg.action
+		m.confirmLatestAgent = msg.agent
+		m.confirmLatestID = msg.id
+		m.confirmLatestName = msg.name
+		m.message = ""
+		m.messageSetAt = time.Time{}
+		return m, nil
 	case promptEditedMsg:
 		return m.handlePromptEdited(msg), nil
 	case tea.KeyMsg:
@@ -275,6 +351,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleWindowSize(msg tea.WindowSizeMsg) Model {
 	m.width, m.height = msg.Width, msg.Height
+	m.sizeKnown = true
 	return m
 }
 
@@ -303,8 +380,12 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 		m.setMessage(msg.err.Error())
 		return m
 	}
+	selectedAgent, selectedID := "", ""
+	if sess, ok := m.selectedSession(); ok {
+		selectedAgent, selectedID = sess.AgentType, sess.ID
+	}
 	if msg.sessions != nil {
-		m.sessions = msg.sessions
+		m.sessions = projectSessions(msg.sessions, msg.groupByDir)
 		m.groupByDir = msg.groupByDir
 		// Drop peek throttle stamps for sessions that no longer exist so the
 		// map cannot grow without bound across many session lifetimes.
@@ -324,9 +405,15 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 		// disabled one (C2-9).
 		m.defaultAgent = m.validateDefaultAgent(msg.defaultAgent)
 	}
-	if m.selected >= len(m.sessions) {
-		m.selected = max(0, len(m.sessions)-1)
+	if selectedID != "" {
+		for i, sess := range m.sessions {
+			if sess.AgentType == selectedAgent && sess.ID == selectedID {
+				m.selected = i
+				return m
+			}
+		}
 	}
+	m.selected = max(0, min(m.selected, len(m.sessions)-1))
 	return m
 }
 
@@ -401,21 +488,35 @@ func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.
 		}
 		return true, m, nil
 	}
+	if m.confirmLatest {
+		if key == "y" || key == "enter" {
+			action, agentName, id := m.confirmLatestAction, m.confirmLatestAgent, m.confirmLatestID
+			m.clearLatestConfirmation()
+			return true, m, m.retryLatestCmd(action, agentName, id)
+		}
+		if key == "n" || key == "esc" {
+			m.clearLatestConfirmation()
+		}
+		return true, m, nil
+	}
 	if m.confirmStop {
 		if key == "y" || key == "enter" {
 			m.confirmStop = false
-			id := m.confirmStopID
+			agentName, id := m.confirmStopAgent, m.confirmStopID
+			m.confirmStopAgent = ""
 			m.confirmStopID = ""
-			return true, m, m.stopTargetCmd(id, true)
+			return true, m, m.stopTargetExactCmd(agentName, id, true)
 		}
 		if key == "r" {
 			m.confirmStop = false
-			id := m.confirmStopID
+			agentName, id := m.confirmStopAgent, m.confirmStopID
+			m.confirmStopAgent = ""
 			m.confirmStopID = ""
-			return true, m, m.restartTargetCmd(id)
+			return true, m, m.restartTargetExactCmd(agentName, id)
 		}
 		if key == "n" || key == "esc" {
 			m.confirmStop = false
+			m.confirmStopAgent = ""
 			m.confirmStopID = ""
 		}
 		return true, m, nil
@@ -429,6 +530,39 @@ func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.
 		return true, model, cmd
 	}
 	return false, m, nil
+}
+
+func (m *Model) clearLatestConfirmation() {
+	m.confirmLatest = false
+	m.confirmLatestAction = ""
+	m.confirmLatestAgent = ""
+	m.confirmLatestID = ""
+	m.confirmLatestName = ""
+}
+
+func (m Model) retryLatestCmd(action latestAction, agentName, id string) tea.Cmd {
+	opts := ResumeOptions{AllowLatest: true}
+	switch action {
+	case latestAttach:
+		return func() tea.Msg {
+			spec, err := m.service.AttachSpecExactWithOptions(context.Background(), agentName, id, opts)
+			return attachSpecMsg{spec: spec, err: err}
+		}
+	case latestRestart:
+		return func() tea.Msg {
+			if err := m.service.RestartExactWithOptions(context.Background(), agentName, id, opts); err != nil {
+				return sessionsLoadedMsg{err: err}
+			}
+			return m.loadSessionsCmd()()
+		}
+	default:
+		return func() tea.Msg {
+			if err := m.service.ResumeBackgroundExactWithOptions(context.Background(), agentName, id, opts); err != nil {
+				return sessionsLoadedMsg{err: err}
+			}
+			return m.loadSessionsCmd()()
+		}
+	}
 }
 
 func (m *Model) handleMovementKey(key string) (bool, tea.Cmd) {
@@ -459,6 +593,7 @@ func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
 	// The peek panel follows the cursor; keep the reply target in sync so a reply
 	// goes to the session the user is actually looking at (F36).
 	if sess, ok := m.selectedSession(); ok {
+		m.peekTargetAgent = sess.AgentType
 		m.peekTargetID = sess.ID
 	}
 	m.peekText = ""
@@ -516,14 +651,24 @@ func (m *Model) moveSession(delta int) tea.Cmd {
 	if next < 0 || next >= len(m.sessions) {
 		return nil
 	}
-	// SortSessions buckets rows by Closed, then Pinned, before honoring
+	// SortSessions buckets rows by process liveness, then Pinned, before honoring
 	// SortIndex. A swap that crosses either boundary is undone on the next
 	// refresh (the row snaps back to its partition), so reject it and give
 	// honest feedback instead of a move that silently reverts (F34).
 	if !samePartition(m.sessions[m.selected], m.sessions[next]) {
-		m.setMessage("can't reorder across the active/closed or pinned boundary")
+		m.setMessage("can't reorder across the running/stopped or pinned boundary")
 		return nil
 	}
+	if m.groupByDir && workspaceKey(m.sessions[m.selected].Cwd) != workspaceKey(m.sessions[next].Cwd) {
+		m.setMessage("can't reorder across workspace groups")
+		return nil
+	}
+	groupStart, groupEnd := m.reorderGroupBounds(m.selected)
+	if reorderGroupHasCollidingIndices(m.sessions[groupStart:groupEnd]) {
+		m.normalizeReorderGroup(groupStart, groupEnd)
+	}
+	m.sessions[m.selected].SortIndex, m.sessions[next].SortIndex = m.sessions[next].SortIndex, m.sessions[m.selected].SortIndex
+	m.markReorderDirty(m.sessions[m.selected], m.sessions[next])
 	m.sessions[m.selected], m.sessions[next] = m.sessions[next], m.sessions[m.selected]
 	m.selected = next
 	return m.scheduleReorderFlush()
@@ -548,15 +693,83 @@ func (m *Model) flushReorder() tea.Cmd {
 	if !m.reorderPending {
 		return nil
 	}
+	return m.persistSortIndicesCmd(m.captureReorderDirty())
+}
+
+func (m *Model) captureReorderDirty() []adapter.Session {
+	dirty := make([]adapter.Session, 0, len(m.reorderDirty))
+	for _, sess := range m.sessions {
+		if _, ok := m.reorderDirty[sessionIdentity{agent: sess.AgentType, id: sess.ID}]; ok {
+			dirty = append(dirty, sess)
+		}
+	}
 	m.reorderPending = false
-	return m.persistOrderCmd()
+	m.reorderDirty = nil
+	return dirty
+}
+
+func (m *Model) markReorderDirty(sessions ...adapter.Session) {
+	if m.reorderDirty == nil {
+		m.reorderDirty = make(map[sessionIdentity]struct{})
+	}
+	for _, sess := range sessions {
+		m.reorderDirty[sessionIdentity{agent: sess.AgentType, id: sess.ID}] = struct{}{}
+	}
+}
+
+func (m Model) reorderGroupBounds(index int) (int, int) {
+	start, end := index, index+1
+	for start > 0 && m.sameReorderGroup(m.sessions[index], m.sessions[start-1]) {
+		start--
+	}
+	for end < len(m.sessions) && m.sameReorderGroup(m.sessions[index], m.sessions[end]) {
+		end++
+	}
+	return start, end
+}
+
+func (m Model) sameReorderGroup(a, b adapter.Session) bool {
+	return samePartition(a, b) && (!m.groupByDir || workspaceKey(a.Cwd) == workspaceKey(b.Cwd))
+}
+
+func reorderGroupHasCollidingIndices(sessions []adapter.Session) bool {
+	seen := make(map[int]struct{}, len(sessions))
+	for _, sess := range sessions {
+		if _, ok := seen[sess.SortIndex]; ok {
+			return true
+		}
+		seen[sess.SortIndex] = struct{}{}
+	}
+	return false
+}
+
+func (m *Model) normalizeReorderGroup(start, end int) {
+	used := make(map[int]struct{}, len(m.sessions)-(end-start))
+	for i, sess := range m.sessions {
+		if i < start || i >= end {
+			used[sess.SortIndex] = struct{}{}
+		}
+	}
+	next := m.sessions[start].SortIndex
+	for i := start; i < end; i++ {
+		for {
+			if _, exists := used[next]; !exists {
+				break
+			}
+			next++
+		}
+		m.sessions[i].SortIndex = next
+		m.markReorderDirty(m.sessions[i])
+		used[next] = struct{}{}
+		next++
+	}
 }
 
 // samePartition reports whether two rows sort into the same SortSessions
-// partition — they share the same Closed and Pinned flags. Only within a
+// partition — they share the same Running/Stopped and Pinned flags. Only within a
 // partition does SortIndex (and therefore a manual reorder) take effect (F34).
 func samePartition(a, b adapter.Session) bool {
-	return a.Closed == b.Closed && a.Pinned == b.Pinned
+	return a.ProcAlive == b.ProcAlive && a.Pinned == b.Pinned
 }
 
 func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
@@ -572,8 +785,14 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "?":
 		m.helpOpen = true
 	case "ctrl+s":
-		m.groupByDir = !m.groupByDir
-		return true, m.persistGroupByDir()
+		grouped := !m.groupByDir
+		generation := m.nextGroupToggleGeneration()
+		var dirty []adapter.Session
+		if m.reorderPending {
+			dirty = m.captureReorderDirty()
+		}
+		m.setGroupByDir(grouped)
+		return true, m.persistGroupToggleCmd(dirty, grouped, generation)
 	case "ctrl+t":
 		return true, m.pinSelectedCmd()
 	case "ctrl+r":
@@ -581,6 +800,7 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "ctrl+x":
 		if sess, ok := m.selectedSession(); ok {
 			m.confirmStop = true
+			m.confirmStopAgent = sess.AgentType
 			m.confirmStopID = sess.ID
 		}
 	case " ":
@@ -606,6 +826,7 @@ func (m *Model) handleEscKey() tea.Cmd {
 		// Esc backs out of the peek/reply composer WITHOUT sending the in-progress
 		// reply (F36).
 		m.peekOpen = false
+		m.peekTargetAgent = ""
 		m.peekTargetID = ""
 		return nil
 	}
@@ -624,6 +845,7 @@ func (m *Model) startRename() {
 		return
 	}
 	m.renaming = true
+	m.renameTargetAgent = sess.AgentType
 	m.renameTargetID = sess.ID
 	m.input = sess.DisplayName
 }
@@ -644,10 +866,12 @@ func (m *Model) handleSpaceKey(key string) tea.Cmd {
 		// Snapshot the peeked session so an Enter-to-reply routes to it even if a
 		// refresh reorders the list under the cursor (F36).
 		if sess, ok := m.selectedSession(); ok {
+			m.peekTargetAgent = sess.AgentType
 			m.peekTargetID = sess.ID
 		}
 		return m.peekSelectedCmd()
 	}
+	m.peekTargetAgent = ""
 	m.peekTargetID = ""
 	return nil
 }
@@ -676,18 +900,18 @@ func (m *Model) handleEnterKey() tea.Cmd {
 // reply target is the snapshotted peekTargetID (falling back to the selected
 // session) so a reorder under the cursor can't misroute it (F36).
 func (m *Model) replyToPeekCmd() tea.Cmd {
-	sess, ok := m.sessionByID(m.peekTargetID)
+	sess, ok := m.sessionByIdentity(m.peekTargetAgent, m.peekTargetID)
 	if !ok {
 		return nil
 	}
 	text := m.input
 	m.input = ""
-	id := sess.ID
+	agentName, id := sess.AgentType, sess.ID
 	return func() tea.Msg {
-		if err := m.service.Reply(context.Background(), id, text); err != nil {
+		if err := m.service.ReplyExact(context.Background(), agentName, id, text); err != nil {
 			return peekLoadedMsg{err: err}
 		}
-		p, err := m.service.Peek(context.Background(), id)
+		p, err := m.service.PeekExact(context.Background(), agentName, id)
 		return peekLoadedMsg{text: p.TailText, err: err}
 	}
 }
@@ -718,9 +942,10 @@ func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "enter":
-		sess, ok := m.sessionByID(m.renameTargetID)
+		sess, ok := m.sessionByIdentity(m.renameTargetAgent, m.renameTargetID)
 		name := m.input
 		m.renaming = false
+		m.renameTargetAgent = ""
 		m.renameTargetID = ""
 		m.input = ""
 		// The target session vanished (killed externally / list emptied) while the
@@ -728,10 +953,13 @@ func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		id := sess.ID
-		return m, func() tea.Msg { return sessionsLoadedMsg{err: m.service.Rename(context.Background(), id, name)} }
+		agentName, id := sess.AgentType, sess.ID
+		return m, func() tea.Msg {
+			return sessionsLoadedMsg{err: m.service.RenameExact(context.Background(), agentName, id, name)}
+		}
 	case "esc":
 		m.renaming = false
+		m.renameTargetAgent = ""
 		m.renameTargetID = ""
 		m.input = ""
 	default:
@@ -1032,26 +1260,45 @@ func (m Model) sessionByID(id string) (adapter.Session, bool) {
 	}
 	return adapter.Session{}, false
 }
+
+func (m Model) sessionByIdentity(agentName, id string) (adapter.Session, bool) {
+	if agentName == "" {
+		return m.sessionByID(id)
+	}
+	if id == "" {
+		return m.selectedSession()
+	}
+	for _, sess := range m.sessions {
+		if sess.AgentType == agentName && sess.ID == id {
+			return sess, true
+		}
+	}
+	return adapter.Session{}, false
+}
+
 func (m Model) peekSelectedCmd() tea.Cmd {
 	sess, ok := m.selectedSession()
 	if !ok {
 		return nil
 	}
 	return func() tea.Msg {
-		p, err := m.service.Peek(context.Background(), sess.ID)
+		p, err := m.service.PeekExact(context.Background(), sess.AgentType, sess.ID)
 		return peekLoadedMsg{text: p.TailText, err: err}
 	}
 }
 
 // resumeSelectedCmd restarts the selected session's backend session in the
-// background, then reloads so it moves into the ACTIVE group.
+// background, then reloads so it moves into RUNNING.
 func (m Model) resumeSelectedCmd() tea.Cmd {
 	sess, ok := m.selectedSession()
 	if !ok {
 		return nil
 	}
 	return func() tea.Msg {
-		if err := m.service.ResumeBackground(context.Background(), sess.ID); err != nil {
+		if err := m.service.ResumeBackgroundExact(context.Background(), sess.AgentType, sess.ID); err != nil {
+			if errors.Is(err, ErrAmbiguousResume) {
+				return latestRequiredMsg{action: latestResume, agent: sess.AgentType, id: sess.ID, name: firstNonEmpty(sess.DisplayName, sess.ID), err: err}
+			}
 			return sessionsLoadedMsg{err: err}
 		}
 		return m.loadSessionsCmd()()
@@ -1069,17 +1316,22 @@ func (m *Model) persistDefaultAgent() tea.Cmd {
 	return m.loadSessionsCmd()
 }
 
-// persistGroupByDir persists the group-by-dir toggle. On failure it surfaces the
-// error and reverts the in-memory flag so the UI matches the unchanged stored
-// state; on success it returns a reload command (F55).
-func (m *Model) persistGroupByDir() tea.Cmd {
-	grouped := m.groupByDir
-	if err := m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = grouped }); err != nil {
-		m.groupByDir = !grouped
-		m.setMessage("could not save view setting: " + err.Error())
-		return nil
+func (m *Model) setGroupByDir(grouped bool) {
+	selectedAgent, selectedID := "", ""
+	if sess, ok := m.selectedSession(); ok {
+		selectedAgent, selectedID = sess.AgentType, sess.ID
 	}
-	return m.loadSessionsCmd()
+	canonical := append([]adapter.Session(nil), m.sessions...)
+	SortSessions(canonical)
+	m.sessions = projectSessions(canonical, grouped)
+	m.groupByDir = grouped
+	for i, sess := range m.sessions {
+		if sess.AgentType == selectedAgent && sess.ID == selectedID {
+			m.selected = i
+			return
+		}
+	}
+	m.selected = max(0, min(m.selected, len(m.sessions)-1))
 }
 
 // stopTargetCmd stops the session with the snapshotted id, falling back to the
@@ -1096,16 +1348,27 @@ func (m Model) stopTargetCmd(id string, remove bool) tea.Cmd {
 	}
 }
 
-// restartTargetCmd restarts the session with the snapshotted id (same F29
-// fallback as stopTargetCmd): the agent process is stopped and resumed in
-// place, keeping the session's name and provider conversation.
-func (m Model) restartTargetCmd(id string) tea.Cmd {
-	sess, ok := m.sessionByID(id)
+func (m Model) stopTargetExactCmd(agentName, id string, remove bool) tea.Cmd {
+	sess, ok := m.sessionByIdentity(agentName, id)
 	if !ok {
 		return nil
 	}
 	return func() tea.Msg {
-		if err := m.service.Restart(context.Background(), sess.ID); err != nil {
+		err := m.service.StopExact(context.Background(), sess.AgentType, sess.ID, remove)
+		return sessionsLoadedMsg{err: err}
+	}
+}
+
+func (m Model) restartTargetExactCmd(agentName, id string) tea.Cmd {
+	sess, ok := m.sessionByIdentity(agentName, id)
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		if err := m.service.RestartExact(context.Background(), sess.AgentType, sess.ID); err != nil {
+			if errors.Is(err, ErrAmbiguousResume) {
+				return latestRequiredMsg{action: latestRestart, agent: sess.AgentType, id: sess.ID, name: firstNonEmpty(sess.DisplayName, sess.ID), err: err}
+			}
 			return sessionsLoadedMsg{err: err}
 		}
 		return m.loadSessionsCmd()()
@@ -1117,7 +1380,7 @@ func (m Model) pinSelectedCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		err := m.service.TogglePin(context.Background(), sess.ID)
+		err := m.service.TogglePinExact(context.Background(), sess.AgentType, sess.ID)
 		return sessionsLoadedMsg{err: err}
 	}
 }
@@ -1127,7 +1390,10 @@ func (m Model) attachSelectedCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		spec, err := m.service.AttachSpec(context.Background(), sess.ID)
+		spec, err := m.service.AttachSpecExact(context.Background(), sess.AgentType, sess.ID)
+		if errors.Is(err, ErrAmbiguousResume) {
+			return latestRequiredMsg{action: latestAttach, agent: sess.AgentType, id: sess.ID, name: firstNonEmpty(sess.DisplayName, sess.ID), err: err}
+		}
 		return attachSpecMsg{spec: spec, err: err}
 	}
 }
@@ -1167,7 +1433,61 @@ func (m Model) execAttachSpec(spec adapter.AttachSpec, err error) tea.Cmd {
 
 func (m Model) persistOrderCmd() tea.Cmd {
 	sessions := append([]adapter.Session(nil), m.sessions...)
-	return func() tea.Msg { return sessionsLoadedMsg{err: m.service.UpdateSortOrder(sessions)} }
+	return m.persistSortIndicesCmd(sessions)
+}
+
+func (m Model) persistSortIndicesCmd(sessions []adapter.Session) tea.Cmd {
+	sessions = append([]adapter.Session(nil), sessions...)
+	return func() tea.Msg { return sessionsLoadedMsg{err: m.updateSortIndices(sessions)} }
+}
+
+func (m Model) updateSortIndices(sessions []adapter.Session) error {
+	if m.persistSortIndices != nil {
+		return m.persistSortIndices(sessions)
+	}
+	return m.service.UpdateSortIndices(sessions)
+}
+
+func (m *Model) nextGroupToggleGeneration() uint64 {
+	if m.groupToggle == nil {
+		m.groupToggle = &groupToggleCoordinator{}
+	}
+	m.groupToggle.mu.Lock()
+	defer m.groupToggle.mu.Unlock()
+	m.groupToggle.generation++
+	return m.groupToggle.generation
+}
+
+func (m Model) isLatestGroupToggle(generation uint64) bool {
+	if m.groupToggle == nil {
+		return false
+	}
+	m.groupToggle.mu.Lock()
+	defer m.groupToggle.mu.Unlock()
+	return generation == m.groupToggle.generation
+}
+
+func (m Model) persistGroupToggleCmd(sessions []adapter.Session, grouped bool, generation uint64) tea.Cmd {
+	sessions = append([]adapter.Session(nil), sessions...)
+	return func() tea.Msg {
+		if len(sessions) > 0 {
+			if err := m.updateSortIndices(sessions); err != nil {
+				return groupToggleResultMsg{generation: generation, grouped: grouped, err: err}
+			}
+		}
+		m.groupToggle.mu.Lock()
+		if generation != m.groupToggle.generation {
+			m.groupToggle.mu.Unlock()
+			return groupToggleResultMsg{generation: generation, grouped: grouped}
+		}
+		err := m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = grouped })
+		m.groupToggle.mu.Unlock()
+		if err != nil {
+			return groupToggleResultMsg{generation: generation, grouped: grouped, err: err}
+		}
+		loaded, _ := m.loadSessionsCmd()().(sessionsLoadedMsg)
+		return groupToggleResultMsg{generation: generation, grouped: grouped, loaded: loaded}
+	}
 }
 
 // ─── theme ───────────────────────────────────────────────────────────────
@@ -1199,12 +1519,60 @@ var (
 // bar is the accent rule that marks the brand and command lines.
 func bar() string { return brandStyle.Render("▌") }
 
-// layoutMode buckets the usable width: 0 narrow (mobile), 1 mid, 2 wide.
+// LayoutClass names the three responsive dashboard geometries. It is derived
+// from the current terminal dimensions; Model deliberately stores no parallel
+// layout booleans that could become contradictory after a resize.
+type LayoutClass uint8
+
+const (
+	LayoutCompact LayoutClass = iota
+	LayoutStandard
+	LayoutWide
+)
+
+// DashboardMode is the primary dashboard surface. Like LayoutClass it is
+// derived from the existing interaction state, keeping wizard/peek behavior as
+// the source of truth for all existing key flows.
+type DashboardMode uint8
+
+const (
+	ModeOperations DashboardMode = iota
+	ModePeek
+	ModeNew
+)
+
+func (m Model) layoutClass() LayoutClass {
+	w, h := m.width, m.height
+	if w <= 0 {
+		w = 98
+	}
+	// An unknown height means callers are rendering a component outside a real
+	// terminal (many legacy unit tests do this), so classify by width only.
+	if h > 0 && (w < 58 || h < 24) || w < 58 {
+		return LayoutCompact
+	}
+	if w >= 96 && (h == 0 || h >= 28) {
+		return LayoutWide
+	}
+	return LayoutStandard
+}
+
+func (m Model) dashboardMode() DashboardMode {
+	if m.wizard {
+		return ModeNew
+	}
+	if m.peekOpen {
+		return ModePeek
+	}
+	return ModeOperations
+}
+
+// layoutMode is retained as a compatibility shim for component-level tests.
 func (m Model) layoutMode() int {
-	switch w := m.contentWidth(); {
-	case w >= 76:
+	switch m.layoutClass() {
+	case LayoutWide:
 		return 2
-	case w >= 48:
+	case LayoutStandard:
 		return 1
 	default:
 		return 0
@@ -1215,11 +1583,22 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
+	// Before Bubble Tea sends its first WindowSizeMsg preserve the historical
+	// unconstrained view. Once dimensions are known all composition is budgeted.
+	if !m.sizeKnown {
+		return m.unboundedView()
+	}
+	return m.responsiveView()
+}
+
+func (m Model) unboundedView() string {
 	var b strings.Builder
 	b.WriteString(m.renderBranding())
 	switch {
 	case m.helpOpen:
 		b.WriteString(m.renderHelp())
+	case m.confirmLatest:
+		b.WriteString(m.renderLatestConfirmation())
 	case m.confirmStop:
 		b.WriteString(m.renderConfirm())
 	case m.wizard:
@@ -1233,6 +1612,299 @@ func (m Model) View() string {
 	}
 	b.WriteString(m.renderPrompt())
 	return b.String()
+}
+
+// responsiveView reserves the prompt first, then allocates the remaining rows
+// to exactly one primary surface. fitScreen is a final safety rail for terminal
+// sizes smaller than any useful composition; normal fixtures fit by budget.
+func (m Model) responsiveView() string {
+	w, h := max(1, m.width), max(0, m.height)
+	if h == 0 {
+		return ""
+	}
+	header := []string{m.responsiveHeader(w)}
+	prompt := boundedNonBlankLines(m.renderPrompt(), w)
+	if m.dashboardMode() == ModeNew {
+		prompt = m.wizardPromptLines(w)
+	}
+	if len(prompt) == 0 {
+		prompt = []string{bar() + " " + brandStyle.Render("›")}
+	}
+	if len(prompt) >= h {
+		return fitScreen(prompt[:h], w, h)
+	}
+	bodyBudget := max(0, h-len(header)-len(prompt))
+	body := m.responsiveBody(w, bodyBudget)
+	lines := append(header, body...)
+	lines = append(lines, prompt...)
+	return fitScreen(lines, w, h)
+}
+
+func (m Model) wizardPromptLines(width int) []string {
+	step := max(0, min(m.wizardStep, 3))
+	hints := []string{
+		"Tab cycle · Enter confirm · Esc cancel",
+		"Enter confirm · Esc cancel",
+		"Tab path · Enter confirm · Esc cancel",
+		"Ctrl+G edit · Enter start · Esc cancel",
+	}
+	field := displaytext.Sanitize(m.input)
+	if step == 0 && field == "" {
+		field = firstNonEmpty(m.wizardAgent, m.defaultAgent)
+	}
+	return []string{
+		ansi.Truncate(bar()+" "+hintStyle.Render("new")+" "+brandStyle.Render("›")+" "+titleStyle.Render(field)+brandStyle.Render("▏"), width, "…"),
+		ansi.Truncate("  "+hintStyle.Render(hints[step]), width, "…"),
+	}
+}
+
+func (m Model) responsiveHeader(width int) string {
+	text := bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("Unified Agent Manager")
+	if m.layoutClass() != LayoutCompact {
+		text += "  " + hintStyle.Render(version.String())
+	}
+	return ansi.Truncate(text, width, "…")
+}
+
+func (m Model) responsiveBody(width, budget int) []string {
+	if budget <= 0 {
+		return nil
+	}
+	if m.helpOpen {
+		return takeLines(boundedNonBlankLines(m.renderHelp(), width), budget)
+	}
+	if m.confirmLatest {
+		return takeLines(boundedNonBlankLines(m.renderLatestConfirmation(), width), budget)
+	}
+	if m.confirmStop {
+		return takeLines(boundedNonBlankLines(m.renderConfirm(), width), budget)
+	}
+	if m.dashboardMode() == ModeNew {
+		return takeLines(boundedNonBlankLines(m.renderWizard(), width), budget)
+	}
+	class := m.layoutClass()
+	if class == LayoutWide {
+		leftWidth := max(28, width*52/100)
+		rightWidth := max(20, width-leftWidth-3)
+		left := m.sessionListLines(leftWidth, budget, class)
+		right := m.detailPaneLines(rightWidth, budget, m.dashboardMode())
+		return joinColumns(left, right, leftWidth, rightWidth, budget)
+	}
+	if m.dashboardMode() == ModePeek {
+		return m.peekSurfaceLines(width, budget, class)
+	}
+	detailLimit := 3
+	if class == LayoutCompact {
+		detailLimit = 2
+	}
+	details := takeLines(m.selectedSummaryLines(width, class), min(detailLimit, budget))
+	list := m.sessionListLines(width, budget-len(details), class)
+	return append(details, list...)
+}
+
+func (m Model) selectedSummaryLines(width int, class LayoutClass) []string {
+	sess, ok := m.selectedSession()
+	if !ok {
+		return nil
+	}
+	name := truncate(firstNonEmpty(sess.DisplayName, sess.ID), max(1, width-11))
+	lines := []string{ansi.Truncate(sectionStyle.Render("SELECTED")+"  "+titleStyle.Render(name), width, "…")}
+	if class == LayoutCompact {
+		meta := firstNonEmpty(boundedTaskSummary(sess, max(1, width-2)), "agent: "+sess.AgentType)
+		return append(lines, ansi.Truncate("  "+taskStyle.Render(meta), width, "…"))
+	}
+	lines = append(lines,
+		ansi.Truncate("  "+hintStyle.Render("agent: "+displaytext.Sanitize(firstNonEmpty(sess.AgentType, "?"))), width, "…"),
+		ansi.Truncate("  "+hintStyle.Render("cwd: "+absCwd(sess.Cwd)), width, "…"),
+	)
+	return lines
+}
+
+func (m Model) detailPaneLines(width, budget int, mode DashboardMode) []string {
+	if mode == ModePeek {
+		return m.peekSurfaceLines(width, budget, LayoutWide)
+	}
+	return takeLines(m.selectedSummaryLines(width, LayoutWide), budget)
+}
+
+func (m Model) peekSurfaceLines(width, budget int, class LayoutClass) []string {
+	if budget <= 0 {
+		return nil
+	}
+	lines := []string{sectionStyle.Render("PEEK")}
+	if sess, ok := m.selectedSession(); ok && budget > 1 {
+		lines = append(lines, ansi.Truncate("  "+titleStyle.Render(firstNonEmpty(sess.DisplayName, sess.ID)), width, "…"))
+	}
+	remaining := budget - len(lines)
+	if remaining > 0 {
+		peek := boundedTailLines(m.peekText, remaining, width)
+		if len(peek) == 0 {
+			peek = []string{hintStyle.Render("waiting for output…")}
+		}
+		lines = append(lines, takeLinesFromEnd(peek, remaining)...)
+	}
+	return takeLines(lines, budget)
+}
+
+// boundedTailLines scans backward only far enough to find the requested tail.
+// It retains empty physical lines because terminal output spacing is content,
+// while avoiding a split/join of a potentially multi-thousand-line pane.
+func boundedTailLines(s string, n, width int) []string {
+	if n <= 0 || s == "" {
+		return nil
+	}
+	start, breaks := 0, 0
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] != '\n' {
+			continue
+		}
+		breaks++
+		if breaks == n {
+			start = i + 1
+			break
+		}
+	}
+	lines := strings.Split(s[start:], "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], width, "…")
+	}
+	return lines
+}
+
+func (m Model) sessionListLines(width, budget int, class LayoutClass) []string {
+	if budget <= 0 {
+		return nil
+	}
+	if m.groupByDir {
+		return m.groupedSessionListLines(width, budget, class)
+	}
+	if len(m.sessions) == 0 {
+		return takeLines([]string{m.renderSectionAtWidth("SESSIONS", "0", width), "  " + hintStyle.Render("no sessions")}, budget)
+	}
+	stopped := 0
+	for _, sess := range m.sessions {
+		if sess.ProcAlive == adapter.Exited {
+			stopped++
+		}
+	}
+	rowBudget := max(0, budget-2)
+	if class == LayoutCompact {
+		rowBudget = max(0, budget-1)
+	}
+	start, end := visibleWindow(len(m.sessions), m.selected, rowBudget)
+	nameWidth, taskWidth, showTask := tableWidthsFor(width, class)
+	lines := make([]string, 0, budget)
+	if class == LayoutCompact {
+		right := fmt.Sprintf("%d", len(m.sessions))
+		if stopped > 0 {
+			right = fmt.Sprintf("%d · %d stopped", len(m.sessions), stopped)
+		}
+		lines = append(lines, m.renderSectionAtWidth("SESSIONS", right, width))
+	} else {
+		label := "RUNNING"
+		if m.sessions[start].ProcAlive == adapter.Exited {
+			label = "STOPPED"
+		}
+		lines = append(lines, m.renderSectionAtWidth(label, "", width))
+	}
+	lastAlive := m.sessions[start].ProcAlive
+	for i := start; i < end && len(lines) < budget; i++ {
+		sess := m.sessions[i]
+		if class != LayoutCompact && sess.ProcAlive != lastAlive && len(lines) < budget-1 {
+			lines = append(lines, m.renderSectionAtWidth("STOPPED", "", width))
+			lastAlive = sess.ProcAlive
+		}
+		lines = append(lines, ansi.Truncate(renderRow(sess, i == m.selected, nameWidth, taskWidth, showTask), width, "…"))
+	}
+	return takeLines(lines, budget)
+}
+
+func (m Model) renderSectionAtWidth(label, right string, width int) string {
+	head := sectionStyle.Render(label)
+	rightWidth := ansi.StringWidth(right)
+	fill := max(0, width-ansi.StringWidth(head)-rightWidth-4)
+	line := " " + head
+	if fill > 0 {
+		line += "  " + dividerStyle.Render(strings.Repeat("─", fill))
+	}
+	if right != "" {
+		line += " " + hintStyle.Render(right)
+	}
+	return ansi.Truncate(line, width, "…")
+}
+
+func tableWidthsFor(width int, class LayoutClass) (int, int, bool) {
+	if class == LayoutCompact || width < 58 {
+		return max(1, width-5), 0, false
+	}
+	name := min(30, max(10, width/3))
+	return name, max(1, width-name-8), true
+}
+
+func visibleWindow(length, selected, limit int) (int, int) {
+	limit = min(length, max(0, limit))
+	if limit == 0 {
+		return 0, 0
+	}
+	selected = max(0, min(selected, length-1))
+	start := max(0, selected-limit/2)
+	start = min(start, length-limit)
+	return start, start + limit
+}
+
+func boundedNonBlankLines(s string, width int) []string {
+	raw := strings.Split(strings.Trim(s, "\n"), "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		if line == "" {
+			continue
+		}
+		lines = append(lines, ansi.Truncate(line, width, "…"))
+	}
+	return lines
+}
+
+func joinColumns(left, right []string, leftWidth, rightWidth, budget int) []string {
+	n := min(budget, max(len(left), len(right)))
+	lines := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		l, r := "", ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		lines = append(lines, padRightANSI(l, leftWidth)+"   "+ansi.Truncate(r, rightWidth, "…"))
+	}
+	return lines
+}
+
+func padRightANSI(s string, width int) string {
+	s = ansi.Truncate(s, width, "…")
+	return s + strings.Repeat(" ", max(0, width-ansi.StringWidth(s)))
+}
+
+func takeLines(lines []string, n int) []string {
+	return lines[:min(len(lines), max(0, n))]
+}
+
+func takeLinesFromEnd(lines []string, n int) []string {
+	n = min(len(lines), max(0, n))
+	return lines[len(lines)-n:]
+}
+
+func fitScreen(lines []string, width, height int) string {
+	if len(lines) > height {
+		lines = lines[len(lines)-height:]
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], width, "…")
+	}
+	return strings.Join(lines, "\n")
 }
 
 const uamANSILogo = ` _   _  _   __  __
@@ -1285,7 +1957,7 @@ func (m Model) renderDetails() string {
 	// Show the task/prompt here only when the session list is too narrow to
 	// show it inline (no task column) — that way it stays visible exactly once.
 	if _, _, showTask := m.tableWidths(); !showTask {
-		b.WriteString("    " + taskStyle.Render(truncate(promptText(sess), max(8, m.contentWidth()-6))) + "\n")
+		b.WriteString("    " + taskStyle.Render(boundedTaskSummary(sess, max(8, m.contentWidth()-6))) + "\n")
 	}
 	b.WriteString("    " + hintStyle.Render("agent: "+displaytext.Sanitize(firstNonEmpty(sess.AgentType, "?"))) + "\n")
 	if !sess.CreatedAt.IsZero() {
@@ -1298,6 +1970,15 @@ func (m Model) renderDetails() string {
 func (m Model) renderTable() string {
 	var b strings.Builder
 	b.WriteString("\n")
+	if m.groupByDir {
+		budget := max(2, len(m.sessions)*3+4)
+		lines := m.groupedSessionListLines(m.contentWidth(), budget, m.layoutClass())
+		b.WriteString(strings.Join(lines, "\n"))
+		if len(lines) > 0 {
+			b.WriteString("\n")
+		}
+		return b.String()
+	}
 	if len(m.sessions) == 0 {
 		b.WriteString(m.renderSection("SESSIONS", "0") + "\n")
 		b.WriteString("  " + hintStyle.Render("no sessions — type a prompt, @agent #name prompt, or press e") + "\n")
@@ -1305,23 +1986,19 @@ func (m Model) renderTable() string {
 	}
 	nameWidth, taskWidth, showTask := m.tableWidths()
 	start, end := m.visibleSessionWindow()
-	active, closed := 0, 0
+	running, stopped := 0, 0
 	for _, s := range m.sessions {
-		if s.Closed {
-			closed++
+		if s.ProcAlive == adapter.Exited {
+			stopped++
 		} else {
-			active++
+			running++
 		}
 	}
 	if start > 0 {
 		b.WriteString("  " + hintStyle.Render(fmt.Sprintf("↑ %d more", start)) + "\n")
 	}
-	// Two groups: Active (anything not flagged closed_by_user — including
-	// reboot-survivors that will resume on attach) and Closed (the user
-	// explicitly retired these via uam stop, exit-in-session, or an external
-	// kill).
-	g1 := m.renderGroup(groupRenderOptions{label: "ACTIVE", total: active, start: start, end: end, wantClosed: false, nameWidth: nameWidth, taskWidth: taskWidth, showTask: showTask})
-	g2 := m.renderGroup(groupRenderOptions{label: "CLOSED", total: closed, start: start, end: end, wantClosed: true, nameWidth: nameWidth, taskWidth: taskWidth, showTask: showTask})
+	g1 := m.renderGroup(groupRenderOptions{label: "RUNNING", total: running, start: start, end: end, wantStopped: false, nameWidth: nameWidth, taskWidth: taskWidth, showTask: showTask})
+	g2 := m.renderGroup(groupRenderOptions{label: "STOPPED", total: stopped, start: start, end: end, wantStopped: true, nameWidth: nameWidth, taskWidth: taskWidth, showTask: showTask})
 	b.WriteString(g1)
 	if g1 != "" && g2 != "" {
 		b.WriteString("\n")
@@ -1334,23 +2011,22 @@ func (m Model) renderTable() string {
 }
 
 type groupRenderOptions struct {
-	label      string
-	total      int
-	start      int
-	end        int
-	wantClosed bool
-	nameWidth  int
-	taskWidth  int
-	showTask   bool
+	label       string
+	total       int
+	start       int
+	end         int
+	wantStopped bool
+	nameWidth   int
+	taskWidth   int
+	showTask    bool
 }
 
-// renderGroup renders the windowed sessions whose Closed flag matches
-// wantClosed under a section header. Empty groups render nothing.
+// renderGroup renders one process-liveness partition.
 func (m Model) renderGroup(opts groupRenderOptions) string {
 	var rows []string
 	for i := opts.start; i < opts.end; i++ {
 		s := m.sessions[i]
-		if s.Closed != opts.wantClosed {
+		if (s.ProcAlive == adapter.Exited) != opts.wantStopped {
 			continue
 		}
 		rows = append(rows, renderRow(s, i == m.selected, opts.nameWidth, opts.taskWidth, opts.showTask))
@@ -1387,16 +2063,24 @@ func renderRow(s adapter.Session, selected bool, nameWidth, taskWidth int, showT
 	if selected {
 		nameStyle = selectedStyle
 	}
-	label := truncate(pin+firstNonEmpty(s.DisplayName, s.ID), nameWidth)
+	detail := failureExitDetail(s)
+	labelWidth := nameWidth
+	if !showTask && detail != "" {
+		labelWidth = max(1, nameWidth-ansi.StringWidth(detail)-1)
+	}
+	label := truncate(pin+firstNonEmpty(s.DisplayName, s.ID), labelWidth)
 	if showTask {
 		// Width-aware padding keeps the task column aligned even when the name
 		// holds wide (CJK/emoji) runes (F28).
 		cell := nameStyle.Render(padRight(label, nameWidth))
-		return cursor + gs.Render(glyph) + " " + cell + " " + prCell + " " + taskStyle.Render(truncate(promptText(s), taskWidth))
+		return cursor + gs.Render(glyph) + " " + cell + " " + prCell + " " + taskStyle.Render(boundedTaskSummary(s, taskWidth))
 	}
 	// Narrow layout: state glyph + name only — one line per row. The selected
 	// session's task is carried by the details panel, so rows don't repeat it.
 	row := cursor + gs.Render(glyph) + " " + nameStyle.Render(label)
+	if detail != "" {
+		row += " " + failGlyphStyle.Render(detail)
+	}
 	if s.PR != nil {
 		row += " " + prCell
 	}
@@ -1478,14 +2162,46 @@ func promptText(sess adapter.Session) string {
 	return firstNonEmpty(sess.Prompt, livenessLabel(sess), "idle")
 }
 
+// taskSummaryText preserves the stored task while adding grounded process-exit
+// detail once. Name-only compact rows render the detail separately instead.
+func taskSummaryText(sess adapter.Session) string {
+	detail := failureExitDetail(sess)
+	if strings.TrimSpace(sess.Prompt) == "" && detail != "" {
+		return detail
+	}
+	base := promptText(sess)
+	if detail == "" || base == detail || strings.HasSuffix(base, " · "+detail) {
+		return base
+	}
+	return base + " · " + detail
+}
+
+// boundedTaskSummary truncates the prompt portion first so grounded failure
+// metadata remains visible at the right edge of narrow task/summary surfaces.
+func boundedTaskSummary(sess adapter.Session, width int) string {
+	detail := failureExitDetail(sess)
+	if detail == "" || strings.TrimSpace(sess.Prompt) == "" {
+		return truncate(taskSummaryText(sess), width)
+	}
+	suffix := " · " + detail
+	base := promptText(sess)
+	if base == detail {
+		return truncate(detail, width)
+	}
+	base = strings.TrimSuffix(base, suffix)
+	available := width - ansi.StringWidth(suffix)
+	if available <= 0 {
+		return truncate(detail, width)
+	}
+	return truncate(base, available) + suffix
+}
+
 // livenessLabel describes a prompt-less session by its liveness and Closed flag
 // rather than its State enum.
 func livenessLabel(sess adapter.Session) string {
-	switch {
-	case sess.ProcAlive == adapter.Alive:
+	switch sess.ProcAlive {
+	case adapter.Alive:
 		return "running"
-	case sess.Closed:
-		return "closed"
 	default:
 		return "resumable"
 	}
@@ -1504,9 +2220,10 @@ func absCwd(cwd string) string {
 
 func (m Model) renderHelp() string {
 	rows := []string{
-		"↑/↓  move        Enter/→  attach        Space  peek",
+		"↑/↓  move   Shift+↑/↓  reorder   Enter/→  attach/resume",
+		"Space  peek running / resume stopped",
 		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
-		"Ctrl+X  stop/restart/remove      Ctrl+S  group-by-dir",
+		"Ctrl+X  stop+remove / restart    Ctrl+S  group-by-dir",
 		"e  new session       Esc  quit",
 		"in session:  ← detach (when input empty)    Ctrl+B d  detach",
 		"dispatch:  @agent:alias #name prompt   (alias, name & prompt optional)",
@@ -1520,11 +2237,21 @@ func (m Model) renderHelp() string {
 }
 
 func (m Model) renderConfirm() string {
-	sess, _ := m.sessionByID(m.confirmStopID)
+	sess, _ := m.sessionByIdentity(m.confirmStopAgent, m.confirmStopID)
 	name := displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID, "session"))
 	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
 		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +
 		"   " + brandStyle.Render("y") + hintStyle.Render(" / restart ") + brandStyle.Render("r") + hintStyle.Render(" / ") + titleStyle.Render("N") + "\n"
+}
+
+func (m Model) renderLatestConfirmation() string {
+	provider := displaytext.Sanitize(firstNonEmpty(m.confirmLatestAgent, "provider"))
+	name := displaytext.Sanitize(firstNonEmpty(m.confirmLatestName, m.confirmLatestID, "session"))
+	return "\n " + sectionStyle.Render("Confirm latest conversation") + "\n  " +
+		hintStyle.Render("Several retained conversations share provider ") + titleStyle.Render(provider) +
+		hintStyle.Render(" and this workspace. Continuing ") + titleStyle.Render(string(m.confirmLatestAction)+" "+name) +
+		hintStyle.Render(" may select the provider's latest conversation.") +
+		"   " + brandStyle.Render("y/Enter") + hintStyle.Render(" continue · n/Esc cancel") + "\n"
 }
 
 func (m Model) renderWizard() string {
@@ -1567,22 +2294,31 @@ var (
 	failGlyphStyle = lipgloss.NewStyle().Bold(true).Foreground(failColor)
 )
 
-// sessionGlyph picks the row glyph from the session's liveness and Closed flag
-// rather than its State enum, so a reboot-survivor (Exited but not user-closed)
-// renders as a neutral "resumable" dot instead of the red Failed glyph under the
-// ACTIVE group (F30).
+// sessionGlyph uses process liveness and recorded exit metadata rather than the
+// broad State enum. Explicit stops remain neutral even when SIGTERM produced a
+// negative compatibility exit code.
 func sessionGlyph(s adapter.Session) (string, lipgloss.Style) {
 	switch {
 	case s.ProcAlive == adapter.Alive:
 		return "⟳", liveGlyphStyle
-	case s.Closed:
-		// User-retired, dead pane: muted resting dot in the CLOSED group.
-		return "•", hintStyle
+	case failureExitDetail(s) != "":
+		return "!", failGlyphStyle
 	default:
-		// Reboot-survivor / externally-killed but resumable: neutral paused
-		// glyph, NOT the red failure mark.
+		// Clean exits and explicit stops are both stopped and resumable. An
+		// explicit SIGTERM is not a provider failure merely because its stored
+		// compatibility exit code is -1.
 		return "◦", hintStyle
 	}
+}
+
+func failureExitDetail(s adapter.Session) string {
+	if s.ProcAlive != adapter.Exited || s.Closed || s.ExitCode == nil || *s.ExitCode == 0 {
+		return ""
+	}
+	if *s.ExitCode < 0 {
+		return "signal"
+	}
+	return fmt.Sprintf("exit %d", *s.ExitCode)
 }
 
 // prStatusDot returns a distinct glyph per PR status (not color-only) so the PR

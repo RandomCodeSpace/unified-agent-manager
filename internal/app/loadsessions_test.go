@@ -121,6 +121,51 @@ func TestRefreshDoesNotClobberConcurrentMutationOnSameSession(t *testing.T) {
 	}
 }
 
+func TestLiveProviderIdentityWinsAndRefreshPatchOwnsOnlyThatField(t *testing.T) {
+	now := time.Now()
+	live := adapter.Session{ID: "aaaa1111", AgentType: "fake", ProviderSessionID: "ses_live", Cwd: "/tmp", SessionName: "uam-fake-aaaa1111", ProcAlive: adapter.Alive, CreatedAt: now}
+	svc, st, _ := newLoadService(t, []adapter.Session{live})
+	key := store.Key("fake", live.ID)
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.Sessions[key] = store.SessionRecord{ID: live.ID, Agent: "fake", Name: "before", Workdir: "/tmp", SessionName: live.SessionName, ProviderSessionID: "ses_stale", Status: store.StatusActive, LastSeenAt: now}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := st.Load()
+	liveMap := map[string]adapter.Session{key: live}
+	svc.mergeStoredSessions(liveMap, stale, now)
+	if got := liveMap[key].ProviderSessionID; got != "ses_live" {
+		t.Fatalf("merged id=%q", got)
+	}
+	updates := svc.refreshSessionRecords(context.Background(), liveMap, &stale)
+	if err := svc.Rename(context.Background(), live.ID, "after"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.TogglePin(context.Background(), live.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.persistRefresh(updates); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := st.Load()
+	rec := cfg.Sessions[key]
+	if rec.ProviderSessionID != "ses_live" || rec.Name != "after" || !rec.Pinned {
+		t.Fatalf("field patch clobbered concurrent mutation: %+v", rec)
+	}
+	second := svc.refreshSessionRecords(context.Background(), liveMap, &cfg)
+	if len(second) != 0 {
+		t.Fatalf("second identity refresh not idempotent: %+v", second)
+	}
+}
+
+func TestEmptyLiveProviderIdentityRetainsStoredIdentity(t *testing.T) {
+	got := mergeStoredMetadata(adapter.Session{}, store.SessionRecord{ProviderSessionID: "ses_stored"})
+	if got.ProviderSessionID != "ses_stored" {
+		t.Fatalf("id=%q", got.ProviderSessionID)
+	}
+}
+
 func TestPersistRefreshReturnsReadOnlyStoreError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.json")
 	data := []byte(`{"schema_version":999,"default_agent":"opencode","sessions":{},"ui":{}}`)
@@ -243,7 +288,7 @@ func TestRefreshDoesNotPersistEmptyIDRecord(t *testing.T) {
 }
 
 // F18 — a session the user closed but whose pane is still alive must reconcile
-// to Active (it renders under ACTIVE, not CLOSED, because Closed => Exited).
+// to Active (it renders under RUNNING because ProcAlive is authoritative).
 func TestLoadSessionsReconcilesLiveUserClosedSessionToActive(t *testing.T) {
 	live := adapter.Session{ID: "eeee5555", AgentType: "fake", DisplayName: "e", Cwd: "/tmp", SessionName: "uam-fake-eeee5555", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})

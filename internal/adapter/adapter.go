@@ -15,8 +15,9 @@ type Context = context.Context
 type State string
 
 const (
-	Active State = "Active"
-	Failed State = "Failed"
+	Active    State = "Active"
+	Completed State = "Completed"
+	Failed    State = "Failed"
 )
 
 type ProcLiveness string
@@ -69,11 +70,9 @@ type Session struct {
 	// (-1 when it died on a signal), recorded by the session host. Nil while
 	// the session is live or when no exit has been observed.
 	ExitCode *int
-	// Closed mirrors store.StatusClosedByUser: true when the user retired
-	// this session through uam (`uam stop`, or exit-in-session — the host
-	// marks the record closed when the agent exits). False otherwise —
-	// including for dead sessions left over from a reboot, which remain in
-	// the Active group and resume on attach.
+	// Closed mirrors store.StatusClosedByUser: explicit UAM stop/restart reason
+	// metadata retained for compatibility. Dashboard lifecycle grouping uses
+	// ProcAlive, so every exited process is STOPPED regardless of this flag.
 	Closed bool
 }
 
@@ -96,6 +95,33 @@ type ResumeRequest struct {
 	// instead of their "most recent" heuristic.
 	ProviderSessionID string
 	CreatedAt         time.Time
+	// ExecutablePath is transient launch metadata populated by Agent only
+	// after alias validation and PATH resolution. Preparation hooks may probe
+	// it; it is never persisted.
+	ExecutablePath string
+}
+
+// LaunchPreparation is provider-owned launch metadata computed after the
+// canonical backend identity and cwd are known, but before any session is
+// created. Slices and maps are copied by Agent before use.
+type LaunchPreparation struct {
+	ExtraArgs         []string
+	Env               map[string]string
+	ProviderSessionID string
+}
+
+type PrepareLaunchFunc func(ctx Context, req ResumeRequest, activity, sessionName, cwd string) (LaunchPreparation, error)
+
+type ResumeKind string
+
+const (
+	ResumeExact       ResumeKind = "exact"
+	ResumeHeuristic   ResumeKind = "heuristic"
+	ResumeUnsupported ResumeKind = "unsupported"
+)
+
+type ResumeKindAdapter interface {
+	ResumeKind(ResumeRequest) ResumeKind
 }
 
 type ResumableAdapter interface {

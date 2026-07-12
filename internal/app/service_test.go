@@ -8,20 +8,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/claude"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/omp"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 type svcFakeAdapter struct {
-	name      string
-	sessions  []adapter.Session
-	available bool
-	stopped   bool
-	replied   string
-	resumed   *adapter.ResumeRequest
+	name       string
+	sessions   []adapter.Session
+	available  bool
+	stopped    bool
+	stoppedID  string
+	peekedID   string
+	attachedID string
+	replied    string
+	resumed    *adapter.ResumeRequest
 	// F04: simulate a failed kill (stopErr) and a still-live pane (alive). The
 	// fake implements adapter.HasSessionAdapter, returning alive from HasSession.
 	stopErr error
@@ -33,6 +42,17 @@ type svcFakeAdapter struct {
 	// backend where Kill returns only after the host is fully gone — so a
 	// restart's resume step sees the session as dead.
 	stopRemoves bool
+	stopHook    func()
+	resumeKind  adapter.ResumeKind
+	resumeHook  func(adapter.ResumeRequest)
+	resumeFunc  func(adapter.ResumeRequest) (adapter.Session, error)
+}
+
+func (f *svcFakeAdapter) ResumeKind(adapter.ResumeRequest) adapter.ResumeKind {
+	if f.resumeKind == "" {
+		return adapter.ResumeHeuristic
+	}
+	return f.resumeKind
 }
 
 func (f *svcFakeAdapter) Name() string        { return f.name }
@@ -51,12 +71,19 @@ func (f *svcFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 }
 func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) (adapter.Session, error) {
 	f.resumed = &req
+	if f.resumeHook != nil {
+		f.resumeHook(req)
+	}
+	if f.resumeFunc != nil {
+		return f.resumeFunc(req)
+	}
 	return adapter.Session{ID: req.ID, AgentType: f.name, CommandAlias: req.CommandAlias, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, SessionName: req.SessionName, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
 	return f.sessions, f.listErr
 }
 func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
+	f.peekedID = id
 	return adapter.PeekResult{TailText: "tail"}, nil
 }
 func (f *svcFakeAdapter) Reply(ctx adapter.Context, id, text string) error {
@@ -64,14 +91,211 @@ func (f *svcFakeAdapter) Reply(ctx adapter.Context, id, text string) error {
 	return nil
 }
 func (f *svcFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
+	f.attachedID = id
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
 }
 func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error {
 	f.stopped = true
+	f.stoppedID = id
+	if f.stopHook != nil {
+		f.stopHook()
+	}
 	if f.stopRemoves {
 		f.sessions = nil
 	}
 	return f.stopErr
+}
+
+func TestRestartCarriesInitialResumeDecisionPastConcurrentRetainedRecord(t *testing.T) {
+	for _, exact := range []bool{false, true} {
+		t.Run(map[bool]string{false: "id", true: "exact"}[exact], func(t *testing.T) {
+			id := "11111111"
+			live := adapter.Session{ID: id, AgentType: "fake", SessionName: "uam-fake-11111111", Cwd: "/tmp/shared", ProcAlive: adapter.Alive}
+			fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeHeuristic, stopRemoves: true, sessions: []adapter.Session{live}}
+			st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.Update(func(cfg *store.Config) error {
+				cfg.Sessions[store.Key("fake", id)] = RecordFromSession(live, store.ModeYolo)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			fake.stopHook = func() {
+				if err := st.Update(func(cfg *store.Config) error {
+					cfg.Sessions[store.Key("fake", "22222222")] = store.SessionRecord{ID: "22222222", Agent: "fake", Workdir: "/tmp/shared", SessionName: "uam-fake-22222222", Status: store.StatusActive}
+					return nil
+				}); err != nil {
+					t.Errorf("insert competing record: %v", err)
+				}
+			}
+			svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+			if exact {
+				err = svc.RestartExactWithOptions(context.Background(), "fake", id, ResumeOptions{})
+			} else {
+				err = svc.RestartWithOptions(context.Background(), id, ResumeOptions{})
+			}
+			if errors.Is(err, ErrAmbiguousResume) && fake.stopped {
+				t.Fatalf("restart rejected ambiguity only after stopping provider: %v", err)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !fake.stopped || fake.resumed == nil || fake.resumed.ID != id {
+				t.Fatalf("validated restart was not carried through: stopped=%v resumed=%+v", fake.stopped, fake.resumed)
+			}
+		})
+	}
+}
+
+func TestExactResumeAttachRestartOptionsAllowExplicitLatest(t *testing.T) {
+	for _, action := range []string{"resume", "attach", "restart"} {
+		t.Run(action, func(t *testing.T) {
+			id := "11111111"
+			fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeHeuristic, stopRemoves: true}
+			if action == "restart" {
+				fake.sessions = []adapter.Session{{ID: id, AgentType: "fake", SessionName: "uam-fake-11111111", Cwd: "/tmp/shared", ProcAlive: adapter.Alive}}
+			}
+			st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.Update(func(cfg *store.Config) error {
+				cfg.Sessions[store.Key("fake", id)] = store.SessionRecord{ID: id, Agent: "fake", Name: "chosen", SessionName: "uam-fake-11111111", Workdir: "/tmp/shared", Status: store.StatusActive}
+				cfg.Sessions[store.Key("fake", "22222222")] = store.SessionRecord{ID: "22222222", Agent: "fake", Name: "other", SessionName: "uam-fake-22222222", Workdir: "/tmp/shared", Status: store.StatusActive}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+			var firstErr error
+			switch action {
+			case "resume":
+				firstErr = svc.ResumeBackgroundExactWithOptions(context.Background(), "fake", id, ResumeOptions{})
+			case "attach":
+				_, firstErr = svc.AttachSpecExactWithOptions(context.Background(), "fake", id, ResumeOptions{})
+			case "restart":
+				firstErr = svc.RestartExactWithOptions(context.Background(), "fake", id, ResumeOptions{})
+			}
+			if !errors.Is(firstErr, ErrAmbiguousResume) {
+				t.Fatalf("preflight error = %v", firstErr)
+			}
+			if fake.stopped || fake.resumed != nil {
+				t.Fatalf("rejected preflight mutated provider: stopped=%v resumed=%+v", fake.stopped, fake.resumed)
+			}
+
+			opts := ResumeOptions{AllowLatest: true}
+			switch action {
+			case "resume":
+				firstErr = svc.ResumeBackgroundExactWithOptions(context.Background(), "fake", id, opts)
+			case "attach":
+				_, firstErr = svc.AttachSpecExactWithOptions(context.Background(), "fake", id, opts)
+			case "restart":
+				firstErr = svc.RestartExactWithOptions(context.Background(), "fake", id, opts)
+			}
+			if firstErr != nil {
+				t.Fatal(firstErr)
+			}
+			if fake.resumed == nil || fake.resumed.ID != id {
+				t.Fatalf("resume target = %+v", fake.resumed)
+			}
+		})
+	}
+}
+
+func TestProviderExactServiceActionsDoNotCrossDuplicateIDs(t *testing.T) {
+	ctx := context.Background()
+	id := "same0001"
+	claude := &svcFakeAdapter{name: "claude", available: true, sessions: []adapter.Session{{ID: id, AgentType: "claude", SessionName: "uam-claude-same0001", ProcAlive: adapter.Alive}}}
+	codex := &svcFakeAdapter{name: "codex", available: true, sessions: []adapter.Session{{ID: id, AgentType: "codex", SessionName: "uam-codex-same0001", ProcAlive: adapter.Alive}}}
+	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.Sessions[store.Key("claude", id)] = RecordFromSession(claude.sessions[0], store.ModeYolo)
+		cfg.Sessions[store.Key("codex", id)] = RecordFromSession(codex.sessions[0], store.ModeYolo)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{claude, codex}))
+
+	found, _, err := svc.FindExact(ctx, "codex", id)
+	if err != nil || found.AgentType != "codex" {
+		t.Fatalf("FindExact = %+v, %v", found, err)
+	}
+	if err := svc.RenameExact(ctx, "codex", id, "selected codex"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.TogglePinExact(ctx, "codex", id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.PeekExact(ctx, "codex", id); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReplyExact(ctx, "codex", id, "hello codex"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AttachSpecExact(ctx, "codex", id); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.StopExact(ctx, "codex", id, false); err != nil {
+		t.Fatal(err)
+	}
+	if claude.stopped || claude.peekedID != "" || claude.replied != "" || claude.attachedID != "" {
+		t.Fatalf("claude adapter was targeted: %+v", claude)
+	}
+	if codex.stoppedID != id || codex.peekedID != id || codex.replied != "hello codex" || codex.attachedID != id {
+		t.Fatalf("codex adapter did not receive exact actions: %+v", codex)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Sessions[store.Key("claude", id)]; got.Name != id || got.Pinned || got.Status == store.StatusClosedByUser {
+		t.Fatalf("claude record changed: %+v", got)
+	}
+	if got := cfg.Sessions[store.Key("codex", id)]; got.Name != "selected codex" || !got.Pinned || got.Status != store.StatusClosedByUser {
+		t.Fatalf("codex record not changed exactly: %+v", got)
+	}
+}
+
+func TestProviderExactResumeAndRestartUseSelectedAdapter(t *testing.T) {
+	for _, action := range []string{"resume", "restart"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := context.Background()
+			id := "same0002"
+			claude := &svcFakeAdapter{name: "claude", available: true, resumeKind: adapter.ResumeExact}
+			codexSession := adapter.Session{ID: id, AgentType: "codex", SessionName: "uam-codex-same0002", Cwd: t.TempDir(), ProcAlive: adapter.Exited}
+			codex := &svcFakeAdapter{name: "codex", available: true, resumeKind: adapter.ResumeExact}
+			st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.Update(func(cfg *store.Config) error {
+				cfg.Sessions[store.Key("claude", id)] = store.SessionRecord{ID: id, Agent: "claude", SessionName: "uam-claude-same0002", Workdir: t.TempDir(), Mode: store.ModeYolo}
+				cfg.Sessions[store.Key("codex", id)] = RecordFromSession(codexSession, store.ModeYolo)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{claude, codex}))
+			if action == "resume" {
+				err = svc.ResumeBackgroundExact(ctx, "codex", id)
+			} else {
+				err = svc.RestartExact(ctx, "codex", id)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if claude.resumed != nil || codex.resumed == nil || codex.resumed.ID != id {
+				t.Fatalf("resume crossed provider: claude=%+v codex=%+v", claude.resumed, codex.resumed)
+			}
+		})
+	}
 }
 func (f *svcFakeAdapter) HasSession(ctx adapter.Context, id string) bool { return f.alive }
 
@@ -294,7 +518,7 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	now := time.Now()
 	sessions := []adapter.Session{{ID: "dead", ProcAlive: adapter.Exited, CreatedAt: now}, {ID: "live", ProcAlive: adapter.Alive, CreatedAt: now}, {ID: "p", ProcAlive: adapter.Exited, Pinned: true, CreatedAt: now}}
 	SortSessions(sessions)
-	if sessions[0].ID != "p" || sessions[1].ID != "live" {
+	if sessions[0].ID != "live" || sessions[1].ID != "p" {
 		t.Fatalf("order=%+v", sessions)
 	}
 	rec := RecordFromSession(adapter.Session{ID: "id", AgentType: "fake", CommandAlias: "ghcp", Prompt: "do work", Cwd: "/tmp", SessionName: "tm", CreatedAt: now}, "")
@@ -306,17 +530,17 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	}
 }
 
-func TestSortSessionsPushesClosedToBottom(t *testing.T) {
+func TestSortSessionsGroupsAllStoppedBelowRunning(t *testing.T) {
 	now := time.Now()
-	// Closed sessions belong below everything else, even pinned ones, so the
-	// Active group renders without interruption at the top.
+	// All exited sessions belong below running ones; Closed does not define a
+	// separate lifecycle partition, while pin order applies within STOPPED.
 	sessions := []adapter.Session{
 		{ID: "closed-pinned", Pinned: true, Closed: true, ProcAlive: adapter.Exited, CreatedAt: now},
 		{ID: "live", ProcAlive: adapter.Alive, CreatedAt: now},
 		{ID: "stopped-active", ProcAlive: adapter.Exited, CreatedAt: now},
 	}
 	SortSessions(sessions)
-	if sessions[0].ID != "live" || sessions[1].ID != "stopped-active" || sessions[2].ID != "closed-pinned" {
+	if sessions[0].ID != "live" || sessions[1].ID != "closed-pinned" || sessions[2].ID != "stopped-active" {
 		t.Fatalf("order=%+v", sessions)
 	}
 }
@@ -650,6 +874,280 @@ func TestResumeBackgroundClearsClosedStatus(t *testing.T) {
 	cfg, _ := st.Load()
 	if cfg.Sessions[store.Key("fake", "12345678")].Status != store.StatusActive {
 		t.Fatalf("status after resume = %q, want %q", cfg.Sessions[store.Key("fake", "12345678")].Status, store.StatusActive)
+	}
+	if cfg.Sessions[store.Key("fake", "12345678")].LastExitCode != nil {
+		t.Fatal("successful resume must clear the previous exit code")
+	}
+}
+
+func TestResumeBackgroundDoesNotEraseImmediateReplacementExit(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldExit, replacementExit := 2, 17
+	const sessionName = "uam-fake-12345678"
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession(store.Key("fake", "12345678"), store.SessionRecord{
+			ID: "12345678", Agent: "fake", Workdir: dir, SessionName: sessionName,
+			Status: store.StatusActive, LastExitCode: &oldExit,
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeExact}
+	fake.resumeHook = func(adapter.ResumeRequest) {
+		matched, err := st.TryRecordSessionExit(store.SessionExit{SessionName: sessionName, ExitCode: replacementExit})
+		if err != nil || !matched {
+			t.Fatalf("record immediate replacement exit: matched=%v err=%v", matched, err)
+		}
+	}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+	if err := svc.ResumeBackground(context.Background(), "12345678"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := cfg.Sessions[store.Key("fake", "12345678")]
+	if rec.LastExitCode == nil || *rec.LastExitCode != replacementExit {
+		t.Fatalf("exit code after immediate replacement failure=%v, want %d", rec.LastExitCode, replacementExit)
+	}
+	if got := deadSessionFromRecord(rec, time.Now()).State; got != adapter.Failed {
+		t.Fatalf("dead replacement state=%q, want %q", got, adapter.Failed)
+	}
+}
+
+func TestFailedConcurrentResumeCannotRollbackSuccessfulResume(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldExit := 9
+	const sessionName = "uam-fake-12345678"
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession(store.Key("fake", "12345678"), store.SessionRecord{
+			ID: "12345678", Agent: "fake", Workdir: dir, SessionName: sessionName,
+			Status: store.StatusClosedByUser, LastExitCode: &oldExit,
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	calls := 0
+	var callsMu sync.Mutex
+	fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeExact}
+	fake.resumeFunc = func(req adapter.ResumeRequest) (adapter.Session, error) {
+		callsMu.Lock()
+		calls++
+		call := calls
+		callsMu.Unlock()
+		if call == 1 {
+			close(firstEntered)
+			<-releaseFirst
+			return adapter.Session{}, errors.New("first launch failed")
+		}
+		return adapter.Session{ID: req.ID, AgentType: "fake", Cwd: req.Cwd, SessionName: req.SessionName, State: adapter.Active, ProcAlive: adapter.Alive}, nil
+	}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- svc.ResumeBackground(context.Background(), "12345678") }()
+	<-firstEntered
+	if err := svc.ResumeBackground(context.Background(), "12345678"); err != nil {
+		t.Fatalf("second resume: %v", err)
+	}
+	close(releaseFirst)
+	if err := <-firstDone; err == nil {
+		t.Fatal("first resume unexpectedly succeeded")
+	}
+
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := cfg.Sessions[store.Key("fake", "12345678")]
+	if rec.Status != store.StatusActive || rec.LastExitCode != nil {
+		t.Fatalf("winning resume lifecycle overwritten: status=%q exit=%v", rec.Status, rec.LastExitCode)
+	}
+}
+
+func TestHeuristicResumeRejectsAmbiguousWorkspaceUnlessAllowed(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if err := st.Update(func(cfg *store.Config) error {
+		for _, id := range []string{"11111111", "22222222"} {
+			cfg.PutSession(store.Key("fake", id), store.SessionRecord{ID: id, Agent: "fake", Name: id, Workdir: "/tmp/project", SessionName: "uam-fake-" + id, Status: store.StatusActive})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ResumeBackground(context.Background(), "11111111"); !errors.Is(err, ErrAmbiguousResume) {
+		t.Fatalf("resume error=%v, want ErrAmbiguousResume", err)
+	}
+	if fake.resumed != nil {
+		t.Fatal("ambiguous heuristic resume must fail before provider launch")
+	}
+	if err := svc.ResumeBackgroundWithOptions(context.Background(), "11111111", ResumeOptions{AllowLatest: true}); err != nil {
+		t.Fatalf("allow-latest resume: %v", err)
+	}
+	if fake.resumed == nil {
+		t.Fatal("allow-latest must launch heuristic resume")
+	}
+}
+
+func TestProductionProviderResumeKindMatrixThroughAmbiguityGuard(t *testing.T) {
+	tests := []struct {
+		name, provider, providerID string
+		newAdapter                 func() adapter.AgentAdapter
+		isolatedOMP                bool
+		wantAmbiguous              bool
+	}{
+		{"opencode exact", "opencode", "ses_known123", func() adapter.AgentAdapter { return opencode.New(nil) }, false, false},
+		{"opencode fallback", "opencode", "", func() adapter.AgentAdapter { return opencode.New(nil) }, false, true},
+		{"claude exact", "claude", "abc12345-dead-beef-cafe-0123456789ab", func() adapter.AgentAdapter { return claude.New(nil) }, false, false},
+		{"claude fallback", "claude", "", func() adapter.AgentAdapter { return claude.New(nil) }, false, true},
+		{"omp isolated", "omp", "", func() adapter.AgentAdapter { return omp.New(nil) }, true, false},
+		{"omp legacy", "omp", "", func() adapter.AgentAdapter { return omp.New(nil) }, false, true},
+		{"codex remains heuristic", "codex", "legacy-value", func() adapter.AgentAdapter { return codex.New(nil) }, false, true},
+		{"copilot derives exact UAM name", "copilot", "", func() adapter.AgentAdapter { return copilot.New(nil) }, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			executable := filepath.Join(binDir, tt.provider)
+			if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", binDir)
+			state := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", state)
+			id, other := "11111111-dead-beef-cafe-0123456789ab", "22222222-dead-beef-cafe-0123456789ab"
+			if tt.isolatedOMP {
+				dir := filepath.Join(state, "uam", "providers", "omp", id)
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				for path := filepath.Join(state, "uam"); path != dir; {
+					if err := os.Chmod(path, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					next := filepath.Join(path, strings.Split(strings.TrimPrefix(dir, path+string(os.PathSeparator)), string(os.PathSeparator))[0])
+					path = next
+				}
+			}
+			cfg := store.DefaultConfig()
+			for _, candidate := range []string{id, other} {
+				providerID := ""
+				if candidate == id {
+					providerID = tt.providerID
+				}
+				cfg.PutSession(store.Key(tt.provider, candidate), store.SessionRecord{ID: candidate, Agent: tt.provider, Workdir: "/tmp/project", SessionName: "uam-" + tt.provider + "-" + candidate[:8], ProviderSessionID: providerID, Status: store.StatusActive})
+			}
+			svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{tt.newAdapter()}))
+			_, _, _, err := svc.prepareResume(adapter.Session{ID: id, AgentType: tt.provider}, cfg, ResumeOptions{})
+			if tt.wantAmbiguous {
+				if !errors.Is(err, ErrAmbiguousResume) {
+					t.Fatalf("error=%v, want ErrAmbiguousResume", err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestUniqueHeuristicResumeStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession(store.Key("fake", "11111111"), store.SessionRecord{ID: "11111111", Agent: "fake", Workdir: "/tmp/project", SessionName: "uam-fake-11111111", Status: store.StatusActive})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ResumeBackground(context.Background(), "11111111"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.resumed == nil {
+		t.Fatal("unique heuristic resume did not launch")
+	}
+}
+
+func TestExactResumeIgnoresOtherSessionsInWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeExact}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if err := st.Update(func(cfg *store.Config) error {
+		for _, id := range []string{"11111111", "22222222"} {
+			cfg.PutSession(store.Key("fake", id), store.SessionRecord{ID: id, Agent: "fake", Workdir: "/tmp/project", SessionName: "uam-fake-" + id, ProviderSessionID: "provider-" + id, Status: store.StatusActive})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ResumeBackground(context.Background(), "11111111"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.resumed == nil {
+		t.Fatal("exact resume did not launch")
+	}
+}
+
+func TestAmbiguousRestartDoesNotStopLiveSession(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := adapter.Session{ID: "11111111", AgentType: "fake", Cwd: "/tmp/project", SessionName: "uam-fake-11111111", ProcAlive: adapter.Alive, State: adapter.Active}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{live}, stopRemoves: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if err := st.Update(func(cfg *store.Config) error {
+		for _, id := range []string{"11111111", "22222222"} {
+			cfg.PutSession(store.Key("fake", id), store.SessionRecord{ID: id, Agent: "fake", Workdir: "/tmp/project", SessionName: "uam-fake-" + id, Status: store.StatusActive})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Restart(context.Background(), "11111111"); !errors.Is(err, ErrAmbiguousResume) {
+		t.Fatalf("restart error=%v, want ErrAmbiguousResume", err)
+	}
+	if fake.stopped {
+		t.Fatal("ambiguous restart must fail before stopping the live session")
+	}
+}
+
+func TestDeadSessionStateReflectsNaturalExitCode(t *testing.T) {
+	zero, crash := 0, 7
+	if got := deadSessionFromRecord(store.SessionRecord{LastExitCode: &zero}, time.Now()).State; got != adapter.Completed {
+		t.Fatalf("natural exit 0 state=%q, want Completed", got)
+	}
+	if got := deadSessionFromRecord(store.SessionRecord{LastExitCode: &crash}, time.Now()).State; got != adapter.Failed {
+		t.Fatalf("natural crash state=%q, want Failed", got)
 	}
 }
 

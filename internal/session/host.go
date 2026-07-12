@@ -2,9 +2,11 @@ package session
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -21,7 +23,12 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/vterm"
+	"golang.org/x/sys/unix"
 )
+
+// ProviderIdentityFileEnv names the provider-neutral identity handoff read by
+// the host after the managed process exits.
+const ProviderIdentityFileEnv = "UAM_PROVIDER_IDENTITY_FILE"
 
 // Default PTY geometry for a detached session, matching the old
 // `tmux new-session -x 200 -y 50` so unattached agents render wide output the
@@ -94,7 +101,8 @@ func (s *stringList) String() string     { return strings.Join(*s, ",") }
 func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
 type host struct {
-	dir, name string
+	dir, name            string
+	providerIdentityFile string
 
 	mu      sync.Mutex
 	term    *vterm.Terminal
@@ -108,9 +116,9 @@ type host struct {
 	// escalation stops there. cleaned is closed after shutdown has also
 	// removed the runtime files, so a Kill reply means the session is fully
 	// gone — a List immediately after must not see leftovers.
-	exited   chan struct{}
-	cleaned  chan struct{}
-	stopping atomic.Bool
+	exited      chan struct{}
+	cleaned     chan struct{}
+	uamStopping atomic.Bool
 }
 
 type attachClient struct {
@@ -151,13 +159,14 @@ func runHost(dir, name, cwd, label string, envs, command []string, ready *os.Fil
 	defer func() { _ = ln.Close() }()
 
 	h := &host{
-		dir:     dir,
-		name:    name,
-		label:   label,
-		term:    vterm.New(defaultCols, defaultRows, historyLines),
-		clients: map[*attachClient]struct{}{},
-		exited:  make(chan struct{}),
-		cleaned: make(chan struct{}),
+		dir:                  dir,
+		name:                 name,
+		providerIdentityFile: envValue(envs, ProviderIdentityFileEnv),
+		label:                label,
+		term:                 vterm.New(defaultCols, defaultRows, historyLines),
+		clients:              map[*attachClient]struct{}{},
+		exited:               make(chan struct{}),
+		cleaned:              make(chan struct{}),
 	}
 	cmd := exec.Command(command[0], command[1:]...) // #nosec G204 -- argv comes from the trusted uam client that spawned this host; no shell is involved.
 	cmd.Dir = cwd
@@ -282,7 +291,6 @@ func (h *host) signalLoop() {
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	<-ch
 	// Forward termination to the agent; the normal exit path then runs.
-	h.stopping.Store(true)
 	h.terminateChild()
 }
 
@@ -325,7 +333,7 @@ func (h *host) handleConn(conn net.Conn) {
 		_ = writeJSONLine(conn, response{OK: true})
 		_ = conn.Close()
 	case opKill:
-		h.stopping.Store(true)
+		h.uamStopping.Store(true)
 		h.terminateChild()
 		select {
 		case <-h.cleaned:
@@ -528,10 +536,11 @@ func (h *host) shutdown(exitCode int) {
 	if err := removeSessionFiles(h.dir, h.name); err != nil {
 		log.Warn("remove session files failed", "session", h.name, "error", err)
 	}
-	h.markClosed(exitCode)
+	h.recordExit(exitCode)
 }
 
-func (h *host) markClosed(exitCode int) {
+func (h *host) recordExit(exitCode int) {
+	providerID := readProviderIdentityHandoff(h.providerIdentityFile)
 	deadline := time.Now().Add(markClosedRetryWindow)
 	delay := markClosedRetryBase
 	var lastErr error
@@ -539,12 +548,12 @@ func (h *host) markClosed(exitCode int) {
 		st, err := store.Open(store.DefaultPath())
 		if err == nil {
 			var matched bool
-			matched, err = st.TryMarkSessionClosed(h.name, exitCode)
+			matched, err = st.TryRecordSessionExit(store.SessionExit{SessionName: h.name, ProviderSessionID: providerID, ExitCode: exitCode, UAMInitiated: h.uamStopping.Load()})
 			if err == nil && matched {
 				return
 			}
 		}
-		if h.stopping.Load() && err == nil {
+		if h.uamStopping.Load() && err == nil {
 			return
 		}
 		lastErr = err
@@ -556,6 +565,43 @@ func (h *host) markClosed(exitCode int) {
 		time.Sleep(min(delay, remaining))
 		delay = min(delay*2, markClosedRetryMax)
 	}
+}
+
+func envValue(envs []string, key string) string {
+	prefix := key + "="
+	for i := len(envs) - 1; i >= 0; i-- {
+		if strings.HasPrefix(envs[i], prefix) {
+			return strings.TrimPrefix(envs[i], prefix)
+		}
+	}
+	return ""
+}
+
+func readProviderIdentityHandoff(path string) string {
+	if path == "" {
+		return ""
+	}
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0) // #nosec G304 -- trusted launch metadata, opened no-follow.
+	if err != nil {
+		return ""
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer func() { _ = file.Close() }()
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || os.FileMode(st.Mode).Perm() != 0o600 || int(st.Uid) != os.Getuid() {
+		return ""
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 1025))
+	if err != nil || len(data) > 1024 {
+		return ""
+	}
+	var payload struct {
+		ProviderSessionID string `json:"provider_session_id"`
+	}
+	if json.Unmarshal(data, &payload) != nil || !store.ValidProviderSessionID(payload.ProviderSessionID) {
+		return ""
+	}
+	return payload.ProviderSessionID
 }
 
 func (h *host) logMarkClosedFailure(err error) {

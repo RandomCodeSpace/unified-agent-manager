@@ -205,8 +205,8 @@ func TestStopConfirmTargetsOriginalSessionAfterReorder(t *testing.T) {
 // F29 snapshot semantics as stop).
 func TestStopConfirmRestartsOriginalSessionAfterReorder(t *testing.T) {
 	live := []adapter.Session{
-		{ID: "alpha", AgentType: "fake", DisplayName: "alpha", SessionName: "uam-fake-alpha", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()},
-		{ID: "beta", AgentType: "fake", DisplayName: "beta", SessionName: "uam-fake-beta", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()},
+		{ID: "alpha", AgentType: "fake", DisplayName: "alpha", Cwd: "/tmp/alpha", SessionName: "uam-fake-alpha", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()},
+		{ID: "beta", AgentType: "fake", DisplayName: "beta", Cwd: "/tmp/beta", SessionName: "uam-fake-beta", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()},
 	}
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "sessions.json"))

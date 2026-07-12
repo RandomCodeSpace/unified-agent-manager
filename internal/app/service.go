@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -110,11 +111,12 @@ func (s *Service) PruneStartup(ctx context.Context) error {
 // overwrites only the supplied keys, leaving every other record (and any
 // concurrent mutation to it) intact.
 type refreshPatch struct {
-	create     *store.SessionRecord
-	status     *store.Status
-	lastSeenAt *time.Time
-	pr         *store.PRRecord
-	clearPR    bool
+	create            *store.SessionRecord
+	status            *store.Status
+	lastSeenAt        *time.Time
+	pr                *store.PRRecord
+	clearPR           bool
+	providerSessionID *string
 }
 
 func (s *Service) persistRefresh(updates map[string]refreshPatch) error {
@@ -145,6 +147,9 @@ func applyRefreshPatch(cfg *store.Config, key string, patch refreshPatch) {
 	} else if patch.pr != nil {
 		pr := *patch.pr
 		rec.PR = &pr
+	}
+	if patch.providerSessionID != nil {
+		rec.ProviderSessionID = *patch.providerSessionID
 	}
 	cfg.Sessions[key] = rec
 }
@@ -196,14 +201,14 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 	sess.DisplayName = firstNonEmpty(rec.Name, sess.DisplayName)
 	sess.CommandAlias = firstNonEmpty(rec.CommandAlias, sess.CommandAlias)
 	sess.Prompt = firstNonEmpty(rec.Prompt, sess.Prompt)
-	sess.ProviderSessionID = firstNonEmpty(rec.ProviderSessionID, sess.ProviderSessionID)
+	// A non-empty live identity is authoritative; an empty discovery result is
+	// a transient absence and must not erase a known stored identity.
+	sess.ProviderSessionID = firstNonEmpty(sess.ProviderSessionID, rec.ProviderSessionID)
 	sess.Pinned = rec.Pinned
 	sess.Group = rec.Group
 	sess.SortIndex = rec.SortIndex
-	// Closed implies the pane has exited: a user-closed record whose pane is
-	// still alive renders under ACTIVE (the refresh reconciles its persisted
-	// status back to Active). This keeps a live session from showing under
-	// CLOSED with a live glyph (F18).
+	// Closed is retained as explicit-stop reason metadata. A live process is
+	// always RUNNING, so refresh reconciles a stale user-closed status to Active.
 	sess.Closed = rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Exited
 	if rec.PR != nil && sess.PR == nil {
 		// The store schema does not persist Owner/Repo, but the URL is lossless:
@@ -221,7 +226,11 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 }
 
 func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Session {
-	return adapter.Session{ExitCode: rec.LastExitCode, ProviderSessionID: rec.ProviderSessionID, ID: rec.ID, AgentType: rec.Agent, CommandAlias: rec.CommandAlias, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, SessionName: rec.SessionName, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
+	state := adapter.Completed
+	if rec.LastExitCode != nil && *rec.LastExitCode != 0 {
+		state = adapter.Failed
+	}
+	return adapter.Session{ExitCode: rec.LastExitCode, ProviderSessionID: rec.ProviderSessionID, ID: rec.ID, AgentType: rec.Agent, CommandAlias: rec.CommandAlias, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, SessionName: rec.SessionName, State: state, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
 }
 
 // refreshSessionRecords reconciles live sessions against the loaded config and
@@ -271,6 +280,10 @@ func makeRefreshPatch(before, after store.SessionRecord, existed bool) refreshPa
 			patch.pr = &pr
 		}
 	}
+	if after.ProviderSessionID != "" && before.ProviderSessionID != after.ProviderSessionID {
+		providerID := after.ProviderSessionID
+		patch.providerSessionID = &providerID
+	}
 	return patch
 }
 
@@ -296,7 +309,7 @@ func reconcileRefreshRecord(cfg *store.Config, key string, sess adapter.Session,
 		changed = true
 	} else if rec.Status == store.StatusClosedByUser && sess.ProcAlive == adapter.Alive {
 		// Anti-flap: the user closed this session but its pane is still alive, so
-		// it belongs in the Active group. Reset the persisted status to Active,
+		// it belongs in RUNNING. Reset the persisted status to Active,
 		// otherwise the next merge re-flags it Closed and it flaps (F18).
 		rec.Status = store.StatusActive
 		cfg.Sessions[key] = rec
@@ -307,6 +320,11 @@ func reconcileRefreshRecord(cfg *store.Config, key string, sess adapter.Session,
 	// session isn't re-saved on every tick (F20 Stage 1).
 	if sess.ProcAlive == adapter.Alive && now.Sub(rec.LastSeenAt) >= lastSeenRefresh {
 		rec.LastSeenAt = now
+		cfg.Sessions[key] = rec
+		changed = true
+	}
+	if sess.ProviderSessionID != "" && sess.ProviderSessionID != rec.ProviderSessionID {
+		rec.ProviderSessionID = sess.ProviderSessionID
 		cfg.Sessions[key] = rec
 		changed = true
 	}
@@ -484,19 +502,16 @@ func sessionsFromMap(live map[string]adapter.Session) []adapter.Session {
 
 func SortSessions(sessions []adapter.Session) {
 	sort.SliceStable(sessions, func(i, j int) bool {
-		// Closed sessions sort below everything else so the renderer's
-		// Active group stays packed at the top and Closed forms a tail.
-		if sessions[i].Closed != sessions[j].Closed {
-			return !sessions[i].Closed
+		// Process liveness is the dashboard lifecycle source of truth. Persisted
+		// Closed is reason/compatibility metadata and must not split stopped rows.
+		if sessions[i].ProcAlive != sessions[j].ProcAlive {
+			return sessions[i].ProcAlive == adapter.Alive
 		}
 		if sessions[i].Pinned != sessions[j].Pinned {
 			return sessions[i].Pinned
 		}
 		if sessions[i].SortIndex != sessions[j].SortIndex {
 			return sessions[i].SortIndex < sessions[j].SortIndex
-		}
-		if sessions[i].ProcAlive != sessions[j].ProcAlive {
-			return sessions[i].ProcAlive == adapter.Alive
 		}
 		if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
 			return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
@@ -552,6 +567,20 @@ func (s *Service) Stop(ctx context.Context, id string, remove bool) error {
 	if err != nil {
 		return err
 	}
+	return s.stopFound(ctx, sess, remove)
+}
+
+// StopExact is the provider-aware TUI variant of Stop. The ID-only method is
+// retained for CLI prefix lookup compatibility.
+func (s *Service) StopExact(ctx context.Context, agentName, id string, remove bool) error {
+	sess, _, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	return s.stopFound(ctx, sess, remove)
+}
+
+func (s *Service) stopFound(ctx context.Context, sess adapter.Session, remove bool) error {
 	if err := s.stopAdapterSession(ctx, sess); err != nil {
 		return err
 	}
@@ -564,9 +593,8 @@ func (s *Service) Stop(ctx context.Context, id string, remove bool) error {
 			return nil
 		})
 	}
-	// Soft-close: keep the record so the user can resume later, but flag it
-	// as user-closed so the UI sorts it into the Closed group and Reconcile
-	// never treats it as a reboot-recovery candidate.
+	// Soft-close: keep the record so the user can resume later, while preserving
+	// user-closed as reason metadata. Process liveness places it in STOPPED.
 	return s.Store.Update(func(cfg *store.Config) error {
 		key := store.Key(sess.AgentType, sess.ID)
 		rec, ok := cfg.Sessions[key]
@@ -635,8 +663,24 @@ func (s *Service) Rename(ctx context.Context, id, name string) error {
 	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Name = name })
 }
 
+func (s *Service) RenameExact(ctx context.Context, agentName, id, name string) error {
+	sess, _, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Name = name })
+}
+
 func (s *Service) TogglePin(ctx context.Context, id string) error {
 	sess, _, err := s.Find(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Pinned = !rec.Pinned })
+}
+
+func (s *Service) TogglePinExact(ctx context.Context, agentName, id string) error {
+	sess, _, err := s.FindExact(ctx, agentName, id)
 	if err != nil {
 		return err
 	}
@@ -703,8 +747,35 @@ func (s *Service) Find(ctx context.Context, id string) (adapter.Session, store.C
 	return adapter.Session{}, cfg, fmt.Errorf("session %q not found", id)
 }
 
+// FindExact resolves the unique provider/session pair used by the TUI. Unlike
+// Find it deliberately performs no prefix or cross-provider matching.
+func (s *Service) FindExact(ctx context.Context, agentName, id string) (adapter.Session, store.Config, error) {
+	sessions, cfg, err := s.LoadSessions(ctx)
+	if err != nil {
+		return adapter.Session{}, cfg, err
+	}
+	for _, sess := range sessions {
+		if sess.AgentType == agentName && sess.ID == id {
+			return sess, cfg, nil
+		}
+	}
+	return adapter.Session{}, cfg, fmt.Errorf("session %q for provider %q not found", id, agentName)
+}
+
 func (s *Service) Peek(ctx context.Context, id string) (adapter.PeekResult, error) {
 	sess, _, err := s.Find(ctx, id)
+	if err != nil {
+		return adapter.PeekResult{}, err
+	}
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return adapter.PeekResult{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
+	}
+	return a.Peek(ctx, sess.ID)
+}
+
+func (s *Service) PeekExact(ctx context.Context, agentName, id string) (adapter.PeekResult, error) {
+	sess, _, err := s.FindExact(ctx, agentName, id)
 	if err != nil {
 		return adapter.PeekResult{}, err
 	}
@@ -727,7 +798,44 @@ func (s *Service) Reply(ctx context.Context, id, text string) error {
 	return a.Reply(ctx, sess.ID, text)
 }
 
+func (s *Service) ReplyExact(ctx context.Context, agentName, id, text string) error {
+	sess, _, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return fmt.Errorf(agentUnavailableFormat, sess.AgentType)
+	}
+	return a.Reply(ctx, sess.ID, text)
+}
+
 func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec, error) {
+	return s.AttachSpecWithOptions(ctx, id, ResumeOptions{})
+}
+
+func (s *Service) AttachSpecExact(ctx context.Context, agentName, id string) (adapter.AttachSpec, error) {
+	return s.AttachSpecExactWithOptions(ctx, agentName, id, ResumeOptions{})
+}
+
+func (s *Service) AttachSpecExactWithOptions(ctx context.Context, agentName, id string, opts ResumeOptions) (adapter.AttachSpec, error) {
+	sess, _, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return adapter.AttachSpec{}, err
+	}
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return adapter.AttachSpec{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
+	}
+	if sess.ProcAlive == adapter.Exited {
+		if err := s.ResumeBackgroundExactWithOptions(ctx, agentName, id, opts); err != nil {
+			return adapter.AttachSpec{}, err
+		}
+	}
+	return a.Attach(sess.ID)
+}
+
+func (s *Service) AttachSpecWithOptions(ctx context.Context, id string, opts ResumeOptions) (adapter.AttachSpec, error) {
 	sess, _, err := s.Find(ctx, id)
 	if err != nil {
 		return adapter.AttachSpec{}, err
@@ -737,7 +845,7 @@ func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec
 		return adapter.AttachSpec{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
 	}
 	if sess.ProcAlive == adapter.Exited {
-		if err := s.ResumeBackground(ctx, sess.ID); err != nil {
+		if err := s.ResumeBackgroundWithOptions(ctx, sess.ID, opts); err != nil {
 			return adapter.AttachSpec{}, err
 		}
 	}
@@ -749,7 +857,36 @@ func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec
 // under the same name with the provider's resume args so the agent picks its
 // conversation back up. A session that is already stopped simply resumes.
 func (s *Service) Restart(ctx context.Context, id string) error {
-	sess, _, err := s.Find(ctx, id)
+	return s.RestartWithOptions(ctx, id, ResumeOptions{})
+}
+
+func (s *Service) RestartExact(ctx context.Context, agentName, id string) error {
+	return s.RestartExactWithOptions(ctx, agentName, id, ResumeOptions{})
+}
+
+func (s *Service) RestartExactWithOptions(ctx context.Context, agentName, id string, opts ResumeOptions) error {
+	sess, cfg, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	resumable, rec, req, err := s.prepareResume(sess, cfg, opts)
+	if err != nil {
+		return err
+	}
+	if sess.ProcAlive == adapter.Alive {
+		if err := s.StopExact(ctx, agentName, id, false); err != nil {
+			return err
+		}
+	}
+	return s.resumePrepared(ctx, resumable, rec, req)
+}
+
+func (s *Service) RestartWithOptions(ctx context.Context, id string, opts ResumeOptions) error {
+	sess, cfg, err := s.Find(ctx, id)
+	if err != nil {
+		return err
+	}
+	resumable, rec, req, err := s.prepareResume(sess, cfg, opts)
 	if err != nil {
 		return err
 	}
@@ -758,33 +895,80 @@ func (s *Service) Restart(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	return s.ResumeBackground(ctx, id)
+	return s.resumePrepared(ctx, resumable, rec, req)
 }
 
 // ResumeBackground restarts a stopped session's backend session without
 // attaching to it. It is a no-op when the session is already running.
 func (s *Service) ResumeBackground(ctx context.Context, id string) error {
+	return s.ResumeBackgroundWithOptions(ctx, id, ResumeOptions{})
+}
+
+func (s *Service) ResumeBackgroundExact(ctx context.Context, agentName, id string) error {
+	return s.ResumeBackgroundExactWithOptions(ctx, agentName, id, ResumeOptions{})
+}
+
+func (s *Service) ResumeBackgroundExactWithOptions(ctx context.Context, agentName, id string, opts ResumeOptions) error {
+	sess, cfg, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	return s.resumeBackgroundFound(ctx, sess, cfg, opts)
+}
+
+type ResumeKind = adapter.ResumeKind
+
+const (
+	ResumeExact       = adapter.ResumeExact
+	ResumeHeuristic   = adapter.ResumeHeuristic
+	ResumeUnsupported = adapter.ResumeUnsupported
+)
+
+type ResumeOptions struct {
+	AllowLatest bool
+}
+
+var ErrAmbiguousResume = errors.New("ambiguous heuristic resume")
+
+func (s *Service) ResumeBackgroundWithOptions(ctx context.Context, id string, opts ResumeOptions) error {
 	sess, cfg, err := s.Find(ctx, id)
 	if err != nil {
 		return err
 	}
+	return s.resumeBackgroundFound(ctx, sess, cfg, opts)
+}
+
+func (s *Service) resumeBackgroundFound(ctx context.Context, sess adapter.Session, cfg store.Config, opts ResumeOptions) error {
 	if sess.ProcAlive == adapter.Alive {
 		return nil
 	}
-	a, ok := s.Registry.Get(sess.AgentType)
-	if !ok {
-		return fmt.Errorf(agentUnavailableFormat, sess.AgentType)
-	}
-	resumable, ok := a.(adapter.ResumableAdapter)
-	if !ok {
-		return fmt.Errorf("session %q is not running and agent %q cannot resume it", sess.ID, sess.AgentType)
-	}
-	rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
-	if rec.ID == "" {
-		rec = RecordFromSession(sess, store.ModeYolo)
-	}
-	resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), SessionName: rec.SessionName, ProviderSessionID: rec.ProviderSessionID, CreatedAt: rec.CreatedAt})
+	resumable, rec, req, err := s.prepareResume(sess, cfg, opts)
 	if err != nil {
+		return err
+	}
+	return s.resumePrepared(ctx, resumable, rec, req)
+}
+
+// resumePrepared carries one validated resume decision through launch. Restart
+// deliberately calls this after stopping the old process so a newly persisted
+// sibling cannot trigger a second ambiguity rejection after the destructive
+// step. The initial prepareResume call remains the sole decision point.
+func (s *Service) resumePrepared(ctx context.Context, resumable adapter.ResumableAdapter, rec store.SessionRecord, req adapter.ResumeRequest) error {
+	var lifecycle resumeLifecycle
+	var err error
+	if s.Store != nil {
+		lifecycle, err = s.beginResumeLifecycle(rec)
+		if err != nil {
+			return err
+		}
+	}
+	resumed, err := resumable.Resume(ctx, req)
+	if err != nil {
+		if s.Store != nil {
+			if rollbackErr := s.rollbackResumeLifecycle(lifecycle); rollbackErr != nil {
+				log.Warn("restore failed resume lifecycle", "session", rec.SessionName, "error", rollbackErr)
+			}
+		}
 		return err
 	}
 	if s.Store == nil {
@@ -800,13 +984,120 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 		rec.Workdir = resumed.Cwd
 		rec.CommandAlias = firstNonEmpty(rec.CommandAlias, resumed.CommandAlias)
 		rec.ProviderSessionID = firstNonEmpty(resumed.ProviderSessionID, rec.ProviderSessionID)
-		rec.LastSeenAt = time.Now()
-		// Resuming a closed_by_user session reactivates it. The session host
-		// will flip Status back to closed_by_user on the next exit.
-		rec.Status = store.StatusActive
+		rec.LastSeenAt = nextResumeTimestamp(lifecycle.attemptAt)
 		cfg.Sessions[key] = rec
 		return nil
 	})
+}
+
+type resumeLifecycle struct {
+	key        string
+	status     store.Status
+	exitCode   *int
+	lastSeenAt time.Time
+	attemptAt  time.Time
+}
+
+// beginResumeLifecycle clears the previous process result before launch. The
+// replacement host can then record an immediate exit without a later success
+// write erasing that newer result.
+func (s *Service) beginResumeLifecycle(fallback store.SessionRecord) (resumeLifecycle, error) {
+	key := store.Key(fallback.Agent, fallback.ID)
+	state := resumeLifecycle{key: key}
+	err := s.Store.Update(func(cfg *store.Config) error {
+		rec := cfg.Sessions[key]
+		if rec.ID == "" {
+			rec = fallback
+		}
+		state.status = rec.Status
+		if rec.LastExitCode != nil {
+			code := *rec.LastExitCode
+			state.exitCode = &code
+		}
+		state.lastSeenAt = rec.LastSeenAt
+		state.attemptAt = nextResumeTimestamp(rec.LastSeenAt)
+		rec.Status = store.StatusActive
+		rec.LastExitCode = nil
+		rec.LastSeenAt = state.attemptAt
+		cfg.Sessions[key] = rec
+		return nil
+	})
+	return state, err
+}
+
+// rollbackResumeLifecycle restores the prior result only while the lifecycle
+// fields still have the pre-launch values. A concurrent host exit or explicit
+// stop wins and is never overwritten by rollback.
+func (s *Service) rollbackResumeLifecycle(state resumeLifecycle) error {
+	return s.Store.Update(func(cfg *store.Config) error {
+		rec := cfg.Sessions[state.key]
+		if rec.ID == "" || rec.Status != store.StatusActive || rec.LastExitCode != nil || !rec.LastSeenAt.Equal(state.attemptAt) {
+			return nil
+		}
+		rec.Status = state.status
+		rec.LastSeenAt = state.lastSeenAt
+		if state.exitCode == nil {
+			rec.LastExitCode = nil
+		} else {
+			code := *state.exitCode
+			rec.LastExitCode = &code
+		}
+		cfg.Sessions[state.key] = rec
+		return nil
+	})
+}
+
+func nextResumeTimestamp(after time.Time) time.Time {
+	now := time.Now().UTC()
+	if !now.After(after) {
+		return after.Add(time.Nanosecond)
+	}
+	return now
+}
+
+func (s *Service) prepareResume(sess adapter.Session, cfg store.Config, opts ResumeOptions) (adapter.ResumableAdapter, store.SessionRecord, adapter.ResumeRequest, error) {
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
+	}
+	resumable, ok := a.(adapter.ResumableAdapter)
+	if !ok {
+		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf("session %q is not running and agent %q cannot resume it", sess.ID, sess.AgentType)
+	}
+	rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
+	if rec.ID == "" {
+		rec = RecordFromSession(sess, store.ModeYolo)
+	}
+	req := adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), SessionName: rec.SessionName, ProviderSessionID: rec.ProviderSessionID, CreatedAt: rec.CreatedAt}
+	kind := adapter.ResumeHeuristic
+	if classifier, ok := a.(adapter.ResumeKindAdapter); ok {
+		kind = classifier.ResumeKind(req)
+	}
+	if kind == adapter.ResumeUnsupported {
+		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf("session %q is not running and agent %q cannot resume it", sess.ID, sess.AgentType)
+	}
+	if kind == adapter.ResumeHeuristic && !opts.AllowLatest && retainedSessionCount(cfg, rec.Agent, rec.Workdir) > 1 {
+		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf("%w: provider %q has multiple retained sessions in %q; retry with --allow-latest", ErrAmbiguousResume, rec.Agent, rec.Workdir)
+	}
+	return resumable, rec, req, nil
+}
+
+func retainedSessionCount(cfg store.Config, agentName, workdir string) int {
+	want := normalizedWorkspace(workdir)
+	count := 0
+	for _, candidate := range cfg.Sessions {
+		if strings.EqualFold(candidate.Agent, agentName) && normalizedWorkspace(candidate.Workdir) == want {
+			count++
+		}
+	}
+	return count
+}
+
+func normalizedWorkspace(workdir string) string {
+	if abs, err := filepath.Abs(workdir); err == nil {
+		workdir = abs
+	}
+	return filepath.Clean(workdir)
 }
 
 func (s *Service) PrintList(ctx context.Context, asJSON bool) error {
@@ -853,6 +1144,27 @@ func (s *Service) UpdateSortOrder(sessions []adapter.Session) error {
 				rec = RecordFromSession(sess, store.ModeYolo)
 			}
 			rec.SortIndex = i
+			cfg.Sessions[key] = rec
+		}
+		return nil
+	})
+}
+
+// UpdateSortIndices persists the explicit canonical positions carried by each
+// session. Grouped presentation order is not itself a global sort order: only
+// the pair moved inside a workspace has its positions exchanged.
+func (s *Service) UpdateSortIndices(sessions []adapter.Session) error {
+	if s.Store == nil {
+		return nil
+	}
+	return s.Store.Update(func(cfg *store.Config) error {
+		for _, sess := range sessions {
+			key := store.Key(sess.AgentType, sess.ID)
+			rec := cfg.Sessions[key]
+			if rec.ID == "" {
+				rec = RecordFromSession(sess, store.ModeYolo)
+			}
+			rec.SortIndex = sess.SortIndex
 			cfg.Sessions[key] = rec
 		}
 		return nil

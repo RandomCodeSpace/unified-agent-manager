@@ -189,9 +189,8 @@ func TestRenderRowColumnsAlignWithPRDot(t *testing.T) {
 	}
 }
 
-// F30 — a reboot-survivor dead session (Exited, not user-closed) must NOT show
-// the red Failed glyph; it shows a neutral resumable glyph. A user-closed dead
-// session and a live session each get their own glyph.
+// F30 — clean/external stopped sessions must not show the failure glyph. Only a
+// grounded nonzero/signal exit is failed; explicit UAM stops remain neutral.
 func TestStateGlyphDistinguishesResumableFromFailed(t *testing.T) {
 	live, _ := sessionGlyph(adapter.Session{ProcAlive: adapter.Alive})
 	resumable, _ := sessionGlyph(adapter.Session{ProcAlive: adapter.Exited})
@@ -354,7 +353,12 @@ func TestTabSurfacesSetDefaultAgentError(t *testing.T) {
 func TestGroupByDirToggleSurfacesSetUIError(t *testing.T) {
 	st := readOnlyStore(t)
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "a", available: true}}))
-	model, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = model.(Model)
+	if cmd == nil {
+		t.Fatal("group toggle should persist asynchronously")
+	}
+	model, _ = m.Update(cmd())
 	m = model.(Model)
 	if m.message == "" {
 		t.Fatal("a failed SetUI must surface an error in the status line")

@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"flag"
@@ -24,6 +25,23 @@ const detachPrefix = 0x02
 const ctrlC = 0x03
 
 const AttachQuietEnv = "UAM_ATTACH_QUIET"
+const AttachMouseEnv = "UAM_ATTACH_MOUSE"
+
+// attachMouseEnabled resolves the per-viewer mouse policy. Local attaches keep
+// provider mouse support by default; SSH attaches leave mouse gestures to the
+// local terminal so selection and paste continue to work.
+func attachMouseEnabled(getenv func(string) string) bool {
+	switch getenv(AttachMouseEnv) {
+	case "on":
+		return true
+	case "off":
+		return false
+	case "", "auto":
+		return getenv("SSH_CONNECTION") == "" && getenv("SSH_TTY") == ""
+	default:
+		return getenv("SSH_CONNECTION") == "" && getenv("SSH_TTY") == ""
+	}
+}
 
 type attachOptions struct {
 	quiet bool
@@ -173,7 +191,11 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	// pump has fully drained, so a second receive never blocks.
 	done := make(chan error, 1)
 	go func() {
-		_, err := io.Copy(stdout, br)
+		filter := newAttachOutputFilter(stdout, attachMouseEnabled(os.Getenv))
+		_, err := io.Copy(filter, br)
+		if flushErr := filter.Flush(); err == nil {
+			err = flushErr
+		}
 		done <- err
 		close(done)
 	}()
@@ -253,11 +275,17 @@ type stdinFilter struct {
 	// verbatim (a terminal reply to an agent query); strBel allows the OSC
 	// BEL terminator, strEsc tracks a possible ST (ESC \), and strLen caps
 	// runaway sequences at maxStrLen.
-	strActive bool
-	strBel    bool
-	strEsc    bool
-	strLen    int
+	strActive  bool
+	strBel     bool
+	strEsc     bool
+	strLen     int
+	inPaste    bool
+	pasteStart int
+	pasteEnd   int
 }
+
+var pasteBegin = []byte("\x1b[200~")
+var pasteEnd = []byte("\x1b[201~")
 
 // boxEmpty reports whether the agent's input box is believed empty.
 func (f *stdinFilter) boxEmpty() bool { return !f.unknown && f.typed == 0 }
@@ -305,8 +333,29 @@ func pumpStdin(stdin io.Reader, frames *frameWriter, backDetach bool) {
 func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 	out = make([]byte, 0, len(chunk)+1)
 	for i, b := range chunk {
+		if f.inPaste {
+			out = append(out, b)
+			f.pasteEnd = advanceExactMatch(pasteEnd, f.pasteEnd, b)
+			if f.pasteEnd == len(pasteEnd) {
+				f.inPaste, f.pasteEnd = false, 0
+				f.unknown = true
+			}
+			continue
+		}
 		if f.strActive {
 			out = f.strByte(out, b)
+			continue
+		}
+		f.pasteStart = advanceExactMatch(pasteBegin, f.pasteStart, b)
+		if f.pasteStart == len(pasteBegin) {
+			// The marker may have accumulated in esc, or its ESC may already
+			// have been forwarded at a read boundary. Emit only what remains.
+			if len(f.esc) > 0 {
+				out = append(out, f.esc...)
+				f.esc = nil
+			}
+			out = append(out, b)
+			f.pasteStart, f.inPaste = 0, true
 			continue
 		}
 		if f.pendingPrefix {
@@ -379,6 +428,168 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 		}
 	}
 	return out, false
+}
+
+func advanceExactMatch(pattern []byte, matched int, b byte) int {
+	if b == pattern[matched] {
+		return matched + 1
+	}
+	if b == pattern[0] {
+		return 1
+	}
+	return 0
+}
+
+const maxAttachCSI = 4096
+
+var attachAltModes = map[string]bool{"47": true, "1047": true, "1049": true}
+var attachMouseModes = map[string]bool{"1000": true, "1002": true, "1003": true, "1005": true, "1006": true, "1015": true}
+
+// attachOutputFilter contains provider-owned alternate-screen toggles inside
+// the attach screen and optionally leaves mouse modes under terminal control.
+// Only seven-bit DEC private h/l sequences are rewritten.
+type attachOutputFilter struct {
+	dst          io.Writer
+	mouse        bool
+	pending      []byte
+	abortedCSI   bool
+	forwardedCSI bool
+}
+
+func newAttachOutputFilter(dst io.Writer, mouse bool) *attachOutputFilter {
+	return &attachOutputFilter{dst: dst, mouse: mouse}
+}
+
+func (f *attachOutputFilter) Write(p []byte) (int, error) {
+	// Ordinary output never exceeds the input length. A split control sequence
+	// can add the small pending prefix back, in which case append grows the
+	// buffer safely instead of computing a potentially overflowing capacity.
+	out := make([]byte, 0, len(p))
+	for _, b := range p {
+		switch {
+		case len(f.pending) == 0:
+			if b == 0x1b {
+				f.pending = append(f.pending, b)
+				f.abortedCSI = f.forwardedCSI
+				f.forwardedCSI = false
+			} else {
+				out = append(out, b)
+				if f.forwardedCSI && (b == 0x18 || b == 0x1a || b >= 0x40 && b <= 0x7e) {
+					f.forwardedCSI = false
+				}
+			}
+		case len(f.pending) == 1:
+			if b == '[' {
+				f.pending = append(f.pending, b)
+			} else {
+				out = append(out, f.pending...)
+				f.pending = f.pending[:0]
+				f.abortedCSI = false
+				if b == 0x1b {
+					f.pending = append(f.pending, b)
+				} else {
+					out = append(out, b)
+				}
+			}
+		case b == 0x18 || b == 0x1a:
+			// CAN and SUB cancel CSI parsing and return the destination
+			// terminal to ground. Preserve the provider's cancellation byte;
+			// no synthetic cancellation is needed for a later filtered mode.
+			out = append(out, f.pending...)
+			out = append(out, b)
+			f.pending = f.pending[:0]
+			f.abortedCSI = false
+			f.forwardedCSI = false
+		case b == 0x1b:
+			// ESC aborts an in-flight CSI in a real terminal. Flush the old
+			// prefix and retain this ESC as the start of a new filterable
+			// sequence instead of letting its '[' terminate the old CSI.
+			out = append(out, f.pending...)
+			f.pending = append(f.pending[:0], b)
+			f.abortedCSI = true
+		default:
+			f.pending = append(f.pending, b)
+			if b >= 0x40 && b <= 0x7e {
+				rewritten := f.rewriteCSI(f.pending)
+				if len(rewritten) == 0 && f.abortedCSI {
+					// The filtered ESC would otherwise leave the previously
+					// forwarded incomplete CSI active. CAN is the standard CSI
+					// cancellation control and cannot begin another sequence.
+					out = append(out, 0x18)
+				} else {
+					out = append(out, rewritten...)
+				}
+				f.pending = f.pending[:0]
+				f.abortedCSI = false
+			} else if len(f.pending) > maxAttachCSI {
+				out = append(out, f.pending...)
+				f.pending = f.pending[:0]
+				f.abortedCSI = false
+				f.forwardedCSI = true
+			}
+		}
+	}
+	if err := writeAttachBytes(f.dst, out); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (f *attachOutputFilter) Flush() error {
+	err := writeAttachBytes(f.dst, f.pending)
+	f.pending = f.pending[:0]
+	return err
+}
+
+func (f *attachOutputFilter) rewriteCSI(seq []byte) []byte {
+	if len(seq) < 5 || seq[0] != 0x1b || seq[1] != '[' || seq[2] != '?' || (seq[len(seq)-1] != 'h' && seq[len(seq)-1] != 'l') {
+		return seq
+	}
+	params := bytes.Split(seq[3:len(seq)-1], []byte{';'})
+	kept := make([][]byte, 0, len(params))
+	removed := false
+	for _, param := range params {
+		if len(param) == 0 {
+			return seq
+		}
+		for _, b := range param {
+			if b < '0' || b > '9' {
+				return seq
+			}
+		}
+		key := string(param)
+		if attachAltModes[key] || (!f.mouse && attachMouseModes[key]) {
+			removed = true
+			continue
+		}
+		kept = append(kept, param)
+	}
+	if !removed {
+		return seq
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	out := []byte("\x1b[?")
+	out = append(out, bytes.Join(kept, []byte{';'})...)
+	out = append(out, seq[len(seq)-1])
+	return out
+}
+
+func writeAttachBytes(dst io.Writer, p []byte) error {
+	for len(p) > 0 {
+		n, err := dst.Write(p)
+		if n > 0 {
+			p = p[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 // escByte feeds one byte into a pending escape sequence. It returns the

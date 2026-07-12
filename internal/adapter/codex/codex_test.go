@@ -47,6 +47,13 @@ func TestNewWiresSessionArgs(t *testing.T) {
 	}
 }
 
+func TestResumeKindRemainsHeuristicEvenWithUnrelatedStoredIdentity(t *testing.T) {
+	ag := New(nil).(adapter.ResumeKindAdapter)
+	if got := ag.ResumeKind(adapter.ResumeRequest{ProviderSessionID: "legacy-value"}); got != adapter.ResumeHeuristic {
+		t.Fatalf("ResumeKind=%q, want heuristic", got)
+	}
+}
+
 // TestResumeAppendsResumeLastAndDoesNotReplayPrompt: resuming an Exited codex
 // row must use codex's `resume --last` and must NOT replay the original prompt
 // into the restored session, nor pass the uam UUID.

@@ -184,6 +184,16 @@ type SessionRecord struct {
 	PR           *PRRecord `json:"pr,omitempty"`
 }
 
+// SessionExit describes how a provider process left its native session host.
+// UAMInitiated is true only for an explicit UAM stop/restart request; terminal
+// provider exits and externally delivered signals remain natural exits.
+type SessionExit struct {
+	SessionName       string
+	ProviderSessionID string
+	ExitCode          int
+	UAMInitiated      bool
+}
+
 type PRRecord struct {
 	URL         string    `json:"url"`
 	Number      int       `json:"number"`
@@ -432,7 +442,7 @@ func validateRecord(rec SessionRecord) string {
 	// The provider session id is passed as a resume argv value; constrain it
 	// so a hand-edited record cannot smuggle a flag or shell hazard into the
 	// agent's command line.
-	if rec.ProviderSessionID != "" && !providerSessionIDRE.MatchString(rec.ProviderSessionID) {
+	if rec.ProviderSessionID != "" && !ValidProviderSessionID(rec.ProviderSessionID) {
 		return "unsafe provider_session_id"
 	}
 	return ""
@@ -443,6 +453,11 @@ func validateRecord(rec SessionRecord) string {
 // "ses_..." ids — with no shell metacharacters and no leading dash (a value
 // starting with '-' could be parsed as a flag by the agent CLI).
 var providerSessionIDRE = regexp.MustCompile(`^[0-9A-Za-z_][0-9A-Za-z_-]{0,63}$`)
+
+// ValidProviderSessionID is the schema-v3 provider identity grammar. Runtime
+// discovery must use this same boundary so it cannot persist a value that a
+// later load would reject by dropping the containing session record.
+func ValidProviderSessionID(id string) bool { return providerSessionIDRE.MatchString(id) }
 
 func isSafeCommandAlias(alias string) bool {
 	if alias == "" || strings.HasPrefix(alias, "-") {
@@ -643,22 +658,35 @@ func (s *Store) MarkSessionClosed(sessionName string, exitCode int) error {
 	return err
 }
 
-// TryMarkSessionClosed is MarkSessionClosed with an explicit match result. The
-// host uses the result to distinguish an intentionally idempotent no-op from
-// the narrow launch race where the durable record has not been written yet.
+// TryMarkSessionClosed is the compatibility entry point for older callers. It
+// records an explicit UAM stop and returns whether a durable record matched.
 func (s *Store) TryMarkSessionClosed(sessionName string, exitCode int) (bool, error) {
-	if sessionName == "" {
+	return s.TryRecordSessionExit(SessionExit{SessionName: sessionName, ExitCode: exitCode, UAMInitiated: true})
+}
+
+// TryRecordSessionExit records the provider's latest exit while preserving
+// resumability for natural exits. Only an explicit UAM stop/restart retires
+// the record into the closed-by-user group.
+func (s *Store) TryRecordSessionExit(exit SessionExit) (bool, error) {
+	if exit.SessionName == "" {
 		return false, nil
 	}
 	matched := false
 	err := s.Update(func(cfg *Config) error {
 		for key, rec := range cfg.Sessions {
-			if rec.SessionName != sessionName {
+			if rec.SessionName != exit.SessionName {
 				continue
 			}
-			rec.Status = StatusClosedByUser
-			code := exitCode
+			if exit.UAMInitiated {
+				rec.Status = StatusClosedByUser
+			} else {
+				rec.Status = StatusActive
+			}
+			code := exit.ExitCode
 			rec.LastExitCode = &code
+			if exit.ProviderSessionID != "" {
+				rec.ProviderSessionID = exit.ProviderSessionID
+			}
 			cfg.Sessions[key] = rec
 			matched = true
 			return nil

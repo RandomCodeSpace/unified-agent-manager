@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
@@ -63,13 +64,13 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam                              open the TUI")
 	fmt.Fprintln(os.Stderr, "  uam new                          guided dispatch wizard")
 	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] [--alias <name>] <agent> [#session-name] [prompt]")
-	fmt.Fprintln(os.Stderr, "  uam attach <name-or-id>")
+	fmt.Fprintln(os.Stderr, "  uam attach [--allow-latest] <name-or-id>")
 	fmt.Fprintln(os.Stderr, "  uam last")
 	fmt.Fprintln(os.Stderr, "  uam version")
 	fmt.Fprintln(os.Stderr, "  uam ls [--json]")
 	fmt.Fprintln(os.Stderr, "  uam peek <id>")
 	fmt.Fprintln(os.Stderr, "  uam stop <id>")
-	fmt.Fprintln(os.Stderr, "  uam restart <id>                  stop the agent and resume it in place")
+	fmt.Fprintln(os.Stderr, "  uam restart [--allow-latest] <id> stop the agent and resume it in place")
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
 	fmt.Fprintln(os.Stderr, "  uam kill-all                      stop every managed session")
 	fmt.Fprintln(os.Stderr, "  uam notify-closed <session-name>   (internal: flag a record user-closed)")
@@ -160,11 +161,16 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 	case "notify-closed":
 		return runNotifyClosed(svc, args[1:])
 	case "attach":
-		id, err := requireArg(args[1:], "attach requires <id>")
+		fs := flag.NewFlagSet("attach", flag.ContinueOnError)
+		allowLatest := fs.Bool("allow-latest", false, "allow heuristic resume of the provider's latest session")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		id, err := requireArg(fs.Args(), "attach requires <id>")
 		if err != nil {
 			return err
 		}
-		return execAttach(ctx, svc, id, runTUI)
+		return execAttachWithOptions(ctx, svc, id, app.ResumeOptions{AllowLatest: *allowLatest}, runTUI)
 	case "last":
 		return runLast(ctx, svc, runTUI)
 	default:
@@ -205,11 +211,16 @@ func runStop(ctx context.Context, svc *app.Service, cmd string, args []string) e
 // runRestart stops the session's agent process and resumes it in place: same
 // session name and record, with the provider's resume args.
 func runRestart(ctx context.Context, svc *app.Service, args []string) error {
-	id, err := requireArg(args, "restart requires <id>")
+	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
+	allowLatest := fs.Bool("allow-latest", false, "allow heuristic resume of the provider's latest session")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	id, err := requireArg(fs.Args(), "restart requires <id>")
 	if err != nil {
 		return err
 	}
-	return svc.Restart(ctx, id)
+	return svc.RestartWithOptions(ctx, id, app.ResumeOptions{AllowLatest: *allowLatest})
 }
 
 // runNotifyClosed flags the matching record as user-closed. Session hosts
@@ -292,6 +303,20 @@ func NewService(st *store.Store) *app.Service {
 func RunTUI(ctx context.Context, model tea.Model) error {
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err := p.Run()
+	if term.IsTerminal(os.Stdout.Fd()) {
+		_ = writeTUIExitCleanup(os.Stdout)
+	}
+	return err
+}
+
+const tuiExitCleanup = "\x1b[0m" +
+	"\x1b[?1000;1002;1003;1004;1005;1006;1015l" +
+	"\x1b[?2004l" +
+	"\x1b[?25h" +
+	"\x1b[2K\r"
+
+func writeTUIExitCleanup(w io.Writer) error {
+	_, err := io.WriteString(w, tuiExitCleanup)
 	return err
 }
 
@@ -435,7 +460,11 @@ func parseNameAndPrompt(parts []string) (string, string) {
 }
 
 func execAttach(ctx context.Context, svc *app.Service, id string, runTUI func(context.Context, tea.Model) error) error {
-	spec, err := svc.AttachSpec(ctx, id)
+	return execAttachWithOptions(ctx, svc, id, app.ResumeOptions{}, runTUI)
+}
+
+func execAttachWithOptions(ctx context.Context, svc *app.Service, id string, opts app.ResumeOptions, runTUI func(context.Context, tea.Model) error) error {
+	spec, err := svc.AttachSpecWithOptions(ctx, id, opts)
 	if err != nil {
 		return err
 	}
