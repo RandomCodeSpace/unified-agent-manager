@@ -182,7 +182,7 @@ func ensureProviderFiles() (string, error) {
 		return "", err
 	}
 	tmp := tmpFile.Name()
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	if err := tmpFile.Chmod(0o600); err != nil {
 		_ = tmpFile.Close()
 		return "", err
@@ -267,7 +267,7 @@ func readIdentity(path string) (string, error) {
 		return "", err
 	}
 	file := os.NewFile(uintptr(fd), path)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
 		return "", err

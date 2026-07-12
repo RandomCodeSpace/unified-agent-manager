@@ -1316,19 +1316,6 @@ func (m *Model) persistDefaultAgent() tea.Cmd {
 	return m.loadSessionsCmd()
 }
 
-// persistGroupByDir persists the group-by-dir toggle. On failure it surfaces the
-// error and reverts the in-memory flag so the UI matches the unchanged stored
-// state; on success it returns a reload command (F55).
-func (m *Model) persistGroupByDir() tea.Cmd {
-	grouped := m.groupByDir
-	if err := m.service.SetUI(func(ui *store.UISettings) { ui.GroupByDir = grouped }); err != nil {
-		m.setGroupByDir(!grouped)
-		m.setMessage("could not save view setting: " + err.Error())
-		return nil
-	}
-	return m.loadSessionsCmd()
-}
-
 func (m *Model) setGroupByDir(grouped bool) {
 	selectedAgent, selectedID := "", ""
 	if sess, ok := m.selectedSession(); ok {
@@ -1369,22 +1356,6 @@ func (m Model) stopTargetExactCmd(agentName, id string, remove bool) tea.Cmd {
 	return func() tea.Msg {
 		err := m.service.StopExact(context.Background(), sess.AgentType, sess.ID, remove)
 		return sessionsLoadedMsg{err: err}
-	}
-}
-
-// restartTargetCmd restarts the session with the snapshotted id (same F29
-// fallback as stopTargetCmd): the agent process is stopped and resumed in
-// place, keeping the session's name and provider conversation.
-func (m Model) restartTargetCmd(id string) tea.Cmd {
-	sess, ok := m.sessionByID(id)
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		if err := m.service.Restart(context.Background(), sess.ID); err != nil {
-			return sessionsLoadedMsg{err: err}
-		}
-		return m.loadSessionsCmd()()
 	}
 }
 
@@ -2228,8 +2199,8 @@ func boundedTaskSummary(sess adapter.Session, width int) string {
 // livenessLabel describes a prompt-less session by its liveness and Closed flag
 // rather than its State enum.
 func livenessLabel(sess adapter.Session) string {
-	switch {
-	case sess.ProcAlive == adapter.Alive:
+	switch sess.ProcAlive {
+	case adapter.Alive:
 		return "running"
 	default:
 		return "resumable"

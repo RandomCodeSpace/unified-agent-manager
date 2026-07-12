@@ -586,7 +586,7 @@ func readProviderIdentityHandoff(path string) string {
 		return ""
 	}
 	file := os.NewFile(uintptr(fd), path)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var st unix.Stat_t
 	if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || os.FileMode(st.Mode).Perm() != 0o600 || int(st.Uid) != os.Getuid() {
 		return ""

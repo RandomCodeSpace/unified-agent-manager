@@ -76,8 +76,11 @@ func TestAutoProbeCachesByExecutableStatIdentity(t *testing.T) {
 	}
 	resetAutoCacheForTest()
 	write("Usage [--auto]")
-	if !supportsAuto(context.Background(), path) || !supportsAuto(context.Background(), path) {
+	if !supportsAuto(context.Background(), path) {
 		t.Fatal("current executable not detected")
+	}
+	if !supportsAuto(context.Background(), path) {
+		t.Fatal("cached executable support not detected")
 	}
 	data, _ := os.ReadFile(count)
 	if string(data) != "x" {
