@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -165,6 +166,47 @@ func TestAdapterStatusMapping(t *testing.T) {
 	} {
 		if got := adapterStatus(tc.in); got != tc.want {
 			t.Fatalf("adapterStatus(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func BenchmarkRefreshPRStatuses(b *testing.B) {
+	sessions := make([]adapter.Session, 20)
+	for i := range sessions {
+		id := fmt.Sprintf("%08x", i+1)
+		sessions[i] = adapter.Session{
+			ID: id, AgentType: "fake", DisplayName: id, Cwd: "/tmp",
+			SessionName: "uam-fake-" + id, State: adapter.Active, ProcAlive: adapter.Alive,
+			CreatedAt: time.Now(), PR: &adapter.PRRef{URL: fmt.Sprintf("https://github.com/o/r/pull/%d", i+1), Number: i + 1, Status: adapter.PROpen},
+		}
+	}
+	st, err := store.Open(filepath.Join(b.TempDir(), "sessions.json"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: sessions}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	svc.checkPR = func(context.Context, string) (pr.Status, error) { return pr.Open, nil }
+	if _, _, err := svc.LoadSessions(context.Background()); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		b.StopTimer()
+		if err := st.Update(func(cfg *store.Config) error {
+			for key, rec := range cfg.Sessions {
+				if rec.PR != nil {
+					rec.PR.LastChecked = time.Time{}
+					cfg.Sessions[key] = rec
+				}
+			}
+			return nil
+		}); err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+		if err := svc.RefreshPRStatuses(context.Background()); err != nil {
+			b.Fatal(err)
 		}
 	}
 }

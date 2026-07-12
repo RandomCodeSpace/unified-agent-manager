@@ -372,6 +372,36 @@ func BenchmarkHostileCSICounts(b *testing.B) {
 	}
 }
 
+func BenchmarkOrdinaryTerminalStream(b *testing.B) {
+	stream := []byte("\x1b[32mready\x1b[0m> go test ./...\r\nok  package  0.123s\r\n")
+	term := New(120, 40, 500)
+	b.SetBytes(int64(len(stream)))
+	b.ResetTimer()
+	for b.Loop() {
+		_, _ = term.Write(stream)
+	}
+}
+
+func FuzzTerminalInput(f *testing.F) {
+	for _, seed := range [][]byte{
+		[]byte("plain\r\ntext"),
+		[]byte("café 世界 🚀"),
+		[]byte("\x1b[999999999999999999999S"),
+		[]byte("\x1b]0;title\x07visible"),
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input []byte) {
+		term := New(80, 24, 100)
+		if _, err := term.Write(input); err != nil {
+			t.Fatal(err)
+		}
+		if got := term.Capture(100); len(got) > 80*(24+100)*4 {
+			t.Fatalf("capture exceeded screen/history bound: %d bytes", len(got))
+		}
+	})
+}
+
 func TestScrollRegionReverseWrapAndKeypadIgnored(t *testing.T) {
 	term := New(20, 4, 0)
 	// Keypad mode escapes and charset designators are consumed silently.

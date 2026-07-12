@@ -1,0 +1,86 @@
+name: Release smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-smoke-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  snapshot:
+    name: GoReleaser snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate GoReleaser configuration
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          args: check
+
+      - name: Build snapshot archives
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          args: release --snapshot --clean --skip=sign,sbom
+
+      - name: Verify archive names and contents
+        shell: bash
+        run: |
+          mapfile -t archives < <(find dist -maxdepth 1 -type f -name 'uam_*.tar.gz' -print | sort)
+          test "${#archives[@]}" -eq 4
+          for archive in "${archives[@]}"; do
+            basename "${archive}" | grep -Eq '^uam_.+_(linux|darwin)_(amd64|arm64)\.tar\.gz$'
+            tar -tzf "${archive}" | grep -Eq '(^|/)uam$'
+          done
+          linux_archive="$(find dist -maxdepth 1 -type f -name 'uam_*_linux_amd64.tar.gz' -print -quit)"
+          test -n "${linux_archive}"
+          mkdir -p /tmp/uam-release-smoke
+          tar -xzf "${linux_archive}" -C /tmp/uam-release-smoke
+          binary="$(find /tmp/uam-release-smoke -type f -name uam -print -quit)"
+          test -n "${binary}"
+          "${binary}" version | grep -E '.+'
+
+  darwin-native:
+    name: Darwin-native lifecycle and version smoke
+    runs-on: macos-14
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run native session lifecycle tests
+        run: go test -race -count=1 -timeout=4m ./internal/session
+
+      - name: Run stop, restart, and resume tests
+        run: go test -race -count=1 -timeout=2m ./internal/app
+
+      - name: Build and run version command
+        run: |
+          go build -o "${RUNNER_TEMP}/uam" ./cmd/uam
+          "${RUNNER_TEMP}/uam" version | grep -E '.+'
