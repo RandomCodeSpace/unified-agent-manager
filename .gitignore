@@ -9,3 +9,5 @@ coverage.*
 /.claude/worktrees/
 /CLAUDE.md
 /PLAN.md
+graphify_out/
+graphify-out/
