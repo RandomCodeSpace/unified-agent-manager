@@ -30,7 +30,15 @@ func TestMain(m *testing.M) {
 
 func newTestClient(t *testing.T) *Client {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "run")
+	dir, err := os.MkdirTemp("", "uam-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Setenv("UAM_CONFIG_DIR", filepath.Join(t.TempDir(), "cfg"))
 	exe, err := os.Executable()
 	if err != nil {
@@ -299,6 +307,14 @@ func TestSetSessionLabelPersistsToState(t *testing.T) {
 		st, err := readState(c.Dir, name)
 		return err == nil && st.Label == "fixer · fake"
 	})
+}
+
+func TestTitleSequenceSanitizesTerminalControls(t *testing.T) {
+	got := titleSequence("safe\u009d0;forged\a red\nnow")
+	want := "\x1b]0;safe red now\x07"
+	if got != want {
+		t.Fatalf("titleSequence = %q, want %q", got, want)
+	}
 }
 
 func TestListSweepsStaleStateFiles(t *testing.T) {

@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -11,6 +12,34 @@ import (
 	"syscall"
 	"testing"
 )
+
+func FuzzStateDecoding(f *testing.F) {
+	for _, seed := range [][]byte{
+		[]byte(`{"name":"uam-fake-aabbccdd","host_pid":1,"host_start":2}`),
+		[]byte(`{"name":"../escape","host_pid":1}`),
+		[]byte(`null`),
+		[]byte(`{"unknown":{"nested":true}}`),
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var state State
+		if err := json.Unmarshal(data, &state); err != nil {
+			return
+		}
+		encoded, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded State
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.Name != state.Name || decoded.HostPID != state.HostPID || decoded.HostStart != state.HostStart {
+			t.Fatalf("state round trip changed identity: before=%+v after=%+v", state, decoded)
+		}
+	})
+}
 
 func TestVerifyDirRejectsUnsafeRuntimeDirectories(t *testing.T) {
 	parent := t.TempDir()
@@ -234,6 +263,41 @@ func TestProcAliveWithStartDetectsPIDReuse(t *testing.T) {
 	}
 	if procAliveWithStart(-1, real) {
 		t.Fatal("invalid pid must read dead")
+	}
+}
+
+func TestProcIdentityMatchesRequiresRecordedAndCurrentIdentity(t *testing.T) {
+	pid := os.Getpid()
+	real := procStartTime(pid)
+	if real == 0 {
+		t.Skip("process start identity unavailable on this platform")
+	}
+	if !procIdentityMatches(pid, real) {
+		t.Fatal("matching nonzero process identity must be accepted")
+	}
+	if procIdentityMatches(pid, 0) {
+		t.Fatal("zero recorded identity must fail closed for signaling")
+	}
+	if procIdentityMatches(pid, real+1) {
+		t.Fatal("mismatched process identity must fail closed for signaling")
+	}
+}
+
+func TestKillRefusesPIDFallbackWithoutVerifiedIdentity(t *testing.T) {
+	c := newTestClient(t)
+	if err := EnsureDir(c.Dir); err != nil {
+		t.Fatal(err)
+	}
+	name := "uam-fake-1d1d1d1d"
+	if err := writeState(c.Dir, State{Name: name, HostPID: os.Getpid(), HostStart: 0}); err != nil {
+		t.Fatal(err)
+	}
+	err := c.Kill(t.Context(), name)
+	if err == nil || !strings.Contains(err.Error(), "cannot verify process identity") {
+		t.Fatalf("Kill error = %v, want explicit process-identity safety error", err)
+	}
+	if !ProcAlive(os.Getpid()) {
+		t.Fatal("Kill signaled the test process despite missing identity")
 	}
 }
 

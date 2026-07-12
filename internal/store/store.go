@@ -147,9 +147,11 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 }
 
 type UISettings struct {
-	GroupByDir bool   `json:"group_by_dir"`
-	Sort       string `json:"sort"`
-	PeekWidth  int    `json:"peek_width"`
+	GroupByDir bool `json:"group_by_dir"`
+	// Sort and PeekWidth are retained schema-v3 compatibility fields. They are
+	// normalized and round-tripped even when the TUI exposes no direct control.
+	Sort      string `json:"sort"`
+	PeekWidth int    `json:"peek_width"`
 }
 
 type SessionRecord struct {
@@ -581,7 +583,9 @@ func (s *Store) saveNoLock(cfg Config) error {
 }
 
 func syncDir(dir string) error {
-	f, err := os.Open(dir)
+	// dir is the containing directory of Store.path; opening that configured
+	// path is the intended durability operation, not user-controlled inclusion.
+	f, err := os.Open(dir) // #nosec G304 -- Store intentionally fsyncs its configured parent directory.
 	if err != nil {
 		return fmt.Errorf("open store directory for sync: %w", err)
 	}

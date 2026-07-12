@@ -104,6 +104,9 @@ func TestTryMarkSessionClosedReportsWhetherRecordMatched(t *testing.T) {
 	if rec.Status != StatusClosedByUser || rec.LastExitCode == nil || *rec.LastExitCode != 7 {
 		t.Fatalf("record not closed: %+v", rec)
 	}
+	if err := s.MarkSessionClosed("uam-fake-deadbeef", 8); err != nil {
+		t.Fatalf("idempotent MarkSessionClosed: %v", err)
+	}
 }
 
 func TestSyncDirAcceptsStoreDirectoryAndRejectsMissingDirectory(t *testing.T) {

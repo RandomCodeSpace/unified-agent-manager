@@ -84,3 +84,28 @@ func TestFrameWriterSerializesConcurrentFrames(t *testing.T) {
 		t.Fatalf("trailing read error = %v, want EOF", err)
 	}
 }
+
+func FuzzFrameDecoding(f *testing.F) {
+	for _, seed := range [][]byte{
+		{frameDetach, 0, 0, 0, 0},
+		{frameStdin, 0, 0, 0, 3, 'a', 'b', 'c'},
+		{frameResize, 0, 0, 0, 4, 0, 80, 0, 24},
+		{frameStdin, 0xff, 0xff, 0xff, 0xff},
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		kind, payload, err := readFrame(bytes.NewReader(data))
+		if err != nil {
+			return
+		}
+		var roundTrip bytes.Buffer
+		if err := writeFrame(&roundTrip, kind, payload); err != nil {
+			t.Fatal(err)
+		}
+		gotKind, gotPayload, err := readFrame(&roundTrip)
+		if err != nil || gotKind != kind || !bytes.Equal(gotPayload, payload) {
+			t.Fatalf("frame round trip = (%d, %x, %v), want (%d, %x)", gotKind, gotPayload, err, kind, payload)
+		}
+	})
+}
