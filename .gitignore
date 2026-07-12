@@ -6,5 +6,6 @@ coverage.*
 .DS_Store
 .idea/
 .vscode/
+/.claude/worktrees/
 /CLAUDE.md
 /PLAN.md
