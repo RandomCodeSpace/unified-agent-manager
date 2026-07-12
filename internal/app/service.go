@@ -64,7 +64,9 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 	// writes only those keys, so a concurrent TogglePin/Rename on a different
 	// session is never clobbered by a stale whole-config Save (F01).
 	updates := s.refreshSessionRecords(ctx, live, &cfg)
-	s.persistRefresh(updates)
+	if err := s.persistRefresh(updates); err != nil {
+		log.Warn("persist refreshed session metadata failed", "records", len(updates), "error", err)
+	}
 	out := sessionsFromMap(live)
 	SortSessions(out)
 	return out, cfg, nil
@@ -105,12 +107,36 @@ func (s *Service) PruneStartup(ctx context.Context) error {
 // atomic read-modify-write. It re-reads the on-disk config inside the lock and
 // overwrites only the supplied keys, leaving every other record (and any
 // concurrent mutation to it) intact.
-func (s *Service) persistRefresh(updates map[string]store.SessionRecord) {
+type refreshPatch struct {
+	create     *store.SessionRecord
+	status     *store.Status
+	lastSeenAt *time.Time
+	pr         *store.PRRecord
+	clearPR    bool
+}
+
+func (s *Service) persistRefresh(updates map[string]refreshPatch) error {
 	if len(updates) == 0 || s.Store == nil {
-		return
+		return nil
 	}
-	_ = s.Store.Update(func(cfg *store.Config) error {
-		for key, rec := range updates {
+	return s.Store.Update(func(cfg *store.Config) error {
+		for key, patch := range updates {
+			rec, exists := cfg.Sessions[key]
+			if (!exists || rec.ID == "") && patch.create != nil {
+				rec = *patch.create
+			}
+			if patch.status != nil {
+				rec.Status = *patch.status
+			}
+			if patch.lastSeenAt != nil {
+				rec.LastSeenAt = *patch.lastSeenAt
+			}
+			if patch.clearPR {
+				rec.PR = nil
+			} else if patch.pr != nil {
+				pr := *patch.pr
+				rec.PR = &pr
+			}
 			cfg.Sessions[key] = rec
 		}
 		return nil
@@ -200,8 +226,8 @@ func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Sessi
 // also updates the in-memory cfg and live maps so the returned snapshot is
 // consistent. pr.Check runs here, OUTSIDE any store lock; persistence happens
 // later via persistRefresh's atomic re-read.
-func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) map[string]store.SessionRecord {
-	updates := map[string]store.SessionRecord{}
+func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) map[string]refreshPatch {
+	updates := map[string]refreshPatch{}
 	now := time.Now()
 	// Acquire the PR-check guard for the duration of this refresh's network pass.
 	// If another refresh already holds it, skip the gh calls (the persisted PR
@@ -213,6 +239,7 @@ func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]ada
 		defer s.prInFlight.Store(false)
 	}
 	for key, sess := range live {
+		before, existed := cfg.Sessions[key]
 		rec, changed, keep := reconcileRefreshRecord(cfg, key, sess, now)
 		if !keep {
 			continue
@@ -222,10 +249,42 @@ func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]ada
 			changed = true
 		}
 		if changed {
-			updates[key] = rec
+			updates[key] = makeRefreshPatch(before, rec, existed && before.ID != "")
 		}
 	}
 	return updates
+}
+
+func makeRefreshPatch(before, after store.SessionRecord, existed bool) refreshPatch {
+	patch := refreshPatch{}
+	if !existed {
+		created := after
+		patch.create = &created
+	}
+	if !existed || before.Status != after.Status {
+		status := after.Status
+		patch.status = &status
+	}
+	if !existed || !before.LastSeenAt.Equal(after.LastSeenAt) {
+		lastSeen := after.LastSeenAt
+		patch.lastSeenAt = &lastSeen
+	}
+	if !prRecordEqual(before.PR, after.PR) {
+		if after.PR == nil {
+			patch.clearPR = true
+		} else {
+			pr := *after.PR
+			patch.pr = &pr
+		}
+	}
+	return patch
+}
+
+func prRecordEqual(a, b *store.PRRecord) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func reconcileRefreshRecord(cfg *store.Config, key string, sess adapter.Session, now time.Time) (store.SessionRecord, bool, bool) {

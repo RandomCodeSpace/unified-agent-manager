@@ -179,6 +179,49 @@ func TestAgentExitMarksStoreRecordClosed(t *testing.T) {
 	})
 }
 
+func TestAgentExitBeforeRecordPersistenceEventuallyMarksRecordClosed(t *testing.T) {
+	c := newTestClient(t)
+	shortDir, err := os.MkdirTemp("", "uam-exit-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(shortDir) })
+	c.Dir = shortDir
+	ctx := context.Background()
+	name := "uam-fake-feedface"
+
+	st, err := store.Open(store.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "exit 3"}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Waiting for runtime cleanup proves the host observed the exit before the
+	// durable record existed. The host must retain responsibility for recording
+	// the exit long enough for dispatch persistence to catch up.
+	waitFor(t, "runtime files removed before persistence", func() bool {
+		_, err := os.Stat(SocketPath(c.Dir, name))
+		return os.IsNotExist(err)
+	})
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession("fake:feedface", store.SessionRecord{ID: "feedface", Agent: "fake", Name: "n", SessionName: name, Status: store.StatusActive})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, "late record marked closed", func() bool {
+		cfg, err := st.Load()
+		if err != nil {
+			return false
+		}
+		rec := cfg.Sessions["fake:feedface"]
+		return rec.Status == store.StatusClosedByUser && rec.LastExitCode != nil && *rec.LastExitCode == 3
+	})
+}
+
 func TestCreateSessionReportsStartupFailure(t *testing.T) {
 	c := newTestClient(t)
 	err := c.CreateSession(context.Background(), "uam-fake-11112222", t.TempDir(), nil, []string{"/nonexistent/agent-binary"})

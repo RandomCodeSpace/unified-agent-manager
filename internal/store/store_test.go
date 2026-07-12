@@ -68,6 +68,54 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTryMarkSessionClosedReportsWhetherRecordMatched(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(cfg *Config) error {
+		cfg.Sessions["fake:deadbeef"] = SessionRecord{ID: "deadbeef", Agent: "fake", SessionName: "uam-fake-deadbeef", Status: StatusActive}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	matched, err := s.TryMarkSessionClosed("uam-fake-missing", 7)
+	if err != nil {
+		t.Fatalf("missing record: %v", err)
+	}
+	if matched {
+		t.Fatal("missing record unexpectedly matched")
+	}
+
+	matched, err = s.TryMarkSessionClosed("uam-fake-deadbeef", 7)
+	if err != nil {
+		t.Fatalf("matching record: %v", err)
+	}
+	if !matched {
+		t.Fatal("existing record was not reported as matched")
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := cfg.Sessions["fake:deadbeef"]
+	if rec.Status != StatusClosedByUser || rec.LastExitCode == nil || *rec.LastExitCode != 7 {
+		t.Fatalf("record not closed: %+v", rec)
+	}
+}
+
+func TestSyncDirAcceptsStoreDirectoryAndRejectsMissingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := syncDir(dir); err != nil {
+		t.Fatalf("syncDir(temp): %v", err)
+	}
+	if err := syncDir(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("syncDir(missing) succeeded")
+	}
+}
+
 func TestSessionRecordCommandAliasJSONOmitEmpty(t *testing.T) {
 	withoutAlias, err := json.Marshal(SessionRecord{ID: "id", Agent: "fake"})
 	if err != nil {

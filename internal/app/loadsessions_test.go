@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -72,6 +74,68 @@ func TestLoadSessionsRefreshDoesNotClobberConcurrentPin(t *testing.T) {
 	}
 	if _, ok := cfg.Sessions[store.Key("fake", "aaaa1111")]; !ok {
 		t.Fatalf("refresh did not persist the backfilled record A: %+v", cfg.Sessions)
+	}
+}
+
+func TestRefreshDoesNotClobberConcurrentMutationOnSameSession(t *testing.T) {
+	now := time.Now()
+	live := adapter.Session{ID: "aaaa1111", AgentType: "fake", DisplayName: "before", Cwd: "/tmp", SessionName: "uam-fake-aaaa1111", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: now}
+	svc, st, _ := newLoadService(t, []adapter.Session{live})
+	key := store.Key("fake", live.ID)
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.Sessions[key] = store.SessionRecord{ID: live.ID, Agent: "fake", Name: "before", Workdir: "/tmp", SessionName: live.SessionName, Status: store.StatusActive, LastSeenAt: now.Add(-2 * lastSeenRefresh)}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stale, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveMap := map[string]adapter.Session{key: live}
+	svc.mergeStoredSessions(liveMap, stale, now)
+	updates := svc.refreshSessionRecords(context.Background(), liveMap, &stale)
+	if err := svc.Rename(context.Background(), live.ID, "after"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.TogglePin(context.Background(), live.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.persistRefresh(updates); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := cfg.Sessions[key]
+	if rec.Name != "after" || !rec.Pinned {
+		t.Fatalf("refresh clobbered same-session mutation: %+v", rec)
+	}
+	if rec.LastSeenAt.Before(now) {
+		t.Fatalf("refresh-owned field was not persisted: %+v", rec)
+	}
+}
+
+func TestPersistRefreshReturnsReadOnlyStoreError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	data := []byte(`{"schema_version":999,"default_agent":"opencode","sessions":{},"ui":{}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(st, nil)
+	status := store.StatusActive
+	err = svc.persistRefresh(map[string]refreshPatch{
+		"fake:aaaa1111": {status: &status},
+	})
+	if !errors.Is(err, store.ErrReadOnly) {
+		t.Fatalf("persistRefresh error = %v, want ErrReadOnly", err)
 	}
 }
 
