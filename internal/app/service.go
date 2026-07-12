@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,7 @@ type Service struct {
 	// that fails to acquire it skips the network check and keeps the persisted
 	// PR record; the holder clears it on completion, success or error (F02).
 	prInFlight atomic.Bool
+	checkPR    func(context.Context, string) (pr.Status, error)
 }
 
 const agentUnavailableFormat = "agent %q unavailable"
@@ -43,13 +45,15 @@ const lastSeenRefresh = time.Minute
 // long (F20 Stage 2).
 const pruneMaxAge = 30 * 24 * time.Hour
 
-// prCheckTimeout bounds a single `gh pr view` call so a hung gh cannot wedge the
-// 2s refresh. It is comfortably under the 60s PR re-check interval, so a
-// timed-out check just defers to the next tick (F02).
-const prCheckTimeout = 4 * time.Second
+const (
+	prCheckTimeout   = 4 * time.Second
+	prRefreshTimeout = 5 * time.Second
+	prRefreshAge     = 60 * time.Second
+	prRefreshWorkers = 4
+)
 
 func NewService(st *store.Store, reg *adapter.Registry) *Service {
-	return &Service{Store: st, Registry: reg}
+	return &Service{Store: st, Registry: reg, checkPR: pr.Check}
 }
 
 func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Config, error) {
@@ -59,12 +63,12 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 	}
 	live := s.liveSessions(ctx)
 	s.mergeStoredSessions(live, cfg, time.Now())
-	// refreshSessionRecords runs pr.Check OUTSIDE any store lock and returns the
-	// records this refresh owns. persistRefresh re-reads inside the flock and
-	// writes only those keys, so a concurrent TogglePin/Rename on a different
-	// session is never clobbered by a stale whole-config Save (F01).
+	// Discovery and reconciliation are local-only. Network PR enrichment runs on
+	// the independent RefreshPRStatuses cadence and never delays this path.
 	updates := s.refreshSessionRecords(ctx, live, &cfg)
-	s.persistRefresh(updates)
+	if err := s.persistRefresh(updates); err != nil {
+		log.Warn("persist refreshed session metadata failed", "records", len(updates), "error", err)
+	}
 	out := sessionsFromMap(live)
 	SortSessions(out)
 	return out, cfg, nil
@@ -105,16 +109,44 @@ func (s *Service) PruneStartup(ctx context.Context) error {
 // atomic read-modify-write. It re-reads the on-disk config inside the lock and
 // overwrites only the supplied keys, leaving every other record (and any
 // concurrent mutation to it) intact.
-func (s *Service) persistRefresh(updates map[string]store.SessionRecord) {
+type refreshPatch struct {
+	create     *store.SessionRecord
+	status     *store.Status
+	lastSeenAt *time.Time
+	pr         *store.PRRecord
+	clearPR    bool
+}
+
+func (s *Service) persistRefresh(updates map[string]refreshPatch) error {
 	if len(updates) == 0 || s.Store == nil {
-		return
+		return nil
 	}
-	_ = s.Store.Update(func(cfg *store.Config) error {
-		for key, rec := range updates {
-			cfg.Sessions[key] = rec
+	return s.Store.Update(func(cfg *store.Config) error {
+		for key, patch := range updates {
+			applyRefreshPatch(cfg, key, patch)
 		}
 		return nil
 	})
+}
+
+func applyRefreshPatch(cfg *store.Config, key string, patch refreshPatch) {
+	rec, exists := cfg.Sessions[key]
+	if (!exists || rec.ID == "") && patch.create != nil {
+		rec = *patch.create
+	}
+	if patch.status != nil {
+		rec.Status = *patch.status
+	}
+	if patch.lastSeenAt != nil {
+		rec.LastSeenAt = *patch.lastSeenAt
+	}
+	if patch.clearPR {
+		rec.PR = nil
+	} else if patch.pr != nil {
+		pr := *patch.pr
+		rec.PR = &pr
+	}
+	cfg.Sessions[key] = rec
 }
 
 func (s *Service) loadConfig() (store.Config, error) {
@@ -130,17 +162,14 @@ func (s *Service) liveSessions(ctx context.Context) map[string]adapter.Session {
 	if s.Registry == nil {
 		return live
 	}
-	for _, a := range s.Registry.Enabled() {
-		sessions, err := a.List(ctx)
-		if err != nil {
-			// One adapter's List failure must not blank the dashboard for the
-			// others, but it shouldn't vanish silently either (F12).
-			log.Warn("listing sessions for adapter failed", "agent", a.Name(), "error", err)
-			continue
-		}
-		for _, sess := range sessions {
-			live[store.Key(sess.AgentType, sess.ID)] = sess
-		}
+	sessions, err := s.Registry.ListAll(ctx)
+	if err != nil {
+		// Partial custom-adapter results are retained; production's shared backend
+		// failure yields an empty snapshot and one actionable warning.
+		log.Warn("listing managed sessions failed", "error", err)
+	}
+	for _, sess := range sessions {
+		live[store.Key(sess.AgentType, sess.ID)] = sess
 	}
 	return live
 }
@@ -198,34 +227,58 @@ func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Sessi
 // refreshSessionRecords reconciles live sessions against the loaded config and
 // returns the records this refresh wants to persist (keyed by store key). It
 // also updates the in-memory cfg and live maps so the returned snapshot is
-// consistent. pr.Check runs here, OUTSIDE any store lock; persistence happens
-// later via persistRefresh's atomic re-read.
-func (s *Service) refreshSessionRecords(ctx context.Context, live map[string]adapter.Session, cfg *store.Config) map[string]store.SessionRecord {
-	updates := map[string]store.SessionRecord{}
+// consistent. It only records locally discovered PR metadata; status checks run
+// independently in RefreshPRStatuses.
+func (s *Service) refreshSessionRecords(_ context.Context, live map[string]adapter.Session, cfg *store.Config) map[string]refreshPatch {
+	updates := map[string]refreshPatch{}
 	now := time.Now()
-	// Acquire the PR-check guard for the duration of this refresh's network pass.
-	// If another refresh already holds it, skip the gh calls (the persisted PR
-	// record is kept) so stacked ticks never launch overlapping gh subprocesses.
-	// Released unconditionally on completion so a single pass never wedges the
-	// guard (F02).
-	doPR := s.prInFlight.CompareAndSwap(false, true)
-	if doPR {
-		defer s.prInFlight.Store(false)
-	}
 	for key, sess := range live {
+		before, existed := cfg.Sessions[key]
 		rec, changed, keep := reconcileRefreshRecord(cfg, key, sess, now)
 		if !keep {
 			continue
 		}
-		if doPR && updatePRRecord(ctx, key, &sess, &rec, live, now) {
+		if syncDiscoveredPRRecord(sess, &rec) {
 			cfg.Sessions[key] = rec
 			changed = true
 		}
 		if changed {
-			updates[key] = rec
+			updates[key] = makeRefreshPatch(before, rec, existed && before.ID != "")
 		}
 	}
 	return updates
+}
+
+func makeRefreshPatch(before, after store.SessionRecord, existed bool) refreshPatch {
+	patch := refreshPatch{}
+	if !existed {
+		created := after
+		patch.create = &created
+	}
+	if !existed || before.Status != after.Status {
+		status := after.Status
+		patch.status = &status
+	}
+	if !existed || !before.LastSeenAt.Equal(after.LastSeenAt) {
+		lastSeen := after.LastSeenAt
+		patch.lastSeenAt = &lastSeen
+	}
+	if !prRecordEqual(before.PR, after.PR) {
+		if after.PR == nil {
+			patch.clearPR = true
+		} else {
+			pr := *after.PR
+			patch.pr = &pr
+		}
+	}
+	return patch
+}
+
+func prRecordEqual(a, b *store.PRRecord) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }
 
 func reconcileRefreshRecord(cfg *store.Config, key string, sess adapter.Session, now time.Time) (store.SessionRecord, bool, bool) {
@@ -260,24 +313,165 @@ func reconcileRefreshRecord(cfg *store.Config, key string, sess adapter.Session,
 	return rec, changed, true
 }
 
-func updatePRRecord(ctx context.Context, key string, sess *adapter.Session, rec *store.SessionRecord, live map[string]adapter.Session, now time.Time) bool {
-	if sess.PR == nil || (rec.PR != nil && rec.PR.URL == sess.PR.URL && time.Since(rec.PR.LastChecked) <= 60*time.Second) {
+func syncDiscoveredPRRecord(sess adapter.Session, rec *store.SessionRecord) bool {
+	if sess.PR == nil || (rec.PR != nil && rec.PR.URL == sess.PR.URL) {
 		return false
 	}
-	status := string(sess.PR.Status)
-	// Bound the gh call so a hung process cannot wedge the refresh. On timeout
-	// (or any error) the status is left at the last-known value and LastChecked is
-	// stamped below, arming the 60s guard so the next tick does not immediately
-	// re-launch gh (F02).
-	checkCtx, cancel := context.WithTimeout(ctx, prCheckTimeout)
-	defer cancel()
-	if checked, err := pr.Check(checkCtx, sess.PR.URL); err == nil && checked != pr.None {
-		status = string(checked)
-		sess.PR.Status = adapter.PRStatus(status)
-		live[key] = *sess
-	}
-	rec.PR = &store.PRRecord{URL: sess.PR.URL, Number: sess.PR.Number, LastStatus: status, LastChecked: now}
+	rec.PR = &store.PRRecord{URL: sess.PR.URL, Number: sess.PR.Number, LastStatus: string(sess.PR.Status)}
 	return true
+}
+
+type prRefreshJob struct {
+	key string
+	ref adapter.PRRef
+}
+
+type prRefreshResult struct {
+	key    string
+	record store.PRRecord
+}
+
+type prCheckResult struct {
+	status pr.Status
+	err    error
+}
+
+// checkPRWithContext enforces the caller's deadline even when a custom checker
+// fails to observe context cancellation. The result channel is buffered so a
+// late checker can finish without retaining the refresh worker.
+func checkPRWithContext(ctx context.Context, checker func(context.Context, string) (pr.Status, error), url string) (pr.Status, error) {
+	resultCh := make(chan prCheckResult, 1)
+	go func() {
+		status, err := checker(ctx, url)
+		resultCh <- prCheckResult{status: status, err: err}
+	}()
+	select {
+	case result := <-resultCh:
+		return result.status, result.err
+	case <-ctx.Done():
+		return pr.None, ctx.Err()
+	}
+}
+
+// RefreshPRStatuses enriches stale discovered PRs outside the session-discovery
+// path. Only PR-owned fields are persisted, and overlapping passes coalesce.
+func (s *Service) RefreshPRStatuses(ctx context.Context) error {
+	if s.Store == nil || !s.prInFlight.CompareAndSwap(false, true) {
+		return nil
+	}
+	defer s.prInFlight.Store(false)
+	ctx, cancel := context.WithTimeout(ctx, prRefreshTimeout)
+	defer cancel()
+	sessions, cfg, err := s.LoadSessions(ctx)
+	if err != nil {
+		return err
+	}
+	jobs := stalePRRefreshJobs(sessions, cfg, time.Now())
+	if len(jobs) == 0 {
+		return nil
+	}
+	results := runPRRefreshJobs(ctx, jobs, firstPRChecker(s.checkPR))
+	if err := s.persistPRRefreshResults(results); err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+func stalePRRefreshJobs(sessions []adapter.Session, cfg store.Config, now time.Time) []prRefreshJob {
+	jobs := make([]prRefreshJob, 0, len(sessions))
+	for _, sess := range sessions {
+		if sess.PR == nil {
+			continue
+		}
+		key := store.Key(sess.AgentType, sess.ID)
+		rec := cfg.Sessions[key]
+		if rec.PR != nil && rec.PR.URL == sess.PR.URL && now.Sub(rec.PR.LastChecked) < prRefreshAge {
+			continue
+		}
+		jobs = append(jobs, prRefreshJob{key: key, ref: *sess.PR})
+	}
+	return jobs
+}
+
+func firstPRChecker(checker func(context.Context, string) (pr.Status, error)) func(context.Context, string) (pr.Status, error) {
+	if checker != nil {
+		return checker
+	}
+	return pr.Check
+}
+
+func runPRRefreshJobs(ctx context.Context, jobs []prRefreshJob, checker func(context.Context, string) (pr.Status, error)) []prRefreshResult {
+	jobCh := make(chan prRefreshJob)
+	resultCh := make(chan prRefreshResult, len(jobs))
+	workers := min(prRefreshWorkers, len(jobs))
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobCh {
+				resultCh <- runPRRefreshJob(ctx, job, checker)
+			}
+		}()
+	}
+	go func() {
+		defer close(jobCh)
+		for _, job := range jobs {
+			select {
+			case jobCh <- job:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	wg.Wait()
+	close(resultCh)
+	results := make([]prRefreshResult, 0, len(jobs))
+	for result := range resultCh {
+		results = append(results, result)
+	}
+	return results
+}
+
+func runPRRefreshJob(ctx context.Context, job prRefreshJob, checker func(context.Context, string) (pr.Status, error)) prRefreshResult {
+	status := job.ref.Status
+	checkCtx, checkCancel := context.WithTimeout(ctx, prCheckTimeout)
+	checked, checkErr := checkPRWithContext(checkCtx, checker, job.ref.URL)
+	checkCancel()
+	if checkErr == nil && checked != pr.None {
+		status = adapterStatus(checked)
+	}
+	return prRefreshResult{key: job.key, record: store.PRRecord{URL: job.ref.URL, Number: job.ref.Number, LastStatus: string(status), LastChecked: time.Now()}}
+}
+
+func (s *Service) persistPRRefreshResults(results []prRefreshResult) error {
+	return s.Store.Update(func(cfg *store.Config) error {
+		for _, result := range results {
+			rec, ok := cfg.Sessions[result.key]
+			if !ok || rec.PR == nil || rec.PR.URL != result.record.URL {
+				continue
+			}
+			record := result.record
+			rec.PR = &record
+			cfg.Sessions[result.key] = rec
+		}
+		return nil
+	})
+}
+
+func adapterStatus(status pr.Status) adapter.PRStatus {
+	switch status {
+	case pr.Open:
+		return adapter.PROpen
+	case pr.Merged:
+		return adapter.PRMerged
+	case pr.Closed:
+		return adapter.PRClosed
+	case pr.Draft:
+		return adapter.PRDraft
+	default:
+		return adapter.PRNone
+	}
 }
 
 func sessionsFromMap(live map[string]adapter.Session) []adapter.Session {

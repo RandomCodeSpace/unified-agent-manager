@@ -46,6 +46,19 @@ there is nothing else to install.
 Providers are capability-probed at runtime. If a CLI is missing, `uam` hides it
 from the dispatch UI instead of failing the whole app.
 
+## Supported platforms
+
+- Linux, including Ubuntu, on amd64 and arm64
+- macOS on Intel and Apple silicon
+- Windows 10/11 through WSL2 with an Ubuntu distribution
+
+On Windows, install and run `uam` and the provider CLIs inside the same WSL2
+distribution. Sessions and paths then live inside that Linux environment.
+Native Windows processes are not supported yet: the session host depends on a
+Unix PTY, Unix process groups, and owner-only Unix runtime directories. A native
+port requires a ConPTY and Job Object backend and will not be advertised until
+its full create/list/attach/stop/restart lifecycle passes on Windows.
+
 ## Install
 
 Install the `uam` binary directly:
@@ -189,9 +202,13 @@ run `loginctl enable-linger`.
 
 ## Safety model
 
-`uam` can launch providers in their full-access or auto-approve mode when the
-provider supports it. Use `uam dispatch --safe ...` when you want the provider's
-default approval behavior instead.
+`uam` launches providers in their full-access or auto-approve ("yolo") mode by
+default when the provider supports it. In that mode, treat the repository,
+prompt, provider configuration, and any instructions the agent reads as trusted:
+the provider may execute commands and change files without pausing for approval.
+Use `uam dispatch --safe ...` when you want the provider's default approval
+behavior instead. Safe mode changes provider arguments; it is not an operating-
+system sandbox and does not reduce the permissions of the `uam` process itself.
 
 `uam` does not make git checkpoints, stash changes, or modify your repository on
 its own. It starts and manages agent sessions; the provider remains responsible

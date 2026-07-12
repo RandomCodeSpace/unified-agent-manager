@@ -80,9 +80,6 @@ func TestModelCommandFactories(t *testing.T) {
 	if New().defaultAgent == "" {
 		t.Fatal("New default empty")
 	}
-	if !NewWizard(st, m.service.Registry).wizard {
-		t.Fatal("NewWizard not wizard")
-	}
 	if m.Init() == nil {
 		t.Fatal("Init returned nil")
 	}
@@ -98,7 +95,7 @@ func TestModelCommandFactories(t *testing.T) {
 	if msg := m.pinSelectedCmd()(); msg.(sessionsLoadedMsg).err != nil {
 		t.Fatalf("pin msg=%+v", msg)
 	}
-	if msg := m.stopSelectedCmd(false)(); msg.(sessionsLoadedMsg).err != nil {
+	if msg := m.stopTargetCmd("", false)(); msg.(sessionsLoadedMsg).err != nil {
 		t.Fatalf("stop msg=%+v", msg)
 	}
 	if msg := m.persistOrderCmd()(); msg.(sessionsLoadedMsg).err != nil {

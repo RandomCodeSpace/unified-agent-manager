@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -145,6 +147,86 @@ func TestRunWithTUIHelpVersionAndDefault(t *testing.T) {
 	if err := RunWithTUI(context.Background(), []string{"unknown"}, runTUI); err == nil {
 		t.Fatal("unknown command should fail")
 	}
+}
+
+func TestRunWithTUIStateFreeCommandsDoNotOpenStore(t *testing.T) {
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UAM_CONFIG_DIR", blocked)
+	t.Setenv("UAM_SESSION_DIR", secureSessionDir(t))
+
+	for _, args := range [][]string{{"help"}, {"version"}, {"kill-all"}} {
+		if err := RunWithTUI(context.Background(), args, noopRunTUI); err != nil {
+			t.Fatalf("RunWithTUI(%q) opened the store: %v", args, err)
+		}
+	}
+	if err := RunWithTUI(context.Background(), []string{"__host", "--name", "bad name", "--", "/bin/true"}, noopRunTUI); err == nil || !strings.Contains(err.Error(), "invalid session name") {
+		t.Fatalf("__host must be routed before the store and return its own validation error, got %v", err)
+	}
+	if err := RunWithTUI(context.Background(), []string{"__attach"}, noopRunTUI); err == nil || !strings.Contains(err.Error(), "attach requires a session name") {
+		t.Fatalf("__attach must be routed before the store and return its own validation error, got %v", err)
+	}
+}
+
+func TestMainStatelessCommandsSkipLoggerAndStore(t *testing.T) {
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"help", "version"} {
+		cmd := cliMainSubprocess(t, command, blocked, blocked)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("uam %s: %v\n%s", command, err, output)
+		}
+		if strings.Contains(string(output), "failed to initialize logger") {
+			t.Fatalf("uam %s initialized the logger: %s", command, output)
+		}
+	}
+}
+
+func TestMainFallsBackToStderrWhenFileLoggerFails(t *testing.T) {
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := cliMainSubprocess(t, "kill-all", blocked, filepath.Join(t.TempDir(), "config"))
+	cmd.Env = append(cmd.Env, "UAM_SESSION_DIR="+secureSessionDir(t))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("uam kill-all must continue with stderr logging: %v\n%s", err, output)
+	}
+	text := string(output)
+	if strings.Count(text, "failed to initialize logger") != 1 {
+		t.Fatalf("logger fallback warning count = %d, want 1: %s", strings.Count(text, "failed to initialize logger"), text)
+	}
+	if !strings.Contains(text, "all uam sessions stopped") {
+		t.Fatalf("kill-all did not run after logger fallback: %s", text)
+	}
+}
+
+func TestCLIMainHelperProcess(t *testing.T) {
+	command := os.Getenv("UAM_TEST_MAIN_COMMAND")
+	if command == "" {
+		return
+	}
+	flag.CommandLine = flag.NewFlagSet("uam", flag.ContinueOnError)
+	os.Args = []string{"uam", command}
+	Main()
+	os.Exit(0)
+}
+
+func cliMainSubprocess(t *testing.T, command, cacheDir, configDir string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIMainHelperProcess$")
+	cmd.Env = append(os.Environ(),
+		"UAM_TEST_MAIN_COMMAND="+command,
+		"UAM_CACHE_DIR="+cacheDir,
+		"UAM_CONFIG_DIR="+configDir,
+	)
+	return cmd
 }
 
 func TestRunCommandAttachLastAndNew(t *testing.T) {
@@ -296,6 +378,15 @@ func writeCLIExecutable(t *testing.T, path string) {
 	}
 }
 
+func secureSessionDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -312,16 +403,14 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// The internal __host/__attach subcommands are routed through runCommand;
+// The internal __host/__attach subcommands are routed before store access;
 // invalid input must surface as errors rather than silently doing nothing.
-func TestRunCommandInternalSubcommands(t *testing.T) {
-	t.Setenv("UAM_SESSION_DIR", t.TempDir())
-	svc, _ := newCLITestService(t)
-	noTUI := func(context.Context, tea.Model) error { return nil }
-	if err := runCommand(context.Background(), svc, []string{"__host", "--name", "bad name", "--", "/bin/true"}, noTUI); err == nil {
+func TestRunWithoutStoreInternalSubcommands(t *testing.T) {
+	t.Setenv("UAM_SESSION_DIR", secureSessionDir(t))
+	if handled, err := runWithoutStore(context.Background(), []string{"__host", "--name", "bad name", "--", "/bin/true"}); !handled || err == nil {
 		t.Fatal("__host with an invalid name must fail")
 	}
-	if err := runCommand(context.Background(), svc, []string{"__attach"}, noTUI); err == nil {
+	if handled, err := runWithoutStore(context.Background(), []string{"__attach"}); !handled || err == nil {
 		t.Fatal("__attach without a session must fail")
 	}
 }

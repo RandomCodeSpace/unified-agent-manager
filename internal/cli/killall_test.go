@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // F24 — `uam kill-all` must invoke the session teardown exactly once.
@@ -32,15 +30,14 @@ func TestRunKillAllPropagatesError(t *testing.T) {
 	}
 }
 
-// F24 — `kill-all` must be routed by runCommand to the default teardown path.
+// F24 — `kill-all` must be routed before store access to the default teardown path.
 // An empty session runtime dir (via UAM_SESSION_DIR) keeps the test off any
 // real sessions: KillAll over zero sessions is an idempotent success.
-func TestRunCommandKillAllDispatches(t *testing.T) {
-	svc, _ := newCLITestService(t)
-	t.Setenv("UAM_SESSION_DIR", t.TempDir())
+func TestRunWithoutStoreKillAllDispatches(t *testing.T) {
+	t.Setenv("UAM_SESSION_DIR", secureSessionDir(t))
 
 	out := captureCLIStdout(t, func() {
-		if err := runCommand(context.Background(), svc, []string{"kill-all"}, func(context.Context, tea.Model) error { return nil }); err != nil {
+		if handled, err := runWithoutStore(context.Background(), []string{"kill-all"}); !handled || err != nil {
 			t.Fatalf("kill-all dispatch: %v", err)
 		}
 	})

@@ -111,6 +111,8 @@ type attachSpecMsg struct {
 }
 type attachFinishedMsg struct{ err error }
 type refreshMsg time.Time
+type prRefreshMsg time.Time
+type prRefreshedMsg struct{ err error }
 
 // peekTickMsg is the peek-focus poll tick. When the peek panel is open it
 // re-captures the focused session's pane (rate-limited per id) so the panel
@@ -143,7 +145,7 @@ func New() Model {
 	// Build the registry from the single shared adapter list so the TUI and the
 	// CLI service can never diverge (the old hand-rolled list here omitted
 	// hermes — F14).
-	reg := adapter.NewRegistry(agents.Default(client))
+	reg := adapter.NewRegistryWithBackend(client, agents.Default(client))
 	return NewWithDeps(st, reg)
 }
 
@@ -173,18 +175,16 @@ func (m Model) validateDefaultAgent(candidate string) string {
 	}
 	return candidate
 }
-func NewWizard(st *store.Store, reg *adapter.Registry) Model {
-	m := NewWithDeps(st, reg)
-	m.wizard = true
-	return m
-}
-
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadSessionsCmd(), refreshTick(), peekTick())
+	return tea.Batch(m.loadSessionsCmd(), refreshTick(), peekTick(), prRefreshTick(100*time.Millisecond))
 }
 
 func refreshTick() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return refreshMsg(t) })
+}
+
+func prRefreshTick(after time.Duration) tea.Cmd {
+	return tea.Tick(after, func(t time.Time) tea.Msg { return prRefreshMsg(t) })
 }
 
 func peekTick() tea.Cmd {
@@ -212,6 +212,12 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 	}
 }
 
+func (m Model) refreshPRCmd() tea.Cmd {
+	return func() tea.Msg {
+		return prRefreshedMsg{err: m.service.RefreshPRStatuses(context.Background())}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -224,6 +230,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return next, tea.Batch(next.loadSessionsCmd(), refreshTick())
 		}
 		return next, refreshTick()
+	case prRefreshMsg:
+		return m, tea.Batch(m.refreshPRCmd(), prRefreshTick(prRefreshAge))
+	case prRefreshedMsg:
+		if msg.err != nil {
+			log.Warn("refresh pull-request statuses failed", "error", msg.err)
+			return m, nil
+		}
+		if m.loading {
+			return m, nil
+		}
+		m.loading = true
+		return m, m.loadSessionsCmd()
 	case peekTickMsg:
 		// Re-arm the peek ticker unconditionally; only re-capture the focused
 		// session when the panel is open and the per-id rate limit allows it
@@ -1039,9 +1057,6 @@ func (m Model) resumeSelectedCmd() tea.Cmd {
 		return m.loadSessionsCmd()()
 	}
 }
-func (m Model) stopSelectedCmd(remove bool) tea.Cmd {
-	return m.stopTargetCmd("", remove)
-}
 
 // persistDefaultAgent persists the default-agent choice. On failure it surfaces
 // the error in the status line instead of swallowing it; on success it returns a
@@ -1568,21 +1583,6 @@ func sessionGlyph(s adapter.Session) (string, lipgloss.Style) {
 		// glyph, NOT the red failure mark.
 		return "◦", hintStyle
 	}
-}
-
-func stateGlyph(s adapter.State) (string, lipgloss.Style) {
-	switch s {
-	case adapter.Active:
-		return "⟳", liveGlyphStyle
-	case adapter.Failed:
-		return "✕", failGlyphStyle
-	default:
-		return "•", hintStyle
-	}
-}
-
-func stateLabel(s adapter.State) string {
-	return strings.ToLower(string(s))
 }
 
 // prStatusDot returns a distinct glyph per PR status (not color-only) so the PR

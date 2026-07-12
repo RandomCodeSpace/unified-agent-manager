@@ -147,9 +147,11 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 }
 
 type UISettings struct {
-	GroupByDir bool   `json:"group_by_dir"`
-	Sort       string `json:"sort"`
-	PeekWidth  int    `json:"peek_width"`
+	GroupByDir bool `json:"group_by_dir"`
+	// Sort and PeekWidth are retained schema-v3 compatibility fields. They are
+	// normalized and round-tripped even when the TUI exposes no direct control.
+	Sort      string `json:"sort"`
+	PeekWidth int    `json:"peek_width"`
 }
 
 type SessionRecord struct {
@@ -574,7 +576,24 @@ func (s *Store) saveNoLock(cfg Config) error {
 		_ = os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	if err := os.Rename(tmp, s.path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(s.path))
+}
+
+func syncDir(dir string) error {
+	// dir is the containing directory of Store.path; opening that configured
+	// path is the intended durability operation, not user-controlled inclusion.
+	f, err := os.Open(dir) // #nosec G304 -- Store intentionally fsyncs its configured parent directory.
+	if err != nil {
+		return fmt.Errorf("open store directory for sync: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := f.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.ENOTSUP) {
+		return fmt.Errorf("sync store directory: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) lock() (func(), error) {
@@ -620,10 +639,19 @@ func (s *Store) moveAside() error { return os.Rename(s.path, s.backupPath()) }
 // session-closed hook driving `uam notify-closed`. Idempotent and a no-op
 // when no record matches (e.g. uam already deleted it via `uam rm`).
 func (s *Store) MarkSessionClosed(sessionName string, exitCode int) error {
+	_, err := s.TryMarkSessionClosed(sessionName, exitCode)
+	return err
+}
+
+// TryMarkSessionClosed is MarkSessionClosed with an explicit match result. The
+// host uses the result to distinguish an intentionally idempotent no-op from
+// the narrow launch race where the durable record has not been written yet.
+func (s *Store) TryMarkSessionClosed(sessionName string, exitCode int) (bool, error) {
 	if sessionName == "" {
-		return nil
+		return false, nil
 	}
-	return s.Update(func(cfg *Config) error {
+	matched := false
+	err := s.Update(func(cfg *Config) error {
 		for key, rec := range cfg.Sessions {
 			if rec.SessionName != sessionName {
 				continue
@@ -632,10 +660,12 @@ func (s *Store) MarkSessionClosed(sessionName string, exitCode int) error {
 			code := exitCode
 			rec.LastExitCode = &code
 			cfg.Sessions[key] = rec
+			matched = true
 			return nil
 		}
 		return nil
 	})
+	return matched, err
 }
 
 func PruneOld(cfg *Config, maxAge time.Duration, exists func(string) bool) {

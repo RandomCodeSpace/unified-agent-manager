@@ -30,7 +30,15 @@ func TestMain(m *testing.M) {
 
 func newTestClient(t *testing.T) *Client {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "run")
+	dir, err := os.MkdirTemp("", "uam-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Setenv("UAM_CONFIG_DIR", filepath.Join(t.TempDir(), "cfg"))
 	exe, err := os.Executable()
 	if err != nil {
@@ -179,6 +187,49 @@ func TestAgentExitMarksStoreRecordClosed(t *testing.T) {
 	})
 }
 
+func TestAgentExitBeforeRecordPersistenceEventuallyMarksRecordClosed(t *testing.T) {
+	c := newTestClient(t)
+	shortDir, err := os.MkdirTemp("", "uam-exit-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(shortDir) })
+	c.Dir = shortDir
+	ctx := context.Background()
+	name := "uam-fake-feedface"
+
+	st, err := store.Open(store.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "exit 3"}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Waiting for runtime cleanup proves the host observed the exit before the
+	// durable record existed. The host must retain responsibility for recording
+	// the exit long enough for dispatch persistence to catch up.
+	waitFor(t, "runtime files removed before persistence", func() bool {
+		_, err := os.Stat(SocketPath(c.Dir, name))
+		return os.IsNotExist(err)
+	})
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession("fake:feedface", store.SessionRecord{ID: "feedface", Agent: "fake", Name: "n", SessionName: name, Status: store.StatusActive})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, "late record marked closed", func() bool {
+		cfg, err := st.Load()
+		if err != nil {
+			return false
+		}
+		rec := cfg.Sessions["fake:feedface"]
+		return rec.Status == store.StatusClosedByUser && rec.LastExitCode != nil && *rec.LastExitCode == 3
+	})
+}
+
 func TestCreateSessionReportsStartupFailure(t *testing.T) {
 	c := newTestClient(t)
 	err := c.CreateSession(context.Background(), "uam-fake-11112222", t.TempDir(), nil, []string{"/nonexistent/agent-binary"})
@@ -256,6 +307,14 @@ func TestSetSessionLabelPersistsToState(t *testing.T) {
 		st, err := readState(c.Dir, name)
 		return err == nil && st.Label == "fixer · fake"
 	})
+}
+
+func TestTitleSequenceSanitizesTerminalControls(t *testing.T) {
+	got := titleSequence("safe\u009d0;forged\a red\nnow")
+	want := "\x1b]0;safe red now\x07"
+	if got != want {
+		t.Fatalf("titleSequence = %q, want %q", got, want)
+	}
 }
 
 func TestListSweepsStaleStateFiles(t *testing.T) {
