@@ -15,8 +15,9 @@ type Context = context.Context
 type State string
 
 const (
-	Active State = "Active"
-	Failed State = "Failed"
+	Active    State = "Active"
+	Completed State = "Completed"
+	Failed    State = "Failed"
 )
 
 type ProcLiveness string
@@ -96,6 +97,18 @@ type ResumeRequest struct {
 	// instead of their "most recent" heuristic.
 	ProviderSessionID string
 	CreatedAt         time.Time
+}
+
+type ResumeKind string
+
+const (
+	ResumeExact       ResumeKind = "exact"
+	ResumeHeuristic   ResumeKind = "heuristic"
+	ResumeUnsupported ResumeKind = "unsupported"
+)
+
+type ResumeKindAdapter interface {
+	ResumeKind(ResumeRequest) ResumeKind
 }
 
 type ResumableAdapter interface {

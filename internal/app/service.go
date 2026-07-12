@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -221,7 +222,11 @@ func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.
 }
 
 func deadSessionFromRecord(rec store.SessionRecord, now time.Time) adapter.Session {
-	return adapter.Session{ExitCode: rec.LastExitCode, ProviderSessionID: rec.ProviderSessionID, ID: rec.ID, AgentType: rec.Agent, CommandAlias: rec.CommandAlias, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, SessionName: rec.SessionName, State: adapter.Failed, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
+	state := adapter.Completed
+	if rec.LastExitCode != nil && *rec.LastExitCode != 0 {
+		state = adapter.Failed
+	}
+	return adapter.Session{ExitCode: rec.LastExitCode, ProviderSessionID: rec.ProviderSessionID, ID: rec.ID, AgentType: rec.Agent, CommandAlias: rec.CommandAlias, DisplayName: rec.Name, Prompt: rec.Prompt, Cwd: rec.Workdir, SessionName: rec.SessionName, State: state, ProcAlive: adapter.Exited, CreatedAt: rec.CreatedAt, LastChange: now, Pinned: rec.Pinned, Group: rec.Group, SortIndex: rec.SortIndex, Closed: rec.Status == store.StatusClosedByUser}
 }
 
 // refreshSessionRecords reconciles live sessions against the loaded config and
@@ -728,6 +733,10 @@ func (s *Service) Reply(ctx context.Context, id, text string) error {
 }
 
 func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec, error) {
+	return s.AttachSpecWithOptions(ctx, id, ResumeOptions{})
+}
+
+func (s *Service) AttachSpecWithOptions(ctx context.Context, id string, opts ResumeOptions) (adapter.AttachSpec, error) {
 	sess, _, err := s.Find(ctx, id)
 	if err != nil {
 		return adapter.AttachSpec{}, err
@@ -737,7 +746,7 @@ func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec
 		return adapter.AttachSpec{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
 	}
 	if sess.ProcAlive == adapter.Exited {
-		if err := s.ResumeBackground(ctx, sess.ID); err != nil {
+		if err := s.ResumeBackgroundWithOptions(ctx, sess.ID, opts); err != nil {
 			return adapter.AttachSpec{}, err
 		}
 	}
@@ -749,8 +758,15 @@ func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec
 // under the same name with the provider's resume args so the agent picks its
 // conversation back up. A session that is already stopped simply resumes.
 func (s *Service) Restart(ctx context.Context, id string) error {
-	sess, _, err := s.Find(ctx, id)
+	return s.RestartWithOptions(ctx, id, ResumeOptions{})
+}
+
+func (s *Service) RestartWithOptions(ctx context.Context, id string, opts ResumeOptions) error {
+	sess, cfg, err := s.Find(ctx, id)
 	if err != nil {
+		return err
+	}
+	if _, _, _, err := s.prepareResume(sess, cfg, opts); err != nil {
 		return err
 	}
 	if sess.ProcAlive == adapter.Alive {
@@ -758,12 +774,30 @@ func (s *Service) Restart(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	return s.ResumeBackground(ctx, id)
+	return s.ResumeBackgroundWithOptions(ctx, id, opts)
 }
 
 // ResumeBackground restarts a stopped session's backend session without
 // attaching to it. It is a no-op when the session is already running.
 func (s *Service) ResumeBackground(ctx context.Context, id string) error {
+	return s.ResumeBackgroundWithOptions(ctx, id, ResumeOptions{})
+}
+
+type ResumeKind = adapter.ResumeKind
+
+const (
+	ResumeExact       = adapter.ResumeExact
+	ResumeHeuristic   = adapter.ResumeHeuristic
+	ResumeUnsupported = adapter.ResumeUnsupported
+)
+
+type ResumeOptions struct {
+	AllowLatest bool
+}
+
+var ErrAmbiguousResume = errors.New("ambiguous heuristic resume")
+
+func (s *Service) ResumeBackgroundWithOptions(ctx context.Context, id string, opts ResumeOptions) error {
 	sess, cfg, err := s.Find(ctx, id)
 	if err != nil {
 		return err
@@ -771,20 +805,24 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 	if sess.ProcAlive == adapter.Alive {
 		return nil
 	}
-	a, ok := s.Registry.Get(sess.AgentType)
-	if !ok {
-		return fmt.Errorf(agentUnavailableFormat, sess.AgentType)
-	}
-	resumable, ok := a.(adapter.ResumableAdapter)
-	if !ok {
-		return fmt.Errorf("session %q is not running and agent %q cannot resume it", sess.ID, sess.AgentType)
-	}
-	rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
-	if rec.ID == "" {
-		rec = RecordFromSession(sess, store.ModeYolo)
-	}
-	resumed, err := resumable.Resume(ctx, adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), SessionName: rec.SessionName, ProviderSessionID: rec.ProviderSessionID, CreatedAt: rec.CreatedAt})
+	resumable, rec, req, err := s.prepareResume(sess, cfg, opts)
 	if err != nil {
+		return err
+	}
+	var lifecycle resumeLifecycle
+	if s.Store != nil {
+		lifecycle, err = s.beginResumeLifecycle(rec)
+		if err != nil {
+			return err
+		}
+	}
+	resumed, err := resumable.Resume(ctx, req)
+	if err != nil {
+		if s.Store != nil {
+			if rollbackErr := s.rollbackResumeLifecycle(lifecycle); rollbackErr != nil {
+				log.Warn("restore failed resume lifecycle", "session", rec.SessionName, "error", rollbackErr)
+			}
+		}
 		return err
 	}
 	if s.Store == nil {
@@ -800,13 +838,120 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 		rec.Workdir = resumed.Cwd
 		rec.CommandAlias = firstNonEmpty(rec.CommandAlias, resumed.CommandAlias)
 		rec.ProviderSessionID = firstNonEmpty(resumed.ProviderSessionID, rec.ProviderSessionID)
-		rec.LastSeenAt = time.Now()
-		// Resuming a closed_by_user session reactivates it. The session host
-		// will flip Status back to closed_by_user on the next exit.
-		rec.Status = store.StatusActive
+		rec.LastSeenAt = nextResumeTimestamp(lifecycle.attemptAt)
 		cfg.Sessions[key] = rec
 		return nil
 	})
+}
+
+type resumeLifecycle struct {
+	key        string
+	status     store.Status
+	exitCode   *int
+	lastSeenAt time.Time
+	attemptAt  time.Time
+}
+
+// beginResumeLifecycle clears the previous process result before launch. The
+// replacement host can then record an immediate exit without a later success
+// write erasing that newer result.
+func (s *Service) beginResumeLifecycle(fallback store.SessionRecord) (resumeLifecycle, error) {
+	key := store.Key(fallback.Agent, fallback.ID)
+	state := resumeLifecycle{key: key}
+	err := s.Store.Update(func(cfg *store.Config) error {
+		rec := cfg.Sessions[key]
+		if rec.ID == "" {
+			rec = fallback
+		}
+		state.status = rec.Status
+		if rec.LastExitCode != nil {
+			code := *rec.LastExitCode
+			state.exitCode = &code
+		}
+		state.lastSeenAt = rec.LastSeenAt
+		state.attemptAt = nextResumeTimestamp(rec.LastSeenAt)
+		rec.Status = store.StatusActive
+		rec.LastExitCode = nil
+		rec.LastSeenAt = state.attemptAt
+		cfg.Sessions[key] = rec
+		return nil
+	})
+	return state, err
+}
+
+// rollbackResumeLifecycle restores the prior result only while the lifecycle
+// fields still have the pre-launch values. A concurrent host exit or explicit
+// stop wins and is never overwritten by rollback.
+func (s *Service) rollbackResumeLifecycle(state resumeLifecycle) error {
+	return s.Store.Update(func(cfg *store.Config) error {
+		rec := cfg.Sessions[state.key]
+		if rec.ID == "" || rec.Status != store.StatusActive || rec.LastExitCode != nil || !rec.LastSeenAt.Equal(state.attemptAt) {
+			return nil
+		}
+		rec.Status = state.status
+		rec.LastSeenAt = state.lastSeenAt
+		if state.exitCode == nil {
+			rec.LastExitCode = nil
+		} else {
+			code := *state.exitCode
+			rec.LastExitCode = &code
+		}
+		cfg.Sessions[state.key] = rec
+		return nil
+	})
+}
+
+func nextResumeTimestamp(after time.Time) time.Time {
+	now := time.Now().UTC()
+	if !now.After(after) {
+		return after.Add(time.Nanosecond)
+	}
+	return now
+}
+
+func (s *Service) prepareResume(sess adapter.Session, cfg store.Config, opts ResumeOptions) (adapter.ResumableAdapter, store.SessionRecord, adapter.ResumeRequest, error) {
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
+	}
+	resumable, ok := a.(adapter.ResumableAdapter)
+	if !ok {
+		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf("session %q is not running and agent %q cannot resume it", sess.ID, sess.AgentType)
+	}
+	rec := cfg.Sessions[store.Key(sess.AgentType, sess.ID)]
+	if rec.ID == "" {
+		rec = RecordFromSession(sess, store.ModeYolo)
+	}
+	req := adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), SessionName: rec.SessionName, ProviderSessionID: rec.ProviderSessionID, CreatedAt: rec.CreatedAt}
+	kind := adapter.ResumeHeuristic
+	if classifier, ok := a.(adapter.ResumeKindAdapter); ok {
+		kind = classifier.ResumeKind(req)
+	}
+	if kind == adapter.ResumeUnsupported {
+		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf("session %q is not running and agent %q cannot resume it", sess.ID, sess.AgentType)
+	}
+	if kind == adapter.ResumeHeuristic && !opts.AllowLatest && retainedSessionCount(cfg, rec.Agent, rec.Workdir) > 1 {
+		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf("%w: provider %q has multiple retained sessions in %q; retry with --allow-latest", ErrAmbiguousResume, rec.Agent, rec.Workdir)
+	}
+	return resumable, rec, req, nil
+}
+
+func retainedSessionCount(cfg store.Config, agentName, workdir string) int {
+	want := normalizedWorkspace(workdir)
+	count := 0
+	for _, candidate := range cfg.Sessions {
+		if strings.EqualFold(candidate.Agent, agentName) && normalizedWorkspace(candidate.Workdir) == want {
+			count++
+		}
+	}
+	return count
+}
+
+func normalizedWorkspace(workdir string) string {
+	if abs, err := filepath.Abs(workdir); err == nil {
+		workdir = abs
+	}
+	return filepath.Clean(workdir)
 }
 
 func (s *Service) PrintList(ctx context.Context, asJSON bool) error {

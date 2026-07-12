@@ -154,7 +154,7 @@ func TestCreateListCaptureSendKill(t *testing.T) {
 	}
 }
 
-func TestAgentExitMarksStoreRecordClosed(t *testing.T) {
+func TestNaturalAgentCrashRemainsResumableAndRecordsFailure(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
 	name := "uam-fake-deadbeef"
@@ -173,13 +173,13 @@ func TestAgentExitMarksStoreRecordClosed(t *testing.T) {
 	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "exit 3"}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	waitFor(t, "record marked closed", func() bool {
+	waitFor(t, "natural crash recorded", func() bool {
 		cfg, err := st.Load()
 		if err != nil {
 			return false
 		}
 		rec := cfg.Sessions["fake:deadbeef"]
-		return rec.Status == store.StatusClosedByUser && rec.LastExitCode != nil && *rec.LastExitCode == 3
+		return rec.Status == store.StatusActive && rec.LastExitCode != nil && *rec.LastExitCode == 3
 	})
 	waitFor(t, "runtime files removed", func() bool {
 		_, err := os.Stat(SocketPath(c.Dir, name))
@@ -187,7 +187,7 @@ func TestAgentExitMarksStoreRecordClosed(t *testing.T) {
 	})
 }
 
-func TestAgentExitBeforeRecordPersistenceEventuallyMarksRecordClosed(t *testing.T) {
+func TestNaturalAgentExitBeforeRecordPersistenceEventuallyRecordsExit(t *testing.T) {
 	c := newTestClient(t)
 	shortDir, err := os.MkdirTemp("", "uam-exit-")
 	if err != nil {
@@ -220,13 +220,39 @@ func TestAgentExitBeforeRecordPersistenceEventuallyMarksRecordClosed(t *testing.
 		t.Fatal(err)
 	}
 
-	waitFor(t, "late record marked closed", func() bool {
+	waitFor(t, "late natural exit recorded", func() bool {
 		cfg, err := st.Load()
 		if err != nil {
 			return false
 		}
 		rec := cfg.Sessions["fake:feedface"]
-		return rec.Status == store.StatusClosedByUser && rec.LastExitCode != nil && *rec.LastExitCode == 3
+		return rec.Status == store.StatusActive && rec.LastExitCode != nil && *rec.LastExitCode == 3
+	})
+}
+
+func TestNaturalAgentExitZeroRemainsResumable(t *testing.T) {
+	c := newTestClient(t)
+	name := "uam-fake-cafebabe"
+	st, err := store.Open(store.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession("fake:cafebabe", store.SessionRecord{ID: "cafebabe", Agent: "fake", SessionName: name, Status: store.StatusActive})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CreateSession(context.Background(), name, t.TempDir(), nil, []string{"/bin/sh", "-c", "exit 0"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "natural success recorded", func() bool {
+		cfg, err := st.Load()
+		if err != nil {
+			return false
+		}
+		rec := cfg.Sessions["fake:cafebabe"]
+		return rec.Status == store.StatusActive && rec.LastExitCode != nil && *rec.LastExitCode == 0
 	})
 }
 

@@ -26,6 +26,7 @@ func New(backend adapter.Backend) adapter.AgentAdapter {
 		}
 		return req.ProviderSessionID
 	}
+	agent.ResumeKindFor = func(adapter.ResumeRequest) adapter.ResumeKind { return adapter.ResumeExact }
 	agent.SkipPromptOnResume = true
 	return agent
 }

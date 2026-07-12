@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,16 @@ type svcFakeAdapter struct {
 	// backend where Kill returns only after the host is fully gone — so a
 	// restart's resume step sees the session as dead.
 	stopRemoves bool
+	resumeKind  adapter.ResumeKind
+	resumeHook  func(adapter.ResumeRequest)
+	resumeFunc  func(adapter.ResumeRequest) (adapter.Session, error)
+}
+
+func (f *svcFakeAdapter) ResumeKind(adapter.ResumeRequest) adapter.ResumeKind {
+	if f.resumeKind == "" {
+		return adapter.ResumeHeuristic
+	}
+	return f.resumeKind
 }
 
 func (f *svcFakeAdapter) Name() string        { return f.name }
@@ -51,6 +62,12 @@ func (f *svcFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 }
 func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) (adapter.Session, error) {
 	f.resumed = &req
+	if f.resumeHook != nil {
+		f.resumeHook(req)
+	}
+	if f.resumeFunc != nil {
+		return f.resumeFunc(req)
+	}
 	return adapter.Session{ID: req.ID, AgentType: f.name, CommandAlias: req.CommandAlias, DisplayName: req.Name, Prompt: req.Prompt, Cwd: req.Cwd, SessionName: req.SessionName, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
 }
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
@@ -650,6 +667,219 @@ func TestResumeBackgroundClearsClosedStatus(t *testing.T) {
 	cfg, _ := st.Load()
 	if cfg.Sessions[store.Key("fake", "12345678")].Status != store.StatusActive {
 		t.Fatalf("status after resume = %q, want %q", cfg.Sessions[store.Key("fake", "12345678")].Status, store.StatusActive)
+	}
+	if cfg.Sessions[store.Key("fake", "12345678")].LastExitCode != nil {
+		t.Fatal("successful resume must clear the previous exit code")
+	}
+}
+
+func TestResumeBackgroundDoesNotEraseImmediateReplacementExit(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldExit, replacementExit := 2, 17
+	const sessionName = "uam-fake-12345678"
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession(store.Key("fake", "12345678"), store.SessionRecord{
+			ID: "12345678", Agent: "fake", Workdir: dir, SessionName: sessionName,
+			Status: store.StatusActive, LastExitCode: &oldExit,
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeExact}
+	fake.resumeHook = func(adapter.ResumeRequest) {
+		matched, err := st.TryRecordSessionExit(store.SessionExit{SessionName: sessionName, ExitCode: replacementExit})
+		if err != nil || !matched {
+			t.Fatalf("record immediate replacement exit: matched=%v err=%v", matched, err)
+		}
+	}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+	if err := svc.ResumeBackground(context.Background(), "12345678"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := cfg.Sessions[store.Key("fake", "12345678")]
+	if rec.LastExitCode == nil || *rec.LastExitCode != replacementExit {
+		t.Fatalf("exit code after immediate replacement failure=%v, want %d", rec.LastExitCode, replacementExit)
+	}
+	if got := deadSessionFromRecord(rec, time.Now()).State; got != adapter.Failed {
+		t.Fatalf("dead replacement state=%q, want %q", got, adapter.Failed)
+	}
+}
+
+func TestFailedConcurrentResumeCannotRollbackSuccessfulResume(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldExit := 9
+	const sessionName = "uam-fake-12345678"
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession(store.Key("fake", "12345678"), store.SessionRecord{
+			ID: "12345678", Agent: "fake", Workdir: dir, SessionName: sessionName,
+			Status: store.StatusClosedByUser, LastExitCode: &oldExit,
+		})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	calls := 0
+	var callsMu sync.Mutex
+	fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeExact}
+	fake.resumeFunc = func(req adapter.ResumeRequest) (adapter.Session, error) {
+		callsMu.Lock()
+		calls++
+		call := calls
+		callsMu.Unlock()
+		if call == 1 {
+			close(firstEntered)
+			<-releaseFirst
+			return adapter.Session{}, errors.New("first launch failed")
+		}
+		return adapter.Session{ID: req.ID, AgentType: "fake", Cwd: req.Cwd, SessionName: req.SessionName, State: adapter.Active, ProcAlive: adapter.Alive}, nil
+	}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- svc.ResumeBackground(context.Background(), "12345678") }()
+	<-firstEntered
+	if err := svc.ResumeBackground(context.Background(), "12345678"); err != nil {
+		t.Fatalf("second resume: %v", err)
+	}
+	close(releaseFirst)
+	if err := <-firstDone; err == nil {
+		t.Fatal("first resume unexpectedly succeeded")
+	}
+
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := cfg.Sessions[store.Key("fake", "12345678")]
+	if rec.Status != store.StatusActive || rec.LastExitCode != nil {
+		t.Fatalf("winning resume lifecycle overwritten: status=%q exit=%v", rec.Status, rec.LastExitCode)
+	}
+}
+
+func TestHeuristicResumeRejectsAmbiguousWorkspaceUnlessAllowed(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if err := st.Update(func(cfg *store.Config) error {
+		for _, id := range []string{"11111111", "22222222"} {
+			cfg.PutSession(store.Key("fake", id), store.SessionRecord{ID: id, Agent: "fake", Name: id, Workdir: "/tmp/project", SessionName: "uam-fake-" + id, Status: store.StatusActive})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ResumeBackground(context.Background(), "11111111"); !errors.Is(err, ErrAmbiguousResume) {
+		t.Fatalf("resume error=%v, want ErrAmbiguousResume", err)
+	}
+	if fake.resumed != nil {
+		t.Fatal("ambiguous heuristic resume must fail before provider launch")
+	}
+	if err := svc.ResumeBackgroundWithOptions(context.Background(), "11111111", ResumeOptions{AllowLatest: true}); err != nil {
+		t.Fatalf("allow-latest resume: %v", err)
+	}
+	if fake.resumed == nil {
+		t.Fatal("allow-latest must launch heuristic resume")
+	}
+}
+
+func TestUniqueHeuristicResumeStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession(store.Key("fake", "11111111"), store.SessionRecord{ID: "11111111", Agent: "fake", Workdir: "/tmp/project", SessionName: "uam-fake-11111111", Status: store.StatusActive})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ResumeBackground(context.Background(), "11111111"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.resumed == nil {
+		t.Fatal("unique heuristic resume did not launch")
+	}
+}
+
+func TestExactResumeIgnoresOtherSessionsInWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeExact}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if err := st.Update(func(cfg *store.Config) error {
+		for _, id := range []string{"11111111", "22222222"} {
+			cfg.PutSession(store.Key("fake", id), store.SessionRecord{ID: id, Agent: "fake", Workdir: "/tmp/project", SessionName: "uam-fake-" + id, ProviderSessionID: "provider-" + id, Status: store.StatusActive})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ResumeBackground(context.Background(), "11111111"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.resumed == nil {
+		t.Fatal("exact resume did not launch")
+	}
+}
+
+func TestAmbiguousRestartDoesNotStopLiveSession(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := adapter.Session{ID: "11111111", AgentType: "fake", Cwd: "/tmp/project", SessionName: "uam-fake-11111111", ProcAlive: adapter.Alive, State: adapter.Active}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{live}, stopRemoves: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	if err := st.Update(func(cfg *store.Config) error {
+		for _, id := range []string{"11111111", "22222222"} {
+			cfg.PutSession(store.Key("fake", id), store.SessionRecord{ID: id, Agent: "fake", Workdir: "/tmp/project", SessionName: "uam-fake-" + id, Status: store.StatusActive})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Restart(context.Background(), "11111111"); !errors.Is(err, ErrAmbiguousResume) {
+		t.Fatalf("restart error=%v, want ErrAmbiguousResume", err)
+	}
+	if fake.stopped {
+		t.Fatal("ambiguous restart must fail before stopping the live session")
+	}
+}
+
+func TestDeadSessionStateReflectsNaturalExitCode(t *testing.T) {
+	zero, crash := 0, 7
+	if got := deadSessionFromRecord(store.SessionRecord{LastExitCode: &zero}, time.Now()).State; got != adapter.Completed {
+		t.Fatalf("natural exit 0 state=%q, want Completed", got)
+	}
+	if got := deadSessionFromRecord(store.SessionRecord{LastExitCode: &crash}, time.Now()).State; got != adapter.Failed {
+		t.Fatalf("natural crash state=%q, want Failed", got)
 	}
 }
 

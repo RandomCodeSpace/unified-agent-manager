@@ -98,6 +98,18 @@ func TestRunRestart(t *testing.T) {
 	}
 }
 
+func TestAttachAndRestartAcceptAllowLatest(t *testing.T) {
+	svc, fake := newCLITestService(t)
+	id := dispatchAndCaptureID(t, svc, []string{"--cwd", "/tmp", "fake", "work"})
+	must(t, runRestart(context.Background(), svc, []string{"--allow-latest", id}))
+	if !fake.resumed {
+		t.Fatal("restart --allow-latest did not resume")
+	}
+	if err := runCommand(context.Background(), svc, []string{"attach", "--allow-latest", id}, noopRunTUI); err != nil {
+		t.Fatalf("attach --allow-latest: %v", err)
+	}
+}
+
 func TestCLIArgumentValidationAndParsing(t *testing.T) {
 	svc, _ := newCLITestService(t)
 	if err := RunDispatch(context.Background(), svc, nil); err == nil {

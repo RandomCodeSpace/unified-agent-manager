@@ -18,6 +18,13 @@ func TestNew(t *testing.T) {
 	}
 }
 
+func TestResumeKindIsExactForLegacyRecordsWithoutProviderID(t *testing.T) {
+	a := New(nil).(adapter.ResumeKindAdapter)
+	if got := a.ResumeKind(adapter.ResumeRequest{ID: "abc12345"}); got != adapter.ResumeExact {
+		t.Fatalf("ResumeKind=%q, want exact", got)
+	}
+}
+
 func TestAvailableRequiresCopilotBinary(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	a := New(nil)

@@ -67,6 +67,7 @@ type Agent struct {
 	// --session-id), or "" when unknown. It is persisted so a later resume
 	// can target the exact provider session (F-resume).
 	ProviderSession    func(req ResumeRequest, activity string) string
+	ResumeKindFor      func(req ResumeRequest) ResumeKind
 	SkipPromptOnResume bool
 	randomReader       io.Reader
 
@@ -196,6 +197,19 @@ func (a *Agent) Resume(ctx context.Context, req ResumeRequest) (Session, error) 
 		req.ID = id
 	}
 	return a.startSession(ctx, req, "resumed")
+}
+
+func (a *Agent) ResumeKind(req ResumeRequest) ResumeKind {
+	if a.ResumeKindFor != nil {
+		return a.ResumeKindFor(req)
+	}
+	if a.SessionArgs == nil {
+		return ResumeUnsupported
+	}
+	if req.ProviderSessionID != "" {
+		return ResumeExact
+	}
+	return ResumeHeuristic
 }
 
 func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity string) (Session, error) {

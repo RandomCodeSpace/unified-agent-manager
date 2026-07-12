@@ -108,9 +108,9 @@ type host struct {
 	// escalation stops there. cleaned is closed after shutdown has also
 	// removed the runtime files, so a Kill reply means the session is fully
 	// gone — a List immediately after must not see leftovers.
-	exited   chan struct{}
-	cleaned  chan struct{}
-	stopping atomic.Bool
+	exited      chan struct{}
+	cleaned     chan struct{}
+	uamStopping atomic.Bool
 }
 
 type attachClient struct {
@@ -282,7 +282,6 @@ func (h *host) signalLoop() {
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	<-ch
 	// Forward termination to the agent; the normal exit path then runs.
-	h.stopping.Store(true)
 	h.terminateChild()
 }
 
@@ -325,7 +324,7 @@ func (h *host) handleConn(conn net.Conn) {
 		_ = writeJSONLine(conn, response{OK: true})
 		_ = conn.Close()
 	case opKill:
-		h.stopping.Store(true)
+		h.uamStopping.Store(true)
 		h.terminateChild()
 		select {
 		case <-h.cleaned:
@@ -528,10 +527,10 @@ func (h *host) shutdown(exitCode int) {
 	if err := removeSessionFiles(h.dir, h.name); err != nil {
 		log.Warn("remove session files failed", "session", h.name, "error", err)
 	}
-	h.markClosed(exitCode)
+	h.recordExit(exitCode)
 }
 
-func (h *host) markClosed(exitCode int) {
+func (h *host) recordExit(exitCode int) {
 	deadline := time.Now().Add(markClosedRetryWindow)
 	delay := markClosedRetryBase
 	var lastErr error
@@ -539,12 +538,12 @@ func (h *host) markClosed(exitCode int) {
 		st, err := store.Open(store.DefaultPath())
 		if err == nil {
 			var matched bool
-			matched, err = st.TryMarkSessionClosed(h.name, exitCode)
+			matched, err = st.TryRecordSessionExit(store.SessionExit{SessionName: h.name, ExitCode: exitCode, UAMInitiated: h.uamStopping.Load()})
 			if err == nil && matched {
 				return
 			}
 		}
-		if h.stopping.Load() && err == nil {
+		if h.uamStopping.Load() && err == nil {
 			return
 		}
 		lastErr = err

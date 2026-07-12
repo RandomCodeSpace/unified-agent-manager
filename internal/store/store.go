@@ -184,6 +184,16 @@ type SessionRecord struct {
 	PR           *PRRecord `json:"pr,omitempty"`
 }
 
+// SessionExit describes how a provider process left its native session host.
+// UAMInitiated is true only for an explicit UAM stop/restart request; terminal
+// provider exits and externally delivered signals remain natural exits.
+type SessionExit struct {
+	SessionName       string
+	ProviderSessionID string
+	ExitCode          int
+	UAMInitiated      bool
+}
+
 type PRRecord struct {
 	URL         string    `json:"url"`
 	Number      int       `json:"number"`
@@ -643,21 +653,31 @@ func (s *Store) MarkSessionClosed(sessionName string, exitCode int) error {
 	return err
 }
 
-// TryMarkSessionClosed is MarkSessionClosed with an explicit match result. The
-// host uses the result to distinguish an intentionally idempotent no-op from
-// the narrow launch race where the durable record has not been written yet.
+// TryMarkSessionClosed is the compatibility entry point for older callers. It
+// records an explicit UAM stop and returns whether a durable record matched.
 func (s *Store) TryMarkSessionClosed(sessionName string, exitCode int) (bool, error) {
-	if sessionName == "" {
+	return s.TryRecordSessionExit(SessionExit{SessionName: sessionName, ExitCode: exitCode, UAMInitiated: true})
+}
+
+// TryRecordSessionExit records the provider's latest exit while preserving
+// resumability for natural exits. Only an explicit UAM stop/restart retires
+// the record into the closed-by-user group.
+func (s *Store) TryRecordSessionExit(exit SessionExit) (bool, error) {
+	if exit.SessionName == "" {
 		return false, nil
 	}
 	matched := false
 	err := s.Update(func(cfg *Config) error {
 		for key, rec := range cfg.Sessions {
-			if rec.SessionName != sessionName {
+			if rec.SessionName != exit.SessionName {
 				continue
 			}
-			rec.Status = StatusClosedByUser
-			code := exitCode
+			if exit.UAMInitiated {
+				rec.Status = StatusClosedByUser
+			} else {
+				rec.Status = StatusActive
+			}
+			code := exit.ExitCode
 			rec.LastExitCode = &code
 			cfg.Sessions[key] = rec
 			matched = true
