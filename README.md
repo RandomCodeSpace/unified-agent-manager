@@ -189,9 +189,13 @@ run `loginctl enable-linger`.
 
 ## Safety model
 
-`uam` can launch providers in their full-access or auto-approve mode when the
-provider supports it. Use `uam dispatch --safe ...` when you want the provider's
-default approval behavior instead.
+`uam` launches providers in their full-access or auto-approve ("yolo") mode by
+default when the provider supports it. In that mode, treat the repository,
+prompt, provider configuration, and any instructions the agent reads as trusted:
+the provider may execute commands and change files without pausing for approval.
+Use `uam dispatch --safe ...` when you want the provider's default approval
+behavior instead. Safe mode changes provider arguments; it is not an operating-
+system sandbox and does not reduce the permissions of the `uam` process itself.
 
 `uam` does not make git checkpoints, stash changes, or modify your repository on
 its own. It starts and manages agent sessions; the provider remains responsible
