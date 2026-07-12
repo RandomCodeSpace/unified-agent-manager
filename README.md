@@ -27,7 +27,7 @@ Supported providers:
 - Runs each managed session under its own lightweight, detached host process
   (a PTY + terminal emulator + Unix socket) — sessions keep running when the
   TUI exits, exactly like a tmux server, with no external dependency
-- Shows active and closed sessions in one dashboard
+- Shows Running and Stopped sessions in one dashboard, with grounded exit detail
 - Lets you peek at recent output without attaching (4000 lines of scrollback)
 - Sends replies back into running agent sessions
 - Persists session metadata across restarts, including each agent's exit code
@@ -50,7 +50,8 @@ from the dispatch UI instead of failing the whole app.
 
 - Linux (Ubuntu), on amd64 and arm64
 - macOS, on Intel and Apple silicon
-- Native Windows is not supported.
+- Native Windows is not supported. Windows Terminal and PowerShell can be used
+  only as SSH clients connecting to a Linux or macOS host running `uam`.
 
 ## Install
 
@@ -96,10 +97,10 @@ uam new                          # guided dispatch wizard, then attach
 uam dispatch [--safe] [--alias <name>] <agent> [#session-name] [prompt]
 uam ls [--json]
 uam peek <id>
-uam attach <name-or-id>
+uam attach [--allow-latest] <name-or-id>
 uam last
 uam stop <id>                    # kill the session, keep record
-uam restart <id>                 # stop the agent and resume it in place
+uam restart [--allow-latest] <id>  # stop the agent and resume it in place
 uam rm <id>                      # kill the session and remove record
 uam kill-all                     # stop every managed session
 uam version
@@ -115,15 +116,21 @@ uam version
 | `@agent prompt` | Dispatch to a specific agent |
 | `@agent:alias prompt` | Dispatch with a command alias |
 | `Tab` | Cycle default agent |
-| `Space` | Toggle peek panel |
+| `Space` | Toggle Peek for Running; resume Stopped in the background |
 | `Ctrl+T` | Pin selected session |
 | `Ctrl+R` | Rename selected session |
-| `Ctrl+X` | Stop, restart, or remove the selected session with confirmation |
+| `Ctrl+X` | Stop and remove the selected record, or restart it, with confirmation |
 | `Ctrl+S` | Toggle group-by-directory |
 | `Shift+↑/↓` | Reorder rows |
 | `e` | Open the guided dispatch wizard |
 | `?` | Open help |
 | `Esc` | Close overlays, clear input, or quit |
+
+The dashboard responds to every terminal resize. Wide terminals show sessions
+beside selected details or Peek; standard terminals stack those surfaces; and
+compact or keyboard-constrained mobile terminals give Peek and the New Session
+wizard the full primary surface. See [Responsive TUI design and operations](docs/responsive-tui.md)
+for layout thresholds, mobile guidance, lifecycle markers, and accessibility.
 
 ## Attached sessions
 
@@ -144,25 +151,85 @@ agent's PTY:
   session would leave it impossible to foreground
 - Several terminals can attach to the same session at once
 
+`UAM_ATTACH_MOUSE` controls whether provider mouse reporting is preserved:
+
+- `auto` (the default) enables it locally and disables it when `SSH_CONNECTION`
+  or `SSH_TTY` indicates an SSH session
+- `on` preserves provider mouse reporting everywhere
+- `off` suppresses provider mouse modes so the terminal keeps selection and
+  paste gestures
+
+Bracketed-paste payload is forwarded byte-for-byte. Control bytes inside a paste
+do not trigger UAM's attach shortcuts. UAM cannot access the client clipboard or
+turn an unsent mouse gesture into remote input.
+
+For PowerShell SSH, use Windows Terminal and configure a Windows Terminal paste
+binding such as right-click, `Ctrl+Shift+V`, or `Shift+Insert`. Keep
+`UAM_ATTACH_MOUSE=auto` (or set it to `off`) on the remote host if provider mouse
+tracking captures selection or right-click. Native Windows remains unsupported;
+Windows is the SSH client in this setup.
+
+In the TUI, `Ctrl+X` followed by `y` stops the process **and removes its stored
+record**. Use `uam stop <id>` when you want to stop the process but retain a
+Stopped row for later resume. For paste diagnosis, follow the
+[SSH troubleshooting steps](docs/responsive-tui.md#ssh-mouse-and-paste).
+
 ## Resuming sessions
 
-Detach/reattach never restarts anything — the agent keeps running under its
-host and attach is a plain reconnect (this is the tmux property, kept).
-Resume only applies to sessions whose process is gone (reboot, `uam stop`):
+Detach/reattach never restarts anything — the provider keeps running under its
+host and attach is a plain reconnect. Resume applies only when the provider
+process is Stopped, such as after a reboot, clean exit, or `uam stop`.
+
+UAM distinguishes an **exact resume**, which targets known provider state, from
+a **heuristic resume**, which asks the provider to continue its latest
+conversation. If a heuristic provider has multiple retained sessions in the
+same workspace, UAM fails closed before launching it. The TUI asks for explicit
+confirmation; CLI users may retry only when latest-conversation behavior is
+acceptable:
+
+```sh
+uam attach --allow-latest <name-or-id>
+uam restart --allow-latest <id>
+```
+
+Provider behavior:
 
 - **Claude Code**: uam seeds claude's session id with the uam id at dispatch
   (`--session-id`, when the installed claude supports it) and resumes that
   exact conversation with `--resume <id>` — several sessions in the same
   directory each resume their own conversation. Sessions dispatched before
-  this feature (or with an older claude) fall back to `--continue`.
+  this feature (or with an older Claude Code) use the guarded `--continue`
+  heuristic.
 - **Copilot**: exact resume — the session is named with the uam id at
   dispatch (`--name`) and resumed by that exact name (`--resume=<id>`).
-- **Codex / OpenCode**: these CLIs cannot preset session ids yet, so resume
-  uses their "most recent" mode (`codex resume --last`, `opencode -c`). When
-  an opencode record carries a `provider_session_id` (`ses_...`), uam resumes
-  that exact session via `--session`. **omp**: `-c`.
+- **OpenCode**: UAM learns the current root conversation ID and resumes it
+  exactly with `--session`. Older records without an identity use guarded
+  `-c` latest-conversation behavior.
+- **Oh My Pi**: new sessions receive a UAM-ID-specific provider state directory,
+  making `-c` exact. Legacy records without that directory retain guarded
+  latest-conversation behavior.
+- **Codex**: `codex resume --last` is heuristic because Codex cannot currently
+  be given the UAM ID when the conversation is created.
+- **Hermes**: no provider resume command is configured. A stopped Hermes record
+  cannot be resumed; dispatch a new Managed Session instead.
 - After a reboot, records survive in the store and resume on attach — a
   scenario where a tmux session would simply be gone.
+
+### Multiple sessions in one workspace
+
+UAM can run several Managed Sessions in one project directory. They have
+independent UAM IDs, terminal hosts, attach points, and provider conversations,
+but they share the same files. The grouped TUI warns when more than one Running
+session shares a Workspace. Use separate Git worktrees or checkouts when agents
+must not edit the same tree; UAM does not create them automatically.
+
+OpenCode's `/new` creates a new provider conversation *inside the current
+Managed Session*. It intentionally does not create another UAM row or host. UAM
+tracks the newly selected root conversation for later exact resume. To get two
+independently attachable sessions, use `uam new` or `uam dispatch` again.
+
+The terminology and compatibility decision are documented in
+[Managed Session vs. Provider Conversation](docs/adr/0001-managed-session-vs-provider-conversation.md).
 
 ## Session storage
 
@@ -203,9 +270,24 @@ Use `uam dispatch --safe ...` when you want the provider's default approval
 behavior instead. Safe mode changes provider arguments; it is not an operating-
 system sandbox and does not reduce the permissions of the `uam` process itself.
 
+OpenCode is capability-probed before launch. In default yolo mode, UAM adds
+`--auto` only when the installed OpenCode advertises that flag; older versions
+continue without an unsupported argument. This preserves compatibility but does
+not turn OpenCode or UAM into a sandbox.
+
 `uam` does not make git checkpoints, stash changes, or modify your repository on
 its own. It starts and manages agent sessions; the provider remains responsible
 for its own execution model.
+
+## Design and operations
+
+- [Terminology glossary](CONTEXT.md)
+- [Managed Session vs. Provider Conversation](docs/adr/0001-managed-session-vs-provider-conversation.md)
+- [Terminal ownership over SSH](docs/adr/0002-terminal-ownership-over-ssh.md)
+- [Responsive TUI design and operations](docs/responsive-tui.md)
+
+Session storage remains schema version 3. Updates do not require a data migration,
+and unknown JSON fields are preserved when existing records are rewritten.
 
 ## Development
 

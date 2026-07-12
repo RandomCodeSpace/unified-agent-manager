@@ -2249,9 +2249,10 @@ func absCwd(cwd string) string {
 
 func (m Model) renderHelp() string {
 	rows := []string{
-		"↑/↓  move        Enter/→  attach        Space  peek",
+		"↑/↓  move   Shift+↑/↓  reorder   Enter/→  attach/resume",
+		"Space  peek running / resume stopped",
 		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
-		"Ctrl+X  stop/restart/remove      Ctrl+S  group-by-dir",
+		"Ctrl+X  stop+remove / restart    Ctrl+S  group-by-dir",
 		"e  new session       Esc  quit",
 		"in session:  ← detach (when input empty)    Ctrl+B d  detach",
 		"dispatch:  @agent:alias #name prompt   (alias, name & prompt optional)",
