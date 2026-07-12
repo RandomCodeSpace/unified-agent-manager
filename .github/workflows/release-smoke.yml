@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-smoke-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   snapshot:
     name: GoReleaser snapshot
@@ -57,8 +61,9 @@ jobs:
           "${binary}" version | grep -E '.+'
 
   darwin-native:
-    name: Darwin-native version smoke
+    name: Darwin-native lifecycle and version smoke
     runs-on: macos-14
+    timeout-minutes: 8
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -68,6 +73,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Run native session lifecycle tests
+        run: go test -race -count=1 -timeout=4m ./internal/session
+
+      - name: Run stop, restart, and resume tests
+        run: go test -race -count=1 -timeout=2m ./internal/app
 
       - name: Build and run version command
         run: |
