@@ -327,7 +327,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case attachSpecMsg:
 		return m, m.execAttachSpec(msg.spec, msg.err)
 	case attachFinishedMsg:
-		return m.handleAttachFinished(msg), m.loadSessionsCmd()
+		return m.handleAttachFinished(msg), tea.Batch(m.loadSessionsCmd(), tea.ClearScreen, tea.WindowSize())
 	case latestRequiredMsg:
 		if !errors.Is(msg.err, ErrAmbiguousResume) {
 			m.setMessage(msg.err.Error())

@@ -234,6 +234,33 @@ func TestDispatchedMessageAttachesNewSession(t *testing.T) {
 	}
 }
 
+func TestAttachFinishedClearsReloadsAndRequestsWindowSize(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	m.reloadSessions = func() sessionsLoadedMsg { return sessionsLoadedMsg{} }
+	model, cmd := m.Update(attachFinishedMsg{})
+	if cmd == nil {
+		t.Fatal("missing attach-return batch")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 3 {
+		t.Fatalf("command = %T len=%d, want tea.BatchMsg len 3", cmd(), len(batch))
+	}
+	seen := map[string]bool{}
+	for _, member := range batch {
+		seen[reflect.TypeOf(member()).String()] = true
+	}
+	for _, want := range []string{"app.sessionsLoadedMsg", "tea.clearScreenMsg", "tea.windowSizeMsg"} {
+		if !seen[want] {
+			t.Fatalf("batch message types = %v, missing %s", seen, want)
+		}
+	}
+	resized, _ := model.(Model).Update(tea.WindowSizeMsg{Width: 47, Height: 19})
+	got := resized.(Model)
+	if got.width != 47 || got.height != 19 {
+		t.Fatalf("size = %dx%d", got.width, got.height)
+	}
+}
+
 func envContains(env []string, key, value string) bool {
 	want := key + "=" + value
 	for _, item := range env {

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
@@ -302,6 +303,20 @@ func NewService(st *store.Store) *app.Service {
 func RunTUI(ctx context.Context, model tea.Model) error {
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
 	_, err := p.Run()
+	if term.IsTerminal(os.Stdout.Fd()) {
+		_ = writeTUIExitCleanup(os.Stdout)
+	}
+	return err
+}
+
+const tuiExitCleanup = "\x1b[0m" +
+	"\x1b[?1000;1002;1003;1004;1005;1006;1015l" +
+	"\x1b[?2004l" +
+	"\x1b[?25h" +
+	"\x1b[2K\r"
+
+func writeTUIExitCleanup(w io.Writer) error {
+	_, err := io.WriteString(w, tuiExitCleanup)
 	return err
 }
 

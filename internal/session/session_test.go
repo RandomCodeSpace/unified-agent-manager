@@ -859,6 +859,7 @@ func TestAttachQuietSuppressesPrimaryScreenNotice(t *testing.T) {
 // has to replay them or arrows and wheel scroll die on every re-entry.
 // Regression test for the resume/re-attach mode-loss bug.
 func TestReattachReplaysAgentPrivateModes(t *testing.T) {
+	t.Setenv(AttachMouseEnv, "on")
 	c := newTestClient(t)
 	ctx := context.Background()
 	name := "uam-fake-cccc1111"
@@ -922,6 +923,65 @@ func TestReattachReplaysAgentPrivateModes(t *testing.T) {
 		if !strings.Contains(second, want) {
 			t.Fatalf("re-attach must replay agent private mode %q: %q", want, second)
 		}
+	}
+}
+
+func TestAttachMouseOffFiltersReplayedProviderModes(t *testing.T) {
+	t.Setenv(AttachMouseEnv, "off")
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-78780001"
+	cmd := []string{"/bin/sh", "-c", "printf '\033[?1;1000;2004;1006hmouse-policy-marker'; sleep 60"}
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, cmd); err != nil {
+		t.Fatal(err)
+	}
+
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ptmx.Close(); _ = tty.Close() }()
+	done := make(chan error, 1)
+	go func() { done <- runAttachWithOptions(c.Dir, name, tty, tty, attachOptions{quiet: true}) }()
+	var mu sync.Mutex
+	var output []byte
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := ptmx.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				output = append(output, buf[:n]...)
+				mu.Unlock()
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}()
+	snapshot := func() string { mu.Lock(); defer mu.Unlock(); return string(output) }
+	waitFor(t, "mouse policy marker", func() bool { return strings.Contains(snapshot(), "mouse-policy-marker") })
+	beforeDetach := snapshot()
+	for _, preserved := range []string{"\x1b[?1h", "\x1b[?2004h"} {
+		if !strings.Contains(beforeDetach, preserved) {
+			t.Fatalf("missing preserved mode %q: %q", preserved, beforeDetach)
+		}
+	}
+	for _, filtered := range []string{"\x1b[?1000h", "\x1b[?1006h"} {
+		if strings.Contains(beforeDetach, filtered) {
+			t.Fatalf("provider mouse mode leaked %q: %q", filtered, beforeDetach)
+		}
+	}
+	if _, err := ptmx.Write([]byte{detachPrefix, 'd'}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("detach timed out")
 	}
 }
 

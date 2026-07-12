@@ -2,6 +2,9 @@ package session
 
 import (
 	"bytes"
+	"errors"
+	"io"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +22,151 @@ func runFilter(t *testing.T, f *stdinFilter, chunks ...string) (string, bool) {
 		}
 	}
 	return out.String(), false
+}
+
+func TestAttachMousePolicy(t *testing.T) {
+	tests := []struct {
+		name, value, sshConnection, sshTTY string
+		want                               bool
+	}{
+		{"unset local", "", "", "", true}, {"auto local", "auto", "", "", true},
+		{"unset ssh connection", "", "client", "", false}, {"auto ssh tty", "auto", "", "/dev/pts/1", false},
+		{"on ssh", "on", "client", "", true}, {"off local", "off", "", "", false},
+		{"invalid local", "maybe", "", "", true}, {"invalid ssh", "maybe", "client", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := map[string]string{AttachMouseEnv: tt.value, "SSH_CONNECTION": tt.sshConnection, "SSH_TTY": tt.sshTTY}
+			if got := attachMouseEnabled(func(key string) string { return env[key] }); got != tt.want {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func filterHostOutput(t *testing.T, mouse bool, chunks ...[]byte) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	f := newAttachOutputFilter(&out, mouse)
+	for _, chunk := range chunks {
+		if n, err := f.Write(chunk); err != nil || n != len(chunk) {
+			t.Fatalf("Write = %d, %v; want %d, nil", n, err, len(chunk))
+		}
+	}
+	if err := f.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
+func TestAttachOutputFilterOwnedModes(t *testing.T) {
+	for _, mouse := range []bool{true, false} {
+		for _, mode := range []string{"47", "1047", "1049"} {
+			for _, final := range []string{"h", "l"} {
+				if got := string(filterHostOutput(t, mouse, []byte("before\x1b[?"+mode+final+"after"))); got != "beforeafter" {
+					t.Fatalf("mouse=%v mode=%s%s got %q", mouse, mode, final, got)
+				}
+			}
+		}
+	}
+	input := []byte("部署\x1b[31m\x1b[?1;1000;2004;1006;1049hX\x1b[?1004l\x1b]0;title\a")
+	if got, want := string(filterHostOutput(t, false, input)), "部署\x1b[31m\x1b[?1;2004hX\x1b[?1004l\x1b]0;title\a"; got != want {
+		t.Fatalf("mouse off = %q, want %q", got, want)
+	}
+	if got, want := string(filterHostOutput(t, true, input)), "部署\x1b[31m\x1b[?1;1000;2004;1006hX\x1b[?1004l\x1b]0;title\a"; got != want {
+		t.Fatalf("mouse on = %q, want %q", got, want)
+	}
+}
+
+func TestAttachOutputFilterSplitAndFlush(t *testing.T) {
+	input := []byte("a\x1b[?1;1000;2004;1049hb")
+	for split := 0; split <= len(input); split++ {
+		if got := string(filterHostOutput(t, false, input[:split], input[split:])); got != "a\x1b[?1;2004hb" {
+			t.Fatalf("split %d = %q", split, got)
+		}
+	}
+	for _, partial := range []string{"\x1b", "\x1b[", "\x1b[?1000"} {
+		if got := string(filterHostOutput(t, false, []byte(partial))); got != partial {
+			t.Fatalf("partial %q flushed as %q", partial, got)
+		}
+	}
+	long := "\x1b[?" + strings.Repeat("1", 4097)
+	if got := string(filterHostOutput(t, false, []byte(long))); got != long {
+		t.Fatal("over-cap CSI changed")
+	}
+}
+
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestAttachOutputFilterPropagatesDownstreamError(t *testing.T) {
+	want := errors.New("write failed")
+	if _, err := io.WriteString(newAttachOutputFilter(failingWriter{want}, false), "plain"); !errors.Is(err, want) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestBracketedPasteBypassesAttachBindings(t *testing.T) {
+	paste := []byte("\x1b[200~部署 café 🚀\r\n\x02d\x03\x1a\x1b[D\x1b[201~")
+	for split := 0; split <= len(paste); split++ {
+		f := &stdinFilter{backDetach: true}
+		var got []byte
+		for _, chunk := range [][]byte{paste[:split], paste[split:]} {
+			out, detach := f.filter(chunk)
+			if detach {
+				t.Fatalf("split %d detached", split)
+			}
+			got = append(got, out...)
+		}
+		if !bytes.Equal(got, paste) {
+			t.Fatalf("split %d = %q, want %q", split, got, paste)
+		}
+		if _, detach := f.filter([]byte{detachPrefix, 'd'}); !detach {
+			t.Fatalf("split %d detach did not resume", split)
+		}
+	}
+}
+
+func TestBracketMarkerInsideTerminalReplyDoesNotEnterPaste(t *testing.T) {
+	f := &stdinFilter{backDetach: true}
+	reply := "\x1b]0;literal \x1b[200~ marker\a"
+	if out, detach := runFilter(t, f, reply); detach || out != reply {
+		t.Fatalf("reply = %q detach=%v", out, detach)
+	}
+	if _, detach := runFilter(t, f, string([]byte{detachPrefix, 'd'})); !detach {
+		t.Fatal("marker inside OSC incorrectly entered paste mode")
+	}
+}
+
+func TestRawUTF8AndCRLFAreByteExact(t *testing.T) {
+	input := []byte("部署 café 🚀\r\n")
+	for split := 0; split <= len(input); split++ {
+		f := &stdinFilter{backDetach: true}
+		var got []byte
+		for _, chunk := range [][]byte{input[:split], input[split:]} {
+			out, detach := f.filter(chunk)
+			if detach {
+				t.Fatalf("split %d detached", split)
+			}
+			got = append(got, out...)
+		}
+		if !bytes.Equal(got, input) {
+			t.Fatalf("split %d = %q, want %q", split, got, input)
+		}
+	}
+}
+
+func TestAttachOutputFilterPreservesUnrelatedControls(t *testing.T) {
+	for _, input := range [][]byte{
+		[]byte("\x1b[31mred\x1b[0m"), []byte("\x1b[?1004h\x1b[?1007l\x1b[?2004h"),
+		[]byte("\x1b[?1000$p\x1b[?1000$y"), []byte("\x1b]0;title\a"),
+		[]byte("\x1bP$qm\x1b\\"), []byte("部署 café 🚀\r\n"),
+	} {
+		if got := filterHostOutput(t, false, input); !bytes.Equal(got, input) {
+			t.Fatalf("%q changed to %q", input, got)
+		}
+	}
 }
 
 func FuzzAttachFiltering(f *testing.F) {
