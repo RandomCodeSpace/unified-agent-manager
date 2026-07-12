@@ -288,7 +288,7 @@ func TestRefreshDoesNotPersistEmptyIDRecord(t *testing.T) {
 }
 
 // F18 — a session the user closed but whose pane is still alive must reconcile
-// to Active (it renders under ACTIVE, not CLOSED, because Closed => Exited).
+// to Active (it renders under RUNNING because ProcAlive is authoritative).
 func TestLoadSessionsReconcilesLiveUserClosedSessionToActive(t *testing.T) {
 	live := adapter.Session{ID: "eeee5555", AgentType: "fake", DisplayName: "e", Cwd: "/tmp", SessionName: "uam-fake-eeee5555", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	svc, st, _ := newLoadService(t, []adapter.Session{live})

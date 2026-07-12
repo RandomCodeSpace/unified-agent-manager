@@ -70,11 +70,9 @@ type Session struct {
 	// (-1 when it died on a signal), recorded by the session host. Nil while
 	// the session is live or when no exit has been observed.
 	ExitCode *int
-	// Closed mirrors store.StatusClosedByUser: true when the user retired
-	// this session through uam (`uam stop`, or exit-in-session — the host
-	// marks the record closed when the agent exits). False otherwise —
-	// including for dead sessions left over from a reboot, which remain in
-	// the Active group and resume on attach.
+	// Closed mirrors store.StatusClosedByUser: explicit UAM stop/restart reason
+	// metadata retained for compatibility. Dashboard lifecycle grouping uses
+	// ProcAlive, so every exited process is STOPPED regardless of this flag.
 	Closed bool
 }
 

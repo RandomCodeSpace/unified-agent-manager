@@ -42,6 +42,7 @@ type svcFakeAdapter struct {
 	// backend where Kill returns only after the host is fully gone — so a
 	// restart's resume step sees the session as dead.
 	stopRemoves bool
+	stopHook    func()
 	resumeKind  adapter.ResumeKind
 	resumeHook  func(adapter.ResumeRequest)
 	resumeFunc  func(adapter.ResumeRequest) (adapter.Session, error)
@@ -96,10 +97,112 @@ func (f *svcFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error {
 	f.stopped = true
 	f.stoppedID = id
+	if f.stopHook != nil {
+		f.stopHook()
+	}
 	if f.stopRemoves {
 		f.sessions = nil
 	}
 	return f.stopErr
+}
+
+func TestRestartCarriesInitialResumeDecisionPastConcurrentRetainedRecord(t *testing.T) {
+	for _, exact := range []bool{false, true} {
+		t.Run(map[bool]string{false: "id", true: "exact"}[exact], func(t *testing.T) {
+			id := "11111111"
+			live := adapter.Session{ID: id, AgentType: "fake", SessionName: "uam-fake-11111111", Cwd: "/tmp/shared", ProcAlive: adapter.Alive}
+			fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeHeuristic, stopRemoves: true, sessions: []adapter.Session{live}}
+			st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.Update(func(cfg *store.Config) error {
+				cfg.Sessions[store.Key("fake", id)] = RecordFromSession(live, store.ModeYolo)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			fake.stopHook = func() {
+				if err := st.Update(func(cfg *store.Config) error {
+					cfg.Sessions[store.Key("fake", "22222222")] = store.SessionRecord{ID: "22222222", Agent: "fake", Workdir: "/tmp/shared", SessionName: "uam-fake-22222222", Status: store.StatusActive}
+					return nil
+				}); err != nil {
+					t.Errorf("insert competing record: %v", err)
+				}
+			}
+			svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+			if exact {
+				err = svc.RestartExactWithOptions(context.Background(), "fake", id, ResumeOptions{})
+			} else {
+				err = svc.RestartWithOptions(context.Background(), id, ResumeOptions{})
+			}
+			if errors.Is(err, ErrAmbiguousResume) && fake.stopped {
+				t.Fatalf("restart rejected ambiguity only after stopping provider: %v", err)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !fake.stopped || fake.resumed == nil || fake.resumed.ID != id {
+				t.Fatalf("validated restart was not carried through: stopped=%v resumed=%+v", fake.stopped, fake.resumed)
+			}
+		})
+	}
+}
+
+func TestExactResumeAttachRestartOptionsAllowExplicitLatest(t *testing.T) {
+	for _, action := range []string{"resume", "attach", "restart"} {
+		t.Run(action, func(t *testing.T) {
+			id := "11111111"
+			fake := &svcFakeAdapter{name: "fake", available: true, resumeKind: adapter.ResumeHeuristic, stopRemoves: true}
+			if action == "restart" {
+				fake.sessions = []adapter.Session{{ID: id, AgentType: "fake", SessionName: "uam-fake-11111111", Cwd: "/tmp/shared", ProcAlive: adapter.Alive}}
+			}
+			st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.Update(func(cfg *store.Config) error {
+				cfg.Sessions[store.Key("fake", id)] = store.SessionRecord{ID: id, Agent: "fake", Name: "chosen", SessionName: "uam-fake-11111111", Workdir: "/tmp/shared", Status: store.StatusActive}
+				cfg.Sessions[store.Key("fake", "22222222")] = store.SessionRecord{ID: "22222222", Agent: "fake", Name: "other", SessionName: "uam-fake-22222222", Workdir: "/tmp/shared", Status: store.StatusActive}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+			var firstErr error
+			switch action {
+			case "resume":
+				firstErr = svc.ResumeBackgroundExactWithOptions(context.Background(), "fake", id, ResumeOptions{})
+			case "attach":
+				_, firstErr = svc.AttachSpecExactWithOptions(context.Background(), "fake", id, ResumeOptions{})
+			case "restart":
+				firstErr = svc.RestartExactWithOptions(context.Background(), "fake", id, ResumeOptions{})
+			}
+			if !errors.Is(firstErr, ErrAmbiguousResume) {
+				t.Fatalf("preflight error = %v", firstErr)
+			}
+			if fake.stopped || fake.resumed != nil {
+				t.Fatalf("rejected preflight mutated provider: stopped=%v resumed=%+v", fake.stopped, fake.resumed)
+			}
+
+			opts := ResumeOptions{AllowLatest: true}
+			switch action {
+			case "resume":
+				firstErr = svc.ResumeBackgroundExactWithOptions(context.Background(), "fake", id, opts)
+			case "attach":
+				_, firstErr = svc.AttachSpecExactWithOptions(context.Background(), "fake", id, opts)
+			case "restart":
+				firstErr = svc.RestartExactWithOptions(context.Background(), "fake", id, opts)
+			}
+			if firstErr != nil {
+				t.Fatal(firstErr)
+			}
+			if fake.resumed == nil || fake.resumed.ID != id {
+				t.Fatalf("resume target = %+v", fake.resumed)
+			}
+		})
+	}
 }
 
 func TestProviderExactServiceActionsDoNotCrossDuplicateIDs(t *testing.T) {
@@ -415,7 +518,7 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	now := time.Now()
 	sessions := []adapter.Session{{ID: "dead", ProcAlive: adapter.Exited, CreatedAt: now}, {ID: "live", ProcAlive: adapter.Alive, CreatedAt: now}, {ID: "p", ProcAlive: adapter.Exited, Pinned: true, CreatedAt: now}}
 	SortSessions(sessions)
-	if sessions[0].ID != "p" || sessions[1].ID != "live" {
+	if sessions[0].ID != "live" || sessions[1].ID != "p" {
 		t.Fatalf("order=%+v", sessions)
 	}
 	rec := RecordFromSession(adapter.Session{ID: "id", AgentType: "fake", CommandAlias: "ghcp", Prompt: "do work", Cwd: "/tmp", SessionName: "tm", CreatedAt: now}, "")
@@ -427,17 +530,17 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	}
 }
 
-func TestSortSessionsPushesClosedToBottom(t *testing.T) {
+func TestSortSessionsGroupsAllStoppedBelowRunning(t *testing.T) {
 	now := time.Now()
-	// Closed sessions belong below everything else, even pinned ones, so the
-	// Active group renders without interruption at the top.
+	// All exited sessions belong below running ones; Closed does not define a
+	// separate lifecycle partition, while pin order applies within STOPPED.
 	sessions := []adapter.Session{
 		{ID: "closed-pinned", Pinned: true, Closed: true, ProcAlive: adapter.Exited, CreatedAt: now},
 		{ID: "live", ProcAlive: adapter.Alive, CreatedAt: now},
 		{ID: "stopped-active", ProcAlive: adapter.Exited, CreatedAt: now},
 	}
 	SortSessions(sessions)
-	if sessions[0].ID != "live" || sessions[1].ID != "stopped-active" || sessions[2].ID != "closed-pinned" {
+	if sessions[0].ID != "live" || sessions[1].ID != "closed-pinned" || sessions[2].ID != "stopped-active" {
 		t.Fatalf("order=%+v", sessions)
 	}
 }

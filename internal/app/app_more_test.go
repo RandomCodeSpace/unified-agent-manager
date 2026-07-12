@@ -16,7 +16,7 @@ import (
 func TestModelViewBasics(t *testing.T) {
 	m := modelWithTwoSessions()
 	out := m.View()
-	if !strings.Contains(out, "ACTIVE") || !strings.Contains(out, "SELECTED") {
+	if !strings.Contains(out, "RUNNING") || !strings.Contains(out, "SELECTED") {
 		t.Fatalf("view=%s", out)
 	}
 	if strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
@@ -294,8 +294,8 @@ func TestViewShowsDetailsOnTopAndTaskInTable(t *testing.T) {
 		t.Fatalf("view should not show aggregate header stats: %s", view)
 	}
 	table := m.renderTable()
-	if !strings.Contains(table, "ACTIVE") || !strings.Contains(table, "CLOSED") {
-		t.Fatalf("table should group sessions into ACTIVE and CLOSED: %s", table)
+	if !strings.Contains(table, "RUNNING") || !strings.Contains(table, "STOPPED") {
+		t.Fatalf("table should group sessions into RUNNING and STOPPED: %s", table)
 	}
 	if !strings.Contains(table, "one") || !strings.Contains(table, "fix the parser") {
 		t.Fatalf("table should show session name and task: %s", table)
@@ -326,8 +326,8 @@ func TestSessionRowsStayStaticAcrossRefresh(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "live", DisplayName: "live", ProcAlive: adapter.Alive}, {ID: "dead", DisplayName: "dead", ProcAlive: adapter.Exited, Closed: true}}
 	before := m.renderTable()
-	if !strings.Contains(before, "ACTIVE") || !strings.Contains(before, "CLOSED") {
-		t.Fatalf("table should group sessions into ACTIVE and CLOSED: %s", before)
+	if !strings.Contains(before, "RUNNING") || !strings.Contains(before, "STOPPED") {
+		t.Fatalf("table should group sessions into RUNNING and STOPPED: %s", before)
 	}
 	if strings.Contains(before, "⠋") || strings.Contains(before, "💀") || strings.Contains(before, "🚀") || strings.Contains(before, "🔴") || strings.Contains(before, "🟢") {
 		t.Fatalf("table should stay glyph-based, no spinner/skull/emoji: %s", before)
@@ -375,8 +375,8 @@ func TestMovementAndQuitBranches(t *testing.T) {
 	if handled, cmd := m.handleMovementKey("shift+up"); !handled || cmd != nil {
 		t.Fatalf("boundary move handled=%v cmd=%v", handled, cmd)
 	}
-	if handled, cmd := m.handleMovementKey("shift+down"); !handled || cmd == nil || m.selected != 1 || m.sessions[1].ID != "1" {
-		t.Fatalf("move down failed handled=%v cmd=%v selected=%d sessions=%v", handled, cmd, m.selected, m.sessions)
+	if handled, cmd := m.handleMovementKey("shift+down"); !handled || cmd != nil || m.selected != 0 || m.sessions[0].ID != "1" {
+		t.Fatalf("cross-lifecycle move was not rejected handled=%v cmd=%v selected=%d sessions=%v", handled, cmd, m.selected, m.sessions)
 	}
 
 	m = modelWithTwoSessions()

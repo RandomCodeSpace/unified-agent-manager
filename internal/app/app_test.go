@@ -12,22 +12,20 @@ import (
 
 func TestRenderTableGroupsSessionsByStatus(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	// live-one: live pane, status=active → ACTIVE
-	// stopped-active: dead pane, status=active (e.g., reboot survivor) → ACTIVE
-	// closed-one: dead pane, status=closed_by_user → CLOSED
+	// Process liveness alone determines the RUNNING/STOPPED partition.
 	m.sessions = []adapter.Session{
 		{ID: "1", AgentType: "claude", DisplayName: "live-one", Prompt: "fix bug", ProcAlive: adapter.Alive},
 		{ID: "2", AgentType: "codex", DisplayName: "stopped-active", Prompt: "rebooted work", ProcAlive: adapter.Exited},
 		{ID: "3", AgentType: "claude", DisplayName: "closed-one", Prompt: "old work", ProcAlive: adapter.Exited, Closed: true},
 	}
 	out := m.renderTable()
-	for _, want := range []string{"ACTIVE", "CLOSED", "live-one", "stopped-active", "closed-one", "fix bug"} {
+	for _, want := range []string{"RUNNING", "STOPPED", "live-one", "stopped-active", "closed-one", "fix bug"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("table missing %q: %s", want, out)
 		}
 	}
-	if strings.Contains(out, "STOPPED") {
-		t.Fatalf("STOPPED group should be replaced by CLOSED: %s", out)
+	if strings.Contains(out, "ACTIVE") || strings.Contains(out, "CLOSED") {
+		t.Fatalf("legacy lifecycle groups remain: %s", out)
 	}
 	if strings.Contains(out, "⠋") || strings.Contains(out, "💀") || strings.Contains(out, "🚀") || strings.Contains(out, "🔴") || strings.Contains(out, "🟢") {
 		t.Fatalf("table should stay glyph-based, no spinner/emoji: %s", out)
@@ -35,9 +33,8 @@ func TestRenderTableGroupsSessionsByStatus(t *testing.T) {
 	if strings.Contains(out, "claude") || strings.Contains(out, "codex") {
 		t.Fatalf("table should not show an agent column: %s", out)
 	}
-	// stopped-active belongs above CLOSED so its row appears before any closed_one entry.
-	if strings.Index(out, "stopped-active") > strings.Index(out, "CLOSED") {
-		t.Fatalf("active-but-stopped sessions should render under ACTIVE, before CLOSED: %s", out)
+	if strings.Index(out, "stopped-active") < strings.Index(out, "STOPPED") || strings.Index(out, "closed-one") < strings.Index(out, "STOPPED") {
+		t.Fatalf("all exited sessions must render under STOPPED: %s", out)
 	}
 }
 
@@ -91,7 +88,7 @@ func TestRenderDetailsShowsPromptOnMobileOnly(t *testing.T) {
 			t.Fatalf("details should not show the session id: %s", out)
 		}
 		if strings.Contains(out, "needs input") || strings.Contains(out, "working") {
-			t.Fatalf("details should not show the state label (ACTIVE/STOPPED conveys it): %s", out)
+			t.Fatalf("details should not show the state label (RUNNING/STOPPED conveys it): %s", out)
 		}
 		if strings.Contains(out, "●") || strings.Contains(out, "○") || strings.Contains(out, "TMUX") || strings.Contains(out, "uam-claude-abc12345") {
 			t.Fatalf("details should not show liveness markers or tmux name: %s", out)
@@ -108,8 +105,8 @@ func TestRenderTableNarrowShowsNamesWithoutInlineTask(t *testing.T) {
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "responsive", Prompt: "running the test suite", ProcAlive: adapter.Alive}}
 
 	out := m.renderTable()
-	if !strings.Contains(out, "responsive") || !strings.Contains(out, "ACTIVE") {
-		t.Fatalf("narrow table should show the session name under ACTIVE: %s", out)
+	if !strings.Contains(out, "responsive") || !strings.Contains(out, "RUNNING") {
+		t.Fatalf("narrow table should show the session name under RUNNING: %s", out)
 	}
 	if strings.Contains(out, "running the test suite") {
 		t.Fatalf("narrow table rows should not repeat the task inline (the details panel shows it): %s", out)
@@ -184,7 +181,7 @@ func TestViewIsCompactAndBorderlessOnNarrowScreens(t *testing.T) {
 	}
 
 	view := m.View()
-	for _, want := range []string{"SELECTED", "ACTIVE", "CLOSED", "active-one", "old-one", "fixing spacing"} {
+	for _, want := range []string{"SELECTED", "RUNNING", "STOPPED", "active-one", "old-one", "fixing spacing"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("narrow view missing %q:\n%s", want, view)
 		}

@@ -33,7 +33,7 @@ func TestMoveSessionAcrossActiveClosedBoundaryIsNoOp(t *testing.T) {
 }
 
 // F34 — a pinned/unpinned boundary is also a partition boundary: SortSessions
-// sorts Pinned above unpinned within the Active group, so swapping a pinned and
+// sorts Pinned above unpinned within the RUNNING group, so swapping a pinned and
 // an unpinned row would revert on refresh too.
 func TestMoveSessionAcrossPinnedBoundaryIsNoOp(t *testing.T) {
 	m := NewWithDeps(nil, nil)

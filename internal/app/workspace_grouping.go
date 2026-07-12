@@ -104,20 +104,22 @@ func (m Model) groupedSessionListLines(width, budget int, class LayoutClass) []s
 }
 
 func (m Model) groupedRenderEntries(width int, class LayoutClass) []groupedRenderLine {
-	closed := countClosedSessions(m.sessions)
+	stopped := countStoppedSessions(m.sessions)
 	right := fmt.Sprintf("%d", len(m.sessions))
-	if class == LayoutCompact && closed > 0 {
-		right = fmt.Sprintf("%d · %d closed", len(m.sessions), closed)
+	if class == LayoutCompact && stopped > 0 {
+		right = fmt.Sprintf("%d · %d stopped", len(m.sessions), stopped)
 	}
 	entries := []groupedRenderLine{{text: m.renderSectionAtWidth("SESSIONS", right, width), sessionIndex: -1}}
 	liveByWorkspace := liveWorkspaceCounts(m.sessions)
 	warnedWorkspaces := make(map[string]bool)
 	nameWidth, taskWidth, showTask := tableWidthsFor(width, class)
 	ctx := groupedRenderContext{width: width, nameWidth: nameWidth, taskWidth: taskWidth, showTask: showTask, live: liveByWorkspace, warned: warnedWorkspaces}
+	var lastLifecycle adapter.ProcLiveness
 	for start := 0; start < len(m.sessions); {
 		partitionEnd := sessionPartitionEnd(m.sessions, start)
-		if class != LayoutCompact {
+		if class != LayoutCompact && m.sessions[start].ProcAlive != lastLifecycle {
 			entries = append(entries, groupedRenderLine{text: m.renderSectionAtWidth(lifecycleLabel(m.sessions[start]), "", width), sessionIndex: -1})
+			lastLifecycle = m.sessions[start].ProcAlive
 		}
 		entries = append(entries, m.workspacePartitionEntries(start, partitionEnd, ctx)...)
 		start = partitionEnd
@@ -179,10 +181,10 @@ func (m Model) workspacePartitionEntries(start, end int, ctx groupedRenderContex
 	return entries
 }
 
-func countClosedSessions(sessions []adapter.Session) int {
+func countStoppedSessions(sessions []adapter.Session) int {
 	count := 0
 	for _, sess := range sessions {
-		if sess.Closed {
+		if sess.ProcAlive == adapter.Exited {
 			count++
 		}
 	}
@@ -193,7 +195,7 @@ func liveWorkspaceCounts(sessions []adapter.Session) map[string]int {
 	counts := make(map[string]int)
 	for _, sess := range sessions {
 		key := workspaceKey(sess.Cwd)
-		if key != unknownWorkspaceKey && sess.ProcAlive == adapter.Alive && !sess.Closed {
+		if key != unknownWorkspaceKey && sess.ProcAlive == adapter.Alive {
 			counts[key]++
 		}
 	}
@@ -217,8 +219,8 @@ func workspaceGroupEnd(sessions []adapter.Session, start, limit int, key string)
 }
 
 func lifecycleLabel(sess adapter.Session) string {
-	if sess.Closed {
-		return "CLOSED"
+	if sess.ProcAlive == adapter.Exited {
+		return "STOPPED"
 	}
-	return "ACTIVE"
+	return "RUNNING"
 }

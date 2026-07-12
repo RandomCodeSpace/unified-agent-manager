@@ -189,9 +189,8 @@ func TestRenderRowColumnsAlignWithPRDot(t *testing.T) {
 	}
 }
 
-// F30 — a reboot-survivor dead session (Exited, not user-closed) must NOT show
-// the red Failed glyph; it shows a neutral resumable glyph. A user-closed dead
-// session and a live session each get their own glyph.
+// F30 — clean/external stopped sessions must not show the failure glyph. Only a
+// grounded nonzero/signal exit is failed; explicit UAM stops remain neutral.
 func TestStateGlyphDistinguishesResumableFromFailed(t *testing.T) {
 	live, _ := sessionGlyph(adapter.Session{ProcAlive: adapter.Alive})
 	resumable, _ := sessionGlyph(adapter.Session{ProcAlive: adapter.Exited})

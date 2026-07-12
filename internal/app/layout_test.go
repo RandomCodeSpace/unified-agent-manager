@@ -77,12 +77,12 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 func TestWideOperationsAndPeekUseTwoPanes(t *testing.T) {
 	m := responsiveFixture(120, 40)
 	operations := m.View()
-	if !lineContainsAll(operations, "ACTIVE", "SELECTED") {
+	if !lineContainsAll(operations, "RUNNING", "SELECTED") {
 		t.Fatalf("wide operations should place list and selected pane side-by-side:\n%s", operations)
 	}
 	m.peekOpen = true
 	peek := m.View()
-	if !lineContainsAll(peek, "ACTIVE", "PEEK") {
+	if !lineContainsAll(peek, "RUNNING", "PEEK") {
 		t.Fatalf("wide peek should retain the list beside the peek pane:\n%s", peek)
 	}
 }
@@ -110,7 +110,7 @@ func TestCompactModesAreExclusiveAndKeepBottomPrompt(t *testing.T) {
 
 	m.peekOpen = true
 	peek := m.View()
-	if strings.Contains(peek, "SESSIONS") || strings.Contains(peek, "ACTIVE") {
+	if strings.Contains(peek, "SESSIONS") || strings.Contains(peek, "RUNNING") {
 		t.Fatalf("compact peek must replace the sessions surface:\n%s", peek)
 	}
 	assertBottomContains(t, peek, "reply")
@@ -135,7 +135,7 @@ func TestNoColorResponsiveViewKeepsSemanticGlyphs(t *testing.T) {
 	if strings.Contains(view, "\x1b[") {
 		t.Fatalf("NO_COLOR view contains SGR escapes: %q", view)
 	}
-	for _, glyph := range []string{"▸", "★", "⟳", "◦", "•", "●"} {
+	for _, glyph := range []string{"▸", "★", "⟳", "◦", "!", "●"} {
 		if !strings.Contains(view, glyph) {
 			t.Fatalf("NO_COLOR view lost semantic glyph %q:\n%s", glyph, view)
 		}
@@ -154,7 +154,8 @@ func TestNoColorResponsiveViewHelper(t *testing.T) {
 	m.sessions[0].PR = &adapter.PRRef{Status: adapter.PRMerged}
 	m.sessions[1].ProcAlive = adapter.Exited
 	m.sessions[2].ProcAlive = adapter.Exited
-	m.sessions[2].Closed = true
+	m.sessions[2].ExitCode = exitCode(1)
+	SortSessions(m.sessions)
 	m.selected = 0
 	_, _ = os.Stdout.WriteString(m.View())
 }
