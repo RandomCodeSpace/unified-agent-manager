@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -54,6 +55,25 @@ func TestRegistryListAllUsesSingleBackendSnapshot(t *testing.T) {
 	}
 	if got := len(backend.CallsOf("list")); got != 1 {
 		t.Fatalf("backend List calls = %d, want 1", got)
+	}
+}
+
+func BenchmarkRegistryListAllSharedSnapshot(b *testing.B) {
+	infos := make([]session.Info, 300)
+	for i := range infos {
+		infos[i] = session.Info{Name: fmt.Sprintf("uam-a-%08x", i+1), CreatedUnix: time.Now().Unix(), Alive: true}
+	}
+	backend := &adaptertest.Backend{Sessions: infos}
+	adapters := make([]AgentAdapter, 0, 6)
+	for _, name := range []string{"a", "b", "c", "d", "e", "f"} {
+		adapters = append(adapters, NewAgent(name, name, []CommandCandidate{{Display: "sh", Args: []string{"/bin/sh"}}}, nil, backend))
+	}
+	registry := NewRegistryWithBackend(backend, adapters)
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := registry.ListAll(context.Background()); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

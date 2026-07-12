@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -11,6 +12,34 @@ import (
 	"syscall"
 	"testing"
 )
+
+func FuzzStateDecoding(f *testing.F) {
+	for _, seed := range [][]byte{
+		[]byte(`{"name":"uam-fake-aabbccdd","host_pid":1,"host_start":2}`),
+		[]byte(`{"name":"../escape","host_pid":1}`),
+		[]byte(`null`),
+		[]byte(`{"unknown":{"nested":true}}`),
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var state State
+		if err := json.Unmarshal(data, &state); err != nil {
+			return
+		}
+		encoded, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded State
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.Name != state.Name || decoded.HostPID != state.HostPID || decoded.HostStart != state.HostStart {
+			t.Fatalf("state round trip changed identity: before=%+v after=%+v", state, decoded)
+		}
+	})
+}
 
 func TestVerifyDirRejectsUnsafeRuntimeDirectories(t *testing.T) {
 	parent := t.TempDir()

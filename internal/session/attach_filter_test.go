@@ -21,6 +21,19 @@ func runFilter(t *testing.T, f *stdinFilter, chunks ...string) (string, bool) {
 	return out.String(), false
 }
 
+func FuzzAttachFiltering(f *testing.F) {
+	for _, seed := range []string{"plain text", "世界🚀", "\x02d", "\x1b[D", "\x1b]11;rgb:ffff/ffff/ffff\x1b\\"} {
+		f.Add(seed, true)
+	}
+	f.Fuzz(func(t *testing.T, input string, backDetach bool) {
+		filter := &stdinFilter{backDetach: backDetach}
+		out, _ := filter.filter([]byte(input))
+		if len(out) > 2*len(input)+2 {
+			t.Fatalf("filter expanded %d input bytes to %d bytes", len(input), len(out))
+		}
+	})
+}
+
 func TestLeftArrowDetachesWhenNothingTyped(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
 	out, detach := runFilter(t, f, "\x1b[D")

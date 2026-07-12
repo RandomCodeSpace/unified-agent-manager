@@ -75,6 +75,27 @@ func TestTruncateIsWidthAware(t *testing.T) {
 	}
 }
 
+func TestTruncateUnicodeGolden(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		cols int
+		want string
+	}{
+		{name: "emoji", in: "🚀🚀🚀", cols: 5, want: "🚀🚀…"},
+		{name: "combining", in: "e\u0301clair", cols: 3, want: "e\u0301c…"},
+		{name: "cjk", in: "你好世界", cols: 5, want: "你好…"},
+		{name: "narrow", in: "anything", cols: 1, want: "…"},
+		{name: "pasted-multibyte-name", in: "部署 café 🚀", cols: 10, want: "部署 café…"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := truncate(tc.in, tc.cols); got != tc.want {
+				t.Fatalf("truncate(%q, %d) = %q, want %q", tc.in, tc.cols, got, tc.want)
+			}
+		})
+	}
+}
+
 // F28 — truncate must not chop a multibyte rune mid-sequence (the old byte-slice
 // path produced mojibake on the boundary).
 func TestTruncateNeverEmitsMojibake(t *testing.T) {
