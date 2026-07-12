@@ -175,12 +175,6 @@ func (m Model) validateDefaultAgent(candidate string) string {
 	}
 	return candidate
 }
-func NewWizard(st *store.Store, reg *adapter.Registry) Model {
-	m := NewWithDeps(st, reg)
-	m.wizard = true
-	return m
-}
-
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.loadSessionsCmd(), refreshTick(), peekTick(), prRefreshTick(100*time.Millisecond))
 }
@@ -1063,9 +1057,6 @@ func (m Model) resumeSelectedCmd() tea.Cmd {
 		return m.loadSessionsCmd()()
 	}
 }
-func (m Model) stopSelectedCmd(remove bool) tea.Cmd {
-	return m.stopTargetCmd("", remove)
-}
 
 // persistDefaultAgent persists the default-agent choice. On failure it surfaces
 // the error in the status line instead of swallowing it; on success it returns a
@@ -1592,21 +1583,6 @@ func sessionGlyph(s adapter.Session) (string, lipgloss.Style) {
 		// glyph, NOT the red failure mark.
 		return "◦", hintStyle
 	}
-}
-
-func stateGlyph(s adapter.State) (string, lipgloss.Style) {
-	switch s {
-	case adapter.Active:
-		return "⟳", liveGlyphStyle
-	case adapter.Failed:
-		return "✕", failGlyphStyle
-	default:
-		return "•", hintStyle
-	}
-}
-
-func stateLabel(s adapter.State) string {
-	return strings.ToLower(string(s))
 }
 
 // prStatusDot returns a distinct glyph per PR status (not color-only) so the PR

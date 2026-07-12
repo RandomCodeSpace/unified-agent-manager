@@ -26,16 +26,29 @@ import (
 func Main() {
 	flag.Usage = Usage
 	flag.Parse()
+	args := flag.Args()
+
+	// Help and version are deliberately independent from both the cache logger
+	// and the persistent store. They must remain usable when either location is
+	// unavailable (for example during installation diagnostics).
+	if handled, err := runBeforeLogger(args); handled {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintf(os.Stderr, "uam: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	closer, err := log.Init()
 	if err != nil {
+		log.UseStderr(os.Stderr)
 		fmt.Fprintf(os.Stderr, "uam: failed to initialize logger: %v\n", err)
-		os.Exit(1)
+	} else {
+		defer func() { _ = closer.Close() }()
 	}
-	defer func() { _ = closer.Close() }()
 
 	ctx := context.Background()
-	if err := Run(ctx, flag.Args()); err != nil && !errors.Is(err, context.Canceled) {
+	if err := Run(ctx, args); err != nil && !errors.Is(err, context.Canceled) {
 		log.Error("run exited with error", "err", err)
 		fmt.Fprintf(os.Stderr, "uam: %v\n", err)
 		os.Exit(1)
@@ -69,6 +82,9 @@ func Run(ctx context.Context, args []string) error {
 
 // RunWithTUI executes the CLI with an injectable TUI runner for tests.
 func RunWithTUI(ctx context.Context, args []string, runTUI func(context.Context, tea.Model) error) error {
+	if handled, err := runWithoutStore(ctx, args); handled {
+		return err
+	}
 	st, err := store.Open(store.DefaultPath())
 	if err != nil {
 		return err
@@ -84,6 +100,47 @@ func RunWithTUI(ctx context.Context, args []string, runTUI func(context.Context,
 		return runTUI(ctx, app.NewWithDeps(st, svc.Registry))
 	}
 	return runCommand(ctx, svc, args, runTUI)
+}
+
+// runBeforeLogger handles commands that have no cache, store, or session
+// dependency. Main invokes it before log.Init; RunWithTUI reaches the same
+// behavior through runWithoutStore when called directly by tests/embedders.
+func runBeforeLogger(args []string) (bool, error) {
+	if len(args) == 0 {
+		return false, nil
+	}
+	switch args[0] {
+	case "-h", "--help", "help":
+		Usage()
+		return true, nil
+	case "version", "--version":
+		fmt.Println(version.String())
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+// runWithoutStore handles commands whose behavior does not depend on
+// sessions.json. Keeping these ahead of store.Open makes recovery commands
+// available even when the config directory is damaged or unwritable.
+func runWithoutStore(ctx context.Context, args []string) (bool, error) {
+	if handled, err := runBeforeLogger(args); handled {
+		return true, err
+	}
+	if len(args) == 0 {
+		return false, nil
+	}
+	switch args[0] {
+	case "kill-all":
+		return true, runKillAll(ctx, session.NewClient().KillAll)
+	case "__host":
+		return true, session.RunHost(args[1:])
+	case "__attach":
+		return true, session.RunAttach(args[1:])
+	default:
+		return false, nil
+	}
 }
 
 func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI func(context.Context, tea.Model) error) error {

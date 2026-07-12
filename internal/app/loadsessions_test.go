@@ -63,7 +63,9 @@ func TestLoadSessionsRefreshDoesNotClobberConcurrentPin(t *testing.T) {
 	live := map[string]adapter.Session{store.Key("fake", liveA.ID): liveA}
 	svc.mergeStoredSessions(live, cfgStale, time.Now())
 	updates := svc.refreshSessionRecords(context.Background(), live, &cfgStale)
-	svc.persistRefresh(updates)
+	if err := svc.persistRefresh(updates); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg, err := st.Load()
 	if err != nil {

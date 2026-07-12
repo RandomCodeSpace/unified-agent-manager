@@ -30,7 +30,15 @@ func TestMain(m *testing.M) {
 
 func newTestClient(t *testing.T) *Client {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "run")
+	dir, err := os.MkdirTemp("", "uam-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		_ = os.RemoveAll(dir)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Setenv("UAM_CONFIG_DIR", filepath.Join(t.TempDir(), "cfg"))
 	exe, err := os.Executable()
 	if err != nil {

@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"strings"
@@ -20,14 +21,37 @@ func startInProcessHost(t *testing.T, c *Client, name, command string) chan erro
 	if err != nil {
 		t.Fatal(err)
 	}
+	cwd := t.TempDir()
 	done := make(chan error, 1)
 	go func() {
-		done <- runHost(c.Dir, name, t.TempDir(), "label0", []string{"UAM_T=1"}, []string{"/bin/sh", "-c", command}, w)
+		defer func() { _ = w.Close() }()
+		done <- runHost(c.Dir, name, cwd, "label0", []string{"UAM_T=1"}, []string{"/bin/sh", "-c", command}, w)
 	}()
-	line, err := bufio.NewReader(r).ReadString('\n')
+	type readyResult struct {
+		line string
+		err  error
+	}
+	ready := make(chan readyResult, 1)
+	go func() {
+		line, err := bufio.NewReader(r).ReadString('\n')
+		ready <- readyResult{line: line, err: err}
+	}()
+	var result readyResult
+	select {
+	case result = <-ready:
+	case <-time.After(10 * time.Second):
+		_ = r.Close()
+		t.Fatal("timed out waiting for host readiness")
+	}
 	_ = r.Close()
-	if err != nil || strings.TrimSpace(line) != "ok" {
-		t.Fatalf("host not ready: %q %v", line, err)
+	if result.err != nil || strings.TrimSpace(result.line) != "ok" {
+		var hostErr error
+		select {
+		case hostErr = <-done:
+		case <-time.After(time.Second):
+			hostErr = errors.New("host did not return after closing readiness pipe")
+		}
+		t.Fatalf("host not ready: %q (read: %v, host: %v)", result.line, result.err, hostErr)
 	}
 	return done
 }
