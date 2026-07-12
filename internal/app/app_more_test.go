@@ -114,7 +114,7 @@ func assertDispatchParsing(t *testing.T, m Model) {
 
 func assertViewHelpers(t *testing.T) {
 	t.Helper()
-	if stateLabel(adapter.Active) != "active" || prStatusDot(adapter.PRMerged) == " " {
+	if prStatusDot(adapter.PRMerged) == " " {
 		t.Fatal("status helpers bad")
 	}
 	if truncate("abcdef", 4) != "abc…" || trimLines("a\nb\nc", 2) != "b\nc" {
@@ -430,9 +430,6 @@ func TestInputWindowAndStateBranches(t *testing.T) {
 	start, end := m.visibleSessionWindow()
 	if start < 0 || end < start || end > len(m.sessions) {
 		t.Fatalf("bad window %d:%d", start, end)
-	}
-	if stateLabel(adapter.Active) != "active" || stateLabel(adapter.Failed) != "failed" {
-		t.Fatal("state labels not covered")
 	}
 }
 

@@ -254,11 +254,18 @@ func (c *Client) Kill(ctx context.Context, name string) error {
 	}
 	// State exists but the socket path failed: the host is wedged, crashed,
 	// or mid-shutdown. Escalate directly and wait for both processes to go.
-	// The start-time-verified probes matter most here: a recycled PID must
-	// never be signalled as if it were the session.
-	if st.hostAlive() {
+	// A live PID is not sufficient authority to signal: fallback control paths
+	// require a nonzero matching start identity so a recycled PID can never be
+	// signalled as if it were the session.
+	if ProcAlive(st.HostPID) {
+		if !procIdentityMatches(st.HostPID, st.HostStart) {
+			return fmt.Errorf("kill session %s: cannot verify process identity for host pid %d", name, st.HostPID)
+		}
 		_ = syscall.Kill(st.HostPID, syscall.SIGTERM)
-	} else if st.childAlive() {
+	} else if ProcAlive(st.ChildPID) {
+		if !procIdentityMatches(st.ChildPID, st.ChildStart) {
+			return fmt.Errorf("kill session %s: cannot verify process identity for child pid %d", name, st.ChildPID)
+		}
 		// Orphaned agent (host crashed): signal its process group directly.
 		if err := syscall.Kill(-st.ChildPID, syscall.SIGTERM); err != nil {
 			_ = syscall.Kill(st.ChildPID, syscall.SIGTERM)

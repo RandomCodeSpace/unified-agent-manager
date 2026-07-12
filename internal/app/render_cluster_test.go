@@ -178,9 +178,8 @@ func TestStateGlyphDistinguishesResumableFromFailed(t *testing.T) {
 	if live == resumable {
 		t.Fatalf("a live session and a resumable dead session must use distinct glyphs (both %q)", live)
 	}
-	failGlyph, _ := stateGlyph(adapter.Failed)
-	if resumable == failGlyph {
-		t.Fatalf("a reboot-survivor resumable session must not use the red Failed glyph %q", failGlyph)
+	if resumable == "✕" {
+		t.Fatal("a reboot-survivor resumable session must not use the failure glyph")
 	}
 	_ = closed
 }
@@ -192,9 +191,8 @@ func TestRenderRowResumableSessionNotMarkedFailed(t *testing.T) {
 	if strings.Contains(strings.ToLower(row), "failed") {
 		t.Fatalf("resumable row should not show the literal \"failed\": %q", row)
 	}
-	failGlyph, _ := stateGlyph(adapter.Failed)
-	if strings.Contains(row, failGlyph) {
-		t.Fatalf("resumable row should not show the red Failed glyph %q: %q", failGlyph, row)
+	if strings.Contains(row, "✕") {
+		t.Fatalf("resumable row should not show the failure glyph: %q", row)
 	}
 }
 

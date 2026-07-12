@@ -1,7 +1,6 @@
 package log
 
 import (
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -187,10 +186,4 @@ func cacheDir() string {
 		return filepath.Join(dir, "uam")
 	}
 	return filepath.Join(".uam", "cache")
-}
-
-// Fatal prints to stderr and exits with code 1.
-func Fatal(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "uam: "+format+"\n", args...)
-	os.Exit(1)
 }

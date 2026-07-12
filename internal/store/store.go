@@ -147,9 +147,11 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 }
 
 type UISettings struct {
-	GroupByDir bool   `json:"group_by_dir"`
-	Sort       string `json:"sort"`
-	PeekWidth  int    `json:"peek_width"`
+	GroupByDir bool `json:"group_by_dir"`
+	// Sort and PeekWidth are retained schema-v3 compatibility fields. They are
+	// normalized and round-tripped even when the TUI exposes no direct control.
+	Sort      string `json:"sort"`
+	PeekWidth int    `json:"peek_width"`
 }
 
 type SessionRecord struct {

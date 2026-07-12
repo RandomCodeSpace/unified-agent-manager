@@ -237,6 +237,41 @@ func TestProcAliveWithStartDetectsPIDReuse(t *testing.T) {
 	}
 }
 
+func TestProcIdentityMatchesRequiresRecordedAndCurrentIdentity(t *testing.T) {
+	pid := os.Getpid()
+	real := procStartTime(pid)
+	if real == 0 {
+		t.Skip("process start identity unavailable on this platform")
+	}
+	if !procIdentityMatches(pid, real) {
+		t.Fatal("matching nonzero process identity must be accepted")
+	}
+	if procIdentityMatches(pid, 0) {
+		t.Fatal("zero recorded identity must fail closed for signaling")
+	}
+	if procIdentityMatches(pid, real+1) {
+		t.Fatal("mismatched process identity must fail closed for signaling")
+	}
+}
+
+func TestKillRefusesPIDFallbackWithoutVerifiedIdentity(t *testing.T) {
+	c := newTestClient(t)
+	if err := EnsureDir(c.Dir); err != nil {
+		t.Fatal(err)
+	}
+	name := "uam-fake-1d1d1d1d"
+	if err := writeState(c.Dir, State{Name: name, HostPID: os.Getpid(), HostStart: 0}); err != nil {
+		t.Fatal(err)
+	}
+	err := c.Kill(t.Context(), name)
+	if err == nil || !strings.Contains(err.Error(), "cannot verify process identity") {
+		t.Fatalf("Kill error = %v, want explicit process-identity safety error", err)
+	}
+	if !ProcAlive(os.Getpid()) {
+		t.Fatal("Kill signaled the test process despite missing identity")
+	}
+}
+
 // A stale state file whose PIDs were recycled by other processes (alive, but
 // with different start times) must be swept by List, not reported live.
 func TestListSweepsRecycledPIDState(t *testing.T) {
