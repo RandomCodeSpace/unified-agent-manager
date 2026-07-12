@@ -327,6 +327,28 @@ type prRefreshResult struct {
 	record store.PRRecord
 }
 
+type prCheckResult struct {
+	status pr.Status
+	err    error
+}
+
+// checkPRWithContext enforces the caller's deadline even when a custom checker
+// fails to observe context cancellation. The result channel is buffered so a
+// late checker can finish without retaining the refresh worker.
+func checkPRWithContext(ctx context.Context, checker func(context.Context, string) (pr.Status, error), url string) (pr.Status, error) {
+	resultCh := make(chan prCheckResult, 1)
+	go func() {
+		status, err := checker(ctx, url)
+		resultCh <- prCheckResult{status: status, err: err}
+	}()
+	select {
+	case result := <-resultCh:
+		return result.status, result.err
+	case <-ctx.Done():
+		return pr.None, ctx.Err()
+	}
+}
+
 // RefreshPRStatuses enriches stale discovered PRs outside the session-discovery
 // path. Only PR-owned fields are persisted, and overlapping passes coalesce.
 func (s *Service) RefreshPRStatuses(ctx context.Context) error {
@@ -370,7 +392,7 @@ func (s *Service) RefreshPRStatuses(ctx context.Context) error {
 			for job := range jobCh {
 				status := job.ref.Status
 				checkCtx, checkCancel := context.WithTimeout(ctx, prCheckTimeout)
-				checked, checkErr := checker(checkCtx, job.ref.URL)
+				checked, checkErr := checkPRWithContext(checkCtx, checker, job.ref.URL)
 				checkCancel()
 				if checkErr == nil && checked != pr.None {
 					status = adapterStatus(checked)
