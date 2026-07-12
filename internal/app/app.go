@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
@@ -23,6 +24,7 @@ import (
 
 type Model struct {
 	width, height int
+	sizeKnown     bool
 	quitting      bool
 	loading       bool
 	service       *Service
@@ -39,19 +41,22 @@ type Model struct {
 	// Enter sends to this session via Service.Reply rather than dispatching a new
 	// agent. Snapshotting the id (mirroring renameTargetID) keeps a reorder under
 	// the cursor from misrouting the reply (F36).
-	peekTargetID   string
-	helpOpen       bool
-	confirmStop    bool
-	confirmStopID  string
-	renaming       bool
-	renameTargetID string
-	wizard         bool
-	wizardStep     int
-	wizardAgent    string
-	wizardAlias    string
-	wizardCwd      string
-	groupByDir     bool
-	execProcess    func(*exec.Cmd, tea.ExecCallback) tea.Cmd
+	peekTargetID      string
+	peekTargetAgent   string
+	helpOpen          bool
+	confirmStop       bool
+	confirmStopID     string
+	confirmStopAgent  string
+	renaming          bool
+	renameTargetID    string
+	renameTargetAgent string
+	wizard            bool
+	wizardStep        int
+	wizardAgent       string
+	wizardAlias       string
+	wizardCwd         string
+	groupByDir        bool
+	execProcess       func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 	// reorderSeq increments on every reorder; a debounced flush tick only
 	// persists when its seq still matches, so a held Shift+arrow coalesces into
 	// one store write instead of one fsync per step. reorderPending marks a
@@ -275,6 +280,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleWindowSize(msg tea.WindowSizeMsg) Model {
 	m.width, m.height = msg.Width, msg.Height
+	m.sizeKnown = true
 	return m
 }
 
@@ -303,6 +309,10 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 		m.setMessage(msg.err.Error())
 		return m
 	}
+	selectedAgent, selectedID := "", ""
+	if sess, ok := m.selectedSession(); ok {
+		selectedAgent, selectedID = sess.AgentType, sess.ID
+	}
 	if msg.sessions != nil {
 		m.sessions = msg.sessions
 		m.groupByDir = msg.groupByDir
@@ -324,9 +334,15 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 		// disabled one (C2-9).
 		m.defaultAgent = m.validateDefaultAgent(msg.defaultAgent)
 	}
-	if m.selected >= len(m.sessions) {
-		m.selected = max(0, len(m.sessions)-1)
+	if selectedID != "" {
+		for i, sess := range m.sessions {
+			if sess.AgentType == selectedAgent && sess.ID == selectedID {
+				m.selected = i
+				return m
+			}
+		}
 	}
+	m.selected = max(0, min(m.selected, len(m.sessions)-1))
 	return m
 }
 
@@ -404,18 +420,21 @@ func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.
 	if m.confirmStop {
 		if key == "y" || key == "enter" {
 			m.confirmStop = false
-			id := m.confirmStopID
+			agentName, id := m.confirmStopAgent, m.confirmStopID
+			m.confirmStopAgent = ""
 			m.confirmStopID = ""
-			return true, m, m.stopTargetCmd(id, true)
+			return true, m, m.stopTargetExactCmd(agentName, id, true)
 		}
 		if key == "r" {
 			m.confirmStop = false
-			id := m.confirmStopID
+			agentName, id := m.confirmStopAgent, m.confirmStopID
+			m.confirmStopAgent = ""
 			m.confirmStopID = ""
-			return true, m, m.restartTargetCmd(id)
+			return true, m, m.restartTargetExactCmd(agentName, id)
 		}
 		if key == "n" || key == "esc" {
 			m.confirmStop = false
+			m.confirmStopAgent = ""
 			m.confirmStopID = ""
 		}
 		return true, m, nil
@@ -459,6 +478,7 @@ func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
 	// The peek panel follows the cursor; keep the reply target in sync so a reply
 	// goes to the session the user is actually looking at (F36).
 	if sess, ok := m.selectedSession(); ok {
+		m.peekTargetAgent = sess.AgentType
 		m.peekTargetID = sess.ID
 	}
 	m.peekText = ""
@@ -581,6 +601,7 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "ctrl+x":
 		if sess, ok := m.selectedSession(); ok {
 			m.confirmStop = true
+			m.confirmStopAgent = sess.AgentType
 			m.confirmStopID = sess.ID
 		}
 	case " ":
@@ -606,6 +627,7 @@ func (m *Model) handleEscKey() tea.Cmd {
 		// Esc backs out of the peek/reply composer WITHOUT sending the in-progress
 		// reply (F36).
 		m.peekOpen = false
+		m.peekTargetAgent = ""
 		m.peekTargetID = ""
 		return nil
 	}
@@ -624,6 +646,7 @@ func (m *Model) startRename() {
 		return
 	}
 	m.renaming = true
+	m.renameTargetAgent = sess.AgentType
 	m.renameTargetID = sess.ID
 	m.input = sess.DisplayName
 }
@@ -644,10 +667,12 @@ func (m *Model) handleSpaceKey(key string) tea.Cmd {
 		// Snapshot the peeked session so an Enter-to-reply routes to it even if a
 		// refresh reorders the list under the cursor (F36).
 		if sess, ok := m.selectedSession(); ok {
+			m.peekTargetAgent = sess.AgentType
 			m.peekTargetID = sess.ID
 		}
 		return m.peekSelectedCmd()
 	}
+	m.peekTargetAgent = ""
 	m.peekTargetID = ""
 	return nil
 }
@@ -676,18 +701,18 @@ func (m *Model) handleEnterKey() tea.Cmd {
 // reply target is the snapshotted peekTargetID (falling back to the selected
 // session) so a reorder under the cursor can't misroute it (F36).
 func (m *Model) replyToPeekCmd() tea.Cmd {
-	sess, ok := m.sessionByID(m.peekTargetID)
+	sess, ok := m.sessionByIdentity(m.peekTargetAgent, m.peekTargetID)
 	if !ok {
 		return nil
 	}
 	text := m.input
 	m.input = ""
-	id := sess.ID
+	agentName, id := sess.AgentType, sess.ID
 	return func() tea.Msg {
-		if err := m.service.Reply(context.Background(), id, text); err != nil {
+		if err := m.service.ReplyExact(context.Background(), agentName, id, text); err != nil {
 			return peekLoadedMsg{err: err}
 		}
-		p, err := m.service.Peek(context.Background(), id)
+		p, err := m.service.PeekExact(context.Background(), agentName, id)
 		return peekLoadedMsg{text: p.TailText, err: err}
 	}
 }
@@ -718,9 +743,10 @@ func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "enter":
-		sess, ok := m.sessionByID(m.renameTargetID)
+		sess, ok := m.sessionByIdentity(m.renameTargetAgent, m.renameTargetID)
 		name := m.input
 		m.renaming = false
+		m.renameTargetAgent = ""
 		m.renameTargetID = ""
 		m.input = ""
 		// The target session vanished (killed externally / list emptied) while the
@@ -728,10 +754,13 @@ func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		id := sess.ID
-		return m, func() tea.Msg { return sessionsLoadedMsg{err: m.service.Rename(context.Background(), id, name)} }
+		agentName, id := sess.AgentType, sess.ID
+		return m, func() tea.Msg {
+			return sessionsLoadedMsg{err: m.service.RenameExact(context.Background(), agentName, id, name)}
+		}
 	case "esc":
 		m.renaming = false
+		m.renameTargetAgent = ""
 		m.renameTargetID = ""
 		m.input = ""
 	default:
@@ -1032,13 +1061,29 @@ func (m Model) sessionByID(id string) (adapter.Session, bool) {
 	}
 	return adapter.Session{}, false
 }
+
+func (m Model) sessionByIdentity(agentName, id string) (adapter.Session, bool) {
+	if agentName == "" {
+		return m.sessionByID(id)
+	}
+	if id == "" {
+		return m.selectedSession()
+	}
+	for _, sess := range m.sessions {
+		if sess.AgentType == agentName && sess.ID == id {
+			return sess, true
+		}
+	}
+	return adapter.Session{}, false
+}
+
 func (m Model) peekSelectedCmd() tea.Cmd {
 	sess, ok := m.selectedSession()
 	if !ok {
 		return nil
 	}
 	return func() tea.Msg {
-		p, err := m.service.Peek(context.Background(), sess.ID)
+		p, err := m.service.PeekExact(context.Background(), sess.AgentType, sess.ID)
 		return peekLoadedMsg{text: p.TailText, err: err}
 	}
 }
@@ -1051,7 +1096,7 @@ func (m Model) resumeSelectedCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		if err := m.service.ResumeBackground(context.Background(), sess.ID); err != nil {
+		if err := m.service.ResumeBackgroundExact(context.Background(), sess.AgentType, sess.ID); err != nil {
 			return sessionsLoadedMsg{err: err}
 		}
 		return m.loadSessionsCmd()()
@@ -1096,6 +1141,17 @@ func (m Model) stopTargetCmd(id string, remove bool) tea.Cmd {
 	}
 }
 
+func (m Model) stopTargetExactCmd(agentName, id string, remove bool) tea.Cmd {
+	sess, ok := m.sessionByIdentity(agentName, id)
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		err := m.service.StopExact(context.Background(), sess.AgentType, sess.ID, remove)
+		return sessionsLoadedMsg{err: err}
+	}
+}
+
 // restartTargetCmd restarts the session with the snapshotted id (same F29
 // fallback as stopTargetCmd): the agent process is stopped and resumed in
 // place, keeping the session's name and provider conversation.
@@ -1111,13 +1167,26 @@ func (m Model) restartTargetCmd(id string) tea.Cmd {
 		return m.loadSessionsCmd()()
 	}
 }
+
+func (m Model) restartTargetExactCmd(agentName, id string) tea.Cmd {
+	sess, ok := m.sessionByIdentity(agentName, id)
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		if err := m.service.RestartExact(context.Background(), sess.AgentType, sess.ID); err != nil {
+			return sessionsLoadedMsg{err: err}
+		}
+		return m.loadSessionsCmd()()
+	}
+}
 func (m Model) pinSelectedCmd() tea.Cmd {
 	sess, ok := m.selectedSession()
 	if !ok {
 		return nil
 	}
 	return func() tea.Msg {
-		err := m.service.TogglePin(context.Background(), sess.ID)
+		err := m.service.TogglePinExact(context.Background(), sess.AgentType, sess.ID)
 		return sessionsLoadedMsg{err: err}
 	}
 }
@@ -1127,7 +1196,7 @@ func (m Model) attachSelectedCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		spec, err := m.service.AttachSpec(context.Background(), sess.ID)
+		spec, err := m.service.AttachSpecExact(context.Background(), sess.AgentType, sess.ID)
 		return attachSpecMsg{spec: spec, err: err}
 	}
 }
@@ -1199,12 +1268,60 @@ var (
 // bar is the accent rule that marks the brand and command lines.
 func bar() string { return brandStyle.Render("▌") }
 
-// layoutMode buckets the usable width: 0 narrow (mobile), 1 mid, 2 wide.
+// LayoutClass names the three responsive dashboard geometries. It is derived
+// from the current terminal dimensions; Model deliberately stores no parallel
+// layout booleans that could become contradictory after a resize.
+type LayoutClass uint8
+
+const (
+	LayoutCompact LayoutClass = iota
+	LayoutStandard
+	LayoutWide
+)
+
+// DashboardMode is the primary dashboard surface. Like LayoutClass it is
+// derived from the existing interaction state, keeping wizard/peek behavior as
+// the source of truth for all existing key flows.
+type DashboardMode uint8
+
+const (
+	ModeOperations DashboardMode = iota
+	ModePeek
+	ModeNew
+)
+
+func (m Model) layoutClass() LayoutClass {
+	w, h := m.width, m.height
+	if w <= 0 {
+		w = 98
+	}
+	// An unknown height means callers are rendering a component outside a real
+	// terminal (many legacy unit tests do this), so classify by width only.
+	if h > 0 && (w < 58 || h < 24) || w < 58 {
+		return LayoutCompact
+	}
+	if w >= 96 && (h == 0 || h >= 28) {
+		return LayoutWide
+	}
+	return LayoutStandard
+}
+
+func (m Model) dashboardMode() DashboardMode {
+	if m.wizard {
+		return ModeNew
+	}
+	if m.peekOpen {
+		return ModePeek
+	}
+	return ModeOperations
+}
+
+// layoutMode is retained as a compatibility shim for component-level tests.
 func (m Model) layoutMode() int {
-	switch w := m.contentWidth(); {
-	case w >= 76:
+	switch m.layoutClass() {
+	case LayoutWide:
 		return 2
-	case w >= 48:
+	case LayoutStandard:
 		return 1
 	default:
 		return 0
@@ -1215,6 +1332,15 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
+	// Before Bubble Tea sends its first WindowSizeMsg preserve the historical
+	// unconstrained view. Once dimensions are known all composition is budgeted.
+	if !m.sizeKnown {
+		return m.unboundedView()
+	}
+	return m.responsiveView()
+}
+
+func (m Model) unboundedView() string {
 	var b strings.Builder
 	b.WriteString(m.renderBranding())
 	switch {
@@ -1233,6 +1359,293 @@ func (m Model) View() string {
 	}
 	b.WriteString(m.renderPrompt())
 	return b.String()
+}
+
+// responsiveView reserves the prompt first, then allocates the remaining rows
+// to exactly one primary surface. fitScreen is a final safety rail for terminal
+// sizes smaller than any useful composition; normal fixtures fit by budget.
+func (m Model) responsiveView() string {
+	w, h := max(1, m.width), max(0, m.height)
+	if h == 0 {
+		return ""
+	}
+	header := []string{m.responsiveHeader(w)}
+	prompt := boundedNonBlankLines(m.renderPrompt(), w)
+	if m.dashboardMode() == ModeNew {
+		prompt = m.wizardPromptLines(w)
+	}
+	if len(prompt) == 0 {
+		prompt = []string{bar() + " " + brandStyle.Render("›")}
+	}
+	if len(prompt) >= h {
+		return fitScreen(prompt[:h], w, h)
+	}
+	bodyBudget := max(0, h-len(header)-len(prompt))
+	body := m.responsiveBody(w, bodyBudget)
+	lines := append(header, body...)
+	lines = append(lines, prompt...)
+	return fitScreen(lines, w, h)
+}
+
+func (m Model) wizardPromptLines(width int) []string {
+	step := max(0, min(m.wizardStep, 3))
+	hints := []string{
+		"Tab cycle · Enter confirm · Esc cancel",
+		"Enter confirm · Esc cancel",
+		"Tab path · Enter confirm · Esc cancel",
+		"Ctrl+G edit · Enter start · Esc cancel",
+	}
+	field := displaytext.Sanitize(m.input)
+	if step == 0 && field == "" {
+		field = firstNonEmpty(m.wizardAgent, m.defaultAgent)
+	}
+	return []string{
+		ansi.Truncate(bar()+" "+hintStyle.Render("new")+" "+brandStyle.Render("›")+" "+titleStyle.Render(field)+brandStyle.Render("▏"), width, "…"),
+		ansi.Truncate("  "+hintStyle.Render(hints[step]), width, "…"),
+	}
+}
+
+func (m Model) responsiveHeader(width int) string {
+	text := bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("Unified Agent Manager")
+	if m.layoutClass() != LayoutCompact {
+		text += "  " + hintStyle.Render(version.String())
+	}
+	return ansi.Truncate(text, width, "…")
+}
+
+func (m Model) responsiveBody(width, budget int) []string {
+	if budget <= 0 {
+		return nil
+	}
+	if m.helpOpen {
+		return takeLines(boundedNonBlankLines(m.renderHelp(), width), budget)
+	}
+	if m.confirmStop {
+		return takeLines(boundedNonBlankLines(m.renderConfirm(), width), budget)
+	}
+	if m.dashboardMode() == ModeNew {
+		return takeLines(boundedNonBlankLines(m.renderWizard(), width), budget)
+	}
+	class := m.layoutClass()
+	if class == LayoutWide {
+		leftWidth := max(28, width*52/100)
+		rightWidth := max(20, width-leftWidth-3)
+		left := m.sessionListLines(leftWidth, budget, class)
+		right := m.detailPaneLines(rightWidth, budget, m.dashboardMode())
+		return joinColumns(left, right, leftWidth, rightWidth, budget)
+	}
+	if m.dashboardMode() == ModePeek {
+		return m.peekSurfaceLines(width, budget, class)
+	}
+	detailLimit := 3
+	if class == LayoutCompact {
+		detailLimit = 2
+	}
+	details := takeLines(m.selectedSummaryLines(width, class), min(detailLimit, budget))
+	list := m.sessionListLines(width, budget-len(details), class)
+	return append(details, list...)
+}
+
+func (m Model) selectedSummaryLines(width int, class LayoutClass) []string {
+	sess, ok := m.selectedSession()
+	if !ok {
+		return nil
+	}
+	name := truncate(firstNonEmpty(sess.DisplayName, sess.ID), max(1, width-11))
+	lines := []string{ansi.Truncate(sectionStyle.Render("SELECTED")+"  "+titleStyle.Render(name), width, "…")}
+	if class == LayoutCompact {
+		meta := firstNonEmpty(promptText(sess), "agent: "+sess.AgentType)
+		return append(lines, ansi.Truncate("  "+taskStyle.Render(meta), width, "…"))
+	}
+	lines = append(lines,
+		ansi.Truncate("  "+hintStyle.Render("agent: "+displaytext.Sanitize(firstNonEmpty(sess.AgentType, "?"))), width, "…"),
+		ansi.Truncate("  "+hintStyle.Render("cwd: "+absCwd(sess.Cwd)), width, "…"),
+	)
+	return lines
+}
+
+func (m Model) detailPaneLines(width, budget int, mode DashboardMode) []string {
+	if mode == ModePeek {
+		return m.peekSurfaceLines(width, budget, LayoutWide)
+	}
+	return takeLines(m.selectedSummaryLines(width, LayoutWide), budget)
+}
+
+func (m Model) peekSurfaceLines(width, budget int, class LayoutClass) []string {
+	if budget <= 0 {
+		return nil
+	}
+	lines := []string{sectionStyle.Render("PEEK")}
+	if sess, ok := m.selectedSession(); ok && budget > 1 {
+		lines = append(lines, ansi.Truncate("  "+titleStyle.Render(firstNonEmpty(sess.DisplayName, sess.ID)), width, "…"))
+	}
+	remaining := budget - len(lines)
+	if remaining > 0 {
+		peek := boundedTailLines(m.peekText, remaining, width)
+		if len(peek) == 0 {
+			peek = []string{hintStyle.Render("waiting for output…")}
+		}
+		lines = append(lines, takeLinesFromEnd(peek, remaining)...)
+	}
+	return takeLines(lines, budget)
+}
+
+// boundedTailLines scans backward only far enough to find the requested tail.
+// It retains empty physical lines because terminal output spacing is content,
+// while avoiding a split/join of a potentially multi-thousand-line pane.
+func boundedTailLines(s string, n, width int) []string {
+	if n <= 0 || s == "" {
+		return nil
+	}
+	start, breaks := 0, 0
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] != '\n' {
+			continue
+		}
+		breaks++
+		if breaks == n {
+			start = i + 1
+			break
+		}
+	}
+	lines := strings.Split(s[start:], "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], width, "…")
+	}
+	return lines
+}
+
+func (m Model) sessionListLines(width, budget int, class LayoutClass) []string {
+	if budget <= 0 {
+		return nil
+	}
+	if len(m.sessions) == 0 {
+		return takeLines([]string{m.renderSectionAtWidth("SESSIONS", "0", width), "  " + hintStyle.Render("no sessions")}, budget)
+	}
+	closed := 0
+	for _, sess := range m.sessions {
+		if sess.Closed {
+			closed++
+		}
+	}
+	rowBudget := max(0, budget-2)
+	if class == LayoutCompact {
+		rowBudget = max(0, budget-1)
+	}
+	start, end := visibleWindow(len(m.sessions), m.selected, rowBudget)
+	nameWidth, taskWidth, showTask := tableWidthsFor(width, class)
+	lines := make([]string, 0, budget)
+	if class == LayoutCompact {
+		right := fmt.Sprintf("%d", len(m.sessions))
+		if closed > 0 {
+			right = fmt.Sprintf("%d · %d closed", len(m.sessions), closed)
+		}
+		lines = append(lines, m.renderSectionAtWidth("SESSIONS", right, width))
+	} else {
+		label := "ACTIVE"
+		if m.sessions[start].Closed {
+			label = "CLOSED"
+		}
+		lines = append(lines, m.renderSectionAtWidth(label, "", width))
+	}
+	lastClosed := m.sessions[start].Closed
+	for i := start; i < end && len(lines) < budget; i++ {
+		sess := m.sessions[i]
+		if class != LayoutCompact && sess.Closed != lastClosed && len(lines) < budget-1 {
+			lines = append(lines, m.renderSectionAtWidth("CLOSED", "", width))
+			lastClosed = sess.Closed
+		}
+		lines = append(lines, ansi.Truncate(renderRow(sess, i == m.selected, nameWidth, taskWidth, showTask), width, "…"))
+	}
+	return takeLines(lines, budget)
+}
+
+func (m Model) renderSectionAtWidth(label, right string, width int) string {
+	head := sectionStyle.Render(label)
+	rightWidth := ansi.StringWidth(right)
+	fill := max(0, width-ansi.StringWidth(head)-rightWidth-4)
+	line := " " + head
+	if fill > 0 {
+		line += "  " + dividerStyle.Render(strings.Repeat("─", fill))
+	}
+	if right != "" {
+		line += " " + hintStyle.Render(right)
+	}
+	return ansi.Truncate(line, width, "…")
+}
+
+func tableWidthsFor(width int, class LayoutClass) (int, int, bool) {
+	if class == LayoutCompact || width < 58 {
+		return max(1, width-5), 0, false
+	}
+	name := min(30, max(10, width/3))
+	return name, max(1, width-name-8), true
+}
+
+func visibleWindow(length, selected, limit int) (int, int) {
+	limit = min(length, max(0, limit))
+	if limit == 0 {
+		return 0, 0
+	}
+	selected = max(0, min(selected, length-1))
+	start := max(0, selected-limit/2)
+	start = min(start, length-limit)
+	return start, start + limit
+}
+
+func boundedNonBlankLines(s string, width int) []string {
+	raw := strings.Split(strings.Trim(s, "\n"), "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		if line == "" {
+			continue
+		}
+		lines = append(lines, ansi.Truncate(line, width, "…"))
+	}
+	return lines
+}
+
+func joinColumns(left, right []string, leftWidth, rightWidth, budget int) []string {
+	n := min(budget, max(len(left), len(right)))
+	lines := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		l, r := "", ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		lines = append(lines, padRightANSI(l, leftWidth)+"   "+ansi.Truncate(r, rightWidth, "…"))
+	}
+	return lines
+}
+
+func padRightANSI(s string, width int) string {
+	s = ansi.Truncate(s, width, "…")
+	return s + strings.Repeat(" ", max(0, width-ansi.StringWidth(s)))
+}
+
+func takeLines(lines []string, n int) []string {
+	return lines[:min(len(lines), max(0, n))]
+}
+
+func takeLinesFromEnd(lines []string, n int) []string {
+	n = min(len(lines), max(0, n))
+	return lines[len(lines)-n:]
+}
+
+func fitScreen(lines []string, width, height int) string {
+	if len(lines) > height {
+		lines = lines[len(lines)-height:]
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], width, "…")
+	}
+	return strings.Join(lines, "\n")
 }
 
 const uamANSILogo = ` _   _  _   __  __
@@ -1520,7 +1933,7 @@ func (m Model) renderHelp() string {
 }
 
 func (m Model) renderConfirm() string {
-	sess, _ := m.sessionByID(m.confirmStopID)
+	sess, _ := m.sessionByIdentity(m.confirmStopAgent, m.confirmStopID)
 	name := displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID, "session"))
 	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
 		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +

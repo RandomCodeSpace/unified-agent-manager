@@ -22,12 +22,15 @@ import (
 )
 
 type svcFakeAdapter struct {
-	name      string
-	sessions  []adapter.Session
-	available bool
-	stopped   bool
-	replied   string
-	resumed   *adapter.ResumeRequest
+	name       string
+	sessions   []adapter.Session
+	available  bool
+	stopped    bool
+	stoppedID  string
+	peekedID   string
+	attachedID string
+	replied    string
+	resumed    *adapter.ResumeRequest
 	// F04: simulate a failed kill (stopErr) and a still-live pane (alive). The
 	// fake implements adapter.HasSessionAdapter, returning alive from HasSession.
 	stopErr error
@@ -79,6 +82,7 @@ func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
 	return f.sessions, f.listErr
 }
 func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
+	f.peekedID = id
 	return adapter.PeekResult{TailText: "tail"}, nil
 }
 func (f *svcFakeAdapter) Reply(ctx adapter.Context, id, text string) error {
@@ -86,14 +90,109 @@ func (f *svcFakeAdapter) Reply(ctx adapter.Context, id, text string) error {
 	return nil
 }
 func (f *svcFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
+	f.attachedID = id
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
 }
 func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error {
 	f.stopped = true
+	f.stoppedID = id
 	if f.stopRemoves {
 		f.sessions = nil
 	}
 	return f.stopErr
+}
+
+func TestProviderExactServiceActionsDoNotCrossDuplicateIDs(t *testing.T) {
+	ctx := context.Background()
+	id := "same0001"
+	claude := &svcFakeAdapter{name: "claude", available: true, sessions: []adapter.Session{{ID: id, AgentType: "claude", SessionName: "uam-claude-same0001", ProcAlive: adapter.Alive}}}
+	codex := &svcFakeAdapter{name: "codex", available: true, sessions: []adapter.Session{{ID: id, AgentType: "codex", SessionName: "uam-codex-same0001", ProcAlive: adapter.Alive}}}
+	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.Sessions[store.Key("claude", id)] = RecordFromSession(claude.sessions[0], store.ModeYolo)
+		cfg.Sessions[store.Key("codex", id)] = RecordFromSession(codex.sessions[0], store.ModeYolo)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{claude, codex}))
+
+	found, _, err := svc.FindExact(ctx, "codex", id)
+	if err != nil || found.AgentType != "codex" {
+		t.Fatalf("FindExact = %+v, %v", found, err)
+	}
+	if err := svc.RenameExact(ctx, "codex", id, "selected codex"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.TogglePinExact(ctx, "codex", id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.PeekExact(ctx, "codex", id); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReplyExact(ctx, "codex", id, "hello codex"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AttachSpecExact(ctx, "codex", id); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.StopExact(ctx, "codex", id, false); err != nil {
+		t.Fatal(err)
+	}
+	if claude.stopped || claude.peekedID != "" || claude.replied != "" || claude.attachedID != "" {
+		t.Fatalf("claude adapter was targeted: %+v", claude)
+	}
+	if codex.stoppedID != id || codex.peekedID != id || codex.replied != "hello codex" || codex.attachedID != id {
+		t.Fatalf("codex adapter did not receive exact actions: %+v", codex)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Sessions[store.Key("claude", id)]; got.Name != id || got.Pinned || got.Status == store.StatusClosedByUser {
+		t.Fatalf("claude record changed: %+v", got)
+	}
+	if got := cfg.Sessions[store.Key("codex", id)]; got.Name != "selected codex" || !got.Pinned || got.Status != store.StatusClosedByUser {
+		t.Fatalf("codex record not changed exactly: %+v", got)
+	}
+}
+
+func TestProviderExactResumeAndRestartUseSelectedAdapter(t *testing.T) {
+	for _, action := range []string{"resume", "restart"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := context.Background()
+			id := "same0002"
+			claude := &svcFakeAdapter{name: "claude", available: true, resumeKind: adapter.ResumeExact}
+			codexSession := adapter.Session{ID: id, AgentType: "codex", SessionName: "uam-codex-same0002", Cwd: t.TempDir(), ProcAlive: adapter.Exited}
+			codex := &svcFakeAdapter{name: "codex", available: true, resumeKind: adapter.ResumeExact}
+			st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.Update(func(cfg *store.Config) error {
+				cfg.Sessions[store.Key("claude", id)] = store.SessionRecord{ID: id, Agent: "claude", SessionName: "uam-claude-same0002", Workdir: t.TempDir(), Mode: store.ModeYolo}
+				cfg.Sessions[store.Key("codex", id)] = RecordFromSession(codexSession, store.ModeYolo)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{claude, codex}))
+			if action == "resume" {
+				err = svc.ResumeBackgroundExact(ctx, "codex", id)
+			} else {
+				err = svc.RestartExact(ctx, "codex", id)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if claude.resumed != nil || codex.resumed == nil || codex.resumed.ID != id {
+				t.Fatalf("resume crossed provider: claude=%+v codex=%+v", claude.resumed, codex.resumed)
+			}
+		})
+	}
 }
 func (f *svcFakeAdapter) HasSession(ctx adapter.Context, id string) bool { return f.alive }
 

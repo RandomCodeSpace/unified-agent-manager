@@ -572,6 +572,20 @@ func (s *Service) Stop(ctx context.Context, id string, remove bool) error {
 	if err != nil {
 		return err
 	}
+	return s.stopFound(ctx, sess, remove)
+}
+
+// StopExact is the provider-aware TUI variant of Stop. The ID-only method is
+// retained for CLI prefix lookup compatibility.
+func (s *Service) StopExact(ctx context.Context, agentName, id string, remove bool) error {
+	sess, _, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	return s.stopFound(ctx, sess, remove)
+}
+
+func (s *Service) stopFound(ctx context.Context, sess adapter.Session, remove bool) error {
 	if err := s.stopAdapterSession(ctx, sess); err != nil {
 		return err
 	}
@@ -655,8 +669,24 @@ func (s *Service) Rename(ctx context.Context, id, name string) error {
 	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Name = name })
 }
 
+func (s *Service) RenameExact(ctx context.Context, agentName, id, name string) error {
+	sess, _, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Name = name })
+}
+
 func (s *Service) TogglePin(ctx context.Context, id string) error {
 	sess, _, err := s.Find(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.applyRecordMutation(sess, func(rec *store.SessionRecord) { rec.Pinned = !rec.Pinned })
+}
+
+func (s *Service) TogglePinExact(ctx context.Context, agentName, id string) error {
+	sess, _, err := s.FindExact(ctx, agentName, id)
 	if err != nil {
 		return err
 	}
@@ -723,8 +753,35 @@ func (s *Service) Find(ctx context.Context, id string) (adapter.Session, store.C
 	return adapter.Session{}, cfg, fmt.Errorf("session %q not found", id)
 }
 
+// FindExact resolves the unique provider/session pair used by the TUI. Unlike
+// Find it deliberately performs no prefix or cross-provider matching.
+func (s *Service) FindExact(ctx context.Context, agentName, id string) (adapter.Session, store.Config, error) {
+	sessions, cfg, err := s.LoadSessions(ctx)
+	if err != nil {
+		return adapter.Session{}, cfg, err
+	}
+	for _, sess := range sessions {
+		if sess.AgentType == agentName && sess.ID == id {
+			return sess, cfg, nil
+		}
+	}
+	return adapter.Session{}, cfg, fmt.Errorf("session %q for provider %q not found", id, agentName)
+}
+
 func (s *Service) Peek(ctx context.Context, id string) (adapter.PeekResult, error) {
 	sess, _, err := s.Find(ctx, id)
+	if err != nil {
+		return adapter.PeekResult{}, err
+	}
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return adapter.PeekResult{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
+	}
+	return a.Peek(ctx, sess.ID)
+}
+
+func (s *Service) PeekExact(ctx context.Context, agentName, id string) (adapter.PeekResult, error) {
+	sess, _, err := s.FindExact(ctx, agentName, id)
 	if err != nil {
 		return adapter.PeekResult{}, err
 	}
@@ -747,8 +804,37 @@ func (s *Service) Reply(ctx context.Context, id, text string) error {
 	return a.Reply(ctx, sess.ID, text)
 }
 
+func (s *Service) ReplyExact(ctx context.Context, agentName, id, text string) error {
+	sess, _, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return fmt.Errorf(agentUnavailableFormat, sess.AgentType)
+	}
+	return a.Reply(ctx, sess.ID, text)
+}
+
 func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec, error) {
 	return s.AttachSpecWithOptions(ctx, id, ResumeOptions{})
+}
+
+func (s *Service) AttachSpecExact(ctx context.Context, agentName, id string) (adapter.AttachSpec, error) {
+	sess, _, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return adapter.AttachSpec{}, err
+	}
+	a, ok := s.Registry.Get(sess.AgentType)
+	if !ok {
+		return adapter.AttachSpec{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
+	}
+	if sess.ProcAlive == adapter.Exited {
+		if err := s.ResumeBackgroundExact(ctx, agentName, id); err != nil {
+			return adapter.AttachSpec{}, err
+		}
+	}
+	return a.Attach(sess.ID)
 }
 
 func (s *Service) AttachSpecWithOptions(ctx context.Context, id string, opts ResumeOptions) (adapter.AttachSpec, error) {
@@ -776,6 +862,22 @@ func (s *Service) Restart(ctx context.Context, id string) error {
 	return s.RestartWithOptions(ctx, id, ResumeOptions{})
 }
 
+func (s *Service) RestartExact(ctx context.Context, agentName, id string) error {
+	sess, cfg, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	if _, _, _, err := s.prepareResume(sess, cfg, ResumeOptions{}); err != nil {
+		return err
+	}
+	if sess.ProcAlive == adapter.Alive {
+		if err := s.StopExact(ctx, agentName, id, false); err != nil {
+			return err
+		}
+	}
+	return s.ResumeBackgroundExact(ctx, agentName, id)
+}
+
 func (s *Service) RestartWithOptions(ctx context.Context, id string, opts ResumeOptions) error {
 	sess, cfg, err := s.Find(ctx, id)
 	if err != nil {
@@ -798,6 +900,14 @@ func (s *Service) ResumeBackground(ctx context.Context, id string) error {
 	return s.ResumeBackgroundWithOptions(ctx, id, ResumeOptions{})
 }
 
+func (s *Service) ResumeBackgroundExact(ctx context.Context, agentName, id string) error {
+	sess, cfg, err := s.FindExact(ctx, agentName, id)
+	if err != nil {
+		return err
+	}
+	return s.resumeBackgroundFound(ctx, sess, cfg, ResumeOptions{})
+}
+
 type ResumeKind = adapter.ResumeKind
 
 const (
@@ -817,6 +927,10 @@ func (s *Service) ResumeBackgroundWithOptions(ctx context.Context, id string, op
 	if err != nil {
 		return err
 	}
+	return s.resumeBackgroundFound(ctx, sess, cfg, opts)
+}
+
+func (s *Service) resumeBackgroundFound(ctx context.Context, sess adapter.Session, cfg store.Config, opts ResumeOptions) error {
 	if sess.ProcAlive == adapter.Alive {
 		return nil
 	}
