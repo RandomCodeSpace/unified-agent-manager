@@ -143,6 +143,31 @@ func TestAttachOutputFilterRestartsAtCapEdge(t *testing.T) {
 	}
 }
 
+func TestAttachOutputFilterHonorsProviderCSICancellation(t *testing.T) {
+	for _, prefix := range []string{
+		"\x1b[12",
+		"\x1b[" + strings.Repeat("1", maxAttachCSI-1),
+	} {
+		for _, cancel := range []byte{0x18, 0x1a} {
+			for _, next := range []struct {
+				name string
+				seq  string
+				want string
+			}{
+				{name: "owned", seq: "\x1b[?1049l", want: prefix + string(cancel)},
+				{name: "non-owned", seq: "\x1b[?2004h", want: prefix + string(cancel) + "\x1b[?2004h"},
+			} {
+				input := []byte(prefix + string(cancel) + next.seq)
+				for split := 0; split <= len(input); split++ {
+					if got := string(filterHostOutput(t, false, input[:split], input[split:])); got != next.want {
+						t.Fatalf("prefix=%d cancel=%#x next=%s split=%d tail=%q, want tail=%q", len(prefix), cancel, next.name, split, got[len(got)-min(20, len(got)):], next.want[len(next.want)-min(20, len(next.want)):])
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestAttachOutputFilterPreservesMalformedPrivateModes(t *testing.T) {
 	for _, input := range []string{
 		"\x1b[?1:2;1049h",

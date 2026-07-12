@@ -471,7 +471,7 @@ func (f *attachOutputFilter) Write(p []byte) (int, error) {
 				f.forwardedCSI = false
 			} else {
 				out = append(out, b)
-				if f.forwardedCSI && b >= 0x40 && b <= 0x7e {
+				if f.forwardedCSI && (b == 0x18 || b == 0x1a || b >= 0x40 && b <= 0x7e) {
 					f.forwardedCSI = false
 				}
 			}
@@ -488,6 +488,15 @@ func (f *attachOutputFilter) Write(p []byte) (int, error) {
 					out = append(out, b)
 				}
 			}
+		case b == 0x18 || b == 0x1a:
+			// CAN and SUB cancel CSI parsing and return the destination
+			// terminal to ground. Preserve the provider's cancellation byte;
+			// no synthetic cancellation is needed for a later filtered mode.
+			out = append(out, f.pending...)
+			out = append(out, b)
+			f.pending = f.pending[:0]
+			f.abortedCSI = false
+			f.forwardedCSI = false
 		case b == 0x1b:
 			// ESC aborts an in-flight CSI in a real terminal. Flush the old
 			// prefix and retain this ESC as the start of a new filterable
