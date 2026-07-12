@@ -155,7 +155,7 @@ func TestRunWithTUIStateFreeCommandsDoNotOpenStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("UAM_CONFIG_DIR", blocked)
-	t.Setenv("UAM_SESSION_DIR", t.TempDir())
+	t.Setenv("UAM_SESSION_DIR", secureSessionDir(t))
 
 	for _, args := range [][]string{{"help"}, {"version"}, {"kill-all"}} {
 		if err := RunWithTUI(context.Background(), args, noopRunTUI); err != nil {
@@ -193,7 +193,7 @@ func TestMainFallsBackToStderrWhenFileLoggerFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := cliMainSubprocess(t, "kill-all", blocked, filepath.Join(t.TempDir(), "config"))
-	cmd.Env = append(cmd.Env, "UAM_SESSION_DIR="+t.TempDir())
+	cmd.Env = append(cmd.Env, "UAM_SESSION_DIR="+secureSessionDir(t))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("uam kill-all must continue with stderr logging: %v\n%s", err, output)
@@ -378,6 +378,15 @@ func writeCLIExecutable(t *testing.T, path string) {
 	}
 }
 
+func secureSessionDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -397,7 +406,7 @@ func firstNonEmpty(values ...string) string {
 // The internal __host/__attach subcommands are routed through runCommand;
 // invalid input must surface as errors rather than silently doing nothing.
 func TestRunCommandInternalSubcommands(t *testing.T) {
-	t.Setenv("UAM_SESSION_DIR", t.TempDir())
+	t.Setenv("UAM_SESSION_DIR", secureSessionDir(t))
 	svc, _ := newCLITestService(t)
 	noTUI := func(context.Context, tea.Model) error { return nil }
 	if err := runCommand(context.Background(), svc, []string{"__host", "--name", "bad name", "--", "/bin/true"}, noTUI); err == nil {

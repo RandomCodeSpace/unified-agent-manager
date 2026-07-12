@@ -37,7 +37,7 @@ func TestRunKillAllPropagatesError(t *testing.T) {
 // real sessions: KillAll over zero sessions is an idempotent success.
 func TestRunCommandKillAllDispatches(t *testing.T) {
 	svc, _ := newCLITestService(t)
-	t.Setenv("UAM_SESSION_DIR", t.TempDir())
+	t.Setenv("UAM_SESSION_DIR", secureSessionDir(t))
 
 	out := captureCLIStdout(t, func() {
 		if err := runCommand(context.Background(), svc, []string{"kill-all"}, func(context.Context, tea.Model) error { return nil }); err != nil {
