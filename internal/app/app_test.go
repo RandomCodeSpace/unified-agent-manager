@@ -161,6 +161,10 @@ func TestViewShowsCompactUAMBrandingAndDashboard(t *testing.T) {
 	if strings.Contains(view, uamANSILogo) {
 		t.Fatalf("responsive dashboard should not spend rows on the legacy ASCII logo: %s", view)
 	}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
+	if compact := m.View(); !strings.Contains(compact, "v9.9.9") {
+		t.Fatalf("compact dashboard should retain the version label: %s", compact)
+	}
 }
 
 func TestViewUsesBorderedSessionsPanel(t *testing.T) {

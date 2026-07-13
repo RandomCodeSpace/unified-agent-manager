@@ -237,7 +237,9 @@ func (m Model) dashboardView() string {
 
 func (m Model) dashboardHeader(width int) string {
 	left := bar() + " " + brandStyle.Render("UAM")
-	if m.layoutClass() != LayoutCompact {
+	if m.layoutClass() == LayoutCompact {
+		left += "  " + hintStyle.Render(version.String())
+	} else {
 		left += "  " + hintStyle.Render("Unified Agent Manager") + "  " + hintStyle.Render(version.String())
 	}
 	right := "/ filter"
