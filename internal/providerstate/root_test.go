@@ -1,10 +1,15 @@
 package providerstate
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
+
+	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 func TestRootOwnedSymlinkPolicyIsAncestorOnly(t *testing.T) {
@@ -30,7 +35,7 @@ func TestTrustedBaseRejectsSymlinkAtBase(t *testing.T) {
 	}
 }
 
-func TestResolvedAncestryRejectsWritableComponent(t *testing.T) {
+func TestResolvedAncestryWarnsForWritableComponent(t *testing.T) {
 	unsafe := filepath.Join(t.TempDir(), "unsafe")
 	if err := os.Mkdir(unsafe, 0o700); err != nil {
 		t.Fatal(err)
@@ -38,8 +43,23 @@ func TestResolvedAncestryRejectsWritableComponent(t *testing.T) {
 	if err := os.Chmod(unsafe, 0o770); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyResolvedAncestry(unsafe); err == nil {
-		t.Fatal("writable resolved target ancestry accepted")
+	var output bytes.Buffer
+	previous := uamlog.SetLogger(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { uamlog.SetLogger(previous) })
+
+	if err := verifyResolvedAncestry(unsafe); err != nil {
+		t.Fatalf("writable resolved target ancestry blocked: %v", err)
+	}
+	if err := verifyResolvedAncestry(unsafe); err != nil {
+		t.Fatalf("repeated writable ancestry check blocked: %v", err)
+	}
+	warning := output.String()
+	if !strings.Contains(warning, "provider state ancestor is group/other-writable") ||
+		!strings.Contains(warning, unsafe) || !strings.Contains(warning, "0770") {
+		t.Fatalf("missing actionable writable-ancestor warning: %q", warning)
+	}
+	if count := strings.Count(warning, "provider state ancestor is group/other-writable"); count != 1 {
+		t.Fatalf("writable ancestor warning count = %d, want 1: %q", count, warning)
 	}
 }
 

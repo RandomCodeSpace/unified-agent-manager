@@ -1,7 +1,6 @@
-// Package providerstate secures the persistent root used for provider-owned
-// launch metadata. Once the base and every controlled child are owned by the
-// current user and not group/other-writable, another local user cannot swap a
-// checked component between validation and use.
+// Package providerstate validates the persistent root used for provider-owned
+// launch metadata. Ownership, file type, and symlink violations fail closed;
+// writable ancestors are reported while UAM-owned children remain owner-only.
 package providerstate
 
 import (
@@ -9,11 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+
+	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
+var warnedWritableAncestors sync.Map
+
 // EnsureTrustedBase creates base when absent and verifies that it is a real,
-// current-user-owned directory with no group/other write permission.
+// current-user-owned directory. Group/other-writable ancestors emit a warning
+// because some managed systems do not allow users to change those modes.
 func EnsureTrustedBase(base string) error {
 	return walkTrustedPath(base, true)
 }
@@ -134,7 +139,12 @@ func verifyComponent(path string, info os.FileInfo) error {
 	if info.Mode().Perm()&0o022 != 0 {
 		rootSticky := uid == 0 && info.Mode()&os.ModeSticky != 0
 		if !rootSticky {
-			return fmt.Errorf("provider state ancestor %s is group/other-writable (%04o)", path, info.Mode().Perm())
+			if _, loaded := warnedWritableAncestors.LoadOrStore(path, struct{}{}); !loaded {
+				uamlog.Warn("provider state ancestor is group/other-writable",
+					"path", path,
+					"mode", fmt.Sprintf("%04o", info.Mode().Perm()),
+				)
+			}
 		}
 	}
 	return nil

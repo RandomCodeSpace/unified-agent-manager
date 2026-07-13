@@ -142,18 +142,18 @@ func TestDispatchRejectsIntermediateStateSymlink(t *testing.T) {
 	}
 }
 
-func TestDispatchRejectsHostileStateBase(t *testing.T) {
+func TestDispatchWarnsForWritableStateBase(t *testing.T) {
 	ag, be := newTestAgent(t)
 	base := os.Getenv("XDG_STATE_HOME")
 	if err := os.Chmod(base, 0o772); err != nil {
 		t.Fatal(err)
 	}
 	_, err := ag.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: "/tmp", Mode: "safe"})
-	if err == nil {
-		t.Fatal("group/other-writable XDG_STATE_HOME accepted")
+	if err != nil {
+		t.Fatalf("group/other-writable XDG_STATE_HOME blocked: %v", err)
 	}
-	if len(be.CallsOf("create")) != 0 {
-		t.Fatal("hostile state base created backend session")
+	if len(be.CallsOf("create")) != 1 {
+		t.Fatal("writable state base did not create backend session")
 	}
 }
 

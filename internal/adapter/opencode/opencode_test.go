@@ -233,17 +233,34 @@ func TestProviderFilesRejectIntermediateSymlink(t *testing.T) {
 	}
 }
 
-func TestProviderFilesRejectHostileStateBase(t *testing.T) {
+func TestProviderFilesWarnForWritableStateAncestry(t *testing.T) {
 	t.Run("group writable", func(t *testing.T) {
 		base := t.TempDir()
 		if err := os.Chmod(base, 0o770); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("XDG_STATE_HOME", base)
-		if _, err := ensureProviderFiles(); err == nil {
-			t.Fatal("group-writable XDG_STATE_HOME accepted")
+		if _, err := ensureProviderFiles(); err != nil {
+			t.Fatalf("group-writable XDG_STATE_HOME blocked: %v", err)
 		}
 	})
+
+	t.Run("writable parent", func(t *testing.T) {
+		parent := filepath.Join(t.TempDir(), "shared")
+		if err := os.Mkdir(parent, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(parent, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("XDG_STATE_HOME", filepath.Join(parent, "state"))
+		if _, err := ensureProviderFiles(); err != nil {
+			t.Fatalf("state base under writable non-sticky parent blocked: %v", err)
+		}
+	})
+}
+
+func TestProviderFilesRejectSymlinkedStateBase(t *testing.T) {
 	t.Run("symlink", func(t *testing.T) {
 		parent, target := t.TempDir(), t.TempDir()
 		base := filepath.Join(parent, "state")
@@ -253,19 +270,6 @@ func TestProviderFilesRejectHostileStateBase(t *testing.T) {
 		t.Setenv("XDG_STATE_HOME", base)
 		if _, err := ensureProviderFiles(); err == nil {
 			t.Fatal("symlinked XDG_STATE_HOME accepted")
-		}
-	})
-	t.Run("hostile parent", func(t *testing.T) {
-		parent := filepath.Join(t.TempDir(), "shared")
-		if err := os.Mkdir(parent, 0o777); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chmod(parent, 0o777); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("XDG_STATE_HOME", filepath.Join(parent, "state"))
-		if _, err := ensureProviderFiles(); err == nil {
-			t.Fatal("state base under writable non-sticky parent accepted")
 		}
 	})
 }
