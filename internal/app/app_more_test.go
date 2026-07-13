@@ -15,8 +15,9 @@ import (
 
 func TestModelViewBasics(t *testing.T) {
 	m := modelWithTwoSessions()
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	out := m.View()
-	if !strings.Contains(out, "RUNNING") || !strings.Contains(out, "SELECTED") {
+	if !strings.Contains(out, "RUNNING") || !strings.Contains(out, "SESSIONS") || !strings.Contains(out, "[fake]") {
 		t.Fatalf("view=%s", out)
 	}
 	if strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
@@ -304,21 +305,24 @@ func TestDispatchedFailureWithoutSessionDoesNotAttach(t *testing.T) {
 	}
 }
 
-func TestViewShowsDetailsOnTopAndTaskInTable(t *testing.T) {
+func TestViewExpandsSelectedSessionInsideDashboard(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
 		{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "fix the parser", Cwd: "/tmp/project", SessionName: "uam-fake-1", ProcAlive: adapter.Alive},
 		{ID: "2", AgentType: "fake", DisplayName: "old", Prompt: "old prompt", Cwd: "/tmp/old", SessionName: "uam-fake-2", ProcAlive: adapter.Exited, Closed: true},
 	}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	view := m.View()
-	if !strings.Contains(view, "cwd: /tmp/project") {
-		t.Fatalf("view should show the absolute cwd in details: %s", view)
+	for _, want := range []string{"/tmp/project", "id 1", "[fake]", "fix the parser", "RUNNING", "STOPPED"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expanded dashboard missing %q: %s", want, view)
+		}
 	}
 	if strings.Contains(view, "⠋") || strings.Contains(view, "💀") || strings.Contains(view, "TMUX: LIVE") || strings.Contains(view, "🚀") || strings.Contains(view, "🟢") {
 		t.Fatalf("view should use compact styling, no spinner/skull/large emoji: %s", view)
 	}
 	if strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") {
-		t.Fatalf("view should not show aggregate header stats: %s", view)
+		t.Fatalf("view should use dashboard metadata instead of legacy aggregates: %s", view)
 	}
 	table := m.renderTable()
 	if !strings.Contains(table, "RUNNING") || !strings.Contains(table, "STOPPED") {

@@ -33,6 +33,10 @@ type Model struct {
 	sessions      []adapter.Session
 	selected      int
 	input         string
+	filterActive  bool
+	filterQuery   string
+	filterRestore sessionIdentity
+	filterSaved   bool
 	defaultAgent  string
 	message       string
 	messageSetAt  time.Time
@@ -83,6 +87,10 @@ type Model struct {
 	// for that gate.
 	lastPeekAt map[string]time.Time
 	peekClock  func() time.Time
+	// now is the presentation clock used for deterministic session-age labels.
+	// Discovery refreshes LastChange on every scan, so the dashboard deliberately
+	// derives age from CreatedAt instead.
+	now func() time.Time
 }
 
 // messageTTL is how long a status/error line stays on screen before a refresh
@@ -409,11 +417,17 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 		for i, sess := range m.sessions {
 			if sess.AgentType == selectedAgent && sess.ID == selectedID {
 				m.selected = i
+				if m.filterActive {
+					m.reconcileFilterSelection()
+				}
 				return m
 			}
 		}
 	}
 	m.selected = max(0, min(m.selected, len(m.sessions)-1))
+	if m.filterActive {
+		m.reconcileFilterSelection()
+	}
 	return m
 }
 
@@ -470,6 +484,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if handled, model, cmd := m.handleModalKey(msg, key); handled {
 		return model, cmd
+	}
+	// Peek owns the command composer for replies. Keep the filtered projection,
+	// but route text/Enter/Esc through the established reply flow while it is open.
+	if m.filterActive && !m.peekOpen {
+		if handled, cmd := m.handleFilterKey(msg, key); handled {
+			return m, cmd
+		}
+	}
+	if key == "/" && m.input == "" && !m.peekOpen {
+		m.enterFilter()
+		return m, nil
 	}
 	if handled, cmd := m.handleMovementKey(key); handled {
 		return m, cmd
@@ -601,6 +626,24 @@ func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
 }
 
 func (m *Model) moveSelection(delta int) {
+	if m.filterActive {
+		visible := m.visibleSessionIndices()
+		if len(visible) == 0 {
+			return
+		}
+		position := 0
+		for i, index := range visible {
+			if index == m.selected {
+				position = i
+				break
+			}
+		}
+		next := position + delta
+		if next >= 0 && next < len(visible) {
+			m.selected = visible[next]
+		}
+		return
+	}
 	next := m.selected + delta
 	if next >= 0 && next < len(m.sessions) {
 		m.selected = next
@@ -647,8 +690,22 @@ func (m Model) shouldPollFocusedPeek(id string, now time.Time) bool {
 }
 
 func (m *Model) moveSession(delta int) tea.Cmd {
+	if m.filterActive {
+		return m.moveFilteredSession(delta)
+	}
 	next := m.selected + delta
 	if next < 0 || next >= len(m.sessions) {
+		return nil
+	}
+	return m.moveSessionTo(next)
+}
+
+// moveSessionTo applies the shared identity-safe reorder invariants between two
+// canonical indices. Both normal and filtered navigation resolve their target
+// index before entering this path, so hidden rows are never mistaken for the
+// selected session.
+func (m *Model) moveSessionTo(next int) tea.Cmd {
+	if m.selected < 0 || m.selected >= len(m.sessions) || next < 0 || next >= len(m.sessions) || next == m.selected {
 		return nil
 	}
 	// SortSessions buckets rows by process liveness, then Pinned, before honoring
@@ -1583,12 +1640,17 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
-	// Before Bubble Tea sends its first WindowSizeMsg preserve the historical
-	// unconstrained view. Once dimensions are known all composition is budgeted.
+	// Before Bubble Tea sends its first WindowSizeMsg, keep the first frame small
+	// and stable instead of flashing the legacy unbounded dashboard.
 	if !m.sizeKnown {
-		return m.unboundedView()
+		// A confirmation can arrive before a WindowSizeMsg in tests and on very
+		// slow remote terminals. Never hide a safety-critical modal behind loading.
+		if m.helpOpen || m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
+			return m.unboundedView()
+		}
+		return bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("loading dashboard…")
 	}
-	return m.responsiveView()
+	return m.dashboardView()
 }
 
 func (m Model) unboundedView() string {
@@ -1682,68 +1744,7 @@ func (m Model) responsiveBody(width, budget int) []string {
 	if m.dashboardMode() == ModeNew {
 		return takeLines(boundedNonBlankLines(m.renderWizard(), width), budget)
 	}
-	class := m.layoutClass()
-	if class == LayoutWide {
-		leftWidth := max(28, width*52/100)
-		rightWidth := max(20, width-leftWidth-3)
-		left := m.sessionListLines(leftWidth, budget, class)
-		right := m.detailPaneLines(rightWidth, budget, m.dashboardMode())
-		return joinColumns(left, right, leftWidth, rightWidth, budget)
-	}
-	if m.dashboardMode() == ModePeek {
-		return m.peekSurfaceLines(width, budget, class)
-	}
-	detailLimit := 3
-	if class == LayoutCompact {
-		detailLimit = 2
-	}
-	details := takeLines(m.selectedSummaryLines(width, class), min(detailLimit, budget))
-	list := m.sessionListLines(width, budget-len(details), class)
-	return append(details, list...)
-}
-
-func (m Model) selectedSummaryLines(width int, class LayoutClass) []string {
-	sess, ok := m.selectedSession()
-	if !ok {
-		return nil
-	}
-	name := truncate(firstNonEmpty(sess.DisplayName, sess.ID), max(1, width-11))
-	lines := []string{ansi.Truncate(sectionStyle.Render("SELECTED")+"  "+titleStyle.Render(name), width, "…")}
-	if class == LayoutCompact {
-		meta := firstNonEmpty(boundedTaskSummary(sess, max(1, width-2)), "agent: "+sess.AgentType)
-		return append(lines, ansi.Truncate("  "+taskStyle.Render(meta), width, "…"))
-	}
-	lines = append(lines,
-		ansi.Truncate("  "+hintStyle.Render("agent: "+displaytext.Sanitize(firstNonEmpty(sess.AgentType, "?"))), width, "…"),
-		ansi.Truncate("  "+hintStyle.Render("cwd: "+absCwd(sess.Cwd)), width, "…"),
-	)
-	return lines
-}
-
-func (m Model) detailPaneLines(width, budget int, mode DashboardMode) []string {
-	if mode == ModePeek {
-		return m.peekSurfaceLines(width, budget, LayoutWide)
-	}
-	return takeLines(m.selectedSummaryLines(width, LayoutWide), budget)
-}
-
-func (m Model) peekSurfaceLines(width, budget int, class LayoutClass) []string {
-	if budget <= 0 {
-		return nil
-	}
-	lines := []string{sectionStyle.Render("PEEK")}
-	if sess, ok := m.selectedSession(); ok && budget > 1 {
-		lines = append(lines, ansi.Truncate("  "+titleStyle.Render(firstNonEmpty(sess.DisplayName, sess.ID)), width, "…"))
-	}
-	remaining := budget - len(lines)
-	if remaining > 0 {
-		peek := boundedTailLines(m.peekText, remaining, width)
-		if len(peek) == 0 {
-			peek = []string{hintStyle.Render("waiting for output…")}
-		}
-		lines = append(lines, takeLinesFromEnd(peek, remaining)...)
-	}
-	return takeLines(lines, budget)
+	return m.dashboardBody(width, budget)
 }
 
 // boundedTailLines scans backward only far enough to find the requested tail.
@@ -1772,54 +1773,6 @@ func boundedTailLines(s string, n, width int) []string {
 		lines[i] = ansi.Truncate(lines[i], width, "…")
 	}
 	return lines
-}
-
-func (m Model) sessionListLines(width, budget int, class LayoutClass) []string {
-	if budget <= 0 {
-		return nil
-	}
-	if m.groupByDir {
-		return m.groupedSessionListLines(width, budget, class)
-	}
-	if len(m.sessions) == 0 {
-		return takeLines([]string{m.renderSectionAtWidth("SESSIONS", "0", width), "  " + hintStyle.Render("no sessions")}, budget)
-	}
-	stopped := 0
-	for _, sess := range m.sessions {
-		if sess.ProcAlive == adapter.Exited {
-			stopped++
-		}
-	}
-	rowBudget := max(0, budget-2)
-	if class == LayoutCompact {
-		rowBudget = max(0, budget-1)
-	}
-	start, end := visibleWindow(len(m.sessions), m.selected, rowBudget)
-	nameWidth, taskWidth, showTask := tableWidthsFor(width, class)
-	lines := make([]string, 0, budget)
-	if class == LayoutCompact {
-		right := fmt.Sprintf("%d", len(m.sessions))
-		if stopped > 0 {
-			right = fmt.Sprintf("%d · %d stopped", len(m.sessions), stopped)
-		}
-		lines = append(lines, m.renderSectionAtWidth("SESSIONS", right, width))
-	} else {
-		label := "RUNNING"
-		if m.sessions[start].ProcAlive == adapter.Exited {
-			label = "STOPPED"
-		}
-		lines = append(lines, m.renderSectionAtWidth(label, "", width))
-	}
-	lastAlive := m.sessions[start].ProcAlive
-	for i := start; i < end && len(lines) < budget; i++ {
-		sess := m.sessions[i]
-		if class != LayoutCompact && sess.ProcAlive != lastAlive && len(lines) < budget-1 {
-			lines = append(lines, m.renderSectionAtWidth("STOPPED", "", width))
-			lastAlive = sess.ProcAlive
-		}
-		lines = append(lines, ansi.Truncate(renderRow(sess, i == m.selected, nameWidth, taskWidth, showTask), width, "…"))
-	}
-	return takeLines(lines, budget)
 }
 
 func (m Model) renderSectionAtWidth(label, right string, width int) string {
@@ -1890,11 +1843,6 @@ func padRightANSI(s string, width int) string {
 
 func takeLines(lines []string, n int) []string {
 	return lines[:min(len(lines), max(0, n))]
-}
-
-func takeLinesFromEnd(lines []string, n int) []string {
-	n = min(len(lines), max(0, n))
-	return lines[len(lines)-n:]
 }
 
 func fitScreen(lines []string, width, height int) string {
@@ -2222,6 +2170,7 @@ func (m Model) renderHelp() string {
 	rows := []string{
 		"↑/↓  move   Shift+↑/↓  reorder   Enter/→  attach/resume",
 		"Space  peek running / resume stopped",
+		"/  filter sessions when the command line is empty",
 		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
 		"Ctrl+X  stop+remove / restart    Ctrl+S  group-by-dir",
 		"e  new session       Esc  quit",

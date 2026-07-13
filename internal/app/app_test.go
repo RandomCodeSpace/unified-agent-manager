@@ -7,6 +7,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -132,22 +133,23 @@ func TestThemeUsesAdaptiveProfessionalPaletteWithoutSelectedBackground(t *testin
 	}
 }
 
-func TestViewShowsUAMBrandingNameAndANSILogo(t *testing.T) {
+func TestViewShowsCompactUAMBrandingAndDashboard(t *testing.T) {
 	oldVersion := version.Override
 	version.Override = "v9.9.9"
 	t.Cleanup(func() { version.Override = oldVersion })
 
 	m := NewWithDeps(nil, nil)
-	m.width = 80
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "clean", Cwd: "/tmp/repo", ProcAlive: adapter.Alive}}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 
 	view := m.View()
 	for _, want := range []string{
-		" _   _  _   __  __",
-		"| | | |/_\\ |  \\/  |",
+		"UAM",
 		"Unified Agent Manager",
 		"v9.9.9",
-		"SELECTED",
+		"SESSIONS",
+		"clean",
+		"RUNNING",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing UAM branding %q:\n%s", want, view)
@@ -156,38 +158,41 @@ func TestViewShowsUAMBrandingNameAndANSILogo(t *testing.T) {
 	if strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") {
 		t.Fatalf("branding should not reintroduce aggregate header stats: %s", view)
 	}
+	if strings.Contains(view, uamANSILogo) {
+		t.Fatalf("responsive dashboard should not spend rows on the legacy ASCII logo: %s", view)
+	}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
+	if compact := m.View(); !strings.Contains(compact, "v9.9.9") {
+		t.Fatalf("compact dashboard should retain the version label: %s", compact)
+	}
 }
 
-func TestViewUsesLightDividerWithoutBorders(t *testing.T) {
+func TestViewUsesBorderedSessionsPanel(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.width = 80
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "clean", Cwd: "/tmp/repo", ProcAlive: adapter.Alive}}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 
 	view := m.View()
-	if strings.ContainsAny(view, "╭╮╰╯│┌┐└┘") {
-		t.Fatalf("view should not render box borders: %s", view)
-	}
-	if !strings.Contains(view, "────") {
-		t.Fatalf("view should keep a light divider between details and sessions: %s", view)
+	for _, want := range []string{"╭─ SESSIONS", "│", "╰─"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view should render a complete sessions panel, missing %q: %s", want, view)
+		}
 	}
 }
 
-func TestViewIsCompactAndBorderlessOnNarrowScreens(t *testing.T) {
+func TestViewIsInformationRichAndBoundedOnNarrowScreens(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.width = 44
 	m.sessions = []adapter.Session{
-		{ID: "1", DisplayName: "active-one", Prompt: "fixing spacing", Cwd: "/tmp/repo", ProcAlive: adapter.Alive},
-		{ID: "2", DisplayName: "old-one", Cwd: "/tmp/old", ProcAlive: adapter.Exited, Closed: true},
+		{ID: "1", AgentType: "codex", DisplayName: "active-one", Prompt: "fixing spacing", Cwd: "/tmp/repo", ProcAlive: adapter.Alive},
+		{ID: "2", AgentType: "claude", DisplayName: "old-one", Cwd: "/tmp/old", ProcAlive: adapter.Exited, Closed: true},
 	}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
 
 	view := m.View()
-	for _, want := range []string{"SELECTED", "RUNNING", "STOPPED", "active-one", "old-one", "fixing spacing"} {
+	for _, want := range []string{"SESSIONS", "RUNNING", "STOPPED", "active-one", "old-one", "fixing spacing", "codex", "claude"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("narrow view missing %q:\n%s", want, view)
 		}
-	}
-	if strings.ContainsAny(view, "╭╮╰╯│┌┐└┘") {
-		t.Fatalf("narrow view should stay borderless:\n%s", view)
 	}
 	if strings.Contains(view, "🚀") || strings.Contains(view, "🔴") || strings.Contains(view, "🟢") {
 		t.Fatalf("view should avoid large emoji on mobile:\n%s", view)

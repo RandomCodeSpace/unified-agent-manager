@@ -17,6 +17,11 @@ UAM does not infer "working," "waiting," or "completed" by scraping provider
 text. The selected row's prompt is kept as its task summary; failure detail is
 added without replacing it.
 
+Every row includes its provider, evidence-based lifecycle label, and age since
+the Managed Session was created. Age is deliberately not an activity indicator:
+live discovery timestamps change on every refresh and cannot prove that an agent
+is busy or idle.
+
 Attaching to Running reconnects to the existing host. Acting on Stopped resumes
 the provider when supported. If that resume can only select the provider's most
 recent conversation and several retained sessions share the Workspace, the TUI
@@ -28,9 +33,9 @@ The layout is derived from the current terminal dimensions on every resize.
 
 | Layout | Geometry | Operations view | Peek view |
 |---|---|---|---|
-| **Wide** | At least 96 columns and 28 rows | Session list and selected-session details are side by side. | Session list remains beside the output tail. |
-| **Standard** | At least 58 columns and 24 rows, but below Wide | Selected-session summary appears above the list. | Output tail replaces the list so it has useful width. |
-| **Compact** | Fewer than 58 columns or fewer than 24 rows | A bounded selected summary and single-line session rows share the screen. | Output tail becomes the primary surface. |
+| **Wide** | At least 96 columns and 28 rows | Full-width list; the selected row expands with task, Workspace, exact ID, and PR. | Session list remains beside the output tail. |
+| **Standard** | At least 58 columns and 24 rows, but below Wide | Full-width list with an expanded selected row. | Output tail replaces the list so it has useful width. |
+| **Compact** | Fewer than 58 columns or fewer than 24 rows | Ordinary rows use one line; the selected row uses a second task line. | Output tail becomes the primary surface. |
 
 The prompt is reserved at the bottom before the remaining rows are allocated.
 The New Session wizard is a primary surface in all layouts, so every step remains
@@ -54,12 +59,29 @@ by terminal-cell width without splitting Unicode text.
 | `Ctrl+X` | Confirm stop **and record removal**; press `r` in the confirmation to restart in place. Use CLI `uam stop <id>` to retain a Stopped row. |
 | `Ctrl+S` | Toggle Workspace grouping. |
 | `Shift+↑` / `Shift+↓` | Reorder within the same lifecycle, pin, and visible Workspace group. |
+| `/` with an empty command | Enter live filtering. Type to narrow, use arrows to move, and press `Esc` to clear. |
 | `?` | Open key help. |
 | `Esc` | Close the current overlay or input; from the base dashboard, quit. |
 
 Inside an attached session, `Ctrl+B d` detaches. A bare left arrow also detaches
 when the provider input is empty and the quick-detach option is enabled. See the
 README for the complete attach-key contract.
+
+## Filtering sessions
+
+Press `/` while the command composer is empty to filter the existing dashboard.
+Matching is case-insensitive across display name, managed-session ID, provider,
+command alias, task, Workspace, and lifecycle label. Space-separated terms must
+all match the same session. The dashboard shows matched/total counts and removes
+empty Workspace sections without changing the stored order.
+
+Filtering is a temporary presentation state. It is not stored, and pin, rename,
+stop, attach, resume, grouping, and reorder actions still use the session's
+provider-and-ID identity. `Esc` clears the query and restores the prior selection
+when it still exists. A slash typed after command text has begun remains literal
+prompt content. Peek replies also keep `/` as literal input rather than entering
+filter mode; an empty Operations dashboard still opens the filter and shows a
+zero-result state.
 
 ## Workspace grouping and parallel sessions
 
@@ -87,7 +109,8 @@ touch-only substitutes for those terminal keys.
 
 1. Keep the terminal narrower than 58 columns or let the keyboard reduce it
    below 24 rows.
-2. Use `Space` to dedicate the primary surface to Peek; use `Esc` to return.
+2. Use the one-line rows and expanded two-line selection to scan sessions; use
+   `Space` to dedicate the primary surface to Peek and `Esc` to return.
 3. Use `e` for the bounded wizard instead of composing a long inline dispatch.
 4. Use `Ctrl+G` with a terminal/editor combination that supports external editor
    handoff when a multi-line prompt is easier outside the small viewport.
