@@ -48,7 +48,7 @@ func TestLayoutClassAndDashboardModeAreDerived(t *testing.T) {
 }
 
 func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
-	sizes := []struct{ width, height int }{{120, 40}, {80, 30}, {44, 20}, {44, 12}}
+	sizes := []struct{ width, height int }{{120, 40}, {80, 30}, {44, 20}, {44, 12}, {44, 10}}
 	modes := []struct {
 		name string
 		set  func(*Model)
@@ -74,15 +74,15 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 	}
 }
 
-func TestWideOperationsAndPeekUseTwoPanes(t *testing.T) {
+func TestWideOperationsUsesFullListAndPeekUsesTwoPanes(t *testing.T) {
 	m := responsiveFixture(120, 40)
 	operations := m.View()
-	if !lineContainsAll(operations, "RUNNING", "SELECTED") {
-		t.Fatalf("wide operations should place list and selected pane side-by-side:\n%s", operations)
+	if !strings.Contains(operations, "╭─ SESSIONS") || strings.Contains(operations, "SELECTED") {
+		t.Fatalf("wide operations should use one full-width sessions panel:\n%s", operations)
 	}
 	m.peekOpen = true
 	peek := m.View()
-	if !lineContainsAll(peek, "RUNNING", "PEEK") {
+	if !lineContainsAll(peek, "SESSIONS", "PEEK") {
 		t.Fatalf("wide peek should retain the list beside the peek pane:\n%s", peek)
 	}
 }
@@ -135,9 +135,9 @@ func TestNoColorResponsiveViewKeepsSemanticGlyphs(t *testing.T) {
 	if strings.Contains(view, "\x1b[") {
 		t.Fatalf("NO_COLOR view contains SGR escapes: %q", view)
 	}
-	for _, glyph := range []string{"▸", "★", "⟳", "◦", "!", "●"} {
-		if !strings.Contains(view, glyph) {
-			t.Fatalf("NO_COLOR view lost semantic glyph %q:\n%s", glyph, view)
+	for _, semantic := range []string{"▸", "★", "RUNNING", "STOPPED", "EXIT 1"} {
+		if !strings.Contains(view, semantic) {
+			t.Fatalf("NO_COLOR view lost semantic marker %q:\n%s", semantic, view)
 		}
 	}
 }
@@ -228,7 +228,7 @@ func TestCompactWizardEveryStepKeepsEssentialAffordances(t *testing.T) {
 func TestPeekSurfacePreservesBlankPhysicalLines(t *testing.T) {
 	m := responsiveFixture(44, 12)
 	m.peekText = "older\nblank-before\n\nblank-after\nnewest"
-	lines := m.peekSurfaceLines(44, 7, LayoutCompact)
+	lines := boundedTailLines(m.peekText, 7, 44)
 	got := strings.Join(lines, "\n")
 	if !strings.Contains(got, "blank-before\n\nblank-after") {
 		t.Fatalf("peek collapsed a physical blank line: %q", got)

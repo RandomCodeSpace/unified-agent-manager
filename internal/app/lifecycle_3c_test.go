@@ -252,9 +252,9 @@ func TestFailureDetailAppendsToPromptWithoutReplacingOrDuplicatingIt(t *testing.
 			}
 
 			m := Model{width: 44, height: 20, sizeKnown: true, sessions: []adapter.Session{sess}}
-			summary := strings.Join(m.selectedSummaryLines(44, LayoutCompact), "\n")
+			summary := m.View()
 			if !strings.Contains(summary, want) || strings.Count(summary, tc.detail) != 1 {
-				t.Fatalf("selected failure summary = %q, want one %q", summary, want)
+				t.Fatalf("selected dashboard summary = %q, want one %q", summary, want)
 			}
 
 			compactRow := renderRow(sess, false, 39, 0, false)
@@ -268,10 +268,11 @@ func TestFailureDetailAppendsToPromptWithoutReplacingOrDuplicatingIt(t *testing.
 				t.Fatalf("bounded task column lost failure suffix: width=%d row=%q", ansi.StringWidth(boundedRow), boundedRow)
 			}
 			m.sessions[0] = sess
-			boundedSummary := strings.Join(m.selectedSummaryLines(44, LayoutCompact), "\n")
-			if !strings.Contains(boundedSummary, " · "+tc.detail) || ansi.StringWidth(strings.Split(boundedSummary, "\n")[1]) > 44 {
+			boundedSummary := m.View()
+			if !strings.Contains(boundedSummary, " · "+tc.detail) {
 				t.Fatalf("bounded selected summary lost failure suffix: %q", boundedSummary)
 			}
+			assertViewGeometry(t, boundedSummary, 44, 20)
 
 			sess.Prompt = "already recorded · " + tc.detail
 			if got := boundedTaskSummary(sess, 44); strings.Count(got, tc.detail) != 1 {

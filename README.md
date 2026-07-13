@@ -122,15 +122,18 @@ uam version
 | `Ctrl+X` | Stop and remove the selected record, or restart it, with confirmation |
 | `Ctrl+S` | Toggle group-by-directory |
 | `Shift+↑/↓` | Reorder rows |
+| `/` with an empty command | Filter by name, provider, task, workspace, ID, or lifecycle |
 | `e` | Open the guided dispatch wizard |
 | `?` | Open help |
 | `Esc` | Close overlays, clear input, or quit |
 
-The dashboard responds to every terminal resize. Wide terminals show sessions
-beside selected details or Peek; standard terminals stack those surfaces; and
-compact or keyboard-constrained mobile terminals give Peek and the New Session
-wizard the full primary surface. See [Responsive TUI design and operations](docs/responsive-tui.md)
-for layout thresholds, mobile guidance, lifecycle markers, and accessibility.
+The dashboard responds to every terminal resize. Operations always use a
+full-width, bordered session list; the selected row expands in place with its
+task, Workspace, identity, and pull request. Wide terminals split only when Peek
+is open. Compact or keyboard-constrained mobile terminals keep ordinary rows to
+one line and expand the selected row to two. See
+[Responsive TUI design and operations](docs/responsive-tui.md) for layout
+thresholds, filtering, mobile guidance, lifecycle labels, and accessibility.
 
 ## Attached sessions
 
