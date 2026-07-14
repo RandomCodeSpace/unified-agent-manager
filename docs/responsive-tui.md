@@ -120,10 +120,10 @@ changes. UAM does not assume a fixed phone aspect ratio.
 
 ## SSH, mouse, and paste
 
-Mouse reporting defaults on for local attachment and off when the environment
-contains `SSH_CONNECTION` or `SSH_TTY`. Override it with
-`UAM_ATTACH_MOUSE=on|off|auto`. Keeping it off over SSH lets the terminal retain
-selection and paste gestures; setting it on restores provider mouse interaction.
+Mouse reporting defaults on for local and SSH attachments so wheel and touch
+gestures reach mouse-aware providers such as OpenCode and OMP. Override it with
+`UAM_ATTACH_MOUSE=on|off|auto`. Set it to `off` when terminal-owned selection or
+right-click paste is more important than provider scrolling.
 
 Bracketed-paste payload is forwarded literally, including control bytes, UTF-8,
 and line endings. UAM cannot initiate paste from a local clipboard. Windows users
@@ -153,10 +153,11 @@ If right-click paste behaves differently through PowerShell SSH:
 
 1. Confirm the SSH command is running inside Windows Terminal rather than the
    legacy console host.
-2. Confirm Windows Terminal has a paste binding for the gesture or key chord.
-3. Keep the remote setting at `UAM_ATTACH_MOUSE=auto`, or set it to `off`.
-4. Test `Ctrl+Shift+V` or `Shift+Insert` to separate a client binding problem
-   from remote input handling.
+2. Confirm Windows Terminal has a keyboard paste binding such as `Ctrl+V`,
+   `Ctrl+Shift+V`, or `Shift+Insert`.
+3. Keep the remote setting at `UAM_ATTACH_MOUSE=auto` for provider scrolling.
+4. If terminal-owned selection or right-click paste is preferred, set the
+   remote setting to `UAM_ATTACH_MOUSE=off` and reattach.
 
 If resuming a stopped row reports ambiguity, read the provider and Workspace in
 the message. Confirm only when selecting the provider's latest conversation is

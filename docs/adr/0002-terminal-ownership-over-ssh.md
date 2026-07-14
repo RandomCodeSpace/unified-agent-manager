@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-12
+- Amended: 2026-07-14 — provider scrolling now takes priority over terminal-owned mouse gestures by default.
 
 ## Context
 
@@ -43,14 +44,16 @@ Non-terminal streams do not receive alternate-screen control sequences.
 
 | Value | Behavior |
 |---|---|
-| `auto` or unset | Enable provider mouse reporting locally. Disable it when `SSH_CONNECTION` or `SSH_TTY` indicates an SSH session. |
+| `auto` or unset | Preserve provider mouse reporting locally and over SSH. |
 | `on` | Preserve provider mouse reporting, including over SSH. |
 | `off` | Suppress provider mouse-reporting modes while attached. |
 
-Invalid values use `auto`. With mouse reporting off, UAM removes only the
-well-known mouse mode parameters from provider control sequences and preserves
-unrelated terminal modes. This makes local selection and terminal-defined paste
-more predictable over SSH without rewriting provider text.
+Invalid values use the default `auto` behavior. Only explicit `off` suppresses
+provider mouse reporting, retaining the former SSH behavior for users who
+prioritize terminal-owned selection and paste. With mouse reporting off, UAM
+removes only the well-known mouse mode parameters from provider control
+sequences and preserves unrelated terminal modes without rewriting provider
+text.
 
 ### Paste is a byte stream
 
@@ -69,11 +72,11 @@ observe the local clipboard, convert a Windows mouse event into remote input, or
 make PowerShell's console host behave like another terminal.
 
 For Windows clients, Windows Terminal is the recommended host for PowerShell
-SSH. Configure a local paste binding such as right-click, `Ctrl+Shift+V`, or
+SSH. Configure a keyboard paste binding such as `Ctrl+V`, `Ctrl+Shift+V`, or
 `Shift+Insert`; the exact binding belongs to Windows Terminal. Once it sends the
-text, UAM forwards it unchanged. If selection or right-click is captured by a
-remote provider, keep `UAM_ATTACH_MOUSE=auto` or set it to `off` on the remote
-host.
+text, UAM forwards it unchanged. Provider mouse reporting is preserved by
+default so remote providers can scroll. Set `UAM_ATTACH_MOUSE=off` on the remote
+host when terminal-owned selection or right-click paste is more important.
 
 Windows remains an SSH client in this design. UAM is not a native Windows
 process.
@@ -92,10 +95,11 @@ never sends the paste action.
 Rejected because it destroys user-visible shell history and resets unrelated
 terminal preferences. Targeted cleanup is sufficient to re-establish ownership.
 
-### Always enable provider mouse reporting
+### Disable provider mouse reporting automatically over SSH
 
-Rejected because many SSH terminal workflows depend on the local terminal for
-selection and paste. Users can still opt in with `UAM_ATTACH_MOUSE=on`.
+Rejected because it prevents wheel and touch scrolling in providers such as
+OpenCode and OMP. Users who prioritize terminal-owned selection or paste can
+still opt out with `UAM_ATTACH_MOUSE=off`.
 
 ### Strip all private terminal modes
 
@@ -107,8 +111,8 @@ mouse policy.
 
 - Returning from attach or quitting the dashboard leaves a predictable shell
   surface without erasing scrollback.
-- SSH defaults favor terminal selection and paste; local use retains provider
-  mouse interaction.
+- SSH defaults favor provider mouse interaction; terminal selection and paste
+  may require keyboard bindings or explicit `UAM_ATTACH_MOUSE=off`.
 - Pasted control bytes cannot accidentally trigger UAM detach or suppression
   shortcuts.
 - Terminal-client configuration remains necessary when the client does not send

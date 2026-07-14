@@ -7,6 +7,7 @@ coverage.*
 .idea/
 .vscode/
 /.claude/worktrees/
+/.worktrees/
 /CLAUDE.md
 /PLAN.md
 graphify_out/

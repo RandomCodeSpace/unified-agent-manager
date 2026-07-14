@@ -156,8 +156,7 @@ agent's PTY:
 
 `UAM_ATTACH_MOUSE` controls whether provider mouse reporting is preserved:
 
-- `auto` (the default) enables it locally and disables it when `SSH_CONNECTION`
-  or `SSH_TTY` indicates an SSH session
+- `auto` (the default) preserves provider mouse reporting locally and over SSH
 - `on` preserves provider mouse reporting everywhere
 - `off` suppresses provider mouse modes so the terminal keeps selection and
   paste gestures
@@ -166,10 +165,11 @@ Bracketed-paste payload is forwarded byte-for-byte. Control bytes inside a paste
 do not trigger UAM's attach shortcuts. UAM cannot access the client clipboard or
 turn an unsent mouse gesture into remote input.
 
-For PowerShell SSH, use Windows Terminal and configure a Windows Terminal paste
-binding such as right-click, `Ctrl+Shift+V`, or `Shift+Insert`. Keep
-`UAM_ATTACH_MOUSE=auto` (or set it to `off`) on the remote host if provider mouse
-tracking captures selection or right-click. Native Windows remains unsupported;
+For PowerShell SSH, use Windows Terminal and configure a keyboard paste binding
+such as `Ctrl+V`, `Ctrl+Shift+V`, or `Shift+Insert`. Provider mouse reporting is
+enabled by default so OpenCode and other mouse-aware providers can scroll. Set
+`UAM_ATTACH_MOUSE=off` on the remote host when terminal-owned selection or
+right-click paste is more important. Native Windows remains unsupported;
 Windows is the SSH client in this setup.
 
 In the TUI, `Ctrl+X` followed by `y` stops the process **and removes its stored
