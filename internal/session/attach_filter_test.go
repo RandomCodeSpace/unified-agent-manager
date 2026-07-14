@@ -30,9 +30,10 @@ func TestAttachMousePolicy(t *testing.T) {
 		want                               bool
 	}{
 		{"unset local", "", "", "", true}, {"auto local", "auto", "", "", true},
-		{"unset ssh connection", "", "client", "", false}, {"auto ssh tty", "auto", "", "/dev/pts/1", false},
+		{"unset ssh connection", "", "client", "", true}, {"auto ssh tty", "auto", "", "/dev/pts/1", true},
 		{"on ssh", "on", "client", "", true}, {"off local", "off", "", "", false},
-		{"invalid local", "maybe", "", "", true}, {"invalid ssh", "maybe", "client", "", false},
+		{"off ssh", "off", "client", "/dev/pts/1", false},
+		{"invalid local", "maybe", "", "", true}, {"invalid ssh", "maybe", "client", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -57,6 +58,19 @@ func filterHostOutput(t *testing.T, mouse bool, chunks ...[]byte) []byte {
 		t.Fatal(err)
 	}
 	return out.Bytes()
+}
+
+func TestAttachDefaultSSHPreservesOpenCodeMouseModes(t *testing.T) {
+	env := map[string]string{
+		AttachMouseEnv:   "",
+		"SSH_CONNECTION": "client 123 server 22",
+		"SSH_TTY":        "/dev/pts/1",
+	}
+	mouse := attachMouseEnabled(func(key string) string { return env[key] })
+	input := []byte("\x1b[?1000;1002;1003;1006h")
+	if got := filterHostOutput(t, mouse, input); !bytes.Equal(got, input) {
+		t.Fatalf("default SSH attach changed OpenCode mouse modes: got %q, want %q", got, input)
+	}
 }
 
 func TestAttachOutputFilterOwnedModes(t *testing.T) {

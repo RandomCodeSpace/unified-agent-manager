@@ -27,20 +27,11 @@ const ctrlC = 0x03
 const AttachQuietEnv = "UAM_ATTACH_QUIET"
 const AttachMouseEnv = "UAM_ATTACH_MOUSE"
 
-// attachMouseEnabled resolves the per-viewer mouse policy. Local attaches keep
-// provider mouse support by default; SSH attaches leave mouse gestures to the
-// local terminal so selection and paste continue to work.
+// attachMouseEnabled resolves the per-viewer mouse policy. Providers keep mouse
+// support locally and over SSH by default so wheel and touch scrolling work.
+// Explicit off leaves mouse gestures under terminal control for selection/paste.
 func attachMouseEnabled(getenv func(string) string) bool {
-	switch getenv(AttachMouseEnv) {
-	case "on":
-		return true
-	case "off":
-		return false
-	case "", "auto":
-		return getenv("SSH_CONNECTION") == "" && getenv("SSH_TTY") == ""
-	default:
-		return getenv("SSH_CONNECTION") == "" && getenv("SSH_TTY") == ""
-	}
+	return getenv(AttachMouseEnv) != "off"
 }
 
 type attachOptions struct {
