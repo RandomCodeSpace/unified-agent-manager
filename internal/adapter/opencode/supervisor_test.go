@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
+	"github.com/creack/pty"
 )
 
 const testSupervisorPassword = "supervisor-password-must-never-leak"
@@ -46,6 +48,7 @@ type fakeOpenCodeConfig struct {
 	AttachSignal      bool            `json:"attach_signal"`
 	AttachDelayMillis int             `json:"attach_delay_millis"`
 	ReadStdin         bool            `json:"read_stdin"`
+	ReadStdinLine     bool            `json:"read_stdin_line"`
 	FailServeAttempts int             `json:"fail_serve_attempts"`
 	BindCollisionOnce bool            `json:"bind_collision_once"`
 	HealthNeverReady  bool            `json:"health_never_ready"`
@@ -467,6 +470,61 @@ func TestSupervisorPromptOrder(t *testing.T) {
 		t.Fatalf("attach input = %#v, want %q exactly once", attach, want)
 	}
 	assertFakeChildrenReaped(t, fixture)
+}
+
+func TestSupervisorLifecycleAttachForegroundTTY(t *testing.T) {
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
+		CreatedID:     "ses_tty123",
+		ReadStdinLine: true,
+	})
+	command := exec.Command(os.Args[0], append([]string{"__supervisor_test"}, fixture.commandArgs()...)...)
+	command.Env = os.Environ()
+	terminal, err := pty.StartWithSize(command, &pty.Winsize{Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	waited := false
+	t.Cleanup(func() {
+		if waited {
+			_ = terminal.Close()
+			killFakeProcesses(fixture.records(t))
+			return
+		}
+		_ = command.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			_ = command.Process.Kill()
+			<-done
+		}
+		_ = terminal.Close()
+		killFakeProcesses(fixture.records(t))
+	})
+
+	awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
+	const want = "prompt from controlling tty\n"
+	if _, err := io.WriteString(terminal, want); err != nil {
+		t.Fatal(err)
+	}
+	attach := awaitFakeRecord(t, fixture, "attach", time.Second)
+	if attach.Input != want {
+		t.Fatalf("attach input = %q, want %q", attach.Input, want)
+	}
+	if attach.PGID != attach.PID {
+		t.Fatalf("attach process group = %d, want isolated foreground group %d", attach.PGID, attach.PID)
+	}
+	select {
+	case err := <-done:
+		waited = true
+		if err != nil {
+			t.Fatalf("PTY supervisor exit: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("PTY supervisor did not exit after attach read the prompt")
+	}
+	assertLifecycleClean(t, fixture, nil)
 }
 
 func TestSupervisorResumeStdinAddsNoPromptBytes(t *testing.T) {
@@ -1461,11 +1519,16 @@ func fakeOpenCodeAttach(args []string) int {
 		time.Sleep(time.Duration(config.AttachDelayMillis) * time.Millisecond)
 	}
 	var input []byte
-	if config.ReadStdin {
+	if config.ReadStdinLine {
+		reader := bufio.NewReader(os.Stdin)
+		line, readErr := reader.ReadString('\n')
+		input = []byte(line)
+		err = readErr
+	} else if config.ReadStdin {
 		input, err = io.ReadAll(os.Stdin)
-		if err != nil {
-			return 98
-		}
+	}
+	if err != nil {
+		return 98
 	}
 	record := fakeChildCredentialRecord("attach", args)
 	record.Input = string(input)

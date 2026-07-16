@@ -23,6 +23,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+	"github.com/charmbracelet/x/term"
 )
 
 const (
@@ -45,6 +46,10 @@ type supervisorOptions struct {
 	ProviderSessionID string
 	Yolo              bool
 	RuntimeDir        string
+}
+
+func validOpenCodeSessionID(id string) bool {
+	return providerIDRE.MatchString(id) && store.ValidProviderSessionID(id)
 }
 
 type ExitError struct {
@@ -114,7 +119,7 @@ func parseSupervisorOptions(args []string) (supervisorOptions, error) {
 		return supervisorOptions{}, err
 	}
 	providerSessionID := values["session"].value
-	if providerSessionID != "" && (!providerIDRE.MatchString(providerSessionID) || !store.ValidProviderSessionID(providerSessionID)) {
+	if providerSessionID != "" && !validOpenCodeSessionID(providerSessionID) {
 		return supervisorOptions{}, fmt.Errorf("invalid OpenCode provider session ID")
 	}
 	yolo, err := parseSupervisorMode(values["mode"].value)
@@ -204,6 +209,17 @@ func startManagedProcess(cmd *exec.Cmd) (*managedProcess, error) {
 		close(process.done)
 	}()
 	return process, nil
+}
+
+func startAttachProcess(cmd *exec.Cmd, stdin *os.File) (*managedProcess, error) {
+	if stdin != nil && term.IsTerminal(stdin.Fd()) {
+		if cmd.SysProcAttr == nil {
+			cmd.SysProcAttr = &syscall.SysProcAttr{}
+		}
+		cmd.SysProcAttr.Foreground = true
+		cmd.SysProcAttr.Ctty = int(stdin.Fd())
+	}
+	return startManagedProcess(cmd)
 }
 
 func (p *managedProcess) waitError() error {
@@ -306,7 +322,7 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	attachCommand.Stdin = os.Stdin
 	attachCommand.Stdout = os.Stdout
 	attachCommand.Stderr = os.Stderr
-	attach, err = startManagedProcess(attachCommand)
+	attach, err = startAttachProcess(attachCommand, os.Stdin)
 	if err != nil {
 		return sanitizedSupervisorError("start OpenCode attach", err, password)
 	}
@@ -501,7 +517,7 @@ func selectRootSession(ctx context.Context, opts supervisorOptions, client *apiC
 	if err != nil {
 		return sessionInfo{}, err
 	}
-	if !providerIDRE.MatchString(root.ID) || !store.ValidProviderSessionID(root.ID) {
+	if !validOpenCodeSessionID(root.ID) {
 		return sessionInfo{}, fmt.Errorf("OpenCode returned an invalid session ID")
 	}
 	if opts.ProviderSessionID != "" && root.ID != opts.ProviderSessionID {
@@ -728,7 +744,7 @@ func (s *supervisorEventState) handleSessionCreated(properties json.RawMessage) 
 		return nil
 	}
 	info := created.Info
-	if created.SessionID == "" || created.SessionID != info.ID || !providerIDRE.MatchString(info.ID) || !store.ValidProviderSessionID(info.ID) || info.Directory != s.opts.Directory {
+	if created.SessionID == "" || created.SessionID != info.ID || !validOpenCodeSessionID(info.ID) || info.Directory != s.opts.Directory {
 		return nil
 	}
 	if info.ParentID != "" {
@@ -766,7 +782,7 @@ func (s *supervisorEventState) handlePermissionAsked(ctx context.Context, client
 	if err := decodeStrictJSON(properties, &asked); err != nil {
 		return nil
 	}
-	if !permissionIDRE.MatchString(asked.ID) || !store.ValidProviderSessionID(asked.ID) || !providerIDRE.MatchString(asked.SessionID) || !store.ValidProviderSessionID(asked.SessionID) {
+	if !permissionIDRE.MatchString(asked.ID) || !store.ValidProviderSessionID(asked.ID) || !validOpenCodeSessionID(asked.SessionID) {
 		return nil
 	}
 	root, ok := s.rootFor[asked.SessionID]
