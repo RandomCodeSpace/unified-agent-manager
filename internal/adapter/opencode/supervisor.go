@@ -332,8 +332,14 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := requireActiveStartup(startupCtx); err != nil {
+		return err
+	}
 	if err := session.WriteProviderIdentity(opts.RuntimeDir, opts.SessionName, root.ID); err != nil {
 		return fmt.Errorf("write OpenCode provider identity: %w", err)
+	}
+	if err := requireActiveStartup(startupCtx); err != nil {
+		return err
 	}
 	eventState := newSupervisorEventState(opts, root.ID, root.Time.Updated)
 
@@ -343,9 +349,17 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	attachCommand.Stdin = os.Stdin
 	attachCommand.Stdout = os.Stdout
 	attachCommand.Stderr = os.Stderr
+	if err := requireActiveStartup(startupCtx); err != nil {
+		return err
+	}
 	attach, err = startAttachProcess(attachCommand, os.Stdin)
 	if err != nil {
 		return sanitizedSupervisorError("start OpenCode attach", err, password)
+	}
+	if err := requireActiveStartup(startupCtx); err != nil {
+		terminateAndReap(attach)
+		attach = nil
+		return err
 	}
 	cancelStartup()
 
@@ -368,7 +382,7 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 			if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
 				return outcome
 			}
-			if err := eventState.recoverAfterReconnect(ctx, server.client, notice.disconnectedAt); err != nil {
+			if err := eventState.recoverAfterReconnect(ctx, server.client, notice.recoverySince); err != nil {
 				return err
 			}
 		case err := <-streamDone:
@@ -688,13 +702,17 @@ func reconnectBackoff(attempt int) time.Duration {
 	return delay
 }
 
+func requireActiveStartup(ctx context.Context) error {
+	return ctx.Err()
+}
+
 type reconnectNotice struct {
-	disconnectedAt time.Time
+	recoverySince time.Time
 }
 
 func subscribeWithReconnect(ctx context.Context, client *apiClient, initialReady chan<- struct{}, reconnects chan<- reconnectNotice, events chan<- eventEnvelope) error {
 	readySent := false
-	var disconnectedAt time.Time
+	var connectedAt time.Time
 	for attempt := 0; ; attempt++ {
 		ready := make(chan struct{})
 		done := make(chan error, 1)
@@ -703,22 +721,23 @@ func subscribeWithReconnect(ctx context.Context, client *apiClient, initialReady
 		}()
 		select {
 		case <-ready:
+			now := time.Now()
 			if !readySent {
 				close(initialReady)
 				readySent = true
 			} else {
 				select {
-				case reconnects <- reconnectNotice{disconnectedAt: disconnectedAt}:
+				case reconnects <- reconnectNotice{recoverySince: connectedAt}:
 				default:
 				}
 			}
+			connectedAt = now
 			if err := <-done; ctx.Err() != nil {
 				return ctx.Err()
 			} else if err == nil {
 				return fmt.Errorf("OpenCode event stream ended without an error")
 			} else {
 				warnOpenCode("OpenCode event stream interrupted; reconnecting: %s", client.safeText(err.Error()))
-				disconnectedAt = time.Now()
 			}
 		case err := <-done:
 			if ctx.Err() != nil {
@@ -830,8 +849,8 @@ func (s *supervisorEventState) acceptRoot(info sessionInfo) error {
 	return nil
 }
 
-func (s *supervisorEventState) recoverAfterReconnect(ctx context.Context, client *apiClient, disconnectedAt time.Time) error {
-	if s.activeUpdated <= 0 || disconnectedAt.IsZero() {
+func (s *supervisorEventState) recoverAfterReconnect(ctx context.Context, client *apiClient, recoverySince time.Time) error {
+	if s.activeUpdated <= 0 || recoverySince.IsZero() {
 		warnOpenCode("OpenCode event recovery lacks a verified time boundary; continuing with %s", s.activeRoot)
 		return nil
 	}
@@ -844,7 +863,7 @@ func (s *supervisorEventState) recoverAfterReconnect(ctx context.Context, client
 	}
 	candidates := make([]sessionInfo, 0, 1)
 	for _, info := range sessions {
-		if info.ParentID != "" || info.Directory != s.opts.Directory || !validOpenCodeSessionID(info.ID) || info.Time.Created <= 0 || info.Time.Updated <= s.activeUpdated || info.Time.Created < disconnectedAt.UnixMilli() {
+		if info.ParentID != "" || info.Directory != s.opts.Directory || !validOpenCodeSessionID(info.ID) || info.Time.Created <= 0 || info.Time.Updated <= s.activeUpdated || info.Time.Created <= recoverySince.UnixMilli() {
 			continue
 		}
 		if _, accepted := s.acceptedRoots[info.ID]; accepted {

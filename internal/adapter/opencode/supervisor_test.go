@@ -69,6 +69,8 @@ type fakeOpenCodeConfig struct {
 	StallEvent          bool            `json:"stall_event"`
 	StallCreate         bool            `json:"stall_create"`
 	StallGet            bool            `json:"stall_get"`
+	GapSession          fakeSession     `json:"gap_session"`
+	DisconnectDelayMS   int             `json:"disconnect_delay_ms"`
 }
 
 type fakeSession struct {
@@ -1139,17 +1141,17 @@ func TestSupervisorEventReconnect(t *testing.T) {
 
 func TestSupervisorReplayGapRecovery(t *testing.T) {
 	directory := filepath.Clean(t.TempDir())
-	gapRootCreated := time.Now().Add(10 * time.Second).UnixMilli()
 	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
 		Directory:         directory,
 		CreatedID:         "ses_root_before_gap123",
 		CreatedUpdated:    100,
 		DisconnectSSE:     true,
+		DisconnectDelayMS: 75,
 		AttachDelayMillis: 260,
 		ListSessions: []fakeSession{
-			{ID: "ses_root_after_gap123", Directory: directory, Created: gapRootCreated, Updated: gapRootCreated},
 			{ID: "ses_root_before_gap123", Directory: directory, Created: 100, Updated: 100},
 		},
+		GapSession: fakeSession{ID: "ses_root_after_gap123", Directory: directory},
 	})
 	foreignName := "uam-opencode-feedface"
 	if err := session.WriteProviderIdentity(fixture.options.RuntimeDir, foreignName, "ses_foreign123"); err != nil {
@@ -1263,7 +1265,7 @@ func TestSupervisorPermissionIgnoredEventsWarnSafely(t *testing.T) {
 		name  string
 		event eventEnvelope
 	}{
-		{name: "malformed", event: eventEnvelope{Type: "permission.asked", Properties: json.RawMessage(`{"id":"bad\u001b[31m/id","sessionID":"ses_root123"}`)}},
+		{name: "malformed", event: eventEnvelope{Type: "permission.asked", Properties: json.RawMessage(`{`)}},
 		{name: "foreign", event: fakeEvent("permission.asked", map[string]any{"id": "per_foreign123", "sessionID": "ses_foreign123"})},
 		{name: "duplicate", event: fakeEvent("permission.asked", map[string]any{"id": "per_duplicate123", "sessionID": "ses_root123"})},
 	} {
@@ -1401,6 +1403,14 @@ func TestSupervisorLifecycleStartup(t *testing.T) {
 		}
 		assertLifecycleClean(t, fixture, err)
 	})
+}
+
+func TestSupervisorStartupCheckpointRejectsExpiredDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := requireActiveStartup(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("requireActiveStartup() = %v, want context.Canceled", err)
+	}
 }
 
 func TestSupervisorLifecycleAttachAndServerExit(t *testing.T) {
@@ -1982,6 +1992,9 @@ func fakeOpenCodeServe(args []string) int {
 	}
 	password := os.Getenv("OPENCODE_SERVER_PASSWORD")
 	username := os.Getenv("OPENCODE_SERVER_USERNAME")
+	var eventStateMu sync.Mutex
+	eventConnections := 0
+	gapSession := config.GapSession
 	if config.NoisyServerLog {
 		_, _ = fmt.Fprint(os.Stderr, strings.Repeat("x", (64<<10)+8192), password)
 	}
@@ -2016,6 +2029,10 @@ func fakeOpenCodeServe(args []string) int {
 			_, _ = io.WriteString(w, `{"healthy":true,"version":"1.18.1"}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/event":
 			_ = writeFakeRecord(fakeOpenCodeRecord{Kind: "event"})
+			eventStateMu.Lock()
+			eventConnections++
+			connectionNumber := eventConnections
+			eventStateMu.Unlock()
 			if config.StallEvent {
 				<-request.Context().Done()
 				return
@@ -2035,7 +2052,19 @@ func fakeOpenCodeServe(args []string) int {
 					flusher.Flush()
 				}
 			}
-			if config.DisconnectSSE {
+			shouldDisconnect := config.DisconnectSSE && (config.GapSession.ID == "" || connectionNumber == 1)
+			if shouldDisconnect {
+				if connectionNumber == 1 && gapSession.ID != "" {
+					time.Sleep(50 * time.Millisecond)
+					eventStateMu.Lock()
+					now := time.Now().UnixMilli()
+					gapSession.Created = now
+					gapSession.Updated = now
+					eventStateMu.Unlock()
+					if config.DisconnectDelayMS > 0 {
+						time.Sleep(time.Duration(config.DisconnectDelayMS) * time.Millisecond)
+					}
+				}
 				return
 			}
 			<-request.Context().Done()
@@ -2062,7 +2091,13 @@ func fakeOpenCodeServe(args []string) int {
 		case request.Method == http.MethodGet && request.URL.Path == "/session":
 			_ = writeFakeRecord(fakeOpenCodeRecord{Kind: "list"})
 			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(config.ListSessions); err != nil {
+			sessions := append([]fakeSession(nil), config.ListSessions...)
+			eventStateMu.Lock()
+			if gapSession.ID != "" && gapSession.Created > 0 {
+				sessions = append(sessions, gapSession)
+			}
+			eventStateMu.Unlock()
+			if err := json.NewEncoder(w).Encode(sessions); err != nil {
 				return
 			}
 		case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/session/"):

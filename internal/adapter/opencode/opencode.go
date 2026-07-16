@@ -44,7 +44,10 @@ func prepareLaunch(ctx adapter.Context, req adapter.ResumeRequest, _, sessionNam
 		return adapter.LaunchPreparation{}, fmt.Errorf("make uam executable absolute: %w", err)
 	}
 
-	runtimeDir := session.DefaultDir()
+	runtimeDir, err := openCodeRuntimeDir()
+	if err != nil {
+		return adapter.LaunchPreparation{}, err
+	}
 	identityPath, err := session.ProviderIdentityPath(runtimeDir, sessionName)
 	if err != nil {
 		return adapter.LaunchPreparation{}, err
@@ -80,7 +83,19 @@ func prepareLaunch(ctx adapter.Context, req adapter.ResumeRequest, _, sessionNam
 }
 
 func liveProviderSessionID(sessionName string) (string, error) {
-	return session.ReadProviderIdentity(session.DefaultDir(), sessionName)
+	runtimeDir, err := openCodeRuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	return session.ReadProviderIdentity(runtimeDir, sessionName)
+}
+
+func openCodeRuntimeDir() (string, error) {
+	dir, err := filepath.Abs(session.DefaultDir())
+	if err != nil {
+		return "", fmt.Errorf("make OpenCode runtime directory absolute: %w", err)
+	}
+	return filepath.Clean(dir), nil
 }
 
 func resumeKind(req adapter.ResumeRequest) adapter.ResumeKind {

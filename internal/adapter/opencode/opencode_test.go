@@ -162,6 +162,57 @@ func TestOpenCodePrepareLaunchBuildsValidatedAliasCommand(t *testing.T) {
 	}
 }
 
+func TestOpenCodePrepareLaunchCanonicalizesRelativeRuntimeDirectory(t *testing.T) {
+	baseDir := t.TempDir()
+	oldDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(baseDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDirectory) })
+	if err := os.Mkdir("relative-runtime", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	providerPath := writeVersionedOpenCode(t, "1.18.1")
+	t.Setenv("PATH", filepath.Dir(providerPath))
+	t.Setenv("UAM_SESSION_DIR", "relative-runtime")
+	backend := &adaptertest.Backend{}
+	workspace := filepath.Clean(t.TempDir())
+	name := "uam-opencode-deadbeef"
+	agent := New(backend).(*adapter.Agent)
+	if _, err := agent.Resume(context.Background(), adapter.ResumeRequest{
+		ID: "deadbeef", Cwd: workspace, Mode: "safe", SessionName: name,
+	}); err != nil {
+		t.Fatalf("Resume(): %v", err)
+	}
+	calls := backend.CallsOf("create")
+	if len(calls) != 1 {
+		t.Fatalf("create calls = %d, want 1", len(calls))
+	}
+	wantRuntimeDir := filepath.Join(baseDir, "relative-runtime")
+	wantIdentity, err := session.ProviderIdentityPath(wantRuntimeDir, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := flagValue(calls[0].Command, "--runtime-dir"); got != wantRuntimeDir {
+		t.Fatalf("supervisor runtime dir = %q, want %q", got, wantRuntimeDir)
+	}
+	if got := calls[0].Env[session.ProviderIdentityFileEnv]; got != wantIdentity {
+		t.Fatalf("host identity handoff = %q, want %q", got, wantIdentity)
+	}
+}
+
+func flagValue(args []string, name string) string {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == name {
+			return args[index+1]
+		}
+	}
+	return ""
+}
+
 func TestOpenCodeLiveProviderSessionIDReadsRuntimeIdentity(t *testing.T) {
 	runtimeDir := secureOpenCodeRuntimeDir(t)
 	t.Setenv("UAM_SESSION_DIR", runtimeDir)
