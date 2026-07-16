@@ -276,6 +276,67 @@ func TestImmediateExitRecordsProviderIdentityHandoff(t *testing.T) {
 	}
 }
 
+func TestImmediateExitRecordsProviderIdentityHandoffWithRelativeRuntimeDir(t *testing.T) {
+	root, err := os.MkdirTemp("", "uam-rel-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	originalCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalCwd); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("UAM_CONFIG_DIR", filepath.Join(root, "cfg"))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Dir: "runtime", Exe: exe}
+	t.Cleanup(func() { _ = c.KillAll(context.Background()) })
+
+	name := "uam-opencode-a1b2c3d5"
+	st, err := store.Open(store.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession("opencode:a1b2c3d5", store.SessionRecord{ID: "a1b2c3d5", Agent: "opencode", Name: "n", SessionName: name, Status: store.StatusActive})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	absoluteRuntimeDir := filepath.Join(root, c.Dir)
+	handoff, err := ProviderIdentityPath(absoluteRuntimeDir, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := `umask 077; printf '{"session_name":"` + name + `","provider_session_id":"ses_relative123"}' > "$` + ProviderIdentityFileEnv + `"; exit 0`
+	if err := c.CreateSession(context.Background(), name, t.TempDir(), map[string]string{ProviderIdentityFileEnv: handoff}, []string{"/bin/sh", "-c", command}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "relative runtime identity exit persisted", func() bool {
+		cfg, err := st.Load()
+		if err != nil {
+			return false
+		}
+		rec := cfg.Sessions["opencode:a1b2c3d5"]
+		return rec.LastExitCode != nil && *rec.LastExitCode == 0 && rec.ProviderSessionID == "ses_relative123"
+	})
+	for _, path := range []string{statePath(absoluteRuntimeDir, name), SocketPath(absoluteRuntimeDir, name), handoff} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("runtime file not removed after exit: %s: %v", path, err)
+		}
+	}
+}
+
 func TestProviderIdentityStaleHostCleanupRemovesAllRuntimeFiles(t *testing.T) {
 	c := newTestClient(t)
 	name := "uam-opencode-aabbccdd"

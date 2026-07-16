@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -74,10 +75,14 @@ func (c *Client) CreateSession(ctx context.Context, name, cwd string, env map[st
 	if err != nil {
 		return err
 	}
-	if err := EnsureDir(c.Dir); err != nil {
+	dir, err := filepath.Abs(c.Dir)
+	if err != nil {
+		return fmt.Errorf("resolve session runtime directory: %w", err)
+	}
+	if err := EnsureDir(dir); err != nil {
 		return err
 	}
-	args := []string{"__host", "--dir", c.Dir, "--name", name}
+	args := []string{"__host", "--dir", dir, "--name", name}
 	if cwd != "" {
 		args = append(args, "--cwd", cwd)
 	}
