@@ -201,8 +201,11 @@ func TestImmediateExitRecordsProviderIdentityHandoff(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	handoff := filepath.Join(t.TempDir(), "identity.json")
-	command := `umask 077; printf '{"provider_session_id":"ses_fast123"}' > "$` + ProviderIdentityFileEnv + `"; exit 0`
+	handoff, err := ProviderIdentityPath(c.Dir, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := `umask 077; printf '{"session_name":"` + name + `","provider_session_id":"ses_fast123"}' > "$` + ProviderIdentityFileEnv + `"; exit 0`
 	if err := c.CreateSession(context.Background(), name, t.TempDir(), map[string]string{ProviderIdentityFileEnv: handoff}, []string{"/bin/sh", "-c", command}); err != nil {
 		t.Fatal(err)
 	}
@@ -214,6 +217,36 @@ func TestImmediateExitRecordsProviderIdentityHandoff(t *testing.T) {
 		rec := cfg.Sessions["opencode:a1b2c3d4"]
 		return rec.LastExitCode != nil && *rec.LastExitCode == 0 && rec.ProviderSessionID == "ses_fast123"
 	})
+	for _, path := range []string{statePath(c.Dir, name), SocketPath(c.Dir, name), handoff} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("runtime file not removed after exit: %s: %v", path, err)
+		}
+	}
+}
+
+func TestProviderIdentityStaleHostCleanupRemovesAllRuntimeFiles(t *testing.T) {
+	c := newTestClient(t)
+	name := "uam-opencode-aabbccdd"
+	if err := writeState(c.Dir, State{Name: name, HostPID: 1 << 28, ChildPID: 1 << 28, CreatedUnix: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(SocketPath(c.Dir, name), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteProviderIdentity(c.Dir, name, "ses_stale"); err != nil {
+		t.Fatal(err)
+	}
+	providerPath := providerIdentityTestPath(t, c.Dir, name)
+
+	infos, err := c.List(context.Background())
+	if err != nil || len(infos) != 0 {
+		t.Fatalf("List stale session = (%+v, %v), want empty success", infos, err)
+	}
+	for _, path := range []string{statePath(c.Dir, name), SocketPath(c.Dir, name), providerPath} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("stale runtime file not removed: %s: %v", path, err)
+		}
+	}
 }
 
 func TestNaturalAgentExitBeforeRecordPersistenceEventuallyRecordsExit(t *testing.T) {

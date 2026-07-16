@@ -2,11 +2,9 @@ package session
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -23,7 +21,6 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/vterm"
-	"golang.org/x/sys/unix"
 )
 
 // ProviderIdentityFileEnv names the provider-neutral identity handoff read by
@@ -533,14 +530,14 @@ func (h *host) shutdown(exitCode int) {
 		cl.drop()
 	}
 	h.mu.Unlock()
+	providerID := readProviderIdentityHandoff(h.dir, h.name, h.providerIdentityFile)
 	if err := removeSessionFiles(h.dir, h.name); err != nil {
 		log.Warn("remove session files failed", "session", h.name, "error", err)
 	}
-	h.recordExit(exitCode)
+	h.recordExit(exitCode, providerID)
 }
 
-func (h *host) recordExit(exitCode int) {
-	providerID := readProviderIdentityHandoff(h.providerIdentityFile)
+func (h *host) recordExit(exitCode int, providerID string) {
 	deadline := time.Now().Add(markClosedRetryWindow)
 	delay := markClosedRetryBase
 	var lastErr error
@@ -577,31 +574,22 @@ func envValue(envs []string, key string) string {
 	return ""
 }
 
-func readProviderIdentityHandoff(path string) string {
+func readProviderIdentityHandoff(dir, name, path string) string {
 	if path == "" {
 		return ""
 	}
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0) // #nosec G304 -- trusted launch metadata, opened no-follow.
+	canonicalPath, err := ProviderIdentityPath(dir, name)
 	if err != nil {
 		return ""
 	}
-	file := os.NewFile(uintptr(fd), path)
-	defer func() { _ = file.Close() }()
-	var st unix.Stat_t
-	if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || os.FileMode(st.Mode).Perm() != 0o600 || int(st.Uid) != os.Getuid() {
+	if path != canonicalPath {
 		return ""
 	}
-	data, err := io.ReadAll(io.LimitReader(file, 1025))
-	if err != nil || len(data) > 1024 {
+	providerID, err := ReadProviderIdentity(dir, name)
+	if err != nil {
 		return ""
 	}
-	var payload struct {
-		ProviderSessionID string `json:"provider_session_id"`
-	}
-	if json.Unmarshal(data, &payload) != nil || !store.ValidProviderSessionID(payload.ProviderSessionID) {
-		return ""
-	}
-	return payload.ProviderSessionID
+	return providerID
 }
 
 func (h *host) logMarkClosedFailure(err error) {

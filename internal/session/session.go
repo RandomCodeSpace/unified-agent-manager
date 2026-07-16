@@ -209,7 +209,11 @@ func removeSessionFiles(dir, name string) error {
 	if err := VerifyDir(dir); err != nil {
 		return err
 	}
-	for _, path := range []string{statePath(dir, name), SocketPath(dir, name)} {
+	providerIdentityPath, err := ProviderIdentityPath(dir, name)
+	if err != nil {
+		return err
+	}
+	for _, path := range []string{statePath(dir, name), SocketPath(dir, name), providerIdentityPath} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
