@@ -1,7 +1,7 @@
 # Native OpenCode session integration
 
 Date: 2026-07-15
-Status: Approved architecture; pending written-spec review
+Status: Approved
 
 ## Context
 
@@ -107,8 +107,8 @@ Startup has a five-second whole-pass deadline.
 
 For a new UAM dispatch, the supervisor calls stable `POST /session`, scoped to
 the requested working directory. The request carries a UAM-identifying title
-or metadata and mode-appropriate permission rules. The returned root session
-ID becomes authoritative before the attach client starts.
+or metadata. The returned root session ID becomes authoritative before the
+attach client starts.
 
 For resume, the retained `ProviderSessionID` is validated locally and then
 confirmed through `GET /session/:id`. A missing exact session is an actionable
@@ -148,6 +148,22 @@ backoff. The last verified ID remains authoritative. Recovery may query root
 sessions updated through the dedicated server, but it may advance the identity
 only when exactly one unambiguous newer root exists; otherwise it warns and
 keeps the last verified ID.
+
+### Permission behavior
+
+Safe mode leaves permission events untouched, so the attached TUI retains
+OpenCode's normal permission prompts.
+
+Yolo mode mirrors OpenCode v1.18.1's own `--auto` implementation. When the
+authenticated event stream emits `permission.asked`, the supervisor replies
+`once` through `POST /permission/:requestID/reply`. OpenCode evaluates
+configured rules before publishing this event: an explicit deny fails without
+emitting `permission.asked`, and an allow completes without emitting it. The
+supervisor therefore auto-approves only requests OpenCode would present to the
+TUI, preserving explicit denies and avoiding blanket allow rules. Replies are
+limited to permission requests for the dedicated server and the currently
+owned root-session tree; malformed, foreign, or stale request IDs are ignored
+with a sanitized warning.
 
 ### Lifecycle and exit behavior
 
@@ -201,7 +217,7 @@ OpenCode launch.
   captured sanitized output.
 - Server readiness timeout: stop all started children and return a bounded
   diagnostic excerpt.
-- Authentication, create, lookup, prompt, or attach failure: stop all children;
+- Authentication, create, lookup, permission-reply, or attach failure: stop all children;
   do not persist an unverified provider ID.
 - Exact resume target missing: fail explicitly; never use `-c`.
 - Event-stream interruption: keep the last verified identity, reconnect, and
@@ -227,7 +243,8 @@ Required automated coverage:
 - child-session events never replace the root identity;
 - SSE disconnect, replay gap, ambiguity, and recovery;
 - raw prompt bytes, empty prompt, Unicode, multiline, and resume-no-replay;
-- safe and yolo permission parity;
+- safe mode leaves permission prompts visible; yolo mode replies `once` only
+  to emitted `permission.asked` events and preserves explicit denies;
 - port collision and retry, readiness timeout, authentication rejection, API
   failure, attach failure, and server death;
 - stop, restart, natural exit, signals, and orphan-free cleanup under the race
