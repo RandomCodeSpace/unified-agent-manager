@@ -1015,15 +1015,16 @@ func TestProductionProviderResumeKindMatrixThroughAmbiguityGuard(t *testing.T) {
 		newAdapter                 func() adapter.AgentAdapter
 		isolatedOMP                bool
 		wantAmbiguous              bool
+		wantUnsupported            bool
 	}{
-		{"opencode exact", "opencode", "ses_known123", func() adapter.AgentAdapter { return opencode.New(nil) }, false, false},
-		{"opencode fallback", "opencode", "", func() adapter.AgentAdapter { return opencode.New(nil) }, false, true},
-		{"claude exact", "claude", "abc12345-dead-beef-cafe-0123456789ab", func() adapter.AgentAdapter { return claude.New(nil) }, false, false},
-		{"claude fallback", "claude", "", func() adapter.AgentAdapter { return claude.New(nil) }, false, true},
-		{"omp isolated", "omp", "", func() adapter.AgentAdapter { return omp.New(nil) }, true, false},
-		{"omp legacy", "omp", "", func() adapter.AgentAdapter { return omp.New(nil) }, false, true},
-		{"codex remains heuristic", "codex", "legacy-value", func() adapter.AgentAdapter { return codex.New(nil) }, false, true},
-		{"copilot derives exact UAM name", "copilot", "", func() adapter.AgentAdapter { return copilot.New(nil) }, false, false},
+		{name: "opencode exact", provider: "opencode", providerID: "ses_known123", newAdapter: func() adapter.AgentAdapter { return opencode.New(nil) }},
+		{name: "opencode missing identity", provider: "opencode", newAdapter: func() adapter.AgentAdapter { return opencode.New(nil) }, wantUnsupported: true},
+		{name: "claude exact", provider: "claude", providerID: "abc12345-dead-beef-cafe-0123456789ab", newAdapter: func() adapter.AgentAdapter { return claude.New(nil) }},
+		{name: "claude fallback", provider: "claude", newAdapter: func() adapter.AgentAdapter { return claude.New(nil) }, wantAmbiguous: true},
+		{name: "omp isolated", provider: "omp", newAdapter: func() adapter.AgentAdapter { return omp.New(nil) }, isolatedOMP: true},
+		{name: "omp legacy", provider: "omp", newAdapter: func() adapter.AgentAdapter { return omp.New(nil) }, wantAmbiguous: true},
+		{name: "codex remains heuristic", provider: "codex", providerID: "legacy-value", newAdapter: func() adapter.AgentAdapter { return codex.New(nil) }, wantAmbiguous: true},
+		{name: "copilot derives exact UAM name", provider: "copilot", newAdapter: func() adapter.AgentAdapter { return copilot.New(nil) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1059,7 +1060,15 @@ func TestProductionProviderResumeKindMatrixThroughAmbiguityGuard(t *testing.T) {
 			}
 			svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{tt.newAdapter()}))
 			_, _, _, err := svc.prepareResume(adapter.Session{ID: id, AgentType: tt.provider}, cfg, ResumeOptions{})
-			if tt.wantAmbiguous {
+			if tt.wantUnsupported {
+				if err == nil || errors.Is(err, ErrAmbiguousResume) || !strings.Contains(err.Error(), "cannot resume") {
+					t.Fatalf("error=%v, want exact-resume-required unsupported error", err)
+				}
+				_, _, _, allowLatestErr := svc.prepareResume(adapter.Session{ID: id, AgentType: tt.provider}, cfg, ResumeOptions{AllowLatest: true})
+				if allowLatestErr == nil || errors.Is(allowLatestErr, ErrAmbiguousResume) || !strings.Contains(allowLatestErr.Error(), "cannot resume") {
+					t.Fatalf("--allow-latest error=%v, want same unsupported exact-resume error", allowLatestErr)
+				}
+			} else if tt.wantAmbiguous {
 				if !errors.Is(err, ErrAmbiguousResume) {
 					t.Fatalf("error=%v, want ErrAmbiguousResume", err)
 				}

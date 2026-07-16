@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
@@ -50,6 +51,10 @@ func Main() {
 
 	ctx := context.Background()
 	if err := Run(ctx, args); err != nil && !errors.Is(err, context.Canceled) {
+		var exitCoder interface{ ExitCode() int }
+		if errors.As(err, &exitCoder) {
+			os.Exit(exitCoder.ExitCode())
+		}
 		log.Error("run exited with error", "err", err)
 		fmt.Fprintf(os.Stderr, "uam: %v\n", err)
 		os.Exit(1)
@@ -139,6 +144,8 @@ func runWithoutStore(ctx context.Context, args []string) (bool, error) {
 		return true, session.RunHost(args[1:])
 	case "__attach":
 		return true, session.RunAttach(args[1:])
+	case "__opencode":
+		return true, opencode.RunSupervisorCommand(args[1:])
 	default:
 		return false, nil
 	}
