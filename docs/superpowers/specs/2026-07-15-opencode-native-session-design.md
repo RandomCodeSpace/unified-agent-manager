@@ -81,16 +81,7 @@ version checks.
 For an accepted version, the adapter will launch an internal UAM command rather
 than injecting `OPENCODE_CONFIG_CONTENT`. The internal command is an OpenCode
 supervisor and receives only explicit launch data: executable path, working
-directory, UAM session name, optional retained provider session ID, mode, and
-the initial prompt through a non-argv channel.
-
-The native session host will deliver the initial prompt to the supervisor over
-a one-shot anonymous pipe inherited on a dedicated file descriptor. The host
-closes its write end after the complete prompt is sent; the supervisor reads to
-EOF before submitting it. The prompt is therefore absent from process argv,
-environment variables, persistent state, and diagnostic logs. An empty prompt
-is represented by a zero-length stream, and pipe/write failures abort startup
-before OpenCode receives a partial prompt.
+directory, UAM session name, optional retained provider session ID, and mode.
 
 ### Per-session supervisor
 
@@ -124,15 +115,13 @@ confirmed through `GET /session/:id`. A missing exact session is an actionable
 error; UAM does not silently substitute OpenCode's most recent session.
 
 After the exact session is available, the supervisor starts
-`opencode attach --session <id>`. An initial prompt, when present on a new
-dispatch, is submitted exactly once through the documented session API after
-the attach transport is ready. Resume preserves the existing behavior of not
+`opencode attach --session <id>`. The supervisor never reads its PTY stdin.
+UAM's existing `Agent.startSession` path continues to deliver an initial prompt
+through `Backend.SendLine`; the PTY queues those bytes while the supervisor
+finishes server/session setup, and the attached OpenCode TUI consumes them when
+it starts. This reuses the current byte path instead of adding an HTTP prompt
+path or a second host protocol. Resume preserves the existing behavior of not
 resubmitting the stored prompt.
-
-The implementation must characterize the v1.18.1 attach/replay ordering before
-choosing between `prompt_async` and the documented TUI append/submit controls.
-The selected path must preserve arbitrary Unicode, newlines, and pasted
-multibyte prompt content without shell interpolation or normalization.
 
 ### `/new` and identity tracking
 
@@ -288,7 +277,7 @@ optional legacy-state cleanup instructions.
 The rollout sequence is:
 
 1. upgrade the development machine to OpenCode v1.18.1;
-2. characterize stable server, session, permission, prompt, attach, and event
+2. characterize stable server, session, permission, PTY prompt, attach, and event
    behavior against the real binary;
 3. implement behind the OpenCode adapter boundary with no plugin fallback;
 4. run focused concurrency/lifecycle tests and the full quality gate;
