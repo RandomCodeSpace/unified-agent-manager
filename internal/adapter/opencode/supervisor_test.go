@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -62,6 +63,52 @@ type fakeOpenCodeConfig struct {
 	ObserveEvents       bool            `json:"observe_events"`
 	NoisyServerLog      bool            `json:"noisy_server_log"`
 	EventGatePath       string          `json:"event_gate_path"`
+	CreatedUpdated      int64           `json:"created_updated"`
+	ExistingUpdated     int64           `json:"existing_updated"`
+	ListSessions        []fakeSession   `json:"list_sessions"`
+	StallEvent          bool            `json:"stall_event"`
+	StallCreate         bool            `json:"stall_create"`
+	StallGet            bool            `json:"stall_get"`
+}
+
+type fakeSession struct {
+	ID        string `json:"id"`
+	ParentID  string `json:"parentID,omitempty"`
+	Directory string `json:"directory"`
+	Created   int64  `json:"-"`
+	Updated   int64  `json:"-"`
+}
+
+func (s fakeSession) MarshalJSON() ([]byte, error) {
+	type wireSession fakeSession
+	return json.Marshal(struct {
+		wireSession
+		Time struct {
+			Created int64 `json:"created"`
+			Updated int64 `json:"updated"`
+		} `json:"time"`
+	}{wireSession: wireSession(s), Time: struct {
+		Created int64 `json:"created"`
+		Updated int64 `json:"updated"`
+	}{Created: s.Created, Updated: s.Updated}})
+}
+
+func (s *fakeSession) UnmarshalJSON(data []byte) error {
+	type wireSession fakeSession
+	value := struct {
+		wireSession
+		Time struct {
+			Created int64 `json:"created"`
+			Updated int64 `json:"updated"`
+		} `json:"time"`
+	}{}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*s = fakeSession(value.wireSession)
+	s.Created = value.Time.Created
+	s.Updated = value.Time.Updated
+	return nil
 }
 
 type fakeOpenCodeRecord struct {
@@ -161,6 +208,30 @@ func TestSupervisorCommandParser(t *testing.T) {
 		}
 	})
 
+	t.Run("relative runtime directory resolves from current working directory", func(t *testing.T) {
+		baseDir := t.TempDir()
+		oldDirectory, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(baseDir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(oldDirectory) })
+		if err := os.Mkdir("relative-runtime", 0o700); err != nil {
+			t.Fatal(err)
+		}
+		args := replaceFlag(base, "--runtime-dir", "relative-runtime")
+		got, err := parseSupervisorOptions(args)
+		if err != nil {
+			t.Fatalf("parseSupervisorOptions: %v", err)
+		}
+		want := filepath.Join(baseDir, "relative-runtime")
+		if got.RuntimeDir != want {
+			t.Fatalf("runtime dir = %q, want %q", got.RuntimeDir, want)
+		}
+	})
+
 	tests := []struct {
 		name string
 		args []string
@@ -208,6 +279,30 @@ func TestSupervisorExitError(t *testing.T) {
 	if exitErr.ExitCode() != 23 {
 		t.Fatalf("ExitCode() = %d, want 23", exitErr.ExitCode())
 	}
+}
+
+func TestSupervisorRelativeRuntimeDirectoryDispatch(t *testing.T) {
+	baseDir := t.TempDir()
+	oldDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(baseDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDirectory) })
+	if err := os.Mkdir("runtime", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{CreatedID: "ses_relative123"})
+	fixture.options.RuntimeDir = "runtime"
+	if err := RunSupervisorCommand(fixture.commandArgs()); err != nil {
+		t.Fatalf("RunSupervisorCommand: %v", err)
+	}
+	wantOptions := fixture.options
+	wantOptions.RuntimeDir = filepath.Join(baseDir, "runtime")
+	assertProviderIdentity(t, wantOptions, "ses_relative123")
+	assertLifecycleClean(t, fixture, nil)
 }
 
 func withoutFlag(args []string, flag string) []string {
@@ -1042,6 +1137,145 @@ func TestSupervisorEventReconnect(t *testing.T) {
 	assertFakeChildrenReaped(t, fixture)
 }
 
+func TestSupervisorReplayGapRecovery(t *testing.T) {
+	directory := filepath.Clean(t.TempDir())
+	gapRootCreated := time.Now().Add(10 * time.Second).UnixMilli()
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
+		Directory:         directory,
+		CreatedID:         "ses_root_before_gap123",
+		CreatedUpdated:    100,
+		DisconnectSSE:     true,
+		AttachDelayMillis: 260,
+		ListSessions: []fakeSession{
+			{ID: "ses_root_after_gap123", Directory: directory, Created: gapRootCreated, Updated: gapRootCreated},
+			{ID: "ses_root_before_gap123", Directory: directory, Created: 100, Updated: 100},
+		},
+	})
+	foreignName := "uam-opencode-feedface"
+	if err := session.WriteProviderIdentity(fixture.options.RuntimeDir, foreignName, "ses_foreign123"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runSupervisor(t.Context(), fixture.options); err != nil {
+		t.Fatalf("runSupervisor: %v", err)
+	}
+	assertProviderIdentity(t, fixture.options, "ses_root_after_gap123")
+	foreignID, err := session.ReadProviderIdentity(fixture.options.RuntimeDir, foreignName)
+	if err != nil || foreignID != "ses_foreign123" {
+		t.Fatalf("foreign identity = (%q, %v), want unchanged", foreignID, err)
+	}
+	if got := len(fixture.recordsOfKind(t, "list")); got == 0 {
+		t.Fatal("reconnect did not query root sessions")
+	}
+	assertLifecycleClean(t, fixture, nil)
+}
+
+func TestSupervisorReplayGapRecoveryWarnsAndRetainsOnZeroOrAmbiguousCandidates(t *testing.T) {
+	future := time.Now().Add(10 * time.Second).UnixMilli()
+	for _, tt := range []struct {
+		name     string
+		sessions []fakeSession
+	}{
+		{name: "zero", sessions: []fakeSession{{ID: "ses_root_before_gap123", Created: 100, Updated: 100}}},
+		{name: "preexisting newer root", sessions: []fakeSession{{ID: "ses_other_existing123", Created: 50, Updated: future}}},
+		{name: "ambiguous", sessions: []fakeSession{{ID: "ses_new_a123", Created: future, Updated: future}, {ID: "ses_new_b123", Created: future + 1, Updated: future + 1}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			directory := filepath.Clean(t.TempDir())
+			for index := range tt.sessions {
+				tt.sessions[index].Directory = directory
+			}
+			fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
+				Directory:         directory,
+				CreatedID:         "ses_root_before_gap123",
+				CreatedUpdated:    100,
+				DisconnectSSE:     true,
+				AttachDelayMillis: 150,
+				ListSessions:      tt.sessions,
+			})
+			warning := captureStderr(t, func() error { return runSupervisor(t.Context(), fixture.options) })
+			if !strings.Contains(warning, "recovery") || strings.ContainsRune(warning, '\x1b') {
+				t.Fatalf("recovery warning = %q", warning)
+			}
+			assertProviderIdentity(t, fixture.options, "ses_root_before_gap123")
+			assertLifecycleClean(t, fixture, nil)
+		})
+	}
+}
+
+func TestSupervisorReplayGapIdentityFailureIsAdvisoryAndRetryable(t *testing.T) {
+	runtimeDir := filepath.Clean(t.TempDir())
+	if err := os.Chmod(runtimeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	options := supervisorOptions{
+		Directory:   filepath.Clean(t.TempDir()),
+		SessionName: "uam-opencode-a1b2c3d4",
+		RuntimeDir:  runtimeDir,
+	}
+	if err := session.WriteProviderIdentity(runtimeDir, options.SessionName, "ses_root_before_gap123"); err != nil {
+		t.Fatal(err)
+	}
+	client := newSessionListTestClient(t, options.Directory, []fakeSession{
+		{ID: "ses_root_after_gap123", Directory: options.Directory, Created: 200, Updated: 200},
+	})
+	state := newSupervisorEventState(options, "ses_root_before_gap123", 100)
+	if err := os.Chmod(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	warning := captureStderr(t, func() error { return state.recoverAfterReconnect(t.Context(), client, time.UnixMilli(150)) })
+	if !strings.Contains(warning, "continuing") || state.activeRoot != "ses_root_before_gap123" {
+		t.Fatalf("failed recovery warning/root = %q / %q", warning, state.activeRoot)
+	}
+	if err := os.Chmod(runtimeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.recoverAfterReconnect(t.Context(), client, time.UnixMilli(150)); err != nil {
+		t.Fatalf("retry recovery: %v", err)
+	}
+	assertProviderIdentity(t, options, "ses_root_after_gap123")
+}
+
+func TestSupervisorReplayGapRecoveryAPIErrorIsAdvisory(t *testing.T) {
+	directory := filepath.Clean(t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "bad\x1b[31mresponse", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	client, err := newAPIClient(server.URL, "uam", "password", directory, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := newSupervisorEventState(supervisorOptions{Directory: directory}, "ses_root_before_gap123", 100)
+	warning := captureStderr(t, func() error {
+		return state.recoverAfterReconnect(t.Context(), client, time.UnixMilli(150))
+	})
+	if state.activeRoot != "ses_root_before_gap123" || !strings.Contains(warning, "recovery failed") || strings.ContainsRune(warning, '\x1b') {
+		t.Fatalf("API recovery failure changed root or leaked controls: root=%q warning=%q", state.activeRoot, warning)
+	}
+}
+
+func TestSupervisorPermissionIgnoredEventsWarnSafely(t *testing.T) {
+	options := supervisorOptions{Directory: filepath.Clean(t.TempDir()), Yolo: true}
+	state := newSupervisorEventState(options, "ses_root123")
+	state.replied["per_duplicate123"] = struct{}{}
+	for _, tt := range []struct {
+		name  string
+		event eventEnvelope
+	}{
+		{name: "malformed", event: eventEnvelope{Type: "permission.asked", Properties: json.RawMessage(`{"id":"bad\u001b[31m/id","sessionID":"ses_root123"}`)}},
+		{name: "foreign", event: fakeEvent("permission.asked", map[string]any{"id": "per_foreign123", "sessionID": "ses_foreign123"})},
+		{name: "duplicate", event: fakeEvent("permission.asked", map[string]any{"id": "per_duplicate123", "sessionID": "ses_root123"})},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			warning := captureStderr(t, func() error { return state.handle(t.Context(), nil, tt.event) })
+			if !strings.Contains(warning, "ignored") || strings.ContainsRune(warning, '\x1b') || len([]rune(warning)) > 512 {
+				t.Fatalf("ignored-event warning = %q", warning)
+			}
+		})
+	}
+}
+
 func TestSupervisorReconnectBackoff(t *testing.T) {
 	want := []time.Duration{25 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond, 400 * time.Millisecond}
 	for attempt, duration := range want {
@@ -1062,6 +1296,37 @@ func TestSupervisorLifecycleStartup(t *testing.T) {
 		}
 		assertLifecycleClean(t, fixture, err)
 	})
+
+	for _, tt := range []struct {
+		name   string
+		config fakeOpenCodeConfig
+		resume bool
+	}{
+		{name: "event handshake stalls", config: fakeOpenCodeConfig{StallEvent: true}},
+		{name: "session create stalls", config: fakeOpenCodeConfig{StallCreate: true}},
+		{name: "exact session lookup stalls", config: fakeOpenCodeConfig{ExistingID: "ses_resume123", StallGet: true}, resume: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newSupervisorFixture(t, tt.config)
+			if tt.resume {
+				fixture.options.ProviderSessionID = "ses_resume123"
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 175*time.Millisecond)
+			defer cancel()
+			started := time.Now()
+			err := runSupervisor(ctx, fixture.options)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("startup stall error = %v, want deadline exceeded", err)
+			}
+			if elapsed := time.Since(started); elapsed > 2*time.Second {
+				t.Fatalf("startup stall took %s, want bounded", elapsed)
+			}
+			if got := fixture.recordsOfKind(t, "attach_start"); len(got) != 0 {
+				t.Fatalf("stalled startup launched attach: %#v", got)
+			}
+			assertLifecycleClean(t, fixture, err)
+		})
+	}
 
 	t.Run("three pre-readiness process failures use three attempts", func(t *testing.T) {
 		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{FailServeAttempts: 2})
@@ -1396,6 +1661,52 @@ func fakeEvent(eventType string, properties any) eventEnvelope {
 	return eventEnvelope{Type: eventType, Properties: data}
 }
 
+func captureStderr(t *testing.T, action func() error) string {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = writer
+	actionErr := action()
+	os.Stderr = oldStderr
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, readErr := io.ReadAll(reader)
+	if closeErr := reader.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if actionErr != nil {
+		t.Fatalf("captured action: %v", actionErr)
+	}
+	return string(data)
+}
+
+func newSessionListTestClient(t *testing.T, directory string, sessions []fakeSession) *apiClient {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/session" {
+			http.NotFound(w, request)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(sessions); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := newAPIClient(server.URL, "uam", "password", directory, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
 func assertProviderIdentity(t *testing.T, options supervisorOptions, want string) {
 	t.Helper()
 	got, err := session.ReadProviderIdentity(options.RuntimeDir, options.SessionName)
@@ -1705,6 +2016,10 @@ func fakeOpenCodeServe(args []string) int {
 			_, _ = io.WriteString(w, `{"healthy":true,"version":"1.18.1"}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/event":
 			_ = writeFakeRecord(fakeOpenCodeRecord{Kind: "event"})
+			if config.StallEvent {
+				<-request.Context().Done()
+				return
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 			if flusher, ok := w.(http.Flusher); ok {
@@ -1727,6 +2042,10 @@ func fakeOpenCodeServe(args []string) int {
 		case request.Method == http.MethodPost && request.URL.Path == "/session":
 			body, _ := io.ReadAll(request.Body)
 			_ = writeFakeRecord(fakeOpenCodeRecord{Kind: "create", Body: string(body)})
+			if config.StallCreate {
+				<-request.Context().Done()
+				return
+			}
 			if config.CreateDelayMillis > 0 {
 				time.Sleep(time.Duration(config.CreateDelayMillis) * time.Millisecond)
 			}
@@ -1739,10 +2058,20 @@ func fakeOpenCodeServe(args []string) int {
 			if responseDirectory == "" {
 				responseDirectory = config.Directory
 			}
-			_, _ = fmt.Fprintf(w, `{"id":%q,"parentID":%q,"directory":%q,"title":"UAM"}`, responseID, config.ResponseParentID, responseDirectory)
+			_, _ = fmt.Fprintf(w, `{"id":%q,"parentID":%q,"directory":%q,"title":"UAM","time":{"created":%d,"updated":%d}}`, responseID, config.ResponseParentID, responseDirectory, config.CreatedUpdated, config.CreatedUpdated)
+		case request.Method == http.MethodGet && request.URL.Path == "/session":
+			_ = writeFakeRecord(fakeOpenCodeRecord{Kind: "list"})
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(config.ListSessions); err != nil {
+				return
+			}
 		case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/session/"):
 			id := strings.TrimPrefix(request.URL.Path, "/session/")
 			_ = writeFakeRecord(fakeOpenCodeRecord{Kind: "get", ID: id})
+			if config.StallGet {
+				<-request.Context().Done()
+				return
+			}
 			if config.ResumeMissing || id != config.ExistingID {
 				http.Error(w, "missing", http.StatusNotFound)
 				return
@@ -1756,7 +2085,7 @@ func fakeOpenCodeServe(args []string) int {
 			if responseDirectory == "" {
 				responseDirectory = config.Directory
 			}
-			_, _ = fmt.Fprintf(w, `{"id":%q,"parentID":%q,"directory":%q,"title":"existing"}`, responseID, config.ResponseParentID, responseDirectory)
+			_, _ = fmt.Fprintf(w, `{"id":%q,"parentID":%q,"directory":%q,"title":"existing","time":{"created":%d,"updated":%d}}`, responseID, config.ResponseParentID, responseDirectory, config.ExistingUpdated, config.ExistingUpdated)
 		case request.Method == http.MethodPost && strings.HasPrefix(request.URL.Path, "/permission/") && strings.HasSuffix(request.URL.Path, "/reply"):
 			body, _ := io.ReadAll(request.Body)
 			id := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/permission/"), "/reply")

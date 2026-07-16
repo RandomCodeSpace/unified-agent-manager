@@ -36,6 +36,7 @@ const (
 	serverLogCapacity      = 64 << 10
 	eventReconnectBase     = 25 * time.Millisecond
 	eventReconnectMax      = 400 * time.Millisecond
+	eventRecoveryTimeout   = 2 * time.Second
 	runtimeDirFlag         = "runtime-dir"
 )
 
@@ -108,7 +109,8 @@ func parseSupervisorOptions(args []string) (supervisorOptions, error) {
 		return supervisorOptions{}, fmt.Errorf("invalid OpenCode working directory: %w", err)
 	}
 	runtimeDir := values[runtimeDirFlag].value
-	if err := validateCanonicalDirectory(runtimeDir); err != nil {
+	runtimeDir, err = resolveRuntimeDirectory(runtimeDir)
+	if err != nil {
 		return supervisorOptions{}, fmt.Errorf("invalid OpenCode runtime directory: %w", err)
 	}
 	if err := session.VerifyDir(runtimeDir); err != nil {
@@ -182,6 +184,24 @@ func validateCanonicalDirectory(path string) error {
 		return fmt.Errorf("path is not a directory")
 	}
 	return nil
+}
+
+func resolveRuntimeDirectory(path string) (string, error) {
+	if path == "" || filepath.Clean(path) != path {
+		return "", fmt.Errorf("path must be canonical")
+	}
+	resolved := path
+	if !filepath.IsAbs(resolved) {
+		absolute, err := filepath.Abs(resolved)
+		if err != nil {
+			return "", err
+		}
+		resolved = absolute
+	}
+	if err := validateCanonicalDirectory(resolved); err != nil {
+		return "", err
+	}
+	return resolved, nil
 }
 
 type managedProcess struct {
@@ -279,8 +299,8 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	}
 	env := serverEnvironment(os.Environ(), openCodeServerUsername, password)
 	startupCtx, cancelStartup := context.WithTimeout(ctx, serverStartupTimeout)
+	defer cancelStartup()
 	server, err := startOpenCodeServer(startupCtx, opts, env, password)
-	cancelStartup()
 	if err != nil {
 		return err
 	}
@@ -289,13 +309,14 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 		terminateAndReap(attach, server.process)
 	}()
 
-	streamCtx, cancelStream := context.WithCancel(context.Background())
+	streamCtx, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
 	events := make(chan eventEnvelope, 128)
+	reconnects := make(chan reconnectNotice, 1)
 	ready := make(chan struct{})
 	streamDone := make(chan error, 1)
 	go func() {
-		streamDone <- subscribeWithReconnect(streamCtx, server.client, ready, events)
+		streamDone <- subscribeWithReconnect(streamCtx, server.client, ready, reconnects, events)
 	}()
 	select {
 	case <-ready:
@@ -303,18 +324,18 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 		return serverFailureError("before event subscription became ready", server, password)
 	case err := <-streamDone:
 		return sanitizedSupervisorError("OpenCode event subscription failed", err, password)
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-startupCtx.Done():
+		return startupCtx.Err()
 	}
 
-	root, err := selectRootSession(ctx, opts, server.client)
+	root, err := selectRootSession(startupCtx, opts, server.client)
 	if err != nil {
 		return err
 	}
 	if err := session.WriteProviderIdentity(opts.RuntimeDir, opts.SessionName, root.ID); err != nil {
 		return fmt.Errorf("write OpenCode provider identity: %w", err)
 	}
-	eventState := newSupervisorEventState(opts, root.ID)
+	eventState := newSupervisorEventState(opts, root.ID, root.Time.Updated)
 
 	attachCommand := opts.Command.command(context.Background(), "attach", server.baseURL, "--dir", opts.Directory, "--session", root.ID)
 	attachCommand.Dir = opts.Directory
@@ -326,6 +347,7 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	if err != nil {
 		return sanitizedSupervisorError("start OpenCode attach", err, password)
 	}
+	cancelStartup()
 
 	for {
 		if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
@@ -340,6 +362,13 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 				return outcome
 			}
 			if err := eventState.handle(ctx, server.client, event); err != nil {
+				return err
+			}
+		case notice := <-reconnects:
+			if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
+				return outcome
+			}
+			if err := eventState.recoverAfterReconnect(ctx, server.client, notice.disconnectedAt); err != nil {
 				return err
 			}
 		case err := <-streamDone:
@@ -659,8 +688,13 @@ func reconnectBackoff(attempt int) time.Duration {
 	return delay
 }
 
-func subscribeWithReconnect(ctx context.Context, client *apiClient, initialReady chan<- struct{}, events chan<- eventEnvelope) error {
+type reconnectNotice struct {
+	disconnectedAt time.Time
+}
+
+func subscribeWithReconnect(ctx context.Context, client *apiClient, initialReady chan<- struct{}, reconnects chan<- reconnectNotice, events chan<- eventEnvelope) error {
 	readySent := false
+	var disconnectedAt time.Time
 	for attempt := 0; ; attempt++ {
 		ready := make(chan struct{})
 		done := make(chan error, 1)
@@ -672,11 +706,19 @@ func subscribeWithReconnect(ctx context.Context, client *apiClient, initialReady
 			if !readySent {
 				close(initialReady)
 				readySent = true
+			} else {
+				select {
+				case reconnects <- reconnectNotice{disconnectedAt: disconnectedAt}:
+				default:
+				}
 			}
 			if err := <-done; ctx.Err() != nil {
 				return ctx.Err()
 			} else if err == nil {
 				return fmt.Errorf("OpenCode event stream ended without an error")
+			} else {
+				warnOpenCode("OpenCode event stream interrupted; reconnecting: %s", client.safeText(err.Error()))
+				disconnectedAt = time.Now()
 			}
 		case err := <-done:
 			if ctx.Err() != nil {
@@ -716,15 +758,21 @@ type supervisorEventState struct {
 	rootFor       map[string]string
 	acceptedRoots map[string]struct{}
 	replied       map[string]struct{}
+	activeUpdated int64
 }
 
-func newSupervisorEventState(opts supervisorOptions, rootID string) *supervisorEventState {
+func newSupervisorEventState(opts supervisorOptions, rootID string, updated ...int64) *supervisorEventState {
+	var activeUpdated int64
+	if len(updated) > 0 {
+		activeUpdated = updated[0]
+	}
 	return &supervisorEventState{
 		opts:          opts,
 		activeRoot:    rootID,
 		rootFor:       map[string]string{rootID: rootID},
 		acceptedRoots: map[string]struct{}{rootID: {}},
 		replied:       make(map[string]struct{}),
+		activeUpdated: activeUpdated,
 	}
 }
 
@@ -759,6 +807,10 @@ func (s *supervisorEventState) handleSessionCreated(properties json.RawMessage) 
 	if _, accepted := s.acceptedRoots[info.ID]; accepted {
 		return nil
 	}
+	return s.acceptRoot(info)
+}
+
+func (s *supervisorEventState) acceptRoot(info sessionInfo) error {
 	if err := session.WriteProviderIdentity(s.opts.RuntimeDir, s.opts.SessionName, info.ID); err != nil {
 		warning := displaytext.Sanitize(fmt.Sprintf(
 			"OpenCode provider identity update for %s failed; continuing with %s: %v",
@@ -770,9 +822,41 @@ func (s *supervisorEventState) handleSessionCreated(properties json.RawMessage) 
 		return nil
 	}
 	s.activeRoot = info.ID
+	if info.Time.Updated > s.activeUpdated {
+		s.activeUpdated = info.Time.Updated
+	}
 	s.rootFor[info.ID] = info.ID
 	s.acceptedRoots[info.ID] = struct{}{}
 	return nil
+}
+
+func (s *supervisorEventState) recoverAfterReconnect(ctx context.Context, client *apiClient, disconnectedAt time.Time) error {
+	if s.activeUpdated <= 0 || disconnectedAt.IsZero() {
+		warnOpenCode("OpenCode event recovery lacks a verified time boundary; continuing with %s", s.activeRoot)
+		return nil
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, eventRecoveryTimeout)
+	defer cancel()
+	sessions, err := client.listSessions(requestCtx)
+	if err != nil {
+		warnOpenCode("OpenCode event recovery failed; continuing with %s: %v", s.activeRoot, err)
+		return nil
+	}
+	candidates := make([]sessionInfo, 0, 1)
+	for _, info := range sessions {
+		if info.ParentID != "" || info.Directory != s.opts.Directory || !validOpenCodeSessionID(info.ID) || info.Time.Created <= 0 || info.Time.Updated <= s.activeUpdated || info.Time.Created < disconnectedAt.UnixMilli() {
+			continue
+		}
+		if _, accepted := s.acceptedRoots[info.ID]; accepted {
+			continue
+		}
+		candidates = append(candidates, info)
+	}
+	if len(candidates) != 1 {
+		warnOpenCode("OpenCode event recovery found %d unambiguous newer roots; continuing with %s", len(candidates), s.activeRoot)
+		return nil
+	}
+	return s.acceptRoot(candidates[0])
 }
 
 func (s *supervisorEventState) handlePermissionAsked(ctx context.Context, client *apiClient, properties json.RawMessage) error {
@@ -781,16 +865,20 @@ func (s *supervisorEventState) handlePermissionAsked(ctx context.Context, client
 	}
 	var asked permissionAskedEvent
 	if err := decodeStrictJSON(properties, &asked); err != nil {
+		warnOpenCode("ignored malformed OpenCode permission event")
 		return nil
 	}
 	if !permissionIDRE.MatchString(asked.ID) || !store.ValidProviderSessionID(asked.ID) || !validOpenCodeSessionID(asked.SessionID) {
+		warnOpenCode("ignored invalid OpenCode permission event")
 		return nil
 	}
 	root, ok := s.rootFor[asked.SessionID]
 	if !ok || root != s.activeRoot {
+		warnOpenCode("ignored OpenCode permission %s for an unowned or stale session", asked.ID)
 		return nil
 	}
 	if _, duplicate := s.replied[asked.ID]; duplicate {
+		warnOpenCode("ignored duplicate OpenCode permission %s", asked.ID)
 		return nil
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -800,4 +888,13 @@ func (s *supervisorEventState) handlePermissionAsked(ctx context.Context, client
 	}
 	s.replied[asked.ID] = struct{}{}
 	return nil
+}
+
+func warnOpenCode(format string, args ...any) {
+	message := displaytext.Sanitize(fmt.Sprintf(format, args...))
+	runes := []rune(message)
+	if len(runes) > 480 {
+		message = string(runes[:480])
+	}
+	_, _ = fmt.Fprintln(os.Stderr, message)
 }

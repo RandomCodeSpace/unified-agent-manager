@@ -42,6 +42,14 @@ func WriteProviderIdentity(dir, name, providerSessionID string) error {
 		return err
 	}
 	path := filepath.Join(dir, name+".provider.json")
+	info, err := os.Lstat(path)
+	if err == nil {
+		if err := verifyProviderIdentityFile(path, info); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat provider identity destination: %w", err)
+	}
 	data, err := json.Marshal(providerIdentity{SessionName: name, ProviderSessionID: providerSessionID})
 	if err != nil {
 		return fmt.Errorf("encode provider identity: %w", err)

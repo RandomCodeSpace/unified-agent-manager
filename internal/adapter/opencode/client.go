@@ -40,10 +40,16 @@ type serverHealth struct {
 }
 
 type sessionInfo struct {
-	ID        string `json:"id"`
-	ParentID  string `json:"parentID,omitempty"`
-	Directory string `json:"directory"`
-	Title     string `json:"title"`
+	ID        string      `json:"id"`
+	ParentID  string      `json:"parentID,omitempty"`
+	Directory string      `json:"directory"`
+	Title     string      `json:"title"`
+	Time      sessionTime `json:"time"`
+}
+
+type sessionTime struct {
+	Created int64 `json:"created"`
+	Updated int64 `json:"updated"`
 }
 
 type eventEnvelope struct {
@@ -133,6 +139,14 @@ func (c *apiClient) getSession(ctx context.Context, id string) (sessionInfo, err
 		return sessionInfo{}, err
 	}
 	return session, nil
+}
+
+func (c *apiClient) listSessions(ctx context.Context) ([]sessionInfo, error) {
+	var sessions []sessionInfo
+	if err := c.doJSON(ctx, http.MethodGet, "/session", "", nil, &sessions); err != nil {
+		return nil, err
+	}
+	return sessions, nil
 }
 
 func (c *apiClient) replyPermission(ctx context.Context, requestID string) error {
