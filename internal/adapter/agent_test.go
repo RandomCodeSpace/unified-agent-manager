@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -193,6 +194,100 @@ func TestPrepareLaunchFailureCreatesNoSession(t *testing.T) {
 	}
 	if got := be.CallsOf("create"); len(got) != 0 {
 		t.Fatalf("preparation failure created session: %+v", got)
+	}
+}
+
+type commandCaptureBackend struct {
+	*adaptertest.Backend
+	command []string
+}
+
+func (b *commandCaptureBackend) CreateSession(_ context.Context, _, _ string, _ map[string]string, command []string) error {
+	b.command = command
+	return nil
+}
+
+func TestLaunchPreparationCommandSelection(t *testing.T) {
+	tests := []struct {
+		name            string
+		preparedCommand func(sessionName string) []string
+		wantCommand     func(sessionName string) []string
+	}{
+		{
+			name: "prepared override",
+			preparedCommand: func(sessionName string) []string {
+				return []string{"/trusted/uam", "__opencode", "--name", sessionName}
+			},
+			wantCommand: func(sessionName string) []string {
+				return []string{"/trusted/uam", "__opencode", "--name", sessionName}
+			},
+		},
+		{
+			name:            "nil override",
+			preparedCommand: func(string) []string { return nil },
+			wantCommand: func(string) []string {
+				return []string{"fakeagent", "--yolo", "--prepared", "--session", "session-id"}
+			},
+		},
+		{
+			name:            "empty override",
+			preparedCommand: func(string) []string { return []string{} },
+			wantCommand: func(string) []string {
+				return []string{"fakeagent", "--yolo", "--prepared", "--session", "session-id"}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ag, _ := newLifecycleAgent(t)
+			backend := &commandCaptureBackend{Backend: &adaptertest.Backend{}}
+			ag.Backend = backend
+			ag.SessionArgs = func(ResumeRequest, string) []string {
+				return []string{"--session", "session-id"}
+			}
+			var preparedCommand []string
+			ag.PrepareLaunch = func(_ Context, _ ResumeRequest, _, sessionName, _ string) (LaunchPreparation, error) {
+				preparedCommand = tt.preparedCommand(sessionName)
+				return LaunchPreparation{Command: preparedCommand, ExtraArgs: []string{"--prepared"}}, nil
+			}
+
+			sess, err := ag.Dispatch(context.Background(), DispatchRequest{Cwd: "/tmp", Mode: "yolo"})
+			if err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			want := tt.wantCommand(sess.SessionName)
+			if !reflect.DeepEqual(backend.command, want) {
+				t.Fatalf("CreateSession command = %#v, want %#v", backend.command, want)
+			}
+
+			if len(preparedCommand) > 0 {
+				preparedCommand[0] = "mutated"
+				if !reflect.DeepEqual(backend.command, want) {
+					t.Fatalf("CreateSession command aliases preparation slice: got %#v, want %#v", backend.command, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLaunchPreparationCommandRejectsInvalidAliasBeforeHook(t *testing.T) {
+	ag, be := newLifecycleAgent(t)
+	prepareCalled := false
+	ag.PrepareLaunch = func(Context, ResumeRequest, string, string, string) (LaunchPreparation, error) {
+		prepareCalled = true
+		return LaunchPreparation{Command: []string{"/trusted/uam", "__opencode"}}, nil
+	}
+
+	_, err := ag.Dispatch(context.Background(), DispatchRequest{CommandAlias: "bad alias", Cwd: "/tmp", Mode: "yolo"})
+	if err == nil || !strings.Contains(err.Error(), "invalid command alias") {
+		t.Fatalf("Dispatch error = %v, want invalid command alias", err)
+	}
+	if prepareCalled {
+		t.Fatal("invalid command alias reached PrepareLaunch")
+	}
+	if got := be.CallsOf("create"); len(got) != 0 {
+		t.Fatalf("invalid command alias created session: %+v", got)
 	}
 }
 

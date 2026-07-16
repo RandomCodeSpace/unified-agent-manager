@@ -105,6 +105,7 @@ type ResumeRequest struct {
 // canonical backend identity and cwd are known, but before any session is
 // created. Slices and maps are copied by Agent before use.
 type LaunchPreparation struct {
+	Command           []string
 	ExtraArgs         []string
 	Env               map[string]string
 	ProviderSessionID string
