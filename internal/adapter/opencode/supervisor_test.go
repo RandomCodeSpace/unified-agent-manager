@@ -35,30 +35,31 @@ const (
 )
 
 type fakeOpenCodeConfig struct {
-	Directory         string          `json:"directory"`
-	CreatedID         string          `json:"created_id"`
-	ExistingID        string          `json:"existing_id"`
-	ResponseID        string          `json:"response_id"`
-	ResponseDirectory string          `json:"response_directory"`
-	ResponseParentID  string          `json:"response_parent_id"`
-	ResumeMissing     bool            `json:"resume_missing"`
-	Events            []eventEnvelope `json:"events"`
-	DisconnectSSE     bool            `json:"disconnect_sse"`
-	AttachExit        int             `json:"attach_exit"`
-	AttachSignal      bool            `json:"attach_signal"`
-	AttachDelayMillis int             `json:"attach_delay_millis"`
-	ReadStdin         bool            `json:"read_stdin"`
-	ReadStdinLine     bool            `json:"read_stdin_line"`
-	FailServeAttempts int             `json:"fail_serve_attempts"`
-	BindCollisionOnce bool            `json:"bind_collision_once"`
-	HealthNeverReady  bool            `json:"health_never_ready"`
-	HealthLeaksSecret bool            `json:"health_leaks_secret"`
-	ServerExitMillis  int             `json:"server_exit_millis"`
-	CreateDelayMillis int             `json:"create_delay_millis"`
-	IgnoreTerminate   bool            `json:"ignore_terminate"`
-	Grandchildren     bool            `json:"grandchildren"`
-	ObserveEvents     bool            `json:"observe_events"`
-	NoisyServerLog    bool            `json:"noisy_server_log"`
+	Directory           string          `json:"directory"`
+	CreatedID           string          `json:"created_id"`
+	ExistingID          string          `json:"existing_id"`
+	ResponseID          string          `json:"response_id"`
+	ResponseDirectory   string          `json:"response_directory"`
+	ResponseParentID    string          `json:"response_parent_id"`
+	ResumeMissing       bool            `json:"resume_missing"`
+	Events              []eventEnvelope `json:"events"`
+	DisconnectSSE       bool            `json:"disconnect_sse"`
+	AttachExit          int             `json:"attach_exit"`
+	AttachSignal        bool            `json:"attach_signal"`
+	AttachDelayMillis   int             `json:"attach_delay_millis"`
+	ReadStdin           bool            `json:"read_stdin"`
+	ReadStdinLine       bool            `json:"read_stdin_line"`
+	FailServeAttempts   int             `json:"fail_serve_attempts"`
+	FailServeGrandchild bool            `json:"fail_serve_grandchild"`
+	BindCollisionOnce   bool            `json:"bind_collision_once"`
+	HealthNeverReady    bool            `json:"health_never_ready"`
+	HealthLeaksSecret   bool            `json:"health_leaks_secret"`
+	ServerExitMillis    int             `json:"server_exit_millis"`
+	CreateDelayMillis   int             `json:"create_delay_millis"`
+	IgnoreTerminate     bool            `json:"ignore_terminate"`
+	Grandchildren       bool            `json:"grandchildren"`
+	ObserveEvents       bool            `json:"observe_events"`
+	NoisyServerLog      bool            `json:"noisy_server_log"`
 }
 
 type fakeOpenCodeRecord struct {
@@ -835,6 +836,31 @@ func TestSupervisorLifecycleStartup(t *testing.T) {
 		assertLifecycleClean(t, fixture, nil)
 	})
 
+	t.Run("failed attempt process group is reaped before retry succeeds", func(t *testing.T) {
+		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
+			FailServeAttempts:   1,
+			FailServeGrandchild: true,
+		})
+		t.Cleanup(func() { killFakeProcesses(fixture.records(t)) })
+		if err := runSupervisor(t.Context(), fixture.options); err != nil {
+			t.Fatalf("runSupervisor: %v", err)
+		}
+
+		attempts := fixture.recordsOfKind(t, "serve_attempt")
+		serves := fixture.recordsOfKind(t, "serve")
+		descendants := fixture.recordsOfKind(t, "serve_attempt_grandchild")
+		if len(attempts) != 1 || len(serves) != 1 || len(descendants) != 1 {
+			t.Fatalf("attempt/serve/descendant records = %#v / %#v / %#v, want one each", attempts, serves, descendants)
+		}
+		if attempts[0].Port == serves[0].Port {
+			t.Fatalf("retry reused failed-attempt port %d", serves[0].Port)
+		}
+		if attempts[0].PGID != attempts[0].PID || descendants[0].PGID != attempts[0].PGID {
+			t.Fatalf("failed attempt descendant escaped process group: attempt=%#v descendant=%#v", attempts[0], descendants[0])
+		}
+		assertLifecycleClean(t, fixture, nil)
+	})
+
 	t.Run("genuine first-attempt bind collision selects a different port", func(t *testing.T) {
 		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{BindCollisionOnce: true})
 		if err := runSupervisor(t.Context(), fixture.options); err != nil {
@@ -1352,6 +1378,14 @@ func fakeOpenCodeServe(args []string) int {
 			record := fakeChildCredentialRecord("serve_attempt", args)
 			record.Port = *port
 			_ = writeFakeRecord(record)
+			if config.FailServeGrandchild {
+				if err := startFakeDetachedGrandchild("serve_attempt_grandchild"); err != nil {
+					return 107
+				}
+				if !waitForFakeRecord("serve_attempt_grandchild", time.Second) {
+					return 108
+				}
+			}
 			return 92
 		}
 	}
@@ -1548,6 +1582,25 @@ func startFakeGrandchild(kind string) error {
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	return command.Start()
+}
+
+func startFakeDetachedGrandchild(kind string) error {
+	command := exec.Command(os.Args[0], "__supervisor_grandchild", kind)
+	command.Env = os.Environ()
+	return command.Start()
+}
+
+func waitForFakeRecord(kind string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	needle := `"kind":"` + kind + `"`
+	for time.Now().Before(deadline) {
+		data, _ := os.ReadFile(os.Getenv(fakeRecordEnv))
+		if strings.Contains(string(data), needle) {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
 }
 
 func fakeSupervisorGrandchild(kind string) int {

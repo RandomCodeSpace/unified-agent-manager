@@ -409,6 +409,7 @@ func startOpenCodeServer(ctx context.Context, opts supervisorOptions, env []stri
 		if !retry {
 			return nil, err
 		}
+		terminateAndReap(server.process)
 		lastError = err
 	}
 	if lastError == nil {
