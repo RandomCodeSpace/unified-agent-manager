@@ -583,11 +583,11 @@ func readProviderIdentityHandoff(dir, name, path string) string {
 	if err != nil {
 		return ""
 	}
-	canonicalPath, err = filepath.Abs(canonicalPath)
+	canonicalPath, err = resolvePathParent(canonicalPath)
 	if err != nil {
 		return ""
 	}
-	path, err = filepath.Abs(path)
+	path, err = resolvePathParent(path)
 	if err != nil || path != canonicalPath {
 		return ""
 	}
@@ -596,6 +596,18 @@ func readProviderIdentityHandoff(dir, name, path string) string {
 		return ""
 	}
 	return providerID
+}
+
+func resolvePathParent(path string) (string, error) {
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(absolutePath))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolvedParent, filepath.Base(absolutePath)), nil
 }
 
 func (h *host) logMarkClosedFailure(err error) {

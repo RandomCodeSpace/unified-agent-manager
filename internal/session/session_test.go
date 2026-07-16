@@ -277,16 +277,21 @@ func TestImmediateExitRecordsProviderIdentityHandoff(t *testing.T) {
 }
 
 func TestImmediateExitRecordsProviderIdentityHandoffWithRelativeRuntimeDir(t *testing.T) {
-	root, err := os.MkdirTemp("", "uam-rel-")
+	root, err := os.MkdirTemp("", "uam-rel-real-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	aliasedRoot := root + "-alias"
+	if err := os.Symlink(root, aliasedRoot); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(aliasedRoot) })
 	originalCwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chdir(root); err != nil {
+	if err := os.Chdir(aliasedRoot); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -313,7 +318,7 @@ func TestImmediateExitRecordsProviderIdentityHandoffWithRelativeRuntimeDir(t *te
 	}); err != nil {
 		t.Fatal(err)
 	}
-	absoluteRuntimeDir := filepath.Join(root, c.Dir)
+	absoluteRuntimeDir := filepath.Join(aliasedRoot, c.Dir)
 	handoff, err := ProviderIdentityPath(absoluteRuntimeDir, name)
 	if err != nil {
 		t.Fatal(err)
