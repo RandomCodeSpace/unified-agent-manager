@@ -8,6 +8,7 @@ coverage.*
 .vscode/
 /.claude/worktrees/
 /.worktrees/
+/.superpowers/
 /CLAUDE.md
 /PLAN.md
 graphify_out/
