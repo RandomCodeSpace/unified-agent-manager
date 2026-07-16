@@ -47,17 +47,21 @@ type fakeOpenCodeConfig struct {
 	AttachDelayMillis int             `json:"attach_delay_millis"`
 	ReadStdin         bool            `json:"read_stdin"`
 	FailServeAttempts int             `json:"fail_serve_attempts"`
+	BindCollisionOnce bool            `json:"bind_collision_once"`
 	HealthNeverReady  bool            `json:"health_never_ready"`
 	HealthLeaksSecret bool            `json:"health_leaks_secret"`
 	ServerExitMillis  int             `json:"server_exit_millis"`
 	CreateDelayMillis int             `json:"create_delay_millis"`
 	IgnoreTerminate   bool            `json:"ignore_terminate"`
+	Grandchildren     bool            `json:"grandchildren"`
+	ObserveEvents     bool            `json:"observe_events"`
 	NoisyServerLog    bool            `json:"noisy_server_log"`
 }
 
 type fakeOpenCodeRecord struct {
 	Kind             string   `json:"kind"`
 	PID              int      `json:"pid,omitempty"`
+	PGID             int      `json:"pgid,omitempty"`
 	Args             []string `json:"args,omitempty"`
 	ID               string   `json:"id,omitempty"`
 	Body             string   `json:"body,omitempty"`
@@ -77,6 +81,8 @@ func TestMain(m *testing.M) {
 			}
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(89)
+		case "__supervisor_grandchild":
+			os.Exit(fakeSupervisorGrandchild(os.Args[2]))
 		case "serve":
 			os.Exit(fakeOpenCodeServe(os.Args[2:]))
 		case "attach":
@@ -463,6 +469,41 @@ func TestSupervisorPromptOrder(t *testing.T) {
 	assertFakeChildrenReaped(t, fixture)
 }
 
+func TestSupervisorResumeStdinAddsNoPromptBytes(t *testing.T) {
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
+		ExistingID:        "ses_resume123",
+		AttachDelayMillis: 75,
+		ReadStdin:         true,
+	})
+	fixture.options.ProviderSessionID = "ses_resume123"
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdin := os.Stdin
+	os.Stdin = reader
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		_ = reader.Close()
+	})
+	const want = "live resume input only\n"
+	if _, err := io.WriteString(writer, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runSupervisor(t.Context(), fixture.options); err != nil {
+		t.Fatalf("runSupervisor: %v", err)
+	}
+	attach := fixture.recordsOfKind(t, "attach")
+	if len(attach) != 1 || attach[0].Input != want {
+		t.Fatalf("resume attach input = %#v, want only %q with no supervisor prompt", attach, want)
+	}
+	assertFakeChildrenReaped(t, fixture)
+}
+
 func TestSupervisorSessionEvents(t *testing.T) {
 	directory := filepath.Clean(t.TempDir())
 	events := []eventEnvelope{
@@ -492,6 +533,98 @@ func TestSupervisorSessionEvents(t *testing.T) {
 		t.Fatalf("foreign identity = (%q, %v), want unchanged", foreignID, err)
 	}
 	assertFakeChildrenReaped(t, fixture)
+}
+
+func TestSupervisorSessionRootReplayDoesNotRollBackIdentity(t *testing.T) {
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{})
+	if err := session.WriteProviderIdentity(fixture.options.RuntimeDir, fixture.options.SessionName, "ses_rootA123"); err != nil {
+		t.Fatal(err)
+	}
+	state := newSupervisorEventState(fixture.options, "ses_rootA123")
+
+	if err := state.handleSessionCreated(fakeEvent("session.created", map[string]any{
+		"sessionID": "ses_rootB123",
+		"info":      map[string]any{"id": "ses_rootB123", "directory": fixture.options.Directory},
+	}).Properties); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.handleSessionCreated(fakeEvent("session.created", map[string]any{
+		"sessionID": "ses_rootA123",
+		"info":      map[string]any{"id": "ses_rootA123", "directory": fixture.options.Directory},
+	}).Properties); err != nil {
+		t.Fatal(err)
+	}
+
+	assertProviderIdentity(t, fixture.options, "ses_rootB123")
+	if state.activeRoot != "ses_rootB123" {
+		t.Fatalf("active root = %q, want ses_rootB123", state.activeRoot)
+	}
+}
+
+func TestSupervisorSessionIdentityWriteFailureIsAdvisoryAndRetryable(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "runtime-\x1b[31mwarning")
+	if err := os.Mkdir(runtimeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	options := supervisorOptions{
+		Directory:   filepath.Clean(t.TempDir()),
+		SessionName: "uam-opencode-a1b2c3d4",
+		RuntimeDir:  runtimeDir,
+	}
+	if err := session.WriteProviderIdentity(runtimeDir, options.SessionName, "ses_rootA123"); err != nil {
+		t.Fatal(err)
+	}
+	state := newSupervisorEventState(options, "ses_rootA123")
+	if err := os.Chmod(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(runtimeDir, 0o700) })
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = writer
+	handleErr := state.handleSessionCreated(fakeEvent("session.created", map[string]any{
+		"sessionID": "ses_rootB123",
+		"info":      map[string]any{"id": "ses_rootB123", "directory": options.Directory},
+	}).Properties)
+	os.Stderr = oldStderr
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	warning, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if handleErr != nil {
+		t.Fatalf("identity write failure stopped the event loop: %v", handleErr)
+	}
+	if state.activeRoot != "ses_rootA123" {
+		t.Fatalf("active root after failed persistence = %q, want prior root", state.activeRoot)
+	}
+	if strings.ContainsRune(string(warning), '\x1b') || !strings.Contains(string(warning), "continuing") {
+		t.Fatalf("advisory warning was not sanitized/actionable: %q", warning)
+	}
+
+	if err := os.Chmod(runtimeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	assertProviderIdentity(t, options, "ses_rootA123")
+	if err := state.handleSessionCreated(fakeEvent("session.created", map[string]any{
+		"sessionID": "ses_rootB123",
+		"info":      map[string]any{"id": "ses_rootB123", "directory": options.Directory},
+	}).Properties); err != nil {
+		t.Fatalf("replayed root did not retry persistence: %v", err)
+	}
+	assertProviderIdentity(t, options, "ses_rootB123")
+	if state.activeRoot != "ses_rootB123" {
+		t.Fatalf("active root after successful replay = %q", state.activeRoot)
+	}
 }
 
 func TestSupervisorPermissionModes(t *testing.T) {
@@ -530,6 +663,31 @@ func TestSupervisorPermissionModes(t *testing.T) {
 			assertFakeChildrenReaped(t, fixture)
 		})
 	}
+}
+
+func TestSupervisorPermissionSafeModeLeavesEventVisible(t *testing.T) {
+	directory := filepath.Clean(t.TempDir())
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
+		Directory:         directory,
+		CreatedID:         "ses_created123",
+		ObserveEvents:     true,
+		AttachDelayMillis: 100,
+		Events: []eventEnvelope{
+			fakeEvent("permission.asked", map[string]any{"id": "per_visible123", "sessionID": "ses_created123"}),
+		},
+	})
+
+	if err := runSupervisor(t.Context(), fixture.options); err != nil {
+		t.Fatalf("runSupervisor: %v", err)
+	}
+	observers := fixture.recordsOfKind(t, "observer")
+	if len(observers) != 1 || observers[0].ID != "per_visible123" {
+		t.Fatalf("second observer records = %#v, want visible permission event", observers)
+	}
+	if replies := fixture.recordsOfKind(t, "permission"); len(replies) != 0 {
+		t.Fatalf("safe supervisor emitted permission replies: %#v", replies)
+	}
+	assertLifecycleClean(t, fixture, nil)
 }
 
 func TestSupervisorPermissionActiveRootTree(t *testing.T) {
@@ -619,6 +777,22 @@ func TestSupervisorLifecycleStartup(t *testing.T) {
 		assertLifecycleClean(t, fixture, nil)
 	})
 
+	t.Run("genuine first-attempt bind collision selects a different port", func(t *testing.T) {
+		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{BindCollisionOnce: true})
+		if err := runSupervisor(t.Context(), fixture.options); err != nil {
+			t.Fatalf("runSupervisor: %v", err)
+		}
+		collisions := fixture.recordsOfKind(t, "serve_bind_collision")
+		serves := fixture.recordsOfKind(t, "serve")
+		if len(collisions) != 1 || len(serves) != 1 {
+			t.Fatalf("collision/serve records = %#v / %#v, want one each", collisions, serves)
+		}
+		if collisions[0].Port == serves[0].Port {
+			t.Fatalf("retry reused collided port %d", serves[0].Port)
+		}
+		assertLifecycleClean(t, fixture, nil)
+	})
+
 	t.Run("server exits before attach", func(t *testing.T) {
 		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
 			ServerExitMillis:  100,
@@ -699,22 +873,57 @@ func TestSupervisorLifecycleCancellation(t *testing.T) {
 		assertLifecycleClean(t, fixture, err)
 	})
 
-	t.Run("simultaneous attach exit and cancellation", func(t *testing.T) {
-		for attempt := 0; attempt < 8; attempt++ {
-			fixture := newSupervisorFixture(t, fakeOpenCodeConfig{AttachDelayMillis: 60, AttachExit: 23})
-			ctx, cancel := context.WithCancel(t.Context())
-			result := make(chan error, 1)
-			go func() { result <- runSupervisor(ctx, fixture.options) }()
-			awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
-			time.AfterFunc(60*time.Millisecond, cancel)
-			err := awaitSupervisorResult(t, result, 3*time.Second)
-			var exitErr *ExitError
-			if !errors.Is(err, context.Canceled) && (!errors.As(err, &exitErr) || exitErr.Code != 23) {
-				t.Fatalf("attempt %d simultaneous result = %v", attempt, err)
-			}
-			assertLifecycleClean(t, fixture, err)
+	t.Run("simultaneous attach exit and cancellation returns exact attach exit", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		attach := completedManagedProcess(t, 23)
+		server := &runningServer{process: &managedProcess{done: make(chan struct{})}, logs: newByteRing(1)}
+
+		err, ready := readySupervisorOutcome(ctx, server, attach, "password")
+		var exitErr *ExitError
+		if !ready || !errors.As(err, &exitErr) || exitErr.Code != 23 {
+			t.Fatalf("simultaneous attach/cancel result = (%v, %t), want exact exit 23", err, ready)
 		}
 	})
+}
+
+func TestSupervisorOutcomeArbitrationServerBeatsAttach(t *testing.T) {
+	attach := completedManagedProcess(t, 23)
+	serverProcess := &managedProcess{done: make(chan struct{}), err: errors.New("server sentinel")}
+	close(serverProcess.done)
+	server := &runningServer{process: serverProcess, logs: newByteRing(1)}
+
+	err, ready := readySupervisorOutcome(t.Context(), server, attach, "password")
+	var exitErr *ExitError
+	if !ready || errors.As(err, &exitErr) || !strings.Contains(err.Error(), "server sentinel") {
+		t.Fatalf("simultaneous server/attach result = (%v, %t), want exact server error", err, ready)
+	}
+}
+
+func completedManagedProcess(t *testing.T, exitCode int) *managedProcess {
+	t.Helper()
+	command := exec.Command("/bin/sh", "-c", "exit "+strconv.Itoa(exitCode))
+	err := command.Run()
+	if err == nil {
+		t.Fatalf("helper exit %d unexpectedly succeeded", exitCode)
+	}
+	process := &managedProcess{done: make(chan struct{}), err: err}
+	close(process.done)
+	return process
+}
+
+func TestSupervisorStartupCanceledBeforeFirstAttempt(t *testing.T) {
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	err := runSupervisor(ctx, fixture.options)
+	if err != context.Canceled {
+		t.Fatalf("canceled startup error = %v, want exact context.Canceled", err)
+	}
+	if records := fixture.records(t); len(records) != 0 {
+		t.Fatalf("canceled startup launched a child or made a request: %#v", records)
+	}
 }
 
 func TestSupervisorLifecycleSignals(t *testing.T) {
@@ -766,6 +975,38 @@ func TestSupervisorLifecycleStuckChildrenEscalate(t *testing.T) {
 	assertLifecycleClean(t, fixture, err)
 }
 
+func TestSupervisorLifecycleKillsProcessGroupGrandchildren(t *testing.T) {
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
+		AttachDelayMillis: 5000,
+		Grandchildren:     true,
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() { result <- runSupervisor(ctx, fixture.options) }()
+	t.Cleanup(func() { killFakeProcesses(fixture.records(t)) })
+	serve := awaitFakeRecord(t, fixture, "serve", 2*time.Second)
+	attach := awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
+	awaitFakeRecord(t, fixture, "serve_grandchild", 2*time.Second)
+	awaitFakeRecord(t, fixture, "attach_grandchild", 2*time.Second)
+
+	started := time.Now()
+	cancel()
+	if serve.PGID != serve.PID || attach.PGID != attach.PID || serve.PGID == attach.PGID {
+		killFakeProcesses(fixture.records(t))
+		_ = awaitSupervisorResult(t, result, 3*time.Second)
+		t.Fatalf("children do not own distinct process groups: serve=%#v attach=%#v", serve, attach)
+	}
+	err := awaitSupervisorResult(t, result, 4*time.Second)
+	elapsed := time.Since(started)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("process-group cleanup result = %v, want context.Canceled", err)
+	}
+	if elapsed < childCleanupTimeout-150*time.Millisecond || elapsed > childCleanupTimeout+1500*time.Millisecond {
+		t.Fatalf("process-group cleanup took %s, want bounded TERM/KILL near %s", elapsed, childCleanupTimeout)
+	}
+	assertLifecycleClean(t, fixture, err)
+}
+
 func TestSupervisorLifecycleBoundedServerLog(t *testing.T) {
 	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
 		AttachDelayMillis: 2000,
@@ -802,6 +1043,24 @@ func TestSupervisorLifecycleCredentialRedaction(t *testing.T) {
 		t.Fatalf("server-controlled version leaked generated credential: %q", err)
 	}
 	assertLifecycleClean(t, fixture, err)
+}
+
+func TestSupervisorSafeServerLogExcerptRedactsSanitizedPassword(t *testing.T) {
+	const password = "split-password"
+	for _, tt := range []struct {
+		name string
+		log  string
+	}{
+		{name: "ANSI split", log: "before split-\x1b[31mpassword after"},
+		{name: "control split", log: "before split-\x00password after"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := safeServerLogExcerpt([]byte(tt.log), password)
+			if strings.Contains(got, password) || !strings.Contains(got, "<redacted>") {
+				t.Fatalf("safeServerLogExcerpt() = %q, want sanitized password redacted", got)
+			}
+		})
+	}
 }
 
 func fakeEvent(eventType string, properties any) eventEnvelope {
@@ -947,8 +1206,24 @@ func assertFakeChildrenReaped(t *testing.T, fixture supervisorFixture) {
 		if !strings.HasPrefix(record.Kind, "serve") && !strings.HasPrefix(record.Kind, "attach") || record.PID <= 0 {
 			continue
 		}
-		if err := syscall.Kill(record.PID, 0); !errors.Is(err, syscall.ESRCH) {
-			t.Fatalf("fake child pid %d was not reaped: %v", record.PID, err)
+		deadline := time.Now().Add(time.Second)
+		for {
+			err := syscall.Kill(record.PID, 0)
+			if errors.Is(err, syscall.ESRCH) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("fake child pid %d was not reaped: %v", record.PID, err)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func killFakeProcesses(records []fakeOpenCodeRecord) {
+	for _, record := range records {
+		if record.PID > 0 && record.PID != os.Getpid() {
+			_ = syscall.Kill(record.PID, syscall.SIGKILL)
 		}
 	}
 }
@@ -985,9 +1260,11 @@ func writeFakeRecord(record fakeOpenCodeRecord) error {
 
 func fakeChildCredentialRecord(kind string, args []string) fakeOpenCodeRecord {
 	password := os.Getenv("OPENCODE_SERVER_PASSWORD")
+	pgid, _ := syscall.Getpgid(os.Getpid())
 	return fakeOpenCodeRecord{
 		Kind:             kind,
 		PID:              os.Getpid(),
+		PGID:             pgid,
 		Args:             append([]string(nil), args...),
 		PasswordSet:      password != "",
 		PasswordReplaced: password != testSupervisorPassword && len(password) == 64,
@@ -1020,6 +1297,28 @@ func fakeOpenCodeServe(args []string) int {
 			return 92
 		}
 	}
+	if config.BindCollisionOnce {
+		collisionPath := os.Getenv(fakeConfigEnv) + ".bind-collision"
+		if _, err := os.Stat(collisionPath); os.IsNotExist(err) {
+			_ = os.WriteFile(collisionPath, []byte("x"), 0o600)
+			collision, err := net.Listen("tcp", net.JoinHostPort(*hostname, strconv.Itoa(*port)))
+			if err != nil {
+				return 93
+			}
+			record := fakeChildCredentialRecord("serve_bind_collision", args)
+			record.Port = *port
+			_ = writeFakeRecord(record)
+			second, bindErr := net.Listen("tcp", net.JoinHostPort(*hostname, strconv.Itoa(*port)))
+			if second != nil {
+				_ = second.Close()
+			}
+			_ = collision.Close()
+			if bindErr == nil {
+				return 102
+			}
+			return 93
+		}
+	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(*hostname, strconv.Itoa(*port)))
 	if err != nil {
 		return 93
@@ -1029,6 +1328,11 @@ func fakeOpenCodeServe(args []string) int {
 	record.Port = *port
 	if err := writeFakeRecord(record); err != nil {
 		return 94
+	}
+	if config.Grandchildren {
+		if err := startFakeGrandchild("serve_grandchild"); err != nil {
+			return 103
+		}
 	}
 	password := os.Getenv("OPENCODE_SERVER_PASSWORD")
 	username := os.Getenv("OPENCODE_SERVER_USERNAME")
@@ -1143,6 +1447,16 @@ func fakeOpenCodeAttach(args []string) int {
 	if err := writeFakeRecord(start); err != nil {
 		return 97
 	}
+	if config.Grandchildren {
+		if err := startFakeGrandchild("attach_grandchild"); err != nil {
+			return 104
+		}
+	}
+	if config.ObserveEvents {
+		if err := fakeObservePermission(args[0], config); err != nil {
+			return 105
+		}
+	}
 	if config.AttachDelayMillis > 0 {
 		time.Sleep(time.Duration(config.AttachDelayMillis) * time.Millisecond)
 	}
@@ -1163,4 +1477,70 @@ func fakeOpenCodeAttach(args []string) int {
 		select {}
 	}
 	return config.AttachExit
+}
+
+func startFakeGrandchild(kind string) error {
+	command := exec.Command(os.Args[0], "__supervisor_grandchild", kind)
+	command.Env = os.Environ()
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	return command.Start()
+}
+
+func fakeSupervisorGrandchild(kind string) int {
+	signal.Ignore(syscall.SIGHUP, syscall.SIGTERM)
+	if err := writeFakeRecord(fakeChildCredentialRecord(kind, nil)); err != nil {
+		return 106
+	}
+	for {
+		time.Sleep(time.Hour)
+	}
+}
+
+func fakeObservePermission(baseURL string, config fakeOpenCodeConfig) error {
+	client, err := newAPIClient(
+		baseURL,
+		os.Getenv("OPENCODE_SERVER_USERNAME"),
+		os.Getenv("OPENCODE_SERVER_PASSWORD"),
+		config.Directory,
+		&http.Client{},
+	)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ready := make(chan struct{})
+	events := make(chan eventEnvelope, 16)
+	done := make(chan error, 1)
+	go func() { done <- client.subscribe(ctx, ready, events) }()
+	select {
+	case <-ready:
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	for {
+		select {
+		case event := <-events:
+			if event.Type != "permission.asked" {
+				continue
+			}
+			var asked permissionAskedEvent
+			if err := json.Unmarshal(event.Properties, &asked); err != nil {
+				return err
+			}
+			if err := writeFakeRecord(fakeOpenCodeRecord{Kind: "observer", ID: asked.ID}); err != nil {
+				return err
+			}
+			cancel()
+			<-done
+			return nil
+		case err := <-done:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }

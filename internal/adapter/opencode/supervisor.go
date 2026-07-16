@@ -188,6 +188,10 @@ type managedProcess struct {
 }
 
 func startManagedProcess(cmd *exec.Cmd) (*managedProcess, error) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -207,15 +211,6 @@ func (p *managedProcess) waitError() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.err
-}
-
-func (p *managedProcess) running() bool {
-	select {
-	case <-p.done:
-		return false
-	default:
-		return true
-	}
 }
 
 type byteRing struct {
@@ -317,24 +312,44 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	}
 
 	for {
+		if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
+			return outcome
+		}
 		select {
 		case <-attach.done:
-			return attachExitError(attach.waitError())
 		case <-server.process.done:
-			return serverFailureError("while attach was active", server, password)
 		case <-ctx.Done():
-			return ctx.Err()
 		case event := <-events:
+			if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
+				return outcome
+			}
 			if err := eventState.handle(ctx, server.client, event); err != nil {
 				return err
 			}
 		case err := <-streamDone:
-			if ctx.Err() != nil {
-				return ctx.Err()
+			if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
+				return outcome
 			}
 			return sanitizedSupervisorError("OpenCode event stream stopped", err, password)
 		}
 	}
+}
+
+func readySupervisorOutcome(ctx context.Context, server *runningServer, attach *managedProcess, password string) (error, bool) {
+	select {
+	case <-server.process.done:
+		return serverFailureError("while attach was active", server, password), true
+	default:
+	}
+	select {
+	case <-attach.done:
+		return attachExitError(attach.waitError()), true
+	default:
+	}
+	if err := ctx.Err(); err != nil {
+		return err, true
+	}
+	return nil, false
 }
 
 func randomServerPassword() (string, error) {
@@ -360,6 +375,9 @@ func serverEnvironment(base []string, username, password string) []string {
 func startOpenCodeServer(ctx context.Context, opts supervisorOptions, env []string, password string) (*runningServer, error) {
 	var lastError error
 	for attempt := 1; attempt <= serverStartupAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		server, retry, err := startOpenCodeServerAttempt(opts, env, password)
 		if err != nil {
 			if !retry {
@@ -499,43 +517,52 @@ func selectRootSession(ctx context.Context, opts supervisorOptions, client *apiC
 }
 
 func terminateAndReap(processes ...*managedProcess) {
-	running := runningProcesses(processes)
-	signalProcesses(running, syscall.SIGTERM)
-	if !waitForProcesses(running, childCleanupTimeout) {
-		signalProcesses(runningProcesses(processes), syscall.SIGKILL)
+	processes = managedProcesses(processes)
+	signalProcessGroups(processes, syscall.SIGTERM)
+	if !waitForProcessGroups(processes, childCleanupTimeout) {
+		signalProcessGroups(processes, syscall.SIGKILL)
 	}
 	reapProcesses(processes)
 }
 
-func runningProcesses(processes []*managedProcess) []*managedProcess {
-	running := make([]*managedProcess, 0, len(processes))
+func managedProcesses(processes []*managedProcess) []*managedProcess {
+	result := make([]*managedProcess, 0, len(processes))
 	for _, process := range processes {
-		if process != nil && process.running() {
-			running = append(running, process)
+		if process != nil {
+			result = append(result, process)
 		}
 	}
-	return running
+	return result
 }
 
-func signalProcesses(processes []*managedProcess, signal syscall.Signal) {
+func signalProcessGroups(processes []*managedProcess, signal syscall.Signal) {
 	for _, process := range processes {
-		if process.running() {
-			_ = process.cmd.Process.Signal(signal)
-		}
+		_ = syscall.Kill(-process.cmd.Process.Pid, signal)
 	}
 }
 
-func waitForProcesses(processes []*managedProcess, timeout time.Duration) bool {
+func waitForProcessGroups(processes []*managedProcess, timeout time.Duration) bool {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	for _, process := range processes {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		allExited := true
+		for _, process := range processes {
+			if err := syscall.Kill(-process.cmd.Process.Pid, 0); err == nil || errors.Is(err, syscall.EPERM) {
+				allExited = false
+				break
+			}
+		}
+		if allExited {
+			return true
+		}
 		select {
-		case <-process.done:
+		case <-ticker.C:
 		case <-deadline.C:
 			return false
 		}
 	}
-	return true
 }
 
 func reapProcesses(processes []*managedProcess) {
@@ -590,8 +617,13 @@ func sanitizedSupervisorError(operation string, err error, password string) erro
 }
 
 func safeServerLogExcerpt(data []byte, password string) string {
-	value := strings.ReplaceAll(string(data), password, "<redacted>")
-	value = strings.TrimSpace(displaytext.Sanitize(value))
+	value := displaytext.Sanitize(string(data))
+	for _, secret := range []string{password, displaytext.Sanitize(password)} {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "<redacted>")
+		}
+	}
+	value = strings.TrimSpace(value)
 	runes := []rune(value)
 	if len(runes) > 512 {
 		value = string(runes[len(runes)-512:])
@@ -662,18 +694,20 @@ type permissionAskedEvent struct {
 }
 
 type supervisorEventState struct {
-	opts       supervisorOptions
-	activeRoot string
-	rootFor    map[string]string
-	replied    map[string]struct{}
+	opts          supervisorOptions
+	activeRoot    string
+	rootFor       map[string]string
+	acceptedRoots map[string]struct{}
+	replied       map[string]struct{}
 }
 
 func newSupervisorEventState(opts supervisorOptions, rootID string) *supervisorEventState {
 	return &supervisorEventState{
-		opts:       opts,
-		activeRoot: rootID,
-		rootFor:    map[string]string{rootID: rootID},
-		replied:    make(map[string]struct{}),
+		opts:          opts,
+		activeRoot:    rootID,
+		rootFor:       map[string]string{rootID: rootID},
+		acceptedRoots: map[string]struct{}{rootID: {}},
+		replied:       make(map[string]struct{}),
 	}
 }
 
@@ -705,14 +739,22 @@ func (s *supervisorEventState) handleSessionCreated(properties json.RawMessage) 
 		s.rootFor[info.ID] = root
 		return nil
 	}
-	if info.ID == s.activeRoot {
+	if _, accepted := s.acceptedRoots[info.ID]; accepted {
 		return nil
 	}
 	if err := session.WriteProviderIdentity(s.opts.RuntimeDir, s.opts.SessionName, info.ID); err != nil {
-		return fmt.Errorf("update OpenCode provider identity: %w", err)
+		warning := displaytext.Sanitize(fmt.Sprintf(
+			"OpenCode provider identity update for %s failed; continuing with %s: %v",
+			info.ID,
+			s.activeRoot,
+			err,
+		))
+		_, _ = fmt.Fprintln(os.Stderr, warning)
+		return nil
 	}
 	s.activeRoot = info.ID
 	s.rootFor[info.ID] = info.ID
+	s.acceptedRoots[info.ID] = struct{}{}
 	return nil
 }
 
