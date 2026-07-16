@@ -147,7 +147,7 @@ func (c *apiClient) replyPermission(ctx context.Context, requestID string) error
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if !successfulStatus(resp.StatusCode) {
 		return c.statusError("permission reply", resp)
 	}
@@ -162,7 +162,7 @@ func (c *apiClient) subscribe(ctx context.Context, ready chan<- struct{}, events
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return c.statusError("event subscription", resp)
 	}
@@ -263,7 +263,7 @@ func (c *apiClient) doJSON(ctx context.Context, method, path, rawPath string, pa
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if !successfulStatus(resp.StatusCode) {
 		if method == http.MethodGet && strings.HasPrefix(path, sessionPathPrefix) && resp.StatusCode == http.StatusNotFound {
 			return errSessionNotFound

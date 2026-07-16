@@ -23,12 +23,6 @@ func New(backend adapter.Backend) adapter.AgentAdapter {
 	return agent
 }
 
-func resetAutoCacheForTest() {
-	minimumVersionCache.Lock()
-	defer minimumVersionCache.Unlock()
-	minimumVersionCache.values = map[versionExecutableIdentity]error{}
-}
-
 func prepareLaunch(ctx adapter.Context, req adapter.ResumeRequest, _, sessionName, cwd string) (adapter.LaunchPreparation, error) {
 	providerCommand, err := providerCommandFor(req)
 	if err != nil {
