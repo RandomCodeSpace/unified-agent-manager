@@ -215,7 +215,7 @@ func probeMinimumVersion(ctx context.Context, command providerCommand) error {
 		return minimumVersionError(command, out, "unrecognized version output")
 	}
 	required := semanticVersion{major: 1, minor: 18, patch: 1}
-	if detected.compare(required) < 0 {
+	if detected.prerelease || detected.compare(required) < 0 {
 		return minimumVersionError(command, out, "unsupported version")
 	}
 	return nil

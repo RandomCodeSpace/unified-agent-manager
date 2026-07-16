@@ -112,6 +112,8 @@ func TestMinimumVersionValidation(t *testing.T) {
 		{name: "v prefix", output: "v1.18.1\n"},
 		{name: "stable build metadata", output: "1.18.1+linux.amd64\n"},
 		{name: "floor prerelease", output: "1.18.1-beta.1\n", wantErr: true, detected: "1.18.1-beta.1"},
+		{name: "newer patch prerelease", output: "1.18.2-beta.1\n", wantErr: true, detected: "1.18.2-beta.1"},
+		{name: "newer minor prerelease", output: "1.19.0-rc.1\n", wantErr: true, detected: "1.19.0-rc.1"},
 		{name: "malformed", output: "not-\x1b[31mvalid\x1b[0m\n", wantErr: true, detected: "not-valid"},
 		{name: "multiple tokens", output: "opencode 1.18.1\n", wantErr: true, detected: "opencode 1.18.1"},
 		{name: "nonzero exit", output: "1.18.1\n", exitCode: 23, wantErr: true, detected: "1.18.1"},
