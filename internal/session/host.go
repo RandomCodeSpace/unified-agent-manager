@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -582,7 +583,12 @@ func readProviderIdentityHandoff(dir, name, path string) string {
 	if err != nil {
 		return ""
 	}
-	if path != canonicalPath {
+	canonicalPath, err = filepath.Abs(canonicalPath)
+	if err != nil {
+		return ""
+	}
+	path, err = filepath.Abs(path)
+	if err != nil || path != canonicalPath {
 		return ""
 	}
 	providerID, err := ReadProviderIdentity(dir, name)

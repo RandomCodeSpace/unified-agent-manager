@@ -337,6 +337,45 @@ func TestImmediateExitRecordsProviderIdentityHandoffWithRelativeRuntimeDir(t *te
 	}
 }
 
+func TestCreateSessionPreservesShortRelativeSocketPathInDeepWorkingDirectory(t *testing.T) {
+	root, err := os.MkdirTemp("", "uam-deep-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	deepCwd := filepath.Join(root, strings.Repeat("d", 90))
+	if err := os.MkdirAll(deepCwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	originalCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(deepCwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalCwd); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("UAM_CONFIG_DIR", filepath.Join(root, "cfg"))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Dir: ".uam", Exe: exe}
+	t.Cleanup(func() { _ = c.KillAll(context.Background()) })
+
+	name := "uam-fake-dead0001"
+	if err := c.CreateSession(context.Background(), name, root, nil, []string{"/bin/sh", "-c", "sleep 60"}); err != nil {
+		t.Fatalf("CreateSession with short relative socket path: %v", err)
+	}
+	if !c.HasSession(context.Background(), name) {
+		t.Fatal("relative-path session should be live after create")
+	}
+}
+
 func TestProviderIdentityStaleHostCleanupRemovesAllRuntimeFiles(t *testing.T) {
 	c := newTestClient(t)
 	name := "uam-opencode-aabbccdd"
