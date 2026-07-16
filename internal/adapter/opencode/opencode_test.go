@@ -184,6 +184,8 @@ func TestOpenCodeResumeKindIsExactOnly(t *testing.T) {
 		want adapter.ResumeKind
 	}{
 		{name: "valid", id: "ses_exact123", want: adapter.ResumeExact},
+		{name: "maximum length", id: "ses_" + strings.Repeat("a", 60), want: adapter.ResumeExact},
+		{name: "one byte over maximum", id: "ses_" + strings.Repeat("a", 61), want: adapter.ResumeUnsupported},
 		{name: "missing", want: adapter.ResumeUnsupported},
 		{name: "wrong prefix", id: "abc_exact123", want: adapter.ResumeUnsupported},
 		{name: "too short", id: "ses_ab", want: adapter.ResumeUnsupported},
@@ -195,6 +197,52 @@ func TestOpenCodeResumeKindIsExactOnly(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOpenCodePromptDeliveryAndResumeNoReplay(t *testing.T) {
+	newAgent := func(t *testing.T) (*adapter.Agent, *adaptertest.Backend, string) {
+		t.Helper()
+		providerPath := writeVersionedOpenCode(t, "1.18.1")
+		t.Setenv("PATH", filepath.Dir(providerPath))
+		t.Setenv("UAM_SESSION_DIR", secureOpenCodeRuntimeDir(t))
+		backend := &adaptertest.Backend{}
+		return New(backend).(*adapter.Agent), backend, filepath.Clean(t.TempDir())
+	}
+
+	t.Run("dispatch preserves Unicode and multiline prompt", func(t *testing.T) {
+		agent, backend, cwd := newAgent(t)
+		const prompt = "Unicode π 你好\nsecond line\tkept"
+		if _, err := agent.Dispatch(context.Background(), adapter.DispatchRequest{Prompt: prompt, Cwd: cwd, Mode: "yolo"}); err != nil {
+			t.Fatalf("Dispatch(): %v", err)
+		}
+		sends := backend.CallsOf("send")
+		if len(sends) != 1 || sends[0].Text != prompt {
+			t.Fatalf("dispatch sends = %#v, want one byte-preserved prompt %q", sends, prompt)
+		}
+	})
+
+	t.Run("empty dispatch sends no line", func(t *testing.T) {
+		agent, backend, cwd := newAgent(t)
+		if _, err := agent.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: cwd, Mode: "safe"}); err != nil {
+			t.Fatalf("Dispatch(): %v", err)
+		}
+		if sends := backend.CallsOf("send"); len(sends) != 0 {
+			t.Fatalf("empty dispatch sends = %#v, want none", sends)
+		}
+	})
+
+	t.Run("exact resume does not replay stored prompt", func(t *testing.T) {
+		agent, backend, cwd := newAgent(t)
+		if _, err := agent.Resume(context.Background(), adapter.ResumeRequest{
+			ID: "deadbeef", Cwd: cwd, Mode: "yolo", SessionName: "uam-opencode-deadbeef",
+			ProviderSessionID: "ses_exact123", Prompt: "stored prompt must stay inert",
+		}); err != nil {
+			t.Fatalf("Resume(): %v", err)
+		}
+		if sends := backend.CallsOf("send"); len(sends) != 0 {
+			t.Fatalf("exact resume replayed prompt: %#v", sends)
+		}
+	})
 }
 
 func TestOpenCodeLegacyPluginAndProviderStateAreInert(t *testing.T) {

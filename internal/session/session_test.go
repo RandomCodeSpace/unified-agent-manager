@@ -155,6 +155,58 @@ func TestCreateListCaptureSendKill(t *testing.T) {
 	}
 }
 
+func TestSendLineNormalizesUnicodeMultilineEmptyAndTrailingNewlines(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-abc12346"
+	command := `stty -echo; printf 'ready\n'; while IFS= read -r line; do printf 'record:%s\n' "$line"; done`
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", command}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitFor(t, "SendLine fixture readiness", func() bool {
+		out, err := c.Capture(ctx, name, 100)
+		return err == nil && strings.Contains(out, "ready")
+	})
+
+	tests := []struct {
+		name      string
+		input     string
+		wantLines []string
+	}{
+		{name: "Unicode", input: "unicode-π-你好", wantLines: []string{"record:unicode-π-你好"}},
+		{name: "multiline", input: "multi-first\nmulti-second", wantLines: []string{"record:multi-first", "record:multi-second"}},
+		{name: "empty", input: "", wantLines: []string{"record:"}},
+		{name: "one trailing newline", input: "one-tail\n", wantLines: []string{"record:one-tail"}},
+		{name: "many trailing newlines", input: "many-tail\n\n\n", wantLines: []string{"record:many-tail"}},
+	}
+	for _, tt := range tests {
+		if err := c.SendLine(ctx, name, tt.input); err != nil {
+			t.Fatalf("SendLine(%s): %v", tt.name, err)
+		}
+		last := tt.wantLines[len(tt.wantLines)-1]
+		waitFor(t, tt.name+" output", func() bool {
+			out, err := c.Capture(ctx, name, 100)
+			return err == nil && strings.Contains(out, last)
+		})
+	}
+
+	out, err := c.Capture(ctx, name, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(out, "record:"); got != 6 {
+		t.Fatalf("normalized records = %d, want 6 exactly; output=%q", got, out)
+	}
+	for _, want := range []string{"record:unicode-π-你好", "record:multi-first", "record:multi-second", "record:one-tail", "record:many-tail"} {
+		if got := strings.Count(out, want); got != 1 {
+			t.Fatalf("output count for %q = %d, want 1; output=%q", want, got, out)
+		}
+	}
+	if err := c.Kill(ctx, name); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+}
+
 func TestNaturalAgentCrashRemainsResumableAndRecordsFailure(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
@@ -364,10 +416,20 @@ func TestKillAllIsIdempotent(t *testing.T) {
 	if err := c.KillAll(ctx); err != nil {
 		t.Fatalf("KillAll on empty dir: %v", err)
 	}
-	for _, name := range []string{"uam-fake-aaaa1111", "uam-fake-bbbb2222"} {
+	names := []string{"uam-fake-aaaa1111", "uam-fake-bbbb2222"}
+	states := make(map[string]State, len(names))
+	for index, name := range names {
 		if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "sleep 60"}); err != nil {
 			t.Fatalf("CreateSession %s: %v", name, err)
 		}
+		if err := WriteProviderIdentity(c.Dir, name, fmt.Sprintf("ses_cleanup%d", index)); err != nil {
+			t.Fatalf("WriteProviderIdentity %s: %v", name, err)
+		}
+		state, err := readState(c.Dir, name)
+		if err != nil {
+			t.Fatalf("readState %s: %v", name, err)
+		}
+		states[name] = state
 	}
 	if err := c.KillAll(ctx); err != nil {
 		t.Fatalf("KillAll: %v", err)
@@ -375,6 +437,24 @@ func TestKillAllIsIdempotent(t *testing.T) {
 	infos, err := c.List(ctx)
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("sessions remain after KillAll: %+v %v", infos, err)
+	}
+	for _, name := range names {
+		state := states[name]
+		waitFor(t, "KillAll process cleanup for "+name, func() bool {
+			return !state.hostAlive() && !state.childAlive()
+		})
+		if state.hostAlive() || state.childAlive() {
+			t.Fatalf("process remains after KillAll for %s: host=%d child=%d", name, state.HostPID, state.ChildPID)
+		}
+		providerPath, err := ProviderIdentityPath(c.Dir, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{statePath(c.Dir, name), SocketPath(c.Dir, name), providerPath} {
+			if _, err := os.Lstat(path); !os.IsNotExist(err) {
+				t.Fatalf("runtime artifact remains after KillAll: %s (%v)", path, err)
+			}
+		}
 	}
 	if err := c.KillAll(ctx); err != nil {
 		t.Fatalf("KillAll repeat: %v", err)

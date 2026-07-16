@@ -3,6 +3,7 @@ package opencode
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -60,6 +61,7 @@ type fakeOpenCodeConfig struct {
 	Grandchildren       bool            `json:"grandchildren"`
 	ObserveEvents       bool            `json:"observe_events"`
 	NoisyServerLog      bool            `json:"noisy_server_log"`
+	EventGatePath       string          `json:"event_gate_path"`
 }
 
 type fakeOpenCodeRecord struct {
@@ -73,6 +75,8 @@ type fakeOpenCodeRecord struct {
 	Port             int      `json:"port,omitempty"`
 	PasswordSet      bool     `json:"password_set,omitempty"`
 	PasswordReplaced bool     `json:"password_replaced,omitempty"`
+	CredentialHash   string   `json:"credential_hash,omitempty"`
+	ConfigHash       string   `json:"config_hash,omitempty"`
 }
 
 func TestMain(m *testing.M) {
@@ -331,6 +335,145 @@ func (f supervisorFixture) commandArgs() []string {
 	return args
 }
 
+func startSupervisorFixture(t *testing.T, fixture supervisorFixture, input string) (*exec.Cmd, *os.File) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input != "" {
+		if _, err := io.WriteString(writer, input); err != nil {
+			_ = reader.Close()
+			_ = writer.Close()
+			t.Fatal(err)
+		}
+	}
+	command := exec.Command(os.Args[0], append([]string{"__supervisor_test"}, fixture.commandArgs()...)...)
+	command.Env = fakeSupervisorEnvironment(fixture)
+	command.Stdin = reader
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	if err := command.Start(); err != nil {
+		_ = reader.Close()
+		_ = writer.Close()
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		_ = writer.Close()
+		_ = command.Process.Kill()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = writer.Close()
+		_ = command.Process.Kill()
+		killFakeProcesses(fixture.records(t))
+	})
+	return command, writer
+}
+
+func fakeSupervisorEnvironment(fixture supervisorFixture) []string {
+	result := make([]string, 0, len(os.Environ())+4)
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		switch key {
+		case fakeConfigEnv, fakeRecordEnv, "OPENCODE_SERVER_USERNAME", "OPENCODE_SERVER_PASSWORD":
+			continue
+		}
+		result = append(result, entry)
+	}
+	return append(result,
+		fakeConfigEnv+"="+fixture.configPath,
+		fakeRecordEnv+"="+fixture.recordPath,
+		"OPENCODE_SERVER_USERNAME=attacker",
+		"OPENCODE_SERVER_PASSWORD="+testSupervisorPassword,
+	)
+}
+
+func writeFakeOpenCodeConfig(t *testing.T, path string, config fakeOpenCodeConfig) {
+	t.Helper()
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func awaitProviderIdentity(t *testing.T, options supervisorOptions, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if got, err := session.ReadProviderIdentity(options.RuntimeDir, options.SessionName); err == nil && got == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	assertProviderIdentity(t, options, want)
+}
+
+func releaseFakeEvents(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("release"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertDistinctSupervisorBoundaries(t *testing.T, alpha, beta supervisorFixture, inheritedConfig string) {
+	t.Helper()
+	if alpha.options.Directory != beta.options.Directory || alpha.options.RuntimeDir != beta.options.RuntimeDir {
+		t.Fatalf("fixtures do not share workspace/runtime: alpha=%#v beta=%#v", alpha.options, beta.options)
+	}
+	if alpha.options.SessionName == beta.options.SessionName {
+		t.Fatalf("managed session names collide: %q", alpha.options.SessionName)
+	}
+	alphaServe := alpha.recordsOfKind(t, "serve")
+	betaServe := beta.recordsOfKind(t, "serve")
+	if len(alphaServe) != 1 || len(betaServe) != 1 || alphaServe[0].Port == betaServe[0].Port {
+		t.Fatalf("loopback boundaries = alpha %#v, beta %#v", alphaServe, betaServe)
+	}
+	if alphaServe[0].CredentialHash == "" || betaServe[0].CredentialHash == "" || alphaServe[0].CredentialHash == betaServe[0].CredentialHash {
+		t.Fatalf("credential hashes are not distinct: alpha=%q beta=%q", alphaServe[0].CredentialHash, betaServe[0].CredentialHash)
+	}
+	wantConfigHash := fakeHash(inheritedConfig)
+	for name, fixture := range map[string]supervisorFixture{"alpha": alpha, "beta": beta} {
+		serve := fixture.recordsOfKind(t, "serve")[0]
+		attach := fixture.recordsOfKind(t, "attach_start")
+		if len(attach) != 1 || attach[0].CredentialHash != serve.CredentialHash {
+			t.Fatalf("%s server/attach credential boundary differs: serve=%#v attach=%#v", name, serve, attach)
+		}
+		if serve.ConfigHash != wantConfigHash || attach[0].ConfigHash != wantConfigHash {
+			t.Fatalf("%s config hashes = serve %q attach %q, want %q", name, serve.ConfigHash, attach[0].ConfigHash, wantConfigHash)
+		}
+	}
+}
+
+func assertExactRestartRecords(t *testing.T, records []fakeOpenCodeRecord, options supervisorOptions, wantID string) {
+	t.Helper()
+	byKind := make(map[string][]fakeOpenCodeRecord)
+	for _, record := range records {
+		byKind[record.Kind] = append(byKind[record.Kind], record)
+	}
+	if len(byKind["create"]) != 0 || len(byKind["get"]) != 1 || byKind["get"][0].ID != wantID {
+		t.Fatalf("exact restart selection records = %#v", records)
+	}
+	if len(byKind["attach"]) != 1 || byKind["attach"][0].Input != "" {
+		t.Fatalf("restart attach input = %#v, want no prompt replay", byKind["attach"])
+	}
+	if len(byKind["serve"]) != 1 {
+		t.Fatalf("restart serve records = %#v", byKind["serve"])
+	}
+	wantArgs := []string{"http://127.0.0.1:" + strconv.Itoa(byKind["serve"][0].Port), "--dir", options.Directory, "--session", wantID}
+	if !reflect.DeepEqual(byKind["attach"][0].Args, wantArgs) {
+		t.Fatalf("restart attach argv = %#v, want %#v", byKind["attach"][0].Args, wantArgs)
+	}
+}
+
+func fakeHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", sum)
+}
+
 func TestSupervisorNewAndExactResume(t *testing.T) {
 	t.Run("new creates persists and attaches exact root", func(t *testing.T) {
 		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{CreatedID: "ses_new123"})
@@ -387,6 +530,104 @@ func TestSupervisorNewAndExactResume(t *testing.T) {
 		assertNoSupervisorSecret(t, fixture)
 		assertFakeChildrenReaped(t, fixture)
 	})
+}
+
+func TestSupervisorSameWorkspaceSessionsRemainIndependent(t *testing.T) {
+	directory := filepath.Clean(t.TempDir())
+	runtimeDir := filepath.Clean(t.TempDir())
+	if err := os.Chmod(runtimeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configEnv := "OPENCODE_CONFIG_" + "CONTENT"
+	const inheritedConfig = `{"unknown_uam_regression":{"preserve":"exactly"}}`
+	t.Setenv(configEnv, inheritedConfig)
+
+	alphaGate := filepath.Join(t.TempDir(), "release-events")
+	betaGate := filepath.Join(t.TempDir(), "release-events")
+	alphaRoot := "ses_alpha123"
+	alphaNew := "ses_alpha_new123"
+	betaRoot := "ses_beta123"
+	alpha := newSupervisorFixture(t, fakeOpenCodeConfig{
+		Directory:     directory,
+		CreatedID:     alphaRoot,
+		ReadStdin:     true,
+		EventGatePath: alphaGate,
+		Events: []eventEnvelope{
+			fakeEvent("session.created", map[string]any{"sessionID": "ses_alpha_child123", "info": map[string]any{"id": "ses_alpha_child123", "parentID": alphaRoot, "directory": directory}}),
+			fakeEvent("session.created", map[string]any{"sessionID": "ses_wrong_directory123", "info": map[string]any{"id": "ses_wrong_directory123", "directory": directory + "-other"}}),
+			fakeEvent("session.created", map[string]any{"sessionID": alphaNew, "info": map[string]any{"id": alphaNew, "directory": directory}}),
+			fakeEvent("session.created", map[string]any{"sessionID": "ses_alpha_new_child123", "info": map[string]any{"id": "ses_alpha_new_child123", "parentID": alphaNew, "directory": directory}}),
+		},
+	})
+	alpha.options.RuntimeDir = runtimeDir
+	alpha.options.SessionName = "uam-opencode-aaaa1111"
+	beta := newSupervisorFixture(t, fakeOpenCodeConfig{
+		Directory:     directory,
+		CreatedID:     betaRoot,
+		ReadStdin:     true,
+		EventGatePath: betaGate,
+		Events: []eventEnvelope{
+			fakeEvent("session.created", map[string]any{"sessionID": "ses_beta_child123", "info": map[string]any{"id": "ses_beta_child123", "parentID": betaRoot, "directory": directory}}),
+		},
+	})
+	beta.options.RuntimeDir = runtimeDir
+	beta.options.SessionName = "uam-opencode-bbbb2222"
+
+	const alphaPrompt = "Unicode π 你好\nsecond line\tkept\n"
+	alphaCommand, alphaInput := startSupervisorFixture(t, alpha, alphaPrompt)
+	betaCommand, betaInput := startSupervisorFixture(t, beta, "")
+
+	awaitFakeRecord(t, alpha, "attach_start", 3*time.Second)
+	awaitFakeRecord(t, beta, "attach_start", 3*time.Second)
+	awaitProviderIdentity(t, alpha.options, alphaRoot, 3*time.Second)
+	awaitProviderIdentity(t, beta.options, betaRoot, 3*time.Second)
+	assertDistinctSupervisorBoundaries(t, alpha, beta, inheritedConfig)
+
+	releaseFakeEvents(t, alphaGate)
+	releaseFakeEvents(t, betaGate)
+	awaitProviderIdentity(t, alpha.options, alphaNew, 3*time.Second)
+	assertProviderIdentity(t, beta.options, betaRoot)
+	if err := alphaInput.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := betaInput.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitCommand(t, alphaCommand, 3*time.Second); err != nil {
+		t.Fatalf("alpha supervisor: %v", err)
+	}
+	if err := waitCommand(t, betaCommand, 3*time.Second); err != nil {
+		t.Fatalf("beta supervisor: %v", err)
+	}
+	alphaAttach := alpha.recordsOfKind(t, "attach")
+	if len(alphaAttach) != 1 || alphaAttach[0].Input != alphaPrompt {
+		t.Fatalf("alpha attach input = %#v, want %q exactly once", alphaAttach, alphaPrompt)
+	}
+	betaAttach := beta.recordsOfKind(t, "attach")
+	if len(betaAttach) != 1 || betaAttach[0].Input != "" {
+		t.Fatalf("beta attach input = %#v, want no prompt", betaAttach)
+	}
+
+	beforeRestart := len(alpha.records(t))
+	writeFakeOpenCodeConfig(t, alpha.configPath, fakeOpenCodeConfig{
+		Directory:  directory,
+		ExistingID: alphaNew,
+		ReadStdin:  true,
+	})
+	alpha.options.ProviderSessionID = alphaNew
+	restartCommand, restartInput := startSupervisorFixture(t, alpha, "")
+	if err := restartInput.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitCommand(t, restartCommand, 3*time.Second); err != nil {
+		t.Fatalf("alpha exact restart: %v", err)
+	}
+	alphaRecords := alpha.records(t)
+	assertExactRestartRecords(t, alphaRecords[beforeRestart:], alpha.options, alphaNew)
+	assertProviderIdentity(t, alpha.options, alphaNew)
+	assertProviderIdentity(t, beta.options, betaRoot)
+	assertLifecycleClean(t, alpha, nil)
+	assertLifecycleClean(t, beta, nil)
 }
 
 func TestSupervisorExactRootValidation(t *testing.T) {
@@ -1352,6 +1593,8 @@ func fakeChildCredentialRecord(kind string, args []string) fakeOpenCodeRecord {
 		Args:             append([]string(nil), args...),
 		PasswordSet:      password != "",
 		PasswordReplaced: password != testSupervisorPassword && len(password) == 64,
+		CredentialHash:   fakeHash(password),
+		ConfigHash:       fakeHash(os.Getenv("OPENCODE_CONFIG_" + "CONTENT")),
 	}
 }
 
@@ -1467,6 +1710,9 @@ func fakeOpenCodeServe(args []string) int {
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
+			if config.EventGatePath != "" && !waitForFakeEventGate(request.Context(), config.EventGatePath) {
+				return
+			}
 			for _, event := range config.Events {
 				data, _ := json.Marshal(event)
 				_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
@@ -1525,6 +1771,23 @@ func fakeOpenCodeServe(args []string) int {
 		return 95
 	}
 	return 0
+}
+
+func waitForFakeEventGate(ctx context.Context, path string) bool {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		} else if !os.IsNotExist(err) {
+			return false
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return false
+		}
+	}
 }
 
 func fakeOpenCodeAttach(args []string) int {

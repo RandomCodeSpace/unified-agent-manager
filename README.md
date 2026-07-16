@@ -39,6 +39,8 @@ Supported providers:
 
 - Go 1.25+ to build from source (the pinned toolchain downloads automatically)
 - Any provider CLI you want to manage already installed and authenticated
+- OpenCode 1.18.1 or newer when using the OpenCode provider. If UAM reports an
+  older version, run `opencode upgrade 1.18.1` before dispatching or resuming.
 
 That's it — agents are spawned directly under uam's own session hosts, so
 there is nothing else to install.
@@ -48,8 +50,8 @@ from the dispatch UI instead of failing the whole app.
 
 ## Supported platforms
 
-- Linux (Ubuntu), on amd64 and arm64
-- macOS, on Intel and Apple silicon
+- Linux (Ubuntu), on AMD64 and ARM64
+- macOS, on AMD64 (Intel) and ARM64 (Apple silicon)
 - Native Windows is not supported. Windows Terminal and PowerShell can be used
   only as SSH clients connecting to a Linux or macOS host running `uam`.
 
@@ -205,9 +207,9 @@ Provider behavior:
   heuristic.
 - **Copilot**: exact resume — the session is named with the uam id at
   dispatch (`--name`) and resumed by that exact name (`--resume=<id>`).
-- **OpenCode**: UAM learns the current root conversation ID and resumes it
-  exactly with `--session`. Older records without an identity use guarded
-  `-c` latest-conversation behavior.
+- **OpenCode**: exact resume only. UAM learns the current root conversation ID
+  and resumes it with `--session`. A stopped legacy record without a valid
+  exact identity cannot be resumed; dispatch a new Managed Session instead.
 - **Oh My Pi**: new sessions receive a UAM-ID-specific provider state directory,
   making `-c` exact. Legacy records without that directory retain guarded
   latest-conversation behavior.
@@ -230,6 +232,32 @@ OpenCode's `/new` creates a new provider conversation *inside the current
 Managed Session*. It intentionally does not create another UAM row or host. UAM
 tracks the newly selected root conversation for later exact resume. To get two
 independently attachable sessions, use `uam new` or `uam dispatch` again.
+
+Each managed OpenCode terminal owns a private authenticated server bound to a
+distinct loopback port. UAM uses that server to create or validate the exact
+root conversation, attach to that exact ID, and observe `/new` root changes.
+Consequently, two OpenCode sessions in the same Workspace retain independent
+ports, credentials, terminal hosts, and provider conversation IDs.
+
+### OpenCode upgrade cleanup
+
+Current UAM releases do not create, inspect, repair, execute, or delete the
+legacy identity plugin at
+`$XDG_STATE_HOME/uam/providers/opencode/uam-identity-plugin.mjs` (under
+`~/.local/state` when `XDG_STATE_HOME` is unset). A stale file there is inert;
+its contents, type, ownership, or permissions cannot block OpenCode launch.
+
+No automatic cleanup is performed. If no older UAM installation still needs
+that generated state, cleanup is optional. First inspect and verify the exact
+UAM-generated directory, then remove only that directory:
+
+```sh
+legacy_dir="${XDG_STATE_HOME:-$HOME/.local/state}/uam/providers/opencode"
+printf 'Review before removal: %s\n' "$legacy_dir"
+ls -la -- "$legacy_dir"
+# After verifying the printed path and contents:
+rm -rf -- "$legacy_dir"
+```
 
 The terminology and compatibility decision are documented in
 [Managed Session vs. Provider Conversation](docs/adr/0001-managed-session-vs-provider-conversation.md).
@@ -273,10 +301,11 @@ Use `uam dispatch --safe ...` when you want the provider's default approval
 behavior instead. Safe mode changes provider arguments; it is not an operating-
 system sandbox and does not reduce the permissions of the `uam` process itself.
 
-OpenCode is capability-probed before launch. In default yolo mode, UAM adds
-`--auto` only when the installed OpenCode advertises that flag; older versions
-continue without an unsupported argument. This preserves compatibility but does
-not turn OpenCode or UAM into a sandbox.
+OpenCode keeps the same safety-mode contract as the other providers. Default
+yolo mode automatically approves permission requests for the active root
+conversation tree. `uam dispatch --safe ...` leaves OpenCode permission prompts
+visible for the user and does not auto-reply. Safe mode still is not an
+operating-system sandbox.
 
 `uam` does not make git checkpoints, stash changes, or modify your repository on
 its own. It starts and manages agent sessions; the provider remains responsible
