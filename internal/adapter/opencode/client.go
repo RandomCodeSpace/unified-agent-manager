@@ -22,8 +22,8 @@ import (
 
 const (
 	maxAPIResponseBytes     = 1 << 20
-	maxAPIErrorReadBytes    = 4 << 10
 	maxAPIErrorExcerptRunes = 256
+	maxErrorBodyBytes       = 4 << 10
 	maxSSEEventBytes        = 256 << 10
 	maxSSELineBytes         = maxSSEEventBytes + 16
 	sessionPathPrefix       = "/session/"
@@ -61,7 +61,7 @@ type apiClient struct {
 
 func newAPIClient(baseURL, username, password, directory string, client *http.Client) (*apiClient, error) {
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme != "http" || parsed.Opaque != "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" {
+	if err != nil || parsed.Scheme != "http" || parsed.Opaque != "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" || parsed.ForceQuery {
 		return nil, fmt.Errorf("OpenCode server base URL must be plain loopback HTTP")
 	}
 	if parsed.Path != "" && parsed.Path != "/" || parsed.RawPath != "" {
@@ -323,7 +323,10 @@ func (c *apiClient) do(ctx context.Context, method, path, rawPath string, payloa
 }
 
 func (c *apiClient) statusError(operation string, resp *http.Response) error {
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxAPIErrorReadBytes))
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes+1))
+	if len(data) > maxErrorBodyBytes {
+		return fmt.Errorf("OpenCode %s failed with HTTP %d: response body omitted (exceeds %d bytes)", operation, resp.StatusCode, maxErrorBodyBytes)
+	}
 	excerpt := c.safeText(string(data))
 	if excerpt == "" {
 		return fmt.Errorf("OpenCode %s failed with HTTP %d", operation, resp.StatusCode)

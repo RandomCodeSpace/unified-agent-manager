@@ -157,6 +157,7 @@ func TestAPIClientRejectsUnsafeBaseURLs(t *testing.T) {
 		"https://127.0.0.1:4096",
 		"http://user:secret@127.0.0.1:4096",
 		"http://127.0.0.1:4096/prefix",
+		"http://127.0.0.1:4096?",
 		"http://127.0.0.1:4096?query=value",
 		"http://127.0.0.1:4096#fragment",
 	} {
@@ -224,18 +225,42 @@ func TestAPIClientHTTPFailures(t *testing.T) {
 		assertSafeAPIError(t, err)
 	})
 
-	t.Run("server body is sanitized redacted and capped", func(t *testing.T) {
+	t.Run("bounded server body is sanitized redacted and capped", func(t *testing.T) {
 		client := newTestAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = io.WriteString(w, "\x1b[31mboom\x1b[0m\r\n"+testAPIPassword+strings.Repeat("x", 4096))
+			_, _ = io.WriteString(w, "\x1b[31mboom\x1b[0m\r\n"+testAPIPassword+strings.Repeat("x", 64))
 		})
 		_, err := client.health(testContext(t))
 		assertSafeAPIError(t, err)
 		if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "boom") {
 			t.Fatalf("error = %q, want status and sanitized excerpt", err)
 		}
+		if !strings.Contains(err.Error(), "<redacted>") {
+			t.Fatalf("error = %q, want password redaction marker", err)
+		}
 		if len([]rune(err.Error())) > 512 {
 			t.Fatalf("error excerpt was not capped: %d runes", len([]rune(err.Error())))
+		}
+	})
+
+	t.Run("oversized body omits a secret straddling the read boundary", func(t *testing.T) {
+		split := len(testAPIPassword) / 2
+		padding := strings.Repeat("\x01", maxErrorBodyBytes-split)
+		client := newTestAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, padding+testAPIPassword)
+		})
+		_, err := client.health(testContext(t))
+		assertSafeAPIError(t, err)
+		message := err.Error()
+		for start := 0; start+8 <= len(testAPIPassword); start++ {
+			fragment := testAPIPassword[start : start+8]
+			if strings.Contains(message, fragment) {
+				t.Fatalf("error leaked password fragment %q: %q", fragment, message)
+			}
+		}
+		if !strings.Contains(message, "response body omitted") {
+			t.Fatalf("oversized error = %q, want generic omission marker", message)
 		}
 	})
 }
@@ -435,6 +460,42 @@ func testContext(t *testing.T) context.Context {
 	return ctx
 }
 
+func TestAPIClientErrorSafetyCheckRejectsTerminalControls(t *testing.T) {
+	t.Parallel()
+
+	if hasUnsafeAPIErrorControl("ordinary display text") {
+		t.Fatal("ordinary display text classified as unsafe")
+	}
+	for _, tt := range []struct {
+		name, value string
+	}{
+		{name: "tab", value: "left\tright"},
+		{name: "line feed", value: "left\nright"},
+		{name: "carriage return", value: "left\rright"},
+		{name: "C0", value: "left\x00right"},
+		{name: "DEL", value: "left\x7fright"},
+		{name: "C1 CSI", value: "left\u009b31mright"},
+		{name: "CSI", value: "left\x1b[31mright"},
+		{name: "OSC", value: "left\x1b]0;owned\x07right"},
+		{name: "DCS", value: "left\x1bPowned\x1b\\right"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if !hasUnsafeAPIErrorControl(tt.value) {
+				t.Fatalf("terminal control accepted in %q", tt.value)
+			}
+		})
+	}
+}
+
+func hasUnsafeAPIErrorControl(message string) bool {
+	for _, r := range message {
+		if r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f {
+			return true
+		}
+	}
+	return false
+}
+
 func assertSafeAPIError(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {
@@ -444,9 +505,7 @@ func assertSafeAPIError(t *testing.T, err error) {
 	if strings.Contains(message, testAPIPassword) {
 		t.Fatalf("error leaked password: %q", message)
 	}
-	for _, r := range message {
-		if r == '\x1b' || r < 0x20 && r != '\t' && r != '\n' && r != '\r' || r == 0x7f {
-			t.Fatalf("error contains terminal control: %q", message)
-		}
+	if hasUnsafeAPIErrorControl(message) {
+		t.Fatalf("error contains terminal control: %q", message)
 	}
 }
