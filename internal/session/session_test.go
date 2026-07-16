@@ -155,6 +155,58 @@ func TestCreateListCaptureSendKill(t *testing.T) {
 	}
 }
 
+func TestSendLineNormalizesUnicodeMultilineEmptyAndTrailingNewlines(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-abc12346"
+	command := `stty -echo; printf 'ready\n'; while IFS= read -r line; do printf 'record:%s\n' "$line"; done`
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", command}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitFor(t, "SendLine fixture readiness", func() bool {
+		out, err := c.Capture(ctx, name, 100)
+		return err == nil && strings.Contains(out, "ready")
+	})
+
+	tests := []struct {
+		name      string
+		input     string
+		wantLines []string
+	}{
+		{name: "Unicode", input: "unicode-π-你好", wantLines: []string{"record:unicode-π-你好"}},
+		{name: "multiline", input: "multi-first\nmulti-second", wantLines: []string{"record:multi-first", "record:multi-second"}},
+		{name: "empty", input: "", wantLines: []string{"record:"}},
+		{name: "one trailing newline", input: "one-tail\n", wantLines: []string{"record:one-tail"}},
+		{name: "many trailing newlines", input: "many-tail\n\n\n", wantLines: []string{"record:many-tail"}},
+	}
+	for _, tt := range tests {
+		if err := c.SendLine(ctx, name, tt.input); err != nil {
+			t.Fatalf("SendLine(%s): %v", tt.name, err)
+		}
+		last := tt.wantLines[len(tt.wantLines)-1]
+		waitFor(t, tt.name+" output", func() bool {
+			out, err := c.Capture(ctx, name, 100)
+			return err == nil && strings.Contains(out, last)
+		})
+	}
+
+	out, err := c.Capture(ctx, name, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(out, "record:"); got != 6 {
+		t.Fatalf("normalized records = %d, want 6 exactly; output=%q", got, out)
+	}
+	for _, want := range []string{"record:unicode-π-你好", "record:multi-first", "record:multi-second", "record:one-tail", "record:many-tail"} {
+		if got := strings.Count(out, want); got != 1 {
+			t.Fatalf("output count for %q = %d, want 1; output=%q", want, got, out)
+		}
+	}
+	if err := c.Kill(ctx, name); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+}
+
 func TestNaturalAgentCrashRemainsResumableAndRecordsFailure(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
@@ -201,8 +253,11 @@ func TestImmediateExitRecordsProviderIdentityHandoff(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	handoff := filepath.Join(t.TempDir(), "identity.json")
-	command := `umask 077; printf '{"provider_session_id":"ses_fast123"}' > "$` + ProviderIdentityFileEnv + `"; exit 0`
+	handoff, err := ProviderIdentityPath(c.Dir, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := `umask 077; printf '{"session_name":"` + name + `","provider_session_id":"ses_fast123"}' > "$` + ProviderIdentityFileEnv + `"; exit 0`
 	if err := c.CreateSession(context.Background(), name, t.TempDir(), map[string]string{ProviderIdentityFileEnv: handoff}, []string{"/bin/sh", "-c", command}); err != nil {
 		t.Fatal(err)
 	}
@@ -214,6 +269,141 @@ func TestImmediateExitRecordsProviderIdentityHandoff(t *testing.T) {
 		rec := cfg.Sessions["opencode:a1b2c3d4"]
 		return rec.LastExitCode != nil && *rec.LastExitCode == 0 && rec.ProviderSessionID == "ses_fast123"
 	})
+	for _, path := range []string{statePath(c.Dir, name), SocketPath(c.Dir, name), handoff} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("runtime file not removed after exit: %s: %v", path, err)
+		}
+	}
+}
+
+func TestImmediateExitRecordsProviderIdentityHandoffWithRelativeRuntimeDir(t *testing.T) {
+	root, err := os.MkdirTemp("", "uam-rel-real-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	aliasedRoot := root + "-alias"
+	if err := os.Symlink(root, aliasedRoot); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(aliasedRoot) })
+	originalCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(aliasedRoot); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalCwd); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("UAM_CONFIG_DIR", filepath.Join(root, "cfg"))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Dir: "runtime", Exe: exe}
+	t.Cleanup(func() { _ = c.KillAll(context.Background()) })
+
+	name := "uam-opencode-a1b2c3d5"
+	st, err := store.Open(store.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession("opencode:a1b2c3d5", store.SessionRecord{ID: "a1b2c3d5", Agent: "opencode", Name: "n", SessionName: name, Status: store.StatusActive})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	absoluteRuntimeDir := filepath.Join(aliasedRoot, c.Dir)
+	handoff, err := ProviderIdentityPath(absoluteRuntimeDir, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := `umask 077; printf '{"session_name":"` + name + `","provider_session_id":"ses_relative123"}' > "$` + ProviderIdentityFileEnv + `"; exit 0`
+	if err := c.CreateSession(context.Background(), name, t.TempDir(), map[string]string{ProviderIdentityFileEnv: handoff}, []string{"/bin/sh", "-c", command}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "relative runtime identity exit persisted", func() bool {
+		cfg, err := st.Load()
+		if err != nil {
+			return false
+		}
+		rec := cfg.Sessions["opencode:a1b2c3d5"]
+		return rec.LastExitCode != nil && *rec.LastExitCode == 0 && rec.ProviderSessionID == "ses_relative123"
+	})
+	for _, path := range []string{statePath(absoluteRuntimeDir, name), SocketPath(absoluteRuntimeDir, name), handoff} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("runtime file not removed after exit: %s: %v", path, err)
+		}
+	}
+}
+
+func TestCreateSessionPreservesShortRelativeSocketPathInDeepWorkingDirectory(t *testing.T) {
+	root, err := os.MkdirTemp("", "uam-deep-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	deepCwd := filepath.Join(root, strings.Repeat("d", 90))
+	if err := os.MkdirAll(deepCwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	originalCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(deepCwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalCwd); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("UAM_CONFIG_DIR", filepath.Join(root, "cfg"))
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Dir: ".uam", Exe: exe}
+	t.Cleanup(func() { _ = c.KillAll(context.Background()) })
+
+	name := "uam-fake-dead0001"
+	if err := c.CreateSession(context.Background(), name, root, nil, []string{"/bin/sh", "-c", "sleep 60"}); err != nil {
+		t.Fatalf("CreateSession with short relative socket path: %v", err)
+	}
+	if !c.HasSession(context.Background(), name) {
+		t.Fatal("relative-path session should be live after create")
+	}
+}
+
+func TestProviderIdentityStaleHostCleanupRemovesAllRuntimeFiles(t *testing.T) {
+	c := newTestClient(t)
+	name := "uam-opencode-aabbccdd"
+	if err := writeState(c.Dir, State{Name: name, HostPID: 1 << 28, ChildPID: 1 << 28, CreatedUnix: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(SocketPath(c.Dir, name), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteProviderIdentity(c.Dir, name, "ses_stale"); err != nil {
+		t.Fatal(err)
+	}
+	providerPath := providerIdentityTestPath(t, c.Dir, name)
+
+	infos, err := c.List(context.Background())
+	if err != nil || len(infos) != 0 {
+		t.Fatalf("List stale session = (%+v, %v), want empty success", infos, err)
+	}
+	for _, path := range []string{statePath(c.Dir, name), SocketPath(c.Dir, name), providerPath} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("stale runtime file not removed: %s: %v", path, err)
+		}
+	}
 }
 
 func TestNaturalAgentExitBeforeRecordPersistenceEventuallyRecordsExit(t *testing.T) {
@@ -331,10 +521,20 @@ func TestKillAllIsIdempotent(t *testing.T) {
 	if err := c.KillAll(ctx); err != nil {
 		t.Fatalf("KillAll on empty dir: %v", err)
 	}
-	for _, name := range []string{"uam-fake-aaaa1111", "uam-fake-bbbb2222"} {
+	names := []string{"uam-fake-aaaa1111", "uam-fake-bbbb2222"}
+	states := make(map[string]State, len(names))
+	for index, name := range names {
 		if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "sleep 60"}); err != nil {
 			t.Fatalf("CreateSession %s: %v", name, err)
 		}
+		if err := WriteProviderIdentity(c.Dir, name, fmt.Sprintf("ses_cleanup%d", index)); err != nil {
+			t.Fatalf("WriteProviderIdentity %s: %v", name, err)
+		}
+		state, err := readState(c.Dir, name)
+		if err != nil {
+			t.Fatalf("readState %s: %v", name, err)
+		}
+		states[name] = state
 	}
 	if err := c.KillAll(ctx); err != nil {
 		t.Fatalf("KillAll: %v", err)
@@ -342,6 +542,24 @@ func TestKillAllIsIdempotent(t *testing.T) {
 	infos, err := c.List(ctx)
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("sessions remain after KillAll: %+v %v", infos, err)
+	}
+	for _, name := range names {
+		state := states[name]
+		waitFor(t, "KillAll process cleanup for "+name, func() bool {
+			return !state.hostAlive() && !state.childAlive()
+		})
+		if state.hostAlive() || state.childAlive() {
+			t.Fatalf("process remains after KillAll for %s: host=%d child=%d", name, state.HostPID, state.ChildPID)
+		}
+		providerPath, err := ProviderIdentityPath(c.Dir, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{statePath(c.Dir, name), SocketPath(c.Dir, name), providerPath} {
+			if _, err := os.Lstat(path); !os.IsNotExist(err) {
+				t.Fatalf("runtime artifact remains after KillAll: %s (%v)", path, err)
+			}
+		}
 	}
 	if err := c.KillAll(ctx); err != nil {
 		t.Fatalf("KillAll repeat: %v", err)

@@ -2,412 +2,447 @@ package opencode
 
 import (
 	"context"
-	"encoding/json"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/adaptertest"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
-func TestNew(t *testing.T) {
-	a := New(nil)
-	if a == nil || a.Name() != "opencode" || a.DisplayName() == "" {
-		t.Fatalf("bad adapter: %#v", a)
+func TestOpenCodeNew(t *testing.T) {
+	agent, ok := New(nil).(*adapter.Agent)
+	if !ok {
+		t.Fatalf("New() = %T, want *adapter.Agent", New(nil))
+	}
+	if agent.Name() != "opencode" || agent.DisplayName() == "" {
+		t.Fatalf("bad adapter identity: name=%q display=%q", agent.Name(), agent.DisplayName())
+	}
+	if agent.SessionArgs != nil {
+		t.Fatal("OpenCode must not retain legacy session arguments")
+	}
+	if agent.PrepareLaunch == nil || agent.LiveProviderSessionID == nil || agent.ResumeKindFor == nil {
+		t.Fatal("OpenCode supervisor hooks are not fully wired")
+	}
+	if !agent.SkipPromptOnResume {
+		t.Fatal("OpenCode resume must not resend the stored prompt")
 	}
 }
 
-func testOpenCodeAgent(t *testing.T, help string) (*adapter.Agent, *adaptertest.Backend) {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "opencode")
-	script := "#!/bin/sh\nif [ \"$1\" = --help ]; then printf '%s\\n' '" + help + "'; fi\n"
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("OPENCODE_CONFIG_CONTENT", "")
-	resetAutoCacheForTest()
-	be := &adaptertest.Backend{}
-	return New(be).(*adapter.Agent), be
-}
-
-func TestAutoFlagIsVersionAwareAndSafeModeNeverUsesIt(t *testing.T) {
+func TestOpenCodePrepareLaunchRequiresMinimumVersionBeforeCreate(t *testing.T) {
 	for _, tt := range []struct {
-		name, help, mode string
-		want             bool
+		version string
+		wantErr bool
 	}{
-		{"current yolo", "Usage: opencode [--auto]", "yolo", true},
-		{"old yolo", "Usage: opencode [--continue]", "yolo", false},
-		{"current safe", "Usage: opencode [--auto]", "safe", false},
+		{version: "1.18.0", wantErr: true},
+		{version: "1.18.1"},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
-			ag, be := testOpenCodeAgent(t, tt.help)
-			if _, err := ag.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: "/tmp", Mode: tt.mode}); err != nil {
-				t.Fatal(err)
+		t.Run(tt.version, func(t *testing.T) {
+			providerPath := writeVersionedOpenCode(t, tt.version)
+			t.Setenv("PATH", filepath.Dir(providerPath))
+			t.Setenv("UAM_SESSION_DIR", secureOpenCodeRuntimeDir(t))
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			backend := &adaptertest.Backend{}
+			agent := New(backend).(*adapter.Agent)
+
+			_, err := agent.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: t.TempDir(), Mode: "safe"})
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "required version 1.18.1") {
+					t.Fatalf("Dispatch() error = %v, want minimum-version rejection", err)
+				}
+				if calls := backend.CallsOf("create"); len(calls) != 0 {
+					t.Fatalf("unsupported version reached Backend.CreateSession: %+v", calls)
+				}
+				return
 			}
-			got := strings.Contains(strings.Join(be.CallsOf("create")[0].Command, " "), "--auto")
-			if got != tt.want {
-				t.Fatalf("auto=%v want=%v argv=%v", got, tt.want, be.CallsOf("create")[0].Command)
+			if err != nil {
+				t.Fatalf("Dispatch() with minimum version: %v", err)
+			}
+			if calls := backend.CallsOf("create"); len(calls) != 1 {
+				t.Fatalf("Backend.CreateSession calls = %d, want 1", len(calls))
 			}
 		})
 	}
 }
 
-func TestAutoProbeCachesByExecutableStatIdentity(t *testing.T) {
-	dir := t.TempDir()
-	path, count := filepath.Join(dir, "opencode"), filepath.Join(dir, "count")
-	t.Setenv("COUNT", count)
-	write := func(help string) {
-		t.Helper()
-		script := "#!/bin/sh\nprintf x >> \"$COUNT\"\nprintf '%s\\n' '" + help + "'\n"
-		if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	resetAutoCacheForTest()
-	write("Usage [--auto]")
-	if !supportsAuto(context.Background(), path) {
-		t.Fatal("current executable not detected")
-	}
-	if !supportsAuto(context.Background(), path) {
-		t.Fatal("cached executable support not detected")
-	}
-	data, _ := os.ReadFile(count)
-	if string(data) != "x" {
-		t.Fatalf("probe count=%q", data)
-	}
-	write("Usage [--continue] changed-size")
-	if supportsAuto(context.Background(), path) {
-		t.Fatal("changed old executable inherited cached support")
-	}
-	data, _ = os.ReadFile(count)
-	if string(data) != "xx" {
-		t.Fatalf("re-probe count=%q", data)
-	}
-}
+func TestOpenCodePrepareLaunchBuildsSupervisorCommandAndNeutralEnv(t *testing.T) {
+	providerPath := writeVersionedOpenCode(t, "1.18.1")
+	t.Setenv("PATH", filepath.Dir(providerPath))
+	runtimeDir := secureOpenCodeRuntimeDir(t)
+	t.Setenv("UAM_SESSION_DIR", runtimeDir)
+	rawConfig := " preserve exactly: {not-json} "
+	configEnv := "OPENCODE_CONFIG_" + "CONTENT"
+	t.Setenv(configEnv, rawConfig)
+	backend := &adaptertest.Backend{}
+	agent := New(backend).(*adapter.Agent)
+	cwd := filepath.Clean(t.TempDir())
+	name := "uam-opencode-deadbeef"
+	providerID := "ses_exact123"
 
-func TestInvalidCommandAliasCannotExecuteDuringPreparation(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "executed")
-	alias := filepath.Join(t.TempDir(), "not-an-alias")
-	if err := os.WriteFile(alias, []byte("#!/bin/sh\nprintf ran > "+marker+"\n"), 0o700); err != nil {
-		t.Fatal(err)
+	gotSession, err := agent.Resume(context.Background(), adapter.ResumeRequest{
+		ID: "deadbeef", Cwd: cwd, Mode: "yolo", SessionName: name, ProviderSessionID: providerID,
+	})
+	if err != nil {
+		t.Fatalf("Resume(): %v", err)
 	}
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	ag := New(&adaptertest.Backend{}).(*adapter.Agent)
-	_, err := ag.Dispatch(context.Background(), adapter.DispatchRequest{CommandAlias: alias, Cwd: "/tmp", Mode: "yolo"})
-	if err == nil {
-		t.Fatal("invalid path alias accepted")
+	if gotSession.ProviderSessionID != providerID {
+		t.Fatalf("ProviderSessionID = %q, want %q", gotSession.ProviderSessionID, providerID)
 	}
-	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
-		t.Fatalf("invalid alias executed during preparation: %v", statErr)
+	calls := backend.CallsOf("create")
+	if len(calls) != 1 {
+		t.Fatalf("Backend.CreateSession calls = %d, want 1", len(calls))
 	}
-}
-
-func TestMergeInlineConfigPreservesKeysAndPlugins(t *testing.T) {
-	got, err := mergeConfigContent(`{"model":"x","nested":{"keep":true},"plugin":["file:///user.js"]}`, "file:///uam.js")
+	uamExecutable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg map[string]any
-	if err := json.Unmarshal([]byte(got), &cfg); err != nil {
-		t.Fatal(err)
-	}
-	plugins := cfg["plugin"].([]any)
-	if cfg["model"] != "x" || len(plugins) != 2 || plugins[0] != "file:///user.js" || plugins[1] != "file:///uam.js" {
-		t.Fatalf("config=%v", cfg)
-	}
-	if _, err := mergeConfigContent(`{"plugin":"wrong"}`, "file:///uam.js"); err == nil {
-		t.Fatal("incompatible plugin shape accepted")
-	}
-	if _, err := mergeConfigContent(`{broken`, "file:///uam.js"); err == nil {
-		t.Fatal("malformed config accepted")
-	}
-}
-
-func TestIdentityHandoffRejectsSymlinksModesBoundsAndMalformedIDs(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "identity.json")
-	write := func(value string, mode os.FileMode) {
-		t.Helper()
-		if err := os.WriteFile(path, []byte(value), mode); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write(`{"provider_session_id":"ses_abc123"}`, 0o600)
-	if got, err := readIdentity(path); err != nil || got != "ses_abc123" {
-		t.Fatalf("got=%q err=%v", got, err)
-	}
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readIdentity(path); err == nil {
-		t.Fatal("unsafe mode accepted")
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	write(`{"provider_session_id":"bad"}`, 0o600)
-	if _, err := readIdentity(path); err == nil {
-		t.Fatal("malformed id accepted")
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	write(strings.Repeat("x", maxIdentityBytes+1), 0o600)
-	if _, err := readIdentity(path); err == nil {
-		t.Fatal("oversized handoff accepted")
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	target := filepath.Join(dir, "target")
-	if err := os.WriteFile(target, []byte(`{"provider_session_id":"ses_ok"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, path); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readIdentity(path); err == nil {
-		t.Fatal("symlink accepted")
-	}
-}
-
-func TestIdentityBoundaryMatchesSchemaV3AndRoundTrips(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "identity.json")
-	accepted := "ses_" + strings.Repeat("a", 60)
-	if len(accepted) != 64 {
-		t.Fatal("bad test boundary")
-	}
-	if err := os.WriteFile(path, []byte(`{"provider_session_id":"`+accepted+`"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	id, err := readIdentity(path)
-	if err != nil || id != accepted {
-		t.Fatalf("accepted boundary id=%q err=%v", id, err)
-	}
-	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+	uamExecutable, err = filepath.Abs(uamExecutable)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Update(func(cfg *store.Config) error {
-		cfg.Sessions["opencode:abc12345"] = store.SessionRecord{ID: "abc12345", Agent: "opencode", SessionName: "uam-opencode-abc12345", Workdir: "/tmp", ProviderSessionID: id}
-		return nil
+	wantCommand := []string{
+		uamExecutable, "__opencode",
+		"--path", providerPath,
+		"--dir", cwd,
+		"--name", name,
+		"--runtime-dir", runtimeDir,
+		"--mode", "yolo",
+		"--session", providerID,
+	}
+	if !reflect.DeepEqual(calls[0].Command, wantCommand) {
+		t.Fatalf("launch command = %#v, want %#v", calls[0].Command, wantCommand)
+	}
+	identityPath, err := session.ProviderIdentityPath(runtimeDir, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEnv := map[string]string{
+		session.ProviderIdentityFileEnv: identityPath,
+		"UAM_AGENT":                     "opencode",
+		"UAM_ID":                        "deadbeef",
+	}
+	if !reflect.DeepEqual(calls[0].Env, wantEnv) {
+		t.Fatalf("launch env = %#v, want %#v", calls[0].Env, wantEnv)
+	}
+	if got := os.Getenv(configEnv); got != rawConfig {
+		t.Fatalf("OpenCode config env = %q, want unchanged %q", got, rawConfig)
+	}
+}
+
+func TestOpenCodePrepareLaunchBuildsValidatedAliasCommand(t *testing.T) {
+	shell := writeOpenCodeAliasShell(t, "1.18.1")
+	t.Setenv("SHELL", shell)
+	t.Setenv("UAM_SESSION_DIR", secureOpenCodeRuntimeDir(t))
+	cwd := filepath.Clean(t.TempDir())
+	name := "uam-opencode-a1b2c3d4"
+
+	prep, err := prepareLaunch(context.Background(), adapter.ResumeRequest{
+		CommandAlias: "custom-opencode", Mode: "safe",
+	}, "dispatched", name, cwd)
+	if err != nil {
+		t.Fatalf("prepareLaunch(): %v", err)
+	}
+	wantPrefix := []string{
+		"__opencode",
+		"--shell", shell,
+		"--alias", "custom-opencode",
+		"--dir", cwd,
+		"--name", name,
+		"--runtime-dir", session.DefaultDir(),
+		"--mode", "safe",
+	}
+	if len(prep.Command) != len(wantPrefix)+1 || !filepath.IsAbs(prep.Command[0]) || !reflect.DeepEqual(prep.Command[1:], wantPrefix) {
+		t.Fatalf("alias supervisor command = %#v, want absolute uam executable followed by %#v", prep.Command, wantPrefix)
+	}
+	if prep.ProviderSessionID != "" {
+		t.Fatalf("dispatch ProviderSessionID = %q, want empty", prep.ProviderSessionID)
+	}
+}
+
+func TestOpenCodePrepareLaunchCanonicalizesRelativeRuntimeDirectory(t *testing.T) {
+	baseDir := t.TempDir()
+	oldDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(baseDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDirectory) })
+	if err := os.Mkdir("relative-runtime", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	providerPath := writeVersionedOpenCode(t, "1.18.1")
+	t.Setenv("PATH", filepath.Dir(providerPath))
+	t.Setenv("UAM_SESSION_DIR", "relative-runtime")
+	backend := &adaptertest.Backend{}
+	workspace := filepath.Clean(t.TempDir())
+	name := "uam-opencode-deadbeef"
+	agent := New(backend).(*adapter.Agent)
+	if _, err := agent.Resume(context.Background(), adapter.ResumeRequest{
+		ID: "deadbeef", Cwd: workspace, Mode: "safe", SessionName: name,
 	}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("Resume(): %v", err)
 	}
-	cfg, err := st.Load()
+	calls := backend.CallsOf("create")
+	if len(calls) != 1 {
+		t.Fatalf("create calls = %d, want 1", len(calls))
+	}
+	wantRuntimeDir := filepath.Join(baseDir, "relative-runtime")
+	wantIdentity, err := session.ProviderIdentityPath(wantRuntimeDir, name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Sessions["opencode:abc12345"].ProviderSessionID != accepted {
-		t.Fatalf("boundary identity did not survive reload: %+v", cfg.Sessions)
+	if got := flagValue(calls[0].Command, "--runtime-dir"); got != wantRuntimeDir {
+		t.Fatalf("supervisor runtime dir = %q, want %q", got, wantRuntimeDir)
 	}
-	overlong := "ses_" + strings.Repeat("a", 61)
-	if err := os.WriteFile(path, []byte(`{"provider_session_id":"`+overlong+`"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readIdentity(path); err == nil {
-		t.Fatal("65-byte provider identity accepted")
+	if got := calls[0].Env[session.ProviderIdentityFileEnv]; got != wantIdentity {
+		t.Fatalf("host identity handoff = %q, want %q", got, wantIdentity)
 	}
 }
 
-func TestProviderFilesRejectIntermediateSymlink(t *testing.T) {
-	base := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", base)
-	if err := os.Symlink(t.TempDir(), filepath.Join(base, "uam")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ensureProviderFiles(); err == nil {
-		t.Fatal("intermediate provider-state symlink accepted")
-	}
-}
-
-func TestProviderFilesWarnForWritableStateAncestry(t *testing.T) {
-	t.Run("group writable", func(t *testing.T) {
-		base := t.TempDir()
-		if err := os.Chmod(base, 0o770); err != nil {
-			t.Fatal(err)
+func flagValue(args []string, name string) string {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == name {
+			return args[index+1]
 		}
-		t.Setenv("XDG_STATE_HOME", base)
-		if _, err := ensureProviderFiles(); err != nil {
-			t.Fatalf("group-writable XDG_STATE_HOME blocked: %v", err)
+	}
+	return ""
+}
+
+func TestOpenCodeLiveProviderSessionIDReadsRuntimeIdentity(t *testing.T) {
+	runtimeDir := secureOpenCodeRuntimeDir(t)
+	t.Setenv("UAM_SESSION_DIR", runtimeDir)
+	name := "uam-opencode-a1b2c3d4"
+	if err := session.WriteProviderIdentity(runtimeDir, name, "ses_live123"); err != nil {
+		t.Fatal(err)
+	}
+	agent := New(nil).(*adapter.Agent)
+	got, err := agent.LiveProviderSessionID(name)
+	if err != nil || got != "ses_live123" {
+		t.Fatalf("LiveProviderSessionID() = (%q, %v), want (ses_live123, nil)", got, err)
+	}
+}
+
+func TestOpenCodeResumeKindIsExactOnly(t *testing.T) {
+	agent := New(nil).(*adapter.Agent)
+	for _, tt := range []struct {
+		name string
+		id   string
+		want adapter.ResumeKind
+	}{
+		{name: "valid", id: "ses_exact123", want: adapter.ResumeExact},
+		{name: "maximum length", id: "ses_" + strings.Repeat("a", 60), want: adapter.ResumeExact},
+		{name: "one byte over maximum", id: "ses_" + strings.Repeat("a", 61), want: adapter.ResumeUnsupported},
+		{name: "missing", want: adapter.ResumeUnsupported},
+		{name: "wrong prefix", id: "abc_exact123", want: adapter.ResumeUnsupported},
+		{name: "too short", id: "ses_ab", want: adapter.ResumeUnsupported},
+		{name: "flag-shaped", id: "ses_bad value", want: adapter.ResumeUnsupported},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := agent.ResumeKind(adapter.ResumeRequest{ProviderSessionID: tt.id}); got != tt.want {
+				t.Fatalf("ResumeKind(%q) = %q, want %q", tt.id, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenCodePromptDeliveryAndResumeNoReplay(t *testing.T) {
+	newAgent := func(t *testing.T) (*adapter.Agent, *adaptertest.Backend, string) {
+		t.Helper()
+		providerPath := writeVersionedOpenCode(t, "1.18.1")
+		t.Setenv("PATH", filepath.Dir(providerPath))
+		t.Setenv("UAM_SESSION_DIR", secureOpenCodeRuntimeDir(t))
+		backend := &adaptertest.Backend{}
+		return New(backend).(*adapter.Agent), backend, filepath.Clean(t.TempDir())
+	}
+
+	t.Run("dispatch preserves Unicode and multiline prompt", func(t *testing.T) {
+		agent, backend, cwd := newAgent(t)
+		const prompt = "Unicode π 你好\nsecond line\tkept"
+		if _, err := agent.Dispatch(context.Background(), adapter.DispatchRequest{Prompt: prompt, Cwd: cwd, Mode: "yolo"}); err != nil {
+			t.Fatalf("Dispatch(): %v", err)
+		}
+		sends := backend.CallsOf("send")
+		if len(sends) != 1 || sends[0].Text != prompt {
+			t.Fatalf("dispatch sends = %#v, want one byte-preserved prompt %q", sends, prompt)
 		}
 	})
 
-	t.Run("writable parent", func(t *testing.T) {
-		parent := filepath.Join(t.TempDir(), "shared")
-		if err := os.Mkdir(parent, 0o777); err != nil {
-			t.Fatal(err)
+	t.Run("empty dispatch sends no line", func(t *testing.T) {
+		agent, backend, cwd := newAgent(t)
+		if _, err := agent.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: cwd, Mode: "safe"}); err != nil {
+			t.Fatalf("Dispatch(): %v", err)
 		}
-		if err := os.Chmod(parent, 0o777); err != nil {
-			t.Fatal(err)
+		if sends := backend.CallsOf("send"); len(sends) != 0 {
+			t.Fatalf("empty dispatch sends = %#v, want none", sends)
 		}
-		t.Setenv("XDG_STATE_HOME", filepath.Join(parent, "state"))
-		if _, err := ensureProviderFiles(); err != nil {
-			t.Fatalf("state base under writable non-sticky parent blocked: %v", err)
+	})
+
+	t.Run("exact resume does not replay stored prompt", func(t *testing.T) {
+		agent, backend, cwd := newAgent(t)
+		if _, err := agent.Resume(context.Background(), adapter.ResumeRequest{
+			ID: "deadbeef", Cwd: cwd, Mode: "yolo", SessionName: "uam-opencode-deadbeef",
+			ProviderSessionID: "ses_exact123", Prompt: "stored prompt must stay inert",
+		}); err != nil {
+			t.Fatalf("Resume(): %v", err)
+		}
+		if sends := backend.CallsOf("send"); len(sends) != 0 {
+			t.Fatalf("exact resume replayed prompt: %#v", sends)
 		}
 	})
 }
 
-func TestProviderFilesRejectSymlinkedStateBase(t *testing.T) {
-	t.Run("symlink", func(t *testing.T) {
-		parent, target := t.TempDir(), t.TempDir()
-		base := filepath.Join(parent, "state")
-		if err := os.Symlink(target, base); err != nil {
+func TestOpenCodeLegacyPluginAndProviderStateAreInert(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		setup func(t *testing.T, root string) string
+	}{
+		{
+			name: "stale plugin",
+			setup: func(t *testing.T, root string) string {
+				path := filepath.Join(root, legacyOpenCodePluginName())
+				writeOpenCodeLegacyFile(t, path, "stale plugin", 0o600)
+				return path
+			},
+		},
+		{
+			name: "permissive plugin",
+			setup: func(t *testing.T, root string) string {
+				path := filepath.Join(root, legacyOpenCodePluginName())
+				writeOpenCodeLegacyFile(t, path, "permissive plugin", 0o666)
+				return path
+			},
+		},
+		{
+			name: "symlinked plugin",
+			setup: func(t *testing.T, root string) string {
+				target := filepath.Join(t.TempDir(), "target.mjs")
+				writeOpenCodeLegacyFile(t, target, "symlink target", 0o600)
+				path := filepath.Join(root, legacyOpenCodePluginName())
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
+		{
+			name: "malformed provider identity",
+			setup: func(t *testing.T, root string) string {
+				path := filepath.Join(root, "identity", "uam-opencode-a1b2c3d4.json")
+				writeOpenCodeLegacyFile(t, path, "{malformed", 0o600)
+				return path
+			},
+		},
+		{
+			name: "directory-shaped plugin",
+			setup: func(t *testing.T, root string) string {
+				path := filepath.Join(root, legacyOpenCodePluginName())
+				if err := os.MkdirAll(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			providerPath := writeVersionedOpenCode(t, "1.18.1")
+			t.Setenv("PATH", filepath.Dir(providerPath))
+			t.Setenv("UAM_SESSION_DIR", secureOpenCodeRuntimeDir(t))
+			stateHome := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", stateHome)
+			legacyRoot := filepath.Join(stateHome, "uam", "providers", "opencode")
+			if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			observedPath := tt.setup(t, legacyRoot)
+			before, beforeErr := os.Lstat(observedPath)
+			beforeData, _ := os.ReadFile(observedPath)
+			backend := &adaptertest.Backend{}
+
+			if _, err := New(backend).Dispatch(context.Background(), adapter.DispatchRequest{Cwd: t.TempDir(), Mode: "safe"}); err != nil {
+				t.Fatalf("legacy state affected dispatch: %v", err)
+			}
+			if len(backend.CallsOf("create")) != 1 {
+				t.Fatal("dispatch did not reach Backend.CreateSession")
+			}
+			after, afterErr := os.Lstat(observedPath)
+			afterData, _ := os.ReadFile(observedPath)
+			if beforeErr != nil || afterErr != nil || before.Mode() != after.Mode() || !reflect.DeepEqual(beforeData, afterData) {
+				t.Fatalf("legacy path was inspected or modified: before=(%v,%v,%q) after=(%v,%v,%q)", before, beforeErr, beforeData, after, afterErr, afterData)
+			}
+		})
+	}
+}
+
+func TestOpenCodeProductionSourceHasNoLegacyPluginPath(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := []string{"uam-identity-plugin" + ".mjs", "plugin" + "Source", "ensureProvider" + "Files", "OPENCODE_CONFIG_" + "CONTENT", `[]string{` + `"-c"}`}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(entry.Name())
+		if err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv("XDG_STATE_HOME", base)
-		if _, err := ensureProviderFiles(); err == nil {
-			t.Fatal("symlinked XDG_STATE_HOME accepted")
-		}
-	})
-}
-
-func TestLiveIdentityProducesExactResumeAndMissingKeepsFallback(t *testing.T) {
-	ag, _ := testOpenCodeAgent(t, "Usage: opencode [--auto]")
-	if got := ag.ResumeKind(adapter.ResumeRequest{ProviderSessionID: "ses_known"}); got != adapter.ResumeExact {
-		t.Fatalf("known kind=%q", got)
-	}
-	if got := ag.ResumeKind(adapter.ResumeRequest{}); got != adapter.ResumeHeuristic {
-		t.Fatalf("missing kind=%q", got)
-	}
-	path, err := identityPath("uam-opencode-abc12345")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ensureProviderFiles(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"provider_session_id":"ses_live"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := ag.ListFromSnapshot(context.Background(), []session.Info{{Name: "uam-opencode-abc12345", Cwd: "/tmp", Alive: true}})
-	if err != nil || got[0].ProviderSessionID != "ses_live" {
-		t.Fatalf("sessions=%+v err=%v", got, err)
-	}
-}
-
-func TestPluginRootEventsWinAndChildCannotOverwrite(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node unavailable")
-	}
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	plugin, err := ensureProviderFiles()
-	if err != nil {
-		t.Fatal(err)
-	}
-	handoff, err := identityPath("uam-opencode-abc12345")
-	if err != nil {
-		t.Fatal(err)
-	}
-	runner := filepath.Join(t.TempDir(), "runner.mjs")
-	source := `import { promises as fs } from "node:fs";
-import { UAMIdentityPlugin } from ` + strconv.Quote((&url.URL{Scheme: "file", Path: plugin}).String()) + `;
-const hooks = await UAMIdentityPlugin();
-await hooks.event({event:{type:"session.created",properties:{info:{id:"ses_root123"}}}});
-await fs.unlink(process.env.UAM_OPENCODE_IDENTITY_FILE);
-await hooks.event({event:{type:"message.updated",properties:{info:{id:"msg_not_session"},sessionID:"ses_root123"}}});
-if (JSON.parse(await fs.readFile(process.env.UAM_OPENCODE_IDENTITY_FILE)).provider_session_id !== "ses_root123") throw new Error("root activity not captured");
-await hooks.event({event:{type:"session.updated",properties:{info:{id:"ses_child123",parentID:"ses_root123"}}}});
-await hooks.event({event:{type:"command.executed",properties:{sessionID:"ses_child123"}}});
-if (JSON.parse(await fs.readFile(process.env.UAM_OPENCODE_IDENTITY_FILE)).provider_session_id !== "ses_root123") throw new Error("child overwrote root");
-await hooks.event({event:{type:"session.updated",properties:{info:{id:"ses_switched123"}}}});
-`
-	if err := os.WriteFile(runner, []byte(source), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(node, runner)
-	cmd.Env = append(os.Environ(), "UAM_OPENCODE_IDENTITY_FILE="+handoff)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("plugin: %v: %s", err, out)
-	}
-	if got, err := readIdentity(handoff); err != nil || got != "ses_switched123" {
-		t.Fatalf("id=%q err=%v", got, err)
-	}
-}
-
-func TestPluginActivityUsesOwningSessionRatherThanMessageID(t *testing.T) {
-	for _, eventType := range []string{"message.updated", "command.executed"} {
-		if !strings.Contains(pluginSource, `type === "`+eventType+`"`) {
-			t.Fatalf("plugin missing %s", eventType)
+		for _, token := range forbidden {
+			if strings.Contains(string(data), token) {
+				t.Errorf("production source %s contains removed token %q", entry.Name(), token)
+			}
 		}
 	}
-	if !strings.Contains(pluginSource, "const activityID = event?.properties?.sessionID") || !strings.Contains(pluginSource, "activityID === rootID") {
-		t.Fatal("activity events do not select and guard the owning root session")
+}
+
+func writeVersionedOpenCode(t *testing.T, version string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf '%s\\n' '" + version + "'; exit 0; fi\nexit 0\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(pluginSource, "catch (_)") || !strings.Contains(pluginSource, "finally") {
-		t.Fatal("identity writes are not wrapped as best-effort event handling")
+	return path
+}
+
+func writeOpenCodeAliasShell(t *testing.T, version string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "shell")
+	script := "#!/bin/sh\ncase \"$2\" in *--version*) printf '%s\\n' '" + version + "';; esac\nexit 0\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func secureOpenCodeRuntimeDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Clean(t.TempDir())
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func writeOpenCodeLegacyFile(t *testing.T, path, content string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// Static yolo args stay empty because --auto is added only after a
-// version-aware executable probe in PrepareLaunch.
-func TestNoYoloArgs(t *testing.T) {
-	got := New(nil)
-	ta, ok := got.(*adapter.Agent)
-	if !ok {
-		t.Fatalf("expected *adapter.Agent, got %T", got)
-	}
-	if len(ta.YoloArgs) != 0 {
-		t.Fatalf("opencode static YoloArgs must be empty, got %v", ta.YoloArgs)
-	}
-}
-
-// TestSessionArgsAppendsContinueOnResume asserts the SessionArgs
-// hook returns opencode's `-c` (continue) on resume and nothing on
-// dispatch. Identity is learned asynchronously, so records observed before
-// discovery still resume the most recent session in the current cwd.
-func TestSessionArgsAppendsContinueOnResume(t *testing.T) {
-	if got := sessionArgs(adapter.ResumeRequest{ID: "x"}, "dispatched"); got != nil {
-		t.Fatalf("dispatched should add no flags, got %v", got)
-	}
-	if got, want := sessionArgs(adapter.ResumeRequest{ID: "x"}, "resumed"), []string{"-c"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("resumed got %v want %v", got, want)
-	}
-}
-
-// TestNewWiresSessionArgs asserts New installs the SessionArgs hook
-// and SkipPromptOnResume. Without this wiring, picking "Resume" on
-// an opencode row would re-launch opencode with no continuation
-// flag, starting a fresh TUI instead of resuming the prior session.
-func TestNewWiresSessionArgs(t *testing.T) {
-	got := New(nil)
-	ta, ok := got.(*adapter.Agent)
-	if !ok {
-		t.Fatalf("expected *adapter.Agent, got %T", got)
-	}
-	if ta.SessionArgs == nil {
-		t.Fatal("expected SessionArgs to be wired")
-	}
-	if !ta.SkipPromptOnResume {
-		t.Fatal("expected SkipPromptOnResume to be true")
-	}
-}
-
-// A recorded provider session id must resume that exact opencode session
-// (--session ses_...) instead of the project's most recent (-c).
-func TestResumeTargetsExactSessionWhenIDKnown(t *testing.T) {
-	ag, ok := New(nil).(*adapter.Agent)
-	if !ok {
-		t.Fatalf("expected *adapter.Agent")
-	}
-	got := ag.SessionArgs(adapter.ResumeRequest{ProviderSessionID: "ses_2132323b6ffe"}, "resumed")
-	if len(got) != 2 || got[0] != "--session" || got[1] != "ses_2132323b6ffe" {
-		t.Fatalf("resume args = %v, want exact --session", got)
-	}
-	if got := ag.SessionArgs(adapter.ResumeRequest{}, "resumed"); len(got) != 1 || got[0] != "-c" {
-		t.Fatalf("resume args without id = %v, want -c fallback", got)
-	}
+func legacyOpenCodePluginName() string {
+	return "uam-identity-plugin" + ".mjs"
 }

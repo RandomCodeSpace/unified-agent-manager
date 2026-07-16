@@ -263,6 +263,9 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 	if err != nil {
 		return Session{}, err
 	}
+	if len(preparation.Command) > 0 {
+		cmd = append([]string(nil), preparation.Command...)
+	}
 	env := make(map[string]string, len(preparation.Env)+2)
 	for key, value := range preparation.Env {
 		env[key] = value
