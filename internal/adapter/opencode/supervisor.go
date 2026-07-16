@@ -356,8 +356,7 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	if err != nil {
 		return sanitizedSupervisorError("start OpenCode attach", err, password)
 	}
-	if err := requireActiveStartup(startupCtx); err != nil {
-		terminateAndReap(attach)
+	if err := requireActiveStartupOrReapAttach(startupCtx, attach); err != nil {
 		attach = nil
 		return err
 	}
@@ -704,6 +703,14 @@ func reconnectBackoff(attempt int) time.Duration {
 
 func requireActiveStartup(ctx context.Context) error {
 	return ctx.Err()
+}
+
+func requireActiveStartupOrReapAttach(ctx context.Context, attach *managedProcess) error {
+	if err := requireActiveStartup(ctx); err != nil {
+		terminateAndReap(attach)
+		return err
+	}
+	return nil
 }
 
 type reconnectNotice struct {

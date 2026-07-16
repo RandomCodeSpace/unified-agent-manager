@@ -1413,6 +1413,51 @@ func TestSupervisorStartupCheckpointRejectsExpiredDeadline(t *testing.T) {
 	}
 }
 
+func TestSupervisorStartupExpiryAfterAttachLaunchReapsAttach(t *testing.T) {
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{AttachDelayMillis: 5000})
+	command := fixture.options.Command.command(
+		context.Background(),
+		"attach",
+		"http://127.0.0.1:0",
+		"--dir",
+		fixture.options.Directory,
+		"--session",
+		"ses_created123",
+	)
+	command.Dir = fixture.options.Directory
+	command.Env = serverEnvironment(
+		fakeSupervisorEnvironment(fixture),
+		openCodeServerUsername,
+		strings.Repeat("a", 64),
+	)
+
+	attach, err := startAttachProcess(command, nil)
+	if err != nil {
+		t.Fatalf("startAttachProcess: %v", err)
+	}
+	t.Cleanup(func() {
+		select {
+		case <-attach.done:
+		default:
+			terminateAndReap(attach)
+		}
+	})
+	awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
+
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	err = requireActiveStartupOrReapAttach(ctx, attach)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired attach startup error = %v, want context.DeadlineExceeded", err)
+	}
+	select {
+	case <-attach.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("attach process was not reaped after startup expired")
+	}
+	assertLifecycleClean(t, fixture, err)
+}
+
 func TestSupervisorLifecycleAttachAndServerExit(t *testing.T) {
 	t.Run("server dies while attach is active", func(t *testing.T) {
 		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
