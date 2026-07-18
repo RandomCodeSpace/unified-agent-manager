@@ -779,6 +779,29 @@ func TestAttachOwnsTerminalStateOnTTY(t *testing.T) {
 	}
 }
 
+func TestCodexAttachPreservesPrimaryScreenScrollback(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-codex-aaaa9999"
+	if err := c.CreateSession(ctx, name, t.TempDir(), nil, []string{"/bin/sh", "-c", "echo codex-inline; sleep 60"}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	waitFor(t, "codex inline marker", func() bool {
+		out, _ := c.Capture(ctx, name, 10)
+		return strings.Contains(out, "codex-inline")
+	})
+
+	attached := startQuietAttach(t, c.Dir, name, 80, 24)
+	waitFor(t, "codex attach replay", func() bool { return strings.Contains(attached.Snapshot(), "codex-inline") })
+	if output := attached.Snapshot(); strings.Contains(output, "\x1b[?1049h") {
+		t.Fatalf("codex attach entered an alternate screen and hid terminal scrollback: %q", output)
+	}
+	attached.Detach(t)
+	if output := attached.Snapshot(); strings.Contains(output, "\x1b[?1049l") {
+		t.Fatalf("codex attach left an alternate screen it never entered: %q", output)
+	}
+}
+
 type attachedPTY struct {
 	ptmx     *os.File
 	done     chan error

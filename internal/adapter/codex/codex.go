@@ -4,16 +4,15 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 )
 
-// sessionArgs appends codex's `resume --last` subcommand on resume so picking
-// "Resume" on an Exited codex row reattaches to the agent's most recent session
-// instead of relaunching a fresh one. codex has no flag for presetting its
-// session ID at dispatch, so uam can't resume by uam-id directly; `resume
-// --last` picks codex's last session. The uam UUID is never passed.
+// sessionArgs keeps Codex on the terminal's primary screen so its transcript
+// remains in scrollback through UAM. On resume it also appends `resume --last`;
+// Codex has no flag for presetting its session ID, so UAM cannot resume by UAM
+// ID directly. The UAM UUID is never passed.
 func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
 	if activity == "resumed" {
-		return []string{"resume", "--last"}
+		return []string{"--no-alt-screen", "resume", "--last"}
 	}
-	return nil
+	return []string{"--no-alt-screen"}
 }
 
 func New(backend adapter.Backend) adapter.AgentAdapter {
