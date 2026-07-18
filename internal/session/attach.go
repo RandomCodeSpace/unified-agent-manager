@@ -63,7 +63,7 @@ const screenEnter = "\x1b[?1049h" + "\x1b[?1007s" + "\x1b[?1007l"
 // screenExit resets every mode the agent could have toggled mid-attach, then
 // leaves the alternate screen. Terminals ignore sequences they don't
 // implement, so the suffix is safe to emit unconditionally.
-const screenExit = "\x1b[<u" + // pop the kitty keyboard flags agents push
+const screenReset = "\x1b[<u" + // pop the kitty keyboard flags agents push
 	"\x1b[=0;1u" + // and zero them in case the agent pushed more than once
 	"\x1b[?1000;1002;1003;1004;1005;1006;1015l" + // mouse tracking + focus reporting off
 	"\x1b[?2004l" + // bracketed paste off
@@ -71,7 +71,9 @@ const screenExit = "\x1b[<u" + // pop the kitty keyboard flags agents push
 	"\x1b[!p" + // DECSTR: cursor keys, origin, margins, SGR, insert mode
 	"\x1b>" + // numeric keypad (DECKPNM; DECSTR leaves keypad mode alone)
 	"\x1b(B" + // G0 charset back to ASCII
-	"\x1b[?25h" + // cursor visible
+	"\x1b[?25h" // cursor visible
+
+const screenExit = screenReset +
 	"\x1b[?1007r" + // alternate scroll back to the user's saved setting (XTRESTORE)
 	"\x1b[?1049l" // leave the alt screen: primary buffer and cursor restored
 
@@ -133,15 +135,20 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 		}
 		ttyState = state
 	}
-	ownScreen := term.IsTerminal(stdout.Fd())
+	terminalOutput := term.IsTerminal(stdout.Fd())
+	ownScreen := terminalOutput && !bytes.HasPrefix([]byte(name), []byte("uam-codex-"))
 	if ownScreen {
 		_, _ = stdout.WriteString(screenEnter)
 	}
 	var once sync.Once
 	restore := func() {
 		once.Do(func() {
-			if ownScreen {
-				_, _ = stdout.WriteString(screenExit)
+			if terminalOutput {
+				reset := screenReset
+				if ownScreen {
+					reset = screenExit
+				}
+				_, _ = stdout.WriteString(reset)
 			}
 			if ttyState != nil {
 				_ = term.Restore(stdin.Fd(), ttyState)

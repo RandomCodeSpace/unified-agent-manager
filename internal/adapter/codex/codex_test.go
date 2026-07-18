@@ -68,7 +68,7 @@ func TestResumeAppendsResumeLastAndDoesNotReplayPrompt(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 	argv := be.CommandLog()
-	if !strings.Contains(argv, "codex --sandbox danger-full-access resume --last") {
+	if !strings.Contains(argv, "codex --sandbox danger-full-access --no-alt-screen resume --last") {
 		t.Fatalf("codex resume should append resume --last: %s", argv)
 	}
 	// The uam UUID may appear in the UAM_ID env var, but must never be passed
@@ -82,9 +82,7 @@ func TestResumeAppendsResumeLastAndDoesNotReplayPrompt(t *testing.T) {
 	}
 }
 
-// TestDispatchUnchanged_sendsPromptNoResume: dispatch keeps its byte-identical
-// argv (no resume) and still sends the prompt.
-func TestDispatchUnchanged_sendsPromptNoResume(t *testing.T) {
+func TestDispatchUsesInlineRenderingAndSendsPromptWithoutResume(t *testing.T) {
 	a, be := newTestCodexAdapter(t)
 	_, err := a.Dispatch(context.Background(), adapter.DispatchRequest{Prompt: "fix parser", Cwd: "/tmp", Mode: "yolo"})
 	if err != nil {
@@ -92,6 +90,9 @@ func TestDispatchUnchanged_sendsPromptNoResume(t *testing.T) {
 	}
 	if argv := be.CommandLog(); strings.Contains(argv, "resume --last") {
 		t.Fatalf("dispatch must not append resume --last: %s", argv)
+	}
+	if argv := be.CommandLog(); !strings.Contains(argv, "codex --sandbox danger-full-access --no-alt-screen") {
+		t.Fatalf("codex must use inline rendering so attached terminals retain scrollback: %s", argv)
 	}
 	sends := be.CallsOf("send")
 	if len(sends) != 1 || sends[0].Text != "fix parser" {
