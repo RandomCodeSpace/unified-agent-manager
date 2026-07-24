@@ -30,6 +30,7 @@ type svcFakeAdapter struct {
 	peekedID   string
 	attachedID string
 	replied    string
+	dispatched *adapter.DispatchRequest
 	resumed    *adapter.ResumeRequest
 	// F04: simulate a failed kill (stopErr) and a still-live pane (alive). The
 	// fake implements adapter.HasSessionAdapter, returning alive from HasSession.
@@ -64,10 +65,15 @@ func (f *svcFakeAdapter) Available() (bool, string) {
 	return false, "missing"
 }
 func (f *svcFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchRequest) (adapter.Session, error) {
+	captured := req
+	f.dispatched = &captured
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
 	return adapter.Session{ID: "12345678", AgentType: f.name, CommandAlias: req.CommandAlias, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: firstNonEmpty(req.Cwd, "/tmp"), SessionName: "uam-" + f.name + "-12345678", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}, nil
+}
+func (f *svcFakeAdapter) TerminalPolicy() adapter.ProviderTerminalPolicy {
+	return adapter.ProviderTerminalPolicy{Identity: adapter.ProviderIdentity(f.name), OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative}
 }
 func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) (adapter.Session, error) {
 	f.resumed = &req

@@ -117,5 +117,8 @@ session.
 - A Managed Session can outlive several provider-side conversation switches,
   which is visible in the terminology but does not multiply dashboard rows.
 - Users retain control over worktrees and other repository isolation.
-- Schema version 3 remains unchanged. Provider identity fits the existing
-  record, and unknown fields continue to round-trip.
+- Schema v4 adds profile selection and overrides. Older records migrate with an
+  adjacent backup before the replacement write; unknown fields still round-trip.
+- Runtime attachment state is deliberately absent from the durable record. See
+  [terminal client/session ownership and protocol v2](0003-terminal-client-session-ownership-and-protocol-v2.md)
+  for the live ownership contract.

@@ -115,6 +115,9 @@ func TestOpenCodePrepareLaunchBuildsSupervisorCommandAndNeutralEnv(t *testing.T)
 	if !reflect.DeepEqual(calls[0].Command, wantCommand) {
 		t.Fatalf("launch command = %#v, want %#v", calls[0].Command, wantCommand)
 	}
+	if strings.Contains(strings.Join(calls[0].Command, " "), "--no-alt-screen") {
+		t.Fatalf("OpenCode resume must preserve provider-native terminal behavior: %#v", calls[0].Command)
+	}
 	identityPath, err := session.ProviderIdentityPath(runtimeDir, name)
 	if err != nil {
 		t.Fatal(err)
@@ -265,6 +268,9 @@ func TestOpenCodePromptDeliveryAndResumeNoReplay(t *testing.T) {
 		const prompt = "Unicode π 你好\nsecond line\tkept"
 		if _, err := agent.Dispatch(context.Background(), adapter.DispatchRequest{Prompt: prompt, Cwd: cwd, Mode: "yolo"}); err != nil {
 			t.Fatalf("Dispatch(): %v", err)
+		}
+		if command := strings.Join(backend.CallsOf("create")[0].Command, " "); strings.Contains(command, "--no-alt-screen") {
+			t.Fatalf("OpenCode dispatch must preserve provider-native terminal behavior: %s", command)
 		}
 		sends := backend.CallsOf("send")
 		if len(sends) != 1 || sends[0].Text != prompt {

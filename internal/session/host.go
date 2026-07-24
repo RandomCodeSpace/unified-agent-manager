@@ -41,6 +41,11 @@ const (
 // here (plain runes, no attributes) and gives peek deeper context.
 const historyLines = 4000
 
+const (
+	minHistoryLines = 100
+	maxHistoryLines = 100000
+)
+
 // killGrace phases the kill escalation: SIGHUP immediately (what tmux
 // kill-session delivered), SIGTERM after one grace period, SIGKILL after two.
 const killGrace = 1500 * time.Millisecond
@@ -68,6 +73,8 @@ func RunHost(args []string) error {
 	name := fs.String("name", "", "session name")
 	cwd := fs.String("cwd", "", "working directory for the agent")
 	label := fs.String("label", "", "user-facing session label")
+	providerIdentity := fs.String("provider", "", "managed-session provider identity")
+	scrollbackLines := fs.Int("scrollback", historyLines, "terminal scrollback lines")
 	var envs stringList
 	fs.Var(&envs, "env", "KEY=VALUE environment entry (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -75,7 +82,9 @@ func RunHost(args []string) error {
 	}
 	command := fs.Args()
 	ready := readyPipe()
-	err := runHost(*dir, *name, *cwd, *label, envs, command, ready)
+	err := runHost(*dir, hostLaunchSpec{
+		name: *name, cwd: *cwd, label: *label, providerIdentity: *providerIdentity, scrollbackLines: *scrollbackLines, envs: envs, command: command,
+	}, ready)
 	if err != nil && ready != nil {
 		// Surface the startup failure to the waiting parent before exiting.
 		_, _ = fmt.Fprintf(ready, "error: %v\n", err)
@@ -98,16 +107,27 @@ type stringList []string
 func (s *stringList) String() string     { return strings.Join(*s, ",") }
 func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
+type hostLaunchSpec struct {
+	name             string
+	cwd              string
+	label            string
+	providerIdentity string
+	scrollbackLines  int
+	envs             []string
+	command          []string
+}
+
 type host struct {
 	dir, name            string
 	providerIdentityFile string
 
-	mu      sync.Mutex
-	term    *vterm.Terminal
-	ptmx    *os.File
-	label   string
-	state   State
-	clients map[*attachClient]struct{}
+	mu        sync.Mutex
+	controlMu sync.Mutex
+	term      *vterm.Terminal
+	ptmx      *os.File
+	label     string
+	state     State
+	registry  *clientRegistry
 
 	child *exec.Cmd
 	// exited is closed once the agent process has been reaped; the kill
@@ -119,25 +139,20 @@ type host struct {
 	uamStopping atomic.Bool
 }
 
-type attachClient struct {
-	conn net.Conn
-	out  chan []byte
-	once sync.Once
-}
-
-func (c *attachClient) drop() {
-	c.once.Do(func() {
-		close(c.out)
-		_ = c.conn.Close()
-	})
-}
-
-func runHost(dir, name, cwd, label string, envs, command []string, ready *os.File) error {
+func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
+	name := spec.name
 	if err := ValidateName(name); err != nil {
 		return err
 	}
-	if len(command) == 0 {
+	if err := validateProviderIdentity(spec.providerIdentity); err != nil {
+		return err
+	}
+	if len(spec.command) == 0 {
 		return errors.New("host requires a command")
+	}
+	scrollbackLines, err := validatedScrollbackLines(spec.scrollbackLines)
+	if err != nil {
+		return err
 	}
 	if err := EnsureDir(dir); err != nil {
 		return err
@@ -159,33 +174,34 @@ func runHost(dir, name, cwd, label string, envs, command []string, ready *os.Fil
 	h := &host{
 		dir:                  dir,
 		name:                 name,
-		providerIdentityFile: envValue(envs, ProviderIdentityFileEnv),
-		label:                label,
-		term:                 vterm.New(defaultCols, defaultRows, historyLines),
-		clients:              map[*attachClient]struct{}{},
+		providerIdentityFile: envValue(spec.envs, ProviderIdentityFileEnv),
+		label:                spec.label,
+		term:                 vterm.New(defaultCols, defaultRows, scrollbackLines),
+		registry:             newClientRegistry(),
 		exited:               make(chan struct{}),
 		cleaned:              make(chan struct{}),
 	}
-	cmd := exec.Command(command[0], command[1:]...) // #nosec G204 -- argv comes from the trusted uam client that spawned this host; no shell is involved.
-	cmd.Dir = cwd
+	cmd := exec.Command(spec.command[0], spec.command[1:]...) // #nosec G204 -- argv comes from the trusted uam client that spawned this host; no shell is involved.
+	cmd.Dir = spec.cwd
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-	cmd.Env = append(cmd.Env, envs...)
+	cmd.Env = append(cmd.Env, spec.envs...)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: defaultCols, Rows: defaultRows})
 	if err != nil {
-		return fmt.Errorf("start %s: %w", command[0], err)
+		return fmt.Errorf("start %s: %w", spec.command[0], err)
 	}
 	h.ptmx = ptmx
 	h.child = cmd
 	h.state = State{
-		Name:        name,
-		HostPID:     os.Getpid(),
-		HostStart:   procStartTime(os.Getpid()),
-		ChildPID:    cmd.Process.Pid,
-		ChildStart:  procStartTime(cmd.Process.Pid),
-		CreatedUnix: time.Now().Unix(),
-		Cwd:         cwd,
-		Label:       label,
-		Command:     command,
+		Name:             name,
+		HostPID:          os.Getpid(),
+		HostStart:        procStartTime(os.Getpid()),
+		ChildPID:         cmd.Process.Pid,
+		ChildStart:       procStartTime(cmd.Process.Pid),
+		CreatedUnix:      time.Now().Unix(),
+		Cwd:              spec.cwd,
+		Label:            spec.label,
+		ProviderIdentity: spec.providerIdentity,
+		Command:          spec.command,
 	}
 	if err := writeState(dir, h.state); err != nil {
 		h.signalChild(syscall.SIGKILL)
@@ -238,17 +254,11 @@ func (h *host) pumpPTY() {
 			copy(data, buf[:n])
 			h.mu.Lock()
 			_, _ = h.term.Write(data)
-			for cl := range h.clients {
-				select {
-				case cl.out <- data:
-				default:
-					// Client stopped draining; cut it loose instead of
-					// blocking the whole session on one wedged terminal.
-					delete(h.clients, cl)
-					cl.drop()
-				}
-			}
+			clients := h.registry.readyClients()
 			h.mu.Unlock()
+			for _, client := range clients {
+				h.enqueueClient(client, serverMessage{kind: serverFramePTY, payload: data})
+			}
 		}
 		if err != nil {
 			return
@@ -303,9 +313,24 @@ func (h *host) acceptLoop(ln net.Listener) {
 }
 
 func (h *host) handleConn(conn net.Conn) {
+	if err := conn.SetReadDeadline(time.Now().Add(attachHandshakeTimeout)); err != nil {
+		_ = conn.Close()
+		return
+	}
 	br := bufio.NewReader(conn)
 	var req request
-	if err := readJSONLine(br, &req); err != nil {
+	if err := readBoundedJSONLine(br, &req); err != nil {
+		reason := "rejected"
+		var timeout net.Error
+		if errors.As(err, &timeout) && timeout.Timeout() {
+			reason = "timeout"
+		}
+		log.Diagnostic(log.DiagnosticEvent{Event: "attach.negotiation", Session: h.name, Reason: reason})
+		_ = writeJSONLine(conn, response{Err: fmt.Sprintf("invalid request: %v", err)})
+		_ = conn.Close()
+		return
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(attachHandshakeTimeout)); err != nil {
 		_ = conn.Close()
 		return
 	}
@@ -317,14 +342,12 @@ func (h *host) handleConn(conn net.Conn) {
 		_ = writeJSONLine(conn, response{OK: true, Data: data})
 		_ = conn.Close()
 	case opSend:
-		h.mu.Lock()
-		_, err := h.ptmx.Write([]byte(req.Text))
-		h.mu.Unlock()
+		err := h.writeOutOfBandInput([]byte(req.Text))
 		_ = writeJSONLine(conn, errResponse(err))
 		_ = conn.Close()
 	case opResize:
-		h.applyResize(req.Cols, req.Rows)
-		_ = writeJSONLine(conn, response{OK: true})
+		err := h.resizeOutOfBand(terminalSize{cols: req.Cols, rows: req.Rows})
+		_ = writeJSONLine(conn, errResponse(err))
 		_ = conn.Close()
 	case opLabel:
 		h.setLabel(req.Label)
@@ -342,6 +365,10 @@ func (h *host) handleConn(conn net.Conn) {
 		_ = conn.Close()
 	case opAttach:
 		h.handleAttach(conn, br, req)
+	case opDoctor:
+		report := h.runtimeDiagnostic()
+		_ = writeJSONLine(conn, response{OK: true, Diagnostic: &report})
+		_ = conn.Close()
 	default:
 		_ = writeJSONLine(conn, response{Err: fmt.Sprintf("unknown op %q", req.Op)})
 		_ = conn.Close()
@@ -350,6 +377,9 @@ func (h *host) handleConn(conn net.Conn) {
 
 func errResponse(err error) response {
 	if err != nil {
+		if errors.Is(err, ErrSessionBusy) {
+			return response{Err: err.Error(), ErrorCode: errorCodeBusy}
+		}
 		return response{Err: err.Error()}
 	}
 	return response{OK: true}
@@ -361,13 +391,11 @@ func (h *host) setLabel(label string) {
 	h.state.Label = label
 	st := h.state
 	title := []byte(titleSequence(label))
-	for cl := range h.clients {
-		select {
-		case cl.out <- title:
-		default:
-		}
-	}
+	clients := h.registry.readyClients()
 	h.mu.Unlock()
+	for _, client := range clients {
+		h.enqueueClient(client, serverMessage{kind: serverFramePTY, payload: title})
+	}
 	if err := writeState(h.dir, st); err != nil {
 		log.Warn("persist session label failed", "session", h.name, "error", err)
 	}
@@ -411,56 +439,83 @@ func (h *host) applyPTYSizeLocked(cols, rows int) {
 	_ = pty.Setsize(h.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}) // #nosec G115 -- bounds checked above
 }
 
-func (h *host) applyResize(cols, rows int) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.applyResizeLocked(cols, rows)
-}
-
 func (h *host) handleAttach(conn net.Conn, br *bufio.Reader, req request) {
-	cl := &attachClient{conn: conn, out: make(chan []byte, attachBufFrames)}
-	h.mu.Lock()
-	label := h.label
-	h.mu.Unlock()
-	// The client is not registered yet, so this connection has no concurrent
-	// writer: the response line is safe to write directly.
-	if err := writeJSONLine(conn, response{OK: true, Data: label}); err != nil {
+	version, err := negotiateAttachRequest(req)
+	if err != nil {
+		log.Diagnostic(log.DiagnosticEvent{Event: "attach.negotiation", Session: h.name, Reason: "rejected"})
+		_ = writeJSONLine(conn, response{Err: err.Error()})
 		_ = conn.Close()
 		return
 	}
-	// Apply the attaching geometry, then register and queue the screen replay
-	// atomically so no live broadcast can interleave ahead of it.
-	h.mu.Lock()
-	if validSize(req.Cols, req.Rows) {
-		curCols, curRows := h.term.Size()
-		if req.Cols == curCols && req.Rows == curRows {
-			// Same geometry produces no SIGWINCH; nudge the size so the
-			// agent's TUI still repaints for the new viewer without truncating
-			// the replay buffer before Redraw.
-			if cols, rows, ok := resizeNudge(req.Cols, req.Rows); ok {
-				h.applyPTYSizeLocked(cols, rows)
+	registration, err := attachRegistration(req, version)
+	if err != nil {
+		log.Diagnostic(log.DiagnosticEvent{
+			Event: "attach.negotiation", Session: h.name, Protocol: int(version), Reason: "rejected",
+		})
+		_ = writeJSONLine(conn, response{Err: err.Error()})
+		_ = conn.Close()
+		return
+	}
+	client := &attachClient{
+		conn: conn, out: make(chan serverMessage, attachBufFrames), done: make(chan struct{}), version: version,
+		fallback: version == protocolV1 && !req.versionPresent,
+	}
+	attachResponse, err := h.registerAttachClient(client, registration)
+	if err != nil {
+		_ = writeJSONLine(conn, response{Err: err.Error()})
+		_ = conn.Close()
+		return
+	}
+	if err := writeAttachResponse(conn, attachResponse); err != nil {
+		h.dropClientReason(client, "handshake_write")
+		return
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		h.dropClientReason(client, "deadline_reset")
+		return
+	}
+	h.initializeAttachClient(client, registration, attachResponse.Data)
+	go h.attachWriter(client)
+	h.attachReader(client, br)
+}
+
+func (h *host) attachWriter(client *attachClient) {
+	for {
+		select {
+		case <-client.done:
+			return
+		case message := <-client.out:
+			if err := h.writeServerMessage(client, message); err != nil {
+				h.dropClientReason(client, "connection_write")
+				return
 			}
 		}
-		h.applyResizeLocked(req.Cols, req.Rows)
 	}
-	cl.out <- append([]byte(titleSequence(label)), h.term.Redraw()...)
-	h.clients[cl] = struct{}{}
-	h.mu.Unlock()
-	go h.attachWriter(cl)
-	h.attachReader(cl, br)
 }
 
-func (h *host) attachWriter(cl *attachClient) {
-	for data := range cl.out {
-		if _, err := cl.conn.Write(data); err != nil {
-			h.dropClient(cl)
-			return
+func (h *host) writeServerMessage(client *attachClient, message serverMessage) error {
+	if client.version == protocolV1 {
+		if message.kind != serverFramePTY {
+			return nil
 		}
+		return writeAll(client.conn, message.payload)
 	}
+	if len(message.payload) == 0 {
+		return writeFrame(client.conn, message.kind, nil)
+	}
+	for len(message.payload) > 0 {
+		size := min(len(message.payload), maxFrameLen)
+		if err := writeFrame(client.conn, message.kind, message.payload[:size]); err != nil {
+			return err
+		}
+		message.payload = message.payload[size:]
+	}
+	return nil
 }
 
-func (h *host) attachReader(cl *attachClient, br *bufio.Reader) {
-	defer h.dropClient(cl)
+func (h *host) attachReader(client *attachClient, br *bufio.Reader) {
+	reason := "connection_drop"
+	defer func() { h.dropClientReason(client, reason) }()
 	for {
 		kind, payload, err := readFrame(br)
 		if err != nil {
@@ -468,29 +523,86 @@ func (h *host) attachReader(cl *attachClient, br *bufio.Reader) {
 		}
 		switch kind {
 		case frameStdin:
-			h.mu.Lock()
-			_, werr := h.ptmx.Write(payload)
-			h.mu.Unlock()
-			if werr != nil {
+			if !h.handleStdinFrame(client, payload) {
+				reason = "malformed_frame"
 				return
 			}
 		case frameResize:
-			if len(payload) == 4 {
-				cols := int(payload[0])<<8 | int(payload[1])
-				rows := int(payload[2])<<8 | int(payload[3])
-				h.applyResize(cols, rows)
+			if !h.handleResizeFrame(client, payload) {
+				reason = "malformed_frame"
+				return
+			}
+		case frameRole:
+			if !h.handleRoleCommand(client, payload) {
+				reason = "malformed_frame"
+				return
 			}
 		case frameDetach:
+			reason = "detached"
+			return
+		default:
+			reason = "malformed_frame"
 			return
 		}
 	}
 }
 
-func (h *host) dropClient(cl *attachClient) {
+func (h *host) dropClient(client *attachClient) {
+	h.dropClientReason(client, "dropped")
+}
+
+func (h *host) dropClientReason(client *attachClient, reason string) {
+	h.controlMu.Lock()
 	h.mu.Lock()
-	delete(h.clients, cl)
+	_, registered := h.registry.clients[client]
+	wasController := h.registry.controller == client
+	changes := h.registry.remove(client)
+	var promotedSize terminalSize
+	var promotedClient *attachClient
+	var promotedReplay []byte
+	if len(changes) > 0 && h.registry.controller != nil {
+		promotedClient = h.registry.controller
+		promotedSize = promotedClient.latestSize
+		if promotedSize.valid() && h.term != nil {
+			h.term.Resize(promotedSize.cols, promotedSize.rows)
+		}
+		if promotedClient.ready && h.term != nil {
+			promotedReplay = h.term.Redraw()
+		}
+	}
 	h.mu.Unlock()
-	cl.drop()
+	if promotedSize.valid() {
+		h.applyPTYSize(promotedSize)
+	}
+	h.controlMu.Unlock()
+	client.drop()
+	if !registered {
+		return
+	}
+	log.Diagnostic(log.DiagnosticEvent{
+		Event: "attach.lifecycle", Session: h.name, ClientID: client.id,
+		Protocol: int(client.version), Role: string(client.assignedRole), Reason: reason,
+	})
+	h.enqueueRoleChanges(changes)
+	if wasController && len(changes) == 0 && promotedClient == nil {
+		log.Diagnostic(log.DiagnosticEvent{
+			Event: "role.vacancy", Session: h.name, ClientID: client.id,
+			Protocol: int(client.version), Role: string(client.assignedRole), Reason: "no_controller",
+		})
+	}
+	for _, change := range changes {
+		log.Diagnostic(log.DiagnosticEvent{
+			Event: "role.promotion", Session: h.name, ClientID: change.clientID,
+			Protocol: int(change.client.version), Role: string(change.role), Reason: change.reason,
+		})
+		log.Diagnostic(log.DiagnosticEvent{
+			Event: "controller.failover", Session: h.name, ClientID: change.clientID,
+			Protocol: int(change.client.version), Role: string(change.role), Reason: reason,
+		})
+	}
+	if promotedClient != nil && len(promotedReplay) > 0 {
+		h.enqueueClient(promotedClient, serverMessage{kind: serverFramePTY, payload: promotedReplay})
+	}
 }
 
 // terminateChild escalates HUP → TERM → KILL against the agent's process
@@ -526,11 +638,15 @@ func (h *host) signalChild(sig syscall.Signal) {
 // attached clients, and remove the runtime files.
 func (h *host) shutdown(exitCode int) {
 	h.mu.Lock()
-	for cl := range h.clients {
-		delete(h.clients, cl)
-		cl.drop()
-	}
+	clients := h.registry.drain()
 	h.mu.Unlock()
+	for _, client := range clients {
+		log.Diagnostic(log.DiagnosticEvent{
+			Event: "attach.lifecycle", Session: h.name, ClientID: client.id,
+			Protocol: int(client.version), Role: string(client.assignedRole), Reason: "host_shutdown",
+		})
+		client.drop()
+	}
 	providerID := readProviderIdentityHandoff(h.dir, h.name, h.providerIdentityFile)
 	if err := removeSessionFiles(h.dir, h.name); err != nil {
 		log.Warn("remove session files failed", "session", h.name, "error", err)

@@ -26,22 +26,35 @@ import (
 )
 
 type cliFakeAdapter struct {
+	name     string
 	sessions []adapter.Session
 	stopped  bool
 	resumed  bool
 	attached []string
 }
 
-func (f *cliFakeAdapter) Name() string        { return "fake" }
-func (f *cliFakeAdapter) DisplayName() string { return "fake" }
+func (f *cliFakeAdapter) Name() string {
+	if f.name == "" {
+		return "fake"
+	}
+	return f.name
+}
+func (f *cliFakeAdapter) DisplayName() string { return f.Name() }
 func (f *cliFakeAdapter) Available() (bool, string) {
 	return true, ""
+}
+func (f *cliFakeAdapter) TerminalPolicy() adapter.ProviderTerminalPolicy {
+	return adapter.ProviderTerminalPolicy{
+		Identity:    adapter.ProviderIdentity(f.Name()),
+		OuterScreen: adapter.OuterScreenUAM,
+		KeyProtocol: adapter.KeyProtocolNative,
+	}
 }
 func (f *cliFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchRequest) (adapter.Session, error) {
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
-	sess := adapter.Session{ID: "abc12345", AgentType: "fake", CommandAlias: req.CommandAlias, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: req.Cwd, SessionName: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	sess := adapter.Session{ID: "abc12345", AgentType: f.Name(), CommandAlias: req.CommandAlias, DisplayName: firstNonEmpty(req.Name, req.Prompt, "untitled"), Prompt: req.Prompt, Cwd: req.Cwd, SessionName: "uam-" + f.Name() + "-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	f.sessions = append(f.sessions, sess)
 	return sess, nil
 }
@@ -65,7 +78,7 @@ func (f *cliFakeAdapter) Stop(ctx adapter.Context, id string) error {
 
 func (f *cliFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) (adapter.Session, error) {
 	f.resumed = true
-	sess := adapter.Session{ID: req.ID, AgentType: "fake", DisplayName: req.Name, Cwd: req.Cwd, SessionName: req.SessionName, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
+	sess := adapter.Session{ID: req.ID, AgentType: f.Name(), DisplayName: req.Name, Cwd: req.Cwd, SessionName: req.SessionName, State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()}
 	f.sessions = append(f.sessions, sess)
 	return sess, nil
 }

@@ -106,6 +106,15 @@ uam restart [--allow-latest] <id>  # stop the agent and resume it in place
 uam rm <id>                      # kill the session and remove record
 uam kill-all                     # stop every managed session
 uam version
+uam doctor [<session-id>] [--json]
+uam profile ls [--json]
+uam profile show <name> [--json]
+uam profile set <name> [profile flags]
+uam profile rm <name>
+uam profile default <name|none>
+uam profile assign <session-id> <name|none>
+uam profile override <session-id> [profile flags]
+uam profile effective <session-id> [--json]
 ```
 
 ## TUI keys
@@ -140,10 +149,21 @@ thresholds, filtering, mobile guidance, lifecycle labels, and accessibility.
 ## Attached sessions
 
 `uam attach` (or `Enter` in the TUI) bridges your terminal straight to the
-agent's PTY:
+agent's PTY. An attach client is temporary client state, not part of the
+Managed Session record. The host permits one controller at a time; additional
+interactive clients wait as standbys, and observers receive output without
+being allowed to send input, resize the PTY, or answer terminal queries. See
+[terminal client and session ownership](docs/adr/0003-terminal-client-session-ownership-and-protocol-v2.md)
+for the normative ownership and protocol rules.
 
-- `Ctrl+B d` detaches and returns to the dashboard (`Ctrl+B Ctrl+B` sends a
-  literal `Ctrl+B` to the agent; `Ctrl+B c` sends a literal `Ctrl+C`)
+- `Ctrl+B d` detaches and returns to the dashboard by default. `prefix prefix`
+  sends a literal configured prefix (`Ctrl+B Ctrl+B` only when the profile uses
+  `C-b`); `prefix c` sends a literal `Ctrl+C`. A profile can change the prefix;
+  use the profile's `C-x` spelling, such as `C-a`, when configuring it.
+- `prefix r` requests control, `prefix o` transfers control when used by the
+  current controller, `prefix i` reports the current role, and `prefix m`
+  toggles mouse passthrough for this attachment only. A prefix command never
+  enters provider input.
 - Plain `Ctrl+C` is swallowed while attached so terminal copy shortcuts do not
   cancel the agent
 - `←` (left arrow) also detaches when you haven't typed anything since the
@@ -165,7 +185,9 @@ agent's PTY:
 
 Bracketed-paste payload is forwarded byte-for-byte. Control bytes inside a paste
 do not trigger UAM's attach shortcuts. UAM cannot access the client clipboard or
-turn an unsent mouse gesture into remote input.
+turn an unsent mouse gesture into remote input. Terminal names and color hints
+reported by an attachment are diagnostics metadata, not proof that the client
+supports a terminal feature.
 
 For PowerShell SSH, use Windows Terminal and configure a keyboard paste binding
 such as `Ctrl+V`, `Ctrl+Shift+V`, or `Shift+Insert`. Provider mouse reporting is
@@ -218,7 +240,10 @@ Provider behavior:
 - **Hermes**: no provider resume command is configured. A stopped Hermes record
   cannot be resumed; dispatch a new Managed Session instead.
 - After a reboot, records survive in the store and resume on attach — a
-  scenario where a tmux session would simply be gone.
+  provider-aware relaunch, not a surviving PTY. The old terminal process and
+  its screen modes are gone. A SIGKILL similarly prevents normal terminal
+  cleanup; start a fresh terminal or run `reset` if the local terminal is left
+  in an unusable mode.
 
 ### Multiple sessions in one workspace
 
@@ -291,6 +316,59 @@ run `loginctl enable-linger`.
 > them first (`tmux -L uam kill-server`); stored session records carry over
 > unchanged and remain resumable.
 
+### Profiles and diagnostics
+
+Profiles supply stable launch and attach defaults. Resolution is ordered; a
+later layer can refine only fields it is allowed to control:
+
+1. **Hard safety invariants** fix the provider `TERM` value to
+   `xterm-256color` and reject profile-supplied environment, capability, or
+   resume-policy changes.
+2. **Global defaults** select the default provider, yolo mode, scrollback,
+   mouse policy, `C-b` prefix, and quick-detach behavior.
+3. **Built-in provider policy** selects the provider identity, native key
+   protocol, and outer-screen policy. OpenAI Codex is the primary-screen
+   exception; the other current providers use a UAM outer screen.
+4. **Selected named profile** applies the default profile or a session-selected
+   profile. A provider-constrained profile must match the session provider.
+5. **Per-session overrides** refine the selected profile for that durable
+   session.
+6. **Client-local attachment overrides** can refine mouse, prefix, and
+   quick-detach for only the current attachment.
+7. **Capability constraints** apply the client's negotiated capabilities. For
+   example, local mouse filtering and an owned outer screen require that the
+   client supports them; terminal hints are not capability proof.
+
+Launch-time fields are provider, approval mode, command alias, and scrollback.
+The default profile, named profiles, selected session profile, and per-session
+overrides are persistent configuration. Mouse, control prefix, and quick-detach
+can also be attachment-local; client identity, role, dimensions, protocol, and
+capabilities are runtime-only and never enter `sessions.json`.
+
+```sh
+uam profile set focused --provider claude --mode safe --mouse off --prefix C-a --back-detach off --scrollback 8000
+uam profile default focused
+uam profile show focused --json
+uam profile ls --json
+uam doctor --json
+```
+
+Use `uam profile assign <session-id> <name|none>` to select a profile for one
+session, `uam profile override <session-id> [profile flags]` for its final
+overrides, and `uam profile effective <session-id> --json` to inspect the
+resolved result. `uam profile rm <name>` refuses to delete a default or a
+profile still selected by a session; clear those references first. `uam doctor
+<session-id> --json` reports runtime roles, supported protocol versions,
+resolved profile, provider terminal policy, and fallback reasons. Diagnostics
+redact secret-like values and do not print terminal input or output.
+
+Schema v4 migrates older records atomically. Before a migration, UAM writes an
+exact adjacent `sessions.json.bak.*` backup; if the write fails, the original
+remains in place. To roll back, stop UAM, replace `sessions.json` with the
+chosen backup, then start a compatible binary. Same-schema unknown fields round
+trip. A config from a newer schema opens read-only so an older binary cannot
+clobber fields it does not understand.
+
 ## Safety model
 
 `uam` launches providers in their full-access or auto-approve ("yolo") mode by
@@ -316,10 +394,8 @@ for its own execution model.
 - [Terminology glossary](CONTEXT.md)
 - [Managed Session vs. Provider Conversation](docs/adr/0001-managed-session-vs-provider-conversation.md)
 - [Terminal ownership over SSH](docs/adr/0002-terminal-ownership-over-ssh.md)
+- [Terminal client/session ownership and protocol v2](docs/adr/0003-terminal-client-session-ownership-and-protocol-v2.md)
 - [Responsive TUI design and operations](docs/responsive-tui.md)
-
-Session storage remains schema version 3. Updates do not require a data migration,
-and unknown JSON fields are preserved when existing records are rewritten.
 
 ## Development
 

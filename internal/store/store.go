@@ -16,7 +16,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
-const CurrentSchemaVersion = 3
+const CurrentSchemaVersion = 4
 
 const configFileName = "sessions.json"
 
@@ -42,6 +42,14 @@ const (
 	ModeSafe Mode = "safe"
 )
 
+type MousePolicy string
+
+const (
+	MousePolicyAuto MousePolicy = "auto"
+	MousePolicyOn   MousePolicy = "on"
+	MousePolicyOff  MousePolicy = "off"
+)
+
 // Status distinguishes records that should keep behaving as live sessions
 // (StatusActive — recoverable on attach) from records the user deliberately
 // retired (StatusClosedByUser).
@@ -53,10 +61,12 @@ const (
 )
 
 type Config struct {
-	SchemaVersion int                      `json:"schema_version"`
-	DefaultAgent  string                   `json:"default_agent"`
-	Sessions      map[string]SessionRecord `json:"sessions"`
-	UI            UISettings               `json:"ui"`
+	SchemaVersion  int                      `json:"schema_version"`
+	DefaultAgent   string                   `json:"default_agent"`
+	DefaultProfile string                   `json:"default_profile"`
+	Profiles       map[string]Profile       `json:"profiles"`
+	Sessions       map[string]SessionRecord `json:"sessions"`
+	UI             UISettings               `json:"ui"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -78,45 +88,60 @@ var ErrReadOnly = errors.New("store: config loaded from a newer schema is read-o
 // in-memory-only fields) so (Un)MarshalJSON can delegate to the stdlib encoder
 // without recursing.
 type configAlias struct {
-	SchemaVersion int                      `json:"schema_version"`
-	DefaultAgent  string                   `json:"default_agent"`
-	Sessions      map[string]SessionRecord `json:"sessions"`
-	UI            UISettings               `json:"ui"`
+	SchemaVersion  int                      `json:"schema_version"`
+	DefaultAgent   string                   `json:"default_agent"`
+	DefaultProfile string                   `json:"default_profile"`
+	Profiles       map[string]Profile       `json:"profiles"`
+	Sessions       map[string]SessionRecord `json:"sessions"`
+	UI             UISettings               `json:"ui"`
 }
 
-// knownConfigFields lists the JSON keys Config models directly; everything else
-// is preserved verbatim via the unknown overflow.
+// knownConfigFields lists modeled keys and runtime-only keys that must never
+// enter the persistent unknown overflow.
 var knownConfigFields = map[string]struct{}{
-	"schema_version": {},
-	"default_agent":  {},
-	"sessions":       {},
-	"ui":             {},
+	"schema_version":              {},
+	"default_agent":               {},
+	"default_profile":             {},
+	"profiles":                    {},
+	"sessions":                    {},
+	"ui":                          {},
+	"client_id":                   {},
+	"client_ids":                  {},
+	"client_role":                 {},
+	"controller":                  {},
+	"controller_id":               {},
+	"controller_client_id":        {},
+	"controller_role":             {},
+	"role":                        {},
+	"requested_role":              {},
+	"assigned_role":               {},
+	"terminal_width":              {},
+	"terminal_height":             {},
+	"terminal_columns":            {},
+	"terminal_rows":               {},
+	"terminal_dimensions":         {},
+	"terminal_size":               {},
+	"capability":                  {},
+	"capabilities":                {},
+	"capability_response":         {},
+	"capability_responses":        {},
+	"protocol_version":            {},
+	"negotiated_protocol_version": {},
 }
 
 func (c Config) MarshalJSON() ([]byte, error) {
 	base, err := json.Marshal(configAlias{
-		SchemaVersion: c.SchemaVersion,
-		DefaultAgent:  c.DefaultAgent,
-		Sessions:      c.Sessions,
-		UI:            c.UI,
+		SchemaVersion:  c.SchemaVersion,
+		DefaultAgent:   c.DefaultAgent,
+		DefaultProfile: c.DefaultProfile,
+		Profiles:       c.Profiles,
+		Sessions:       c.Sessions,
+		UI:             c.UI,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if len(c.unknown) == 0 {
-		return base, nil
-	}
-	var merged map[string]json.RawMessage
-	if err := json.Unmarshal(base, &merged); err != nil {
-		return nil, err
-	}
-	for k, v := range c.unknown {
-		if _, known := knownConfigFields[k]; known {
-			continue
-		}
-		merged[k] = v
-	}
-	return json.Marshal(merged)
+	return mergeUnknownJSON(base, c.unknown, knownConfigFields)
 }
 
 func (c *Config) UnmarshalJSON(data []byte) error {
@@ -126,24 +151,48 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	c.SchemaVersion = alias.SchemaVersion
 	c.DefaultAgent = alias.DefaultAgent
+	c.DefaultProfile = alias.DefaultProfile
+	c.Profiles = alias.Profiles
 	c.Sessions = alias.Sessions
 	c.UI = alias.UI
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	unknown, err := decodeUnknownJSON(data, knownConfigFields)
+	if err != nil {
 		return err
 	}
-	for k := range raw {
-		if _, known := knownConfigFields[k]; known {
-			delete(raw, k)
+	c.unknown = unknown
+	return nil
+}
+
+func mergeUnknownJSON(base []byte, unknown map[string]json.RawMessage, known map[string]struct{}) ([]byte, error) {
+	if len(unknown) == 0 {
+		return base, nil
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	for key, value := range unknown {
+		if _, exists := known[key]; !exists {
+			merged[key] = value
+		}
+	}
+	return json.Marshal(merged)
+}
+
+func decodeUnknownJSON(data []byte, known map[string]struct{}) (map[string]json.RawMessage, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	for key := range raw {
+		if _, exists := known[key]; exists {
+			delete(raw, key)
 		}
 	}
 	if len(raw) == 0 {
-		c.unknown = nil
-	} else {
-		c.unknown = raw
+		return nil, nil
 	}
-	return nil
+	return raw, nil
 }
 
 type UISettings struct {
@@ -152,6 +201,71 @@ type UISettings struct {
 	// normalized and round-tripped even when the TUI exposes no direct control.
 	Sort      string `json:"sort"`
 	PeekWidth int    `json:"peek_width"`
+}
+
+type Profile struct {
+	Provider        *string      `json:"provider,omitempty"`
+	Mode            *Mode        `json:"mode,omitempty"`
+	CommandAlias    *string      `json:"command_alias,omitempty"`
+	Mouse           *MousePolicy `json:"mouse,omitempty"`
+	ControlPrefix   *string      `json:"control_prefix,omitempty"`
+	BackDetach      *bool        `json:"back_detach,omitempty"`
+	ScrollbackLines *int         `json:"scrollback_lines,omitempty"`
+
+	unknown map[string]json.RawMessage
+}
+
+type profileAlias Profile
+
+var knownProfileFields = map[string]struct{}{
+	"provider":                    {},
+	"mode":                        {},
+	"command_alias":               {},
+	"mouse":                       {},
+	"control_prefix":              {},
+	"back_detach":                 {},
+	"scrollback_lines":            {},
+	"client_id":                   {},
+	"controller_id":               {},
+	"requested_role":              {},
+	"assigned_role":               {},
+	"terminal_width":              {},
+	"terminal_height":             {},
+	"capabilities":                {},
+	"negotiated_protocol_version": {},
+}
+
+func (p Profile) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(profileAlias(p))
+	if err != nil {
+		return nil, err
+	}
+	return mergeUnknownJSON(base, p.unknown, knownProfileFields)
+}
+
+func (p *Profile) UnmarshalJSON(data []byte) error {
+	var alias profileAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*p = Profile(alias)
+	unknown, err := decodeUnknownJSON(data, knownProfileFields)
+	if err != nil {
+		return err
+	}
+	p.unknown = unknown
+	return nil
+}
+
+type SessionProfileOverrides struct {
+	Mode            *Mode        `json:"mode,omitempty"`
+	CommandAlias    *string      `json:"command_alias,omitempty"`
+	Mouse           *MousePolicy `json:"mouse,omitempty"`
+	ControlPrefix   *string      `json:"control_prefix,omitempty"`
+	BackDetach      *bool        `json:"back_detach,omitempty"`
+	ScrollbackLines *int         `json:"scrollback_lines,omitempty"`
+
+	unknown map[string]json.RawMessage
 }
 
 type SessionRecord struct {
@@ -180,8 +294,66 @@ type SessionRecord struct {
 	// LastExitCode records the agent process's exit status from the most
 	// recent close (-1 when it died on a signal). Pointer so records from
 	// older schemas stay distinguishable from a real exit 0.
-	LastExitCode *int      `json:"last_exit_code,omitempty"`
-	PR           *PRRecord `json:"pr,omitempty"`
+	LastExitCode     *int                     `json:"last_exit_code,omitempty"`
+	PR               *PRRecord                `json:"pr,omitempty"`
+	Profile          string                   `json:"profile,omitempty"`
+	ProfileOverrides *SessionProfileOverrides `json:"profile_overrides,omitempty"`
+
+	unknown map[string]json.RawMessage
+}
+
+type sessionRecordAlias SessionRecord
+
+var knownSessionRecordFields = map[string]struct{}{
+	"id":                          {},
+	"agent":                       {},
+	"command_alias":               {},
+	"name":                        {},
+	"prompt":                      {},
+	"mode":                        {},
+	"workdir":                     {},
+	"tmux_session":                {},
+	"created_at":                  {},
+	"last_seen_at":                {},
+	"pinned":                      {},
+	"group":                       {},
+	"sort_index":                  {},
+	"status":                      {},
+	"provider_session_id":         {},
+	"last_exit_code":              {},
+	"pr":                          {},
+	"profile":                     {},
+	"profile_overrides":           {},
+	"client_id":                   {},
+	"controller_id":               {},
+	"requested_role":              {},
+	"assigned_role":               {},
+	"terminal_width":              {},
+	"terminal_height":             {},
+	"capabilities":                {},
+	"negotiated_protocol_version": {},
+}
+
+func (r SessionRecord) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(sessionRecordAlias(r))
+	if err != nil {
+		return nil, err
+	}
+	return mergeUnknownJSON(base, r.unknown, knownSessionRecordFields)
+}
+
+func (r *SessionRecord) UnmarshalJSON(data []byte) error {
+	var alias sessionRecordAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*r = SessionRecord(alias)
+	unknown, err := decodeUnknownJSON(data, knownSessionRecordFields)
+	if err != nil {
+		return err
+	}
+	r.unknown = unknown
+	return nil
 }
 
 // SessionExit describes how a provider process left its native session host.
@@ -207,7 +379,9 @@ type Store struct {
 	// still live. It is injected by the caller (the store stays backend-free)
 	// and is used only to reclassify Statusless v1 records during migration
 	// (F07).
-	sessionExists func(string) bool
+	sessionExists   func(string) bool
+	migrationBackup func() error
+	migrationWrite  func(Config) error
 }
 
 func Open(path string) (*Store, error) {
@@ -245,6 +419,7 @@ func DefaultConfig() Config {
 	return Config{
 		SchemaVersion: CurrentSchemaVersion,
 		DefaultAgent:  DefaultAgentName,
+		Profiles:      map[string]Profile{},
 		Sessions:      map[string]SessionRecord{},
 		UI:            UISettings{Sort: "state", PeekWidth: 60},
 	}
@@ -350,15 +525,23 @@ func (s *Store) loadNoLock() (Config, error) {
 	}
 	dropInvalidRecords(&cfg)
 	if cfg.SchemaVersion < CurrentSchemaVersion {
-		if err := s.copyBackup(); err != nil {
+		backupMigration := s.copyBackup
+		if s.migrationBackup != nil {
+			backupMigration = s.migrationBackup
+		}
+		if err := backupMigration(); err != nil {
 			return Config{}, err
 		}
 		// Reclassify Statusless v1 records BEFORE normalize backfills them to
 		// Active: a dead-pane record was a user-stopped session and must not
 		// auto-resume on attach (F07). normalize stays unchanged.
 		reclassifyV1Closed(&cfg, s.sessionExists)
-		cfg = migrate(normalize(cfg))
-		if err := s.saveNoLock(cfg); err != nil {
+		cfg = migrate(cfg)
+		writeMigration := s.saveNoLock
+		if s.migrationWrite != nil {
+			writeMigration = s.migrationWrite
+		}
+		if err := writeMigration(cfg); err != nil {
 			return Config{}, err
 		}
 	}
@@ -500,6 +683,9 @@ func normalize(cfg Config) Config {
 	if cfg.Sessions == nil {
 		cfg.Sessions = map[string]SessionRecord{}
 	}
+	if cfg.Profiles == nil {
+		cfg.Profiles = map[string]Profile{}
+	}
 	if _, ok := knownSorts[cfg.UI.Sort]; !ok {
 		cfg.UI.Sort = defaultSort
 	}
@@ -509,7 +695,34 @@ func normalize(cfg Config) Config {
 			cfg.Sessions[k] = rec
 		}
 	}
+	normalizeProfileReferences(&cfg)
 	return cfg
+}
+
+func normalizeProfileReferences(cfg *Config) {
+	if cfg.DefaultProfile != "" {
+		profile, exists := cfg.Profiles[cfg.DefaultProfile]
+		if !exists || !validProfile(profile) {
+			log.ProfileFallback("default", cfg.DefaultProfile)
+			cfg.DefaultProfile = ""
+		}
+	}
+	for key, record := range cfg.Sessions {
+		if record.Profile == "" {
+			continue
+		}
+		profile, exists := cfg.Profiles[record.Profile]
+		if exists && validProfile(profile) {
+			continue
+		}
+		log.ProfileFallback("session", record.Profile)
+		record.Profile = ""
+		cfg.Sessions[key] = record
+	}
+}
+
+func validProfile(profile Profile) bool {
+	return ValidateProfile(profile) == nil
 }
 
 // clampPeekWidth coerces an out-of-range peek width back into bounds. A
@@ -558,6 +771,14 @@ func migrate(cfg Config) Config {
 			}
 		}
 	}
+	if cfg.SchemaVersion < 4 {
+		cfg.DefaultProfile = ""
+		for key, record := range cfg.Sessions {
+			record.Profile = ""
+			record.ProfileOverrides = nil
+			cfg.Sessions[key] = record
+		}
+	}
 	cfg.SchemaVersion = CurrentSchemaVersion
 	return normalize(cfg)
 }
@@ -592,6 +813,7 @@ func (s *Store) saveNoLock(cfg Config) error {
 		return err
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	return syncDir(filepath.Dir(s.path))
@@ -643,7 +865,14 @@ func (s *Store) copyBackup() error {
 		_ = out.Close()
 		return err
 	}
-	return out.Close()
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(s.path))
 }
 
 func (s *Store) moveAside() error { return os.Rename(s.path, s.backupPath()) }

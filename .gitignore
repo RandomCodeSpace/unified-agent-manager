@@ -9,7 +9,9 @@ coverage.*
 /.claude/worktrees/
 /.worktrees/
 /.superpowers/
+/.omo/
 /CLAUDE.md
+/HANDOFF.md
 /PLAN.md
 graphify_out/
 graphify-out/

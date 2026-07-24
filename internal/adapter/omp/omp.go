@@ -34,6 +34,7 @@ func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
 
 func New(backend adapter.Backend) adapter.AgentAdapter {
 	a := adapter.NewAgent("omp", "Oh My Pi", []adapter.CommandCandidate{{Display: "omp", Args: []string{"omp"}}}, yoloArgs, backend)
+	a.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderOMP, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative}
 	a.SessionArgs = sessionArgs
 	a.PrepareLaunch = prepareLaunch
 	a.ResumeKindFor = resumeKind

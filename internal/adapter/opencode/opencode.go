@@ -16,6 +16,7 @@ var providerIDRE = regexp.MustCompile(`^ses_[A-Za-z0-9_-]{3,60}$`)
 
 func New(backend adapter.Backend) adapter.AgentAdapter {
 	agent := adapter.NewAgent("opencode", "OpenCode", []adapter.CommandCandidate{{Display: "opencode", Args: []string{"opencode"}}}, yoloArgs, backend)
+	agent.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderOpenCode, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative}
 	agent.PrepareLaunch = prepareLaunch
 	agent.LiveProviderSessionID = liveProviderSessionID
 	agent.ResumeKindFor = resumeKind

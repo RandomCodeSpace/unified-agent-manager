@@ -1,10 +1,15 @@
 package hermes
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/adaptertest"
 )
 
 func TestNewUsesBareHermesCommand(t *testing.T) {
@@ -26,5 +31,26 @@ func TestNewUsesBareHermesCommand(t *testing.T) {
 	}
 	if len(ag.YoloArgs) != 0 {
 		t.Fatalf("yolo args = %v, want none", ag.YoloArgs)
+	}
+}
+
+func TestLaunchAndResumeUseBareProviderNativeCommand(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hermes"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	backend := &adaptertest.Backend{}
+	agent := New(backend).(*adapter.Agent)
+	if _, err := agent.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: t.TempDir(), Mode: "yolo"}); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if _, err := agent.Resume(context.Background(), adapter.ResumeRequest{ID: "deadbeef", Cwd: t.TempDir(), Mode: "yolo", SessionName: "uam-hermes-deadbeef"}); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	for _, call := range backend.CallsOf("create") {
+		if got := strings.Join(call.Command, " "); got != "hermes" {
+			t.Fatalf("Hermes launch command = %q, want bare provider command", got)
+		}
 	}
 }

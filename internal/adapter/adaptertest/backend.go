@@ -13,14 +13,16 @@ import (
 
 // Call is one recorded backend invocation.
 type Call struct {
-	Op      string
-	Name    string
-	Cwd     string
-	Env     map[string]string
-	Command []string
-	Text    string
-	Lines   int
-	Label   string
+	Op               string
+	Name             string
+	Cwd              string
+	ProviderIdentity string
+	ScrollbackLines  int
+	Env              map[string]string
+	Command          []string
+	Text             string
+	Lines            int
+	Label            string
 }
 
 // Backend is an in-memory adapter.Backend that records every call and serves
@@ -80,8 +82,8 @@ func (b *Backend) CommandLog() string {
 	return strings.Join(lines, "\n")
 }
 
-func (b *Backend) CreateSession(_ context.Context, name, cwd string, env map[string]string, command []string) error {
-	b.record(Call{Op: "create", Name: name, Cwd: cwd, Env: env, Command: append([]string{}, command...)})
+func (b *Backend) CreateProviderSession(_ context.Context, spec session.CreateSpec) error {
+	b.record(Call{Op: "create", Name: spec.Name, Cwd: spec.Cwd, ProviderIdentity: spec.ProviderIdentity, ScrollbackLines: spec.ScrollbackLines, Env: spec.Env, Command: append([]string{}, spec.Command...)})
 	return b.CreateErr
 }
 

@@ -111,7 +111,7 @@ func newLogger(w io.Writer) *slog.Logger {
 	if os.Getenv("UAM_DEBUG") != "" {
 		level = slog.LevelDebug
 	}
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}))
+	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}))
 }
 
 func rotateIfNeeded(path string) error {

@@ -410,6 +410,8 @@ func (m Model) dashboardSessionEntries(sess adapter.Session, index, width int) [
 	}
 	details := []string{taskStyle.Render(boundedTaskSummary(sess, max(1, width-4)))}
 	if m.layoutClass() != LayoutCompact {
+		selectedProfile, effectiveProfile := m.profileLabels(sess)
+		details = append(details, hintStyle.Render("profile selected: "+displaytext.Sanitize(selectedProfile)+"  effective: "+displaytext.Sanitize(effectiveProfile)))
 		details = append(details, hintStyle.Render("cwd "+absCwd(sess.Cwd)))
 		details = append(details, hintStyle.Render("id "+displaytext.Sanitize(sess.ID)))
 		if sess.PR != nil {

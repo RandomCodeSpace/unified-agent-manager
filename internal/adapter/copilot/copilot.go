@@ -6,6 +6,7 @@ import (
 
 func New(backend adapter.Backend) adapter.AgentAdapter {
 	agent := adapter.NewAgent("copilot", "GitHub Copilot", []adapter.CommandCandidate{{Display: "copilot", Args: []string{"copilot"}}}, []string{"--yolo"}, backend)
+	agent.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderCopilot, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative}
 	// copilot supports exact-session resume natively: --name seeds the new
 	// session's name with the uam id at dispatch, and --resume matches it
 	// exactly (case-insensitive) on resume.

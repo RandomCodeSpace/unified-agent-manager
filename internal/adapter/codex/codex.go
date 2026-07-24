@@ -17,6 +17,7 @@ func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
 
 func New(backend adapter.Backend) adapter.AgentAdapter {
 	a := adapter.NewAgent("codex", "OpenAI Codex", []adapter.CommandCandidate{{Display: "codex", Args: []string{"codex"}}}, []string{"--sandbox", "danger-full-access"}, backend)
+	a.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderCodex, OuterScreen: adapter.OuterScreenPrimary, KeyProtocol: adapter.KeyProtocolNative}
 	a.SessionArgs = sessionArgs
 	a.ResumeKindFor = func(adapter.ResumeRequest) adapter.ResumeKind { return adapter.ResumeHeuristic }
 	a.SkipPromptOnResume = true

@@ -47,6 +47,9 @@ func TestAgentLifecycle(t *testing.T) {
 	if creates[0].Env["UAM_AGENT"] != "fake" || creates[0].Env["UAM_ID"] != sess.ID {
 		t.Fatalf("create env missing UAM_AGENT/UAM_ID: %+v", creates[0].Env)
 	}
+	if creates[0].ProviderIdentity != "fake" {
+		t.Fatalf("create provider identity = %q, want fake", creates[0].ProviderIdentity)
+	}
 	sends := be.CallsOf("send")
 	if len(sends) != 1 || sends[0].Text != "hello" {
 		t.Fatalf("dispatch should send the prompt once: %+v", sends)
@@ -202,8 +205,8 @@ type commandCaptureBackend struct {
 	command []string
 }
 
-func (b *commandCaptureBackend) CreateSession(_ context.Context, _, _ string, _ map[string]string, command []string) error {
-	b.command = command
+func (b *commandCaptureBackend) CreateProviderSession(_ context.Context, spec session.CreateSpec) error {
+	b.command = spec.Command
 	return nil
 }
 
