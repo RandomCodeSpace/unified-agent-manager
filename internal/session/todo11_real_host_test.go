@@ -38,7 +38,7 @@ func todo11StartHost(t *testing.T, fixture todo11Fixture, index int) *todo11Host
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeDir := t.TempDir()
+	runtimeDir := socketTestDir(t)
 	reportPath := filepath.Join(t.TempDir(), "provider.jsonl")
 	diagnosticsPath := filepath.Join(t.TempDir(), "host-diagnostics.jsonl")
 	cwd := t.TempDir()
@@ -75,7 +75,14 @@ func todo11StartHost(t *testing.T, fixture todo11Fixture, index int) *todo11Host
 	line, err := bufio.NewReader(readyReader).ReadString('\n')
 	_ = readyReader.Close()
 	if err != nil || line != "ok\n" {
-		t.Fatalf("host readiness = %q, %v; stderr=%s", line, err, hostStderr.String())
+		select {
+		case waitErr := <-done:
+			t.Fatalf("host readiness = %q, %v; host wait=%v; stderr=%s", line, err, waitErr, hostStderr.String())
+		case <-time.After(10 * time.Second):
+			_ = hostCommand.Process.Kill()
+			<-done
+			t.Fatalf("host readiness = %q, %v; host did not exit; stderr=%s", line, err, hostStderr.String())
+		}
 	}
 	harness := &todo11HostHarness{
 		client: &Client{Dir: runtimeDir, Exe: executable}, name: name,

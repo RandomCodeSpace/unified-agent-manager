@@ -185,7 +185,7 @@ func testTodo6CodexScrollback(t *testing.T) {
 
 func todo6AttachListener(t *testing.T, name string) (string, string, net.Listener) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := socketTestDir(t)
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}

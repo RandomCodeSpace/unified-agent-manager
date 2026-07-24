@@ -17,7 +17,7 @@ import (
 )
 
 func TestAttachHandshakeTimeout(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTestDir(t)
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}

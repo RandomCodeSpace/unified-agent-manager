@@ -17,7 +17,7 @@ func testTodo6SignalCleanup(t *testing.T) {
 	for _, assignedRole := range []clientRole{roleController, roleStandby, roleObserver} {
 		t.Run(string(assignedRole), func(t *testing.T) {
 			// Given
-			dir := t.TempDir()
+			dir := socketTestDir(t)
 			if err := EnsureDir(dir); err != nil {
 				t.Fatal(err)
 			}

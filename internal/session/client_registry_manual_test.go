@@ -97,7 +97,11 @@ func (attached *monitoredAttach) writeControlFrame(kind byte, payload []byte) er
 	attached.mu.Lock()
 	generation := attached.generation
 	attached.mu.Unlock()
-	return writeFrame(attached.conn, kind, ownedFramePayload(generation, payload))
+	framed, err := ownedFramePayload(generation, payload)
+	if err != nil {
+		return err
+	}
+	return writeFrame(attached.conn, kind, framed)
 }
 
 func (attached *monitoredAttach) setGeneration(generation uint64) {

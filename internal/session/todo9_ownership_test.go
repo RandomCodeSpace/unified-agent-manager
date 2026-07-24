@@ -24,7 +24,7 @@ type todo9Server struct {
 
 func todo9StartServer(t *testing.T, h *host) *todo9Server {
 	t.Helper()
-	dir := t.TempDir()
+	dir := socketTestDir(t)
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}

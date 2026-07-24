@@ -160,11 +160,14 @@ const maxFrameLen = 1 << 20
 
 const ownershipEpochLen = 8
 
-func ownedFramePayload(generation uint64, payload []byte) []byte {
+func ownedFramePayload(generation uint64, payload []byte) ([]byte, error) {
+	if len(payload) > maxFrameLen-ownershipEpochLen {
+		return nil, fmt.Errorf("%w: %d bytes with ownership epoch", errFrameTooLarge, len(payload))
+	}
 	framed := make([]byte, ownershipEpochLen+len(payload))
 	binary.BigEndian.PutUint64(framed, generation)
 	copy(framed[ownershipEpochLen:], payload)
-	return framed
+	return framed, nil
 }
 
 func parseOwnedFramePayload(payload []byte) (uint64, []byte, error) {
@@ -338,7 +341,11 @@ func (w *frameWriter) WriteFrame(kind byte, payload []byte) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.version == protocolV2 && (kind == frameStdin || kind == frameResize) {
-		payload = ownedFramePayload(w.generation, payload)
+		var err error
+		payload, err = ownedFramePayload(w.generation, payload)
+		if err != nil {
+			return err
+		}
 	}
 	return writeFrame(w.w, kind, payload)
 }

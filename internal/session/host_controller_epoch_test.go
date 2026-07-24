@@ -39,7 +39,7 @@ func TestQueuedStandbyFramesCannotCrossPromotion(t *testing.T) {
 			name: "stdin",
 			kind: frameStdin,
 			payload: func(generation uint64) []byte {
-				return ownedFramePayload(generation, []byte("stale-input"))
+				return mustOwnedFramePayload(t, generation, []byte("stale-input"))
 			},
 			assert: func(t *testing.T, _ *host, ptyOutput *os.File) {
 				t.Helper()
@@ -57,7 +57,7 @@ func TestQueuedStandbyFramesCannotCrossPromotion(t *testing.T) {
 			name: "resize",
 			kind: frameResize,
 			payload: func(generation uint64) []byte {
-				return ownedFramePayload(generation, resizePayload(111, 33))
+				return mustOwnedFramePayload(t, generation, resizePayload(111, 33))
 			},
 			assert: func(t *testing.T, host *host, _ *os.File) {
 				t.Helper()
@@ -73,7 +73,7 @@ func TestQueuedStandbyFramesCannotCrossPromotion(t *testing.T) {
 			name: "future stdin",
 			kind: frameStdin,
 			payload: func(generation uint64) []byte {
-				return ownedFramePayload(generation+2, []byte("future-input"))
+				return mustOwnedFramePayload(t, generation+2, []byte("future-input"))
 			},
 			assert: func(t *testing.T, _ *host, ptyOutput *os.File) {
 				t.Helper()
@@ -91,7 +91,7 @@ func TestQueuedStandbyFramesCannotCrossPromotion(t *testing.T) {
 			name: "future resize",
 			kind: frameResize,
 			payload: func(generation uint64) []byte {
-				return ownedFramePayload(generation+2, resizePayload(112, 34))
+				return mustOwnedFramePayload(t, generation+2, resizePayload(112, 34))
 			},
 			assert: func(t *testing.T, host *host, _ *os.File) {
 				t.Helper()

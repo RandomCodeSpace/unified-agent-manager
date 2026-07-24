@@ -67,7 +67,7 @@ func TestAttachProtocolRealPTYFixture(t *testing.T) {
 		t.Fatalf("v2 handshake = %+v, %v", v2Resp, err)
 	}
 	v2Payload := []byte{0x00, 0xff, 'V', '2', '\r', '\n'}
-	if err := writeFrame(v2Conn, frameStdin, ownedFramePayload(v2Resp.Generation, v2Payload)); err != nil {
+	if err := writeFrame(v2Conn, frameStdin, mustOwnedFramePayload(t, v2Resp.Generation, v2Payload)); err != nil {
 		t.Fatal(err)
 	}
 	if err := v2Conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {

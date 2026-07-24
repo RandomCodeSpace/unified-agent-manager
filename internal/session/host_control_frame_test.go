@@ -11,7 +11,7 @@ func TestV2ControlFramesRequireOwnershipEpoch(t *testing.T) {
 	if _, _, valid := host.parseResizeFrame(client, resizePayload(80, 24)); valid {
 		t.Fatal("v2 resize without an ownership epoch was accepted")
 	}
-	if _, _, valid := host.parseResizeFrame(client, ownedFramePayload(1, []byte{0, 80, 0})); valid {
+	if _, _, valid := host.parseResizeFrame(client, mustOwnedFramePayload(t, 1, []byte{0, 80, 0})); valid {
 		t.Fatal("v2 resize with an invalid payload was accepted")
 	}
 }

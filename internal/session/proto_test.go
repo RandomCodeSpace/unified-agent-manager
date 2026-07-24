@@ -10,6 +10,35 @@ import (
 	"testing"
 )
 
+func mustOwnedFramePayload(t *testing.T, generation uint64, payload []byte) []byte {
+	t.Helper()
+	framed, err := ownedFramePayload(generation, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return framed
+}
+
+func TestOwnedFramePayloadBoundsAllocation(t *testing.T) {
+	maximum := make([]byte, maxFrameLen-ownershipEpochLen)
+	framed, err := ownedFramePayload(1, maximum)
+	if err != nil {
+		t.Fatalf("maximum owned payload: %v", err)
+	}
+	if len(framed) != maxFrameLen {
+		t.Fatalf("framed payload length = %d, want %d", len(framed), maxFrameLen)
+	}
+
+	oversized := make([]byte, maxFrameLen-ownershipEpochLen+1)
+	if _, err := ownedFramePayload(1, oversized); !errors.Is(err, errFrameTooLarge) {
+		t.Fatalf("oversized owned payload error = %v, want %v", err, errFrameTooLarge)
+	}
+	writer := newAttachFrameWriter(io.Discard, protocolV2, "client-1", 1)
+	if err := writer.WriteFrame(frameStdin, oversized); !errors.Is(err, errFrameTooLarge) {
+		t.Fatalf("oversized writer payload error = %v, want %v", err, errFrameTooLarge)
+	}
+}
+
 func TestAttachV1CharacterizationHandshakeAndRawOutput(t *testing.T) {
 	client, server := net.Pipe()
 	t.Cleanup(func() {

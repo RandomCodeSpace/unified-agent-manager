@@ -17,7 +17,15 @@ import (
 )
 
 func TestServiceReplyRealHostOwnershipIntegration(t *testing.T) {
-	runtimeDir := t.TempDir()
+	runtimeDir, err := os.MkdirTemp("", "uam-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(runtimeDir); err != nil {
+			t.Errorf("remove socket test directory: %v", err)
+		}
+	})
 	t.Setenv("UAM_CONFIG_DIR", filepath.Join(t.TempDir(), "config"))
 	executable, err := os.Executable()
 	if err != nil {

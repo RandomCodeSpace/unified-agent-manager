@@ -14,10 +14,10 @@ func TestResizeGenerationRejectsStaleFrames(t *testing.T) {
 
 	frames := [][]byte{
 		resizePayload(120, 40),
-		ownedFramePayload(stale, resizePayload(121, 41)),
-		ownedFramePayload(standby.generation+1, resizePayload(122, 42)),
-		ownedFramePayload(standby.generation, resizePayload(0, 0)),
-		ownedFramePayload(standby.generation, resizePayload(1001, 24)),
+		mustOwnedFramePayload(t, stale, resizePayload(121, 41)),
+		mustOwnedFramePayload(t, standby.generation+1, resizePayload(122, 42)),
+		mustOwnedFramePayload(t, standby.generation, resizePayload(0, 0)),
+		mustOwnedFramePayload(t, standby.generation, resizePayload(1001, 24)),
 	}
 	for _, frame := range frames {
 		h.handleResizeFrame(standby, frame)

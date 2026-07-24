@@ -14,7 +14,7 @@ import (
 
 func TestTodo6PINPreservesV1CodexAndCleanupContracts(t *testing.T) {
 	// Given: an unversioned v1 host behind a legacy Codex session name.
-	dir := t.TempDir()
+	dir := socketTestDir(t)
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}

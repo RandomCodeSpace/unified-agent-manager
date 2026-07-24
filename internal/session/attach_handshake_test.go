@@ -14,7 +14,7 @@ import (
 )
 
 func TestAttachHandshakeInterruptionLeavesTerminalUntouched(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTestDir(t)
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestAttachHandshakeInterruptionLeavesTerminalUntouched(t *testing.T) {
 }
 
 func TestAttachNegotiatesBeforeScreenOwnership(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTestDir(t)
 	if err := EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}

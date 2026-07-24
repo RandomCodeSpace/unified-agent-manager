@@ -15,7 +15,7 @@ import (
 
 func TestAttachProtocolCompatibilityMatrix(t *testing.T) {
 	t.Run("v2 client consumes unversioned v1 host output as raw bytes", func(t *testing.T) {
-		dir := t.TempDir()
+		dir := socketTestDir(t)
 		if err := EnsureDir(dir); err != nil {
 			t.Fatal(err)
 		}

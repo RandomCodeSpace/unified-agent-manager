@@ -129,7 +129,11 @@ func (attached *todo11ProtocolAttach) awaitController(t *testing.T, transcript *
 }
 
 func (attached *todo11ProtocolAttach) write(kind byte, payload []byte) error {
-	return writeFrame(attached.conn, kind, ownedFramePayload(attached.generation, payload))
+	framed, err := ownedFramePayload(attached.generation, payload)
+	if err != nil {
+		return err
+	}
+	return writeFrame(attached.conn, kind, framed)
 }
 
 func (attached *todo11ProtocolAttach) close() {
