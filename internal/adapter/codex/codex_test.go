@@ -57,7 +57,7 @@ func TestResumeKindRemainsHeuristicEvenWithUnrelatedStoredIdentity(t *testing.T)
 // TestResumeAppendsResumeLastAndDoesNotReplayPrompt: resuming an Exited codex
 // row must use codex's `resume --last` and must NOT replay the original prompt
 // into the restored session, nor pass the uam UUID.
-func TestResumeAppendsResumeLastAndDoesNotReplayPrompt(t *testing.T) {
+func TestResumeUsesNoAltScreenExactlyOnce(t *testing.T) {
 	a, be := newTestCodexAdapter(t)
 	resumable, ok := a.(adapter.ResumableAdapter)
 	if !ok {
@@ -71,6 +71,9 @@ func TestResumeAppendsResumeLastAndDoesNotReplayPrompt(t *testing.T) {
 	if !strings.Contains(argv, "codex --sandbox danger-full-access --no-alt-screen resume --last") {
 		t.Fatalf("codex resume should append resume --last: %s", argv)
 	}
+	if got := countArg(be.CallsOf("create")[0].Command, "--no-alt-screen"); got != 1 {
+		t.Fatalf("codex resume --no-alt-screen count = %d, want 1: %s", got, argv)
+	}
 	// The uam UUID may appear in the UAM_ID env var, but must never be passed
 	// as a flag argument to codex (no resume <uuid> / --resume <uuid>).
 	if strings.Contains(argv, "resume --last abc12345-dead-beef-cafe-0123456789ab") ||
@@ -82,7 +85,7 @@ func TestResumeAppendsResumeLastAndDoesNotReplayPrompt(t *testing.T) {
 	}
 }
 
-func TestDispatchUsesInlineRenderingAndSendsPromptWithoutResume(t *testing.T) {
+func TestDispatchUsesNoAltScreenExactlyOnce(t *testing.T) {
 	a, be := newTestCodexAdapter(t)
 	_, err := a.Dispatch(context.Background(), adapter.DispatchRequest{Prompt: "fix parser", Cwd: "/tmp", Mode: "yolo"})
 	if err != nil {
@@ -94,10 +97,23 @@ func TestDispatchUsesInlineRenderingAndSendsPromptWithoutResume(t *testing.T) {
 	if argv := be.CommandLog(); !strings.Contains(argv, "codex --sandbox danger-full-access --no-alt-screen") {
 		t.Fatalf("codex must use inline rendering so attached terminals retain scrollback: %s", argv)
 	}
+	if argv := be.CommandLog(); countArg(be.CallsOf("create")[0].Command, "--no-alt-screen") != 1 {
+		t.Fatalf("codex dispatch must use --no-alt-screen exactly once: %s", argv)
+	}
 	sends := be.CallsOf("send")
 	if len(sends) != 1 || sends[0].Text != "fix parser" {
 		t.Fatalf("dispatch should send the prompt: %+v", sends)
 	}
+}
+
+func countArg(argv []string, want string) int {
+	count := 0
+	for _, arg := range argv {
+		if arg == want {
+			count++
+		}
+	}
+	return count
 }
 
 func newTestCodexAdapter(t *testing.T) (adapter.AgentAdapter, *adaptertest.Backend) {

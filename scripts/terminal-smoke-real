@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="all"
+output=""
+while (($#)); do
+  case "$1" in
+    --terminal) target="$2"; shift 2 ;;
+    --output) output="$2"; shift 2 ;;
+    --non-interactive) shift ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+node - "$target" "$output" <<'NODE'
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+const targets = {
+  kitty: "kitty",
+  wezterm: "wezterm",
+  alacritty: "alacritty",
+  ghostty: "ghostty"
+};
+const requested = process.argv[2];
+const names = requested === "all"
+  ? ["kitty", "wezterm", "alacritty", "ghostty", "iterm2-ssh", "windows-terminal-ssh"]
+  : [requested];
+const results = [];
+for (const name of names) {
+  const binary = targets[name];
+  if (!binary) {
+    results.push({ terminal: name, status: "unavailable", reason: "remote SSH target not configured" });
+    continue;
+  }
+  try {
+    const version = execFileSync(binary, ["--version"], { encoding: "utf8", timeout: 5000 }).trim();
+    const display = Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+    results.push({
+      terminal: name,
+      status: display ? "available_manual" : "unavailable_runtime",
+      reason: display ? "binary detected; manual visual run required" : "binary detected but no graphical display",
+      version
+    });
+  } catch (error) {
+    results.push({ terminal: name, status: "unavailable", reason: error.code === "ENOENT" ? "binary not installed" : String(error.message) });
+  }
+}
+const report = { nonInteractive: true, mandatoryCI: false, results };
+const json = JSON.stringify(report, null, 2) + "\n";
+if (process.argv[3]) fs.writeFileSync(process.argv[3], json);
+process.stdout.write(json);
+NODE

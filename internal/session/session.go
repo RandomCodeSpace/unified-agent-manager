@@ -119,13 +119,14 @@ type State struct {
 	// a recycled PID from the original
 	// process, so a stale state file can never make uam treat — or worse,
 	// signal — an unrelated process as a session.
-	HostStart   int64    `json:"host_start,omitempty"`
-	ChildPID    int      `json:"child_pid"`
-	ChildStart  int64    `json:"child_start,omitempty"`
-	CreatedUnix int64    `json:"created_unix"`
-	Cwd         string   `json:"cwd"`
-	Label       string   `json:"label,omitempty"`
-	Command     []string `json:"command"`
+	HostStart        int64    `json:"host_start,omitempty"`
+	ChildPID         int      `json:"child_pid"`
+	ChildStart       int64    `json:"child_start,omitempty"`
+	CreatedUnix      int64    `json:"created_unix"`
+	Cwd              string   `json:"cwd"`
+	Label            string   `json:"label,omitempty"`
+	ProviderIdentity string   `json:"provider_identity,omitempty"`
+	Command          []string `json:"command"`
 }
 
 // hostAlive / childAlive are the start-time-verified liveness probes for a
@@ -198,6 +199,9 @@ func readState(dir, name string) (State, error) {
 	}
 	if st.Name != name {
 		return State{}, fmt.Errorf("session state name %q does not match file name %q", st.Name, name)
+	}
+	if err := validateProviderIdentity(st.ProviderIdentity); err != nil {
+		return State{}, err
 	}
 	return st, nil
 }

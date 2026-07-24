@@ -1,0 +1,12 @@
+{
+  "input": [
+    {"name": "printable_utf8", "hex": "68656c6c6f20e4b896e7958c"},
+    {"name": "arrows_modifiers", "hex": "1b5b411b5b421b5b313b35431b5b313b3244"},
+    {"name": "control_prefix_literal", "hex": "0202"},
+    {"name": "sgr_mouse", "hex": "1b5b3c303b31323b374d1b5b3c303b31323b376d"},
+    {"name": "bracketed_paste", "hex": "1b5b3230307e706173746520e697a5e69cace8aa9e1b5b3230317e"},
+    {"name": "focus", "hex": "1b5b491b5b4f"}
+  ],
+  "provider_output_hex": "6d61696e2d73637265656e0d0a1b5b3f31303439681b5b33316d616c742d73637265656e1b5b306d1b5b3f313034396c726573746f7265640d0a1b5b3f32303034681b5b3f3130303468544f444f31312d5245414459",
+  "malformed_escape_hex": "1b5b3f313a323b31303439681b5b31321b5b3f313034396cff00"
+}

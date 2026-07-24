@@ -21,8 +21,9 @@ import (
 )
 
 type Service struct {
-	Store    *store.Store
-	Registry *adapter.Registry
+	Store              *store.Store
+	Registry           *adapter.Registry
+	SessionDiagnostics SessionDiagnosticSource
 	// prInFlight guards the PR-check pass of a refresh so overlapping refreshes
 	// (stacked 2s ticks) do not launch concurrent `gh` subprocesses. A refresh
 	// that fails to acquire it skips the network check and keeps the persisted
@@ -533,6 +534,10 @@ func (s *Service) DispatchNamed(ctx context.Context, agentName, name, prompt, cw
 }
 
 func (s *Service) DispatchNamedWithAlias(ctx context.Context, agentName, commandAlias, name, prompt, cwd, mode string) (adapter.Session, error) {
+	return s.DispatchNamedWithAliasProfile(ctx, agentName, commandAlias, name, prompt, cwd, mode, "")
+}
+
+func (s *Service) DispatchNamedWithAliasProfile(ctx context.Context, agentName, commandAlias, name, prompt, cwd, mode, profileName string) (adapter.Session, error) {
 	if s.Registry == nil {
 		return adapter.Session{}, errors.New("no registry configured")
 	}
@@ -540,15 +545,37 @@ func (s *Service) DispatchNamedWithAlias(ctx context.Context, agentName, command
 	if !ok {
 		return adapter.Session{}, fmt.Errorf("agent %q is unavailable", agentName)
 	}
-	if mode == "" {
-		mode = string(store.ModeYolo)
+	cfg, err := s.loadConfig()
+	if err != nil {
+		return adapter.Session{}, fmt.Errorf("load dispatch profile config: %w", err)
 	}
-	sess, err := a.Dispatch(ctx, adapter.DispatchRequest{Name: name, CommandAlias: commandAlias, Prompt: prompt, Cwd: cwd, Mode: mode})
+	if profileName != "" {
+		if err := store.ValidateProfileName(profileName); err != nil {
+			return adapter.Session{}, err
+		}
+		if _, exists := cfg.Profiles[profileName]; !exists {
+			return adapter.Session{}, fmt.Errorf("profile %q not found", profileName)
+		}
+	}
+	launch, err := resolveLaunchPolicy(cfg, a, store.SessionRecord{Agent: agentName, Profile: profileName})
+	if err != nil {
+		return adapter.Session{}, fmt.Errorf("resolve dispatch profile: %w", err)
+	}
+	if mode == "" {
+		mode = string(launch.Mode())
+	}
+	if commandAlias == "" {
+		commandAlias = launch.CommandAlias()
+	}
+	sess, err := a.Dispatch(ctx, adapter.DispatchRequest{
+		Name: name, CommandAlias: commandAlias, ScrollbackLines: launch.ScrollbackLines(), Prompt: prompt, Cwd: cwd, Mode: mode,
+	})
 	if err != nil {
 		return adapter.Session{}, err
 	}
 	if s.Store != nil {
 		rec := RecordFromSession(sess, store.Mode(mode))
+		rec.Profile = profileName
 		if err := s.Store.Update(func(cfg *store.Config) error {
 			cfg.PutSession(store.Key(sess.AgentType, sess.ID), rec)
 			return nil
@@ -832,7 +859,7 @@ func (s *Service) AttachSpecExactWithOptions(ctx context.Context, agentName, id 
 			return adapter.AttachSpec{}, err
 		}
 	}
-	return a.Attach(sess.ID)
+	return s.attachSpecWithProfile(ctx, sess, a)
 }
 
 func (s *Service) AttachSpecWithOptions(ctx context.Context, id string, opts ResumeOptions) (adapter.AttachSpec, error) {
@@ -849,7 +876,27 @@ func (s *Service) AttachSpecWithOptions(ctx context.Context, id string, opts Res
 			return adapter.AttachSpec{}, err
 		}
 	}
-	return a.Attach(sess.ID)
+	return s.attachSpecWithProfile(ctx, sess, a)
+}
+
+func (s *Service) attachSpecWithProfile(ctx context.Context, sess adapter.Session, agent adapter.AgentAdapter) (adapter.AttachSpec, error) {
+	spec, err := agent.Attach(sess.ID)
+	if err != nil {
+		return adapter.AttachSpec{}, err
+	}
+	lookup := sess.SessionName
+	if lookup == "" {
+		lookup = sess.ID
+	}
+	profile, err := s.EffectiveProfileExact(ctx, lookup)
+	if err != nil {
+		return adapter.AttachSpec{}, fmt.Errorf("resolve attach profile: %w", err)
+	}
+	spec.Profile = adapter.AttachProfileSnapshot{
+		Selected: profile.SelectedProfile, Effective: profile.EffectiveProfile, Mouse: string(profile.Mouse),
+		ControlPrefix: profile.ControlPrefix, BackDetach: profile.BackDetach,
+	}
+	return spec, nil
 }
 
 // Restart replaces a session's agent process while keeping its identity: a
@@ -1068,7 +1115,11 @@ func (s *Service) prepareResume(sess adapter.Session, cfg store.Config, opts Res
 	if rec.ID == "" {
 		rec = RecordFromSession(sess, store.ModeYolo)
 	}
-	req := adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: rec.CommandAlias, Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(rec.Mode), SessionName: rec.SessionName, ProviderSessionID: rec.ProviderSessionID, CreatedAt: rec.CreatedAt}
+	launch, err := resolveLaunchPolicy(cfg, a, rec)
+	if err != nil {
+		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf("resolve resume profile: %w", err)
+	}
+	req := adapter.ResumeRequest{ID: rec.ID, Name: rec.Name, CommandAlias: launch.CommandAlias(), ScrollbackLines: launch.ScrollbackLines(), Prompt: rec.Prompt, Cwd: rec.Workdir, Mode: string(launch.Mode()), SessionName: rec.SessionName, ProviderSessionID: rec.ProviderSessionID, CreatedAt: rec.CreatedAt}
 	kind := adapter.ResumeHeuristic
 	if classifier, ok := a.(adapter.ResumeKindAdapter); ok {
 		kind = classifier.ResumeKind(req)
@@ -1080,6 +1131,20 @@ func (s *Service) prepareResume(sess adapter.Session, cfg store.Config, opts Res
 		return nil, store.SessionRecord{}, adapter.ResumeRequest{}, fmt.Errorf("%w: provider %q has multiple retained sessions in %q; retry with --allow-latest", ErrAmbiguousResume, rec.Agent, rec.Workdir)
 	}
 	return resumable, rec, req, nil
+}
+
+func resolveLaunchPolicy(cfg store.Config, provider adapter.AgentAdapter, record store.SessionRecord) (LaunchPolicySnapshot, error) {
+	policyProvider, ok := provider.(adapter.TerminalPolicyAdapter)
+	if !ok {
+		return LaunchPolicySnapshot{}, fmt.Errorf("agent %q does not expose a terminal policy", provider.Name())
+	}
+	effective, err := ResolveProfilePolicy(ResolutionInput{
+		Config: cfg, Session: record, ProviderPolicy: policyProvider.TerminalPolicy(),
+	})
+	if err != nil {
+		return LaunchPolicySnapshot{}, err
+	}
+	return effective.LaunchSnapshot(), nil
 }
 
 func retainedSessionCount(cfg store.Config, agentName, workdir string) int {

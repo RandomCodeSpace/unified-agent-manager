@@ -66,6 +66,9 @@ func TestResumeKindUsesExistingSafeDerivedDirectory(t *testing.T) {
 	if !strings.Contains(argv, "--session-dir "+dir+" -c") {
 		t.Fatalf("argv=%q", argv)
 	}
+	if strings.Contains(argv, "--no-alt-screen") {
+		t.Fatalf("OMP resume must preserve provider-native terminal behavior: %q", argv)
+	}
 }
 
 func TestLegacyResumeWithoutDerivedDirectoryKeepsBareContinue(t *testing.T) {
@@ -80,6 +83,9 @@ func TestLegacyResumeWithoutDerivedDirectoryKeepsBareContinue(t *testing.T) {
 	argv := strings.Join(be.CallsOf("create")[0].Command, " ")
 	if strings.Contains(argv, "--session-dir") || !strings.HasSuffix(argv, " -c") {
 		t.Fatalf("argv=%q", argv)
+	}
+	if strings.Contains(argv, "--no-alt-screen") {
+		t.Fatalf("legacy OMP resume must preserve provider-native terminal behavior: %q", argv)
 	}
 }
 

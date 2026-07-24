@@ -1,12 +1,67 @@
 package session
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"io"
+	"net"
 	"sync"
 	"testing"
 )
+
+func TestAttachV1CharacterizationHandshakeAndRawOutput(t *testing.T) {
+	client, server := net.Pipe()
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+	})
+	payload := []byte{'v', '1', ':', 0x00, 0xff, '\r', '\n'}
+	serverErr := make(chan error, 1)
+	go func() {
+		br := bufio.NewReader(server)
+		var req request
+		if err := readJSONLine(br, &req); err != nil {
+			serverErr <- err
+			return
+		}
+		if req.Op != opAttach || req.Cols != 80 || req.Rows != 24 {
+			serverErr <- errors.New("unexpected v1 attach request")
+			return
+		}
+		if err := writeJSONLine(server, response{OK: true, Data: "v1-label"}); err != nil {
+			serverErr <- err
+			return
+		}
+		if err := writeAll(server, payload); err != nil {
+			serverErr <- err
+			return
+		}
+		serverErr <- server.Close()
+	}()
+
+	if err := writeJSONLine(client, request{Op: opAttach, Cols: 80, Rows: 24}); err != nil {
+		t.Fatalf("write v1 handshake: %v", err)
+	}
+	br := bufio.NewReader(client)
+	var resp response
+	if err := readJSONLine(br, &resp); err != nil {
+		t.Fatalf("read v1 handshake: %v", err)
+	}
+	if !resp.OK || resp.Data != "v1-label" {
+		t.Fatalf("v1 response = %+v", resp)
+	}
+	got, err := io.ReadAll(br)
+	if err != nil {
+		t.Fatalf("read v1 raw output: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("v1 raw output = %x, want %x", got, payload)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("v1 fixture: %v", err)
+	}
+}
 
 type shortWriter struct {
 	mu  sync.Mutex
@@ -82,6 +137,95 @@ func TestFrameWriterSerializesConcurrentFrames(t *testing.T) {
 	}
 	if _, _, err := readFrame(r); !errors.Is(err, io.EOF) {
 		t.Fatalf("trailing read error = %v, want EOF", err)
+	}
+}
+
+func TestAttachFrameWriterStampsV2OwnershipGeneration(t *testing.T) {
+	var wire bytes.Buffer
+	writer := newAttachFrameWriter(&wire, protocolV2, "client-1", 7)
+	if err := writer.WriteFrame(frameStdin, []byte("before")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.ObserveControl([]byte(`{"type":"role","client_id":"client-1","generation":8}`)); err != nil {
+		t.Fatalf("observe control: %v", err)
+	}
+	if err := writer.WriteFrame(frameResize, []byte{0, 100, 0, 30}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.ObserveControl([]byte(`{"type":"role","client_id":"client-2","generation":9}`)); err != nil {
+		t.Fatalf("observe control: %v", err)
+	}
+	if err := writer.WriteFrame(frameStdin, []byte("after")); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []struct {
+		kind       byte
+		generation uint64
+		payload    []byte
+	}{
+		{kind: frameStdin, generation: 7, payload: []byte("before")},
+		{kind: frameResize, generation: 8, payload: []byte{0, 100, 0, 30}},
+		{kind: frameStdin, generation: 8, payload: []byte("after")},
+	}
+	for _, expected := range want {
+		kind, payload, err := readFrame(&wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		generation, control, err := parseOwnedFramePayload(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind != expected.kind || generation != expected.generation || !bytes.Equal(control, expected.payload) {
+			t.Fatalf("frame = (%d, %d, %q), want (%d, %d, %q)", kind, generation, control, expected.kind, expected.generation, expected.payload)
+		}
+	}
+}
+
+func TestAttachFrameWriterDoesNotRegressMatchingClientGeneration(t *testing.T) {
+	var wire bytes.Buffer
+	writer := newAttachFrameWriter(&wire, protocolV2, "client-1", 1)
+	if err := writer.ObserveControl([]byte(`{"type":"role","client_id":"client-1","generation":3}`)); err != nil {
+		t.Fatalf("observe control: %v", err)
+	}
+	if err := writer.ObserveControl([]byte(`{"type":"role","client_id":"client-1","generation":2}`)); err != nil {
+		t.Fatalf("observe control: %v", err)
+	}
+	if err := writer.WriteFrame(frameStdin, []byte("stdin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteFrame(frameResize, []byte{0, 100, 0, 30}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, expectedKind := range []byte{frameStdin, frameResize} {
+		kind, payload, err := readFrame(&wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		generation, _, err := parseOwnedFramePayload(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind != expectedKind || generation != 3 {
+			t.Fatalf("frame = (%d, generation %d), want (%d, generation 3)", kind, generation, expectedKind)
+		}
+	}
+}
+
+func TestAttachFrameWriterPreservesV1ControlPayloads(t *testing.T) {
+	var wire bytes.Buffer
+	writer := newAttachFrameWriter(&wire, protocolV1, "", 7)
+	if err := writer.WriteFrame(frameStdin, []byte("legacy")); err != nil {
+		t.Fatal(err)
+	}
+	kind, payload, err := readFrame(&wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != frameStdin || !bytes.Equal(payload, []byte("legacy")) {
+		t.Fatalf("v1 frame = (%d, %q), want raw stdin", kind, payload)
 	}
 }
 

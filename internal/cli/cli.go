@@ -68,16 +68,26 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  uam                              open the TUI")
 	fmt.Fprintln(os.Stderr, "  uam new                          guided dispatch wizard")
-	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] [--alias <name>] <agent> [#session-name] [prompt]")
+	fmt.Fprintln(os.Stderr, "  uam new [--profile <name>]       guided dispatch wizard")
+	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] [--alias <name>] [--profile <name>] <agent> [#session-name] [prompt]")
 	fmt.Fprintln(os.Stderr, "  uam attach [--allow-latest] <name-or-id>")
 	fmt.Fprintln(os.Stderr, "  uam last")
 	fmt.Fprintln(os.Stderr, "  uam version")
 	fmt.Fprintln(os.Stderr, "  uam ls [--json]")
+	fmt.Fprintln(os.Stderr, "  uam doctor [<session-id>] [--json]")
 	fmt.Fprintln(os.Stderr, "  uam peek <id>")
 	fmt.Fprintln(os.Stderr, "  uam stop <id>")
 	fmt.Fprintln(os.Stderr, "  uam restart [--allow-latest] <id> stop the agent and resume it in place")
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
 	fmt.Fprintln(os.Stderr, "  uam kill-all                      stop every managed session")
+	fmt.Fprintln(os.Stderr, "  uam profile ls [--json]")
+	fmt.Fprintln(os.Stderr, "  uam profile show <name> [--json]")
+	fmt.Fprintln(os.Stderr, "  uam profile set <name> [profile flags]")
+	fmt.Fprintln(os.Stderr, "  uam profile rm <name>")
+	fmt.Fprintln(os.Stderr, "  uam profile default <name|none>")
+	fmt.Fprintln(os.Stderr, "  uam profile assign <session-id> <name|none>")
+	fmt.Fprintln(os.Stderr, "  uam profile override <session-id> [profile flags]")
+	fmt.Fprintln(os.Stderr, "  uam profile effective <session-id> [--json]")
 	fmt.Fprintln(os.Stderr, "  uam notify-closed <session-name>   (internal: flag a record user-closed)")
 }
 
@@ -154,7 +164,7 @@ func runWithoutStore(ctx context.Context, args []string) (bool, error) {
 func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI func(context.Context, tea.Model) error) error {
 	switch args[0] {
 	case "new":
-		return runNew(ctx, svc, runTUI)
+		return runNewWithArgs(ctx, svc, args[1:], runTUI)
 	case "dispatch":
 		return RunDispatch(ctx, svc, args[1:])
 	case "ls", "list":
@@ -167,6 +177,10 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		return runRestart(ctx, svc, args[1:])
 	case "notify-closed":
 		return runNotifyClosed(svc, args[1:])
+	case "profile":
+		return runProfile(ctx, svc, args[1:])
+	case "doctor":
+		return runDoctor(ctx, svc, args[1:])
 	case "attach":
 		fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 		allowLatest := fs.Bool("allow-latest", false, "allow heuristic resume of the provider's latest session")
@@ -333,6 +347,7 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	safe := fs.Bool("safe", false, "use provider default permission mode")
 	alias := fs.String("alias", "", "command alias")
 	cwd := fs.String("cwd", "", "working directory")
+	profile := fs.String("profile", "", "named profile")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -353,11 +368,14 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 		return fmt.Errorf("dispatch: %q looks like a flag; flags must come before <agent>", rem[1])
 	}
 	mode := string(store.ModeYolo)
+	if *profile != "" {
+		mode = ""
+	}
 	if *safe {
 		mode = string(store.ModeSafe)
 	}
 	name, prompt := parseNameAndPrompt(rem[1:])
-	sess, err := svc.DispatchNamedWithAlias(ctx, rem[0], *alias, name, prompt, *cwd, mode)
+	sess, err := svc.DispatchNamedWithAliasProfile(ctx, rem[0], *alias, name, prompt, *cwd, mode, *profile)
 	if err != nil {
 		// A non-empty session means the agent launched but the record failed to
 		// persist (advisory): report the warning, still emit the id, exit 0 (F03).
@@ -371,9 +389,39 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 }
 
 func runNew(ctx context.Context, svc *app.Service, runTUI func(context.Context, tea.Model) error) error {
+	return runNewWithArgs(ctx, svc, nil, runTUI)
+}
+
+func runNewWithArgs(ctx context.Context, svc *app.Service, args []string, runTUI func(context.Context, tea.Model) error) error {
+	fs := flag.NewFlagSet("new", flag.ContinueOnError)
+	profile := fs.String("profile", "", "named profile")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if len(fs.Args()) != 0 {
+		return fmt.Errorf("new: unexpected arguments %q", fs.Args())
+	}
 	reader := bufio.NewReader(os.Stdin)
-	cfg, _ := svc.Store.Load()
+	cfg, err := svc.Store.Load()
+	if err != nil {
+		return fmt.Errorf("load new-session config: %w", err)
+	}
 	agent := cfg.DefaultAgent
+	if *profile != "" {
+		if err := store.ValidateProfileName(*profile); err != nil {
+			return err
+		}
+		selected, exists := cfg.Profiles[*profile]
+		if !exists {
+			return fmt.Errorf("profile %q not found", *profile)
+		}
+		if err := store.ValidateProfile(selected); err != nil {
+			return fmt.Errorf("profile %q: %w", *profile, err)
+		}
+		if selected.Provider != nil {
+			agent = *selected.Provider
+		}
+	}
 	if a := svc.Registry.Default(agent); a != nil {
 		agent = a.Name()
 	}
@@ -419,7 +467,11 @@ func runNew(ctx context.Context, svc *app.Service, runTUI func(context.Context, 
 	if strings.TrimSpace(prompt) == "" {
 		prompt = ""
 	}
-	sess, err := svc.DispatchNamedWithAlias(ctx, agent, alias, name, prompt, cwd, string(store.ModeYolo))
+	mode := string(store.ModeYolo)
+	if *profile != "" {
+		mode = ""
+	}
+	sess, err := svc.DispatchNamedWithAliasProfile(ctx, agent, alias, name, prompt, cwd, mode, *profile)
 	if err != nil {
 		if sess.ID == "" {
 			return err
@@ -482,9 +534,43 @@ func execAttachWithOptions(ctx context.Context, svc *app.Service, id string, opt
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), session.AttachQuietEnv+"=1")
+	cmd.Env = attachEnvironment(os.Environ(), spec)
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "uam: session exited: %v\n", err)
 	}
 	return runTUI(ctx, app.NewWithDeps(svc.Store, svc.Registry))
+}
+
+func attachEnvironment(base []string, spec adapter.AttachSpec) []string {
+	environment := make([]string, 0, len(base)+6)
+	for _, assignment := range base {
+		name, _, _ := strings.Cut(assignment, "=")
+		if name == session.AttachQuietEnv || name == session.AttachSelectedProfileEnv || name == session.AttachEffectiveProfileEnv ||
+			name == session.AttachPolicyMouseEnv || name == session.AttachPolicyPrefixEnv || name == session.AttachPolicyBackDetachEnv {
+			continue
+		}
+		environment = append(environment, assignment)
+	}
+	environment = append(environment, session.AttachQuietEnv+"=1")
+	if spec.Profile.Selected != "" {
+		environment = append(environment, session.AttachSelectedProfileEnv+"="+spec.Profile.Selected)
+	}
+	if spec.Profile.Effective != "" {
+		environment = append(environment, session.AttachEffectiveProfileEnv+"="+spec.Profile.Effective)
+	}
+	if spec.Profile.Mouse != "" || spec.Profile.ControlPrefix != "" {
+		environment = append(environment,
+			session.AttachPolicyMouseEnv+"="+spec.Profile.Mouse,
+			session.AttachPolicyPrefixEnv+"="+spec.Profile.ControlPrefix,
+			session.AttachPolicyBackDetachEnv+"="+boolTransport(spec.Profile.BackDetach),
+		)
+	}
+	return environment
+}
+
+func boolTransport(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
 }

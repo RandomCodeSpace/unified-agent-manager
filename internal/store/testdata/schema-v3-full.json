@@ -1,0 +1,41 @@
+{
+  "schema_version": 3,
+  "default_agent": "claude",
+  "sessions": {
+    "claude:12345678": {
+      "id": "12345678-1234-4234-9234-123456789abc",
+      "agent": "claude",
+      "command_alias": "claude-local",
+      "name": "preserve every field",
+      "prompt": "characterize schema v3",
+      "mode": "safe",
+      "workdir": "/tmp/schema-v3-worktree",
+      "tmux_session": "uam-claude-12345678",
+      "created_at": "2025-01-02T03:04:05Z",
+      "last_seen_at": "2025-02-03T04:05:06Z",
+      "pinned": true,
+      "group": "migration",
+      "sort_index": 17,
+      "status": "active",
+      "provider_session_id": "provider_session_12345678",
+      "last_exit_code": 23,
+      "pr": {
+        "url": "https://github.com/owner/repo/pull/42",
+        "number": 42,
+        "last_status": "open",
+        "last_checked": "2025-03-04T05:06:07Z"
+      },
+      "session_extension": {
+        "preserve": true
+      }
+    }
+  },
+  "ui": {
+    "group_by_dir": true,
+    "sort": "state",
+    "peek_width": 91
+  },
+  "top_level_extension": {
+    "preserve": true
+  }
+}

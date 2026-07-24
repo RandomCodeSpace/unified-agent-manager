@@ -25,7 +25,9 @@ func startInProcessHost(t *testing.T, c *Client, name, command string) chan erro
 	done := make(chan error, 1)
 	go func() {
 		defer func() { _ = w.Close() }()
-		done <- runHost(c.Dir, name, cwd, "label0", []string{"UAM_T=1"}, []string{"/bin/sh", "-c", command}, w)
+		done <- runHost(c.Dir, hostLaunchSpec{
+			name: name, cwd: cwd, label: "label0", envs: []string{"UAM_T=1"}, command: []string{"/bin/sh", "-c", command},
+		}, w)
 	}()
 	type readyResult struct {
 		line string

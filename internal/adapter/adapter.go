@@ -80,16 +80,28 @@ type PeekResult struct {
 	TailText string
 }
 
-type AttachSpec struct{ Argv []string }
+type AttachProfileSnapshot struct {
+	Selected      string
+	Effective     string
+	Mouse         string
+	ControlPrefix string
+	BackDetach    bool
+}
+
+type AttachSpec struct {
+	Argv    []string
+	Profile AttachProfileSnapshot
+}
 
 type ResumeRequest struct {
-	ID           string
-	Name         string
-	CommandAlias string
-	Prompt       string
-	Cwd          string
-	Mode         string
-	SessionName  string
+	ID              string
+	Name            string
+	CommandAlias    string
+	ScrollbackLines int
+	Prompt          string
+	Cwd             string
+	Mode            string
+	SessionName     string
 	// ProviderSessionID is the persisted provider-side session id, when one
 	// was recorded at dispatch; providers that support exact resume use it
 	// instead of their "most recent" heuristic.
@@ -138,11 +150,12 @@ type HasSessionAdapter interface {
 }
 
 type DispatchRequest struct {
-	Prompt       string
-	Cwd          string
-	Mode         string
-	Name         string
-	CommandAlias string
+	Prompt          string
+	Cwd             string
+	Mode            string
+	Name            string
+	CommandAlias    string
+	ScrollbackLines int
 }
 
 type AgentAdapter interface {

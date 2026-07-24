@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+harness_dir="$repo_root/scripts/xterm-harness"
+ansi=""
+evidence_dir=""
+title="UAM xterm visual QA"
+
+while (($#)); do
+  case "$1" in
+    --ansi) ansi="$2"; shift 2 ;;
+    --evidence-dir) evidence_dir="$2"; shift 2 ;;
+    --title) title="$2"; shift 2 ;;
+    --non-interactive) shift ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [[ -z "$ansi" || -z "$evidence_dir" || "$evidence_dir" != /* ]]; then
+  echo "--ansi and absolute --evidence-dir are required" >&2
+  exit 2
+fi
+mkdir -p "$evidence_dir"
+scratch="$(mktemp -d)"
+cleanup() {
+  case "$scratch" in
+    /tmp/tmp.*)
+      if [[ -d "$harness_dir/node_modules" ]]; then
+        find "$harness_dir/node_modules" -depth -delete
+      fi
+      find "$scratch" -depth -delete
+      ;;
+    *) exit 70 ;;
+  esac
+}
+trap cleanup EXIT
+
+npm ci --prefix "$harness_dir" --ignore-scripts --no-audit --cache "$scratch/npm-cache"
+UAM_CHROME_PROFILE="$scratch/chrome-profile" \
+  node "$harness_dir/render.mjs" --ansi "$ansi" --evidence-dir "$evidence_dir" --title "$title"
+cleanup
+trap - EXIT
+node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const [dir, scratch, harness] = process.argv.slice(1);
+  const chrome = fs.readdirSync("/proc", { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\d+$/u.test(entry.name) && Number(entry.name) !== process.pid)
+    .map((entry) => {
+      try { return fs.readFileSync(`/proc/${entry.name}/cmdline`, "utf8"); }
+      catch { return ""; }
+    })
+    .filter((command) => command.includes(scratch) && command.includes("chrome"));
+  const receipt = {
+    browser_processes_remaining: chrome.length,
+    chrome_profile_removed: !fs.existsSync(scratch),
+    npm_cache_removed: !fs.existsSync(scratch),
+    node_modules_removed: !fs.existsSync(path.join(harness, "node_modules"))
+  };
+  fs.writeFileSync(path.join(dir, "xterm-cleanup-receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
+' "$evidence_dir" "$scratch" "$harness_dir"

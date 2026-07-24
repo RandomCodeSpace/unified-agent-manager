@@ -779,7 +779,7 @@ func TestAttachOwnsTerminalStateOnTTY(t *testing.T) {
 	}
 }
 
-func TestCodexAttachPreservesPrimaryScreenScrollback(t *testing.T) {
+func TestLegacyCodexNamePrefixPreservesPrimaryScreenScrollback(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
 	name := "uam-codex-aaaa9999"

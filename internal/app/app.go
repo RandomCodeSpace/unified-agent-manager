@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -64,8 +65,14 @@ type Model struct {
 	wizard              bool
 	wizardStep          int
 	wizardAgent         string
+	wizardAgentExplicit bool
+	wizardProfile       string
 	wizardAlias         string
 	wizardCwd           string
+	profileNames        []string
+	profileProviders    map[string]string
+	defaultProfile      string
+	profileBySession    map[sessionIdentity]string
 	groupByDir          bool
 	execProcess         func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 	// reorderSeq increments on every reorder; a debounced flush tick only
@@ -118,10 +125,14 @@ const peekTickInterval = time.Second
 const peekFocusInterval = time.Second
 
 type sessionsLoadedMsg struct {
-	sessions     []adapter.Session
-	defaultAgent string
-	groupByDir   bool
-	err          error
+	sessions         []adapter.Session
+	defaultAgent     string
+	groupByDir       bool
+	profileNames     []string
+	profileProviders map[string]string
+	defaultProfile   string
+	profileBySession map[sessionIdentity]string
+	err              error
 }
 type peekLoadedMsg struct {
 	text string
@@ -208,7 +219,7 @@ func New() Model {
 }
 
 func NewWithDeps(st *store.Store, reg *adapter.Registry) Model {
-	m := Model{service: NewService(st, reg), defaultAgent: store.DefaultAgentName, wizardCwd: ".", execProcess: tea.ExecProcess, lastPeekAt: map[string]time.Time{}, peekClock: time.Now}
+	m := Model{service: NewService(st, reg), defaultAgent: store.DefaultAgentName, wizardCwd: ".", profileProviders: map[string]string{}, profileBySession: map[sessionIdentity]string{}, execProcess: tea.ExecProcess, lastPeekAt: map[string]time.Time{}, peekClock: time.Now}
 	// The baked-in OpenCode default may not be installed; reconcile it to an
 	// enabled provider so Enter-with-no-input and the prompt hint never point at
 	// a disabled agent (C2-9).
@@ -269,7 +280,20 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 			return m.reloadSessions()
 		}
 		sessions, cfg, err := m.service.LoadSessions(context.Background())
-		return sessionsLoadedMsg{sessions: sessions, defaultAgent: cfg.DefaultAgent, groupByDir: cfg.UI.GroupByDir, err: err}
+		profileNames := make([]string, 0, len(cfg.Profiles))
+		profileProviders := make(map[string]string, len(cfg.Profiles))
+		for name, profile := range cfg.Profiles {
+			profileNames = append(profileNames, name)
+			if profile.Provider != nil {
+				profileProviders[name] = *profile.Provider
+			}
+		}
+		sort.Strings(profileNames)
+		profileBySession := make(map[sessionIdentity]string, len(cfg.Sessions))
+		for _, record := range cfg.Sessions {
+			profileBySession[sessionIdentity{agent: record.Agent, id: record.ID}] = record.Profile
+		}
+		return sessionsLoadedMsg{sessions: sessions, defaultAgent: cfg.DefaultAgent, groupByDir: cfg.UI.GroupByDir, profileNames: profileNames, profileProviders: profileProviders, defaultProfile: cfg.DefaultProfile, profileBySession: profileBySession, err: err}
 	}
 }
 
@@ -412,6 +436,12 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 		// reconcile it to an enabled provider rather than dispatching to a
 		// disabled one (C2-9).
 		m.defaultAgent = m.validateDefaultAgent(msg.defaultAgent)
+	}
+	m.profileNames = append([]string(nil), msg.profileNames...)
+	m.profileProviders = msg.profileProviders
+	m.defaultProfile = msg.defaultProfile
+	if msg.profileBySession != nil {
+		m.profileBySession = msg.profileBySession
 	}
 	if selectedID != "" {
 		for i, sess := range m.sessions {
@@ -981,6 +1011,9 @@ func (m *Model) handleEditKey(key string) {
 	m.wizard = true
 	m.wizardStep = 0
 	m.input = ""
+	m.wizardProfile = ""
+	m.wizardAgentExplicit = false
+	m.wizardAgent = m.wizardProviderDefault("")
 	m.wizardAlias = ""
 	m.wizardCwd = "."
 }
@@ -1077,7 +1110,14 @@ func (m *Model) handleWizardAgentKey(key string) (tea.Cmd, bool) {
 	case "tab":
 		m.cycleDefaultAgent()
 		m.wizardAgent = m.defaultAgent
+		m.wizardAgentExplicit = true
 		return m.persistDefaultAgent(), true
+	case "shift+tab", "right":
+		m.cycleWizardProfile()
+		if !m.wizardAgentExplicit {
+			m.wizardAgent = m.wizardProviderDefault(m.wizardProfile)
+		}
+		return nil, true
 	case "enter":
 		if m.wizardAgent == "" {
 			m.wizardAgent = m.defaultAgent
@@ -1130,7 +1170,7 @@ func (m *Model) handleWizardPromptKey(key string) (tea.Cmd, bool) {
 		}
 		cwd := m.wizardCwd
 		m.closeWizard()
-		return m.dispatchWithNameCwdCmd(spec.Agent, spec.Alias, spec.Name, spec.Prompt, cwd), true
+		return m.dispatchWithNameCwdProfileCmd(spec.Agent, spec.Alias, spec.Name, spec.Prompt, cwd, m.wizardProfile), true
 	}
 	return nil, false
 }
@@ -1246,6 +1286,27 @@ func (m *Model) cycleDefaultAgent() {
 	m.defaultAgent = enabled[idx%len(enabled)].Name()
 }
 
+func (m *Model) cycleWizardProfile() {
+	choices := append([]string{""}, m.profileNames...)
+	for i, name := range choices {
+		if name == m.wizardProfile {
+			m.wizardProfile = choices[(i+1)%len(choices)]
+			return
+		}
+	}
+	m.wizardProfile = ""
+}
+
+func (m Model) wizardProviderDefault(profileName string) string {
+	if profileName == "" {
+		profileName = m.defaultProfile
+	}
+	if provider := m.profileProviders[profileName]; provider != "" {
+		return provider
+	}
+	return m.defaultAgent
+}
+
 type dispatchSpec struct {
 	Agent  string
 	Alias  string
@@ -1287,11 +1348,15 @@ func consumeDispatchToken(input, prefix string) (token, rest string, ok bool) {
 }
 
 func (m Model) dispatchNamedCmd(agent, alias, name, prompt string) tea.Cmd {
-	return m.dispatchWithNameCwdCmd(agent, alias, name, prompt, "")
+	return m.dispatchWithNameCwdProfileCmd(agent, alias, name, prompt, "", "")
 }
-func (m Model) dispatchWithNameCwdCmd(agent, alias, name, prompt, cwd string) tea.Cmd {
+func (m Model) dispatchWithNameCwdProfileCmd(agent, alias, name, prompt, cwd, profile string) tea.Cmd {
 	return func() tea.Msg {
-		sess, err := m.service.DispatchNamedWithAlias(context.Background(), agent, alias, name, prompt, cwd, string(store.ModeYolo))
+		mode := string(store.ModeYolo)
+		if profile != "" {
+			mode = ""
+		}
+		sess, err := m.service.DispatchNamedWithAliasProfile(context.Background(), agent, alias, name, prompt, cwd, mode, profile)
 		return dispatchedMsg{session: sess, err: err}
 	}
 }
@@ -1463,11 +1528,15 @@ func (m Model) attachSessionCmd(sess adapter.Session) tea.Cmd {
 		if m.service == nil || m.service.Registry == nil {
 			return sessionsLoadedMsg{err: fmt.Errorf("agent %q unavailable", sess.AgentType)}
 		}
-		a, ok := m.service.Registry.Get(sess.AgentType)
-		if !ok {
-			return sessionsLoadedMsg{err: fmt.Errorf("agent %q unavailable", sess.AgentType)}
+		if m.service.Store == nil {
+			a, ok := m.service.Registry.Get(sess.AgentType)
+			if !ok {
+				return sessionsLoadedMsg{err: fmt.Errorf("agent %q unavailable", sess.AgentType)}
+			}
+			spec, err := a.Attach(sess.ID)
+			return attachSpecMsg{spec: spec, err: err}
 		}
-		spec, err := a.Attach(sess.ID)
+		spec, err := m.service.AttachSpecExact(context.Background(), sess.AgentType, sess.ID)
 		return attachSpecMsg{spec: spec, err: err}
 	}
 }
@@ -1484,8 +1553,39 @@ func (m Model) execAttachSpec(spec adapter.AttachSpec, err error) tea.Cmd {
 		runner = tea.ExecProcess
 	}
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...) // #nosec G204 -- attach argv is generated by trusted agent adapters, no shell expansion.
-	cmd.Env = append(os.Environ(), session.AttachQuietEnv+"=1")
+	cmd.Env = attachProcessEnvironment(os.Environ(), spec)
 	return runner(cmd, func(err error) tea.Msg { return attachFinishedMsg{err: err} })
+}
+
+func attachProcessEnvironment(base []string, spec adapter.AttachSpec) []string {
+	environment := make([]string, 0, len(base)+6)
+	for _, assignment := range base {
+		name, _, _ := strings.Cut(assignment, "=")
+		if name == session.AttachQuietEnv || name == session.AttachSelectedProfileEnv || name == session.AttachEffectiveProfileEnv ||
+			name == session.AttachPolicyMouseEnv || name == session.AttachPolicyPrefixEnv || name == session.AttachPolicyBackDetachEnv {
+			continue
+		}
+		environment = append(environment, assignment)
+	}
+	environment = append(environment, session.AttachQuietEnv+"=1")
+	if spec.Profile.Selected != "" {
+		environment = append(environment, session.AttachSelectedProfileEnv+"="+spec.Profile.Selected)
+	}
+	if spec.Profile.Effective != "" {
+		environment = append(environment, session.AttachEffectiveProfileEnv+"="+spec.Profile.Effective)
+	}
+	if spec.Profile.Mouse != "" || spec.Profile.ControlPrefix != "" {
+		backDetach := "0"
+		if spec.Profile.BackDetach {
+			backDetach = "1"
+		}
+		environment = append(environment,
+			session.AttachPolicyMouseEnv+"="+spec.Profile.Mouse,
+			session.AttachPolicyPrefixEnv+"="+spec.Profile.ControlPrefix,
+			session.AttachPolicyBackDetachEnv+"="+backDetach,
+		)
+	}
+	return environment
 }
 
 func (m Model) persistOrderCmd() tea.Cmd {
@@ -1714,6 +1814,9 @@ func (m Model) wizardPromptLines(width int) []string {
 	if step == 0 && field == "" {
 		field = firstNonEmpty(m.wizardAgent, m.defaultAgent)
 	}
+	if step == 0 {
+		field += "  profile=" + m.wizardProfileLabel()
+	}
 	return []string{
 		ansi.Truncate(bar()+" "+hintStyle.Render("new")+" "+brandStyle.Render("›")+" "+titleStyle.Render(field)+brandStyle.Render("▏"), width, "…"),
 		ansi.Truncate("  "+hintStyle.Render(hints[step]), width, "…"),
@@ -1908,11 +2011,28 @@ func (m Model) renderDetails() string {
 		b.WriteString("    " + taskStyle.Render(boundedTaskSummary(sess, max(8, m.contentWidth()-6))) + "\n")
 	}
 	b.WriteString("    " + hintStyle.Render("agent: "+displaytext.Sanitize(firstNonEmpty(sess.AgentType, "?"))) + "\n")
+	selected, effective := m.profileLabels(sess)
+	b.WriteString("    ")
+	b.WriteString(hintStyle.Render("profile selected: " + displaytext.Sanitize(selected) + "  effective: " + displaytext.Sanitize(effective)))
+	b.WriteByte('\n')
 	if !sess.CreatedAt.IsZero() {
 		b.WriteString("    " + hintStyle.Render("created: "+sess.CreatedAt.Format("Jan 02 15:04")) + "\n")
 	}
 	b.WriteString("    " + hintStyle.Render("cwd: "+absCwd(sess.Cwd)) + "\n")
 	return b.String()
+}
+
+func (m Model) profileLabels(sess adapter.Session) (string, string) {
+	selected := m.profileBySession[sessionIdentity{agent: sess.AgentType, id: sess.ID}]
+	effective := selected
+	if selected == "" {
+		selected = "default"
+		effective = m.defaultProfile
+	}
+	if effective == "" {
+		effective = "none"
+	}
+	return selected, effective
 }
 
 func (m Model) renderTable() string {
@@ -2204,8 +2324,9 @@ func (m Model) renderLatestConfirmation() string {
 }
 
 func (m Model) renderWizard() string {
+	profileLabel := m.wizardProfileLabel()
 	steps := []string{
-		"provider — Tab cycles, Enter confirms:  " + firstNonEmpty(m.wizardAgent, m.defaultAgent),
+		"provider — Tab cycles; Shift+Tab profile; Enter confirms:  " + firstNonEmpty(m.wizardAgent, m.defaultAgent) + "  profile=" + profileLabel,
 		"command alias — blank uses provider default:  " + m.input,
 		"working directory:  " + m.input,
 		"#name prompt — both optional:  " + m.input,
@@ -2215,7 +2336,7 @@ func (m Model) renderWizard() string {
 		step = 0
 	}
 	var b strings.Builder
-	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 4", step+1)) + "\n")
+	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 4 · profile %s", step+1, profileLabel)) + "\n")
 	b.WriteString("  " + titleStyle.Render(displaytext.Sanitize(steps[step])) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
 	switch step {
 	case 2:
@@ -2232,6 +2353,16 @@ func (m Model) renderWizard() string {
 		b.WriteString("  " + hintStyle.Render("Esc cancels") + "\n")
 	}
 	return b.String()
+}
+
+func (m Model) wizardProfileLabel() string {
+	if m.wizardProfile != "" {
+		return m.wizardProfile
+	}
+	if m.defaultProfile != "" {
+		return "default:" + m.defaultProfile
+	}
+	return "default:none"
 }
 
 // liveGlyphStyle / failGlyphStyle are hoisted to package vars so renderRow does

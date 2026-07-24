@@ -67,6 +67,24 @@ Inside an attached session, `Ctrl+B d` detaches. A bare left arrow also detaches
 when the provider input is empty and the quick-detach option is enabled. See the
 README for the complete attach-key contract.
 
+## Multiple attached terminals
+
+An attachment is a live client, not a second Managed Session. One client is the
+**controller** and is the only one allowed to send provider input, resize the
+PTY, or issue a provider reply. Further interactive clients are **standbys**;
+they see output and can request a handoff, but cannot interleave keystrokes.
+**Observers** are output-only. If the controller disconnects, the next standby
+is promoted. A controller can also transfer deliberately.
+
+With the default prefix, use `Ctrl+B r` to request control, `Ctrl+B o` from the
+controller to transfer, and `Ctrl+B i` to display your role. `Ctrl+B m`
+changes mouse passthrough only for the current attachment. A configured profile
+prefix replaces `Ctrl+B`; `prefix prefix` sends the configured literal prefix.
+`Ctrl+B Ctrl+B` has that meaning only when the configured prefix is `C-b`.
+Bracketed paste bypasses every prefix command, so pasted control bytes stay
+provider input. The full protocol and mixed-version matrix is
+[ADR 0003](adr/0003-terminal-client-session-ownership-and-protocol-v2.md).
+
 ## Filtering sessions
 
 Press `/` while the command composer is empty to filter the existing dashboard.
@@ -131,6 +149,78 @@ should run SSH in Windows Terminal and configure a Windows Terminal paste
 binding. See [ADR 0002](adr/0002-terminal-ownership-over-ssh.md) for the terminal
 ownership boundary and limitations.
 
+The terminal's `TERM` or color name is metadata, not proof that it can perform a
+specific feature. UAM keeps provider keys native and uses its supported provider
+terminal policy rather than guessing from that name. An unsupported or sensitive
+hint is redacted in diagnostics.
+
+## Profiles, provider policy, and recovery
+
+Use a named profile to make repeated launches predictable:
+
+```sh
+uam profile set focused --provider claude --mode safe --mouse off --prefix C-a --back-detach off --scrollback 8000
+uam profile default focused
+uam profile show focused --json
+uam profile ls --json
+uam doctor --json
+```
+
+Profile resolution is ordered: **hard safety invariants**, **global defaults**,
+**built-in provider policy**, **selected named profile**, **per-session
+overrides**, **client-local attachment overrides**, then **capability
+constraints**. The invariant layer fixes provider `TERM` to `xterm-256color`
+and rejects profile environment, terminal-capability, and resume-policy changes.
+Provider policy fixes native keys and outer-screen
+behavior; Codex is primary-screen while the other current providers use a UAM
+outer screen. `uam profile assign <session-id> <name|none>` selects the
+per-session profile; `uam profile override <session-id> [profile flags]` sets
+the durable final profile layer; `uam profile effective <session-id> --json`
+shows it. Attachment-local mouse, prefix, and quick-detach choices last only for
+that client, and capabilities can constrain whether local filtering or an owned
+screen is available. A provider-constrained profile must match its session
+provider. `uam profile rm <name>` refuses a profile that is still default or
+selected by a session. Launch-time fields are provider, mode, alias, and
+scrollback; profiles and session selection/overrides persist; client identity,
+role, dimensions, protocol, and capabilities do not.
+
+| Provider | Resume policy | Outer screen |
+|---|---|---|
+| Claude Code | Exact when its seeded ID is retained; otherwise guarded latest continuation | UAM |
+| GitHub Copilot CLI | Exact for UAM-created records | UAM |
+| OpenCode | Exact root conversation only | UAM |
+| Oh My Pi | Exact with its dedicated state; legacy records use guarded latest continuation | UAM |
+| OpenAI Codex | Guarded latest continuation | Primary |
+| Hermes Agent | Unsupported; create a new Managed Session | UAM |
+
+`uam doctor <session-id> --json` shows runtime role counts, protocols,
+profile resolution, provider policy, and safe fallback reasons. It does not
+print terminal content or secret-like values.
+
+### Cross-terminal smoke collection
+
+Collect optional manual terminal evidence with the real collector, once per
+available target:
+
+```sh
+scripts/terminal-smoke-real --terminal <kitty|wezterm|alacritty|ghostty|iterm2-ssh|windows-terminal-ssh> --output <path> --non-interactive
+```
+
+It reports whether the named local terminal is available for a manual visual run
+or whether an SSH target is configured; unavailable/headless results are useful
+evidence, not a test failure. This collector is optional/manual evidence and is
+not a mandatory CI gate. In contrast,
+`script/qa/docs-contract-smoke.sh --uam ./bin/uam --evidence-dir <absolute-dir>`
+is the required documentation contract gate: it checks CLI help, isolated
+profile/doctor examples, schema migration, and links, but does not claim to
+test graphical terminal behavior.
+
+Schema v4 creates an adjacent backup before migrating an older configuration.
+If migration fails, the original stays in place. Stop UAM before restoring a
+chosen backup, then use a compatible binary. Unknown equal-schema fields round
+trip; a newer schema opens read-only to an older binary. Runtime client state is
+never persisted.
+
 ## Accessibility and no-color operation
 
 - `NO_COLOR` disables styling even when the terminal advertises color.
@@ -163,3 +253,8 @@ If resuming a stopped row reports ambiguity, read the provider and Workspace in
 the message. Confirm only when selecting the provider's latest conversation is
 acceptable. Otherwise start a new Managed Session or restore an exact provider
 identity.
+
+After a reboot, a retained record permits provider-aware relaunch/resume; the
+old PTY and terminal modes did not survive. Normal detach and handled signals
+restore the terminal contract. SIGKILL cannot do cleanup. If it leaves a local
+terminal unusable, use `reset` or start a fresh terminal before attaching again.

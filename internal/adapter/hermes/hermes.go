@@ -11,5 +11,7 @@ import (
 var yoloArgs []string
 
 func New(backend adapter.Backend) adapter.AgentAdapter {
-	return adapter.NewAgent("hermes", "Hermes Agent", []adapter.CommandCandidate{{Display: "hermes", Args: []string{"hermes"}}}, yoloArgs, backend)
+	agent := adapter.NewAgent("hermes", "Hermes Agent", []adapter.CommandCandidate{{Display: "hermes", Args: []string{"hermes"}}}, yoloArgs, backend)
+	agent.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderHermes, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative}
+	return agent
 }

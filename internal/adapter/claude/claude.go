@@ -67,6 +67,7 @@ func supportsSessionID() bool {
 
 func New(backend adapter.Backend) adapter.AgentAdapter {
 	a := adapter.NewAgent("claude", "Claude Code", []adapter.CommandCandidate{{Display: "claude", Args: []string{"claude"}}}, []string{"--dangerously-skip-permissions"}, backend)
+	a.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderClaude, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative}
 	a.SessionArgs = sessionArgs
 	a.ProviderSession = providerSession
 	a.SkipPromptOnResume = true

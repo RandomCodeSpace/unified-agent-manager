@@ -40,6 +40,15 @@ type Client struct {
 	Exe string
 }
 
+type CreateSpec struct {
+	Name             string
+	Cwd              string
+	ProviderIdentity string
+	ScrollbackLines  int
+	Env              map[string]string
+	Command          []string
+}
+
 func NewClient() *Client {
 	return &Client{Dir: DefaultDir()}
 }
@@ -64,11 +73,22 @@ func (c *Client) exePath() (string, error) {
 // once the host reports the agent started (or with the host's startup error),
 // mirroring the synchronous contract of `tmux new-session -d`.
 func (c *Client) CreateSession(ctx context.Context, name, cwd string, env map[string]string, command []string) error {
-	if err := ValidateName(name); err != nil {
+	return c.CreateProviderSession(ctx, CreateSpec{Name: name, Cwd: cwd, Env: env, Command: command})
+}
+
+func (c *Client) CreateProviderSession(ctx context.Context, spec CreateSpec) error {
+	if err := ValidateName(spec.Name); err != nil {
 		return fmt.Errorf("refusing to create session: %w", err)
 	}
-	if len(command) == 0 {
+	if err := validateProviderIdentity(spec.ProviderIdentity); err != nil {
+		return fmt.Errorf("refusing to create session: %w", err)
+	}
+	if len(spec.Command) == 0 {
 		return errors.New("create session: empty command")
+	}
+	scrollbackLines, err := validatedScrollbackLines(spec.ScrollbackLines)
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
 	}
 	exe, err := c.exePath()
 	if err != nil {
@@ -77,15 +97,19 @@ func (c *Client) CreateSession(ctx context.Context, name, cwd string, env map[st
 	if err := EnsureDir(c.Dir); err != nil {
 		return err
 	}
-	args := []string{"__host", "--dir", c.Dir, "--name", name}
-	if cwd != "" {
-		args = append(args, "--cwd", cwd)
+	args := []string{"__host", "--dir", c.Dir, "--name", spec.Name}
+	args = append(args, "--scrollback", fmt.Sprintf("%d", scrollbackLines))
+	if spec.Cwd != "" {
+		args = append(args, "--cwd", spec.Cwd)
 	}
-	for _, k := range sortedKeys(env) {
-		args = append(args, "--env", k+"="+env[k])
+	if spec.ProviderIdentity != "" {
+		args = append(args, "--provider", spec.ProviderIdentity)
+	}
+	for _, k := range sortedKeys(spec.Env) {
+		args = append(args, "--env", k+"="+spec.Env[k])
 	}
 	args = append(args, "--")
-	args = append(args, command...)
+	args = append(args, spec.Command...)
 
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -106,7 +130,7 @@ func (c *Client) CreateSession(ctx context.Context, name, cwd string, env map[st
 	// Reap the host whenever it eventually exits so it never lingers as a
 	// zombie under a long-lived TUI process.
 	go func() { _ = cmd.Wait() }()
-	return waitReady(ctx, r, name, cmd.Process.Pid)
+	return waitReady(ctx, r, spec.Name, cmd.Process.Pid)
 }
 
 func waitReady(ctx context.Context, r *os.File, name string, hostPID int) error {
@@ -367,6 +391,9 @@ func (c *Client) roundTrip(ctx context.Context, name string, req request) (respo
 		return response{}, fmt.Errorf("session %s: read %s response: %w", name, req.Op, err)
 	}
 	if !resp.OK {
+		if resp.ErrorCode == errorCodeBusy {
+			return resp, fmt.Errorf("session %s: %w", name, &SessionBusyError{Operation: req.Op})
+		}
 		return resp, fmt.Errorf("session %s: %s failed: %s", name, req.Op, resp.Err)
 	}
 	return resp, nil

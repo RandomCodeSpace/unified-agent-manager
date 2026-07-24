@@ -46,6 +46,9 @@ func TestYoloModeUsesYoloFlag(t *testing.T) {
 	if strings.Contains(argv, "--autopilot") {
 		t.Fatalf("copilot yolo mode should not use --autopilot: %s", argv)
 	}
+	if strings.Contains(argv, "--no-alt-screen") {
+		t.Fatalf("copilot dispatch must preserve provider-native terminal behavior: %s", argv)
+	}
 }
 
 func TestDispatchSeedsCopilotSessionIDForFutureResume(t *testing.T) {
@@ -80,6 +83,9 @@ func TestResumeUsesCopilotSessionIDAndDoesNotReplayPrompt(t *testing.T) {
 	argv := be.CommandLog()
 	if !strings.Contains(argv, "copilot --yolo --resume=abc12345-dead-beef-cafe-0123456789ab") {
 		t.Fatalf("copilot resume should pass the persisted provider session id: %s", argv)
+	}
+	if strings.Contains(argv, "--no-alt-screen") {
+		t.Fatalf("copilot resume must preserve provider-native terminal behavior: %s", argv)
 	}
 	if sends := be.CallsOf("send"); len(sends) != 0 {
 		t.Fatalf("resume should not replay the original prompt into the restored session: %+v", sends)

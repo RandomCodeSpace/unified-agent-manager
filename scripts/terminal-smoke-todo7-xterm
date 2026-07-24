@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+todo7_evidence="$repo_root/.omo/evidence/persistent-agent-multiplexer/task-7-profile-cli"
+todo11_evidence="$repo_root/.omo/evidence/persistent-agent-multiplexer/task-11-compat"
+isolation_root="$(mktemp -d)"
+config_dir="$isolation_root/uam-config"
+session_dir="$isolation_root/uam-session"
+cache_dir="$isolation_root/uam-cache"
+xdg_config_home="$isolation_root/xdg-config"
+
+cleanup() {
+  case "$isolation_root" in
+    /tmp/tmp.*) find "$isolation_root" -depth -delete ;;
+    *) exit 70 ;;
+  esac
+}
+trap cleanup EXIT
+
+for path in "$config_dir" "$session_dir" "$cache_dir" "$xdg_config_home"; do
+  [[ "$path" = /* && "$path" == "$isolation_root"/* ]] || exit 70
+done
+real_config="$(realpath -m "$HOME/.config/uam")"
+[[ "$(realpath -m "$config_dir")" != "$real_config" ]] || {
+  echo "refusing real UAM config path" >&2
+  exit 70
+}
+mkdir -p "$config_dir" "$session_dir" "$cache_dir" "$xdg_config_home" "$todo7_evidence" "$todo11_evidence"
+
+node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const [out, root, config, session, cache, xdg, home] = process.argv.slice(1);
+  fs.writeFileSync(out, JSON.stringify({
+    isolationRoot: root,
+    UAM_CONFIG_DIR: config,
+    UAM_SESSION_DIR: session,
+    UAM_CACHE_DIR: cache,
+    XDG_CONFIG_HOME: xdg,
+    absolute: [config, session, cache, xdg].every((value) => value.startsWith("/")),
+    configWithinIsolationRoot: path.resolve(config).startsWith(`${path.resolve(root)}${path.sep}`),
+    configDiffersFromHomeConfig: path.resolve(config) !== path.resolve(home, ".config", "uam")
+  }, null, 2) + "\n");
+' "$todo11_evidence/profile-isolation.json" "$isolation_root" "$config_dir" "$session_dir" "$cache_dir" "$xdg_config_home" "$HOME"
+
+(
+  cd "$repo_root"
+  timeout 120s env \
+    UAM_CONFIG_DIR="$config_dir" \
+    UAM_SESSION_DIR="$session_dir" \
+    UAM_CACHE_DIR="$cache_dir" \
+    XDG_CONFIG_HOME="$xdg_config_home" \
+    UAM_TASK7_EVIDENCE_DIR="$todo7_evidence" \
+    go test ./internal/cli -run '^TestTodo7ProfileCLIRealSurface$' -count=1 -v
+) | tee "$todo11_evidence/todo7-real-surface.txt"
+find "$todo7_evidence" -maxdepth 1 -type f -name 'uam-task7' -delete
+
+(
+  cd "$repo_root"
+  go test ./internal/app -run '^(TestTodo7CharacterizationDispatchKeepsExplicitLaunchInputs|TestTodo7CharacterizationFindExactRejectsIDPrefixes|TestWizardProfileSelection|TestSessionDetailsShowEffectiveProfile)$' -count=1 -v
+) | tee "$todo11_evidence/profile-regression.txt"
+
+"$repo_root/scripts/terminal-smoke-xterm" \
+  --non-interactive \
+  --ansi "$todo7_evidence/wizard-details-pty.ansi" \
+  --evidence-dir "$todo7_evidence" \
+  --title "UAM profile wizard and effective profile"
+"$repo_root/scripts/terminal-smoke-xterm" \
+  --non-interactive \
+  --ansi "$todo7_evidence/wizard-details-pty.ansi" \
+  --evidence-dir "$todo11_evidence" \
+  --title "UAM Todo 11 xterm compatibility"
+
+cleanup
+trap - EXIT
+node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const [todo7, todo11, isolation] = process.argv.slice(1);
+  const required = ["terminal.png", "terminal.txt", "metadata.json"];
+  const observed = Object.fromEntries(required.map((name) => [
+    name, fs.statSync(path.join(todo11, name)).size
+  ]));
+  const remaining = fs.readdirSync("/proc", { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\d+$/u.test(entry.name) && Number(entry.name) !== process.pid)
+    .map((entry) => {
+      try { return fs.readFileSync(`/proc/${entry.name}/cmdline`, "utf8"); }
+      catch { return ""; }
+    })
+    .filter((command) => command.includes(isolation));
+  const receipt = {
+    isolatedProcessesRemaining: remaining.length,
+    isolationRootRemoved: !fs.existsSync(isolation),
+    npmCacheRemoved: !fs.existsSync(isolation),
+    nodeModulesRemoved: !fs.existsSync(path.join(process.cwd(), "scripts", "xterm-harness", "node_modules")),
+    visualArtifactsNonEmpty: Object.values(observed).every((size) => size > 0),
+    artifactBytes: observed
+  };
+  const data = JSON.stringify(receipt, null, 2) + "\n";
+  fs.writeFileSync(path.join(todo11, "cleanup-receipt.json"), data);
+  fs.writeFileSync(path.join(todo7, "cleanup-receipt.json"), data);
+' "$todo7_evidence" "$todo11_evidence" "$isolation_root"

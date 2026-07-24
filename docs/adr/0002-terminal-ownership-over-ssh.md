@@ -19,22 +19,27 @@ selection and paste.
 
 ## Decision
 
-### Attach owns its terminal screen
+### Screen ownership follows provider policy
 
-When output is a terminal, the attach client enters an alternate screen that it
-owns. Input independently enters raw mode when it is a terminal. Provider output
-is rendered inside that boundary. Seven-bit DEC-private CSI sequences used by
-supported providers to enter or leave the alternate screen are contained so
-they cannot escape into the user's primary shell screen. The filter deliberately
-does not interpret a bare C1 byte as CSI because that byte value can occur inside
-UTF-8 input; supported provider output uses the seven-bit `ESC [` form.
+When output is a terminal, input independently enters raw mode. The provider's
+terminal policy decides the outer screen:
 
-On detach or return, UAM drains output within the owned screen and restores the
-terminal contract: reset attributes, disable mouse/focus tracking, disable
-bracketed paste, show the cursor, leave the owned alternate screen, and return
-to a clean line. The dashboard separately repaints after an attached process
-returns. Cleanup is intentionally targeted; UAM does not reset the entire
-terminal or erase scrollback.
+| Outer-screen policy | Current providers | Attach behavior |
+|---|---|---|
+| UAM | Claude Code, Copilot, Hermes, Oh My Pi, OpenCode | UAM enters and owns an alternate screen. Provider alternate-screen sequences are contained inside that boundary. |
+| Primary | OpenAI Codex | UAM attaches on the primary screen and does not create an outer alternate screen. |
+
+The Codex primary-screen exception is deliberate. It does not change the host's
+PTY ownership, the one-controller input/resize/reply rule, or native provider
+keys. Seven-bit DEC-private CSI handling remains bounded; UAM does not interpret
+a bare C1 byte as CSI because that byte can occur inside UTF-8 input.
+
+On detach or return, UAM drains output and restores the terminal contract it
+owns: reset attributes, disable mouse/focus tracking, disable bracketed paste,
+show the cursor, leave an outer alternate screen only when one was entered, and
+return to a clean line. The dashboard separately repaints after an attached
+process returns. Cleanup is targeted; it does not reset the entire terminal or
+erase scrollback.
 
 Non-terminal streams do not receive alternate-screen control sequences.
 
@@ -117,3 +122,11 @@ mouse policy.
   shortcuts.
 - Terminal-client configuration remains necessary when the client does not send
   a paste operation.
+- `TERM` and color hints received through SSH are diagnostic metadata only. They
+  are not capability proof and do not authorize a different terminal protocol.
+- Normal detach, interrupt, hangup, and termination paths restore the owned
+  terminal contract. SIGKILL cannot run cleanup, so it cannot promise restored
+  modes; use a fresh terminal or `reset` when the local terminal is unusable.
+
+The controller, standby, observer, and protocol-v2 ownership rules are defined
+by [ADR 0003](0003-terminal-client-session-ownership-and-protocol-v2.md).

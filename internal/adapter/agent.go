@@ -42,7 +42,7 @@ type CommandCandidate struct {
 // capture / reply / kill / attach against uam's native session hosts
 // (internal/session.Client in production, fakes in tests).
 type Backend interface {
-	CreateSession(ctx context.Context, name, cwd string, env map[string]string, command []string) error
+	CreateProviderSession(ctx context.Context, spec session.CreateSpec) error
 	SetSessionLabel(ctx context.Context, name, label string) error
 	List(ctx context.Context) ([]session.Info, error)
 	Capture(ctx context.Context, name string, lines int) (string, error)
@@ -61,6 +61,7 @@ type Agent struct {
 	Candidates       []CommandCandidate
 	YoloArgs         []string
 	Backend          Backend
+	Terminal         ProviderTerminalPolicy
 	SessionArgs      func(req ResumeRequest, activity string) []string
 	// PrepareLaunch runs after cwd and canonical session-name resolution.
 	// Preparation args run first; legacy SessionArgs are appended after them.
@@ -91,11 +92,14 @@ func NewAgent(name, display string, candidates []CommandCandidate, yoloArgs []st
 	if backend == nil {
 		backend = session.NewClient()
 	}
-	return &Agent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Backend: backend, randomReader: rand.Reader, now: time.Now, lastPRScan: map[string]time.Time{}}
+	return &Agent{NameValue: name, DisplayNameValue: display, Candidates: candidates, YoloArgs: yoloArgs, Backend: backend, Terminal: nativeTerminalPolicy(ProviderIdentity(name)), randomReader: rand.Reader, now: time.Now, lastPRScan: map[string]time.Time{}}
 }
 
 func (a *Agent) Name() string        { return a.NameValue }
 func (a *Agent) DisplayName() string { return a.DisplayNameValue }
+func (a *Agent) TerminalPolicy() ProviderTerminalPolicy {
+	return a.Terminal
+}
 
 func (a *Agent) Available() (bool, string) {
 	_, ok := a.resolveCommand()
@@ -191,7 +195,7 @@ func (a *Agent) Dispatch(ctx context.Context, req DispatchRequest) (Session, err
 	if err != nil {
 		return Session{}, fmt.Errorf("generate session id: %w", err)
 	}
-	return a.startSession(ctx, ResumeRequest{ID: id, Name: req.Name, CommandAlias: req.CommandAlias, Prompt: req.Prompt, Cwd: req.Cwd, Mode: req.Mode}, "dispatched")
+	return a.startSession(ctx, ResumeRequest{ID: id, Name: req.Name, CommandAlias: req.CommandAlias, ScrollbackLines: req.ScrollbackLines, Prompt: req.Prompt, Cwd: req.Cwd, Mode: req.Mode}, "dispatched")
 }
 
 func (a *Agent) Resume(ctx context.Context, req ResumeRequest) (Session, error) {
@@ -272,7 +276,9 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 	}
 	env["UAM_AGENT"] = a.Name()
 	env["UAM_ID"] = req.ID
-	if err := a.Backend.CreateSession(ctx, sessionName, cwd, env, cmd); err != nil {
+	if err := a.Backend.CreateProviderSession(ctx, session.CreateSpec{
+		Name: sessionName, Cwd: cwd, ProviderIdentity: string(a.Terminal.Identity), ScrollbackLines: req.ScrollbackLines, Env: env, Command: cmd,
+	}); err != nil {
 		return Session{}, fmt.Errorf("create session %s: %w", sessionName, err)
 	}
 	displayName := a.setSessionDisplayLabel(ctx, sessionName, req.Name, cwd)

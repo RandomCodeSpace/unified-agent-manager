@@ -64,6 +64,9 @@ func TestResumeAppendsContinueAndDoesNotReplayPrompt(t *testing.T) {
 	if !strings.Contains(argv, "claude --dangerously-skip-permissions --continue") {
 		t.Fatalf("claude resume should append --continue: %s", argv)
 	}
+	if strings.Contains(argv, "--no-alt-screen") {
+		t.Fatalf("claude resume must preserve provider-native terminal behavior: %s", argv)
+	}
 	// The uam UUID may appear in the UAM_ID env var, but must never be passed
 	// as a flag argument to claude (no --resume <uuid> / --continue <uuid>).
 	if strings.Contains(argv, "--continue abc12345-dead-beef-cafe-0123456789ab") ||
@@ -83,8 +86,8 @@ func TestDispatchUnchanged_sendsPromptNoContinue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	if argv := be.CommandLog(); strings.Contains(argv, "--continue") {
-		t.Fatalf("dispatch must not append --continue: %s", argv)
+	if argv := be.CommandLog(); strings.Contains(argv, "--continue") || strings.Contains(argv, "--no-alt-screen") {
+		t.Fatalf("dispatch must preserve provider-native terminal arguments: %s", argv)
 	}
 	sends := be.CallsOf("send")
 	if len(sends) != 1 || sends[0].Text != "fix parser" {

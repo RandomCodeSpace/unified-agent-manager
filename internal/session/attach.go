@@ -11,8 +11,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/x/term"
 )
@@ -26,6 +26,8 @@ const ctrlC = 0x03
 
 const AttachQuietEnv = "UAM_ATTACH_QUIET"
 const AttachMouseEnv = "UAM_ATTACH_MOUSE"
+const AttachSelectedProfileEnv = "UAM_ATTACH_SELECTED_PROFILE"
+const AttachEffectiveProfileEnv = "UAM_ATTACH_EFFECTIVE_PROFILE"
 
 // attachMouseEnabled resolves the per-viewer mouse policy. Providers keep mouse
 // support locally and over SSH by default so wheel and touch scrolling work.
@@ -34,8 +36,15 @@ func attachMouseEnabled(getenv func(string) string) bool {
 	return getenv(AttachMouseEnv) != "off"
 }
 
+func attachProfileFromEnv(getenv func(string) string) attachProfileSnapshot {
+	return attachProfileSnapshot{selected: getenv(AttachSelectedProfileEnv), effective: getenv(AttachEffectiveProfileEnv)}
+}
+
 type attachOptions struct {
-	quiet bool
+	quiet         bool
+	requestedRole clientRole
+	profile       attachProfileSnapshot
+	policy        attachPolicySnapshot
 }
 
 // ctrlZ is swallowed by the attach client: letting it through would SIGTSTP
@@ -59,6 +68,8 @@ const ctrlZ = 0x1a
 // The user's setting is saved first (XTSAVE) and restored by screenExit;
 // terminals without ?1007 ignore all three sequences.
 const screenEnter = "\x1b[?1049h" + "\x1b[?1007s" + "\x1b[?1007l"
+
+const mouseReset = "\x1b[?1000;1002;1003;1005;1006;1015l"
 
 // screenExit resets every mode the agent could have toggled mid-attach, then
 // leaves the alternate screen. Terminals ignore sequences they don't
@@ -84,13 +95,21 @@ const screenExit = screenReset +
 func RunAttach(args []string) error {
 	fs := flag.NewFlagSet("__attach", flag.ContinueOnError)
 	dir := fs.String("dir", DefaultDir(), "session runtime directory")
+	requestedRole := fs.String("role", string(roleController), "attach role: controller or observer")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 {
 		return errors.New("attach requires a session name")
 	}
-	return runAttachWithOptions(*dir, fs.Arg(0), os.Stdin, os.Stdout, attachOptions{quiet: os.Getenv(AttachQuietEnv) == "1"})
+	role := clientRole(*requestedRole)
+	if role != roleController && role != roleObserver {
+		return fmt.Errorf("attach role must be %q or %q", roleController, roleObserver)
+	}
+	return runAttachWithOptions(*dir, fs.Arg(0), os.Stdin, os.Stdout, attachOptions{
+		quiet: os.Getenv(AttachQuietEnv) == "1", requestedRole: role,
+		profile: attachProfileFromEnv(os.Getenv), policy: attachPolicyFromEnv(os.Getenv),
+	})
 }
 
 func runAttach(dir, name string, stdin *os.File, stdout *os.File) error {
@@ -104,62 +123,61 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	if err := VerifyDir(dir); err != nil {
 		return err
 	}
+	policy, err := resolveAttachPolicy(opts.policy, os.Getenv)
+	if err != nil {
+		return err
+	}
 	conn, err := net.Dial("unix", SocketPath(dir, name))
 	if err != nil {
 		return fmt.Errorf("session %s is not running: %w", name, err)
 	}
 	defer func() { _ = conn.Close() }()
 
+	requestedRole := opts.requestedRole
+	if requestedRole == "" {
+		requestedRole = roleController
+	}
+	if requestedRole != roleController && requestedRole != roleObserver {
+		return fmt.Errorf("unsupported attach role %q", requestedRole)
+	}
 	cols, rows := 0, 0
 	if w, h, err := term.GetSize(stdout.Fd()); err == nil {
 		cols, rows = w, h
 	}
-	if err := writeJSONLine(conn, request{Op: opAttach, Cols: cols, Rows: rows}); err != nil {
-		return fmt.Errorf("attach %s: %w", name, err)
+	hello := defaultClientHello(term.IsTerminal(stdin.Fd()) && term.IsTerminal(stdout.Fd()), os.Getenv("TERM"), os.Getenv("COLORTERM"))
+	handshake, err := performAttachHandshake(conn, name, request{
+		Op: opAttach, Cols: cols, Rows: rows, Version: protocolV2, RequestedRole: requestedRole, Hello: &hello,
+	})
+	if err != nil {
+		return err
 	}
-	br := bufio.NewReader(conn)
-	var resp response
-	if err := readJSONLine(br, &resp); err != nil {
-		return fmt.Errorf("attach %s: %w", name, err)
-	}
-	if !resp.OK {
-		return fmt.Errorf("attach %s: %s", name, resp.Err)
-	}
-	frames := newFrameWriter(conn)
-
-	var ttyState *term.State
-	if term.IsTerminal(stdin.Fd()) {
-		state, err := term.MakeRaw(stdin.Fd())
-		if err != nil {
-			return fmt.Errorf("set raw mode: %w", err)
-		}
-		ttyState = state
-	}
+	frames := newAttachFrameWriter(conn, handshake.version, handshake.clientID, handshake.generation)
+	frames.SetAssignedRole(handshake.assignedRole)
+	output := &synchronizedWriter{writer: stdout}
+	inputTerminal := term.IsTerminal(stdin.Fd())
 	terminalOutput := term.IsTerminal(stdout.Fd())
-	ownScreen := terminalOutput && !bytes.HasPrefix([]byte(name), []byte("uam-codex-"))
-	if ownScreen {
-		_, _ = stdout.WriteString(screenEnter)
+	ownScreen := terminalOutput && attachOwnsOuterScreen(dir, name)
+	cleanup, err := beginAttachTerminal(attachTerminalConfig{
+		input: stdin, output: output, inputTerminal: inputTerminal, outputTerminal: terminalOutput, ownScreen: ownScreen,
+	})
+	if err != nil {
+		return err
 	}
-	var once sync.Once
-	restore := func() {
-		once.Do(func() {
-			if terminalOutput {
-				reset := screenReset
-				if ownScreen {
-					reset = screenExit
-				}
-				_, _ = stdout.WriteString(reset)
-			}
-			if ttyState != nil {
-				_ = term.Restore(stdin.Fd(), ttyState)
-			}
-		})
+	defer func() { _ = cleanup.Restore() }()
+	runtime := newAttachRuntime(attachRuntimeConfig{
+		session: name, output: output, input: stdin, inputTerminal: inputTerminal, mouseEnabled: policy.mouseEnabled, prefix: policy.controlPrefix, profile: opts.profile,
+	})
+	if terminalOutput && handshake.version == protocolV2 {
+		if err := runtime.writeStatus(fmt.Sprintf("role %s; %s i for info", handshake.assignedRole, controlPrefixName(policy.controlPrefix))); err != nil {
+			return errors.Join(fmt.Errorf("show assigned attach role: %w", err), cleanup.Restore())
+		}
 	}
-	defer restore()
 
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
 	defer signal.Stop(winch)
+	stopWinch := make(chan struct{})
+	defer close(stopWinch)
 
 	// An external SIGINT/SIGTERM/SIGHUP must restore the screen and termios
 	// like a detach would, or the terminal is left raw on the agent's output.
@@ -169,57 +187,175 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(quit)
 	go func() {
-		for range winch {
-			if w, h, err := term.GetSize(stdout.Fd()); err == nil {
-				_ = frames.WriteFrame(frameResize, resizePayload(w, h))
+		for {
+			select {
+			case <-stopWinch:
+				return
+			case <-winch:
+				if frames.HasControl() {
+					if w, h, err := term.GetSize(stdout.Fd()); err == nil {
+						_ = frames.WriteFrame(frameResize, resizePayload(w, h))
+					}
+				}
 			}
 		}
 	}()
 
-	// stdin → host. Runs in a goroutine because a blocked terminal read
-	// cannot be interrupted; when the session ends the process exits anyway.
-	detached := make(chan struct{})
+	inputDone := make(chan error, 1)
+	stopInput := make(chan struct{})
+	inputFD, err := attachInputFD(stdin.Fd())
+	if err != nil {
+		return err
+	}
 	go func() {
-		pumpStdin(stdin, frames, backDetachEnabled())
-		close(detached)
+		inputDone <- pumpAttachInput(attachPumpConfig{
+			input: stdin, inputFD: inputFD, frames: frames, runtime: runtime, prefix: policy.controlPrefix, backDetach: policy.backDetach, stop: stopInput,
+		})
 	}()
 
 	// host → terminal (the main loop): ends when the host closes the
 	// connection (agent exited) or the user detached. done is closed once the
 	// pump has fully drained, so a second receive never blocks.
-	done := make(chan error, 1)
+	outputDone := make(chan error, 1)
 	go func() {
-		filter := newAttachOutputFilter(stdout, attachMouseEnabled(os.Getenv))
-		_, err := io.Copy(filter, br)
-		if flushErr := filter.Flush(); err == nil {
-			err = flushErr
-		}
-		done <- err
-		close(done)
+		outputDone <- copyAttachOutputConfigured(attachOutputConfig{
+			output: output, reader: handshake.reader, version: handshake.version, frames: frames, runtime: runtime,
+		})
 	}()
 	var note string
+	var inputErr error
+	var outputErr error
+	outputFinished := false
+	inputFinished := false
+	detached := false
 	select {
-	case <-detached:
+	case inputErr = <-inputDone:
+		inputFinished = true
 		_ = frames.WriteFrame(frameDetach, nil)
 		note = "detached"
-	case <-done:
+		detached = true
+	case outputErr = <-outputDone:
 		note = "session ended"
+		outputFinished = true
 	case <-quit:
 		_ = frames.WriteFrame(frameDetach, nil)
 		note = "detached"
+		detached = true
 	}
+	close(stopInput)
 	// Stop the host→terminal pump and drain it before restoring the screen:
 	// bytes still buffered from the socket must land inside the alternate
 	// screen, not on the primary screen revealed after screenExit. On the
 	// session-ended path the pump has already finished and done is closed, so
 	// this returns immediately.
 	_ = conn.Close()
-	<-done
-	restore()
+	if !outputFinished {
+		outputErr = <-outputDone
+	}
+	if !inputFinished {
+		inputErr = <-inputDone
+	}
+	restoreErr := cleanup.Restore()
+	if inputErr != nil {
+		return errors.Join(inputErr, restoreErr)
+	}
+	if outputErr != nil && !detached {
+		return errors.Join(fmt.Errorf("attach output: %w", outputErr), restoreErr)
+	}
+	if restoreErr != nil {
+		return restoreErr
+	}
 	if !opts.quiet {
-		_, _ = fmt.Fprintf(stdout, "\r\n[uam: %s]\r\n", note)
+		if _, err := fmt.Fprintf(output, "\r\n[uam: %s]\r\n", note); err != nil {
+			return fmt.Errorf("write attach completion: %w", err)
+		}
 	}
 	return nil
+}
+
+type attachHandshake struct {
+	reader       *bufio.Reader
+	version      protocolVersion
+	clientID     string
+	assignedRole clientRole
+	generation   uint64
+}
+
+func performAttachHandshake(conn net.Conn, name string, req request) (attachHandshake, error) {
+	if err := writeJSONLine(conn, req); err != nil {
+		return attachHandshake{}, fmt.Errorf("attach %s send handshake: %w", name, err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(attachHandshakeTimeout)); err != nil {
+		return attachHandshake{}, fmt.Errorf("attach %s set handshake deadline: %w", name, err)
+	}
+	br := bufio.NewReader(conn)
+	var resp response
+	if err := readBoundedJSONLine(br, &resp); err != nil {
+		return attachHandshake{}, fmt.Errorf("attach %s read handshake: %w", name, err)
+	}
+	if !resp.OK {
+		return attachHandshake{}, fmt.Errorf("attach %s rejected: %s", name, resp.Err)
+	}
+	version, err := negotiateAttachResponse(req.Version, resp)
+	if err != nil {
+		return attachHandshake{}, fmt.Errorf("attach %s negotiate: %w", name, err)
+	}
+	assignedRole := roleController
+	if version == protocolV2 {
+		if resp.ClientID == "" {
+			return attachHandshake{}, fmt.Errorf("attach %s negotiate: missing client ID", name)
+		}
+		if err := validateRequestedRole(resp.AssignedRole); err != nil {
+			return attachHandshake{}, fmt.Errorf("attach %s negotiate assigned role: %w", name, err)
+		}
+		assignedRole = resp.AssignedRole
+	}
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		return attachHandshake{}, fmt.Errorf("attach %s clear handshake deadline: %w", name, err)
+	}
+	return attachHandshake{reader: br, version: version, clientID: resp.ClientID, assignedRole: assignedRole, generation: resp.Generation}, nil
+}
+
+func copyAttachOutput(dst io.Writer, br *bufio.Reader, version protocolVersion, mouse bool) error {
+	return copyAttachOutputWithControls(dst, br, version, mouse, nil)
+}
+
+func copyAttachOutputWithControls(dst io.Writer, br *bufio.Reader, version protocolVersion, mouse bool, observeControl func([]byte)) error {
+	filter := newAttachOutputFilter(dst, mouse)
+	if version == protocolV1 {
+		_, err := io.Copy(filter, br)
+		if flushErr := filter.Flush(); err == nil {
+			err = flushErr
+		}
+		return err
+	}
+	for {
+		kind, payload, err := readFrame(br)
+		if errors.Is(err, io.EOF) {
+			return filter.Flush()
+		}
+		if err != nil {
+			return err
+		}
+		if err := consumeAttachServerFrame(filter, kind, payload, observeControl); err != nil {
+			return err
+		}
+	}
+}
+
+func consumeAttachServerFrame(filter *attachOutputFilter, kind byte, payload []byte, observeControl func([]byte)) error {
+	switch kind {
+	case serverFramePTY:
+		_, err := filter.Write(payload)
+		return err
+	case serverFrameControl:
+		if observeControl != nil {
+			observeControl(payload)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported server attach frame type %d", kind)
+	}
 }
 
 func resizePayload(cols, rows int) []byte {
@@ -228,13 +364,6 @@ func resizePayload(cols, rows int) []byte {
 	binary.BigEndian.PutUint16(out[0:2], uint16(max(0, min(cols, 0xffff)))) // #nosec G115 -- clamped
 	binary.BigEndian.PutUint16(out[2:4], uint16(max(0, min(rows, 0xffff)))) // #nosec G115 -- clamped
 	return out
-}
-
-// backDetachEnabled reports whether the left-arrow quick detach is on. It is
-// the default; UAM_ATTACH_BACK_DETACH=0 restores pure passthrough for agents
-// that bind a bare left arrow themselves.
-func backDetachEnabled() bool {
-	return os.Getenv("UAM_ATTACH_BACK_DETACH") != "0"
 }
 
 // stdinFilter is the attach client's input state machine. Besides the detach
@@ -260,7 +389,10 @@ func backDetachEnabled() bool {
 // box, so it is forwarded without touching the estimate (see seqPoisons);
 // counting it would wedge the quick detach until the next Enter.
 type stdinFilter struct {
+	prefix     byte
 	backDetach bool
+	role       clientRole
+	commands   []attachCommand
 	// pendingPrefix is set after Ctrl+B, waiting for the chord's second key.
 	pendingPrefix bool
 	// esc accumulates a partial escape sequence (possibly across reads).
@@ -300,36 +432,15 @@ const maxEscLen = 64
 // color-query and XTGETTCAP replies stay well under it.
 const maxStrLen = 4096
 
-// pumpStdin forwards terminal input to the host, filtering the detach chord,
-// Ctrl+Z, and (when enabled) the left-arrow quick detach. It returns when the
-// user detaches or stdin/conn fails.
-func pumpStdin(stdin io.Reader, frames *frameWriter, backDetach bool) {
-	f := &stdinFilter{backDetach: backDetach}
-	buf := make([]byte, 4096)
-	for {
-		n, err := stdin.Read(buf)
-		if n > 0 {
-			out, detach := f.filter(buf[:n])
-			if len(out) > 0 {
-				if werr := frames.WriteFrame(frameStdin, out); werr != nil {
-					return
-				}
-			}
-			if detach {
-				return
-			}
-		}
-		if err != nil {
-			return
-		}
-	}
-}
-
 // filter processes one stdin chunk, returning the bytes to forward and
 // whether the user detached. On detach the returned bytes (anything typed
 // before the detach key in the same chunk) must still be flushed first.
 func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 	out = make([]byte, 0, len(chunk)+1)
+	prefix := f.prefix
+	if prefix == 0 {
+		prefix = detachPrefix
+	}
 	for i, b := range chunk {
 		if f.inPaste {
 			out = append(out, b)
@@ -360,15 +471,23 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 			f.pendingPrefix = false
 			switch b {
 			case 'd':
-				return out, true
+				return f.result(out, true)
 			case 'c':
 				out = append(out, ctrlC)
 				f.clearBox()
-			case detachPrefix:
-				out = append(out, detachPrefix)
+			case 'r':
+				f.commands = append(f.commands, commandRequestControl)
+			case 'o':
+				f.commands = append(f.commands, commandTransferControl)
+			case 'i':
+				f.commands = append(f.commands, commandShowInfo)
+			case 'm':
+				f.commands = append(f.commands, commandToggleMouse)
+			case prefix:
+				out = append(out, prefix)
 				f.unknown = true
 			default:
-				out = append(out, detachPrefix, b)
+				out = append(out, prefix, b)
 				f.unknown = true
 			}
 			continue
@@ -377,12 +496,12 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 			var fired bool
 			out, fired = f.escByte(out, b)
 			if fired {
-				return out, true
+				return f.result(out, true)
 			}
 			continue
 		}
 		switch b {
-		case detachPrefix:
+		case prefix:
 			f.pendingPrefix = true
 		case ctrlZ:
 			// Swallowed; see ctrlZ doc.
@@ -425,7 +544,20 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 			}
 		}
 	}
-	return out, false
+	return f.result(out, false)
+}
+
+func (f *stdinFilter) result(out []byte, detach bool) ([]byte, bool) {
+	if f.role == roleObserver {
+		return nil, detach
+	}
+	return out, detach
+}
+
+func (f *stdinFilter) drainCommands() []attachCommand {
+	commands := f.commands
+	f.commands = nil
+	return commands
 }
 
 func advanceExactMatch(pattern []byte, matched int, b byte) int {
@@ -448,14 +580,18 @@ var attachMouseModes = map[string]bool{"1000": true, "1002": true, "1003": true,
 // Only seven-bit DEC private h/l sequences are rewritten.
 type attachOutputFilter struct {
 	dst          io.Writer
-	mouse        bool
+	mouseEnabled func() bool
 	pending      []byte
 	abortedCSI   bool
 	forwardedCSI bool
 }
 
 func newAttachOutputFilter(dst io.Writer, mouse bool) *attachOutputFilter {
-	return &attachOutputFilter{dst: dst, mouse: mouse}
+	return &attachOutputFilter{dst: dst, mouseEnabled: func() bool { return mouse }}
+}
+
+func newAttachOutputFilterWithMouse(dst io.Writer, mouseEnabled func() bool) *attachOutputFilter {
+	return &attachOutputFilter{dst: dst, mouseEnabled: mouseEnabled}
 }
 
 func (f *attachOutputFilter) Write(p []byte) (int, error) {
@@ -556,7 +692,7 @@ func (f *attachOutputFilter) rewriteCSI(seq []byte) []byte {
 			}
 		}
 		key := string(param)
-		if attachAltModes[key] || (!f.mouse && attachMouseModes[key]) {
+		if attachAltModes[key] || (!f.mouseEnabled() && attachMouseModes[key]) {
 			removed = true
 			continue
 		}
