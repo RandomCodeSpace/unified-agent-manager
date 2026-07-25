@@ -25,7 +25,7 @@ var diagnosticReasons = allowedDiagnostics(
 	"deadline_reset", "default_profile", "detached", "dropped", "fallback",
 	"handshake_write", "host_shutdown", "invalid_size", "legacy", "malformed_frame",
 	"no_controller", "not_controller", "observer", "output_backpressure",
-	"profile_fallback", "promoted", "provider_primary_screen", "rejected",
+	"profile_fallback", "promoted", "provider_primary_screen", "pty_write", "rejected",
 	"selected", "session_profile", "slow_client", "stale_generation", "timeout",
 	"transferred", "unknown_client",
 )

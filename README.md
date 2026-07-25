@@ -135,8 +135,9 @@ uam profile effective <session-id> [--json]
 | `Shift+↑/↓` | Reorder rows |
 | `/` with an empty command | Filter by name, provider, task, workspace, ID, or lifecycle |
 | `e` | Open the guided dispatch wizard |
-| `?` | Open help |
+| `?` with an empty command | Open help; with text typed it is ordinary input |
 | `Esc` | Close overlays, clear input, or quit |
+| `Ctrl+C` | Quit from anywhere, including modals |
 
 The dashboard responds to every terminal resize. Operations always use a
 full-width, bordered session list; the selected row expands in place with its
@@ -162,8 +163,12 @@ for the normative ownership and protocol rules.
   use the profile's `C-x` spelling, such as `C-a`, when configuring it.
 - `prefix r` requests control, `prefix o` transfers control when used by the
   current controller, `prefix i` reports the current role, and `prefix m`
-  toggles mouse passthrough for this attachment only. A prefix command never
-  enters provider input.
+  toggles mouse passthrough for this attachment only — turning it back on
+  restores the mouse modes the provider currently has set. A prefix command
+  never enters provider input.
+- The prefix, `Ctrl+C` and `Ctrl+Z` are recognised whether the terminal sends
+  them as plain control bytes or in the kitty keyboard / `modifyOtherKeys`
+  encodings that providers switch on.
 - Plain `Ctrl+C` is swallowed while attached so terminal copy shortcuts do not
   cancel the agent
 - `←` (left arrow) also detaches when you haven't typed anything since the

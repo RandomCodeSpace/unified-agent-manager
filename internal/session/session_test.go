@@ -758,7 +758,8 @@ func TestAttachOwnsTerminalStateOnTTY(t *testing.T) {
 		t.Fatalf("detach must leave the alternate screen: %q", full)
 	}
 	for _, reset := range []string{
-		"\x1b[?1000;1002;1003;1004;1005;1006;1015l", // mouse tracking + focus reporting off
+		mouseReset,    // every tracked mouse mode off
+		"\x1b[?1004l", // focus reporting off
 		"\x1b[?2004l", // bracketed paste off
 		"\x1b[?25h",   // cursor visible
 		"\x1b[?1007r", // alternate scroll restored to the user's saved setting

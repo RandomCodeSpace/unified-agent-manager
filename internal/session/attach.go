@@ -11,6 +11,9 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -69,14 +72,33 @@ const ctrlZ = 0x1a
 // terminals without ?1007 ignore all three sequences.
 const screenEnter = "\x1b[?1049h" + "\x1b[?1007s" + "\x1b[?1007l"
 
-const mouseReset = "\x1b[?1000;1002;1003;1005;1006;1015l"
+// mouseTrackingModes are the mutually exclusive tracking levels: a terminal
+// keeps one, so setting 1003 replaces 1002 rather than adding to it.
+var mouseTrackingModes = []string{"9", "1000", "1001", "1002", "1003"}
+
+// mouseEncodingModes select how a tracked event is encoded. Unlike the tracking
+// level these are independent flags.
+var mouseEncodingModes = []string{"1005", "1006", "1015", "1016"}
+
+// mouseModes are the DEC private modes that make up provider mouse reporting.
+// One list drives every use of the set — the output filter's suppression set,
+// the reset a viewer sends when it turns passthrough off, and the teardown in
+// screenReset — so no mode can be suppressed on the way in without also being
+// reset on the way out. 9 (X10), 1001 (highlight tracking) and 1016 (SGR-pixel)
+// are included: the previous per-site literals disagreed about all three, which
+// left them alive in the user's terminal after detach.
+var mouseModes = append(append([]string{}, mouseTrackingModes...), mouseEncodingModes...)
+
+// mouseReset turns every mode in mouseModes off.
+var mouseReset = privateModeSequence(mouseModes, 'l')
 
 // screenExit resets every mode the agent could have toggled mid-attach, then
 // leaves the alternate screen. Terminals ignore sequences they don't
 // implement, so the suffix is safe to emit unconditionally.
-const screenReset = "\x1b[<u" + // pop the kitty keyboard flags agents push
+var screenReset = "\x1b[<u" + // pop the kitty keyboard flags agents push
 	"\x1b[=0;1u" + // and zero them in case the agent pushed more than once
-	"\x1b[?1000;1002;1003;1004;1005;1006;1015l" + // mouse tracking + focus reporting off
+	mouseReset + // mouse tracking off
+	"\x1b[?1004l" + // focus reporting off
 	"\x1b[?2004l" + // bracketed paste off
 	"\x1b[?2026l" + // synchronized output off
 	"\x1b[!p" + // DECSTR: cursor keys, origin, margins, SGR, insert mode
@@ -84,9 +106,19 @@ const screenReset = "\x1b[<u" + // pop the kitty keyboard flags agents push
 	"\x1b(B" + // G0 charset back to ASCII
 	"\x1b[?25h" // cursor visible
 
-const screenExit = screenReset +
+var screenExit = screenReset +
 	"\x1b[?1007r" + // alternate scroll back to the user's saved setting (XTRESTORE)
 	"\x1b[?1049l" // leave the alt screen: primary buffer and cursor restored
+
+// privateModeSequence builds a single DEC private set ('h') or reset ('l')
+// sequence for modes. It returns "" for an empty set so callers never emit the
+// parameterless `CSI ? h`, which means mode 0 to a real terminal.
+func privateModeSequence(modes []string, final byte) string {
+	if len(modes) == 0 {
+		return ""
+	}
+	return "\x1b[?" + strings.Join(modes, ";") + string(final)
+}
 
 // RunAttach is the entry point of `uam __attach`: it puts the terminal in raw
 // mode and bridges it to a session host — the native replacement for
@@ -166,11 +198,19 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	defer func() { _ = cleanup.Restore() }()
 	runtime := newAttachRuntime(attachRuntimeConfig{
 		session: name, output: output, input: stdin, inputTerminal: inputTerminal, mouseEnabled: policy.mouseEnabled, prefix: policy.controlPrefix, profile: opts.profile,
+		terminalSize: func() (int, int, bool) {
+			if !terminalOutput {
+				return 0, 0, false
+			}
+			w, h, err := term.GetSize(stdout.Fd())
+			return w, h, err == nil
+		},
 	})
 	if terminalOutput && handshake.version == protocolV2 {
-		if err := runtime.writeStatus(fmt.Sprintf("role %s; %s i for info", handshake.assignedRole, controlPrefixName(policy.controlPrefix))); err != nil {
-			return errors.Join(fmt.Errorf("show assigned attach role: %w", err), cleanup.Restore())
-		}
+		// Queued, not written: the host's first frame is a full repaint that
+		// opens with a clear-screen, so a banner written here is erased before
+		// the user can read it.
+		runtime.queueStatus(fmt.Sprintf("role %s; %s i for info", handshake.assignedRole, controlPrefixName(policy.controlPrefix)))
 	}
 
 	winch := make(chan os.Signal, 1)
@@ -192,10 +232,12 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 			case <-stopWinch:
 				return
 			case <-winch:
-				if frames.HasControl() {
-					if w, h, err := term.GetSize(stdout.Fd()); err == nil {
-						_ = frames.WriteFrame(frameResize, resizePayload(w, h))
-					}
+				// Standbys report their size too. The host only applies the
+				// controller's, but it records everyone's and uses the stored
+				// size when it promotes — so a standby that stayed silent since
+				// attaching was promoted into a stale geometry.
+				if w, h, err := term.GetSize(stdout.Fd()); err == nil {
+					_ = frames.WriteFrame(frameResize, resizePayload(w, h))
 				}
 			}
 		}
@@ -412,10 +454,26 @@ type stdinFilter struct {
 	inPaste    bool
 	pasteStart int
 	pasteEnd   int
+	pasteLen   int
+	// mouseBody counts the raw bytes still to come in a legacy X10/normal
+	// mouse report (CSI M Cb Cx Cy). They are binary, not keystrokes.
+	mouseBody int
 }
+
+// x10MouseBodyLen is the button-and-coordinate payload that follows CSI M when
+// the terminal reports mouse events in the legacy encoding (no ?1006).
+const x10MouseBodyLen = 3
 
 var pasteBegin = []byte("\x1b[200~")
 var pasteEnd = []byte("\x1b[201~")
+
+// prefixByte is the configured control prefix, defaulting to Ctrl+B.
+func (f *stdinFilter) prefixByte() byte {
+	if f.prefix == 0 {
+		return detachPrefix
+	}
+	return f.prefix
+}
 
 // boxEmpty reports whether the agent's input box is believed empty.
 func (f *stdinFilter) boxEmpty() bool { return !f.unknown && f.typed == 0 }
@@ -432,27 +490,47 @@ const maxEscLen = 64
 // color-query and XTGETTCAP replies stay well under it.
 const maxStrLen = 4096
 
+// maxPasteLen bounds bracketed-paste passthrough. Sized far above any
+// interactive paste: past the cap the tail is parsed as keystrokes again, which
+// is the right trade only once a missing end marker is the likelier
+// explanation.
+const maxPasteLen = 8 << 20
+
 // filter processes one stdin chunk, returning the bytes to forward and
 // whether the user detached. On detach the returned bytes (anything typed
 // before the detach key in the same chunk) must still be flushed first.
 func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 	out = make([]byte, 0, len(chunk)+1)
-	prefix := f.prefix
-	if prefix == 0 {
-		prefix = detachPrefix
-	}
+	prefix := f.prefixByte()
 	for i, b := range chunk {
 		if f.inPaste {
 			out = append(out, b)
+			f.pasteLen++
 			f.pasteEnd = advanceExactMatch(pasteEnd, f.pasteEnd, b)
-			if f.pasteEnd == len(pasteEnd) {
-				f.inPaste, f.pasteEnd = false, 0
+			if f.pasteEnd == len(pasteEnd) || f.pasteLen > maxPasteLen {
+				// A terminal that never sends the end marker (or a stream that
+				// is not really a paste) would otherwise leave the filter
+				// forwarding everything forever — detach chord included.
+				f.inPaste, f.pasteEnd, f.pasteLen = false, 0, 0
 				f.unknown = true
 			}
 			continue
 		}
 		if f.strActive {
-			out = f.strByte(out, b)
+			var consumed bool
+			if out, consumed = f.strByte(out, b); consumed {
+				continue
+			}
+		}
+		if f.mouseBody > 0 {
+			// Legacy mouse report payload: forward verbatim. Counting these
+			// bytes as typed runes disarmed the quick detach on every click and
+			// wheel tick until the next Enter. Coordinates are counted in runes,
+			// not bytes, because ?1005 encodes them as UTF-8.
+			out = append(out, b)
+			if b&0xc0 != 0x80 {
+				f.mouseBody--
+			}
 			continue
 		}
 		f.pasteStart = advanceExactMatch(pasteBegin, f.pasteStart, b)
@@ -573,7 +651,15 @@ func advanceExactMatch(pattern []byte, matched int, b byte) int {
 const maxAttachCSI = 4096
 
 var attachAltModes = map[string]bool{"47": true, "1047": true, "1049": true}
-var attachMouseModes = map[string]bool{"1000": true, "1002": true, "1003": true, "1005": true, "1006": true, "1015": true}
+var attachMouseModes = newModeSet(mouseModes)
+
+func newModeSet(modes []string) map[string]bool {
+	set := make(map[string]bool, len(modes))
+	for _, mode := range modes {
+		set[mode] = true
+	}
+	return set
+}
 
 // attachOutputFilter contains provider-owned alternate-screen toggles inside
 // the attach screen and optionally leaves mouse modes under terminal control.
@@ -584,7 +670,17 @@ type attachOutputFilter struct {
 	pending      []byte
 	abortedCSI   bool
 	forwardedCSI bool
+	// mouseMu guards mouseState: the filter writes it from the host→terminal
+	// pump while `prefix m` reads it from the input pump.
+	mouseMu sync.Mutex
+	// mouseState records which encoding modes the provider currently has on,
+	// and mouseTracking its current tracking level (empty when off), both
+	// tracked whether or not passthrough is suppressing them.
+	mouseState    map[string]bool
+	mouseTracking string
 }
+
+var attachMouseTrackingModes = newModeSet(mouseTrackingModes)
 
 func newAttachOutputFilter(dst io.Writer, mouse bool) *attachOutputFilter {
 	return &attachOutputFilter{dst: dst, mouseEnabled: func() bool { return mouse }}
@@ -692,6 +788,9 @@ func (f *attachOutputFilter) rewriteCSI(seq []byte) []byte {
 			}
 		}
 		key := string(param)
+		if attachMouseModes[key] {
+			f.recordMouseMode(key, seq[len(seq)-1] == 'h')
+		}
 		if attachAltModes[key] || (!f.mouseEnabled() && attachMouseModes[key]) {
 			removed = true
 			continue
@@ -708,6 +807,48 @@ func (f *attachOutputFilter) rewriteCSI(seq []byte) []byte {
 	out = append(out, bytes.Join(kept, []byte{';'})...)
 	out = append(out, seq[len(seq)-1])
 	return out
+}
+
+func (f *attachOutputFilter) recordMouseMode(mode string, on bool) {
+	f.mouseMu.Lock()
+	defer f.mouseMu.Unlock()
+	if attachMouseTrackingModes[mode] {
+		switch {
+		case on:
+			f.mouseTracking = mode
+		case f.mouseTracking == mode:
+			f.mouseTracking = ""
+		}
+		return
+	}
+	if f.mouseState == nil {
+		f.mouseState = make(map[string]bool, len(mouseEncodingModes))
+	}
+	f.mouseState[mode] = on
+}
+
+// activeMouseSequence returns the sequence that re-enables every mouse mode the
+// provider currently has on, or "" when none are. Turning passthrough back on
+// mid-attach has to replay them: the provider set those modes once, the filter
+// swallowed them while passthrough was off, and nothing makes it send them
+// again — so without the replay `prefix m` only ever worked in one direction.
+func (f *attachOutputFilter) activeMouseSequence() string {
+	f.mouseMu.Lock()
+	defer f.mouseMu.Unlock()
+	active := make([]string, 0, len(mouseModes))
+	// Only the live tracking level, never the whole history of levels: the
+	// modes are mutually exclusive, so replaying them all would leave the
+	// terminal on whichever happens to sort last.
+	if f.mouseTracking != "" {
+		active = append(active, f.mouseTracking)
+	}
+	// Iterate the list, not the map, so the emitted order is deterministic.
+	for _, mode := range mouseEncodingModes {
+		if f.mouseState[mode] {
+			active = append(active, mode)
+		}
+	}
+	return privateModeSequence(active, 'h')
 }
 
 func writeAttachBytes(dst io.Writer, p []byte) error {
@@ -756,7 +897,16 @@ func (f *stdinFilter) escByte(out []byte, b byte) ([]byte, bool) {
 	if f.backDetach && f.boxEmpty() && isLeftArrow(seq) {
 		return out, true
 	}
+	if ctrl := decodeEnhancedCtrlKey(seq); ctrl != 0 && f.handleEnhancedCtrlKey(ctrl) {
+		// Swallowed exactly like the legacy control byte: the sequence never
+		// reaches the agent.
+		return out, false
+	}
 	out = append(out, seq...)
+	if len(seq) == 3 && seq[2] == 'M' {
+		f.mouseBody = x10MouseBodyLen
+		return out, false
+	}
 	if seqPoisons(seq) {
 		// Navigation may recall history or move through a menu, either of
 		// which can leave text in the input box — be conservative and require
@@ -770,27 +920,103 @@ func (f *stdinFilter) escByte(out []byte, b byte) ([]byte, bool) {
 // verbatim. The sequence ends at ST (ESC \) or, for OSC only, BEL. Reply
 // payloads are not keystrokes, so the input-box estimate stays untouched; a
 // sequence exceeding maxStrLen is assumed malformed and poisons it instead.
-func (f *stdinFilter) strByte(out []byte, b byte) []byte {
+// It reports whether the byte belonged to the sequence; a byte that cannot
+// appear in one ends it and is handed back for normal input handling.
+func (f *stdinFilter) strByte(out []byte, b byte) ([]byte, bool) {
+	if b < 0x20 && b != 0x1b && b != 0x07 {
+		// Not a terminal reply after all: Alt+], Alt+Shift+P and Alt+Shift+X
+		// are two-byte meta chords that open the same states, and waiting for a
+		// terminator that never comes latched the filter — Ctrl+B d included —
+		// for the rest of the attachment. A control byte cannot appear inside a
+		// real OSC/DCS payload, so it ends the sequence here.
+		f.strActive, f.strEsc = false, false
+		f.unknown = true
+		return out, false
+	}
 	out = append(out, b)
 	f.strLen++
 	switch {
 	case f.strEsc:
 		if b == '\\' { // ST: sequence complete
 			f.strActive, f.strEsc = false, false
-			return out
+			return out, true
 		}
 		f.strEsc = b == 0x1b
 	case b == 0x1b:
 		f.strEsc = true
 	case b == 0x07 && f.strBel: // BEL terminates OSC
 		f.strActive = false
-		return out
+		return out, true
 	}
 	if f.strLen > maxStrLen {
 		f.strActive, f.strEsc = false, false
 		f.unknown = true
 	}
-	return out
+	return out, true
+}
+
+// handleEnhancedCtrlKey applies the guards that the legacy control byte would
+// have triggered. It reports whether the sequence was consumed.
+func (f *stdinFilter) handleEnhancedCtrlKey(ctrl byte) bool {
+	switch ctrl {
+	case f.prefixByte():
+		f.pendingPrefix = true
+		return true
+	case ctrlZ:
+		return true // swallowed; see ctrlZ doc
+	case ctrlC:
+		f.clearBox()
+		return true
+	}
+	return false
+}
+
+// decodeEnhancedCtrlKey maps a Ctrl chord encoded by the kitty keyboard
+// protocol (CSI unicode ; modifiers u) or by xterm's modifyOtherKeys
+// (CSI 27 ; modifiers ; unicode ~) back to the C0 byte the same chord produces
+// in the legacy encoding, or 0 when the sequence is not one.
+//
+// Agents push these protocols on their own output so they can tell Shift+Enter
+// from Enter. The terminal then stops sending 0x02 for Ctrl+B, which used to
+// make the whole prefix chord — and the Ctrl+Z and Ctrl+C guards with it —
+// silently stop working for the rest of the attachment.
+func decodeEnhancedCtrlKey(seq []byte) byte {
+	if len(seq) < 4 || seq[0] != 0x1b || seq[1] != '[' {
+		return 0
+	}
+	params := strings.Split(string(seq[2:len(seq)-1]), ";")
+	var code, modifiers string
+	switch seq[len(seq)-1] {
+	case 'u':
+		if len(params) < 2 {
+			return 0
+		}
+		code, modifiers = params[0], params[1]
+	case '~':
+		if len(params) != 3 || params[0] != "27" {
+			return 0
+		}
+		modifiers, code = params[1], params[2]
+	default:
+		return 0
+	}
+	// Kitty and modifyOtherKeys both report a sub-parameter after the
+	// modifiers (event type / alternate key); only the leading number counts.
+	modifiers, _, _ = strings.Cut(modifiers, ":")
+	code, _, _ = strings.Cut(code, ":")
+	mask, err := strconv.Atoi(modifiers)
+	if err != nil || mask < 1 {
+		return 0
+	}
+	const ctrlModifier = 4 // the modifier mask is 1-based: 1 + shift|alt|ctrl…
+	if (mask-1)&ctrlModifier == 0 {
+		return 0
+	}
+	key, err := strconv.Atoi(code)
+	if err != nil || key < 'a' || key > 'z' {
+		return 0
+	}
+	return byte(key-'a') + 1
 }
 
 // seqPoisons reports whether a completed escape sequence may change the

@@ -22,12 +22,18 @@ func (h *host) parseResizeFrame(client *attachClient, payload []byte) (uint64, t
 	}, true
 }
 
-func (h *host) handleStdinFrame(client *attachClient, payload []byte) bool {
+// handleStdinFrame returns whether the reader loop may continue, and the
+// diagnostic reason when it may not. A PTY write failure is not the client's
+// fault, so it must not be reported as a wire-framing error.
+func (h *host) handleStdinFrame(client *attachClient, payload []byte) (bool, string) {
 	generation, input, valid := h.parseControlFrame(client, payload)
 	if !valid {
-		return false
+		return false, "malformed_frame"
 	}
-	return h.writeControllerInput(client, generation, input) == nil
+	if err := h.writeControllerInput(client, generation, input); err != nil {
+		return false, "pty_write"
+	}
+	return true, ""
 }
 
 func (h *host) handleResizeFrame(client *attachClient, payload []byte) bool {

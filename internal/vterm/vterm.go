@@ -53,6 +53,31 @@ type Terminal struct {
 	// appKeypad is DECKPAM (ESC =); the numeric default (ESC >) needs no
 	// replay. Tracked alongside privModes because screenExit resets it too.
 	appKeypad bool
+	// autoWrap is DECAWM (?7), on at power-up. Providers turn it off while
+	// painting the last column of a full-width row; without honouring it the
+	// emulator wraps and scrolls a row into history the real terminal keeps.
+	autoWrap bool
+	// g0Graphics reports whether G0 is the DEC special graphics set (ESC ( 0),
+	// which providers select to draw box borders on non-UTF-8 terminals.
+	g0Graphics bool
+	// charsetG0 records that the designator byte being parsed belongs to G0.
+	charsetG0 bool
+	// mouseTracking is the active tracking level from mouseTrackingModes, 0
+	// when mouse reporting is off.
+	mouseTracking int
+}
+
+// decSpecialGraphics maps the DEC special graphics set (ESC ( 0) onto the
+// Unicode runes it draws. The grid stores the translated rune, so Capture reads
+// as line art and Redraw repaints it without re-designating the charset — which
+// it could not do anyway, since the replayed sequence would also translate the
+// ordinary text painted alongside it.
+var decSpecialGraphics = map[rune]rune{
+	'`': '◆', 'a': '▒', 'b': '␉', 'c': '␌', 'd': '␍', 'e': '␊', 'f': '°', 'g': '±',
+	'h': '␤', 'i': '␋', 'j': '┘', 'k': '┐', 'l': '┌', 'm': '└', 'n': '┼', 'o': '⎺',
+	'p': '⎻', 'q': '─', 'r': '⎼', 's': '⎽', 't': '├', 'u': '┤', 'v': '┴', 'w': '┬',
+	'x': '│', 'y': '≤', 'z': '≥', '{': 'π', '|': '≠', '}': '£', '~': '·',
+	'_': ' ', '0': '█',
 }
 
 // bufLine is one captured line: its text and whether it is the soft-wrap
@@ -91,6 +116,7 @@ func New(cols, rows, maxHistory int) *Terminal {
 		alt:        newScreen(cols, rows),
 		maxHistory: maxHistory,
 		privModes:  map[int]bool{},
+		autoWrap:   true,
 	}
 }
 
@@ -142,7 +168,12 @@ func (t *Terminal) step(r rune) {
 	case stDCS:
 		t.stepDCS(r)
 	case stCharset:
-		t.state = stGround // discard the designator byte
+		t.state = stGround
+		// Only the G0 designation matters: G1–G3 need SO/LS1 to become
+		// active, which no supported provider emits.
+		if t.charsetG0 {
+			t.g0Graphics = r == '0'
+		}
 	}
 }
 
@@ -187,6 +218,7 @@ func (t *Terminal) stepEsc(r rune) {
 		t.state = stDCS
 	case '(', ')', '*', '+':
 		t.state = stCharset
+		t.charsetG0 = r == '('
 	case '7':
 		s.savedX, s.savedY = s.x, s.y
 	case '8':
@@ -250,7 +282,17 @@ func (t *Terminal) stepDCS(r rune) {
 
 func (t *Terminal) dispatchCSI(params string, final byte) {
 	private := strings.HasPrefix(params, "?")
-	params = strings.TrimLeft(params, "?<=>")
+	if strings.HasPrefix(params, "<") || strings.HasPrefix(params, "=") || strings.HasPrefix(params, ">") {
+		// Protocol negotiation, not drawing: kitty keyboard push/pop/set
+		// (CSI > flags u, CSI < u, CSI = flags ; mode u), xterm
+		// modifyOtherKeys (CSI > 4 ; Pm m) and secondary/tertiary device
+		// attributes. The prefix used to be trimmed away with the '?', so
+		// these fell through to SCORC and SGR: an agent pushing kitty flags
+		// teleported the cursor to the saved position and corrupted every
+		// following row of the capture and of Redraw.
+		return
+	}
+	params = strings.TrimLeft(params, "?")
 	// Strip intermediate bytes (e.g. the space in "CSI Ps SP q").
 	if i := strings.IndexFunc(params, func(r rune) bool { return r < '0' || r > ';' }); i >= 0 {
 		params = params[:i]
@@ -328,10 +370,18 @@ func (t *Terminal) dispatchCSI(params string, final byte) {
 			t.setPrivateMode(n, false)
 		}
 	case 's':
-		s.savedX, s.savedY = s.x, s.y
+		// SCOSC. With a '?' prefix this is XTSAVE (save DEC private modes),
+		// which must not clobber the saved cursor.
+		if !private {
+			s.savedX, s.savedY = s.x, s.y
+		}
 	case 'u':
-		s.x, s.y = min(s.savedX, t.cols-1), min(s.savedY, t.rows-1)
-		s.pendingWrap = false
+		// SCORC. `CSI ? u` is the kitty keyboard flags query, not a cursor
+		// restore.
+		if !private {
+			s.x, s.y = min(s.savedX, t.cols-1), min(s.savedY, t.rows-1)
+			s.pendingWrap = false
+		}
 	case 'm':
 		if !private {
 			t.applySGR(params)
@@ -389,7 +439,7 @@ const maxCSIParam = int(^uint(0)>>1) / 2
 // these down on detach (mouse + bracketed paste explicitly, DECCKM via
 // DECSTR, cursor visibility via ?25h), so without replay a re-attaching
 // client is left in default mode while the still-running agent expects them.
-var replayModes = []int{1, 25, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004}
+var replayModes = []int{1, 25, 1004, 1005, 1006, 1015, 1016, 2004}
 
 // modeDefaultOn reports a private mode's power-on default: only cursor
 // visibility (?25) is on by default, so it is the only mode Redraw replays in
@@ -401,12 +451,27 @@ func (t *Terminal) setPrivateMode(params []int, on bool) {
 		switch p {
 		case 47, 1047, 1049:
 			t.switchAlt(on)
-		case 1, 25, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004:
+		case 9, 1000, 1001, 1002, 1003:
+			// The mutually exclusive mouse tracking levels: a terminal holds
+			// one, so they are tracked as a single value and replayed as the
+			// last one set. Replaying them as independent flags in numeric
+			// order would hand a provider that asked for button tracking
+			// (1002) the any-motion reporting of 1003.
+			switch {
+			case on:
+				t.mouseTracking = p
+			case t.mouseTracking == p:
+				t.mouseTracking = 0
+			}
+		case 1, 25, 1004, 1005, 1006, 1015, 1016, 2004:
 			// Input/cursor modes: tracked so Redraw can restore them on
 			// re-attach (they don't affect captured text). See replayModes.
 			t.privModes[p] = on
 		case 7:
-			// Autowrap: no effect on captured text and not replayed.
+			// DECAWM. Not replayed — Redraw repaints the grid it produced, and
+			// the provider re-asserts the mode around its own last-column
+			// writes — but honoured while parsing so those writes do not scroll.
+			t.autoWrap = on
 		}
 	}
 }
@@ -430,6 +495,11 @@ func (t *Terminal) switchAlt(on bool) {
 }
 
 func (t *Terminal) print(r rune) {
+	if t.g0Graphics {
+		if mapped, ok := decSpecialGraphics[r]; ok {
+			r = mapped
+		}
+	}
 	w := runewidth.RuneWidth(r)
 	if w <= 0 {
 		return // combining marks / zero-width: skip, capture is best-effort
@@ -441,9 +511,18 @@ func (t *Terminal) print(r rune) {
 		s.pendingWrap = false
 	}
 	if s.x+w > t.cols {
-		// A wide rune that does not fit hard-wraps early.
+		if !t.autoWrap {
+			// DECAWM off: the rune overwrites the last cell instead of moving
+			// to the next row.
+			s.x = t.cols - w
+		} else {
+			// A wide rune that does not fit hard-wraps early.
+			s.x = 0
+			t.lineFeed(true)
+		}
+	}
+	if s.x < 0 {
 		s.x = 0
-		t.lineFeed(true)
 	}
 	s.cells[s.y][s.x] = cell{r: r, a: t.cur}
 	if w == 2 && s.x+1 < t.cols {
@@ -452,7 +531,10 @@ func (t *Terminal) print(r rune) {
 	s.x += w
 	if s.x >= t.cols {
 		s.x = t.cols - 1
-		s.pendingWrap = true
+		// With autowrap off the cursor pins to the last column and the next
+		// rune overwrites it; arming pendingWrap would scroll a row into
+		// history that a real terminal never scrolls.
+		s.pendingWrap = t.autoWrap
 	}
 }
 
@@ -590,6 +672,9 @@ func (t *Terminal) reset() {
 	t.cur = attr{}
 	t.privModes = map[int]bool{}
 	t.appKeypad = false
+	t.autoWrap = true
+	t.g0Graphics = false
+	t.mouseTracking = 0
 }
 
 // Resize changes the grid size, preserving as much content as fits. Scroll
@@ -698,7 +783,24 @@ func (t *Terminal) Redraw() []byte {
 	if cur != (attr{}) {
 		b.WriteString("\x1b[0m")
 	}
+	// Everything below has to follow the paint: DECSTBM would make the paint
+	// loop's line feeds scroll inside the region, and both DECSTBM and DECSC
+	// need the pen already reset so the client's saved slot does not capture a
+	// half-painted attribute set.
+	if s.top != 0 || s.bottom != t.rows-1 {
+		b.WriteString("\x1b[" + strconv.Itoa(s.top+1) + ";" + strconv.Itoa(s.bottom+1) + "r")
+	}
+	if s.savedX != 0 || s.savedY != 0 {
+		b.WriteString("\x1b[" + strconv.Itoa(min(s.savedY, t.rows-1)+1) + ";" + strconv.Itoa(min(s.savedX, t.cols-1)+1) + "H")
+		b.WriteString("\x1b7") // DECSC: restore the agent's own save slot
+	}
 	b.WriteString("\x1b[" + strconv.Itoa(s.y+1) + ";" + strconv.Itoa(s.x+1) + "H")
+	// The live pen last: the agent keeps writing with the SGR state it left
+	// set, and a client repainted to default attributes would render the next
+	// chunk of output uncolored.
+	if t.cur != (attr{}) {
+		b.WriteString(t.cur.sgr())
+	}
 	return []byte(b.String())
 }
 
@@ -719,6 +821,11 @@ func (t *Terminal) writeReplayModes(b *strings.Builder) {
 		} else {
 			b.WriteByte('l')
 		}
+	}
+	if t.mouseTracking != 0 {
+		b.WriteString("\x1b[?")
+		b.WriteString(strconv.Itoa(t.mouseTracking))
+		b.WriteByte('h')
 	}
 	if t.appKeypad {
 		b.WriteString("\x1b=")

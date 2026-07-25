@@ -356,11 +356,18 @@ func (h *host) handleConn(conn net.Conn) {
 	case opKill:
 		h.uamStopping.Store(true)
 		h.terminateChild()
+		var reply response
 		select {
 		case <-h.cleaned:
-			_ = writeJSONLine(conn, response{OK: true})
+			reply = response{OK: true}
 		case <-time.After(10 * time.Second):
-			_ = writeJSONLine(conn, response{Err: "session did not exit"})
+			reply = response{Err: "session did not exit"}
+		}
+		// Teardown can outlast the handshake write deadline set above; without a
+		// fresh one the reply is dropped and a successful kill is reported to the
+		// caller as a connection failure.
+		if err := conn.SetWriteDeadline(time.Now().Add(attachHandshakeTimeout)); err == nil {
+			_ = writeJSONLine(conn, reply)
 		}
 		_ = conn.Close()
 	case opAttach:
@@ -523,8 +530,8 @@ func (h *host) attachReader(client *attachClient, br *bufio.Reader) {
 		}
 		switch kind {
 		case frameStdin:
-			if !h.handleStdinFrame(client, payload) {
-				reason = "malformed_frame"
+			if ok, why := h.handleStdinFrame(client, payload); !ok {
+				reason = why
 				return
 			}
 		case frameResize:
@@ -553,6 +560,22 @@ func (h *host) dropClient(client *attachClient) {
 
 func (h *host) dropClientReason(client *attachClient, reason string) {
 	h.controlMu.Lock()
+	defer h.controlMu.Unlock()
+	h.removeClient(client, reason)
+}
+
+// evictSlowClient drops a client whose output queue overflowed. Unlike every
+// other drop it deliberately does not take controlMu: pumpPTY is the only PTY
+// drainer, and the controller it is evicting may be blocked in ptmx.Write
+// holding controlMu while waiting for that same pump — taking the mutex here
+// wedges the host and every client attached to it. Registry state stays guarded
+// by h.mu, and applyPTYSize is a single ioctl that needs no serialisation
+// against an in-flight write.
+func (h *host) evictSlowClient(client *attachClient) {
+	h.removeClient(client, "slow_client")
+}
+
+func (h *host) removeClient(client *attachClient, reason string) {
 	h.mu.Lock()
 	_, registered := h.registry.clients[client]
 	wasController := h.registry.controller == client
@@ -574,7 +597,6 @@ func (h *host) dropClientReason(client *attachClient, reason string) {
 	if promotedSize.valid() {
 		h.applyPTYSize(promotedSize)
 	}
-	h.controlMu.Unlock()
 	client.drop()
 	if !registered {
 		return
