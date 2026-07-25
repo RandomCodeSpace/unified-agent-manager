@@ -525,12 +525,12 @@ func (f *stdinFilter) filter(chunk []byte) (out []byte, detach bool) {
 		if f.mouseBody > 0 {
 			// Legacy mouse report payload: forward verbatim. Counting these
 			// bytes as typed runes disarmed the quick detach on every click and
-			// wheel tick until the next Enter. Coordinates are counted in runes,
-			// not bytes, because ?1005 encodes them as UTF-8.
+			// wheel tick until the next Enter. The count is in bytes, not
+			// runes: a legacy coordinate is 32+value clamped at 223, so columns
+			// 97–160 are indistinguishable from a UTF-8 continuation byte and
+			// skipping them would overrun the drain into the next keystroke.
 			out = append(out, b)
-			if b&0xc0 != 0x80 {
-				f.mouseBody--
-			}
+			f.mouseBody--
 			continue
 		}
 		f.pasteStart = advanceExactMatch(pasteBegin, f.pasteStart, b)
@@ -897,9 +897,18 @@ func (f *stdinFilter) escByte(out []byte, b byte) ([]byte, bool) {
 	if f.backDetach && f.boxEmpty() && isLeftArrow(seq) {
 		return out, true
 	}
-	if ctrl := decodeEnhancedCtrlKey(seq); ctrl != 0 && f.handleEnhancedCtrlKey(ctrl) {
-		// Swallowed exactly like the legacy control byte: the sequence never
-		// reaches the agent.
+	if ctrl := decodeEnhancedCtrlKey(seq); ctrl != 0 {
+		if f.handleEnhancedCtrlKey(ctrl) {
+			// Swallowed exactly like the legacy control byte: the sequence
+			// never reaches the agent.
+			return out, false
+		}
+		// Forwarded, but with the legacy byte's effect on the input-box
+		// estimate. Falling through to seqPoisons instead would latch on the
+		// very keys that clear the box, leaving the quick detach disarmed with
+		// no way to re-arm it for the rest of the attachment.
+		out = append(out, seq...)
+		f.applyKeyToBox(ctrl)
 		return out, false
 	}
 	out = append(out, seq...)
@@ -955,6 +964,22 @@ func (f *stdinFilter) strByte(out []byte, b byte) ([]byte, bool) {
 	return out, true
 }
 
+// applyKeyToBox mirrors the input-box bookkeeping the plain control byte would
+// have received in filter's switch.
+func (f *stdinFilter) applyKeyToBox(ctrl byte) {
+	switch ctrl {
+	case '\r', '\n', 0x15, 0x1b:
+		// Enter submits; Ctrl+U and Esc clear the box.
+		f.clearBox()
+	case 0x08, 0x7f:
+		if f.typed > 0 {
+			f.typed--
+		}
+	default:
+		f.unknown = true
+	}
+}
+
 // handleEnhancedCtrlKey applies the guards that the legacy control byte would
 // have triggered. It reports whether the sequence was consumed.
 func (f *stdinFilter) handleEnhancedCtrlKey(ctrl byte) bool {
@@ -988,6 +1013,16 @@ func decodeEnhancedCtrlKey(seq []byte) byte {
 	var code, modifiers string
 	switch seq[len(seq)-1] {
 	case 'u':
+		if len(params) == 1 {
+			// Kitty reports unmodified Enter, Esc and Backspace as CSI code u.
+			// They carry no modifier but they do move the input box, so they
+			// still have to be recognised; any other bare key is ordinary text.
+			key, err := strconv.Atoi(leadingParam(params[0]))
+			if err == nil && (key == '\r' || key == 0x1b || key == 0x7f) {
+				return byte(key)
+			}
+			return 0
+		}
 		if len(params) < 2 {
 			return 0
 		}
@@ -1000,11 +1035,7 @@ func decodeEnhancedCtrlKey(seq []byte) byte {
 	default:
 		return 0
 	}
-	// Kitty and modifyOtherKeys both report a sub-parameter after the
-	// modifiers (event type / alternate key); only the leading number counts.
-	modifiers, _, _ = strings.Cut(modifiers, ":")
-	code, _, _ = strings.Cut(code, ":")
-	mask, err := strconv.Atoi(modifiers)
+	mask, err := strconv.Atoi(leadingParam(modifiers))
 	if err != nil || mask < 1 {
 		return 0
 	}
@@ -1012,11 +1043,18 @@ func decodeEnhancedCtrlKey(seq []byte) byte {
 	if (mask-1)&ctrlModifier == 0 {
 		return 0
 	}
-	key, err := strconv.Atoi(code)
+	key, err := strconv.Atoi(leadingParam(code))
 	if err != nil || key < 'a' || key > 'z' {
 		return 0
 	}
 	return byte(key-'a') + 1
+}
+
+// leadingParam drops a CSI sub-parameter: kitty and modifyOtherKeys both append
+// one after the modifiers (event type) and the key (alternate key).
+func leadingParam(param string) string {
+	leading, _, _ := strings.Cut(param, ":")
+	return leading
 }
 
 // seqPoisons reports whether a completed escape sequence may change the

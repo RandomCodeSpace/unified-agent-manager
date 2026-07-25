@@ -707,3 +707,63 @@ func TestStringReplyStillConsumedAfterC0Guard(t *testing.T) {
 		t.Fatal("terminal reply disarmed the quick detach")
 	}
 }
+
+// Legacy mouse coordinates are 32+value and clamp at 223, so a column in the
+// 0x80-0xbf range is indistinguishable from a UTF-8 continuation byte. Counting
+// the payload in runes made the drain overrun and swallow the next keystroke —
+// the detach chord included.
+func TestLegacyMouseReportWithHighCoordinates(t *testing.T) {
+	f := &stdinFilter{backDetach: true, role: roleController}
+	report := []byte{0x1b, '[', 'M', ' ', 0x84, '0'}
+	out, detach := f.filter(report)
+	if detach || string(out) != string(report) {
+		t.Fatalf("report mangled, out=%q detach=%v", out, detach)
+	}
+	if f.mouseBody != 0 {
+		t.Fatalf("mouseBody = %d after a complete report, want 0", f.mouseBody)
+	}
+	if out, detach := f.filter([]byte{detachPrefix, 'd'}); !detach || len(out) != 0 {
+		t.Fatalf("detach chord after a mouse report: out=%q detach=%v", out, detach)
+	}
+}
+
+// Esc and Ctrl+U clear the provider's input box. Under the kitty encoding they
+// arrive as CSI sequences, and treating them as unknown navigation left the
+// quick detach disarmed with no way back.
+func TestEnhancedClearKeysReArmQuickDetach(t *testing.T) {
+	tests := []struct{ name, clear string }{
+		{name: "esc", clear: "\x1b[27u"},
+		{name: "ctrl+u", clear: "\x1b[117;5u"},
+		{name: "enter", clear: "\x1b[13u"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := &stdinFilter{backDetach: true, role: roleController}
+			if _, detach := f.filter([]byte("abc")); detach {
+				t.Fatal("typing detached")
+			}
+			out, detach := f.filter([]byte(test.clear))
+			if detach || string(out) != test.clear {
+				t.Fatalf("clear key mangled, out=%q detach=%v", out, detach)
+			}
+			if !f.boxEmpty() {
+				t.Fatalf("box not cleared: typed=%d unknown=%v", f.typed, f.unknown)
+			}
+			if _, detach := f.filter([]byte("\x1b[D")); !detach {
+				t.Fatal("quick detach did not re-arm")
+			}
+		})
+	}
+	t.Run("backspace deletes one rune", func(t *testing.T) {
+		f := &stdinFilter{backDetach: true, role: roleController}
+		if _, detach := f.filter([]byte("a")); detach {
+			t.Fatal("typing detached")
+		}
+		if _, detach := f.filter([]byte("\x1b[127u")); detach {
+			t.Fatal("backspace detached")
+		}
+		if !f.boxEmpty() {
+			t.Fatalf("box not empty after deleting the draft: typed=%d unknown=%v", f.typed, f.unknown)
+		}
+	})
+}
