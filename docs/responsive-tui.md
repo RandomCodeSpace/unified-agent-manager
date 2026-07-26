@@ -60,8 +60,9 @@ by terminal-cell width without splitting Unicode text.
 | `Ctrl+S` | Toggle Workspace grouping. |
 | `Shift+↑` / `Shift+↓` | Reorder within the same lifecycle, pin, and visible Workspace group. |
 | `/` with an empty command | Enter live filtering. Type to narrow, use arrows to move, and press `Esc` to clear. |
-| `?` | Open key help. |
+| `?` with an empty command | Open key help. With text typed, `?` is ordinary input. |
 | `Esc` | Close the current overlay or input; from the base dashboard, quit. |
+| `Ctrl+C` | Quit from anywhere, including help, the wizard, rename, and confirmations. |
 
 Inside an attached session, `Ctrl+B d` detaches. A bare left arrow also detaches
 when the provider input is empty and the quick-detach option is enabled. See the

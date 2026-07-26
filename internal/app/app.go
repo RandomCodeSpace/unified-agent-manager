@@ -512,6 +512,14 @@ func (m Model) handlePromptEdited(msg promptEditedMsg) Model {
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	// Ctrl+C quits from anywhere. Routed before the modal dispatch because a
+	// modal claims every key it does not recognise, which left help, the
+	// wizard, rename and both confirmations with no way out but Esc — and no
+	// way out at all for a user reaching for the universal quit.
+	if key == "ctrl+c" {
+		_, cmd := m.handleActionKey(key)
+		return m, cmd
+	}
 	if handled, model, cmd := m.handleModalKey(msg, key); handled {
 		return model, cmd
 	}
@@ -870,6 +878,13 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 		m.cycleDefaultAgent()
 		return true, m.persistDefaultAgent()
 	case "?":
+		// Same guard the other letter-shaped bindings use: a leading key only
+		// binds on an empty composer, otherwise it is text. Without it a '?'
+		// could never be typed into a prompt or a reply.
+		if strings.TrimSpace(m.input) != "" {
+			m.input += key
+			return true, nil
+		}
 		m.helpOpen = true
 	case "ctrl+s":
 		grouped := !m.groupByDir

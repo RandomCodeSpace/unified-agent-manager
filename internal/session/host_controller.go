@@ -23,7 +23,7 @@ func (h *host) enqueueClient(client *attachClient, message serverMessage) bool {
 			Event: "slow_client.eviction", Session: h.name, ClientID: client.id,
 			Protocol: int(client.version), Role: string(client.assignedRole), Reason: "output_backpressure",
 		})
-		h.dropClientReason(client, "slow_client")
+		h.evictSlowClient(client)
 		return false
 	}
 }

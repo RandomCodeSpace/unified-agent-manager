@@ -523,10 +523,32 @@ func TestRedrawReplaysMouseModes(t *testing.T) {
 	term := New(20, 3, 0)
 	feed(t, term, "\x1b[?1000;1002;1003;1006h") // tracking + SGR encoding
 	out := string(term.Redraw())
-	for _, want := range []string{"\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h"} {
+	for _, want := range []string{"\x1b[?1003h", "\x1b[?1006h"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("Redraw must replay mouse mode %q: %q", want, out)
 		}
+	}
+}
+
+// The tracking levels are mutually exclusive, so a provider that downgrades
+// (1003 then 1002) must be replayed at the level it ended on, not at whichever
+// level it happened to visit last in numeric order.
+func TestRedrawReplaysOnlyTheLiveMouseTrackingLevel(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[?1003h\x1b[?1002h")
+	out := string(term.Redraw())
+	if !strings.Contains(out, "\x1b[?1002h") {
+		t.Fatalf("Redraw must replay the live tracking level: %q", out)
+	}
+	for _, none := range []string{"\x1b[?1003h", "\x1b[?1000h"} {
+		if strings.Contains(out, none) {
+			t.Fatalf("Redraw must not replay superseded tracking level %q: %q", none, out)
+		}
+	}
+	off := New(20, 3, 0)
+	feed(t, off, "\x1b[?1002h\x1b[?1002l")
+	if out := string(off.Redraw()); strings.Contains(out, "\x1b[?100") {
+		t.Fatalf("Redraw must not replay mouse tracking the provider turned off: %q", out)
 	}
 }
 

@@ -162,3 +162,49 @@ func TestControlPrefixModes(t *testing.T) {
 		}
 	})
 }
+
+// A standby that is promoted owns the PTY geometry from that moment. The host
+// applies whatever size that client last reported, so the client has to report
+// its live size on promotion instead of leaving the agent in the geometry it
+// had when it first attached.
+func TestPromotionReportsLiveTerminalSize(t *testing.T) {
+	// Given
+	var wire bytes.Buffer
+	frames := newAttachFrameWriter(&wire, protocolV2, "client-2", 4)
+	frames.SetAssignedRole(roleController)
+	runtime := newAttachRuntime(attachRuntimeConfig{
+		output:       &bytes.Buffer{},
+		terminalSize: func() (int, int, bool) { return 120, 40, true },
+	})
+
+	// When
+	if err := runtime.reportSize(frames); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then
+	kind, payload, err := readFrame(bytes.NewReader(wire.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != frameResize {
+		t.Fatalf("frame kind = %d, want %d", kind, frameResize)
+	}
+	_, size, ok := (&host{}).parseResizeFrame(&attachClient{version: protocolV2}, payload)
+	if !ok || size != (terminalSize{cols: 120, rows: 40}) {
+		t.Fatalf("resize payload = %+v ok=%v, want 120x40", size, ok)
+	}
+}
+
+// Without a terminal there is nothing to report and no frame may be sent.
+func TestReportSizeIsNoOpWithoutTerminal(t *testing.T) {
+	var wire bytes.Buffer
+	frames := newAttachFrameWriter(&wire, protocolV2, "client-3", 1)
+	runtime := newAttachRuntime(attachRuntimeConfig{output: &bytes.Buffer{}})
+	if err := runtime.reportSize(frames); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Len() != 0 {
+		t.Fatalf("wrote %d bytes without a terminal", wire.Len())
+	}
+}
