@@ -183,8 +183,9 @@ for the normative ownership and protocol rules.
 
 `UAM_ATTACH_MOUSE` controls whether provider mouse reporting is preserved:
 
-- `auto` (the default) preserves provider mouse reporting locally and over SSH
-- `on` preserves provider mouse reporting everywhere
+- `auto` (the default) preserves provider mouse reporting; `on` is an accepted
+  alias for it. UAM does not vary the policy by transport — local and SSH
+  attachments behave identically
 - `off` suppresses provider mouse modes so the terminal keeps selection and
   paste gestures
 
@@ -405,10 +406,16 @@ for its own execution model.
 ## Development
 
 ```sh
-make test
+make test        # unit and integration
+make test-e2e    # drives the built binary over real PTYs
+make cover       # coverage total
 make build
 make lint
 ```
+
+See [Testing uam](docs/testing.md) for the end-to-end harnesses, the evidence
+collectors and their required directory names, and the environment
+sensitivities to know about.
 
 ## Releases
 

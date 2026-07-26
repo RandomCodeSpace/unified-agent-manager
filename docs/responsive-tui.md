@@ -139,10 +139,12 @@ changes. UAM does not assume a fixed phone aspect ratio.
 
 ## SSH, mouse, and paste
 
-Mouse reporting defaults on for local and SSH attachments so wheel and touch
-gestures reach mouse-aware providers such as OpenCode and OMP. Override it with
-`UAM_ATTACH_MOUSE=on|off|auto`. Set it to `off` when terminal-owned selection or
-right-click paste is more important than provider scrolling.
+Mouse reporting defaults on for local and SSH attachments alike so wheel and
+touch gestures reach mouse-aware providers such as OpenCode and OMP. Override it
+with `UAM_ATTACH_MOUSE=on|off|auto`, where `auto` is the default and `on` is an
+alias for it — the policy does not vary by transport. Set it to `off` when
+terminal-owned selection or right-click paste is more important than provider
+scrolling.
 
 Bracketed-paste payload is forwarded literally, including control bytes, UTF-8,
 and line endings. UAM cannot initiate paste from a local clipboard. Windows users

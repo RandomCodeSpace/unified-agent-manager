@@ -2308,7 +2308,7 @@ func (m Model) renderHelp() string {
 		"/  filter sessions when the command line is empty",
 		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
 		"Ctrl+X  stop+remove / restart    Ctrl+S  group-by-dir",
-		"e  new session       Esc  quit",
+		"e  new session       Esc  back / quit     Ctrl+C  quit anywhere",
 		"in session:  ← detach (when input empty)    Ctrl+B d  detach",
 		"dispatch:  @agent:alias #name prompt   (alias, name & prompt optional)",
 	}

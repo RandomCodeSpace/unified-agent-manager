@@ -36,7 +36,14 @@ func TestTrustedBaseRejectsSymlinkAtBase(t *testing.T) {
 }
 
 func TestResolvedAncestryWarnsForWritableComponent(t *testing.T) {
-	unsafe := filepath.Join(t.TempDir(), "unsafe")
+	// t.TempDir honours the umask, so under a group-writable umask (0002) the
+	// fixture's own parent warns too. Narrow it to the component under test so
+	// the assertion is about this test's directory, not the developer's umask.
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	unsafe := filepath.Join(parent, "unsafe")
 	if err := os.Mkdir(unsafe, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +65,16 @@ func TestResolvedAncestryWarnsForWritableComponent(t *testing.T) {
 		!strings.Contains(warning, unsafe) || !strings.Contains(warning, "0770") {
 		t.Fatalf("missing actionable writable-ancestor warning: %q", warning)
 	}
-	if count := strings.Count(warning, "provider state ancestor is group/other-writable"); count != 1 {
-		t.Fatalf("writable ancestor warning count = %d, want 1: %q", count, warning)
+	// Repeated checks must warn once per path: count only the lines naming the
+	// directory this test made writable.
+	warned := 0
+	for _, line := range strings.Split(warning, "\n") {
+		if strings.Contains(line, "provider state ancestor is group/other-writable") && strings.Contains(line, unsafe) {
+			warned++
+		}
+	}
+	if warned != 1 {
+		t.Fatalf("writable ancestor warning count for %s = %d, want 1: %q", unsafe, warned, warning)
 	}
 }
 
