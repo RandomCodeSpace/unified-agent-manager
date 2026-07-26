@@ -55,6 +55,12 @@ const killGrace = 1500 * time.Millisecond
 // disconnected rather than allowed to stall the session.
 const attachBufFrames = 512
 
+// shutdownFlushWindow bounds how long teardown waits for attached viewers to
+// receive the agent's final output. Long enough for a queued screen on a slow
+// link, short enough that a viewer which stopped reading cannot hold the host
+// open.
+const shutdownFlushWindow = 250 * time.Millisecond
+
 const (
 	markClosedRetryWindow = 2 * time.Second
 	markClosedRetryBase   = 25 * time.Millisecond
@@ -464,7 +470,8 @@ func (h *host) handleAttach(conn net.Conn, br *bufio.Reader, req request) {
 		return
 	}
 	client := &attachClient{
-		conn: conn, out: make(chan serverMessage, attachBufFrames), done: make(chan struct{}), version: version,
+		conn: conn, out: make(chan serverMessage, attachBufFrames), done: make(chan struct{}),
+		flush: make(chan struct{}), version: version,
 		fallback: version == protocolV1 && !req.versionPresent,
 	}
 	attachResponse, err := h.registerAttachClient(client, registration)
@@ -491,11 +498,36 @@ func (h *host) attachWriter(client *attachClient) {
 		select {
 		case <-client.done:
 			return
+		case <-client.flush:
+			h.flushClient(client)
+			return
 		case message := <-client.out:
 			if err := h.writeServerMessage(client, message); err != nil {
 				h.dropClientReason(client, "connection_write")
 				return
 			}
+		}
+	}
+}
+
+// flushClient writes what the shutting-down client has already queued and then
+// closes the connection itself. The write deadline bounds a viewer that has
+// stopped reading, so a stalled socket cannot hold up host teardown.
+func (h *host) flushClient(client *attachClient) {
+	defer client.drop()
+	if client.conn != nil {
+		if err := client.conn.SetWriteDeadline(time.Now().Add(shutdownFlushWindow)); err != nil {
+			return
+		}
+	}
+	for {
+		select {
+		case message := <-client.out:
+			if err := h.writeServerMessage(client, message); err != nil {
+				return
+			}
+		default:
+			return
 		}
 	}
 }
@@ -659,6 +691,17 @@ func (h *host) signalChild(sig syscall.Signal) {
 // closed (the native replacement for the tmux session-closed hook), tell any
 // attached clients, and remove the runtime files.
 func (h *host) shutdown(exitCode int) {
+	h.shutdownClients()
+	providerID := readProviderIdentityHandoff(h.dir, h.name, h.providerIdentityFile)
+	if err := removeSessionFiles(h.dir, h.name); err != nil {
+		log.Warn("remove session files failed", "session", h.name, "error", err)
+	}
+	h.recordExit(exitCode, providerID)
+}
+
+// shutdownClients releases every attached client, giving each writer a bounded
+// window to put the agent's last output on the wire first.
+func (h *host) shutdownClients() {
 	h.mu.Lock()
 	clients := h.registry.drain()
 	h.mu.Unlock()
@@ -667,13 +710,23 @@ func (h *host) shutdown(exitCode int) {
 			Event: "attach.lifecycle", Session: h.name, ClientID: client.id,
 			Protocol: int(client.version), Role: string(client.assignedRole), Reason: "host_shutdown",
 		})
-		client.drop()
+		client.requestFlush()
 	}
-	providerID := readProviderIdentityHandoff(h.dir, h.name, h.providerIdentityFile)
-	if err := removeSessionFiles(h.dir, h.name); err != nil {
-		log.Warn("remove session files failed", "session", h.name, "error", err)
+	// pumpPTY has already returned, so everything the agent ever wrote is
+	// queued; each writer only needs the chance to put it on the wire. Closing
+	// the connection first — as this used to — truncated the agent's last
+	// screen, and cutting a frame in half turned a clean exit into
+	// "attach output: unexpected EOF" on the viewer.
+	flushBy := time.Now().Add(shutdownFlushWindow)
+	for _, client := range clients {
+		select {
+		case <-client.done:
+		case <-time.After(time.Until(flushBy)):
+			// No writer is running for this client, or it is wedged behind a
+			// stalled socket. Either way the deadline is the whole budget.
+			client.drop()
+		}
 	}
-	h.recordExit(exitCode, providerID)
 }
 
 func (h *host) recordExit(exitCode int, providerID string) {

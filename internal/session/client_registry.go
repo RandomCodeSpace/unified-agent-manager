@@ -24,9 +24,14 @@ type serverMessage struct {
 }
 
 type attachClient struct {
-	conn          net.Conn
-	out           chan serverMessage
-	done          chan struct{}
+	conn net.Conn
+	out  chan serverMessage
+	done chan struct{}
+	// flush is closed by shutdown to ask this client's writer to drain what is
+	// queued and then close the connection itself. done means "stop now";
+	// flush means "finish, then stop".
+	flush         chan struct{}
+	flushOnce     sync.Once
 	version       protocolVersion
 	id            string
 	requestedRole clientRole
@@ -45,6 +50,17 @@ func (client *attachClient) drop() {
 		close(client.done)
 		if client.conn != nil {
 			_ = client.conn.Close()
+		}
+	})
+}
+
+// requestFlush asks the client's writer to drain its queue and close. It is a
+// no-op for a client that has no writer running; shutdown falls back to drop
+// once its flush window expires.
+func (client *attachClient) requestFlush() {
+	client.flushOnce.Do(func() {
+		if client.flush != nil {
+			close(client.flush)
 		}
 	})
 }
