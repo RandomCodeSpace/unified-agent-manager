@@ -168,8 +168,12 @@ func (m Model) workspacePartitionEntries(start, end int, ctx groupedRenderContex
 		groupEnd := workspaceGroupEnd(m.sessions, groupStart, end, key)
 		entries = append(entries, groupedRenderLine{text: workspaceHeadingLine(key, groupEnd-groupStart, ctx.width), sessionIndex: -1, workspace: true})
 		if ctx.live[key] > 1 && !ctx.warned[key] {
-			warning := fmt.Sprintf("  ⚠ %d sessions share this workspace", ctx.live[key])
-			entries = append(entries, groupedRenderLine{text: ansi.Truncate(warnStyle.Render(warning), ctx.width, "…"), sessionIndex: -1})
+			// The glyph comes from the tone table so this legacy grouped
+			// renderer and the dashboard speak one vocabulary — and because ⚠
+			// is double-width on many terminals, which silently shifted every
+			// column to its right.
+			warning := "  " + toneOf(toneWarn).mark() + warnStyle.Render(fmt.Sprintf(" %d sessions share this workspace", ctx.live[key]))
+			entries = append(entries, groupedRenderLine{text: ansi.Truncate(warning, ctx.width, "…"), sessionIndex: -1})
 			ctx.warned[key] = true
 		}
 		for i := groupStart; i < groupEnd; i++ {

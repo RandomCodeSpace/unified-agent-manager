@@ -121,6 +121,9 @@ uam profile effective <session-id> [--json]
 
 | Key | Action |
 |---|---|
+| `1`–`9`, `0` | Jump to that session's chip; press the same digit again to attach |
+| Click / tap a row | Same as its chip — first tap selects, second attaches |
+| Wheel up / down | Move selection |
 | `↑` / `↓` | Move selection |
 | `Enter` / `→` | Attach selected session |
 | Type prompt + `Enter` | Dispatch to the default agent |
@@ -139,12 +142,32 @@ uam profile effective <session-id> [--json]
 | `Esc` | Close overlays, clear input, or quit |
 | `Ctrl+C` | Quit from anywhere, including modals |
 
-The dashboard responds to every terminal resize. Operations always use a
-full-width, bordered session list; the selected row expands in place with its
-task, Workspace, identity, and pull request. Wide terminals split only when Peek
-is open. Compact or keyboard-constrained mobile terminals keep ordinary rows to
-one line and expand the selected row to two. See
-[Responsive TUI design and operations](docs/responsive-tui.md) for layout
+The dashboard responds to every terminal resize. Operations use a borderless,
+full-width session list headed by a rule that carries the roster count, and a
+header strip of fleet vitals (`●` live, `✕` failed, `○` stopped, `★` pinned,
+`◇` carrying a PR) that degrades category by category rather than vanishing on a
+narrow screen. Wide terminals split only when Peek is open.
+
+Rows are laid out by a **density ladder** rather than a fixed height: the body's
+line budget is divided evenly among the visible sessions, so a few sessions on a
+phone each show name, task, workspace, profile, resume fidelity and identity,
+while a large roster on a wide terminal collapses to one dense line each with
+the task inline. Detail is no longer a property of the cursor — every session
+shows the same fields as every other one.
+
+Every mark comes from a single tone table: a datum is never carried by colour
+alone, so a monochrome terminal, an eight-colour palette or `NO_COLOR` loses hue
+and nothing else. The right-aligned age is now tinted along a four-stop ramp
+(fresh under an hour, recent under a day, old under a week, then stale) so old
+inventory reads at a glance. Age remains derived from creation time, not from
+liveness discovery — see the note in `internal/app/fleet.go` for why the
+apparently better `LastChange` field cannot carry it.
+
+Mouse reporting is enabled so the dashboard is tappable on a phone. Set
+`UAM_NO_MOUSE=1` to turn it off and restore the terminal's native
+drag-to-select text copying.
+
+See [Responsive TUI design and operations](docs/responsive-tui.md) for layout
 thresholds, filtering, mobile guidance, lifecycle labels, and accessibility.
 
 ## Attached sessions
@@ -161,14 +184,19 @@ for the normative ownership and protocol rules.
   sends a literal configured prefix (`Ctrl+B Ctrl+B` only when the profile uses
   `C-b`); `prefix c` sends a literal `Ctrl+C`. A profile can change the prefix;
   use the profile's `C-x` spelling, such as `C-a`, when configuring it.
-- `prefix r` requests control, `prefix o` transfers control when used by the
-  current controller, `prefix i` reports the current role, and `prefix m`
+- `prefix r` requests control — the current controller is shown a notice, and
+  the handoff itself stays theirs to make. `prefix o` transfers control when
+  used by the current controller, `prefix i` reports the current role, and
+  `prefix m`
   toggles mouse passthrough for this attachment only — turning it back on
   restores the mouse modes the provider currently has set. A prefix command
   never enters provider input.
 - The prefix, `Ctrl+C` and `Ctrl+Z` are recognised whether the terminal sends
   them as plain control bytes or in the kitty keyboard / `modifyOtherKeys`
   encodings that providers switch on.
+- UAM notices are painted on the bottom rows of your terminal and leave the
+  cursor where the agent had it, so they never scroll the agent's screen. The
+  agent's next repaint of those rows clears them.
 - Plain `Ctrl+C` is swallowed while attached so terminal copy shortcuts do not
   cancel the agent
 - `←` (left arrow) also detaches when you haven't typed anything since the
@@ -183,8 +211,9 @@ for the normative ownership and protocol rules.
 
 `UAM_ATTACH_MOUSE` controls whether provider mouse reporting is preserved:
 
-- `auto` (the default) preserves provider mouse reporting locally and over SSH
-- `on` preserves provider mouse reporting everywhere
+- `auto` (the default) preserves provider mouse reporting; `on` is an accepted
+  alias for it. UAM does not vary the policy by transport — local and SSH
+  attachments behave identically
 - `off` suppresses provider mouse modes so the terminal keeps selection and
   paste gestures
 
@@ -405,10 +434,16 @@ for its own execution model.
 ## Development
 
 ```sh
-make test
+make test        # unit and integration
+make test-e2e    # drives the built binary over real PTYs
+make cover       # coverage total
 make build
 make lint
 ```
+
+See [Testing uam](docs/testing.md) for the end-to-end harnesses, the evidence
+collectors and their required directory names, and the environment
+sensitivities to know about.
 
 ## Releases
 

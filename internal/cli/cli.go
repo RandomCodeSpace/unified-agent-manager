@@ -320,9 +320,29 @@ func NewService(st *store.Store) *app.Service {
 	return app.NewService(st, reg)
 }
 
+// mouseReportingDisabled reports whether the user has opted out of pointer
+// input. Enabling mouse reporting is what makes the dashboard tappable on a
+// phone, but it also takes the terminal's native text selection away from
+// drag-to-copy — so the opt-out exists and is honoured before anything else.
+func mouseReportingDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("UAM_NO_MOUSE"))) {
+	case "", "0", "false", "no":
+		return false
+	default:
+		return true
+	}
+}
+
 // RunTUI launches the Bubble Tea TUI.
 func RunTUI(ctx context.Context, model tea.Model) error {
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
+	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
+	if !mouseReportingDisabled() {
+		// Cell motion rather than all motion: the dashboard only needs presses
+		// and wheel events, and all-motion reporting floods the input path with
+		// events no handler consumes.
+		options = append(options, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(model, options...)
 	_, err := p.Run()
 	if term.IsTerminal(os.Stdout.Fd()) {
 		_ = writeTUIExitCleanup(os.Stdout)

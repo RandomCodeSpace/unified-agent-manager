@@ -150,7 +150,7 @@ func TestTodo7ProfileCLIRealSurface(t *testing.T) {
 		"overrides_cleared":                   record.ProfileOverrides == nil,
 		"pty_wizard_selected_profile":         strings.Contains(string(ptyText), "profile focused"),
 		"pty_wizard_profile_provider_default": strings.Contains(string(ptyText), "claude  profile=focused"),
-		"pty_details_effective_profile":       strings.Contains(string(ptyText), "effective: focused"),
+		"pty_details_effective_profile":       strings.Contains(string(ptyText), "focused→focused"),
 		"xterm_screenshot_deferred_to_todo11": true,
 	}
 	assertionJSON, err := json.MarshalIndent(assertions, "", "  ")
