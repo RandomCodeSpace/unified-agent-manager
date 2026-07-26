@@ -240,7 +240,13 @@ func (runtime *attachRuntime) toggleMouse() bool {
 }
 
 func (runtime *attachRuntime) writeStatus(message string) error {
-	return writeAttachBytes(runtime.output, []byte("\r\n[uam: "+message+"]\r\n"))
+	cols, rows := 0, 0
+	if runtime.terminalSize != nil {
+		if width, height, ok := runtime.terminalSize(); ok {
+			cols, rows = width, height
+		}
+	}
+	return writeAttachBytes(runtime.output, []byte(paintStatus(cols, rows, message)))
 }
 
 // queueStatus holds a notice until after the next PTY frame. Notices that

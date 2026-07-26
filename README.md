@@ -161,14 +161,19 @@ for the normative ownership and protocol rules.
   sends a literal configured prefix (`Ctrl+B Ctrl+B` only when the profile uses
   `C-b`); `prefix c` sends a literal `Ctrl+C`. A profile can change the prefix;
   use the profile's `C-x` spelling, such as `C-a`, when configuring it.
-- `prefix r` requests control, `prefix o` transfers control when used by the
-  current controller, `prefix i` reports the current role, and `prefix m`
+- `prefix r` requests control — the current controller is shown a notice, and
+  the handoff itself stays theirs to make. `prefix o` transfers control when
+  used by the current controller, `prefix i` reports the current role, and
+  `prefix m`
   toggles mouse passthrough for this attachment only — turning it back on
   restores the mouse modes the provider currently has set. A prefix command
   never enters provider input.
 - The prefix, `Ctrl+C` and `Ctrl+Z` are recognised whether the terminal sends
   them as plain control bytes or in the kitty keyboard / `modifyOtherKeys`
   encodings that providers switch on.
+- UAM notices are painted on the bottom rows of your terminal and leave the
+  cursor where the agent had it, so they never scroll the agent's screen. The
+  agent's next repaint of those rows clears them.
 - Plain `Ctrl+C` is swallowed while attached so terminal copy shortcuts do not
   cancel the agent
 - `←` (left arrow) also detaches when you haven't typed anything since the

@@ -77,8 +77,9 @@ they see output and can request a handoff, but cannot interleave keystrokes.
 **Observers** are output-only. If the controller disconnects, the next standby
 is promoted. A controller can also transfer deliberately.
 
-With the default prefix, use `Ctrl+B r` to request control, `Ctrl+B o` from the
-controller to transfer, and `Ctrl+B i` to display your role. `Ctrl+B m`
+With the default prefix, use `Ctrl+B r` to request control — the controller is
+shown a notice naming the requesting client, and decides whether to hand over —
+`Ctrl+B o` from the controller to transfer, and `Ctrl+B i` to display your role. `Ctrl+B m`
 changes mouse passthrough only for the current attachment. A configured profile
 prefix replaces `Ctrl+B`; `prefix prefix` sends the configured literal prefix.
 `Ctrl+B Ctrl+B` has that meaning only when the configured prefix is `C-b`.

@@ -139,16 +139,19 @@ func (r *ptyRecorder) tail() string {
 }
 
 // attach starts `uam __attach` on its own PTY and returns the viewer end.
-func (s *e2eSession) attach() *e2eViewer {
-	s.t.Helper()
+// Cleanup is registered on the caller's t, not the session's: a subtest that
+// fails must not leave its client attached and holding the controller role for
+// every subtest that follows.
+func (s *e2eSession) attach(t *testing.T) *e2eViewer {
+	t.Helper()
 	cmd := exec.Command(s.bin, "__attach", "--dir", s.dir, s.name)
 	cmd.Env = append(os.Environ(), "UAM_SESSION_DIR="+s.dir, "UAM_CONFIG_DIR="+filepath.Join(s.dir, "cfg"), "TERM=xterm-256color")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 80, Rows: 24})
 	if err != nil {
-		s.t.Fatal(err)
+		t.Fatal(err)
 	}
-	viewer := &e2eViewer{t: s.t, cmd: cmd, ptmx: ptmx, seen: recordPTY(ptmx)}
-	s.t.Cleanup(func() {
+	viewer := &e2eViewer{t: t, cmd: cmd, ptmx: ptmx, seen: recordPTY(ptmx)}
+	t.Cleanup(func() {
 		_ = ptmx.Close()
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
@@ -214,7 +217,7 @@ func TestE2EAttachChordsAndMouse(t *testing.T) {
 	session := newE2ESession(t, e2eAgentScript)
 
 	t.Run("banner survives the host repaint", func(t *testing.T) {
-		viewer := session.attach()
+		viewer := session.attach(t)
 		if !viewer.await("AGENT-READY", 10*time.Second) {
 			t.Fatalf("agent output never arrived: %q", viewer.seen.tail())
 		}
@@ -234,7 +237,7 @@ func TestE2EAttachChordsAndMouse(t *testing.T) {
 		{name: "modifyOtherKeys", prefix: "\x1b[27;5;98~"},
 	} {
 		t.Run(encoded.name+" encoded prefix detaches", func(t *testing.T) {
-			viewer := session.attach()
+			viewer := session.attach(t)
 			if !viewer.await("AGENT-READY", 10*time.Second) {
 				t.Fatalf("agent output never arrived: %q", viewer.seen.tail())
 			}
@@ -245,13 +248,18 @@ func TestE2EAttachChordsAndMouse(t *testing.T) {
 	}
 
 	t.Run("mouse toggle restores the provider's live modes", func(t *testing.T) {
-		viewer := session.attach()
+		viewer := session.attach(t)
 		if !viewer.await("AGENT-READY", 10*time.Second) {
 			t.Fatalf("agent output never arrived: %q", viewer.seen.tail())
 		}
 		viewer.send("\x02i")
-		if !viewer.await("keys: prefix d detach", 5*time.Second) {
+		// The notice is painted across the bottom rows, so assert on fragments
+		// that cannot straddle a row break rather than one long run.
+		if !viewer.await("session uam-fake-11112222", 5*time.Second) {
 			t.Fatalf("info line missing: %q", viewer.seen.tail())
+		}
+		if !viewer.await("m mouse]", 5*time.Second) {
+			t.Fatalf("info line was cut short: %q", viewer.seen.tail())
 		}
 		viewer.send("\x02m")
 		if !viewer.await("mouse passthrough false", 5*time.Second) {
@@ -268,7 +276,7 @@ func TestE2EAttachChordsAndMouse(t *testing.T) {
 	})
 
 	t.Run("quick detach survives a legacy mouse report", func(t *testing.T) {
-		viewer := session.attach()
+		viewer := session.attach(t)
 		if !viewer.await("AGENT-READY", 10*time.Second) {
 			t.Fatalf("agent output never arrived: %q", viewer.seen.tail())
 		}
@@ -279,7 +287,7 @@ func TestE2EAttachChordsAndMouse(t *testing.T) {
 	})
 
 	t.Run("meta chord does not latch the filter", func(t *testing.T) {
-		viewer := session.attach()
+		viewer := session.attach(t)
 		if !viewer.await("AGENT-READY", 10*time.Second) {
 			t.Fatalf("agent output never arrived: %q", viewer.seen.tail())
 		}
@@ -289,11 +297,11 @@ func TestE2EAttachChordsAndMouse(t *testing.T) {
 	})
 
 	t.Run("second client is a standby and is promoted", func(t *testing.T) {
-		first := session.attach()
+		first := session.attach(t)
 		if !first.await("AGENT-READY", 10*time.Second) {
 			t.Fatalf("agent output never arrived: %q", first.seen.tail())
 		}
-		second := session.attach()
+		second := session.attach(t)
 		if !second.await("[uam: role standby", 10*time.Second) {
 			t.Fatalf("second client was not made a standby: %q", second.seen.tail())
 		}
@@ -306,8 +314,30 @@ func TestE2EAttachChordsAndMouse(t *testing.T) {
 		second.requireDetached("promoted client")
 	})
 
+	t.Run("prefix r reaches the controller", func(t *testing.T) {
+		controller := session.attach(t)
+		if !controller.await("AGENT-READY", 10*time.Second) {
+			t.Fatalf("agent output never arrived: %q", controller.seen.tail())
+		}
+		standby := session.attach(t)
+		if !standby.await("[uam: role standby", 10*time.Second) {
+			t.Fatalf("second client was not made a standby: %q", standby.seen.tail())
+		}
+		standby.send("\x02r")
+		if !standby.await("control requested", 5*time.Second) {
+			t.Fatalf("requester saw no acknowledgement: %q", standby.seen.tail())
+		}
+		if !controller.await("requested control", 8*time.Second) {
+			t.Fatalf("the controller was never told: %q", controller.seen.tail())
+		}
+		standby.send("\x02d")
+		standby.requireDetached("requesting standby")
+		controller.send("\x02d")
+		controller.requireDetached("notified controller")
+	})
+
 	t.Run("session outlives every detach", func(t *testing.T) {
-		viewer := session.attach()
+		viewer := session.attach(t)
 		if !viewer.await("AGENT-READY", 10*time.Second) {
 			t.Fatalf("re-attach after all detaches failed: %q", viewer.seen.tail())
 		}
@@ -323,7 +353,7 @@ func TestE2EAgentExitDeliversFinalOutput(t *testing.T) {
 	// exiting, so the viewer is attached when it happens — no timing race.
 	const script = `printf 'AGENT-READY\n'; read _ignored; i=0; while [ $i -lt 60 ]; do printf 'FINAL-LINE-%03d\n' $i; i=$((i+1)); done; printf 'AGENT-EXITING\n'`
 	session := newE2ESession(t, script)
-	viewer := session.attach()
+	viewer := session.attach(t)
 	if !viewer.await("AGENT-READY", 10*time.Second) {
 		t.Fatalf("agent output never arrived: %q", viewer.seen.tail())
 	}
