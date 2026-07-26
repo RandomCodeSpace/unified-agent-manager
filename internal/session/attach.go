@@ -1018,8 +1018,16 @@ func decodeEnhancedCtrlKey(seq []byte) byte {
 			// They carry no modifier but they do move the input box, so they
 			// still have to be recognised; any other bare key is ordinary text.
 			key, err := strconv.Atoi(leadingParam(params[0]))
-			if err == nil && (key == '\r' || key == 0x1b || key == 0x7f) {
-				return byte(key)
+			if err != nil {
+				return 0
+			}
+			switch key {
+			case '\r':
+				return '\r'
+			case 0x1b:
+				return 0x1b
+			case 0x7f:
+				return 0x7f
 			}
 			return 0
 		}
@@ -1047,7 +1055,15 @@ func decodeEnhancedCtrlKey(seq []byte) byte {
 	if err != nil || key < 'a' || key > 'z' {
 		return 0
 	}
-	return byte(key-'a') + 1
+	return ctrlLetterBytes[key-'a']
+}
+
+// ctrlLetterBytes maps 'a'–'z' onto the C0 bytes their Ctrl chords produce.
+// Indexing a fixed table rather than converting the parsed number keeps the
+// result provably in range.
+var ctrlLetterBytes = [26]byte{
+	0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+	0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a,
 }
 
 // leadingParam drops a CSI sub-parameter: kitty and modifyOtherKeys both append
