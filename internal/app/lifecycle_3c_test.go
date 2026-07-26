@@ -162,6 +162,16 @@ func TestRunningStoppedLabelsAcrossResponsiveAndGroupedRenderers(t *testing.T) {
 					if !strings.Contains(out, "○") && !strings.Contains(out, "✕") {
 						t.Fatalf("compact view must expose stopped/failed counts: %s", out)
 					}
+				} else if m.cockpitOpen() {
+					// The cockpit roster is a navigation list: liveness rides on
+					// the glyph, and the detail pane spells out the lifecycle for
+					// the focused session only.
+					if !strings.Contains(out, "●") || !strings.Contains(out, "○") {
+						t.Fatalf("cockpit roster missing lifecycle glyphs: %s", out)
+					}
+					if !strings.Contains(out, "RUNNING") && !strings.Contains(out, "STOPPED") {
+						t.Fatalf("cockpit pane must spell out the focused lifecycle: %s", out)
+					}
 				} else if !strings.Contains(out, "RUNNING") || !strings.Contains(out, "STOPPED") {
 					t.Fatalf("responsive view missing lifecycle groups: %s", out)
 				}

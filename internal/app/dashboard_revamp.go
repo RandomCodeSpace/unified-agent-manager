@@ -223,8 +223,16 @@ func (m Model) dashboardView() string {
 	if len(bottom) >= h {
 		return fitScreen(bottom[:h], w, h)
 	}
-	bodyBudget := max(0, h-1-len(bottom))
+	bodyBudget := max(0, h-dashboardHeaderLines-len(bottom))
 	body := m.dashboardBody(w, bodyBudget)
+	// The body is padded out to its whole budget so the composer and footer stay
+	// pinned to the bottom of the terminal. The retired bordered panel used to
+	// fill the frame with its own blank rows; without that padding a short
+	// roster collapsed the layout upward and left the command line floating in
+	// the middle of the screen with a void beneath it.
+	for len(body) < bodyBudget {
+		body = append(body, "")
+	}
 	lines := []string{header}
 	lines = append(lines, body...)
 	lines = append(lines, bottom...)
@@ -335,17 +343,62 @@ func (m Model) dashboardBodyEntries(width, budget int) []dashboardEntry {
 	if budget <= 0 {
 		return nil
 	}
-	if m.peekOpen && m.layoutClass() == LayoutWide {
-		leftWidth := max(46, width*58/100)
-		rightWidth := width - leftWidth - 3
-		left := m.sessionPanelEntries(leftWidth, budget)
-		right := m.peekPanelLines(rightWidth, budget)
-		return joinEntryColumns(left, right, leftWidth, rightWidth, budget)
+	// The wide layout is a permanent two-pane cockpit: the roster stays on the
+	// left at one line per session, and the right pane is the selected session's
+	// detail and live output. A 30-row terminal holding three sessions used to
+	// spend 24 rows on nothing; this is what those rows are for.
+	if m.cockpitOpen() {
+		leftWidth, rightWidth := cockpitWidths(width)
+		if rightWidth >= cockpitMinDetail {
+			left := m.sessionPanelEntriesAt(leftWidth, budget, densityMin)
+			right := m.cockpitLines(rightWidth, budget)
+			return joinEntryColumns(left, right, leftWidth, rightWidth, budget)
+		}
 	}
 	if m.peekOpen {
 		return textEntries(m.peekPanelLines(width, budget))
 	}
 	return m.sessionPanelEntries(width, budget)
+}
+
+// cockpitOpen reports whether the two-pane cockpit is in play.
+//
+// It deliberately does not reuse LayoutWide. LayoutWide demands 28 rows because
+// it governs how much *vertical* detail a single column can afford; two columns
+// need horizontal room and almost no extra height, and tying them together left
+// a 100x26 terminal — an ordinary window — rendering the single-column body with
+// two thirds of the screen empty.
+//
+// A known size is required because layoutClass() classifies an unsized model as
+// Wide, and component-level tests render unsized models expecting one column.
+func (m Model) cockpitOpen() bool {
+	return m.sizeKnown && m.width >= cockpitMinWidth && m.height >= cockpitMinHeight
+}
+
+const (
+	// cockpitGutter matches the column separator joinEntryColumns inserts.
+	cockpitGutter = 3
+	// cockpitMinDetail is the narrowest right pane worth rendering; below it the
+	// body falls back to one full-width column.
+	cockpitMinDetail = 30
+	cockpitMinWidth  = 96
+	// cockpitMinHeight only has to leave the detail pane a few rows once the
+	// header and command line are reserved.
+	cockpitMinHeight = 20
+)
+
+// cockpitWidths splits the body. The roster is given enough width to stay
+// readable but is deliberately the smaller pane: it carries one line per
+// session, because the detail it used to expand inline now lives to its right.
+func cockpitWidths(width int) (int, int) {
+	left := width * 42 / 100
+	if left < 34 {
+		left = 34
+	}
+	if left > 56 {
+		left = 56
+	}
+	return left, width - left - cockpitGutter
 }
 
 func entryLines(entries []dashboardEntry, width int) []string {
@@ -381,7 +434,13 @@ func joinEntryColumns(left []dashboardEntry, right []string, leftWidth, rightWid
 		if i < len(right) {
 			r = right[i]
 		}
-		entry.text = padRightANSI(l, leftWidth) + "   " + ansi.Truncate(r, rightWidth, "…")
+		// A row whose right pane is empty is padded to nothing but trailing
+		// spaces, so drop the padding rather than emit a line of whitespace.
+		if strings.TrimSpace(r) == "" {
+			entry.text = l
+		} else {
+			entry.text = padRightANSI(l, leftWidth) + "   " + ansi.Truncate(r, rightWidth, "…")
+		}
 		entries = append(entries, entry)
 	}
 	return entries
@@ -392,6 +451,13 @@ func joinEntryColumns(left []dashboardEntry, right []string, leftWidth, rightWid
 // former panel border cost two rows and two columns; both are handed back to
 // the data, which is exactly what a 20-row phone cannot spare.
 func (m Model) sessionPanelEntries(width, budget int) []dashboardEntry {
+	return m.sessionPanelEntriesAt(width, budget, 0)
+}
+
+// sessionPanelEntriesAt renders the roster. forced pins the density rung; 0 lets
+// densityFor divide the budget. The cockpit pins it to one line per session
+// because the right pane owns the detail.
+func (m Model) sessionPanelEntriesAt(width, budget, forced int) []dashboardEntry {
 	if budget <= 0 || width <= 0 {
 		return nil
 	}
@@ -401,8 +467,10 @@ func (m Model) sessionPanelEntries(width, budget int) []dashboardEntry {
 		return []dashboardEntry{rule}
 	}
 	inner := budget - 1
-	overhead := m.sectionOverhead(visible)
-	density := densityFor(len(visible), inner, overhead)
+	density := forced
+	if density <= 0 {
+		density = densityFor(len(visible), inner, m.sectionOverhead(visible))
+	}
 	entries := m.sessionEntries(width, visible, density)
 	return append([]dashboardEntry{rule}, windowBlocks(entries, m.selected, inner)...)
 }
@@ -411,7 +479,6 @@ func (m Model) sessionPanelEntries(width, budget int) []dashboardEntry {
 // harness-independent by construction: they are cardinalities over
 // adapter.Session, not anything a provider printed.
 func (m Model) sessionsRule(width int, visible []int) string {
-	title := sectionStyle.Render("SESSIONS")
 	right := fmt.Sprintf("%d", len(m.sessions))
 	if m.filterActive {
 		right = fmt.Sprintf("%d/%d", len(visible), len(m.sessions))
@@ -421,12 +488,144 @@ func (m Model) sessionsRule(width int, visible []int) string {
 			right += fmt.Sprintf(" · %d ws", n)
 		}
 	}
-	right = hintStyle.Render(right)
+	return hairlineRule(sectionStyle.Render("SESSIONS"), hintStyle.Render(right), width)
+}
+
+// hairlineRule is the borderless section divider: a label, a thin rule filling
+// the gap, and an optional right-aligned annotation. It replaces the panel
+// borders everywhere, so the whole UI shares one section vocabulary.
+func hairlineRule(title, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if right == "" {
+		fill := width - ansi.StringWidth(title) - 1
+		if fill < 1 {
+			return ansi.Truncate(title, width, "…")
+		}
+		return title + " " + dividerStyle.Render(strings.Repeat("─", fill))
+	}
 	fill := width - ansi.StringWidth(title) - ansi.StringWidth(right) - 2
 	if fill < 1 {
 		return ansi.Truncate(title+" "+right, width, "…")
 	}
 	return title + " " + dividerStyle.Render(strings.Repeat("─", fill)) + " " + right
+}
+
+// cockpitLines renders the right pane: who the selected session is, where it
+// runs, what it was asked to do, and what it has most recently printed. It is
+// the surface that makes the dashboard answer "what is happening" without an
+// attach — the roster answers "what exists".
+func (m Model) cockpitLines(width, budget int) []string {
+	if budget <= 0 || width <= 0 {
+		return nil
+	}
+	sess, ok := m.selectedSession()
+	if !ok {
+		if m.filterActive {
+			return []string{hintStyle.Render("no session matches the filter")}
+		}
+		return []string{hintStyle.Render("no sessions yet — type a command or press e")}
+	}
+
+	lines := make([]string, 0, budget)
+	name := displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID))
+
+	// Space means "show me what this is doing", so a focused peek gives the
+	// output the entire pane rather than making it share with metadata that is
+	// one keystroke away.
+	if m.peekOpen {
+		lines = append(lines, hairlineRule(sectionStyle.Render("PEEK"), hintStyle.Render(name), width))
+		tail := boundedTailLines(m.peekText, budget-1, width)
+		if len(tail) == 0 {
+			tail = []string{hintStyle.Render("waiting for output…")}
+		}
+		return takeLines(append(lines, tail...), budget)
+	}
+
+	lines = append(lines, joinDashboardEnds(
+		toneForSession(sess).mark()+" "+titleStyle.Render(name),
+		hintStyle.Render(providerBadge(sess))+"  "+statusBadge(sess),
+		width,
+	))
+	lines = append(lines, hintStyle.Render(truncatePathLeft(homeRelativeCwd(sess.Cwd), width)))
+	for _, line := range m.cockpitProvenance(sess) {
+		lines = append(lines, ansi.Truncate(line, width, "…"))
+	}
+	if sess.PR != nil {
+		lines = append(lines, ansi.Truncate(
+			toneForPR(sess.PR.Status).mark()+" "+hintStyle.Render(fmt.Sprintf("pull request #%d %s",
+				sess.PR.Number, strings.ToLower(string(sess.PR.Status)))), width, "…"))
+	}
+	if sess.Pinned {
+		lines = append(lines, toneOf(tonePinned).mark()+" "+hintStyle.Render("pinned"))
+	}
+	if shared := liveWorkspaceCounts(m.sessions)[workspaceKey(sess.Cwd)]; shared > 1 {
+		lines = append(lines, ansi.Truncate(toneOf(toneWarn).mark()+
+			warnStyle.Render(fmt.Sprintf(" %d live sessions share this workspace", shared)), width, "…"))
+	}
+
+	if budget-len(lines) > 6 {
+		lines = append(lines, "")
+		lines = append(lines, hairlineRule(sectionStyle.Render("TASK"), "", width))
+		task := displaytext.Sanitize(taskSummaryText(sess))
+		if strings.TrimSpace(task) == "" {
+			task = "no task recorded"
+		}
+		for _, line := range strings.Split(ansi.Wrap(task, width, " -"), "\n") {
+			lines = append(lines, taskStyle.Render(line))
+			if len(lines) >= budget-4 {
+				break
+			}
+		}
+	}
+
+	remaining := budget - len(lines) - 2
+	if remaining < 1 {
+		return takeLines(lines, budget)
+	}
+	lines = append(lines, "")
+	lines = append(lines, hairlineRule(sectionStyle.Render("OUTPUT"), hintStyle.Render("Space focuses"), width))
+	tail := boundedTailLines(m.peekText, remaining, width)
+	if len(tail) == 0 {
+		hint := "waiting for output…"
+		if sess.ProcAlive == adapter.Exited {
+			hint = "stopped — Space resumes it in the background"
+		}
+		tail = []string{hintStyle.Render(hint)}
+	}
+	lines = append(lines, tail...)
+	return takeLines(lines, budget)
+}
+
+// cockpitProvenance is the identity block: resume fidelity, id, profile and any
+// command alias — the same harness-independent fields the compact rows carry,
+// given room to be spelled out.
+//
+// It returns lines rather than one string on purpose. Joined into a single row
+// this overflowed a 61-column pane and truncation silently ate the profile,
+// which is exactly the datum someone opens this pane to check. The detail pane's
+// abundant resource is vertical space, so it spends that instead.
+func (m Model) cockpitProvenance(sess adapter.Session) []string {
+	resume := "resumes exactly"
+	if resumeTone(sess).key == toneResumeRecent {
+		resume = "resumes most recent"
+	}
+	identity := resumeTone(sess).mark() + " " + hintStyle.Render(resume+" · "+displaytext.Sanitize(sess.ID))
+
+	settings := make([]string, 0, 2)
+	selectedProfile, effectiveProfile := m.profileLabels(sess)
+	if selectedProfile != "default" || effectiveProfile != "none" {
+		settings = append(settings, "profile "+displaytext.Sanitize(selectedProfile)+"→"+displaytext.Sanitize(effectiveProfile))
+	}
+	if alias := displaytext.Sanitize(sess.CommandAlias); alias != "" && alias != displaytext.Sanitize(sess.AgentType) {
+		settings = append(settings, "alias "+alias)
+	}
+	lines := []string{identity}
+	if len(settings) > 0 {
+		lines = append(lines, hintStyle.Render(strings.Join(settings, " · ")))
+	}
+	return lines
 }
 
 func countWorkspaces(sessions []adapter.Session) int {
@@ -625,9 +824,17 @@ func (m Model) sessionRowPrimary(sess adapter.Session, edge string, position int
 	}
 	name := displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID))
 	// At the densest rung there is no second line, so the task rides inline
-	// rather than being lost.
+	// rather than being lost — except in the cockpit, where the pane to the
+	// right is already showing the task in full and squeezing it in here only
+	// truncated the session name it has to share the row with.
 	if density == 1 {
-		if task := displaytext.Sanitize(taskSummaryText(sess)); task != "" {
+		if m.cockpitOpen() {
+			// The task is on the right, but a failure code is short and is the
+			// one thing you must not have to select a row to discover.
+			if detail := failureExitDetail(sess); detail != "" {
+				name += "  ·  " + detail
+			}
+		} else if task := displaytext.Sanitize(taskSummaryText(sess)); task != "" {
 			name += "  ·  " + task
 		}
 	}
@@ -650,7 +857,14 @@ func (m Model) rowTrailer(sess adapter.Session) string {
 		parts = append(parts, toneForPR(sess.PR.Status).mark()+hintStyle.Render(fmt.Sprintf("%d", sess.PR.Number)))
 	}
 	parts = append(parts, hintStyle.Render(providerBadge(sess)))
-	if m.layoutClass() != LayoutCompact {
+	// The spelled-out lifecycle word is dropped in two cases: a compact layout,
+	// which has no cells to spare, and the cockpit, where the pane to the right
+	// spells it out for the focused session and the roster is a navigation list.
+	// The tone glyph in the gutter carries liveness in both, so the fact
+	// survives and only its wording goes. Keeping the word in a 42-column
+	// cockpit roster truncated session names to nothing — a worse trade than
+	// dropping a label the adjacent pane already shows.
+	if m.layoutClass() != LayoutCompact && !m.cockpitOpen() {
 		parts = append(parts, statusBadge(sess))
 	}
 	parts = append(parts, ageText(sess, m.dashboardNow()))
@@ -775,12 +989,7 @@ func (m Model) peekPanelLines(width, budget int) []string {
 	if sess, ok := m.selectedSession(); ok {
 		name = firstNonEmpty(sess.DisplayName, sess.ID)
 	}
-	title := sectionStyle.Render("PEEK")
-	right := hintStyle.Render(displaytext.Sanitize(name))
-	rule := ansi.Truncate(title+" "+right, width, "…")
-	if fill := width - ansi.StringWidth(title) - ansi.StringWidth(right) - 2; fill >= 1 {
-		rule = title + " " + dividerStyle.Render(strings.Repeat("─", fill)) + " " + right
-	}
+	rule := hairlineRule(sectionStyle.Render("PEEK"), hintStyle.Render(displaytext.Sanitize(name)), width)
 	if budget == 1 {
 		return []string{rule}
 	}

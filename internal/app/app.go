@@ -655,14 +655,28 @@ func (m *Model) handleMovementKey(key string) (bool, tea.Cmd) {
 func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
 	prev := m.selected
 	m.moveSelection(delta)
-	if !m.peekOpen || m.selected == prev {
+	if m.selected == prev {
 		return nil
 	}
-	// The peek panel follows the cursor; keep the reply target in sync so a reply
-	// goes to the session the user is actually looking at (F36).
-	if sess, ok := m.selectedSession(); ok {
-		m.peekTargetAgent = sess.AgentType
-		m.peekTargetID = sess.ID
+	return m.refocusOutput()
+}
+
+// refocusOutput re-points the output surfaces at the newly selected session.
+//
+// The reply target moves only when the peek panel is open, because it is reply
+// routing and must stay pinned to the session the user opened (F36). The
+// captured tail moves whenever *some* surface is showing one, which now includes
+// the always-on cockpit pane — otherwise walking the roster in the wide layout
+// would leave the previous session's output under the new session's name.
+func (m *Model) refocusOutput() tea.Cmd {
+	if m.peekOpen {
+		if sess, ok := m.selectedSession(); ok {
+			m.peekTargetAgent = sess.AgentType
+			m.peekTargetID = sess.ID
+		}
+	}
+	if !m.peekOpen && !m.cockpitOpen() {
+		return nil
 	}
 	m.peekText = ""
 	return m.peekSelectedCmd()
@@ -701,12 +715,23 @@ func (m Model) peekFocusStep(now time.Time) (Model, tea.Cmd) {
 	if m.peekClock != nil {
 		now = m.peekClock()
 	}
-	if !m.peekOpen {
+	// The cockpit pane shows a tail without the peek panel being open, so it
+	// needs the same poll. Nothing else changes: the id-keyed rate limit still
+	// bounds captures to one per peekFocusInterval.
+	if !m.peekOpen && !m.cockpitOpen() {
 		return m, nil
 	}
 	sess, ok := m.selectedSession()
 	if !ok {
 		return m, nil
+	}
+	// A process that has exited will not print again, so its tail is captured
+	// once and then left alone. Without this the cockpit would poll a dead
+	// session forever for a result that cannot change.
+	if !m.peekOpen && sess.ProcAlive == adapter.Exited {
+		if _, captured := m.lastPeekAt[sess.ID]; captured {
+			return m, nil
+		}
 	}
 	if !m.shouldPollFocusedPeek(sess.ID, now) {
 		return m, nil
@@ -976,15 +1001,7 @@ func (m *Model) selectOrActivate(index int) tea.Cmd {
 		return m.attachSelectedCmd()
 	}
 	m.selected = index
-	if !m.peekOpen {
-		return nil
-	}
-	if sess, ok := m.selectedSession(); ok {
-		m.peekTargetAgent = sess.AgentType
-		m.peekTargetID = sess.ID
-	}
-	m.peekText = ""
-	return m.peekSelectedCmd()
+	return m.refocusOutput()
 }
 
 // handleMouse routes pointer input through exactly the same verbs the keyboard

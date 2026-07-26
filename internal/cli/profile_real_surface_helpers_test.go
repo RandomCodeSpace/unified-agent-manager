@@ -82,7 +82,10 @@ func runTodo7ProfilePTY(t *testing.T, binary string, env []string) ([]byte, []by
 	if _, err := io.WriteString(ptmx, "\x1b[Z"); err != nil {
 		t.Fatal(err)
 	}
-	readUntil("profile focused")
+	// Wait on the wizard's exact spelling. "profile focused" alone is now also a
+	// prefix of the dashboard's "profile focused→focused" provenance line, so the
+	// looser marker was satisfied by text captured before the wizard even opened.
+	readUntil("profile=focused")
 	if _, err := io.WriteString(ptmx, "\x1b"); err != nil {
 		t.Fatal(err)
 	}

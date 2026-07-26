@@ -36,7 +36,7 @@ func TestDashboardDesktopShowsOperationalMetadataWithoutDefaultSplitPane(t *test
 	for _, want := range []string{
 		"SESSIONS", "/ filter", "release-check", "codex", "RUNNING", "2h",
 		"verify the release pipeline", "/work/unified-agent-manager", "full-session-identity", "◇41",
-		"failed-tests", "claude", "EXIT 7", "3d",
+		"failed-tests", "claude", "exit 7", "3d",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("desktop dashboard missing %q:\n%s", want, view)
@@ -48,11 +48,104 @@ func TestDashboardDesktopShowsOperationalMetadataWithoutDefaultSplitPane(t *test
 	if lineContainsAll(view, "SESSIONS", "SELECTED") {
 		t.Fatalf("operations view must use the full list instead of a default selected split pane:\n%s", view)
 	}
-	// Every session gets its own detail, not just the one under the cursor.
-	if !strings.Contains(view, "repair integration tests") {
-		t.Fatalf("unselected sessions must still show their task:\n%s", view)
+	// The wide layout is a cockpit: the roster is one line per session and the
+	// selected session's detail lives in the pane beside it.
+	for _, want := range []string{"TASK", "OUTPUT", "resumes most recent", "pull request #41 open"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("cockpit pane missing %q:\n%s", want, view)
+		}
+	}
+	if !lineContainsAll(view, "SESSIONS", "release-check") {
+		t.Fatalf("the roster and the detail pane should share the top body row:\n%s", view)
 	}
 	assertBorderless(t, view)
+
+	// Narrow enough for one column: there the density ladder gives every
+	// session its own task line, not just the one under the cursor.
+	single := m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 40}).View()
+	if !strings.Contains(single, "repair integration tests") {
+		t.Fatalf("single-column layout must show an unselected session's task:\n%s", single)
+	}
+	assertBorderless(t, single)
+}
+
+// TestCockpitOnlyNeedsWidthNotHeight guards the reason cockpitOpen does not
+// reuse LayoutWide: LayoutWide demands 28 rows because it governs vertical
+// detail, but two columns need horizontal room. Tying them together left an
+// ordinary 100x26 window rendering one column with two thirds of the screen
+// blank.
+func TestCockpitOnlyNeedsWidthNotHeight(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{{ID: "a", AgentType: "codex", DisplayName: "only", Prompt: "work", ProcAlive: adapter.Alive}}
+
+	wideShort := m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 26})
+	if !wideShort.cockpitOpen() {
+		t.Fatal("a 100x26 terminal is wide enough for two panes")
+	}
+	if wideShort.layoutClass() == LayoutWide {
+		t.Fatal("fixture no longer exercises the case: 100x26 should not be LayoutWide")
+	}
+	if !lineContainsAll(wideShort.View(), "SESSIONS", "only") {
+		t.Fatalf("cockpit should render both panes on the top body row:\n%s", wideShort.View())
+	}
+
+	if narrow := m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 40}); narrow.cockpitOpen() {
+		t.Fatal("80 columns is not enough for two panes")
+	}
+	if squat := m.handleWindowSize(tea.WindowSizeMsg{Width: 120, Height: 12}); squat.cockpitOpen() {
+		t.Fatal("a 12-row terminal has no room for a detail pane")
+	}
+	// An unsized model must not be treated as a cockpit: layoutClass classifies
+	// it as Wide and component tests render it expecting one column.
+	if (Model{}).cockpitOpen() {
+		t.Fatal("an unsized model must not open the cockpit")
+	}
+}
+
+// TestCockpitFollowsTheCursorAndFocusesOnSpace pins the two behaviours that make
+// the pane trustworthy: it re-captures output when the selection moves (so the
+// tail never sits under the wrong name), and Space gives the output the whole
+// pane.
+func TestCockpitFollowsTheCursorAndFocusesOnSpace(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{
+		{ID: "a", AgentType: "codex", DisplayName: "first", Prompt: "one", ProcAlive: adapter.Alive},
+		{ID: "b", AgentType: "claude", DisplayName: "second", Prompt: "two", ProcAlive: adapter.Alive},
+	}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.peekText = "stale output from the first session"
+
+	// Moving the cursor must clear the stale tail and request a fresh capture,
+	// even though the peek panel was never opened.
+	moved := m
+	cmd := moved.moveSelectionPeek(1)
+	if moved.selected != 1 {
+		t.Fatalf("selection did not move: %d", moved.selected)
+	}
+	if moved.peekText != "" {
+		t.Fatalf("cockpit must drop the previous session's tail, got %q", moved.peekText)
+	}
+	if cmd == nil {
+		t.Fatal("cockpit must re-capture output when the selection moves")
+	}
+	// The reply target is peek-panel state and must not move with the cursor.
+	if moved.peekTargetID != "" {
+		t.Fatalf("reply target should stay unset while the peek panel is closed, got %q", moved.peekTargetID)
+	}
+
+	unfocused := m.View()
+	if !strings.Contains(unfocused, "TASK") || !strings.Contains(unfocused, "OUTPUT") {
+		t.Fatalf("unfocused cockpit should show both sections:\n%s", unfocused)
+	}
+	focused := m
+	focused.peekOpen = true
+	view := focused.View()
+	if !lineContainsAll(view, "SESSIONS", "PEEK") {
+		t.Fatalf("a focused cockpit should title its pane PEEK beside the roster:\n%s", view)
+	}
+	if strings.Contains(view, "TASK") {
+		t.Fatalf("a focused cockpit gives the output the whole pane:\n%s", view)
+	}
 }
 
 // assertBorderless pins the standing preference for a borderless dashboard: no
@@ -180,9 +273,6 @@ func TestDashboardTapResolvesToTheSessionUnderThePointer(t *testing.T) {
 		t.Fatalf("expected every session to be tappable, got %d", len(targets))
 	}
 	for index, rows := range targets {
-		if len(rows) < 2 {
-			t.Fatalf("session %d should be tappable on every line of its block, got %d", index, len(rows))
-		}
 		for _, row := range rows {
 			got, ok := m.dashboardHitSession(row)
 			if !ok || got != index {
