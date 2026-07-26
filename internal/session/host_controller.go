@@ -121,6 +121,7 @@ func (h *host) handleRoleCommand(client *attachClient, payload []byte) bool {
 		return false
 	}
 	if command.Action == actionRequestControl {
+		h.notifyControlRequest(client)
 		return true
 	}
 
@@ -156,6 +157,34 @@ func (h *host) handleRoleCommand(client *attachClient, payload []byte) bool {
 		h.enqueueClient(controller, serverMessage{kind: serverFramePTY, payload: repaint})
 	}
 	return true
+}
+
+// notifyControlRequest tells the current controller that another client is
+// waiting for the session. Transfer stays controller-owned, so the request is
+// only ever a notice — but until it was delivered, `prefix r` printed
+// "control requested" to the asker and reached nobody at all.
+//
+// It is delivered as terminal output rather than a control event: the client
+// rejects control events it does not know, and a viewer old enough not to know
+// this one would drop its connection instead of ignoring it.
+func (h *host) notifyControlRequest(client *attachClient) {
+	h.mu.Lock()
+	controller := h.registry.controller
+	requesterID := client.id
+	var size terminalSize
+	if controller != nil {
+		size = controller.latestSize
+	}
+	h.mu.Unlock()
+	if controller == nil || controller == client || !controller.ready {
+		return
+	}
+	notice := paintStatus(size.cols, size.rows, requesterID+" requested control; prefix o transfers it")
+	h.enqueueClient(controller, serverMessage{kind: serverFramePTY, payload: []byte(notice)})
+	log.Diagnostic(log.DiagnosticEvent{
+		Event: "control.requested", Session: h.name, ClientID: requesterID,
+		Protocol: int(client.version), Role: string(client.assignedRole), Reason: "control_requested",
+	})
 }
 
 func (h *host) applyPTYSize(size terminalSize) {
