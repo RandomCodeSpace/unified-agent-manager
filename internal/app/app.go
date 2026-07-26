@@ -375,6 +375,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case promptEditedMsg:
 		return m.handlePromptEdited(msg), nil
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -538,6 +540,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if handled, cmd := m.handleActionKey(key); handled {
+		return m, cmd
+	}
+	if handled, cmd := m.handleChipKey(key); handled {
 		return m, cmd
 	}
 	m.appendKeyInput(msg)
@@ -919,6 +924,90 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// chipPositionFor maps a pressed key to the chip position it addresses, or -1
+// when the key is not a chip digit.
+func chipPositionFor(key string) int {
+	if len(key) != 1 {
+		return -1
+	}
+	return strings.IndexByte(chipDigits, key[0])
+}
+
+// handleChipKey implements zero-chord addressing. A digit jumps to the session
+// wearing that chip; pressing it again attaches. It is deliberately the same
+// select-then-activate verb a tap runs, so a phone and a desktop share one
+// grammar instead of the phone getting a degraded copy of the keyboard one.
+//
+// Digits bind only on an empty composer, exactly like "e" and "?" already do,
+// and only when the chip is actually on screen — an out-of-range digit falls
+// through and types, so a smaller roster never swallows input. Letters were the
+// obvious choice here and are the wrong one: stealing nine of them would break
+// dispatching any prompt that happens to start with one.
+func (m *Model) handleChipKey(key string) (bool, tea.Cmd) {
+	if m.peekOpen || m.filterActive || m.renaming || m.wizard {
+		return false, nil
+	}
+	if strings.TrimSpace(m.input) != "" {
+		return false, nil
+	}
+	position := chipPositionFor(key)
+	if position < 0 {
+		return false, nil
+	}
+	visible := m.visibleSessionIndices()
+	if position >= len(visible) {
+		return false, nil
+	}
+	return true, m.selectOrActivate(visible[position])
+}
+
+// selectOrActivate is the shared verb behind a chip press and a mouse tap: the
+// first hit moves the cursor, a second hit on the session already under it
+// attaches. Selection changes keep the peek panel and its reply target in sync
+// the same way moveSelectionPeek does, so a tap while peeking cannot misroute a
+// subsequent reply.
+func (m *Model) selectOrActivate(index int) tea.Cmd {
+	if index < 0 || index >= len(m.sessions) {
+		return nil
+	}
+	if m.selected == index {
+		return m.attachSelectedCmd()
+	}
+	m.selected = index
+	if !m.peekOpen {
+		return nil
+	}
+	if sess, ok := m.selectedSession(); ok {
+		m.peekTargetAgent = sess.AgentType
+		m.peekTargetID = sess.ID
+	}
+	m.peekText = ""
+	return m.peekSelectedCmd()
+}
+
+// handleMouse routes pointer input through exactly the same verbs the keyboard
+// uses. A left press resolves the row under the pointer via dashboardHitSession
+// — which recomposes the body rather than trusting a cached hit map, so it can
+// never select a session that has since moved — and the wheel walks the cursor.
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		return m, m.moveSelectionPeek(-1)
+	case tea.MouseButtonWheelDown:
+		return m, m.moveSelectionPeek(1)
+	case tea.MouseButtonLeft:
+		index, ok := m.dashboardHitSession(msg.Y)
+		if !ok {
+			return m, nil
+		}
+		return m, m.selectOrActivate(index)
+	}
+	return m, nil
 }
 
 // handleEscKey makes Esc back out one level per press: close the peek panel,
@@ -1662,34 +1751,7 @@ func (m Model) persistGroupToggleCmd(sessions []adapter.Session, grouped bool, g
 	}
 }
 
-// ─── theme ───────────────────────────────────────────────────────────────
-// Borderless adaptive palette: one teal accent, semantic status colors, and
-// AdaptiveColor everywhere so the UI reads well on light and dark terminals.
-
-var (
-	accentColor  = lipgloss.AdaptiveColor{Light: "#0F766E", Dark: "#2DD4BF"}
-	textColor    = lipgloss.AdaptiveColor{Light: "#0F172A", Dark: "#E8EDF4"}
-	mutedColor   = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#8B97AC"}
-	dividerColor = lipgloss.AdaptiveColor{Light: "#D6DEE8", Dark: "#2B3547"}
-	taskColor    = lipgloss.AdaptiveColor{Light: "#475569", Dark: "#AEBACD"}
-	liveColor    = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
-	failColor    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
-	warnColor    = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
-)
-
-var (
-	brandStyle    = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(textColor)
-	sectionStyle  = lipgloss.NewStyle().Bold(true).Foreground(mutedColor)
-	hintStyle     = lipgloss.NewStyle().Foreground(mutedColor)
-	dividerStyle  = lipgloss.NewStyle().Foreground(dividerColor)
-	taskStyle     = lipgloss.NewStyle().Foreground(taskColor)
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
-	warnStyle     = lipgloss.NewStyle().Foreground(warnColor)
-)
-
-// bar is the accent rule that marks the brand and command lines.
-func bar() string { return brandStyle.Render("▌") }
+// The palette and the tone table live in theme.go.
 
 // LayoutClass names the three responsive dashboard geometries. It is derived
 // from the current terminal dimensions; Model deliberately stores no parallel
@@ -1934,22 +1996,6 @@ func boundedNonBlankLines(s string, width int) []string {
 			continue
 		}
 		lines = append(lines, ansi.Truncate(line, width, "…"))
-	}
-	return lines
-}
-
-func joinColumns(left, right []string, leftWidth, rightWidth, budget int) []string {
-	n := min(budget, max(len(left), len(right)))
-	lines := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		l, r := "", ""
-		if i < len(left) {
-			l = left[i]
-		}
-		if i < len(right) {
-			r = right[i]
-		}
-		lines = append(lines, padRightANSI(l, leftWidth)+"   "+ansi.Truncate(r, rightWidth, "…"))
 	}
 	return lines
 }
@@ -2303,14 +2349,18 @@ func absCwd(cwd string) string {
 
 func (m Model) renderHelp() string {
 	rows := []string{
+		"1-9,0  jump to that chip   ·  press it again to attach",
+		"click / tap a row  ·  same as its chip   ·  wheel scrolls the cursor",
 		"↑/↓  move   Shift+↑/↓  reorder   Enter/→  attach/resume",
 		"Space  peek running / resume stopped",
-		"/  filter sessions when the command line is empty",
+		"/  filter sessions when the command line is empty (re-chips the roster)",
 		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
 		"Ctrl+X  stop+remove / restart    Ctrl+S  group-by-dir",
 		"e  new session       Esc  back / quit     Ctrl+C  quit anywhere",
 		"in session:  ← detach (when input empty)    Ctrl+B d  detach",
 		"dispatch:  @agent:alias #name prompt   (alias, name & prompt optional)",
+		"legend  ● live  ○ stopped  ✕ failed  ★ pinned  ◇◆◐⊘ pr  ⇄ exact resume",
+		"UAM_NO_MOUSE=1 restores native terminal text selection",
 	}
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("Keys:") + "\n")
@@ -2380,30 +2430,14 @@ func (m Model) wizardProfileLabel() string {
 	return "default:none"
 }
 
-// liveGlyphStyle / failGlyphStyle are hoisted to package vars so renderRow does
-// not allocate a fresh lipgloss.Style per row per frame. They keep AdaptiveColor
-// (resolved at render time, not pre-baked) so the palette still adapts to
-// light/dark terminals (F58).
-var (
-	liveGlyphStyle = lipgloss.NewStyle().Bold(true).Foreground(liveColor)
-	failGlyphStyle = lipgloss.NewStyle().Bold(true).Foreground(failColor)
-)
-
 // sessionGlyph uses process liveness and recorded exit metadata rather than the
 // broad State enum. Explicit stops remain neutral even when SIGTERM produced a
-// negative compatibility exit code.
+// negative compatibility exit code. Both the glyph and its style come from the
+// tone table (theme.go), so every surface speaks one visual vocabulary and the
+// glyph-distinctness invariant covers this path too.
 func sessionGlyph(s adapter.Session) (string, lipgloss.Style) {
-	switch {
-	case s.ProcAlive == adapter.Alive:
-		return "⟳", liveGlyphStyle
-	case failureExitDetail(s) != "":
-		return "!", failGlyphStyle
-	default:
-		// Clean exits and explicit stops are both stopped and resumable. An
-		// explicit SIGTERM is not a provider failure merely because its stored
-		// compatibility exit code is -1.
-		return "◦", hintStyle
-	}
+	t := toneForSession(s)
+	return t.glyph, t.style()
 }
 
 func failureExitDetail(s adapter.Session) string {
@@ -2419,32 +2453,21 @@ func failureExitDetail(s adapter.Session) string {
 // prStatusDot returns a distinct glyph per PR status (not color-only) so the PR
 // state survives a monochrome terminal or a screen scrape: open=hollow circle,
 // merged=filled circle, draft=half circle, closed=cross (F26).
+// prStatusDot and prStatusStyle both resolve through the tone table, which is
+// what keeps a PR dot from being mistaken for a lifecycle dot: the table's
+// distinctness invariant spans both families, so merged (◆) can never collide
+// with live (●) the way the previous hand-written glyph sets did.
 func prStatusDot(s adapter.PRStatus) string {
-	switch s {
-	case adapter.PROpen:
-		return "○"
-	case adapter.PRMerged:
-		return "●"
-	case adapter.PRDraft:
-		return "◐"
-	case adapter.PRClosed:
-		return "✕"
-	default:
+	if s == "" {
 		return " "
 	}
+	return toneForPR(s).glyph
 }
 
 // prStatusStyle colours the PR dot by status. Colour is a secondary cue; the
 // glyph in prStatusDot is the primary, color-independent signal (F26).
 func prStatusStyle(s adapter.PRStatus) lipgloss.Style {
-	switch s {
-	case adapter.PRMerged:
-		return liveGlyphStyle
-	case adapter.PRClosed:
-		return failGlyphStyle
-	default:
-		return hintStyle
-	}
+	return toneForPR(s).style()
 }
 
 // truncate clips s to at most n display columns, measuring with lipgloss.Width

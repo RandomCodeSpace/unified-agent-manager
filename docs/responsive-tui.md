@@ -20,7 +20,11 @@ added without replacing it.
 Every row includes its provider, evidence-based lifecycle label, and age since
 the Managed Session was created. Age is deliberately not an activity indicator:
 live discovery timestamps change on every refresh and cannot prove that an agent
-is busy or idle.
+is busy or idle. The age is additionally tinted along a four-stop ramp (fresh
+under an hour, recent under a day, old under a week, then stale), which colours
+the same creation-time fact rather than introducing an activity claim —
+`adapter.Session.LastChange` is re-stamped by every discovery scan and so cannot
+support one.
 
 Attaching to Running reconnects to the existing host. Acting on Stopped resumes
 the provider when supported. If that resume can only select the provider's most
@@ -33,9 +37,44 @@ The layout is derived from the current terminal dimensions on every resize.
 
 | Layout | Geometry | Operations view | Peek view |
 |---|---|---|---|
-| **Wide** | At least 96 columns and 28 rows | Full-width list; the selected row expands with task, Workspace, exact ID, and PR. | Session list remains beside the output tail. |
-| **Standard** | At least 58 columns and 24 rows, but below Wide | Full-width list with an expanded selected row. | Output tail replaces the list so it has useful width. |
-| **Compact** | Fewer than 58 columns or fewer than 24 rows | Ordinary rows use one line; the selected row uses a second task line. | Output tail becomes the primary surface. |
+| **Wide** | At least 96 columns and 28 rows | Borderless full-width list at the density the row budget affords; every session shows the same fields. | Session list remains beside the output tail. |
+| **Standard** | At least 58 columns and 24 rows, but below Wide | Borderless full-width list; full session IDs are retained. | Output tail replaces the list so it has useful width. |
+| **Compact** | Fewer than 58 columns or fewer than 24 rows | Same density ladder; the lifecycle word yields to its glyph and IDs shorten to an eight-character prefix. | Output tail becomes the primary surface. |
+
+### Density ladder
+
+Row height is not fixed per layout. `densityFor(visibleCount, budget, overhead)`
+divides the body's remaining lines among the visible sessions and returns one,
+two, or three lines per session, applied uniformly:
+
+| Rung | Lines per session | Adds |
+|---|---|---|
+| 1 | 1 | Chip, lifecycle glyph, pin, name with the task inline, PR mark, provider, lifecycle word (non-compact), dwell |
+| 2 | 2 | The task summary on its own line, including any failure detail |
+| 3 | 3 | Workspace path, profile `selected→effective` (omitted when it is the empty `default→none`), resume fidelity, command alias when it differs from the provider, session ID |
+
+Section headings and workspace-contention warnings are counted as overhead
+*before* the rung is chosen, so the chosen density always fits whenever one line
+per session would fit. Blocks are atomic: windowing snaps the viewport back to a
+block boundary rather than rendering a session's task line with no name above it.
+
+### Addressing without modifier keys
+
+The first ten visible sessions wear a chip (`1`-`9`, then `0`). Pressing a chip
+moves the cursor to it; pressing the same chip again attaches. A mouse click or
+a phone tap resolves through the same verb — any line of a block, including its
+task and provenance lines, resolves to that block's session — and the wheel
+walks the selection. `/` narrows the roster and re-chips it, which is how rosters
+larger than ten are addressed.
+
+Digits bind only on an empty composer, and only when the chip is actually on
+screen: an unassigned digit is ordinary text, so a small roster never swallows
+input. Letters were deliberately not used — taking nine of them would break
+dispatching any prompt that starts with one.
+
+Mouse reporting is on by default because it is what makes the dashboard usable
+by touch. It takes over the terminal's native drag-to-select copying, so
+`UAM_NO_MOUSE=1` disables it.
 
 The prompt is reserved at the bottom before the remaining rows are allocated.
 The New Session wizard is a primary surface in all layouts, so every step remains
@@ -228,8 +267,15 @@ never persisted.
 ## Accessibility and no-color operation
 
 - `NO_COLOR` disables styling even when the terminal advertises color.
-- Lifecycle and pull-request states have distinct glyphs, so meaning is not
-  encoded by color alone.
+- Every semantic mark is defined in a single tone table as a colour paired with
+  a distinct one-cell glyph and text attributes. A unit test asserts that each
+  meaning-bearing tone owns a glyph, that those glyphs are pairwise distinct and
+  exactly one cell wide, and that purely decorative tones (the dwell ramp) own no
+  glyph at all — so no datum can be encoded by colour alone, and a two-cell glyph
+  cannot silently shift the columns to its right.
+- No surface paints a background or uses reverse video: the selected session is
+  marked by an accent edge bar down the left of its block, which cannot bleed
+  across the frame when a styled run is truncated.
 - Names, paths, prompts, headings, and status text are sanitized before display
   so stored control sequences cannot alter the terminal.
 - Width calculations account for emoji, combining characters, and CJK text.

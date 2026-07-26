@@ -121,6 +121,9 @@ uam profile effective <session-id> [--json]
 
 | Key | Action |
 |---|---|
+| `1`–`9`, `0` | Jump to that session's chip; press the same digit again to attach |
+| Click / tap a row | Same as its chip — first tap selects, second attaches |
+| Wheel up / down | Move selection |
 | `↑` / `↓` | Move selection |
 | `Enter` / `→` | Attach selected session |
 | Type prompt + `Enter` | Dispatch to the default agent |
@@ -139,12 +142,32 @@ uam profile effective <session-id> [--json]
 | `Esc` | Close overlays, clear input, or quit |
 | `Ctrl+C` | Quit from anywhere, including modals |
 
-The dashboard responds to every terminal resize. Operations always use a
-full-width, bordered session list; the selected row expands in place with its
-task, Workspace, identity, and pull request. Wide terminals split only when Peek
-is open. Compact or keyboard-constrained mobile terminals keep ordinary rows to
-one line and expand the selected row to two. See
-[Responsive TUI design and operations](docs/responsive-tui.md) for layout
+The dashboard responds to every terminal resize. Operations use a borderless,
+full-width session list headed by a rule that carries the roster count, and a
+header strip of fleet vitals (`●` live, `✕` failed, `○` stopped, `★` pinned,
+`◇` carrying a PR) that degrades category by category rather than vanishing on a
+narrow screen. Wide terminals split only when Peek is open.
+
+Rows are laid out by a **density ladder** rather than a fixed height: the body's
+line budget is divided evenly among the visible sessions, so a few sessions on a
+phone each show name, task, workspace, profile, resume fidelity and identity,
+while a large roster on a wide terminal collapses to one dense line each with
+the task inline. Detail is no longer a property of the cursor — every session
+shows the same fields as every other one.
+
+Every mark comes from a single tone table: a datum is never carried by colour
+alone, so a monochrome terminal, an eight-colour palette or `NO_COLOR` loses hue
+and nothing else. The right-aligned age is now tinted along a four-stop ramp
+(fresh under an hour, recent under a day, old under a week, then stale) so old
+inventory reads at a glance. Age remains derived from creation time, not from
+liveness discovery — see the note in `internal/app/fleet.go` for why the
+apparently better `LastChange` field cannot carry it.
+
+Mouse reporting is enabled so the dashboard is tappable on a phone. Set
+`UAM_NO_MOUSE=1` to turn it off and restore the terminal's native
+drag-to-select text copying.
+
+See [Responsive TUI design and operations](docs/responsive-tui.md) for layout
 thresholds, filtering, mobile guidance, lifecycle labels, and accessibility.
 
 ## Attached sessions

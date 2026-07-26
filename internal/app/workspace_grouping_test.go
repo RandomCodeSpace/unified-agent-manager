@@ -87,7 +87,7 @@ func TestGroupedViewShowsBoundedWorkspaceHeadingAndLiveSharingWarning(t *testing
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 20})
 	view := m.View()
 	assertViewGeometry(t, view, 44, 20)
-	for _, want := range []string{"alpha-workspace", "3", "⚠ 2 sessions share this workspace"} {
+	for _, want := range []string{"alpha-workspace", "3", "▲ 2 sessions share this workspace"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("grouped view missing %q:\n%s", want, view)
 		}
@@ -104,7 +104,7 @@ func TestGroupedViewCountsLiveWorkspaceSharingAcrossPinPartitions(t *testing.T) 
 	}, true)
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	view := m.View()
-	if got := strings.Count(view, "⚠ 2 sessions share this workspace"); got != 1 {
+	if got := strings.Count(view, "▲ 2 sessions share this workspace"); got != 1 {
 		t.Fatalf("sharing count must span pin partitions and render once, got %d:\n%s", got, view)
 	}
 }

@@ -167,17 +167,20 @@ func TestViewShowsCompactUAMBrandingAndDashboard(t *testing.T) {
 	}
 }
 
-func TestViewUsesBorderedSessionsPanel(t *testing.T) {
+// TestViewUsesBorderlessSessionsRule replaces the bordered-panel contract. The
+// box cost two rows and two columns for no information; a single divider rule
+// carrying the roster count says more in one row, and the reclaimed budget goes
+// to the density ladder.
+func TestViewUsesBorderlessSessionsRule(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "clean", Cwd: "/tmp/repo", ProcAlive: adapter.Alive}}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 
 	view := m.View()
-	for _, want := range []string{"╭─ SESSIONS", "│", "╰─"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("view should render a complete sessions panel, missing %q: %s", want, view)
-		}
+	if !lineContainsAll(view, "SESSIONS", "─", "1") {
+		t.Fatalf("view should render a sessions rule with the roster count: %s", view)
 	}
+	assertBorderless(t, view)
 }
 
 func TestViewIsInformationRichAndBoundedOnNarrowScreens(t *testing.T) {
@@ -189,7 +192,7 @@ func TestViewIsInformationRichAndBoundedOnNarrowScreens(t *testing.T) {
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
 
 	view := m.View()
-	for _, want := range []string{"SESSIONS", "RUNNING", "STOPPED", "active-one", "old-one", "fixing spacing", "codex", "claude"} {
+	for _, want := range []string{"SESSIONS", "●", "○", "active-one", "old-one", "fixing spacing", "codex", "claude"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("narrow view missing %q:\n%s", want, view)
 		}

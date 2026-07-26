@@ -34,23 +34,45 @@ func TestDashboardDesktopShowsOperationalMetadataWithoutDefaultSplitPane(t *test
 	view := m.View()
 	assertViewGeometry(t, view, 120, 40)
 	for _, want := range []string{
-		"SESSIONS", "2 sessions", "/ filter", "release-check", "codex", "RUNNING", "2h",
-		"verify the release pipeline", "/work/unified-agent-manager", "full-session-identity", "PR #41",
+		"SESSIONS", "/ filter", "release-check", "codex", "RUNNING", "2h",
+		"verify the release pipeline", "/work/unified-agent-manager", "full-session-identity", "◇41",
 		"failed-tests", "claude", "EXIT 7", "3d",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("desktop dashboard missing %q:\n%s", want, view)
 		}
 	}
+	if !lineContainsAll(view, "SESSIONS", "2") {
+		t.Fatalf("the sessions rule must carry the roster count:\n%s", view)
+	}
 	if lineContainsAll(view, "SESSIONS", "SELECTED") {
 		t.Fatalf("operations view must use the full list instead of a default selected split pane:\n%s", view)
 	}
-	if !strings.ContainsAny(view, "╭┌") || !strings.ContainsAny(view, "╯┘") {
-		t.Fatalf("dashboard should render a bordered sessions panel:\n%s", view)
+	// Every session gets its own detail, not just the one under the cursor.
+	if !strings.Contains(view, "repair integration tests") {
+		t.Fatalf("unselected sessions must still show their task:\n%s", view)
+	}
+	assertBorderless(t, view)
+}
+
+// assertBorderless pins the standing preference for a borderless dashboard: no
+// box-drawing corners or verticals anywhere in the frame. The horizontal rule
+// glyph is allowed — it is a divider, not a border.
+func assertBorderless(t *testing.T, view string) {
+	t.Helper()
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "┌", "┐", "└", "┘", "│", "├", "┤"} {
+		if strings.Contains(view, glyph) {
+			t.Fatalf("dashboard should be borderless, found %q:\n%s", glyph, view)
+		}
 	}
 }
 
-func TestDashboardCompactUsesOneLineRowsAndTwoLineSelection(t *testing.T) {
+// TestDashboardCompactSpendsItsBudgetOnEverySessionEqually replaces the older
+// expectation that only the selected row carried detail. The density ladder
+// divides the body budget uniformly, so a small roster on a small screen shows
+// every session's task rather than making the operator walk the cursor to read
+// them one at a time.
+func TestDashboardCompactSpendsItsBudgetOnEverySessionEqually(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
 	m := NewWithDeps(nil, nil)
 	m.now = func() time.Time { return now }
@@ -62,15 +84,130 @@ func TestDashboardCompactUsesOneLineRowsAndTwoLineSelection(t *testing.T) {
 
 	view := m.View()
 	assertViewGeometry(t, view, 44, 12)
-	for _, want := range []string{"╭▸", "╰─", "selected", "codex", "RUNNING", "8m", "fix copy and paste", "ordinary", "claude", "STOPPED", "1h"} {
+	for _, want := range []string{
+		"▌", "1", "2", "selected", "codex", "8m", "fix copy and paste",
+		"ordinary", "claude", "1h", "this task stays collapsed",
+	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("compact dashboard missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "this task stays collapsed") {
-		t.Fatalf("ordinary compact rows must stay one line:\n%s", view)
+	// Compact trades the spelled-out lifecycle for its glyph — the only datum
+	// the narrow layout drops, and it drops the word, not the fact.
+	if !strings.Contains(view, "●") || !strings.Contains(view, "○") {
+		t.Fatalf("compact rows must still carry a lifecycle glyph:\n%s", view)
 	}
+	if strings.Contains(view, "RUNNING") || strings.Contains(view, "STOPPED") {
+		t.Fatalf("compact rows should not spend cells on the lifecycle word:\n%s", view)
+	}
+	assertBorderless(t, view)
 	assertBottomContains(t, view, "›")
+}
+
+// TestDashboardChipsAddressTheFirstTenVisibleSessions pins the zero-chord
+// addressing contract: a digit is printed next to each of the first ten visible
+// sessions, pressing it moves the cursor there, and pressing it again attaches.
+func TestDashboardChipsAddressTheFirstTenVisibleSessions(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	for i := 0; i < 12; i++ {
+		m.sessions = append(m.sessions, adapter.Session{
+			ID: fmt.Sprintf("id-%d", i), AgentType: "codex",
+			DisplayName: fmt.Sprintf("session-%d", i), ProcAlive: adapter.Alive,
+		})
+	}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	if got := chipFor(0); got != "1" {
+		t.Fatalf("first chip = %q, want \"1\"", got)
+	}
+	if got := chipFor(9); got != "0" {
+		t.Fatalf("tenth chip = %q, want \"0\"", got)
+	}
+	if got := chipFor(10); got != " " {
+		t.Fatalf("eleventh session should have no chip, got %q", got)
+	}
+
+	// A chip press moves the cursor; the same chip again attaches.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
+	moved := next.(Model)
+	if moved.selected != 2 {
+		t.Fatalf("chip 3 should select the third visible session, got %d", moved.selected)
+	}
+	if moved.input != "" {
+		t.Fatalf("a chip press must not leak into the composer, got %q", moved.input)
+	}
+
+	// An out-of-range digit is text, not navigation, so a small roster never
+	// swallows input.
+	small := NewWithDeps(nil, nil)
+	small.sessions = []adapter.Session{{ID: "only", AgentType: "codex", DisplayName: "only", ProcAlive: adapter.Alive}}
+	small = small.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
+	typed, _ := small.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("7")})
+	if got := typed.(Model).input; got != "7" {
+		t.Fatalf("an unassigned digit should type into the composer, got %q", got)
+	}
+
+	// A digit must never steal a keystroke from a non-empty composer.
+	busy := m
+	busy.input = "fix"
+	after, _ := busy.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
+	if got := after.(Model).input; got != "fix3" {
+		t.Fatalf("digits must be text once the composer is non-empty, got %q", got)
+	}
+}
+
+// TestDashboardTapResolvesToTheSessionUnderThePointer pins the property that
+// makes the dashboard usable on a phone: a tap and a chip press are the same
+// verb, and a tap on any line of a block — including its task and provenance
+// lines — resolves to that block's session.
+func TestDashboardTapResolvesToTheSessionUnderThePointer(t *testing.T) {
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{
+		{ID: "a", AgentType: "codex", DisplayName: "first", Prompt: "one", ProcAlive: adapter.Alive},
+		{ID: "b", AgentType: "claude", DisplayName: "second", Prompt: "two", ProcAlive: adapter.Alive},
+		{ID: "c", AgentType: "omp", DisplayName: "third", Prompt: "three", ProcAlive: adapter.Alive},
+	}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	entries := m.dashboardBodyEntries(100, 30)
+	targets := map[int][]int{}
+	for row, entry := range entries {
+		if entry.sessionIndex >= 0 {
+			targets[entry.sessionIndex] = append(targets[entry.sessionIndex], row+dashboardHeaderLines)
+		}
+	}
+	if len(targets) != 3 {
+		t.Fatalf("expected every session to be tappable, got %d", len(targets))
+	}
+	for index, rows := range targets {
+		if len(rows) < 2 {
+			t.Fatalf("session %d should be tappable on every line of its block, got %d", index, len(rows))
+		}
+		for _, row := range rows {
+			got, ok := m.dashboardHitSession(row)
+			if !ok || got != index {
+				t.Fatalf("tap on row %d resolved to (%d,%v), want session %d", row, got, ok, index)
+			}
+		}
+	}
+
+	// The header is not a session, and neither is a row past the body.
+	if _, ok := m.dashboardHitSession(0); ok {
+		t.Fatalf("a tap on the header must not select a session")
+	}
+	if _, ok := m.dashboardHitSession(39); ok {
+		t.Fatalf("a tap on the composer must not select a session")
+	}
+
+	// A tap selects; a second tap on the same session attaches.
+	row := targets[2][0]
+	next, _ := m.Update(tea.MouseMsg{Y: row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if got := next.(Model).selected; got != 2 {
+		t.Fatalf("tap should select session 2, got %d", got)
+	}
+	if _, cmd := next.(Model).Update(tea.MouseMsg{Y: row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}); cmd == nil {
+		t.Fatalf("a second tap on the selected session should attach")
+	}
 }
 
 func TestDashboardFilterUsesEmptyPromptSlashAndPreservesPromptSlash(t *testing.T) {
@@ -144,7 +281,7 @@ func TestDashboardFilterShowsNoMatchesAndMatchesLifecycleWorkspaceAndTask(t *tes
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("definitely absent")})
 	m = model.(Model)
 	view := m.View()
-	if !strings.Contains(view, "No sessions match") || !strings.Contains(view, "0/2 sessions") {
+	if !strings.Contains(view, "No sessions match") || !strings.Contains(view, "0/2") {
 		t.Fatalf("empty filter result needs an explicit state and matched count:\n%s", view)
 	}
 }
@@ -243,7 +380,7 @@ func TestDashboardTinyKeyboardLayoutAndGroupedFilterStayBounded(t *testing.T) {
 	m = model.(Model)
 	view := m.View()
 	assertViewGeometry(t, view, 44, 10)
-	for _, want := range []string{"1/2 sessions", "WORKSPACE", "1/2", "⚠ 2 sessions share this workspace", "release", "codex", "RUNNING", "ship", "›"} {
+	for _, want := range []string{"1/2", "▸", "▲ 2 sessions share this workspace", "release", "codex", "ship", "›"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("tiny grouped filter missing %q:\n%s", want, view)
 		}
@@ -276,11 +413,13 @@ func TestDashboardWorkspaceCountsAreScopedToLifecycleAndPinSections(t *testing.T
 	}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	view := m.View()
-	if got := strings.Count(view, "WORKSPACE shared"); got != 2 {
+	// One heading per lifecycle partition, each naming its partition so the
+	// repeated workspace name reads as intent rather than as a render fault.
+	if got := strings.Count(view, "▸"); got != 2 {
 		t.Fatalf("workspace should have one heading per lifecycle section, got %d:\n%s", got, view)
 	}
-	if strings.Contains(view, "WORKSPACE shared  2") {
-		t.Fatalf("workspace heading must not claim rows from a different lifecycle section:\n%s", view)
+	if !strings.Contains(view, "shared · live") || !strings.Contains(view, "shared · stopped") {
+		t.Fatalf("each heading must name its lifecycle partition:\n%s", view)
 	}
 }
 
@@ -293,7 +432,10 @@ func TestDashboardSelectedIdentityAndPRSurviveLongWorkspaceAtStandardWidth(t *te
 	}}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	view := m.View()
-	for _, want := range []string{"cwd /home/developer", "id 12345678-1234-1234-1234-123456789abc", "PR #99"} {
+	// The path is the only unbounded field on the provenance line, so it is the
+	// one that yields — from the front, keeping the segments that identify the
+	// workspace — while the id and the PR mark survive intact.
+	for _, want := range []string{"needs/truncation", "12345678-1234-1234-1234-123456789abc", "◆99"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("selected metadata lost %q behind long workspace:\n%s", want, view)
 		}

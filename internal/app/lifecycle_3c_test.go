@@ -157,8 +157,10 @@ func TestRunningStoppedLabelsAcrossResponsiveAndGroupedRenderers(t *testing.T) {
 					t.Fatalf("legacy lifecycle wording remains: %s", out)
 				}
 				if size.width == 44 {
-					if !strings.Contains(strings.ToLower(out), "stopped") {
-						t.Fatalf("compact view must expose stopped count: %s", out)
+					// Compact spends no cells on the lifecycle word; the header
+					// vitals carry the stopped and failed counts as marks.
+					if !strings.Contains(out, "○") && !strings.Contains(out, "✕") {
+						t.Fatalf("compact view must expose stopped/failed counts: %s", out)
 					}
 				} else if !strings.Contains(out, "RUNNING") || !strings.Contains(out, "STOPPED") {
 					t.Fatalf("responsive view missing lifecycle groups: %s", out)
@@ -207,10 +209,10 @@ func TestStoppedExitPresentationDistinguishesFailureAndExplicitStop(t *testing.T
 		detail string
 		forbid string
 	}{
-		{name: "clean", sess: adapter.Session{DisplayName: "clean", ProcAlive: adapter.Exited, ExitCode: exitCode(0)}, glyph: "◦", forbid: "exit 0"},
-		{name: "crash", sess: adapter.Session{DisplayName: "crash", ProcAlive: adapter.Exited, ExitCode: exitCode(23)}, glyph: "!", detail: "exit 23"},
-		{name: "signal", sess: adapter.Session{DisplayName: "signal", ProcAlive: adapter.Exited, ExitCode: exitCode(-1)}, glyph: "!", detail: "signal"},
-		{name: "explicit", sess: adapter.Session{DisplayName: "explicit", ProcAlive: adapter.Exited, ExitCode: exitCode(-1), Closed: true}, glyph: "◦", forbid: "signal"},
+		{name: "clean", sess: adapter.Session{DisplayName: "clean", ProcAlive: adapter.Exited, ExitCode: exitCode(0)}, glyph: "○", forbid: "exit 0"},
+		{name: "crash", sess: adapter.Session{DisplayName: "crash", ProcAlive: adapter.Exited, ExitCode: exitCode(23)}, glyph: "✕", detail: "exit 23"},
+		{name: "signal", sess: adapter.Session{DisplayName: "signal", ProcAlive: adapter.Exited, ExitCode: exitCode(-1)}, glyph: "✕", detail: "signal"},
+		{name: "explicit", sess: adapter.Session{DisplayName: "explicit", ProcAlive: adapter.Exited, ExitCode: exitCode(-1), Closed: true}, glyph: "○", forbid: "signal"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -253,7 +255,10 @@ func TestFailureDetailAppendsToPromptWithoutReplacingOrDuplicatingIt(t *testing.
 
 			m := Model{width: 44, height: 20, sizeKnown: true, sessions: []adapter.Session{sess}}
 			summary := m.View()
-			if !strings.Contains(summary, want) || strings.Count(summary, tc.detail) != 1 {
+			// Count the composed summary, not the bare detail: these fixtures
+			// name the session after its failure mode, and the provenance line
+			// legitimately prints that id too.
+			if !strings.Contains(summary, want) || strings.Count(summary, want) != 1 {
 				t.Fatalf("selected dashboard summary = %q, want one %q", summary, want)
 			}
 
