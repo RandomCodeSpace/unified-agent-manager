@@ -53,6 +53,51 @@ func TestToneTableNeverEncodesADatumInHueAlone(t *testing.T) {
 	}
 }
 
+// TestASCIIColumnKeepsEveryGlyphInvariant sweeps the degraded set with the
+// exact rules the Unicode set lives under, plus one of its own: the spelling
+// must be pure ASCII, because the whole point of the column is a terminal that
+// cannot render anything else.
+func TestASCIIColumnKeepsEveryGlyphInvariant(t *testing.T) {
+	seen := map[string]string{}
+	for _, tn := range tones {
+		if tn.decorative {
+			if tn.ascii != "" {
+				t.Fatalf("decorative tone %q must not own an ascii glyph, got %q", tn.key, tn.ascii)
+			}
+			continue
+		}
+		if tn.ascii == "" {
+			t.Fatalf("tone %q has no ascii spelling, so a degraded terminal loses its datum", tn.key)
+		}
+		if len(tn.ascii) != 1 || tn.ascii[0] > 127 {
+			t.Fatalf("tone %q ascii spelling %q must be a single ASCII byte", tn.key, tn.ascii)
+		}
+		if prior, dup := seen[tn.ascii]; dup {
+			t.Fatalf("tones %q and %q share ascii glyph %q", tn.key, prior, tn.ascii)
+		}
+		seen[tn.ascii] = tn.key
+	}
+}
+
+// TestGlyphSetSubstitutionIsWholesale pins that installing the ASCII caps
+// switches every mark at once: a mixed vocabulary is harder to read than a
+// plain one.
+func TestGlyphSetSubstitutionIsWholesale(t *testing.T) {
+	prev := ApplyTermCaps(TermCaps{Glyphs: GlyphsASCII})
+	defer ApplyTermCaps(prev)
+	for _, tn := range tones {
+		if tn.decorative {
+			continue
+		}
+		if got := tn.activeGlyph(); got != tn.ascii {
+			t.Fatalf("tone %q renders %q under the ASCII set, want %q", tn.key, got, tn.ascii)
+		}
+		if plain := ansi.Strip(tn.mark()); plain != tn.ascii {
+			t.Fatalf("tone %q mark stripped to %q under the ASCII set, want %q", tn.key, plain, tn.ascii)
+		}
+	}
+}
+
 func TestToneColorsAreAdaptiveAndCarryNoBackground(t *testing.T) {
 	for _, tn := range tones {
 		style := tn.style()

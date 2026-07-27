@@ -50,10 +50,17 @@ from the dispatch UI instead of failing the whole app.
 
 ## Supported platforms
 
-- Linux (Ubuntu), on AMD64 and ARM64
+- Linux on AMD64 and ARM64 — Ubuntu, Debian, Arch Linux, UBI8 and RHEL are
+  full-support tier with identical behavior, verified by a per-distro CI
+  matrix; other distributions are best effort. The binary is fully static
+  (`CGO_ENABLED=0`), so it carries no distro dependencies.
 - macOS, on AMD64 (Intel) and ARM64 (Apple silicon)
 - Native Windows is not supported. Windows Terminal and PowerShell can be used
   only as SSH clients connecting to a Linux or macOS host running `uam`.
+
+Client terminals (Windows Terminal, Termius, VS Code, JetBrains, anything
+xterm-class) are adapted to per startup, not assumed: see
+[Terminal and OS support](docs/terminals.md).
 
 ## Install
 
@@ -121,8 +128,9 @@ uam profile effective <session-id> [--json]
 
 | Key | Action |
 |---|---|
-| `1`–`9`, `0` | Jump to that session's chip; press the same digit again to attach |
-| Click / tap a row | Same as its chip — first tap selects, second attaches |
+| `1`–`9`, `0` | Jump to that board number; press the same digit again to attach |
+| Click / tap a row | Same as its number — first tap selects, second attaches |
+| Click / tap a GATE cell | Run that row's verb immediately (attach or resume) |
 | Wheel up / down | Move selection |
 | `↑` / `↓` | Move selection |
 | `Enter` / `→` | Attach selected session |
@@ -142,26 +150,30 @@ uam profile effective <session-id> [--json]
 | `Esc` | Close overlays, clear input, or quit |
 | `Ctrl+C` | Quit from anywhere, including modals |
 
-The dashboard responds to every terminal resize. Operations use a borderless,
-full-width session list headed by a rule that carries the roster count, and a
-header strip of fleet vitals (`●` live, `✕` failed, `○` stopped, `★` pinned,
-`◇` carrying a PR) that degrades category by category rather than vanishing on a
-narrow screen. Wide terminals split only when Peek is open.
+The dashboard is a **departures board**: one flat table, one row per session,
+under a masthead carrying the brand, version, clock, host and craft count.
+Columns are `Nº · SESSION · OPERATOR · TASK · STATUS · GATE · DUE`. STATUS
+speaks a three-word vocabulary — `██ EN ROUTE` (running), `▓▓ DIVERTED`
+(failed), `░░ ARRIVED` (stopped cleanly) — and GATE is a clickable cell
+running the row's one verb: `ATTACH` for a live session, `RESUME ⇄` for an
+exact resume, `RESUME ~` for the provider's most-recent heuristic. The newest
+failure is summarised as a *boarding call* above the composer, and two live
+sessions sharing a workspace raise a ground *advisory* there.
 
-Rows are laid out by a **density ladder** rather than a fixed height: the body's
-line budget is divided evenly among the visible sessions, so a few sessions on a
-phone each show name, task, workspace, profile, resume fidelity and identity,
-while a large roster on a wide terminal collapses to one dense line each with
-the task inline. Detail is no longer a property of the cursor — every session
-shows the same fields as every other one.
+Below 78 columns — a phone with the keyboard up — the board compacts to
+`Nº CODE NAME STATUS AGE` rows using airline-style operator codes (`CL`
+claude, `CX` codex, `OC` opencode, `OM` omp, `CP` copilot, `HM` hermes) with a
+legend above the composer. Both geometries carry the version in the masthead.
 
 Every mark comes from a single tone table: a datum is never carried by colour
-alone, so a monochrome terminal, an eight-colour palette or `NO_COLOR` loses hue
-and nothing else. The right-aligned age is now tinted along a four-stop ramp
-(fresh under an hour, recent under a day, old under a week, then stale) so old
-inventory reads at a glance. Age remains derived from creation time, not from
-liveness discovery — see the note in `internal/app/fleet.go` for why the
-apparently better `LastChange` field cannot carry it.
+alone, so a monochrome terminal, an eight-colour palette or `NO_COLOR` loses
+hue and nothing else. The DUE column is tinted along a four-stop age ramp
+(fresh under an hour, recent under a day, old under a week, then stale). Age
+is derived from creation time, not from liveness discovery — see the note in
+`internal/app/fleet.go` for why the apparently better `LastChange` field
+cannot carry it. On terminals that draw ambiguous-width glyphs two cells wide
+or lack UTF-8, the whole vocabulary degrades to a plain-ASCII spelling — see
+[Terminal and OS support](docs/terminals.md).
 
 Mouse reporting is enabled so the dashboard is tappable on a phone. Set
 `UAM_NO_MOUSE=1` to turn it off and restore the terminal's native

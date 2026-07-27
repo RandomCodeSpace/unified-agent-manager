@@ -60,7 +60,7 @@ func newE2ESession(t *testing.T, agentScript string) *e2eSession {
 	}
 	host := exec.Command(bin, "__host", "--dir", dir, "--name", session.name, "--provider", "fake",
 		"/bin/sh", "-c", agentScript)
-	host.Env = append(os.Environ(), "UAM_SESSION_DIR="+dir, "UAM_CONFIG_DIR="+filepath.Join(dir, "cfg"), "TERM=xterm-256color")
+	host.Env = append(os.Environ(), "UAM_SESSION_DIR="+dir, "UAM_CONFIG_DIR="+filepath.Join(dir, "cfg"), "TERM=xterm-256color", "UAM_WIDE=0")
 	host.Stdout, host.Stderr = logFile, logFile
 	if err := host.Start(); err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func (r *ptyRecorder) tail() string {
 func (s *e2eSession) attach(t *testing.T) *e2eViewer {
 	t.Helper()
 	cmd := exec.Command(s.bin, "__attach", "--dir", s.dir, s.name)
-	cmd.Env = append(os.Environ(), "UAM_SESSION_DIR="+s.dir, "UAM_CONFIG_DIR="+filepath.Join(s.dir, "cfg"), "TERM=xterm-256color")
+	cmd.Env = append(os.Environ(), "UAM_SESSION_DIR="+s.dir, "UAM_CONFIG_DIR="+filepath.Join(s.dir, "cfg"), "TERM=xterm-256color", "UAM_WIDE=0")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)

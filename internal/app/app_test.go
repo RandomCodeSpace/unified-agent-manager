@@ -144,12 +144,11 @@ func TestViewShowsCompactUAMBrandingAndDashboard(t *testing.T) {
 
 	view := m.View()
 	for _, want := range []string{
-		"UAM",
-		"Unified Agent Manager",
+		"UNIFIED AGENT MANAGER (UAM)",
+		"DEPARTURES",
 		"v9.9.9",
-		"SESSIONS",
-		"clean",
-		"RUNNING",
+		"CLEAN",
+		"EN ROUTE",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing UAM branding %q:\n%s", want, view)
@@ -177,8 +176,8 @@ func TestViewUsesBorderlessSessionsRule(t *testing.T) {
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 
 	view := m.View()
-	if !lineContainsAll(view, "SESSIONS", "─", "1") {
-		t.Fatalf("view should render a sessions rule with the roster count: %s", view)
+	if !strings.Contains(view, "─") || !strings.Contains(view, "1 craft") {
+		t.Fatalf("view should frame the board with rules and carry the craft count: %s", view)
 	}
 	assertBorderless(t, view)
 }
@@ -192,7 +191,7 @@ func TestViewIsInformationRichAndBoundedOnNarrowScreens(t *testing.T) {
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
 
 	view := m.View()
-	for _, want := range []string{"SESSIONS", "●", "○", "active-one", "old-one", "fixing spacing", "codex", "claude"} {
+	for _, want := range []string{"ACTIVE-ONE", "OLD-ONE", "EN ROUTE", "ARRIVED", "CX", "CL", "codex", "claude"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("narrow view missing %q:\n%s", want, view)
 		}

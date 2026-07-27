@@ -17,11 +17,19 @@ func runDoctor(ctx context.Context, svc *app.Service, args []string) error {
 	}
 	if sessionID == "" {
 		report := svc.DoctorGlobal(ctx)
+		terminal := doctorTerminal()
 		if asJSON {
-			return writeJSON(report)
+			// The terminal section rides beside the host report rather than
+			// inside it: the service diagnoses the host, which is constant,
+			// while the terminal is whichever client ran this command.
+			return writeJSON(struct {
+				app.GlobalDoctorReport
+				Terminal terminalDoctorReport `json:"terminal"`
+			}{report, terminal})
 		}
 		fmt.Printf("store\t%s\n", report.Store.Status)
 		fmt.Printf("runtime\t%s\tsessions=%d\n", report.Runtime.Status, report.Runtime.Count)
+		fmt.Println(terminal.line())
 		for _, provider := range report.Providers {
 			fmt.Printf("provider\t%s\t%s\t%s\t%s\n",
 				displaytext.Sanitize(provider.Name), provider.Status, provider.OuterScreen, provider.KeyProtocol)

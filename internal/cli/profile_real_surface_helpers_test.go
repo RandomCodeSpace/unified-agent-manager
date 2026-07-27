@@ -74,7 +74,8 @@ func runTodo7ProfilePTY(t *testing.T, binary string, env []string) ([]byte, []by
 			}
 		}
 	}
-	readUntil("seeded")
+	// The departures board spells session names uppercase.
+	readUntil("SEEDED")
 	if _, err := io.WriteString(ptmx, "e"); err != nil {
 		t.Fatal(err)
 	}
@@ -89,9 +90,10 @@ func runTodo7ProfilePTY(t *testing.T, binary string, env []string) ([]byte, []by
 	if _, err := io.WriteString(ptmx, "\x1b"); err != nil {
 		t.Fatal(err)
 	}
-	// The dashboard renders the profile pair as selected→effective on the
-	// session's provenance line rather than as two labelled fields.
-	readUntil("focused→focused")
+	// The departures board deliberately carries no profile column, so there is
+	// nothing profile-shaped to wait for after the wizard closes; the wizard's
+	// own profile field (asserted above) is the real surface. A second Esc
+	// quits from the dashboard.
 	if _, err := io.WriteString(ptmx, "\x1b"); err != nil {
 		t.Fatal(err)
 	}

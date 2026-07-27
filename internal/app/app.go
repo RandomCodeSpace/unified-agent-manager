@@ -663,20 +663,17 @@ func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
 
 // refocusOutput re-points the output surfaces at the newly selected session.
 //
-// The reply target moves only when the peek panel is open, because it is reply
-// routing and must stay pinned to the session the user opened (F36). The
-// captured tail moves whenever *some* surface is showing one, which now includes
-// the always-on cockpit pane — otherwise walking the roster in the wide layout
-// would leave the previous session's output under the new session's name.
+// The reply target moves with the cursor because it is reply routing and must
+// stay pinned to the session the user opened (F36). The captured tail is
+// blanked and re-fired so the panel never shows a frame of the previous
+// session's output under the new session's name.
 func (m *Model) refocusOutput() tea.Cmd {
-	if m.peekOpen {
-		if sess, ok := m.selectedSession(); ok {
-			m.peekTargetAgent = sess.AgentType
-			m.peekTargetID = sess.ID
-		}
-	}
-	if !m.peekOpen && !m.cockpitOpen() {
+	if !m.peekOpen {
 		return nil
+	}
+	if sess, ok := m.selectedSession(); ok {
+		m.peekTargetAgent = sess.AgentType
+		m.peekTargetID = sess.ID
 	}
 	m.peekText = ""
 	return m.peekSelectedCmd()
@@ -715,23 +712,15 @@ func (m Model) peekFocusStep(now time.Time) (Model, tea.Cmd) {
 	if m.peekClock != nil {
 		now = m.peekClock()
 	}
-	// The cockpit pane shows a tail without the peek panel being open, so it
-	// needs the same poll. Nothing else changes: the id-keyed rate limit still
-	// bounds captures to one per peekFocusInterval.
-	if !m.peekOpen && !m.cockpitOpen() {
+	// Only the peek panel shows a live tail; with it closed there is nothing on
+	// screen for a capture to feed. The id-keyed rate limit still bounds
+	// captures to one per peekFocusInterval.
+	if !m.peekOpen {
 		return m, nil
 	}
 	sess, ok := m.selectedSession()
 	if !ok {
 		return m, nil
-	}
-	// A process that has exited will not print again, so its tail is captured
-	// once and then left alone. Without this the cockpit would poll a dead
-	// session forever for a result that cannot change.
-	if !m.peekOpen && sess.ProcAlive == adapter.Exited {
-		if _, captured := m.lastPeekAt[sess.ID]; captured {
-			return m, nil
-		}
 	}
 	if !m.shouldPollFocusedPeek(sess.ID, now) {
 		return m, nil
@@ -1005,9 +994,12 @@ func (m *Model) selectOrActivate(index int) tea.Cmd {
 }
 
 // handleMouse routes pointer input through exactly the same verbs the keyboard
-// uses. A left press resolves the row under the pointer via dashboardHitSession
-// — which recomposes the body rather than trusting a cached hit map, so it can
-// never select a session that has since moved — and the wheel walks the cursor.
+// uses. A left press resolves the position under the pointer via
+// dashboardHitTarget — which recomposes the body rather than trusting a cached
+// hit map, so it can never select a session that has since moved — and the
+// wheel walks the cursor. A press inside a GATE cell runs that row's verb
+// immediately: the gate is a button, and a button that needed a second click
+// would not be one.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress {
 		return m, nil
@@ -1018,9 +1010,13 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case tea.MouseButtonWheelDown:
 		return m, m.moveSelectionPeek(1)
 	case tea.MouseButtonLeft:
-		index, ok := m.dashboardHitSession(msg.Y)
+		index, gate, ok := m.dashboardHitTarget(msg.Y, msg.X)
 		if !ok {
 			return m, nil
+		}
+		if gate {
+			m.selected = index
+			return m, m.attachSelectedCmd()
 		}
 		return m, m.selectOrActivate(index)
 	}
@@ -1842,7 +1838,7 @@ func (m Model) View() string {
 		if m.helpOpen || m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
 			return m.unboundedView()
 		}
-		return bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("loading dashboard…")
+		return bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("loading dashboard"+hintEllipsis())
 	}
 	return m.dashboardView()
 }
@@ -1884,7 +1880,7 @@ func (m Model) responsiveView() string {
 		prompt = m.wizardPromptLines(w)
 	}
 	if len(prompt) == 0 {
-		prompt = []string{bar() + " " + brandStyle.Render("›")}
+		prompt = []string{bar() + " " + brandStyle.Render(caretGlyph())}
 	}
 	if len(prompt) >= h {
 		return fitScreen(prompt[:h], w, h)
@@ -1912,8 +1908,8 @@ func (m Model) wizardPromptLines(width int) []string {
 		field += "  profile=" + m.wizardProfileLabel()
 	}
 	return []string{
-		ansi.Truncate(bar()+" "+hintStyle.Render("new")+" "+brandStyle.Render("›")+" "+titleStyle.Render(field)+brandStyle.Render("▏"), width, "…"),
-		ansi.Truncate("  "+hintStyle.Render(hints[step]), width, "…"),
+		ansi.Truncate(bar()+" "+hintStyle.Render("new")+" "+brandStyle.Render(caretGlyph())+" "+titleStyle.Render(field)+brandStyle.Render(cursorGlyph()), width, truncTail()),
+		ansi.Truncate("  "+hintStyle.Render(hints[step]), width, truncTail()),
 	}
 }
 
@@ -1922,7 +1918,7 @@ func (m Model) responsiveHeader(width int) string {
 	if m.layoutClass() != LayoutCompact {
 		text += "  " + hintStyle.Render(version.String())
 	}
-	return ansi.Truncate(text, width, "…")
+	return ansi.Truncate(text, width, truncTail())
 }
 
 func (m Model) responsiveBody(width, budget int) []string {
@@ -1967,7 +1963,7 @@ func boundedTailLines(s string, n, width int) []string {
 		lines = lines[len(lines)-n:]
 	}
 	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "…")
+		lines[i] = ansi.Truncate(lines[i], width, truncTail())
 	}
 	return lines
 }
@@ -1978,12 +1974,12 @@ func (m Model) renderSectionAtWidth(label, right string, width int) string {
 	fill := max(0, width-ansi.StringWidth(head)-rightWidth-4)
 	line := " " + head
 	if fill > 0 {
-		line += "  " + dividerStyle.Render(strings.Repeat("─", fill))
+		line += "  " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill))
 	}
 	if right != "" {
 		line += " " + hintStyle.Render(right)
 	}
-	return ansi.Truncate(line, width, "…")
+	return ansi.Truncate(line, width, truncTail())
 }
 
 func tableWidthsFor(width int, class LayoutClass) (int, int, bool) {
@@ -2012,14 +2008,20 @@ func boundedNonBlankLines(s string, width int) []string {
 		if line == "" {
 			continue
 		}
-		lines = append(lines, ansi.Truncate(line, width, "…"))
+		lines = append(lines, ansi.Truncate(line, width, truncTail()))
 	}
 	return lines
 }
 
 func padRightANSI(s string, width int) string {
-	s = ansi.Truncate(s, width, "…")
+	s = ansi.Truncate(s, width, truncTail())
 	return s + strings.Repeat(" ", max(0, width-ansi.StringWidth(s)))
+}
+
+// padLeftANSI right-aligns s in width cells; wider input is returned intact so
+// the caller's truncation policy — not the padder's — decides what to cut.
+func padLeftANSI(s string, width int) string {
+	return strings.Repeat(" ", max(0, width-ansi.StringWidth(s))) + s
 }
 
 func takeLines(lines []string, n int) []string {
@@ -2031,7 +2033,7 @@ func fitScreen(lines []string, width, height int) string {
 		lines = lines[len(lines)-height:]
 	}
 	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "…")
+		lines[i] = ansi.Truncate(lines[i], width, truncTail())
 	}
 	return strings.Join(lines, "\n")
 }
@@ -2067,7 +2069,7 @@ func (m Model) renderBranding() string {
 func (m Model) renderSection(label, right string) string {
 	head := sectionStyle.Render(label)
 	fill := max(3, m.contentWidth()-lipgloss.Width(head)-lipgloss.Width(right)-4)
-	line := " " + head + "  " + dividerStyle.Render(strings.Repeat("─", fill))
+	line := " " + head + "  " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill))
 	if right != "" {
 		line += " " + hintStyle.Render(right)
 	}
@@ -2241,23 +2243,23 @@ func (m Model) renderPrompt() string {
 	var b strings.Builder
 	b.WriteString("\n")
 	if m.renaming {
-		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render("▏") + "\n")
+		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render(cursorGlyph()) + "\n")
 	} else if m.peekOpen {
 		// The command line doubles as a reply composer while peek is open: label
 		// it so the sub-mode is discoverable (Enter sends, Esc closes) (F36).
-		field := hintStyle.Render("type a reply…")
+		field := hintStyle.Render("type a reply" + hintEllipsis())
 		if m.input != "" {
 			field = titleStyle.Render(displaytext.Sanitize(m.input))
 		}
 		hints := hintStyle.Render("Enter send  ·  Esc close")
-		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
+		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render(caretGlyph()) + " " + field + brandStyle.Render(cursorGlyph()) + "   " + hints + "\n")
 	} else {
-		field := hintStyle.Render("type a command…")
+		field := hintStyle.Render("type a command" + hintEllipsis())
 		if m.input != "" {
 			field = titleStyle.Render(displaytext.Sanitize(m.input))
 		}
 		hints := hintStyle.Render(m.defaultAgent + "  ·  ? help  ·  e new  ·  Esc quit")
-		b.WriteString(bar() + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
+		b.WriteString(bar() + " " + brandStyle.Render(caretGlyph()) + " " + field + brandStyle.Render(cursorGlyph()) + "   " + hints + "\n")
 	}
 	if m.message != "" {
 		b.WriteString("  " + hintStyle.Render(displaytext.Sanitize(m.message)) + "\n")
@@ -2319,7 +2321,7 @@ func taskSummaryText(sess adapter.Session) string {
 	if detail == "" || base == detail || strings.HasSuffix(base, " · "+detail) {
 		return base
 	}
-	return base + " · " + detail
+	return base + dotSep() + detail
 }
 
 // boundedTaskSummary truncates the prompt portion first so grounded failure
@@ -2329,7 +2331,7 @@ func boundedTaskSummary(sess adapter.Session, width int) string {
 	if detail == "" || strings.TrimSpace(sess.Prompt) == "" {
 		return truncate(taskSummaryText(sess), width)
 	}
-	suffix := " · " + detail
+	suffix := dotSep() + detail
 	base := promptText(sess)
 	if base == detail {
 		return truncate(detail, width)
@@ -2419,7 +2421,7 @@ func (m Model) renderWizard() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 4 · profile %s", step+1, profileLabel)) + "\n")
-	b.WriteString("  " + titleStyle.Render(displaytext.Sanitize(steps[step])) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
+	b.WriteString("  " + titleStyle.Render(displaytext.Sanitize(steps[step])) + brandStyle.Render(cursorGlyph()) + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
 	switch step {
 	case 2:
 		// Warn when the chosen working directory is not inside a git repo: there
@@ -2513,7 +2515,7 @@ func truncate(s string, n int) string {
 		b.WriteRune(r)
 		w += rw
 	}
-	return b.String() + "…"
+	return b.String() + truncTail()
 }
 
 // padRight pads s with spaces to occupy exactly n display columns. If s already

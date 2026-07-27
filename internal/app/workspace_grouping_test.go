@@ -87,10 +87,10 @@ func TestGroupedViewShowsBoundedWorkspaceHeadingAndLiveSharingWarning(t *testing
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 20})
 	view := m.View()
 	assertViewGeometry(t, view, 44, 20)
-	for _, want := range []string{"alpha-workspace", "3", "▲ 2 sessions share this workspace"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("grouped view missing %q:\n%s", want, view)
-		}
+	// The board is flat; workspace contention surfaces as the ground advisory
+	// above the composer instead of a per-group warning line.
+	if !strings.Contains(view, "advisory: 2 live craft share") {
+		t.Fatalf("grouped view missing the contention advisory:\n%s", view)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestGroupedViewCountsLiveWorkspaceSharingAcrossPinPartitions(t *testing.T) 
 	}, true)
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	view := m.View()
-	if got := strings.Count(view, "▲ 2 sessions share this workspace"); got != 1 {
+	if got := strings.Count(view, "advisory: 2 live craft share"); got != 1 {
 		t.Fatalf("sharing count must span pin partitions and render once, got %d:\n%s", got, view)
 	}
 }
@@ -120,11 +120,11 @@ func TestGroupedViewHandlesBlankWorkspaceWithoutSharingWarning(t *testing.T) {
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	view := m.View()
 	assertViewGeometry(t, view, 80, 30)
-	if !strings.Contains(view, "Unknown workspace") {
-		t.Fatalf("blank cwd needs a safe heading:\n%s", view)
+	if !strings.Contains(view, "BLANK") || !strings.Contains(view, "ALSO-BLANK") {
+		t.Fatalf("blank cwd sessions must still board:\n%s", view)
 	}
-	if strings.Contains(view, "sessions share this workspace") {
-		t.Fatalf("closed/non-live sessions must not produce a sharing warning:\n%s", view)
+	if strings.Contains(view, "craft share") {
+		t.Fatalf("an unknown workspace must not produce a sharing advisory:\n%s", view)
 	}
 }
 
