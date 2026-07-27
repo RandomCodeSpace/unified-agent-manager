@@ -928,3 +928,33 @@ func BenchmarkDashboardRenderAndFilter(b *testing.B) {
 		})
 	}
 }
+
+// TestMastheadSurvivesAMonstrousHostname — cloud runners carry provisioning-id
+// hostnames sixty cells long; the masthead must shed the host (and then the
+// clock), never the brand, the version or the craft count.
+func TestMastheadSurvivesAMonstrousHostname(t *testing.T) {
+	host := "sjc22-bt147-e6c48904-906c-49c3-b443-5f457b73a6a9-CA6ACE11D88E"
+	for _, budget := range []int{70, 40, 24, 10, 3} {
+		right := ansi.Strip(mastheadRight(host, "12:04", "4 craft", budget))
+		if w := ansi.StringWidth(right); w > budget && budget >= ansi.StringWidth("dev") {
+			t.Fatalf("budget %d: right side is %d cells: %q", budget, w, right)
+		}
+		if !strings.Contains(right, "dev") { // version.String() in tests
+			t.Fatalf("budget %d: version lost: %q", budget, right)
+		}
+		if budget >= 40 && !strings.Contains(right, "craft") {
+			t.Fatalf("budget %d: craft count dropped before the host: %q", budget, right)
+		}
+		if strings.Contains(right, host) {
+			t.Fatalf("budget %d: uncapped hostname survived: %q", budget, right)
+		}
+	}
+
+	// The full wide view keeps its brand regardless of the host segment.
+	m := NewWithDeps(nil, nil)
+	m.sessions = []adapter.Session{{ID: "a", AgentType: "codex", DisplayName: "one", ProcAlive: adapter.Alive}}
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
+	if view := m.View(); !strings.Contains(view, "UNIFIED AGENT MANAGER (UAM)") || !strings.Contains(view, "DEPARTURES") {
+		t.Fatalf("brand must survive any hostname:\n%s", view)
+	}
+}

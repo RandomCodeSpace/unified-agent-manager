@@ -267,13 +267,38 @@ func (m Model) dashboardHeader(width int) string {
 	if m.filterActive {
 		craft = fmt.Sprintf("%d/%d craft", len(m.visibleSessionIndices()), len(m.sessions))
 	}
-	segments := []string{clock}
-	if host := boardHost(); host != "" {
-		segments = append(segments, host)
-	}
-	segments = append(segments, craft)
-	right := titleStyle.Render(version.String()) + hintStyle.Render(dotSep()+strings.Join(segments, dotSep()))
+	right := mastheadRight(boardHost(), clock, craft, width-ansi.StringWidth(left)-2)
 	return joinDashboardEnds(left, right, width)
+}
+
+// mastheadRightHostCap bounds the hostname's spend in the masthead. Cloud
+// hosts carry provisioning-id names sixty cells long; past this point the
+// name stops identifying the machine to a human and starts eating the brand.
+const mastheadRightHostCap = 20
+
+// mastheadRight fits the version, clock, host and craft count into the cells
+// the brand leaves over, dropping the host first and the clock second rather
+// than letting truncation shear the brand off the left edge — which is exactly
+// what a long cloud hostname used to do. The version and the craft count are
+// the two segments a bug report and a glance both need, so they go last.
+func mastheadRight(host, clock, craft string, budget int) string {
+	if host != "" {
+		host = ansi.Truncate(host, mastheadRightHostCap, truncTail())
+	}
+	candidates := [][]string{{clock, host, craft}, {clock, craft}, {craft}}
+	for _, segments := range candidates {
+		kept := make([]string, 0, len(segments))
+		for _, segment := range segments {
+			if segment != "" {
+				kept = append(kept, segment)
+			}
+		}
+		right := titleStyle.Render(version.String()) + hintStyle.Render(dotSep()+strings.Join(kept, dotSep()))
+		if ansi.StringWidth(right) <= budget {
+			return right
+		}
+	}
+	return titleStyle.Render(version.String())
 }
 
 // ─── board geometry ───────────────────────────────────────────────────────────

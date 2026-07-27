@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -88,12 +89,18 @@ func readCPR(in *os.File, timeout time.Duration) ([]byte, bool) {
 	deadline := time.Now().Add(timeout)
 	buf := make([]byte, 0, 16)
 	one := make([]byte, 1)
+	// poll(2) takes an int32 fd; a descriptor beyond that range cannot be
+	// polled, so the probe reports failure instead of converting blindly.
+	fd := in.Fd()
+	if fd > math.MaxInt32 {
+		return nil, false
+	}
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			return nil, false
 		}
-		pollFD := []unix.PollFd{{Fd: int32(in.Fd()), Events: unix.POLLIN}}
+		pollFD := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 		ready, err := unix.Poll(pollFD, int(remaining.Milliseconds())+1)
 		if err != nil {
 			if errors.Is(err, unix.EINTR) {
