@@ -80,7 +80,7 @@ func startTUI(t *testing.T) *tuiSession {
 	cmd.Env = append(os.Environ(),
 		"UAM_SESSION_DIR="+filepath.Join(root, "run"),
 		"UAM_CONFIG_DIR="+filepath.Join(root, "cfg"),
-		"TERM=xterm-256color",
+		"TERM=xterm-256color", "UAM_WIDE=0",
 	)
 	if err := os.MkdirAll(filepath.Join(root, "run"), 0o700); err != nil {
 		t.Fatal(err)

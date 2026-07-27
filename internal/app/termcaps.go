@@ -168,3 +168,35 @@ func hintEllipsis() string {
 	}
 	return "…"
 }
+
+// dotSep separates masthead and hint segments. U+00B7 is not renderable on a
+// non-UTF-8 terminal, so the ASCII set falls back to a plain dash.
+func dotSep() string {
+	if asciiGlyphs() {
+		return " - "
+	}
+	return " · "
+}
+
+// dashSep is the long break inside the boarding call.
+func dashSep() string {
+	if asciiGlyphs() {
+		return " - "
+	}
+	return " — "
+}
+
+// arrowsHint and enterHint spell the navigation keys in the footer.
+func arrowsHint() string {
+	if asciiGlyphs() {
+		return "up/dn"
+	}
+	return "↑↓"
+}
+
+func enterHint() string {
+	if asciiGlyphs() {
+		return "enter"
+	}
+	return "⏎"
+}

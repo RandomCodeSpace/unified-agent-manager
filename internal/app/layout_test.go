@@ -77,14 +77,14 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 func TestWideOperationsUsesFullListAndPeekUsesTwoPanes(t *testing.T) {
 	m := responsiveFixture(120, 40)
 	operations := m.View()
-	if !strings.Contains(operations, "SESSIONS") || strings.Contains(operations, "SELECTED") {
-		t.Fatalf("wide operations should use one full-width sessions panel:\n%s", operations)
+	if !strings.Contains(operations, "GATE") || strings.Contains(operations, "SELECTED") {
+		t.Fatalf("wide operations should render the full-width departures board:\n%s", operations)
 	}
 	assertBorderless(t, operations)
 	m.peekOpen = true
 	peek := m.View()
-	if !lineContainsAll(peek, "SESSIONS", "PEEK") {
-		t.Fatalf("wide peek should retain the list beside the peek pane:\n%s", peek)
+	if !strings.Contains(peek, "PEEK") || strings.Contains(peek, "GATE") {
+		t.Fatalf("wide peek gives the panel the whole body:\n%s", peek)
 	}
 }
 
@@ -136,10 +136,10 @@ func TestNoColorResponsiveViewKeepsSemanticGlyphs(t *testing.T) {
 	if strings.Contains(view, "\x1b[") {
 		t.Fatalf("NO_COLOR view contains SGR escapes: %q", view)
 	}
-	// Selection bar, pin, the three lifecycle marks and the merged-PR mark all
-	// survive a palette-free terminal, which is the whole point of the tone
-	// table: strip colour and no datum goes with it.
-	for _, semantic := range []string{"▌", "★", "●", "○", "✕", "◆", "RUNNING", "STOPPED", "EXIT 1"} {
+	// The selection bar, the status shades and the pairwise-distinct status
+	// words all survive a palette-free terminal, which is the whole point of
+	// the tone table: strip colour and no datum goes with it.
+	for _, semantic := range []string{"▌", "██", "▓▓", "░░", "EN ROUTE", "ARRIVED", "DIVERTED", "exit 1"} {
 		if !strings.Contains(view, semantic) {
 			t.Fatalf("NO_COLOR view lost semantic marker %q:\n%s", semantic, view)
 		}

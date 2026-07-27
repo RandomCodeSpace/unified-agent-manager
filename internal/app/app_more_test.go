@@ -17,7 +17,7 @@ func TestModelViewBasics(t *testing.T) {
 	m := modelWithTwoSessions()
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	out := m.View()
-	if !strings.Contains(out, "RUNNING") || !strings.Contains(out, "SESSIONS") || !strings.Contains(out, "fake") {
+	if !strings.Contains(out, "EN ROUTE") || !strings.Contains(out, "GATE") || !strings.Contains(out, "FAKE") {
 		t.Fatalf("view=%s", out)
 	}
 	if strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
@@ -313,7 +313,7 @@ func TestViewExpandsSelectedSessionInsideDashboard(t *testing.T) {
 	}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	view := m.View()
-	for _, want := range []string{"/tmp/project", "fake", "fix the parser", "RUNNING", "STOPPED"} {
+	for _, want := range []string{"FAKE", "fix the parser", "EN ROUTE", "ARRIVED"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expanded dashboard missing %q: %s", want, view)
 		}

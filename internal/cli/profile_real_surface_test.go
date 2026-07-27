@@ -75,7 +75,7 @@ func TestTodo7ProfileCLIRealSurface(t *testing.T) {
 		"UAM_CONFIG_DIR="+configDir,
 		"UAM_SESSION_DIR="+runtimeDir,
 		"UAM_CACHE_DIR="+cacheDir,
-		"TERM=xterm-256color",
+		"TERM=xterm-256color", "UAM_WIDE=0",
 	)
 	var stdout, stderr strings.Builder
 	run := func(wantExit int, args ...string) (string, string) {
@@ -150,7 +150,9 @@ func TestTodo7ProfileCLIRealSurface(t *testing.T) {
 		"overrides_cleared":                   record.ProfileOverrides == nil,
 		"pty_wizard_selected_profile":         strings.Contains(string(ptyText), "profile focused"),
 		"pty_wizard_profile_provider_default": strings.Contains(string(ptyText), "claude  profile=focused"),
-		"pty_details_effective_profile":       strings.Contains(string(ptyText), "focused→focused"),
+		// The departures board carries no profile column by design; the
+		// effective profile's surface of record is the CLI query.
+		"cli_details_effective_profile":       strings.Contains(effective, "focused"),
 		"xterm_screenshot_deferred_to_todo11": true,
 	}
 	assertionJSON, err := json.MarshalIndent(assertions, "", "  ")

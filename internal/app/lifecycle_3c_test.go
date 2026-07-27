@@ -156,24 +156,13 @@ func TestRunningStoppedLabelsAcrossResponsiveAndGroupedRenderers(t *testing.T) {
 				if strings.Contains(out, "ACTIVE") || strings.Contains(out, "CLOSED") || strings.Contains(strings.ToLower(out), "closed") {
 					t.Fatalf("legacy lifecycle wording remains: %s", out)
 				}
-				if size.width == 44 {
-					// Compact spends no cells on the lifecycle word; the header
-					// vitals carry the stopped and failed counts as marks.
-					if !strings.Contains(out, "○") && !strings.Contains(out, "✕") {
-						t.Fatalf("compact view must expose stopped/failed counts: %s", out)
+				// Every geometry of the board speaks the departure vocabulary:
+				// the fixtures hold a live, a cleanly stopped and a crashed
+				// session, so all three words must be present.
+				for _, word := range []string{"EN ROUTE", "ARRIVED", "DIVERTED"} {
+					if !strings.Contains(out, word) {
+						t.Fatalf("board at %dx%d missing status word %q: %s", size.width, size.height, word, out)
 					}
-				} else if m.cockpitOpen() {
-					// The cockpit roster is a navigation list: liveness rides on
-					// the glyph, and the detail pane spells out the lifecycle for
-					// the focused session only.
-					if !strings.Contains(out, "●") || !strings.Contains(out, "○") {
-						t.Fatalf("cockpit roster missing lifecycle glyphs: %s", out)
-					}
-					if !strings.Contains(out, "RUNNING") && !strings.Contains(out, "STOPPED") {
-						t.Fatalf("cockpit pane must spell out the focused lifecycle: %s", out)
-					}
-				} else if !strings.Contains(out, "RUNNING") || !strings.Contains(out, "STOPPED") {
-					t.Fatalf("responsive view missing lifecycle groups: %s", out)
 				}
 			})
 		}
@@ -263,11 +252,10 @@ func TestFailureDetailAppendsToPromptWithoutReplacingOrDuplicatingIt(t *testing.
 				t.Fatalf("task-column failure summary = %q, want one %q", row, want)
 			}
 
-			m := Model{width: 44, height: 20, sizeKnown: true, sessions: []adapter.Session{sess}}
+			// The wide board carries the composed summary in its TASK column
+			// exactly once; the compact board drops the task by design.
+			m := Model{width: 100, height: 20, sizeKnown: true, sessions: []adapter.Session{sess}}
 			summary := m.View()
-			// Count the composed summary, not the bare detail: these fixtures
-			// name the session after its failure mode, and the provenance line
-			// legitimately prints that id too.
 			if !strings.Contains(summary, want) || strings.Count(summary, want) != 1 {
 				t.Fatalf("selected dashboard summary = %q, want one %q", summary, want)
 			}
@@ -287,7 +275,7 @@ func TestFailureDetailAppendsToPromptWithoutReplacingOrDuplicatingIt(t *testing.
 			if !strings.Contains(boundedSummary, " · "+tc.detail) {
 				t.Fatalf("bounded selected summary lost failure suffix: %q", boundedSummary)
 			}
-			assertViewGeometry(t, boundedSummary, 44, 20)
+			assertViewGeometry(t, boundedSummary, 100, 20)
 
 			sess.Prompt = "already recorded · " + tc.detail
 			if got := boundedTaskSummary(sess, 44); strings.Count(got, tc.detail) != 1 {
