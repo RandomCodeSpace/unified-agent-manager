@@ -21,9 +21,13 @@ import (
 // the palette grow without any single addition quietly becoming color-only.
 
 type tone struct {
-	key        string
-	color      lipgloss.AdaptiveColor
-	glyph      string
+	key   string
+	color lipgloss.AdaptiveColor
+	glyph string
+	// ascii is the degraded spelling used when the terminal probe selects
+	// GlyphsASCII — a non-UTF-8 locale, or a font that draws the Unicode set
+	// two cells wide. Same invariants as glyph: one cell, pairwise distinct.
+	ascii      string
 	bold       bool
 	faint      bool
 	decorative bool
@@ -33,13 +37,22 @@ func (t tone) style() lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(t.color).Bold(t.bold).Faint(t.faint)
 }
 
+// activeGlyph resolves the glyph for the terminal's active set.
+func (t tone) activeGlyph() string {
+	if asciiGlyphs() && t.glyph != "" {
+		return t.ascii
+	}
+	return t.glyph
+}
+
 // mark renders the tone's glyph. Decorative tones have none, so mark is empty
 // and callers can concatenate it unconditionally.
 func (t tone) mark() string {
-	if t.glyph == "" {
+	glyph := t.activeGlyph()
+	if glyph == "" {
 		return ""
 	}
-	return t.style().Render(t.glyph)
+	return t.style().Render(glyph)
 }
 
 func (t tone) render(text string) string { return t.style().Render(text) }
@@ -84,21 +97,23 @@ const (
 )
 
 // tones is ordered so theme_test.go can report a stable first offender and so
-// the doctor surface can print the legend in a fixed order.
+// the doctor surface can print the legend in a fixed order. The PR tones remain
+// in the table for the doctor legend and `uam ls` even though the dashboard no
+// longer renders forge state (a provider-coupled datum by the user's call).
 var tones = []tone{
-	{key: toneLive, color: liveColor, glyph: "●", bold: true},
-	{key: toneStopped, color: mutedColor, glyph: "○", faint: true},
-	{key: toneFailed, color: failColor, glyph: "✕", bold: true},
-	{key: toneWarn, color: warnColor, glyph: "▲"},
-	{key: tonePinned, color: pinColor, glyph: "★"},
-	{key: toneWorkspace, color: mutedColor, glyph: "▸", bold: true},
-	{key: toneSelected, color: accentColor, glyph: "▌", bold: true},
-	{key: tonePROpen, color: mutedColor, glyph: "◇"},
-	{key: tonePRMerged, color: prColor, glyph: "◆"},
-	{key: tonePRDraft, color: warnColor, glyph: "◐"},
-	{key: tonePRClosed, color: failColor, glyph: "⊘"},
-	{key: toneResumeExact, color: accentColor, glyph: "⇄"},
-	{key: toneResumeRecent, color: mutedColor, glyph: "~"},
+	{key: toneLive, color: liveColor, glyph: "●", ascii: "*", bold: true},
+	{key: toneStopped, color: mutedColor, glyph: "○", ascii: ".", faint: true},
+	{key: toneFailed, color: failColor, glyph: "✕", ascii: "x", bold: true},
+	{key: toneWarn, color: warnColor, glyph: "▲", ascii: "!"},
+	{key: tonePinned, color: pinColor, glyph: "★", ascii: "+"},
+	{key: toneWorkspace, color: mutedColor, glyph: "▸", ascii: ">", bold: true},
+	{key: toneSelected, color: accentColor, glyph: "▌", ascii: "|", bold: true},
+	{key: tonePROpen, color: mutedColor, glyph: "◇", ascii: "o"},
+	{key: tonePRMerged, color: prColor, glyph: "◆", ascii: "@"},
+	{key: tonePRDraft, color: warnColor, glyph: "◐", ascii: "d"},
+	{key: tonePRClosed, color: failColor, glyph: "⊘", ascii: "#"},
+	{key: toneResumeExact, color: accentColor, glyph: "⇄", ascii: "="},
+	{key: toneResumeRecent, color: mutedColor, glyph: "~", ascii: "~"},
 	// Age is a ramp over an interval, and an interval has no natural glyph
 	// vocabulary — so it tints the age text it sits on and never replaces it.
 	{key: toneAgeFresh, color: liveColor, decorative: true},
@@ -163,4 +178,4 @@ var (
 )
 
 // bar is the accent rule that marks the brand and command lines.
-func bar() string { return brandStyle.Render("▌") }
+func bar() string { return brandStyle.Render(barGlyph()) }

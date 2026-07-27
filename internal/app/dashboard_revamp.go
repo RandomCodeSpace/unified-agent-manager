@@ -278,13 +278,13 @@ func (m Model) dashboardHeader(width int) string {
 	}
 	available := width - ansi.StringWidth(left) - ansi.StringWidth(rendered)
 	if available < 1 {
-		return ansi.Truncate(left+"  "+rendered, width, "…")
+		return ansi.Truncate(left+"  "+rendered, width, truncTail())
 	}
 	return left + strings.Repeat(" ", available) + rendered
 }
 
 func (m Model) dashboardBottom(width, height int) []string {
-	field := hintStyle.Render("type a command…")
+	field := hintStyle.Render("type a command" + hintEllipsis())
 	label := ""
 	if m.input != "" {
 		field = titleStyle.Render(displaytext.Sanitize(m.input))
@@ -292,16 +292,16 @@ func (m Model) dashboardBottom(width, height int) []string {
 	if m.peekOpen {
 		label = hintStyle.Render("reply ")
 		if m.input == "" {
-			field = hintStyle.Render("type a reply…")
+			field = hintStyle.Render("type a reply" + hintEllipsis())
 		}
 	} else if m.filterActive {
 		label = hintStyle.Render("filter / ")
-		field = hintStyle.Render("type to filter…")
+		field = hintStyle.Render("type to filter" + hintEllipsis())
 		if m.filterQuery != "" {
 			field = titleStyle.Render(displaytext.Sanitize(m.filterQuery))
 		}
 	}
-	composer := ansi.Truncate(bar()+" "+label+brandStyle.Render("›")+" "+field+brandStyle.Render("▏"), width, "…")
+	composer := ansi.Truncate(bar()+" "+label+brandStyle.Render(caretGlyph())+" "+field+brandStyle.Render(cursorGlyph()), width, truncTail())
 	if height <= 12 {
 		hint := firstNonEmpty(m.defaultAgent, "agent") + "  1-9 jump  ↑↓ Enter"
 		if m.peekOpen {
@@ -317,19 +317,19 @@ func (m Model) dashboardBottom(width, height int) []string {
 	} else if m.filterActive {
 		footer = "type to filter  ↑↓ move  Enter open  Esc clear"
 	}
-	lines := []string{composer, ansi.Truncate("  "+hintStyle.Render(footer), width, "…")}
+	lines := []string{composer, ansi.Truncate("  "+hintStyle.Render(footer), width, truncTail())}
 	if m.message != "" && height >= 16 {
-		lines = append(lines, ansi.Truncate("  "+hintStyle.Render(displaytext.Sanitize(m.message)), width, "…"))
+		lines = append(lines, ansi.Truncate("  "+hintStyle.Render(displaytext.Sanitize(m.message)), width, truncTail()))
 	}
 	return lines
 }
 
 func joinDashboardEnds(left, right string, width int) string {
-	right = ansi.Truncate(right, width, "…")
+	right = ansi.Truncate(right, width, truncTail())
 	leftWidth := max(0, width-ansi.StringWidth(right)-1)
-	left = ansi.Truncate(left, leftWidth, "…")
+	left = ansi.Truncate(left, leftWidth, truncTail())
 	gap := max(1, width-ansi.StringWidth(left)-ansi.StringWidth(right))
-	return ansi.Truncate(left+strings.Repeat(" ", gap)+right, width, "…")
+	return ansi.Truncate(left+strings.Repeat(" ", gap)+right, width, truncTail())
 }
 
 func (m Model) dashboardBody(width, budget int) []string {
@@ -404,7 +404,7 @@ func cockpitWidths(width int) (int, int) {
 func entryLines(entries []dashboardEntry, width int) []string {
 	lines := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		lines = append(lines, ansi.Truncate(entry.text, width, "…"))
+		lines = append(lines, ansi.Truncate(entry.text, width, truncTail()))
 	}
 	return lines
 }
@@ -439,7 +439,7 @@ func joinEntryColumns(left []dashboardEntry, right []string, leftWidth, rightWid
 		if strings.TrimSpace(r) == "" {
 			entry.text = l
 		} else {
-			entry.text = padRightANSI(l, leftWidth) + "   " + ansi.Truncate(r, rightWidth, "…")
+			entry.text = padRightANSI(l, leftWidth) + "   " + ansi.Truncate(r, rightWidth, truncTail())
 		}
 		entries = append(entries, entry)
 	}
@@ -501,15 +501,15 @@ func hairlineRule(title, right string, width int) string {
 	if right == "" {
 		fill := width - ansi.StringWidth(title) - 1
 		if fill < 1 {
-			return ansi.Truncate(title, width, "…")
+			return ansi.Truncate(title, width, truncTail())
 		}
-		return title + " " + dividerStyle.Render(strings.Repeat("─", fill))
+		return title + " " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill))
 	}
 	fill := width - ansi.StringWidth(title) - ansi.StringWidth(right) - 2
 	if fill < 1 {
-		return ansi.Truncate(title+" "+right, width, "…")
+		return ansi.Truncate(title+" "+right, width, truncTail())
 	}
-	return title + " " + dividerStyle.Render(strings.Repeat("─", fill)) + " " + right
+	return title + " " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill)) + " " + right
 }
 
 // cockpitLines renders the right pane: who the selected session is, where it
@@ -538,7 +538,7 @@ func (m Model) cockpitLines(width, budget int) []string {
 		lines = append(lines, hairlineRule(sectionStyle.Render("PEEK"), hintStyle.Render(name), width))
 		tail := boundedTailLines(m.peekText, budget-1, width)
 		if len(tail) == 0 {
-			tail = []string{hintStyle.Render("waiting for output…")}
+			tail = []string{hintStyle.Render("waiting for output" + hintEllipsis())}
 		}
 		return takeLines(append(lines, tail...), budget)
 	}
@@ -550,19 +550,19 @@ func (m Model) cockpitLines(width, budget int) []string {
 	))
 	lines = append(lines, hintStyle.Render(truncatePathLeft(homeRelativeCwd(sess.Cwd), width)))
 	for _, line := range m.cockpitProvenance(sess) {
-		lines = append(lines, ansi.Truncate(line, width, "…"))
+		lines = append(lines, ansi.Truncate(line, width, truncTail()))
 	}
 	if sess.PR != nil {
 		lines = append(lines, ansi.Truncate(
 			toneForPR(sess.PR.Status).mark()+" "+hintStyle.Render(fmt.Sprintf("pull request #%d %s",
-				sess.PR.Number, strings.ToLower(string(sess.PR.Status)))), width, "…"))
+				sess.PR.Number, strings.ToLower(string(sess.PR.Status)))), width, truncTail()))
 	}
 	if sess.Pinned {
 		lines = append(lines, toneOf(tonePinned).mark()+" "+hintStyle.Render("pinned"))
 	}
 	if shared := liveWorkspaceCounts(m.sessions)[workspaceKey(sess.Cwd)]; shared > 1 {
 		lines = append(lines, ansi.Truncate(toneOf(toneWarn).mark()+
-			warnStyle.Render(fmt.Sprintf(" %d live sessions share this workspace", shared)), width, "…"))
+			warnStyle.Render(fmt.Sprintf(" %d live sessions share this workspace", shared)), width, truncTail()))
 	}
 
 	if budget-len(lines) > 6 {
@@ -588,7 +588,7 @@ func (m Model) cockpitLines(width, budget int) []string {
 	lines = append(lines, hairlineRule(sectionStyle.Render("OUTPUT"), hintStyle.Render("Space focuses"), width))
 	tail := boundedTailLines(m.peekText, remaining, width)
 	if len(tail) == 0 {
-		hint := "waiting for output…"
+		hint := "waiting for output" + hintEllipsis()
 		if sess.ProcAlive == adapter.Exited {
 			hint = "stopped — Space resumes it in the background"
 		}
@@ -698,12 +698,12 @@ func (m Model) sessionEntries(width int, visible []int, density int) []dashboard
 			key := section.workspace
 			if !haveSection || section != lastSection {
 				entries = append(entries, dashboardEntry{
-					text:         ansi.Truncate(m.workspaceHeading(section, shownBySection, totalBySection, visible, split), width, "…"),
+					text:         ansi.Truncate(m.workspaceHeading(section, shownBySection, totalBySection, visible, split), width, truncTail()),
 					sessionIndex: -1,
 				})
 				if liveByWorkspace[key] > 1 && !warned[key] {
 					warning := " " + toneOf(toneWarn).mark() + warnStyle.Render(fmt.Sprintf(" %d sessions share this workspace", liveByWorkspace[key]))
-					entries = append(entries, dashboardEntry{text: ansi.Truncate(warning, width, "…"), sessionIndex: -1})
+					entries = append(entries, dashboardEntry{text: ansi.Truncate(warning, width, truncTail()), sessionIndex: -1})
 					warned[key] = true
 				}
 				lastSection = section
@@ -800,13 +800,13 @@ func (m Model) sessionBlock(sess adapter.Session, index, position, width, densit
 	if density >= 2 {
 		task := boundedTaskSummary(sess, max(1, width-6))
 		entries = append(entries, dashboardEntry{
-			text:         ansi.Truncate(edge+"    "+taskStyle.Render(task), width, "…"),
+			text:         ansi.Truncate(edge+"    "+taskStyle.Render(task), width, truncTail()),
 			sessionIndex: index,
 		})
 	}
 	if density >= 3 {
 		entries = append(entries, dashboardEntry{
-			text:         ansi.Truncate(edge+"    "+m.sessionProvenance(sess, max(1, width-6)), width, "…"),
+			text:         ansi.Truncate(edge+"    "+m.sessionProvenance(sess, max(1, width-6)), width, truncTail()),
 			sessionIndex: index,
 		})
 	}
@@ -844,7 +844,7 @@ func (m Model) sessionRowPrimary(sess adapter.Session, edge string, position int
 	}
 	right := m.rowTrailer(sess)
 	leftWidth := max(1, width-ansi.StringWidth(right)-1)
-	left := edge + chip + " " + toneForSession(sess).mark() + " " + style.Render(ansi.Truncate(pin+name, max(1, leftWidth-4), "…"))
+	left := edge + chip + " " + toneForSession(sess).mark() + " " + style.Render(ansi.Truncate(pin+name, max(1, leftWidth-4), truncTail()))
 	return padRightANSI(left, width-ansi.StringWidth(right)-1) + " " + right
 }
 
@@ -918,11 +918,11 @@ func truncatePathLeft(path string, width int) string {
 	}
 	runes := []rune(path)
 	for start := 0; start < len(runes); start++ {
-		if candidate := "…" + string(runes[start+1:]); ansi.StringWidth(candidate) <= width {
+		if candidate := truncTail() + string(runes[start+1:]); ansi.StringWidth(candidate) <= width {
 			return candidate
 		}
 	}
-	return "…"
+	return truncTail()
 }
 
 // homeRelativeCwd abbreviates the user's home directory to "~". On a 40-column
@@ -995,7 +995,7 @@ func (m Model) peekPanelLines(width, budget int) []string {
 	}
 	content := boundedTailLines(m.peekText, budget-1, max(1, width-1))
 	if len(content) == 0 {
-		content = []string{hintStyle.Render("waiting for output…")}
+		content = []string{hintStyle.Render("waiting for output" + hintEllipsis())}
 	}
 	lines := make([]string, 0, budget)
 	lines = append(lines, rule)

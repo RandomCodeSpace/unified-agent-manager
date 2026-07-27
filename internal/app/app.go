@@ -1842,7 +1842,7 @@ func (m Model) View() string {
 		if m.helpOpen || m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
 			return m.unboundedView()
 		}
-		return bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("loading dashboard…")
+		return bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("loading dashboard"+hintEllipsis())
 	}
 	return m.dashboardView()
 }
@@ -1884,7 +1884,7 @@ func (m Model) responsiveView() string {
 		prompt = m.wizardPromptLines(w)
 	}
 	if len(prompt) == 0 {
-		prompt = []string{bar() + " " + brandStyle.Render("›")}
+		prompt = []string{bar() + " " + brandStyle.Render(caretGlyph())}
 	}
 	if len(prompt) >= h {
 		return fitScreen(prompt[:h], w, h)
@@ -1912,8 +1912,8 @@ func (m Model) wizardPromptLines(width int) []string {
 		field += "  profile=" + m.wizardProfileLabel()
 	}
 	return []string{
-		ansi.Truncate(bar()+" "+hintStyle.Render("new")+" "+brandStyle.Render("›")+" "+titleStyle.Render(field)+brandStyle.Render("▏"), width, "…"),
-		ansi.Truncate("  "+hintStyle.Render(hints[step]), width, "…"),
+		ansi.Truncate(bar()+" "+hintStyle.Render("new")+" "+brandStyle.Render(caretGlyph())+" "+titleStyle.Render(field)+brandStyle.Render(cursorGlyph()), width, truncTail()),
+		ansi.Truncate("  "+hintStyle.Render(hints[step]), width, truncTail()),
 	}
 }
 
@@ -1922,7 +1922,7 @@ func (m Model) responsiveHeader(width int) string {
 	if m.layoutClass() != LayoutCompact {
 		text += "  " + hintStyle.Render(version.String())
 	}
-	return ansi.Truncate(text, width, "…")
+	return ansi.Truncate(text, width, truncTail())
 }
 
 func (m Model) responsiveBody(width, budget int) []string {
@@ -1967,7 +1967,7 @@ func boundedTailLines(s string, n, width int) []string {
 		lines = lines[len(lines)-n:]
 	}
 	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "…")
+		lines[i] = ansi.Truncate(lines[i], width, truncTail())
 	}
 	return lines
 }
@@ -1978,12 +1978,12 @@ func (m Model) renderSectionAtWidth(label, right string, width int) string {
 	fill := max(0, width-ansi.StringWidth(head)-rightWidth-4)
 	line := " " + head
 	if fill > 0 {
-		line += "  " + dividerStyle.Render(strings.Repeat("─", fill))
+		line += "  " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill))
 	}
 	if right != "" {
 		line += " " + hintStyle.Render(right)
 	}
-	return ansi.Truncate(line, width, "…")
+	return ansi.Truncate(line, width, truncTail())
 }
 
 func tableWidthsFor(width int, class LayoutClass) (int, int, bool) {
@@ -2012,13 +2012,13 @@ func boundedNonBlankLines(s string, width int) []string {
 		if line == "" {
 			continue
 		}
-		lines = append(lines, ansi.Truncate(line, width, "…"))
+		lines = append(lines, ansi.Truncate(line, width, truncTail()))
 	}
 	return lines
 }
 
 func padRightANSI(s string, width int) string {
-	s = ansi.Truncate(s, width, "…")
+	s = ansi.Truncate(s, width, truncTail())
 	return s + strings.Repeat(" ", max(0, width-ansi.StringWidth(s)))
 }
 
@@ -2031,7 +2031,7 @@ func fitScreen(lines []string, width, height int) string {
 		lines = lines[len(lines)-height:]
 	}
 	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "…")
+		lines[i] = ansi.Truncate(lines[i], width, truncTail())
 	}
 	return strings.Join(lines, "\n")
 }
@@ -2067,7 +2067,7 @@ func (m Model) renderBranding() string {
 func (m Model) renderSection(label, right string) string {
 	head := sectionStyle.Render(label)
 	fill := max(3, m.contentWidth()-lipgloss.Width(head)-lipgloss.Width(right)-4)
-	line := " " + head + "  " + dividerStyle.Render(strings.Repeat("─", fill))
+	line := " " + head + "  " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill))
 	if right != "" {
 		line += " " + hintStyle.Render(right)
 	}
@@ -2241,23 +2241,23 @@ func (m Model) renderPrompt() string {
 	var b strings.Builder
 	b.WriteString("\n")
 	if m.renaming {
-		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render("▏") + "\n")
+		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render(cursorGlyph()) + "\n")
 	} else if m.peekOpen {
 		// The command line doubles as a reply composer while peek is open: label
 		// it so the sub-mode is discoverable (Enter sends, Esc closes) (F36).
-		field := hintStyle.Render("type a reply…")
+		field := hintStyle.Render("type a reply" + hintEllipsis())
 		if m.input != "" {
 			field = titleStyle.Render(displaytext.Sanitize(m.input))
 		}
 		hints := hintStyle.Render("Enter send  ·  Esc close")
-		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
+		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render(caretGlyph()) + " " + field + brandStyle.Render(cursorGlyph()) + "   " + hints + "\n")
 	} else {
-		field := hintStyle.Render("type a command…")
+		field := hintStyle.Render("type a command" + hintEllipsis())
 		if m.input != "" {
 			field = titleStyle.Render(displaytext.Sanitize(m.input))
 		}
 		hints := hintStyle.Render(m.defaultAgent + "  ·  ? help  ·  e new  ·  Esc quit")
-		b.WriteString(bar() + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
+		b.WriteString(bar() + " " + brandStyle.Render(caretGlyph()) + " " + field + brandStyle.Render(cursorGlyph()) + "   " + hints + "\n")
 	}
 	if m.message != "" {
 		b.WriteString("  " + hintStyle.Render(displaytext.Sanitize(m.message)) + "\n")
@@ -2419,7 +2419,7 @@ func (m Model) renderWizard() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 4 · profile %s", step+1, profileLabel)) + "\n")
-	b.WriteString("  " + titleStyle.Render(displaytext.Sanitize(steps[step])) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
+	b.WriteString("  " + titleStyle.Render(displaytext.Sanitize(steps[step])) + brandStyle.Render(cursorGlyph()) + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
 	switch step {
 	case 2:
 		// Warn when the chosen working directory is not inside a git repo: there
@@ -2513,7 +2513,7 @@ func truncate(s string, n int) string {
 		b.WriteRune(r)
 		w += rw
 	}
-	return b.String() + "…"
+	return b.String() + truncTail()
 }
 
 // padRight pads s with spaces to occupy exactly n display columns. If s already

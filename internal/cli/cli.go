@@ -333,8 +333,10 @@ func mouseReportingDisabled() bool {
 	}
 }
 
-// RunTUI launches the Bubble Tea TUI.
+// RunTUI launches the Bubble Tea TUI. The terminal probe runs first so the
+// glyph-set decision is installed before the first frame renders.
 func RunTUI(ctx context.Context, model tea.Model) error {
+	app.ApplyTermCaps(probeTermCaps())
 	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
 	if !mouseReportingDisabled() {
 		// Cell motion rather than all motion: the dashboard only needs presses
