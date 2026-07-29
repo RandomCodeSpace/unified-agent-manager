@@ -34,7 +34,12 @@ func sessionArgs(_ adapter.ResumeRequest, activity string) []string {
 
 func New(backend adapter.Backend) adapter.AgentAdapter {
 	a := adapter.NewAgent("omp", "Oh My Pi", []adapter.CommandCandidate{{Display: "omp", Args: []string{"omp"}}}, yoloArgs, backend)
-	a.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderOMP, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative}
+	// omp renders on the primary screen: launched on a PTY it sets no mouse
+	// tracking modes and never enters the alternate screen (?1049), so its
+	// history is the terminal's own scrollback — the same profile as codex.
+	// Declaring OuterScreenUAM made the attach client wrap it in an alternate
+	// screen, which has no scrollback, and the wheel had nothing left to move.
+	a.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderOMP, OuterScreen: adapter.OuterScreenPrimary, KeyProtocol: adapter.KeyProtocolNative}
 	a.SessionArgs = sessionArgs
 	a.PrepareLaunch = prepareLaunch
 	a.ResumeKindFor = resumeKind
