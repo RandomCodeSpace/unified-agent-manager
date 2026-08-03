@@ -118,3 +118,18 @@ func TestRedrawReplaysRegionSavedCursorAndPen(t *testing.T) {
 		t.Fatalf("redraw = %q, want the live SGR pen restored last", out)
 	}
 }
+
+func TestFocusReportingTracksMode1004(t *testing.T) {
+	term := New(80, 24, 100)
+	if term.FocusReporting() {
+		t.Fatal("focus reporting should be off by default")
+	}
+	_, _ = term.Write([]byte("\x1b[?1004h"))
+	if !term.FocusReporting() {
+		t.Fatal("focus reporting should be on after ?1004h")
+	}
+	_, _ = term.Write([]byte("\x1b[?1004l"))
+	if term.FocusReporting() {
+		t.Fatal("focus reporting should be off after ?1004l")
+	}
+}

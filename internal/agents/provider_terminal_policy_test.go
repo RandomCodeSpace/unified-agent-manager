@@ -13,9 +13,11 @@ import (
 
 func TestProviderTerminalPolicyMatrix(t *testing.T) {
 	want := map[string]adapter.ProviderTerminalPolicy{
-		"claude":  {Identity: adapter.ProviderClaude, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative},
-		"codex":   {Identity: adapter.ProviderCodex, OuterScreen: adapter.OuterScreenPrimary, KeyProtocol: adapter.KeyProtocolNative},
-		"copilot": {Identity: adapter.ProviderCopilot, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative},
+		"claude": {Identity: adapter.ProviderClaude, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative},
+		"codex":  {Identity: adapter.ProviderCodex, OuterScreen: adapter.OuterScreenPrimary, KeyProtocol: adapter.KeyProtocolNative},
+		// copilot binds left arrow to pane navigation at an empty composer,
+		// so the quick-detach gesture is disabled by default for it.
+		"copilot": {Identity: adapter.ProviderCopilot, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative, BackDetach: adapter.BackDetachDisabled},
 		"hermes":  {Identity: adapter.ProviderHermes, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative},
 		// omp sets no mouse modes and never enters ?1049 — verified on a PTY —
 		// so like codex it owns the primary screen and its scrollback.

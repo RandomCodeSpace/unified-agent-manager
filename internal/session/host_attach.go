@@ -76,7 +76,20 @@ func (h *host) initializeAttachClient(client *attachClient, registration clientR
 	}
 	client.out <- serverMessage{kind: serverFramePTY, payload: append([]byte(titleSequence(label)), h.term.Redraw()...)}
 	client.ready = true
+	focusGained := controls && h.term.FocusReporting() && !h.providerFocused
+	if focusGained {
+		h.providerFocused = true
+	}
 	h.mu.Unlock()
+	if focusGained {
+		// The agent asked for focus events (?1004) but runs under a detached
+		// host, so no terminal ever tells it a window gained focus. A
+		// controller attaching is that event; without it agents that dim or
+		// lock their input box while unfocused stay that way. Client
+		// terminals that implement ?1004 may also send their own focus-in
+		// once the replay enables the mode — a duplicate is harmless.
+		h.writeFocusEvent(focusIn)
+	}
 	if !controls || !registration.size.valid() {
 		return
 	}

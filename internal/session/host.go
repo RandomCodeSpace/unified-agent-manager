@@ -128,6 +128,11 @@ type host struct {
 	label     string
 	state     State
 	registry  *clientRegistry
+	// providerFocused records whether the host has told the agent its
+	// terminal is focused (synthetic ?1004 focus events, guarded by mu). Two
+	// paths can observe the same attach — the attach initializer and the PTY
+	// pump seeing ?1004h turn on — and the flag keeps them from both firing.
+	providerFocused bool
 
 	child *exec.Cmd
 	// exited is closed once the agent process has been reaped; the kill
@@ -245,6 +250,24 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 
 // pumpPTY copies agent output into the emulator and to every attached client
 // until the PTY reaches EOF (agent exit).
+// focusIn and focusOut are the xterm focus-tracking events an application
+// with ?1004 enabled expects from its terminal. The host synthesizes them at
+// controller attach/detach boundaries (and on late ?1004 enablement) because
+// the real terminal's focus events can only reach the agent while a client is
+// attached — see initializeAttachClient and removeClient.
+var focusIn = []byte("\x1b[I")
+var focusOut = []byte("\x1b[O")
+
+// writeFocusEvent injects a synthetic focus event into the agent's input.
+// Like applyPTYSize it is deliberately unserialised against controller input:
+// the event is a complete three-byte sequence, and callers may hold neither
+// mutex (pumpPTY) or only controlMu (attach/drop paths).
+func (h *host) writeFocusEvent(event []byte) {
+	if _, err := h.ptmx.Write(event); err != nil {
+		log.Debug("write synthetic focus event failed", "session", h.name, "error", err)
+	}
+}
+
 func (h *host) pumpPTY() {
 	buf := make([]byte, 32*1024)
 	for {
@@ -254,8 +277,23 @@ func (h *host) pumpPTY() {
 			copy(data, buf[:n])
 			h.mu.Lock()
 			_, _ = h.term.Write(data)
+			if !h.term.FocusReporting() {
+				// The mode is off (or was just turned off): a later re-enable
+				// deserves a fresh focus-in.
+				h.providerFocused = false
+			}
+			// An agent that enables ?1004 after a controller attached (every
+			// resume works this way: the client attaches while the replacement
+			// process is still starting) missed the attach-time focus-in.
+			focusGained := h.term.FocusReporting() && h.registry.controller != nil && !h.providerFocused
+			if focusGained {
+				h.providerFocused = true
+			}
 			clients := h.registry.readyClients()
 			h.mu.Unlock()
+			if focusGained {
+				h.writeFocusEvent(focusIn)
+			}
 			for _, client := range clients {
 				h.enqueueClient(client, serverMessage{kind: serverFramePTY, payload: data})
 			}
@@ -593,7 +631,17 @@ func (h *host) removeClient(client *attachClient, reason string) {
 			promotedReplay = h.term.Redraw()
 		}
 	}
+	// The counterpart of the attach-time synthetic focus-in: with no
+	// controller left there is no terminal whose focus the agent could hold.
+	focusLost := registered && wasController && h.registry.controller == nil &&
+		h.term != nil && h.term.FocusReporting() && h.providerFocused
+	if focusLost {
+		h.providerFocused = false
+	}
 	h.mu.Unlock()
+	if focusLost {
+		h.writeFocusEvent(focusOut)
+	}
 	if promotedSize.valid() {
 		h.applyPTYSize(promotedSize)
 	}

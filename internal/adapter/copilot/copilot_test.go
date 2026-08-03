@@ -58,6 +58,9 @@ func TestDispatchSeedsCopilotSessionIDForFutureResume(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	argv := be.CommandLog()
+	if !strings.Contains(argv, "--session-id "+sess.ID) {
+		t.Fatalf("copilot dispatch should pin the provider session id to the UAM id: %s", argv)
+	}
 	if !strings.Contains(argv, "--name "+sess.ID) {
 		t.Fatalf("copilot dispatch should name the provider session with the UAM id: %s", argv)
 	}

@@ -52,9 +52,12 @@ func TestTodo8TerminalPolicyRealPTYFixture(t *testing.T) {
 	if _, err := first.ptmx.Write(payload); err != nil {
 		t.Fatal(err)
 	}
+	// The provider enabled ?1004, so the host synthesized a focus-in when the
+	// first controller attached; everything after it must be byte-exact.
+	expectedInput := append(append([]byte{}, focusIn...), payload...)
 	waitFor(t, "byte-exact provider input", func() bool {
 		got, err := os.ReadFile(providerInputPath)
-		return err == nil && bytes.Equal(got, payload)
+		return err == nil && bytes.Equal(got, expectedInput)
 	})
 	providerInput, err := os.ReadFile(providerInputPath)
 	if err != nil {
@@ -85,7 +88,7 @@ func TestTodo8TerminalPolicyRealPTYFixture(t *testing.T) {
 		SharedProviderMarker: bytes.Contains(firstLiveOutput, []byte("TASK8-READY")) && bytes.Contains(secondLiveOutput, []byte("TASK8-READY")),
 		FirstPreservedMouse:  containsEnabledDECMode(firstLiveOutput, "1000") && containsEnabledDECMode(firstLiveOutput, "1006"),
 		SecondFilteredMouse:  !containsEnabledDECMode(secondLiveOutput, "1000") && !containsEnabledDECMode(secondLiveOutput, "1006"),
-		ProviderInputExact:   bytes.Equal(providerInput, payload),
+		ProviderInputExact:   bytes.Equal(providerInput, expectedInput),
 		RuntimeClean:         true,
 	}
 	if !assertion.SharedProviderMarker || !assertion.FirstPreservedMouse || !assertion.SecondFilteredMouse || !assertion.ProviderInputExact {
