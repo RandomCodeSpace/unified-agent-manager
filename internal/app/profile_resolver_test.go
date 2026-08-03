@@ -104,3 +104,44 @@ func allClientCapabilities() ClientCapabilities {
 }
 
 func pointer[T any](value T) *T { return &value }
+
+func TestProviderBackDetachPolicySetsTheDefault(t *testing.T) {
+	cfg := store.DefaultConfig()
+	record := store.SessionRecord{Agent: "copilot"}
+	policy := adapter.ProviderTerminalPolicy{
+		Identity: adapter.ProviderCopilot, OuterScreen: adapter.OuterScreenUAM,
+		KeyProtocol: adapter.KeyProtocolNative, BackDetach: adapter.BackDetachDisabled,
+	}
+	effective, err := ResolveProfilePolicy(ResolutionInput{Config: cfg, Session: record, ProviderPolicy: policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := effective.NewAttachment(ClientTemporaryOverride{}, allClientCapabilities())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachment.BackDetach() {
+		t.Fatal("provider back-detach disabled policy should default the quick detach off")
+	}
+}
+
+func TestProfileBackDetachOverridesProviderPolicy(t *testing.T) {
+	cfg := store.DefaultConfig()
+	cfg.Profiles["gesture"] = store.Profile{BackDetach: pointer(true)}
+	record := store.SessionRecord{Agent: "copilot", Profile: "gesture"}
+	policy := adapter.ProviderTerminalPolicy{
+		Identity: adapter.ProviderCopilot, OuterScreen: adapter.OuterScreenUAM,
+		KeyProtocol: adapter.KeyProtocolNative, BackDetach: adapter.BackDetachDisabled,
+	}
+	effective, err := ResolveProfilePolicy(ResolutionInput{Config: cfg, Session: record, ProviderPolicy: policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := effective.NewAttachment(ClientTemporaryOverride{}, allClientCapabilities())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !attachment.BackDetach() {
+		t.Fatal("an explicit profile back-detach must win over the provider default")
+	}
+}

@@ -24,10 +24,26 @@ type KeyProtocolPolicy string
 
 const KeyProtocolNative KeyProtocolPolicy = "native"
 
+// BackDetachPolicy is a provider's default for the attach client's quick
+// detach (a bare left arrow while the input box is empty detaches). The
+// gesture assumes left arrow is a no-op at an empty prompt; providers that
+// bind it to their own UI (pane or tab navigation) disable the default.
+// Profiles and session overrides still take precedence either way.
+type BackDetachPolicy string
+
+const (
+	// BackDetachDefault leaves the quick detach enabled (the zero value).
+	BackDetachDefault BackDetachPolicy = ""
+	// BackDetachDisabled turns the quick detach off unless a profile or
+	// override explicitly enables it.
+	BackDetachDisabled BackDetachPolicy = "disabled"
+)
+
 type ProviderTerminalPolicy struct {
 	Identity    ProviderIdentity
 	OuterScreen OuterScreenPolicy
 	KeyProtocol KeyProtocolPolicy
+	BackDetach  BackDetachPolicy
 }
 
 type TerminalPolicyAdapter interface {
@@ -43,6 +59,9 @@ func (p ProviderTerminalPolicy) Validate() error {
 	}
 	if p.KeyProtocol != KeyProtocolNative {
 		return fmt.Errorf("invalid provider key-protocol policy %q", p.KeyProtocol)
+	}
+	if p.BackDetach != BackDetachDefault && p.BackDetach != BackDetachDisabled {
+		return fmt.Errorf("invalid provider back-detach policy %q", p.BackDetach)
 	}
 	return nil
 }

@@ -735,6 +735,15 @@ func (t *Terminal) Capture(maxLines int) string {
 	return strings.Join(joined, "\n") + "\n"
 }
 
+// FocusReporting reports whether the agent has focus reporting (DEC private
+// mode 1004) enabled. The session host uses it to synthesize focus events at
+// attach and detach boundaries: a real terminal tells the application when
+// its window gains or loses focus, and an agent running under a detached host
+// would otherwise never hear either.
+func (t *Terminal) FocusReporting() bool {
+	return t.privModes[1004]
+}
+
 // Redraw returns an ANSI byte sequence that repaints the current screen on a
 // fresh terminal: reset attributes, clear, draw every row with the SGR state
 // each cell was written with, and park the cursor. The session host sends it
