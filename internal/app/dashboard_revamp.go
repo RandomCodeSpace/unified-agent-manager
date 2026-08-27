@@ -782,26 +782,6 @@ func entryLines(entries []dashboardEntry, width int) []string {
 	return lines
 }
 
-// hairlineRule is the borderless section divider: a label, a thin rule filling
-// the gap, and an optional right-aligned annotation.
-func hairlineRule(title, right string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if right == "" {
-		fill := width - ansi.StringWidth(title) - 1
-		if fill < 1 {
-			return ansi.Truncate(title, width, truncTail())
-		}
-		return title + " " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill))
-	}
-	fill := width - ansi.StringWidth(title) - ansi.StringWidth(right) - 2
-	if fill < 1 {
-		return ansi.Truncate(title+" "+right, width, truncTail())
-	}
-	return title + " " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill)) + " " + right
-}
-
 // windowBlocks scrolls in lines but never severs a block: the start is snapped
 // back to a block boundary, so a session is either fully on screen or absent.
 func windowBlocks(entries []dashboardEntry, selected, budget int) []dashboardEntry {
