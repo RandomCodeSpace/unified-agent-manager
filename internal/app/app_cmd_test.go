@@ -89,9 +89,6 @@ func TestModelCommandFactories(t *testing.T) {
 	if msg := m.dispatchNamedCmd("fake", "", "", "prompt")(); msg.(dispatchedMsg).err != nil {
 		t.Fatalf("dispatch msg=%+v", msg)
 	}
-	if msg := m.peekSelectedCmd()(); msg.(peekLoadedMsg).text != "tail" {
-		t.Fatalf("peek msg=%+v", msg)
-	}
 	if msg := m.pinSelectedCmd()(); msg.(sessionsLoadedMsg).err != nil {
 		t.Fatalf("pin msg=%+v", msg)
 	}

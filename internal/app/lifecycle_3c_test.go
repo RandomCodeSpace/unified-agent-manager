@@ -289,11 +289,11 @@ func TestReorderRejectsAcrossRunningStoppedWithoutSideEffects(t *testing.T) {
 	m := Model{sessions: []adapter.Session{
 		{ID: "run", AgentType: "fake", ProcAlive: adapter.Alive, SortIndex: 0},
 		{ID: "stop", AgentType: "fake", ProcAlive: adapter.Exited, SortIndex: 1},
-	}, selected: 0, peekOpen: true, peekTargetID: "run", peekText: "tail"}
+	}, selected: 0}
 	if cmd := m.moveSession(1); cmd != nil {
 		t.Fatal("cross-lifecycle reorder scheduled persistence")
 	}
-	if m.selected != 0 || m.reorderPending || m.reorderSeq != 0 || m.peekTargetID != "run" || m.peekText != "tail" || sessionIDs(m.sessions)[0] != "run" {
+	if m.selected != 0 || m.reorderPending || m.reorderSeq != 0 || sessionIDs(m.sessions)[0] != "run" {
 		t.Fatalf("rejected move mutated state: %+v", m)
 	}
 }

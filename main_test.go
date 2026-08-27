@@ -20,7 +20,7 @@ import (
 // TestMain doubles as the session host/attach entry point: the native backend
 // spawns os.Executable() with the internal __host/__attach subcommands, and
 // under `go test` that executable is this test binary. Routing those argv
-// shapes into the real CLI makes the dispatch/peek/stop tests below exercise
+// shapes into the real CLI makes the dispatch/stop tests below exercise
 // the actual session backend end to end.
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && (os.Args[1] == "__host" || os.Args[1] == "__attach") {
@@ -58,7 +58,6 @@ func TestRunArgumentErrors(t *testing.T) {
 		msg  string
 	}{
 		{[]string{"unknown"}, "want unknown error"},
-		{[]string{"peek"}, "want peek arg error"},
 		{[]string{"stop"}, "want stop arg error"},
 		{[]string{"rm"}, "want rm arg error"},
 		{[]string{"attach"}, "want attach arg error"},
@@ -198,13 +197,6 @@ func TestRunMoreCLIPaths(t *testing.T) {
 	}); !strings.Contains(text, "claude") {
 		t.Fatalf("ls text=%q", text)
 	}
-	if text := captureStdout(t, func() {
-		if err := run(context.Background(), []string{"peek", id}); err != nil {
-			t.Fatal(err)
-		}
-	}); !strings.Contains(text, "pane") {
-		t.Fatalf("peek=%q", text)
-	}
 	if err := run(context.Background(), []string{"stop", id}); err != nil {
 		t.Fatal(err)
 	}
@@ -288,8 +280,7 @@ func TestUsageAndNewService(t *testing.T) {
 func setupFakeCLIEnv(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	// A long-lived fake agent: prints a recognizable line for peek asserts and
-	// then idles so the session stays alive for list/stop/attach paths.
+	// A long-lived fake agent that stays alive for list/stop/attach paths.
 	writeFileMode(t, filepath.Join(dir, "claude"), "#!/bin/sh\necho pane\nexec sleep 60\n", 0o755)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("UAM_CACHE_DIR", filepath.Join(dir, "cache"))

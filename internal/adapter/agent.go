@@ -29,8 +29,7 @@ import (
 const prRescanInterval = 60 * time.Second
 
 // prCaptureLines is the output tail captured for PR scraping. A PR URL is
-// emitted near where `gh`/the agent prints it, so a short tail is enough — the
-// 200-line grab the peek path uses is wasteful here (F16).
+// emitted near where `gh`/the agent prints it, so a short tail is enough.
 const prCaptureLines = 40
 
 type CommandCandidate struct {
@@ -39,7 +38,7 @@ type CommandCandidate struct {
 }
 
 // Backend is the session-management surface an Agent drives: create / list /
-// capture / reply / kill / attach against uam's native session hosts
+// capture / input / kill / attach against uam's native session hosts
 // (internal/session.Client in production, fakes in tests).
 type Backend interface {
 	CreateProviderSession(ctx context.Context, spec session.CreateSpec) error
@@ -431,17 +430,6 @@ func (a *Agent) prunePRScan(live map[string]struct{}) {
 	}
 }
 
-func (a *Agent) Peek(ctx context.Context, id string) (PeekResult, error) {
-	capture, err := a.Backend.Capture(ctx, a.target(id), 200)
-	if err != nil {
-		return PeekResult{}, fmt.Errorf("peek %s session %s: %w", a.Name(), id, err)
-	}
-	return PeekResult{TailText: capture}, nil
-}
-
-func (a *Agent) Reply(ctx context.Context, id, text string) error {
-	return a.Backend.SendLine(ctx, a.target(id), text)
-}
 func (a *Agent) Attach(id string) (AttachSpec, error) {
 	argv, err := a.Backend.AttachArgv(a.target(id))
 	if err != nil {

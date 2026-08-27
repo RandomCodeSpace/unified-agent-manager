@@ -35,11 +35,11 @@ asks for confirmation before launching anything.
 
 The layout is derived from the current terminal dimensions on every resize.
 
-| Layout | Geometry | Operations view | Peek view |
-|---|---|---|---|
-| **Wide** | At least 96 columns and 28 rows | Borderless full-width list at the density the row budget affords; every session shows the same fields. | Session list remains beside the output tail. |
-| **Standard** | At least 58 columns and 24 rows, but below Wide | Borderless full-width list; full session IDs are retained. | Output tail replaces the list so it has useful width. |
-| **Compact** | Fewer than 58 columns or fewer than 24 rows | Same density ladder; the lifecycle word yields to its glyph and IDs shorten to an eight-character prefix. | Output tail becomes the primary surface. |
+| Layout | Geometry | Operations view |
+|---|---|---|
+| **Wide** | At least 96 columns and 28 rows | Borderless full-width list at the density the row budget affords; every session shows the same fields. |
+| **Standard** | At least 58 columns and 24 rows, but below Wide | Borderless full-width list; full session IDs are retained. |
+| **Compact** | Fewer than 58 columns or fewer than 24 rows | Same density ladder; the lifecycle word yields to its glyph and IDs shorten to an eight-character prefix. |
 
 ### Density ladder
 
@@ -85,10 +85,10 @@ by terminal-cell width without splitting Unicode text.
 
 | Key | Action |
 |---|---|
-| `↑` / `↓` | Move the selected row. With Peek open, output follows the selection. |
+| `↑` / `↓` | Move the selected row. |
 | `Enter` / `→` | Attach to Running, or resume and attach to Stopped. |
-| `Space` | Open or close Peek for Running. For Stopped, resume in the background; this may first require latest-conversation confirmation. |
-| Type + `Enter` | Dispatch with the default provider. In Peek, send a reply to the selected session. |
+| `Space` | Resume Stopped in the background; this may first require latest-conversation confirmation. Otherwise enter a space in the composer. |
+| Type + `Enter` | Dispatch with the default provider. |
 | `@provider:alias #name prompt` | Choose provider, optional command alias, optional name, and prompt inline. |
 | `Tab` | Cycle the default provider. In the wizard, cycle provider or complete a path according to the current step. |
 | `e` | Open the four-step New Session wizard. |
@@ -110,8 +110,8 @@ README for the complete attach-key contract.
 ## Multiple attached terminals
 
 An attachment is a live client, not a second Managed Session. One client is the
-**controller** and is the only one allowed to send provider input, resize the
-PTY, or issue a provider reply. Further interactive clients are **standbys**;
+**controller** and is the only one allowed to send provider input or resize the
+PTY. Further interactive clients are **standbys**;
 they see output and can request a handoff, but cannot interleave keystrokes.
 **Observers** are output-only. If the controller disconnects, the next standby
 is promoted. A controller can also transfer deliberately.
@@ -138,9 +138,8 @@ Filtering is a temporary presentation state. It is not stored, and pin, rename,
 stop, attach, resume, grouping, and reorder actions still use the session's
 provider-and-ID identity. `Esc` clears the query and restores the prior selection
 when it still exists. A slash typed after command text has begun remains literal
-prompt content. Peek replies also keep `/` as literal input rather than entering
-filter mode; an empty Operations dashboard still opens the filter and shows a
-zero-result state.
+prompt content. An empty Operations dashboard still opens the filter and shows
+a zero-result state.
 
 ## Workspace grouping and parallel sessions
 
@@ -169,7 +168,7 @@ touch-only substitutes for those terminal keys.
 1. Keep the terminal narrower than 58 columns or let the keyboard reduce it
    below 24 rows.
 2. Use the one-line rows and expanded two-line selection to scan sessions; use
-   `Space` to dedicate the primary surface to Peek and `Esc` to return.
+   the numbered chips or `Enter` to attach to the selected session.
 3. Use `e` for the bounded wizard instead of composing a long inline dispatch.
 4. Use `Ctrl+G` with a terminal/editor combination that supports external editor
    handoff when a multi-line prompt is easier outside the small viewport.

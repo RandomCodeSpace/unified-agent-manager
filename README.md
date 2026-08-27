@@ -9,9 +9,8 @@
 </p>
 
 `uam` is a terminal dashboard for managing multiple coding-agent CLIs from one place.
-It gives you a single TUI for launching, peeking, replying to, attaching to, and
-stopping long-running agent sessions — no tmux (or any other multiplexer)
-required.
+It gives you a single TUI for launching, attaching to, resuming, and stopping
+long-running agent sessions — no tmux (or any other multiplexer) required.
 
 Supported providers:
 
@@ -28,8 +27,6 @@ Supported providers:
   (a PTY + terminal emulator + Unix socket) — sessions keep running when the
   TUI exits, exactly like a tmux server, with no external dependency
 - Shows Running and Stopped sessions in one dashboard, with grounded exit detail
-- Lets you peek at recent output without attaching (4000 lines of scrollback)
-- Sends replies back into running agent sessions
 - Persists session metadata across restarts, including each agent's exit code
 - Supports pinning, renaming, manual reorder, and group-by-directory
 - Detects GitHub PR URLs from agent output and can refresh PR state when `gh` is available
@@ -105,7 +102,6 @@ uam                              # open the TUI
 uam new                          # guided dispatch wizard, then attach
 uam dispatch [--safe] [--alias <name>] <agent> [#session-name] [prompt]
 uam ls [--json]
-uam peek <id>
 uam attach [--allow-latest] <name-or-id>
 uam last
 uam stop <id>                    # kill the session, keep record
@@ -138,7 +134,7 @@ uam profile effective <session-id> [--json]
 | `@agent prompt` | Dispatch to a specific agent |
 | `@agent:alias prompt` | Dispatch with a command alias |
 | `Tab` | Cycle default agent |
-| `Space` | Toggle Peek for Running; resume Stopped in the background |
+| `Space` | Resume Stopped in the background; otherwise enter a space in the composer |
 | `Ctrl+T` | Pin selected session |
 | `Ctrl+R` | Rename selected session |
 | `Ctrl+X` | Stop and remove the selected record, or restart it, with confirmation |
@@ -426,10 +422,9 @@ behavior instead. Safe mode changes provider arguments; it is not an operating-
 system sandbox and does not reduce the permissions of the `uam` process itself.
 
 OpenCode keeps the same safety-mode contract as the other providers. Default
-yolo mode automatically approves permission requests for the active root
-conversation tree. `uam dispatch --safe ...` leaves OpenCode permission prompts
-visible for the user and does not auto-reply. Safe mode still is not an
-operating-system sandbox.
+yolo mode starts the full OpenCode TUI with its native `--auto` flag.
+`uam dispatch --safe ...` omits that flag and leaves OpenCode permission prompts
+visible for the user. Safe mode still is not an operating-system sandbox.
 
 `uam` does not make git checkpoints, stash changes, or modify your repository on
 its own. It starts and manages agent sessions; the provider remains responsible
