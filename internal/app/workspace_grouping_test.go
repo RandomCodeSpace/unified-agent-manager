@@ -136,19 +136,12 @@ func TestGroupedReorderRejectsWorkspaceBoundaryWithoutSideEffects(t *testing.T) 
 		{ID: "b", AgentType: "fake", Cwd: "/tmp/b", ProcAlive: adapter.Alive},
 	}
 	m.selected = 0
-	m.peekOpen = true
-	m.peekTargetAgent = "fake"
-	m.peekTargetID = "a"
-	m.peekText = "keep this tail"
 
 	if cmd := m.moveSession(1); cmd != nil {
 		t.Fatal("cross-workspace move must not schedule persistence")
 	}
 	if m.selected != 0 || m.reorderPending || m.reorderSeq != 0 {
 		t.Fatalf("rejected move changed selection or persistence state: selected=%d pending=%v seq=%d", m.selected, m.reorderPending, m.reorderSeq)
-	}
-	if m.peekTargetID != "a" || m.peekText != "keep this tail" {
-		t.Fatalf("rejected move changed peek state: target=%q text=%q", m.peekTargetID, m.peekText)
 	}
 	if got := sessionIDs(m.sessions); !reflect.DeepEqual(got, []string{"a", "b"}) {
 		t.Fatalf("rejected move changed rows: %v", got)

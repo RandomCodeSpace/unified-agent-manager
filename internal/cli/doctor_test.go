@@ -200,12 +200,8 @@ func (a *doctorAdapter) Dispatch(adapter.Context, adapter.DispatchRequest) (adap
 	return adapter.Session{}, nil
 }
 func (a *doctorAdapter) List(adapter.Context) ([]adapter.Session, error) { return nil, nil }
-func (a *doctorAdapter) Peek(adapter.Context, string) (adapter.PeekResult, error) {
-	return adapter.PeekResult{}, nil
-}
-func (a *doctorAdapter) Reply(adapter.Context, string, string) error { return nil }
-func (a *doctorAdapter) Attach(string) (adapter.AttachSpec, error)   { return adapter.AttachSpec{}, nil }
-func (a *doctorAdapter) Stop(adapter.Context, string) error          { return nil }
+func (a *doctorAdapter) Attach(string) (adapter.AttachSpec, error)       { return adapter.AttachSpec{}, nil }
+func (a *doctorAdapter) Stop(adapter.Context, string) error              { return nil }
 func (a *doctorAdapter) TerminalPolicy() adapter.ProviderTerminalPolicy {
 	return adapter.ProviderTerminalPolicy{
 		Identity: adapter.ProviderIdentity(a.name), OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative,

@@ -26,30 +26,21 @@ import (
 )
 
 type Model struct {
-	width, height int
-	sizeKnown     bool
-	quitting      bool
-	loading       bool
-	service       *Service
-	sessions      []adapter.Session
-	selected      int
-	input         string
-	filterActive  bool
-	filterQuery   string
-	filterRestore sessionIdentity
-	filterSaved   bool
-	defaultAgent  string
-	message       string
-	messageSetAt  time.Time
-	peekOpen      bool
-	peekText      string
-	// peekTargetID is the session whose pane the open peek panel shows. While
-	// peek is open the command line doubles as a reply composer: typed text +
-	// Enter sends to this session via Service.Reply rather than dispatching a new
-	// agent. Snapshotting the id (mirroring renameTargetID) keeps a reorder under
-	// the cursor from misrouting the reply (F36).
-	peekTargetID        string
-	peekTargetAgent     string
+	width, height       int
+	sizeKnown           bool
+	quitting            bool
+	loading             bool
+	service             *Service
+	sessions            []adapter.Session
+	selected            int
+	input               string
+	filterActive        bool
+	filterQuery         string
+	filterRestore       sessionIdentity
+	filterSaved         bool
+	defaultAgent        string
+	message             string
+	messageSetAt        time.Time
 	helpOpen            bool
 	confirmStop         bool
 	confirmStopID       string
@@ -87,13 +78,6 @@ type Model struct {
 	persistSortIndices func([]adapter.Session) error
 	reloadSessions     func() sessionsLoadedMsg
 	groupToggle        *groupToggleCoordinator
-	// lastPeekAt records, per session id, when its pane was last captured for
-	// the peek panel. The peek-focus ticker re-polls the focused session at most
-	// once per peekFocusInterval; the map is keyed by id (not row index) because
-	// rows reorder every refresh tick (C2-11). peekClock is the injectable clock
-	// for that gate.
-	lastPeekAt map[string]time.Time
-	peekClock  func() time.Time
 	// now is the presentation clock used for deterministic session-age labels.
 	// Discovery refreshes LastChange on every scan, so the dashboard deliberately
 	// derives age from CreatedAt instead.
@@ -112,18 +96,6 @@ const messageTTL = 8 * time.Second
 // (F59).
 const reorderDebounce = 500 * time.Millisecond
 
-// peekTickInterval drives the peek-focus poll. The tick is what makes an open
-// peek panel update live without coupling peek freshness to the slower 2s
-// session refresh (C2-11).
-const peekTickInterval = time.Second
-
-// peekFocusInterval is the minimum spacing between captures of the focused
-// session's pane while the peek panel is open. The peek-focus ticker fires
-// every second; this gate (id-keyed) keeps a focused session from being
-// captured faster than once per interval even if rows reorder under the cursor
-// (C2-11).
-const peekFocusInterval = time.Second
-
 type sessionsLoadedMsg struct {
 	sessions         []adapter.Session
 	defaultAgent     string
@@ -133,10 +105,6 @@ type sessionsLoadedMsg struct {
 	defaultProfile   string
 	profileBySession map[sessionIdentity]string
 	err              error
-}
-type peekLoadedMsg struct {
-	text string
-	err  error
 }
 type dispatchedMsg struct {
 	session adapter.Session
@@ -165,11 +133,6 @@ type latestRequiredMsg struct {
 type refreshMsg time.Time
 type prRefreshMsg time.Time
 type prRefreshedMsg struct{ err error }
-
-// peekTickMsg is the peek-focus poll tick. When the peek panel is open it
-// re-captures the focused session's pane (rate-limited per id) so the panel
-// follows live output; when closed it just re-arms (C2-11).
-type peekTickMsg time.Time
 
 // reorderFlushMsg is the debounced reorder-persist tick. It carries the seq of
 // the reorder that scheduled it; the handler persists only when the seq still
@@ -219,7 +182,7 @@ func New() Model {
 }
 
 func NewWithDeps(st *store.Store, reg *adapter.Registry) Model {
-	m := Model{service: NewService(st, reg), defaultAgent: store.DefaultAgentName, wizardCwd: ".", profileProviders: map[string]string{}, profileBySession: map[sessionIdentity]string{}, execProcess: tea.ExecProcess, lastPeekAt: map[string]time.Time{}, peekClock: time.Now}
+	m := Model{service: NewService(st, reg), defaultAgent: store.DefaultAgentName, wizardCwd: ".", profileProviders: map[string]string{}, profileBySession: map[sessionIdentity]string{}, execProcess: tea.ExecProcess}
 	// The baked-in OpenCode default may not be installed; reconcile it to an
 	// enabled provider so Enter-with-no-input and the prompt hint never point at
 	// a disabled agent (C2-9).
@@ -245,7 +208,7 @@ func (m Model) validateDefaultAgent(candidate string) string {
 	return candidate
 }
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadSessionsCmd(), refreshTick(), peekTick(), prRefreshTick(100*time.Millisecond))
+	return tea.Batch(m.loadSessionsCmd(), refreshTick(), prRefreshTick(100*time.Millisecond))
 }
 
 func refreshTick() tea.Cmd {
@@ -254,10 +217,6 @@ func refreshTick() tea.Cmd {
 
 func prRefreshTick(after time.Duration) tea.Cmd {
 	return tea.Tick(after, func(t time.Time) tea.Msg { return prRefreshMsg(t) })
-}
-
-func peekTick() tea.Cmd {
-	return tea.Tick(peekTickInterval, func(t time.Time) tea.Msg { return peekTickMsg(t) })
 }
 
 // refreshStep advances the refresh state machine for one tick. It always
@@ -327,12 +286,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading = true
 		return m, m.loadSessionsCmd()
-	case peekTickMsg:
-		// Re-arm the peek ticker unconditionally; only re-capture the focused
-		// session when the panel is open and the per-id rate limit allows it
-		// (C2-11).
-		next, peekCmd := m.peekFocusStep(time.Time(msg))
-		return next, tea.Batch(peekCmd, peekTick())
 	case reorderFlushMsg:
 		// Persist only if this is the latest reorder; a superseded tick is dropped
 		// so a held Shift+arrow coalesces into one write (F59).
@@ -352,8 +305,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSessionsLoaded(msg.loaded), nil
 	case sessionsLoadedMsg:
 		return m.handleSessionsLoaded(msg), nil
-	case peekLoadedMsg:
-		return m.handlePeekLoaded(msg), nil
 	case dispatchedMsg:
 		return m.handleDispatched(msg)
 	case attachSpecMsg:
@@ -421,17 +372,6 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	if msg.sessions != nil {
 		m.sessions = projectSessions(msg.sessions, msg.groupByDir)
 		m.groupByDir = msg.groupByDir
-		// Drop peek throttle stamps for sessions that no longer exist so the
-		// map cannot grow without bound across many session lifetimes.
-		live := make(map[string]struct{}, len(m.sessions))
-		for _, sess := range m.sessions {
-			live[sess.ID] = struct{}{}
-		}
-		for id := range m.lastPeekAt {
-			if _, ok := live[id]; !ok {
-				delete(m.lastPeekAt, id)
-			}
-		}
 	}
 	if msg.defaultAgent != "" {
 		// A persisted default may name an agent whose CLI was since uninstalled;
@@ -459,15 +399,6 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	m.selected = max(0, min(m.selected, len(m.sessions)-1))
 	if m.filterActive {
 		m.reconcileFilterSelection()
-	}
-	return m
-}
-
-func (m Model) handlePeekLoaded(msg peekLoadedMsg) Model {
-	if msg.err != nil {
-		m.setMessage(msg.err.Error())
-	} else {
-		m.peekText = msg.text
 	}
 	return m
 }
@@ -525,14 +456,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if handled, model, cmd := m.handleModalKey(msg, key); handled {
 		return model, cmd
 	}
-	// Peek owns the command composer for replies. Keep the filtered projection,
-	// but route text/Enter/Esc through the established reply flow while it is open.
-	if m.filterActive && !m.peekOpen {
+	if m.filterActive {
 		if handled, cmd := m.handleFilterKey(msg, key); handled {
 			return m, cmd
 		}
 	}
-	if key == "/" && m.input == "" && !m.peekOpen {
+	if key == "/" && m.input == "" {
 		m.enterFilter()
 		return m, nil
 	}
@@ -636,47 +565,17 @@ func (m Model) retryLatestCmd(action latestAction, agentName, id string) tea.Cmd
 func (m *Model) handleMovementKey(key string) (bool, tea.Cmd) {
 	switch key {
 	case "up":
-		return true, m.moveSelectionPeek(-1)
+		m.moveSelection(-1)
+		return true, nil
 	case "down":
-		return true, m.moveSelectionPeek(1)
+		m.moveSelection(1)
+		return true, nil
 	case "shift+up":
 		return true, m.moveSession(-1)
 	case "shift+down":
 		return true, m.moveSession(1)
 	}
 	return false, nil
-}
-
-// moveSelectionPeek moves the cursor and, when the peek panel is open and the
-// selection actually changed, re-fires the peek for the newly selected session.
-// The stale peek text is blanked synchronously so the panel never shows a frame
-// of the previous session's tail. Gated on peekOpen so plain navigation with the
-// panel closed doesn't trigger an N+1 capture storm (C2-2).
-func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
-	prev := m.selected
-	m.moveSelection(delta)
-	if m.selected == prev {
-		return nil
-	}
-	return m.refocusOutput()
-}
-
-// refocusOutput re-points the output surfaces at the newly selected session.
-//
-// The reply target moves with the cursor because it is reply routing and must
-// stay pinned to the session the user opened (F36). The captured tail is
-// blanked and re-fired so the panel never shows a frame of the previous
-// session's output under the new session's name.
-func (m *Model) refocusOutput() tea.Cmd {
-	if !m.peekOpen {
-		return nil
-	}
-	if sess, ok := m.selectedSession(); ok {
-		m.peekTargetAgent = sess.AgentType
-		m.peekTargetID = sess.ID
-	}
-	m.peekText = ""
-	return m.peekSelectedCmd()
 }
 
 func (m *Model) moveSelection(delta int) {
@@ -702,48 +601,6 @@ func (m *Model) moveSelection(delta int) {
 	if next >= 0 && next < len(m.sessions) {
 		m.selected = next
 	}
-}
-
-// peekFocusStep handles a peek-focus tick: when the panel is open it re-captures
-// the focused session's pane at most once per peekFocusInterval (gated by id so
-// a reorder under the cursor can't double-capture), keeping the panel live. It
-// returns the (possibly nil) peek command; the caller re-arms the ticker (C2-11).
-func (m Model) peekFocusStep(now time.Time) (Model, tea.Cmd) {
-	if m.peekClock != nil {
-		now = m.peekClock()
-	}
-	// Only the peek panel shows a live tail; with it closed there is nothing on
-	// screen for a capture to feed. The id-keyed rate limit still bounds
-	// captures to one per peekFocusInterval.
-	if !m.peekOpen {
-		return m, nil
-	}
-	sess, ok := m.selectedSession()
-	if !ok {
-		return m, nil
-	}
-	if !m.shouldPollFocusedPeek(sess.ID, now) {
-		return m, nil
-	}
-	if m.lastPeekAt == nil {
-		m.lastPeekAt = map[string]time.Time{}
-	}
-	m.lastPeekAt[sess.ID] = now
-	return m, m.peekSelectedCmd()
-}
-
-// shouldPollFocusedPeek reports whether the focused session id is due for a
-// peek capture: never polled, or last polled at least peekFocusInterval ago.
-// Keyed by id so the rate limit follows the session, not the row index (C2-11).
-func (m Model) shouldPollFocusedPeek(id string, now time.Time) bool {
-	if id == "" {
-		return false
-	}
-	last, seen := m.lastPeekAt[id]
-	if !seen {
-		return true
-	}
-	return now.Sub(last) >= peekFocusInterval
 }
 
 func (m *Model) moveSession(delta int) tea.Cmd {
@@ -899,7 +756,7 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "?":
 		// Same guard the other letter-shaped bindings use: a leading key only
 		// binds on an empty composer, otherwise it is text. Without it a '?'
-		// could never be typed into a prompt or a reply.
+		// could never be typed into a prompt.
 		if strings.TrimSpace(m.input) != "" {
 			m.input += key
 			return true, nil
@@ -960,7 +817,7 @@ func chipPositionFor(key string) int {
 // obvious choice here and are the wrong one: stealing nine of them would break
 // dispatching any prompt that happens to start with one.
 func (m *Model) handleChipKey(key string) (bool, tea.Cmd) {
-	if m.peekOpen || m.filterActive || m.renaming || m.wizard {
+	if m.filterActive || m.renaming || m.wizard {
 		return false, nil
 	}
 	if strings.TrimSpace(m.input) != "" {
@@ -979,9 +836,7 @@ func (m *Model) handleChipKey(key string) (bool, tea.Cmd) {
 
 // selectOrActivate is the shared verb behind a chip press and a mouse tap: the
 // first hit moves the cursor, a second hit on the session already under it
-// attaches. Selection changes keep the peek panel and its reply target in sync
-// the same way moveSelectionPeek does, so a tap while peeking cannot misroute a
-// subsequent reply.
+// attaches.
 func (m *Model) selectOrActivate(index int) tea.Cmd {
 	if index < 0 || index >= len(m.sessions) {
 		return nil
@@ -990,7 +845,7 @@ func (m *Model) selectOrActivate(index int) tea.Cmd {
 		return m.attachSelectedCmd()
 	}
 	m.selected = index
-	return m.refocusOutput()
+	return nil
 }
 
 // handleMouse routes pointer input through exactly the same verbs the keyboard
@@ -1006,9 +861,11 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
-		return m, m.moveSelectionPeek(-1)
+		m.moveSelection(-1)
+		return m, nil
 	case tea.MouseButtonWheelDown:
-		return m, m.moveSelectionPeek(1)
+		m.moveSelection(1)
+		return m, nil
 	case tea.MouseButtonLeft:
 		index, gate, ok := m.dashboardHitTarget(msg.Y, msg.X)
 		if !ok {
@@ -1023,17 +880,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleEscKey makes Esc back out one level per press: close the peek panel,
-// then clear the command input, and finally quit the uam TUI.
+// handleEscKey clears the command input, then quits the uam TUI.
 func (m *Model) handleEscKey() tea.Cmd {
-	if m.peekOpen {
-		// Esc backs out of the peek/reply composer WITHOUT sending the in-progress
-		// reply (F36).
-		m.peekOpen = false
-		m.peekTargetAgent = ""
-		m.peekTargetID = ""
-		return nil
-	}
 	if m.input != "" {
 		m.input = ""
 		return nil
@@ -1059,36 +907,16 @@ func (m *Model) handleSpaceKey(key string) tea.Cmd {
 		m.input += key
 		return nil
 	}
-	// A stopped session has no live process to peek into — Space restarts it
-	// in the background instead.
+	// Space restarts a stopped session in the background.
 	if sess, ok := m.selectedSession(); ok && sess.ProcAlive == adapter.Exited {
 		m.setMessage("restarting " + firstNonEmpty(sess.DisplayName, sess.ID))
 		return m.resumeSelectedCmd()
 	}
-	m.peekOpen = !m.peekOpen
-	if m.peekOpen {
-		// Snapshot the peeked session so an Enter-to-reply routes to it even if a
-		// refresh reorders the list under the cursor (F36).
-		if sess, ok := m.selectedSession(); ok {
-			m.peekTargetAgent = sess.AgentType
-			m.peekTargetID = sess.ID
-		}
-		return m.peekSelectedCmd()
-	}
-	m.peekTargetAgent = ""
-	m.peekTargetID = ""
+	m.input += key
 	return nil
 }
 
 func (m *Model) handleEnterKey() tea.Cmd {
-	// Reply sub-mode: while the peek panel is open the command line is a reply
-	// composer. Non-empty input + Enter sends to the peeked session via
-	// Service.Reply and re-peeks, instead of dispatching a new agent. Checked
-	// before the dispatch/attach branch so peek+typed-text never spawns a session
-	// (F36).
-	if m.peekOpen && strings.TrimSpace(m.input) != "" {
-		return m.replyToPeekCmd()
-	}
 	if strings.TrimSpace(m.input) != "" {
 		spec := parseDispatchSpec(m.input, m.defaultAgent)
 		return m.dispatchNamedCmd(spec.Agent, spec.Alias, spec.Name, spec.Prompt)
@@ -1097,27 +925,6 @@ func (m *Model) handleEnterKey() tea.Cmd {
 		return m.attachSelectedCmd()
 	}
 	return nil
-}
-
-// replyToPeekCmd sends the typed input to the peeked session via Service.Reply,
-// clears the composer, and re-peeks so the panel shows the agent's response. The
-// reply target is the snapshotted peekTargetID (falling back to the selected
-// session) so a reorder under the cursor can't misroute it (F36).
-func (m *Model) replyToPeekCmd() tea.Cmd {
-	sess, ok := m.sessionByIdentity(m.peekTargetAgent, m.peekTargetID)
-	if !ok {
-		return nil
-	}
-	text := m.input
-	m.input = ""
-	agentName, id := sess.AgentType, sess.ID
-	return func() tea.Msg {
-		if err := m.service.ReplyExact(context.Background(), agentName, id, text); err != nil {
-			return peekLoadedMsg{err: err}
-		}
-		p, err := m.service.PeekExact(context.Background(), agentName, id)
-		return peekLoadedMsg{text: p.TailText, err: err}
-	}
 }
 
 func (m *Model) handleEditKey(key string) {
@@ -1515,17 +1322,6 @@ func (m Model) sessionByIdentity(agentName, id string) (adapter.Session, bool) {
 	return adapter.Session{}, false
 }
 
-func (m Model) peekSelectedCmd() tea.Cmd {
-	sess, ok := m.selectedSession()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		p, err := m.service.PeekExact(context.Background(), sess.AgentType, sess.ID)
-		return peekLoadedMsg{text: p.TailText, err: err}
-	}
-}
-
 // resumeSelectedCmd restarts the selected session's backend session in the
 // background, then reloads so it moves into RUNNING.
 func (m Model) resumeSelectedCmd() tea.Cmd {
@@ -1778,13 +1574,11 @@ const (
 )
 
 // DashboardMode is the primary dashboard surface. Like LayoutClass it is
-// derived from the existing interaction state, keeping wizard/peek behavior as
-// the source of truth for all existing key flows.
+// derived from the existing interaction state.
 type DashboardMode uint8
 
 const (
 	ModeOperations DashboardMode = iota
-	ModePeek
 	ModeNew
 )
 
@@ -1807,9 +1601,6 @@ func (m Model) layoutClass() LayoutClass {
 func (m Model) dashboardMode() DashboardMode {
 	if m.wizard {
 		return ModeNew
-	}
-	if m.peekOpen {
-		return ModePeek
 	}
 	return ModeOperations
 }
@@ -1858,9 +1649,6 @@ func (m Model) unboundedView() string {
 	default:
 		b.WriteString(m.renderDetails())
 		b.WriteString(m.renderTable())
-		if m.peekOpen {
-			b.WriteString(m.renderPeek())
-		}
 	}
 	b.WriteString(m.renderPrompt())
 	return b.String()
@@ -1938,34 +1726,6 @@ func (m Model) responsiveBody(width, budget int) []string {
 		return takeLines(boundedNonBlankLines(m.renderWizard(), width), budget)
 	}
 	return m.dashboardBody(width, budget)
-}
-
-// boundedTailLines scans backward only far enough to find the requested tail.
-// It retains empty physical lines because terminal output spacing is content,
-// while avoiding a split/join of a potentially multi-thousand-line pane.
-func boundedTailLines(s string, n, width int) []string {
-	if n <= 0 || s == "" {
-		return nil
-	}
-	start, breaks := 0, 0
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] != '\n' {
-			continue
-		}
-		breaks++
-		if breaks == n {
-			start = i + 1
-			break
-		}
-	}
-	lines := strings.Split(s[start:], "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, truncTail())
-	}
-	return lines
 }
 
 func (m Model) renderSectionAtWidth(label, right string, width int) string {
@@ -2235,24 +1995,11 @@ func renderRow(s adapter.Session, selected bool, nameWidth, taskWidth int, showT
 	return row
 }
 
-func (m Model) renderPeek() string {
-	return "\n" + m.renderSection("PEEK", "") + "\n" + trimLines(m.peekText, max(5, m.height/3)) + "\n"
-}
-
 func (m Model) renderPrompt() string {
 	var b strings.Builder
 	b.WriteString("\n")
 	if m.renaming {
 		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render(cursorGlyph()) + "\n")
-	} else if m.peekOpen {
-		// The command line doubles as a reply composer while peek is open: label
-		// it so the sub-mode is discoverable (Enter sends, Esc closes) (F36).
-		field := hintStyle.Render("type a reply" + hintEllipsis())
-		if m.input != "" {
-			field = titleStyle.Render(displaytext.Sanitize(m.input))
-		}
-		hints := hintStyle.Render("Enter send  ·  Esc close")
-		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render(caretGlyph()) + " " + field + brandStyle.Render(cursorGlyph()) + "   " + hints + "\n")
 	} else {
 		field := hintStyle.Render("type a command" + hintEllipsis())
 		if m.input != "" {
@@ -2291,9 +2038,6 @@ func (m Model) visibleSessionWindow() (int, int) {
 		return 0, limit
 	}
 	reserve := 20
-	if m.peekOpen {
-		reserve += max(5, m.height/3) + 2
-	}
 	limit = min(len(m.sessions), max(3, m.height-reserve))
 	start := 0
 	if m.selected >= limit {
@@ -2371,7 +2115,7 @@ func (m Model) renderHelp() string {
 		"1-9,0  jump to that chip   ·  press it again to attach",
 		"click / tap a row  ·  same as its chip   ·  wheel scrolls the cursor",
 		"↑/↓  move   Shift+↑/↓  reorder   Enter/→  attach/resume",
-		"Space  peek running / resume stopped",
+		"Space  type / resume stopped",
 		"/  filter sessions when the command line is empty (re-chips the roster)",
 		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
 		"Ctrl+X  stop+remove / restart    Ctrl+S  group-by-dir",
@@ -2527,11 +2271,4 @@ func padRight(s string, n int) string {
 		return s + strings.Repeat(" ", pad)
 	}
 	return s
-}
-func trimLines(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }

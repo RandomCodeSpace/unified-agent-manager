@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -24,15 +23,10 @@ const (
 	maxAPIResponseBytes     = 1 << 20
 	maxAPIErrorExcerptRunes = 256
 	maxErrorBodyBytes       = 4 << 10
-	maxSSEEventBytes        = 256 << 10
-	maxSSELineBytes         = maxSSEEventBytes + 16
 	sessionPathPrefix       = "/session/"
 )
 
-var (
-	errSessionNotFound = errors.New("OpenCode session not found")
-	permissionIDRE     = regexp.MustCompile(`^per_[A-Za-z0-9_-]{3,60}$`)
-)
+var errSessionNotFound = errors.New("OpenCode session not found")
 
 type serverHealth struct {
 	Healthy bool   `json:"healthy"`
@@ -149,25 +143,6 @@ func (c *apiClient) listSessions(ctx context.Context) ([]sessionInfo, error) {
 	return sessions, nil
 }
 
-func (c *apiClient) replyPermission(ctx context.Context, requestID string) error {
-	if !permissionIDRE.MatchString(requestID) || !store.ValidProviderSessionID(requestID) {
-		return fmt.Errorf("invalid OpenCode permission request ID")
-	}
-	path := "/permission/" + requestID + "/reply"
-	rawPath := "/permission/" + url.PathEscape(requestID) + "/reply"
-	resp, err := c.do(ctx, http.MethodPost, path, rawPath, struct {
-		Reply string `json:"reply"`
-	}{Reply: "once"}, "")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if !successfulStatus(resp.StatusCode) {
-		return c.statusError("permission reply", resp)
-	}
-	return nil
-}
-
 func (c *apiClient) subscribe(ctx context.Context, ready chan<- struct{}, events chan<- eventEnvelope) error {
 	if ready == nil {
 		return fmt.Errorf("OpenCode event readiness channel is required")
@@ -214,9 +189,7 @@ func (c *apiClient) readSSEEvents(ctx context.Context, body io.Reader, events ch
 		if !ok {
 			continue
 		}
-		if err := data.append(value); err != nil {
-			return err
-		}
+		data.append(value)
 	}
 }
 
@@ -235,6 +208,9 @@ func (c *apiClient) sendSSEEvent(ctx context.Context, data []byte, events chan<-
 	if err := decodeStrictJSON(data, &event); err != nil {
 		return c.safeError("decode OpenCode event", err)
 	}
+	if event.Type != "session.created" {
+		return nil
+	}
 	select {
 	case events <- event:
 		return nil
@@ -251,20 +227,12 @@ func sseDataValue(line []byte) (string, bool) {
 	return strings.TrimPrefix(value, " "), true
 }
 
-func (d *sseEventData) append(value string) error {
-	additional := len(value)
-	if d.present {
-		additional++
-	}
-	if len(d.bytes)+additional > maxSSEEventBytes {
-		return fmt.Errorf("OpenCode SSE event is too large")
-	}
+func (d *sseEventData) append(value string) {
 	if d.present {
 		d.bytes = append(d.bytes, '\n')
 	}
 	d.bytes = append(d.bytes, value...)
 	d.present = true
-	return nil
 }
 
 func (d *sseEventData) reset() {
@@ -399,9 +367,6 @@ func readSSELine(reader *bufio.Reader) ([]byte, error) {
 	line := make([]byte, 0, reader.Size())
 	for {
 		fragment, err := reader.ReadSlice('\n')
-		if len(line)+len(fragment) > maxSSELineBytes {
-			return nil, fmt.Errorf("OpenCode SSE line is too large")
-		}
 		line = append(line, fragment...)
 		switch {
 		case err == nil:

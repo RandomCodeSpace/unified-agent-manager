@@ -64,13 +64,6 @@ func TestAgentLifecycle(t *testing.T) {
 	if list[0].State != Active || list[0].ProcAlive != Alive || list[0].Cwd != "/tmp/repo" {
 		t.Fatalf("bad list session: %+v", list[0])
 	}
-	peek, err := ag.Peek(context.Background(), "abc12345")
-	if err != nil || !strings.Contains(peek.TailText, "Thinking") {
-		t.Fatalf("Peek: %+v %v", peek, err)
-	}
-	if err := ag.Reply(context.Background(), "abc12345", "ok"); err != nil {
-		t.Fatal(err)
-	}
 	if spec, err := ag.Attach("abc12345"); err != nil || len(spec.Argv) == 0 {
 		t.Fatalf("Attach: %+v %v", spec, err)
 	}

@@ -37,10 +37,6 @@ func TestLayoutClassAndDashboardModeAreDerived(t *testing.T) {
 	if got := m.dashboardMode(); got != ModeOperations {
 		t.Fatalf("default dashboard mode = %v, want operations", got)
 	}
-	m.peekOpen = true
-	if got := m.dashboardMode(); got != ModePeek {
-		t.Fatalf("peek dashboard mode = %v, want peek", got)
-	}
 	m.wizard = true
 	if got := m.dashboardMode(); got != ModeNew {
 		t.Fatalf("wizard dashboard mode = %v, want new", got)
@@ -55,7 +51,6 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 		want string
 	}{
 		{"operations", func(*Model) {}, "›"},
-		{"peek", func(m *Model) { m.peekOpen = true }, "reply"},
 		{"new", func(m *Model) { m.wizard = true; m.wizardStep = 3 }, "NEW SESSION"},
 	}
 	for _, size := range sizes {
@@ -74,26 +69,19 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 	}
 }
 
-func TestWideOperationsUsesFullListAndPeekUsesTwoPanes(t *testing.T) {
+func TestWideOperationsUsesFullList(t *testing.T) {
 	m := responsiveFixture(120, 40)
 	operations := m.View()
 	if !strings.Contains(operations, "GATE") || strings.Contains(operations, "SELECTED") {
 		t.Fatalf("wide operations should render the full-width departures board:\n%s", operations)
 	}
 	assertBorderless(t, operations)
-	m.peekOpen = true
-	peek := m.View()
-	if !strings.Contains(peek, "PEEK") || strings.Contains(peek, "GATE") {
-		t.Fatalf("wide peek gives the panel the whole body:\n%s", peek)
-	}
 }
 
 func TestCompactRenderingKeepsUnicodeValidAndBoundsLongContent(t *testing.T) {
 	m := responsiveFixture(44, 12)
 	m.input = "部署 café e\u0301 🚀 " + strings.Repeat("界", 80)
 	m.message = strings.Repeat("status 🚀 ", 40)
-	m.peekOpen = true
-	m.peekText = strings.Repeat("界", 100) + "\n" + strings.Repeat("e\u0301🚀", 80)
 	view := m.View()
 	if !utf8.ValidString(view) {
 		t.Fatal("responsive rendering produced invalid UTF-8")
@@ -109,16 +97,9 @@ func TestCompactModesAreExclusiveAndKeepBottomPrompt(t *testing.T) {
 	}
 	assertBottomContains(t, operations, "›")
 
-	m.peekOpen = true
-	peek := m.View()
-	if strings.Contains(peek, "SESSIONS") || strings.Contains(peek, "RUNNING") {
-		t.Fatalf("compact peek must replace the sessions surface:\n%s", peek)
-	}
-	assertBottomContains(t, peek, "reply")
-
 	m.wizard = true
 	newView := m.View()
-	if strings.Contains(newView, "SESSIONS") || strings.Contains(newView, "PEEK") {
+	if strings.Contains(newView, "SESSIONS") {
 		t.Fatalf("compact new must replace other primary surfaces:\n%s", newView)
 	}
 	assertBottomContains(t, newView, "›")
@@ -190,11 +171,6 @@ func TestKnownZeroAndTinyHeightsStayBoundedAndRetainPrompt(t *testing.T) {
 	if !strings.Contains(view, "›") || strings.Contains(view, "refresh failed") {
 		t.Fatalf("height-1 view must prioritize command prompt: %q", view)
 	}
-	m.peekOpen = true
-	view = m.View()
-	if !strings.Contains(view, "reply") {
-		t.Fatalf("height-1 peek view must retain reply prompt: %q", view)
-	}
 }
 
 func TestCompactWizardEveryStepKeepsEssentialAffordances(t *testing.T) {
@@ -226,16 +202,6 @@ func TestCompactWizardEveryStepKeepsEssentialAffordances(t *testing.T) {
 			}
 			assertBottomContains(t, view, m.input)
 		})
-	}
-}
-
-func TestPeekSurfacePreservesBlankPhysicalLines(t *testing.T) {
-	m := responsiveFixture(44, 12)
-	m.peekText = "older\nblank-before\n\nblank-after\nnewest"
-	lines := boundedTailLines(m.peekText, 7, 44)
-	got := strings.Join(lines, "\n")
-	if !strings.Contains(got, "blank-before\n\nblank-after") {
-		t.Fatalf("peek collapsed a physical blank line: %q", got)
 	}
 }
 
@@ -283,7 +249,6 @@ func responsiveFixture(width, height int) Model {
 	}
 	m.defaultAgent = "claude"
 	m.input = "部署 café e\u0301 🚀"
-	m.peekText = "first tail line\n" + strings.Repeat("long peek 世界 🚀 ", 20) + "\nlast tail line"
 	for i := 0; i < 16; i++ {
 		m.sessions = append(m.sessions, adapter.Session{
 			ID:          fmt.Sprintf("session-%02d", i),

@@ -59,10 +59,6 @@ func (f *cliFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 	return sess, nil
 }
 func (f *cliFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) { return f.sessions, nil }
-func (f *cliFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
-	return adapter.PeekResult{TailText: "tail for " + id}, nil
-}
-func (f *cliFakeAdapter) Reply(ctx adapter.Context, id, text string) error { return nil }
 func (f *cliFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 	f.attached = append(f.attached, id)
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
@@ -147,7 +143,7 @@ func TestRunTUICleansPrimaryLineAfterBubbleTeaExit(t *testing.T) {
 	}
 }
 
-func TestRunDispatchListPeekAndStop(t *testing.T) {
+func TestRunDispatchListAndStop(t *testing.T) {
 	svc, fake := newCLITestService(t)
 	id := dispatchAndCaptureID(t, svc, []string{"--cwd", "/tmp", "fake", "#bugfix", "fix", "thing"})
 	if id != "abc12345" {
@@ -155,9 +151,6 @@ func TestRunDispatchListPeekAndStop(t *testing.T) {
 	}
 	if out := captureCLIStdout(t, func() { must(t, runList(context.Background(), svc, []string{"--json"})) }); !strings.Contains(out, "bugfix") {
 		t.Fatalf("list=%q", out)
-	}
-	if out := captureCLIStdout(t, func() { must(t, runPeek(context.Background(), svc, []string{id})) }); !strings.Contains(out, "tail for") {
-		t.Fatalf("peek=%q", out)
 	}
 	must(t, runStop(context.Background(), svc, "stop", []string{id}))
 	if !fake.stopped {
@@ -319,7 +312,7 @@ func TestCLIMainHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestMainPropagatesOpenCodeAttachExitCodeWithoutPrintingError(t *testing.T) {
+func TestMainPropagatesOpenCodeTUIExitCodeWithoutPrintingError(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -329,9 +322,8 @@ func TestMainPropagatesOpenCodeAttachExitCodeWithoutPrintingError(t *testing.T) 
 case "$1" in
   --version) printf '1.18.1\n'; exit 0 ;;
   serve) shift; exec "$UAM_CLI_TEST_EXE" -test.run=^TestCLIOpenCodeProviderHelper$ -- serve "$@" ;;
-  attach) exit 23 ;;
+  *) exec "$UAM_CLI_TEST_EXE" -test.run=^TestCLIOpenCodeProviderHelper$ -- tui "$@" ;;
 esac
-exit 97
 `
 	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -366,7 +358,7 @@ exit 97
 		t.Fatalf("Main() subprocess = (%v, %q), want exit code 23", err, output)
 	}
 	if len(output) != 0 {
-		t.Fatalf("Main() printed an attach/credential error: %q", output)
+		t.Fatalf("Main() printed a TUI/credential error: %q", output)
 	}
 }
 
@@ -381,12 +373,18 @@ func TestCLIOpenCodeProviderHelper(t *testing.T) {
 			break
 		}
 	}
-	if separator < 0 || separator+1 >= len(os.Args) || os.Args[separator+1] != "serve" {
+	if separator < 0 || separator+1 >= len(os.Args) {
 		t.Fatalf("provider helper argv = %q", os.Args)
 	}
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	mode := os.Args[separator+1]
+	if mode != "serve" && mode != "tui" {
+		t.Fatalf("provider helper mode = %q", mode)
+	}
+	fs := flag.NewFlagSet(mode, flag.ContinueOnError)
 	hostname := fs.String("hostname", "", "")
 	port := fs.Int("port", 0, "")
+	_ = fs.String("session", "", "")
+	_ = fs.Bool("auto", false, "")
 	if err := fs.Parse(os.Args[separator+2:]); err != nil {
 		t.Fatal(err)
 	}
@@ -400,6 +398,10 @@ func TestCLIOpenCodeProviderHelper(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
+			}
+			if mode == "tui" {
+				time.Sleep(25 * time.Millisecond)
+				os.Exit(23)
 			}
 			<-request.Context().Done()
 		case request.Method == http.MethodPost && request.URL.Path == "/session":

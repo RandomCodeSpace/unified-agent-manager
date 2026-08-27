@@ -237,61 +237,17 @@ func TestGlyphStylesAreHoisted(t *testing.T) {
 	}
 }
 
-// C2-2 — moving the cursor up/down while the peek panel is open must re-fire the
-// peek for the newly selected session and blank the stale text synchronously.
-func TestUpDownRefiresPeekWhenPanelOpen(t *testing.T) {
+func TestUpDownMovesSelectionWithoutCommand(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
 		{ID: "1", AgentType: "fake", DisplayName: "one", ProcAlive: adapter.Alive},
 		{ID: "2", AgentType: "fake", DisplayName: "two", ProcAlive: adapter.Alive},
 	}
-	m.peekOpen = true
-	m.peekText = "stale tail from session one"
-
-	handled, cmd := m.handleMovementKey("down")
-	if !handled {
-		t.Fatal("down should be handled")
+	if handled, cmd := m.handleMovementKey("down"); !handled || cmd != nil || m.selected != 1 {
+		t.Fatalf("down should move without a command: handled=%v cmd=%v selected=%d", handled, cmd, m.selected)
 	}
-	if m.selected != 1 {
-		t.Fatalf("selection should advance to 1, got %d", m.selected)
-	}
-	if m.peekText != "" {
-		t.Fatalf("peek text should be blanked synchronously on move, got %q", m.peekText)
-	}
-	if cmd == nil {
-		t.Fatal("moving with the peek panel open should re-fire the peek command")
-	}
-}
-
-// C2-2 — with the panel closed, up/down must NOT fire a peek (avoids an N+1
-// capture storm on every keystroke).
-func TestUpDownDoesNotPeekWhenPanelClosed(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "1", AgentType: "fake", DisplayName: "one", ProcAlive: adapter.Alive},
-		{ID: "2", AgentType: "fake", DisplayName: "two", ProcAlive: adapter.Alive},
-	}
-	m.peekOpen = false
-
-	if _, cmd := m.handleMovementKey("down"); cmd != nil {
-		t.Fatalf("down with the peek panel closed should not fire a peek command, got %v", cmd)
-	}
-	if _, cmd := m.handleMovementKey("up"); cmd != nil {
-		t.Fatalf("up with the peek panel closed should not fire a peek command, got %v", cmd)
-	}
-}
-
-// C2-2 — moving onto the same row (boundary no-op) must not re-fire the peek.
-func TestPeekNotRefiredWhenSelectionUnchanged(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "one", ProcAlive: adapter.Alive}}
-	m.peekOpen = true
-	m.peekText = "tail"
-	if _, cmd := m.handleMovementKey("up"); cmd != nil { // already at top → no-op
-		t.Fatalf("a no-op move should not re-fire the peek, got %v", cmd)
-	}
-	if m.peekText != "tail" {
-		t.Fatalf("a no-op move should not blank the peek text, got %q", m.peekText)
+	if handled, cmd := m.handleMovementKey("up"); !handled || cmd != nil || m.selected != 0 {
+		t.Fatalf("up should move without a command: handled=%v cmd=%v selected=%d", handled, cmd, m.selected)
 	}
 }
 

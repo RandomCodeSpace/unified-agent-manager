@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,7 +61,6 @@ type fakeOpenCodeConfig struct {
 	CreateDelayMillis   int             `json:"create_delay_millis"`
 	IgnoreTerminate     bool            `json:"ignore_terminate"`
 	Grandchildren       bool            `json:"grandchildren"`
-	ObserveEvents       bool            `json:"observe_events"`
 	NoisyServerLog      bool            `json:"noisy_server_log"`
 	EventGatePath       string          `json:"event_gate_path"`
 	CreatedUpdated      int64           `json:"created_updated"`
@@ -142,8 +142,10 @@ func TestMain(m *testing.M) {
 			os.Exit(fakeSupervisorGrandchild(os.Args[2]))
 		case "serve":
 			os.Exit(fakeOpenCodeServe(os.Args[2:]))
-		case "attach":
-			os.Exit(fakeOpenCodeAttach(os.Args[2:]))
+		default:
+			if os.Getenv(fakeConfigEnv) != "" {
+				os.Exit(fakeOpenCodeTUI(os.Args[1:]))
+			}
 		}
 	}
 	os.Exit(m.Run())
@@ -271,7 +273,7 @@ func TestSupervisorCommandParser(t *testing.T) {
 
 func TestSupervisorExitError(t *testing.T) {
 	err := error(&ExitError{Code: 23})
-	if err.Error() != "OpenCode attach exited with code 23" {
+	if err.Error() != "OpenCode TUI exited with code 23" {
 		t.Fatalf("Error() = %q", err)
 	}
 	var exitErr *ExitError
@@ -535,12 +537,12 @@ func assertDistinctSupervisorBoundaries(t *testing.T, alpha, beta supervisorFixt
 	wantConfigHash := fakeHash(inheritedConfig)
 	for name, fixture := range map[string]supervisorFixture{"alpha": alpha, "beta": beta} {
 		serve := fixture.recordsOfKind(t, "serve")[0]
-		attach := fixture.recordsOfKind(t, "attach_start")
-		if len(attach) != 1 || attach[0].CredentialHash != serve.CredentialHash {
-			t.Fatalf("%s server/attach credential boundary differs: serve=%#v attach=%#v", name, serve, attach)
+		tui := fixture.recordsOfKind(t, "tui_start")
+		if len(tui) != 1 || tui[0].CredentialHash != serve.CredentialHash {
+			t.Fatalf("%s bootstrap/TUI credential boundary differs: serve=%#v tui=%#v", name, serve, tui)
 		}
-		if serve.ConfigHash != wantConfigHash || attach[0].ConfigHash != wantConfigHash {
-			t.Fatalf("%s config hashes = serve %q attach %q, want %q", name, serve.ConfigHash, attach[0].ConfigHash, wantConfigHash)
+		if serve.ConfigHash != wantConfigHash || tui[0].ConfigHash != wantConfigHash {
+			t.Fatalf("%s config hashes = serve %q tui %q, want %q", name, serve.ConfigHash, tui[0].ConfigHash, wantConfigHash)
 		}
 	}
 }
@@ -554,15 +556,19 @@ func assertExactRestartRecords(t *testing.T, records []fakeOpenCodeRecord, optio
 	if len(byKind["create"]) != 0 || len(byKind["get"]) != 1 || byKind["get"][0].ID != wantID {
 		t.Fatalf("exact restart selection records = %#v", records)
 	}
-	if len(byKind["attach"]) != 1 || byKind["attach"][0].Input != "" {
-		t.Fatalf("restart attach input = %#v, want no prompt replay", byKind["attach"])
+	if len(byKind["tui"]) != 1 || byKind["tui"][0].Input != "" {
+		t.Fatalf("restart TUI input = %#v, want no prompt replay", byKind["tui"])
 	}
 	if len(byKind["serve"]) != 1 {
 		t.Fatalf("restart serve records = %#v", byKind["serve"])
 	}
-	wantArgs := []string{"http://127.0.0.1:" + strconv.Itoa(byKind["serve"][0].Port), "--dir", options.Directory, "--session", wantID}
-	if !reflect.DeepEqual(byKind["attach"][0].Args, wantArgs) {
-		t.Fatalf("restart attach argv = %#v, want %#v", byKind["attach"][0].Args, wantArgs)
+	wantArgs := []string{"--hostname", "127.0.0.1", "--port", strconv.Itoa(byKind["tui_server"][0].Port), "--session", wantID}
+	if options.Yolo {
+		wantArgs = append(wantArgs, "--auto")
+	}
+	wantArgs = append(wantArgs, options.Directory)
+	if !reflect.DeepEqual(byKind["tui"][0].Args, wantArgs) {
+		t.Fatalf("restart TUI argv = %#v, want %#v", byKind["tui"][0].Args, wantArgs)
 	}
 }
 
@@ -615,7 +621,7 @@ func TestSupervisorNewAndExactResume(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "ses_missing123") || !strings.Contains(strings.ToLower(err.Error()), "not found") {
 			t.Fatalf("missing resume error = %v", err)
 		}
-		if got := fixture.recordsOfKind(t, "attach"); len(got) != 0 {
+		if got := fixture.recordsOfKind(t, "tui"); len(got) != 0 {
 			t.Fatalf("missing resume started attach: %#v", got)
 		}
 		for _, record := range fixture.records(t) {
@@ -674,8 +680,8 @@ func TestSupervisorSameWorkspaceSessionsRemainIndependent(t *testing.T) {
 	alphaCommand, alphaInput := startSupervisorFixture(t, alpha, alphaPrompt)
 	betaCommand, betaInput := startSupervisorFixture(t, beta, "")
 
-	awaitFakeRecord(t, alpha, "attach_start", 3*time.Second)
-	awaitFakeRecord(t, beta, "attach_start", 3*time.Second)
+	awaitFakeRecord(t, alpha, "tui_start", 3*time.Second)
+	awaitFakeRecord(t, beta, "tui_start", 3*time.Second)
 	awaitProviderIdentity(t, alpha.options, alphaRoot, 3*time.Second)
 	awaitProviderIdentity(t, beta.options, betaRoot, 3*time.Second)
 	assertDistinctSupervisorBoundaries(t, alpha, beta, inheritedConfig)
@@ -696,11 +702,11 @@ func TestSupervisorSameWorkspaceSessionsRemainIndependent(t *testing.T) {
 	if err := waitCommand(t, betaCommand, 3*time.Second); err != nil {
 		t.Fatalf("beta supervisor: %v", err)
 	}
-	alphaAttach := alpha.recordsOfKind(t, "attach")
+	alphaAttach := alpha.recordsOfKind(t, "tui")
 	if len(alphaAttach) != 1 || alphaAttach[0].Input != alphaPrompt {
 		t.Fatalf("alpha attach input = %#v, want %q exactly once", alphaAttach, alphaPrompt)
 	}
-	betaAttach := beta.recordsOfKind(t, "attach")
+	betaAttach := beta.recordsOfKind(t, "tui")
 	if len(betaAttach) != 1 || betaAttach[0].Input != "" {
 		t.Fatalf("beta attach input = %#v, want no prompt", betaAttach)
 	}
@@ -717,7 +723,7 @@ func TestSupervisorSameWorkspaceSessionsRemainIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := waitCommand(t, restartCommand, 3*time.Second); err != nil {
-		t.Fatalf("alpha exact restart: %v", err)
+		t.Fatalf("alpha exact restart: %v; records=%#v", err, alpha.records(t)[beforeRestart:])
 	}
 	alphaRecords := alpha.records(t)
 	assertExactRestartRecords(t, alphaRecords[beforeRestart:], alpha.options, alphaNew)
@@ -770,8 +776,8 @@ func TestSupervisorExactRootValidation(t *testing.T) {
 			if err == nil {
 				t.Fatal("runSupervisor accepted a non-exact root session")
 			}
-			if got := len(fixture.recordsOfKind(t, "attach_start")); got != 0 {
-				t.Fatalf("invalid root started attach: %#v", fixture.recordsOfKind(t, "attach_start"))
+			if got := len(fixture.recordsOfKind(t, "tui_start")); got != 0 {
+				t.Fatalf("invalid root started attach: %#v", fixture.recordsOfKind(t, "tui_start"))
 			}
 			assertLifecycleClean(t, fixture, err)
 		})
@@ -804,7 +810,7 @@ func TestSupervisorPromptOrder(t *testing.T) {
 	if err := runSupervisor(t.Context(), fixture.options); err != nil {
 		t.Fatalf("runSupervisor: %v", err)
 	}
-	attach := fixture.recordsOfKind(t, "attach")
+	attach := fixture.recordsOfKind(t, "tui")
 	if len(attach) != 1 || attach[0].Input != want {
 		t.Fatalf("attach input = %#v, want %q exactly once", attach, want)
 	}
@@ -842,12 +848,12 @@ func TestSupervisorLifecycleAttachForegroundTTY(t *testing.T) {
 		killFakeProcesses(fixture.records(t))
 	})
 
-	awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
+	awaitFakeRecord(t, fixture, "tui_start", 2*time.Second)
 	const want = "prompt from controlling tty\n"
 	if _, err := io.WriteString(terminal, want); err != nil {
 		t.Fatal(err)
 	}
-	attach := awaitFakeRecord(t, fixture, "attach", time.Second)
+	attach := awaitFakeRecord(t, fixture, "tui", time.Second)
 	if attach.Input != want {
 		t.Fatalf("attach input = %q, want %q", attach.Input, want)
 	}
@@ -894,7 +900,7 @@ func TestSupervisorResumeStdinAddsNoPromptBytes(t *testing.T) {
 	if err := runSupervisor(t.Context(), fixture.options); err != nil {
 		t.Fatalf("runSupervisor: %v", err)
 	}
-	attach := fixture.recordsOfKind(t, "attach")
+	attach := fixture.recordsOfKind(t, "tui")
 	if len(attach) != 1 || attach[0].Input != want {
 		t.Fatalf("resume attach input = %#v, want only %q with no supervisor prompt", attach, want)
 	}
@@ -1024,93 +1030,25 @@ func TestSupervisorSessionIdentityWriteFailureIsAdvisoryAndRetryable(t *testing.
 	}
 }
 
-func TestSupervisorPermissionModes(t *testing.T) {
+func TestSupervisorNativeAutoModes(t *testing.T) {
 	for _, yolo := range []bool{false, true} {
 		name := "safe"
 		if yolo {
 			name = "yolo"
 		}
 		t.Run(name, func(t *testing.T) {
-			directory := filepath.Clean(t.TempDir())
-			events := []eventEnvelope{
-				fakeEvent("session.created", map[string]any{"sessionID": "ses_child123", "info": map[string]any{"id": "ses_child123", "parentID": "ses_created123", "directory": directory}}),
-				fakeEvent("permission.asked", map[string]any{"id": "per_valid123", "sessionID": "ses_child123"}),
-				fakeEvent("permission.asked", map[string]any{"id": "per_valid123", "sessionID": "ses_child123"}),
-				fakeEvent("permission.asked", map[string]any{"id": "per_foreign123", "sessionID": "ses_foreign123"}),
-				fakeEvent("permission.asked", map[string]any{"id": "bad/id", "sessionID": "ses_child123"}),
-			}
-			fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
-				Directory:         directory,
-				CreatedID:         "ses_created123",
-				Events:            events,
-				AttachDelayMillis: 200,
-			})
+			fixture := newSupervisorFixture(t, fakeOpenCodeConfig{CreatedID: "ses_created123"})
 			fixture.options.Yolo = yolo
 			if err := runSupervisor(t.Context(), fixture.options); err != nil {
 				t.Fatalf("runSupervisor: %v", err)
 			}
-			replies := fixture.recordsOfKind(t, "permission")
-			if !yolo {
-				if len(replies) != 0 {
-					t.Fatalf("safe mode permission replies = %#v, want none", replies)
-				}
-			} else if len(replies) != 1 || replies[0].ID != "per_valid123" || replies[0].Body != `{"reply":"once"}` {
-				t.Fatalf("yolo permission replies = %#v, want one once reply", replies)
+			tuis := fixture.recordsOfKind(t, "tui")
+			if len(tuis) != 1 || slices.Contains(tuis[0].Args, "--auto") != yolo {
+				t.Fatalf("yolo=%t TUI records=%#v", yolo, tuis)
 			}
 			assertFakeChildrenReaped(t, fixture)
 		})
 	}
-}
-
-func TestSupervisorPermissionSafeModeLeavesEventVisible(t *testing.T) {
-	directory := filepath.Clean(t.TempDir())
-	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
-		Directory:         directory,
-		CreatedID:         "ses_created123",
-		ObserveEvents:     true,
-		AttachDelayMillis: 100,
-		Events: []eventEnvelope{
-			fakeEvent("permission.asked", map[string]any{"id": "per_visible123", "sessionID": "ses_created123"}),
-		},
-	})
-
-	if err := runSupervisor(t.Context(), fixture.options); err != nil {
-		t.Fatalf("runSupervisor: %v", err)
-	}
-	observers := fixture.recordsOfKind(t, "observer")
-	if len(observers) != 1 || observers[0].ID != "per_visible123" {
-		t.Fatalf("second observer records = %#v, want visible permission event", observers)
-	}
-	if replies := fixture.recordsOfKind(t, "permission"); len(replies) != 0 {
-		t.Fatalf("safe supervisor emitted permission replies: %#v", replies)
-	}
-	assertLifecycleClean(t, fixture, nil)
-}
-
-func TestSupervisorPermissionActiveRootTree(t *testing.T) {
-	directory := filepath.Clean(t.TempDir())
-	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
-		Directory:         directory,
-		CreatedID:         "ses_created123",
-		AttachDelayMillis: 200,
-		Events: []eventEnvelope{
-			fakeEvent("session.created", map[string]any{"sessionID": "ses_oldchild123", "info": map[string]any{"id": "ses_oldchild123", "parentID": "ses_created123", "directory": directory}}),
-			fakeEvent("session.created", map[string]any{"sessionID": "ses_newroot123", "info": map[string]any{"id": "ses_newroot123", "directory": directory}}),
-			fakeEvent("permission.asked", map[string]any{"id": "per_stale123", "sessionID": "ses_oldchild123"}),
-			fakeEvent("session.created", map[string]any{"sessionID": "ses_newchild123", "info": map[string]any{"id": "ses_newchild123", "parentID": "ses_newroot123", "directory": directory}}),
-			fakeEvent("permission.asked", map[string]any{"id": "per_current123", "sessionID": "ses_newchild123"}),
-		},
-	})
-	fixture.options.Yolo = true
-	if err := runSupervisor(t.Context(), fixture.options); err != nil {
-		t.Fatalf("runSupervisor: %v", err)
-	}
-	replies := fixture.recordsOfKind(t, "permission")
-	if len(replies) != 1 || replies[0].ID != "per_current123" {
-		t.Fatalf("active-root permission replies = %#v, want current tree only", replies)
-	}
-	assertProviderIdentity(t, fixture.options, "ses_newroot123")
-	assertLifecycleClean(t, fixture, nil)
 }
 
 func TestSupervisorEventReconnect(t *testing.T) {
@@ -1122,7 +1060,6 @@ func TestSupervisorEventReconnect(t *testing.T) {
 		AttachDelayMillis: 260,
 		Events: []eventEnvelope{
 			fakeEvent("session.created", map[string]any{"sessionID": "ses_new456", "info": map[string]any{"id": "ses_new456", "directory": directory}}),
-			fakeEvent("permission.asked", map[string]any{"id": "per_valid123", "sessionID": "ses_new456"}),
 		},
 	})
 	fixture.options.Yolo = true
@@ -1131,9 +1068,6 @@ func TestSupervisorEventReconnect(t *testing.T) {
 	}
 	if got := len(fixture.recordsOfKind(t, "event")); got < 3 {
 		t.Fatalf("event subscriptions = %d, want at least 3 reconnects", got)
-	}
-	if got := len(fixture.recordsOfKind(t, "permission")); got != 1 {
-		t.Fatalf("permission replies after replay = %d, want 1", got)
 	}
 	assertProviderIdentity(t, fixture.options, "ses_new456")
 	assertFakeChildrenReaped(t, fixture)
@@ -1172,15 +1106,16 @@ func TestSupervisorReplayGapRecovery(t *testing.T) {
 	assertLifecycleClean(t, fixture, nil)
 }
 
-func TestSupervisorReplayGapRecoveryWarnsAndRetainsOnZeroOrAmbiguousCandidates(t *testing.T) {
+func TestSupervisorReplayGapRecoveryRetainsWithoutInventingNewRoot(t *testing.T) {
 	future := time.Now().Add(10 * time.Second).UnixMilli()
 	for _, tt := range []struct {
 		name     string
 		sessions []fakeSession
+		warn     bool
 	}{
 		{name: "zero", sessions: []fakeSession{{ID: "ses_root_before_gap123", Created: 100, Updated: 100}}},
 		{name: "preexisting newer root", sessions: []fakeSession{{ID: "ses_other_existing123", Created: 50, Updated: future}}},
-		{name: "ambiguous", sessions: []fakeSession{{ID: "ses_new_a123", Created: future, Updated: future}, {ID: "ses_new_b123", Created: future + 1, Updated: future + 1}}},
+		{name: "ambiguous", sessions: []fakeSession{{ID: "ses_new_a123", Created: future, Updated: future}, {ID: "ses_new_b123", Created: future + 1, Updated: future + 1}}, warn: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			directory := filepath.Clean(t.TempDir())
@@ -1196,7 +1131,7 @@ func TestSupervisorReplayGapRecoveryWarnsAndRetainsOnZeroOrAmbiguousCandidates(t
 				ListSessions:      tt.sessions,
 			})
 			warning := captureStderr(t, func() error { return runSupervisor(t.Context(), fixture.options) })
-			if !strings.Contains(warning, "recovery") || strings.ContainsRune(warning, '\x1b') {
+			if strings.ContainsRune(warning, '\x1b') || strings.Contains(warning, "recovery") != tt.warn {
 				t.Fatalf("recovery warning = %q", warning)
 			}
 			assertProviderIdentity(t, fixture.options, "ses_root_before_gap123")
@@ -1257,27 +1192,6 @@ func TestSupervisorReplayGapRecoveryAPIErrorIsAdvisory(t *testing.T) {
 	}
 }
 
-func TestSupervisorPermissionIgnoredEventsWarnSafely(t *testing.T) {
-	options := supervisorOptions{Directory: filepath.Clean(t.TempDir()), Yolo: true}
-	state := newSupervisorEventState(options, "ses_root123")
-	state.replied["per_duplicate123"] = struct{}{}
-	for _, tt := range []struct {
-		name  string
-		event eventEnvelope
-	}{
-		{name: "malformed", event: eventEnvelope{Type: "permission.asked", Properties: json.RawMessage(`{`)}},
-		{name: "foreign", event: fakeEvent("permission.asked", map[string]any{"id": "per_foreign123", "sessionID": "ses_foreign123"})},
-		{name: "duplicate", event: fakeEvent("permission.asked", map[string]any{"id": "per_duplicate123", "sessionID": "ses_root123"})},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			warning := captureStderr(t, func() error { return state.handle(t.Context(), nil, tt.event) })
-			if !strings.Contains(warning, "ignored") || strings.ContainsRune(warning, '\x1b') || len([]rune(warning)) > 512 {
-				t.Fatalf("ignored-event warning = %q", warning)
-			}
-		})
-	}
-}
-
 func TestSupervisorReconnectBackoff(t *testing.T) {
 	want := []time.Duration{25 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond, 400 * time.Millisecond}
 	for attempt, duration := range want {
@@ -1323,8 +1237,8 @@ func TestSupervisorLifecycleStartup(t *testing.T) {
 			if elapsed := time.Since(started); elapsed > 2*time.Second {
 				t.Fatalf("startup stall took %s, want bounded", elapsed)
 			}
-			if got := fixture.recordsOfKind(t, "attach_start"); len(got) != 0 {
-				t.Fatalf("stalled startup launched attach: %#v", got)
+			if got := fixture.recordsOfKind(t, "tui_start"); tt.name == "event handshake stalls" && len(got) != 1 || tt.name != "event handshake stalls" && len(got) != 0 {
+				t.Fatalf("stalled startup TUI records = %#v", got)
 			}
 			assertLifecycleClean(t, fixture, err)
 		})
@@ -1394,7 +1308,7 @@ func TestSupervisorLifecycleStartup(t *testing.T) {
 		if err == nil {
 			t.Fatal("runSupervisor succeeded after server exited before attach")
 		}
-		if got := fixture.recordsOfKind(t, "attach_start"); len(got) != 0 {
+		if got := fixture.recordsOfKind(t, "tui_start"); len(got) != 0 {
 			t.Fatalf("attach started after server failure: %#v", got)
 		}
 		var exitErr *ExitError
@@ -1413,51 +1327,6 @@ func TestSupervisorStartupCheckpointRejectsExpiredDeadline(t *testing.T) {
 	}
 }
 
-func TestSupervisorStartupExpiryAfterAttachLaunchReapsAttach(t *testing.T) {
-	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{AttachDelayMillis: 5000})
-	command := fixture.options.Command.command(
-		context.Background(),
-		"attach",
-		"http://127.0.0.1:0",
-		"--dir",
-		fixture.options.Directory,
-		"--session",
-		"ses_created123",
-	)
-	command.Dir = fixture.options.Directory
-	command.Env = serverEnvironment(
-		fakeSupervisorEnvironment(fixture),
-		openCodeServerUsername,
-		strings.Repeat("a", 64),
-	)
-
-	attach, err := startAttachProcess(command, nil)
-	if err != nil {
-		t.Fatalf("startAttachProcess: %v", err)
-	}
-	t.Cleanup(func() {
-		select {
-		case <-attach.done:
-		default:
-			terminateAndReap(attach)
-		}
-	})
-	awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
-
-	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
-	defer cancel()
-	err = requireActiveStartupOrReapAttach(ctx, attach)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expired attach startup error = %v, want context.DeadlineExceeded", err)
-	}
-	select {
-	case <-attach.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("attach process was not reaped after startup expired")
-	}
-	assertLifecycleClean(t, fixture, err)
-}
-
 func TestSupervisorLifecycleAttachAndServerExit(t *testing.T) {
 	t.Run("server dies while attach is active", func(t *testing.T) {
 		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
@@ -1465,11 +1334,12 @@ func TestSupervisorLifecycleAttachAndServerExit(t *testing.T) {
 			ServerExitMillis:  300,
 		})
 		err := runSupervisor(t.Context(), fixture.options)
-		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "server exited") {
-			t.Fatalf("server death error = %v", err)
+		var exitErr *ExitError
+		if !errors.As(err, &exitErr) || exitErr.Code != 44 {
+			t.Fatalf("TUI server death error = %v", err)
 		}
-		if got := len(fixture.recordsOfKind(t, "attach_start")); got != 1 {
-			t.Fatalf("attach start records = %#v, want one", fixture.recordsOfKind(t, "attach_start"))
+		if got := len(fixture.recordsOfKind(t, "tui_start")); got != 1 {
+			t.Fatalf("attach start records = %#v, want one", fixture.recordsOfKind(t, "tui_start"))
 		}
 		assertLifecycleClean(t, fixture, err)
 	})
@@ -1509,7 +1379,7 @@ func TestSupervisorLifecycleCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		result := make(chan error, 1)
 		go func() { result <- runSupervisor(ctx, fixture.options) }()
-		awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
+		awaitFakeRecord(t, fixture, "tui_start", 2*time.Second)
 		cancel()
 		err := awaitSupervisorResult(t, result, 3*time.Second)
 		if !errors.Is(err, context.Canceled) {
@@ -1518,31 +1388,17 @@ func TestSupervisorLifecycleCancellation(t *testing.T) {
 		assertLifecycleClean(t, fixture, err)
 	})
 
-	t.Run("simultaneous attach exit and cancellation returns exact attach exit", func(t *testing.T) {
+	t.Run("simultaneous TUI exit and cancellation returns exact TUI exit", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		attach := completedManagedProcess(t, 23)
-		server := &runningServer{process: &managedProcess{done: make(chan struct{})}, logs: newByteRing(1)}
+		tui := completedManagedProcess(t, 23)
 
-		err, ready := readySupervisorOutcome(ctx, server, attach, "password")
+		err, ready := readySupervisorOutcome(ctx, tui)
 		var exitErr *ExitError
 		if !ready || !errors.As(err, &exitErr) || exitErr.Code != 23 {
-			t.Fatalf("simultaneous attach/cancel result = (%v, %t), want exact exit 23", err, ready)
+			t.Fatalf("simultaneous TUI/cancel result = (%v, %t), want exact exit 23", err, ready)
 		}
 	})
-}
-
-func TestSupervisorOutcomeArbitrationServerBeatsAttach(t *testing.T) {
-	attach := completedManagedProcess(t, 23)
-	serverProcess := &managedProcess{done: make(chan struct{}), err: errors.New("server sentinel")}
-	close(serverProcess.done)
-	server := &runningServer{process: serverProcess, logs: newByteRing(1)}
-
-	err, ready := readySupervisorOutcome(t.Context(), server, attach, "password")
-	var exitErr *ExitError
-	if !ready || errors.As(err, &exitErr) || !strings.Contains(err.Error(), "server sentinel") {
-		t.Fatalf("simultaneous server/attach result = (%v, %t), want exact server error", err, ready)
-	}
 }
 
 func completedManagedProcess(t *testing.T, exitCode int) *managedProcess {
@@ -1583,7 +1439,7 @@ func TestSupervisorLifecycleSignals(t *testing.T) {
 			if err := command.Start(); err != nil {
 				t.Fatal(err)
 			}
-			awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
+			awaitFakeRecord(t, fixture, "tui_start", 2*time.Second)
 			if err := command.Process.Signal(sig); err != nil {
 				t.Fatal(err)
 			}
@@ -1606,7 +1462,7 @@ func TestSupervisorLifecycleStuckChildrenEscalate(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	result := make(chan error, 1)
 	go func() { result <- runSupervisor(ctx, fixture.options) }()
-	awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
+	awaitFakeRecord(t, fixture, "tui_start", 2*time.Second)
 	started := time.Now()
 	cancel()
 	err := awaitSupervisorResult(t, result, 4*time.Second)
@@ -1630,9 +1486,9 @@ func TestSupervisorLifecycleKillsProcessGroupGrandchildren(t *testing.T) {
 	go func() { result <- runSupervisor(ctx, fixture.options) }()
 	t.Cleanup(func() { killFakeProcesses(fixture.records(t)) })
 	serve := awaitFakeRecord(t, fixture, "serve", 2*time.Second)
-	attach := awaitFakeRecord(t, fixture, "attach_start", 2*time.Second)
+	attach := awaitFakeRecord(t, fixture, "tui_start", 2*time.Second)
 	awaitFakeRecord(t, fixture, "serve_grandchild", 2*time.Second)
-	awaitFakeRecord(t, fixture, "attach_grandchild", 2*time.Second)
+	awaitFakeRecord(t, fixture, "tui_grandchild", 2*time.Second)
 
 	started := time.Now()
 	cancel()
@@ -1662,8 +1518,8 @@ func TestSupervisorLifecycleBoundedServerLog(t *testing.T) {
 	if err == nil {
 		t.Fatal("runSupervisor succeeded after noisy server exited")
 	}
-	if strings.Contains(err.Error(), testSupervisorPassword) || !strings.Contains(err.Error(), "<redacted>") {
-		t.Fatalf("server error was not sanitized: %q", err)
+	if strings.Contains(err.Error(), testSupervisorPassword) {
+		t.Fatalf("TUI exit error leaked the server credential: %q", err)
 	}
 	if got := len([]rune(err.Error())); got > 700 {
 		t.Fatalf("server error has %d runes, want bounded diagnostic", got)
@@ -1779,17 +1635,22 @@ func assertServeAndAttachRecords(t *testing.T, fixture supervisorFixture, wantID
 	if len(serves) != 1 || !reflect.DeepEqual(serves[0].Args[:3], []string{"--hostname", "127.0.0.1", "--port"}) || serves[0].Port < 1 {
 		t.Fatalf("serve records = %#v", serves)
 	}
-	attaches := fixture.recordsOfKind(t, "attach")
-	if len(attaches) != 1 {
-		t.Fatalf("attach records = %#v", attaches)
+	tuis := fixture.recordsOfKind(t, "tui")
+	tuiServers := fixture.recordsOfKind(t, "tui_server")
+	if len(tuis) != 1 || len(tuiServers) != 1 {
+		t.Fatalf("TUI records = %#v; servers = %#v", tuis, tuiServers)
 	}
-	wantArgs := []string{"http://127.0.0.1:" + strconv.Itoa(serves[0].Port), "--dir", fixture.options.Directory, "--session", wantID}
-	if !reflect.DeepEqual(attaches[0].Args, wantArgs) {
-		t.Fatalf("attach argv = %#v, want %#v", attaches[0].Args, wantArgs)
+	wantArgs := []string{"--hostname", "127.0.0.1", "--port", strconv.Itoa(tuiServers[0].Port), "--session", wantID}
+	if fixture.options.Yolo {
+		wantArgs = append(wantArgs, "--auto")
 	}
-	for _, arg := range attaches[0].Args {
+	wantArgs = append(wantArgs, fixture.options.Directory)
+	if !reflect.DeepEqual(tuis[0].Args, wantArgs) {
+		t.Fatalf("TUI argv = %#v, want %#v", tuis[0].Args, wantArgs)
+	}
+	for _, arg := range tuis[0].Args {
 		if arg == "-c" || arg == "--continue" {
-			t.Fatalf("attach used fallback flag in %#v", attaches[0].Args)
+			t.Fatalf("TUI used fallback flag in %#v", tuis[0].Args)
 		}
 	}
 }
@@ -1804,7 +1665,7 @@ func assertNoSupervisorSecret(t *testing.T, fixture supervisorFixture) {
 		if strings.Contains(string(data), testSupervisorPassword) {
 			t.Fatalf("record leaked fixed password: %s", data)
 		}
-		if (strings.HasPrefix(record.Kind, "serve") || strings.HasPrefix(record.Kind, "attach")) && (!record.PasswordSet || !record.PasswordReplaced) {
+		if (strings.HasPrefix(record.Kind, "serve") || strings.HasPrefix(record.Kind, "tui")) && (!record.PasswordSet || !record.PasswordReplaced) {
 			t.Fatalf("child did not receive replaced credentials: %#v", record)
 		}
 	}
@@ -1894,7 +1755,7 @@ func waitCommand(t *testing.T, command *exec.Cmd, timeout time.Duration) error {
 func assertFakeChildrenReaped(t *testing.T, fixture supervisorFixture) {
 	t.Helper()
 	for _, record := range fixture.records(t) {
-		if !strings.HasPrefix(record.Kind, "serve") && !strings.HasPrefix(record.Kind, "attach") || record.PID <= 0 {
+		if !strings.HasPrefix(record.Kind, "serve") && !strings.HasPrefix(record.Kind, "tui") || record.PID <= 0 {
 			continue
 		}
 		deadline := time.Now().Add(time.Second)
@@ -2025,7 +1886,11 @@ func fakeOpenCodeServe(args []string) int {
 		return 93
 	}
 	defer func() { _ = listener.Close() }()
-	record := fakeChildCredentialRecord("serve", args)
+	serverKind := "serve"
+	if os.Getenv("UAM_FAKE_OPENCODE_TUI") == "1" {
+		serverKind = "tui_server"
+	}
+	record := fakeChildCredentialRecord(serverKind, args)
 	record.Port = *port
 	if err := writeFakeRecord(record); err != nil {
 		return 94
@@ -2166,11 +2031,6 @@ func fakeOpenCodeServe(args []string) int {
 				responseDirectory = config.Directory
 			}
 			_, _ = fmt.Fprintf(w, `{"id":%q,"parentID":%q,"directory":%q,"title":"existing","time":{"created":%d,"updated":%d}}`, responseID, config.ResponseParentID, responseDirectory, config.ExistingUpdated, config.ExistingUpdated)
-		case request.Method == http.MethodPost && strings.HasPrefix(request.URL.Path, "/permission/") && strings.HasSuffix(request.URL.Path, "/reply"):
-			body, _ := io.ReadAll(request.Body)
-			id := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/permission/"), "/reply")
-			_ = writeFakeRecord(fakeOpenCodeRecord{Kind: "permission", ID: id, Body: string(body)})
-			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, request)
 		}
@@ -2180,6 +2040,80 @@ func fakeOpenCodeServe(args []string) int {
 		return 95
 	}
 	return 0
+}
+
+func fakeOpenCodeTUI(args []string) int {
+	config, err := fakeOpenCodeConfigFromEnv()
+	if err != nil {
+		return 96
+	}
+	fs := flag.NewFlagSet("fake tui", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	hostname := fs.String("hostname", "", "")
+	port := fs.Int("port", 0, "")
+	sessionID := fs.String("session", "", "")
+	auto := fs.Bool("auto", false, "")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || fs.Arg(0) != config.Directory || *hostname != "127.0.0.1" || *port < 1 || *sessionID == "" {
+		return 97
+	}
+	start := fakeChildCredentialRecord("tui_start", args)
+	start.ID = *sessionID
+	if *auto {
+		start.Body = "auto"
+	}
+	if err := writeFakeRecord(start); err != nil {
+		return 98
+	}
+	if config.IgnoreTerminate {
+		signal.Ignore(syscall.SIGHUP, syscall.SIGTERM)
+	}
+	if config.Grandchildren {
+		if err := startFakeGrandchild("tui_grandchild"); err != nil {
+			return 104
+		}
+	}
+	go func() {
+		time.Sleep(75 * time.Millisecond)
+		if !waitForFakeRecord("event", 2*time.Second) {
+			os.Exit(105)
+		}
+		if config.StallEvent {
+			select {}
+		}
+		if config.AttachDelayMillis > 0 {
+			time.Sleep(time.Duration(config.AttachDelayMillis) * time.Millisecond)
+		}
+		var input []byte
+		if config.ReadStdinLine {
+			reader := bufio.NewReader(os.Stdin)
+			line, readErr := reader.ReadString('\n')
+			input = []byte(line)
+			err = readErr
+		} else if config.ReadStdin {
+			input, err = io.ReadAll(os.Stdin)
+		}
+		if err != nil {
+			os.Exit(106)
+		}
+		record := fakeChildCredentialRecord("tui", args)
+		record.ID = *sessionID
+		record.Input = string(input)
+		if *auto {
+			record.Body = "auto"
+		}
+		if err := writeFakeRecord(record); err != nil {
+			os.Exit(107)
+		}
+		if config.AttachSignal {
+			_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+			select {}
+		}
+		os.Exit(config.AttachExit)
+	}()
+	if err := os.Setenv("UAM_FAKE_OPENCODE_TUI", "1"); err != nil {
+		return 108
+	}
+	return fakeOpenCodeServe([]string{"--hostname", *hostname, "--port", strconv.Itoa(*port)})
 }
 
 func waitForFakeEventGate(ctx context.Context, path string) bool {
@@ -2197,55 +2131,6 @@ func waitForFakeEventGate(ctx context.Context, path string) bool {
 			return false
 		}
 	}
-}
-
-func fakeOpenCodeAttach(args []string) int {
-	config, err := fakeOpenCodeConfigFromEnv()
-	if err != nil {
-		return 96
-	}
-	if config.IgnoreTerminate {
-		signal.Ignore(syscall.SIGHUP, syscall.SIGTERM)
-	}
-	start := fakeChildCredentialRecord("attach_start", args)
-	if err := writeFakeRecord(start); err != nil {
-		return 97
-	}
-	if config.Grandchildren {
-		if err := startFakeGrandchild("attach_grandchild"); err != nil {
-			return 104
-		}
-	}
-	if config.ObserveEvents {
-		if err := fakeObservePermission(args[0], config); err != nil {
-			return 105
-		}
-	}
-	if config.AttachDelayMillis > 0 {
-		time.Sleep(time.Duration(config.AttachDelayMillis) * time.Millisecond)
-	}
-	var input []byte
-	if config.ReadStdinLine {
-		reader := bufio.NewReader(os.Stdin)
-		line, readErr := reader.ReadString('\n')
-		input = []byte(line)
-		err = readErr
-	} else if config.ReadStdin {
-		input, err = io.ReadAll(os.Stdin)
-	}
-	if err != nil {
-		return 98
-	}
-	record := fakeChildCredentialRecord("attach", args)
-	record.Input = string(input)
-	if err := writeFakeRecord(record); err != nil {
-		return 99
-	}
-	if config.AttachSignal {
-		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
-		select {}
-	}
-	return config.AttachExit
 }
 
 func startFakeGrandchild(kind string) error {
@@ -2282,53 +2167,5 @@ func fakeSupervisorGrandchild(kind string) int {
 	}
 	for {
 		time.Sleep(time.Hour)
-	}
-}
-
-func fakeObservePermission(baseURL string, config fakeOpenCodeConfig) error {
-	client, err := newAPIClient(
-		baseURL,
-		os.Getenv("OPENCODE_SERVER_USERNAME"),
-		os.Getenv("OPENCODE_SERVER_PASSWORD"),
-		config.Directory,
-		&http.Client{},
-	)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	ready := make(chan struct{})
-	events := make(chan eventEnvelope, 16)
-	done := make(chan error, 1)
-	go func() { done <- client.subscribe(ctx, ready, events) }()
-	select {
-	case <-ready:
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	for {
-		select {
-		case event := <-events:
-			if event.Type != "permission.asked" {
-				continue
-			}
-			var asked permissionAskedEvent
-			if err := json.Unmarshal(event.Properties, &asked); err != nil {
-				return err
-			}
-			if err := writeFakeRecord(fakeOpenCodeRecord{Kind: "observer", ID: asked.ID}); err != nil {
-				return err
-			}
-			cancel()
-			<-done
-			return nil
-		case err := <-done:
-			return err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
 	}
 }

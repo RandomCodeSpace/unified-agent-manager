@@ -159,9 +159,11 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg, key string) (bool, tea.Cmd) {
 		m.reconcileFilterSelection()
 		return true, nil
 	case "up":
-		return true, m.moveSelectionPeek(-1)
+		m.moveSelection(-1)
+		return true, nil
 	case "down":
-		return true, m.moveSelectionPeek(1)
+		m.moveSelection(1)
+		return true, nil
 	case "shift+up":
 		return true, m.moveSession(-1)
 	case "shift+down":
@@ -172,10 +174,9 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg, key string) (bool, tea.Cmd) {
 		}
 		return true, m.handleEnterKey()
 	case " ":
-		if noMatches {
-			return true, nil
-		}
-		return true, m.handleSpaceKey(key)
+		m.filterQuery += " "
+		m.reconcileFilterSelection()
+		return true, nil
 	case "ctrl+t", "ctrl+r", "ctrl+x":
 		if noMatches {
 			return true, nil
@@ -449,9 +450,6 @@ func (m Model) dashboardBody(width, budget int) []string {
 func (m Model) dashboardBodyEntries(width, budget int) []dashboardEntry {
 	if budget <= 0 || width <= 0 {
 		return nil
-	}
-	if m.peekOpen {
-		return textEntries(m.peekPanelLines(width, budget))
 	}
 	lay := boardColumns(width)
 	chrome := []dashboardEntry{{text: boardRule(width), sessionIndex: -1}}
@@ -727,12 +725,7 @@ func (m Model) boardComposer(width int, wide bool) string {
 	if typed {
 		field = titleStyle.Render(displaytext.Sanitize(m.input))
 	}
-	if m.peekOpen {
-		label = hintStyle.Render("reply ")
-		if !typed {
-			field = hintStyle.Render("type a reply" + hintEllipsis())
-		}
-	} else if m.filterActive {
+	if m.filterActive {
 		label = hintStyle.Render("filter / ")
 		field = hintStyle.Render("type to filter" + hintEllipsis())
 		if m.filterQuery != "" {
@@ -745,16 +738,14 @@ func (m Model) boardComposer(width int, wide bool) string {
 	if typed || !wide {
 		return ansi.Truncate(composer, width, truncTail())
 	}
-	segments := []string{arrowsHint() + " " + enterHint(), "click a gate", "Space peek", "/ filter", "e new", "? help"}
+	segments := []string{arrowsHint() + " " + enterHint(), "click a gate", "/ filter", "e new", "? help"}
 	if chips := chipRangeLabel(visible); chips != "" {
 		segments = append([]string{chips}, segments...)
 	}
 	if m.defaultAgent != "" {
 		segments = append([]string{m.defaultAgent}, segments...)
 	}
-	if m.peekOpen {
-		segments = []string{arrowsHint() + " session", enterHint() + " send", "Space close", "Esc close"}
-	} else if m.filterActive {
+	if m.filterActive {
 		segments = []string{arrowsHint(), enterHint() + " open", "Esc clears"}
 	}
 	// The composer owns the line; the hints fit in what it leaves, dropping
@@ -789,14 +780,6 @@ func entryLines(entries []dashboardEntry, width int) []string {
 		lines = append(lines, ansi.Truncate(entry.text, width, truncTail()))
 	}
 	return lines
-}
-
-func textEntries(lines []string) []dashboardEntry {
-	entries := make([]dashboardEntry, 0, len(lines))
-	for _, line := range lines {
-		entries = append(entries, dashboardEntry{text: line, sessionIndex: -1})
-	}
-	return entries
 }
 
 // hairlineRule is the borderless section divider: a label, a thin rule filling
@@ -844,30 +827,6 @@ func windowBlocks(entries []dashboardEntry, selected, budget int) []dashboardEnt
 		start--
 	}
 	return entries[start : start+budget]
-}
-
-func (m Model) peekPanelLines(width, budget int) []string {
-	if budget <= 0 || width <= 0 {
-		return nil
-	}
-	name := ""
-	if sess, ok := m.selectedSession(); ok {
-		name = firstNonEmpty(sess.DisplayName, sess.ID)
-	}
-	rule := hairlineRule(sectionStyle.Render("PEEK"), hintStyle.Render(displaytext.Sanitize(name)), width)
-	if budget == 1 {
-		return []string{rule}
-	}
-	content := boundedTailLines(m.peekText, budget-1, max(1, width-1))
-	if len(content) == 0 {
-		content = []string{hintStyle.Render("waiting for output" + hintEllipsis())}
-	}
-	lines := make([]string, 0, budget)
-	lines = append(lines, rule)
-	for _, line := range content {
-		lines = append(lines, " "+line)
-	}
-	return takeLines(lines, budget)
 }
 
 // ─── hit-testing ──────────────────────────────────────────────────────────────

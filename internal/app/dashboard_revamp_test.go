@@ -434,46 +434,6 @@ func TestDashboardTapResolvesToTheSessionUnderThePointer(t *testing.T) {
 	}
 }
 
-// TestBoardPeekFollowsTheCursor pins the panel's trustworthiness: with the
-// peek open, moving the cursor drops the stale tail and re-captures; with it
-// closed, navigation causes no capture at all.
-func TestBoardPeekFollowsTheCursor(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "a", AgentType: "codex", DisplayName: "first", Prompt: "one", ProcAlive: adapter.Alive},
-		{ID: "b", AgentType: "claude", DisplayName: "second", Prompt: "two", ProcAlive: adapter.Alive},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 30})
-
-	closed := m
-	closed.peekText = "stale"
-	if cmd := closed.moveSelectionPeek(1); cmd != nil {
-		t.Fatal("closed peek must not trigger a capture on navigation")
-	}
-
-	open := m
-	open.peekOpen = true
-	open.peekText = "stale output from the first session"
-	cmd := open.moveSelectionPeek(1)
-	if open.selected != 1 {
-		t.Fatalf("selection did not move: %d", open.selected)
-	}
-	if open.peekText != "" {
-		t.Fatalf("peek must drop the previous session's tail, got %q", open.peekText)
-	}
-	if cmd == nil {
-		t.Fatal("peek must re-capture output when the selection moves")
-	}
-	if open.peekTargetID != "b" {
-		t.Fatalf("reply target must follow the open peek, got %q", open.peekTargetID)
-	}
-
-	view := open.View()
-	if !strings.Contains(view, "PEEK") {
-		t.Fatalf("open peek should title its panel:\n%s", view)
-	}
-}
-
 // assertBorderless pins the standing preference for a borderless dashboard: no
 // box-drawing corners or verticals anywhere in the frame. The horizontal rule
 // glyph is allowed — it is a divider, not a border.
@@ -624,18 +584,9 @@ func TestDashboardFilterRefreshAndNavigationUseCompositeIdentity(t *testing.T) {
 	}
 }
 
-func TestDashboardSlashDoesNotStealReplyAndCanFilterEmptyDashboard(t *testing.T) {
+func TestDashboardSlashCanFilterEmptyDashboard(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.peekOpen = true
-	m.sessions = []adapter.Session{{ID: "one", ProcAlive: adapter.Alive}}
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	if m.filterActive || m.input != "/" {
-		t.Fatalf("slash should remain literal in Peek reply input: active=%v input=%q", m.filterActive, m.input)
-	}
-
-	m = NewWithDeps(nil, nil)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	m = model.(Model)
 	if !m.filterActive || m.input != "" {
 		t.Fatalf("empty dashboard slash should enter filter mode: active=%v input=%q", m.filterActive, m.input)
@@ -718,14 +669,19 @@ func TestDashboardFilterNoMatchActionsAreSafeAndBackspaceExits(t *testing.T) {
 	m = model.(Model)
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("absent")})
 	m = model.(Model)
-	for _, key := range []tea.KeyType{tea.KeyEnter, tea.KeySpace, tea.KeyCtrlT, tea.KeyCtrlR, tea.KeyCtrlX} {
+	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = model.(Model)
+	if cmd != nil || m.filterQuery != "absent " {
+		t.Fatalf("space should extend filter query: cmd=%v query=%q", cmd, m.filterQuery)
+	}
+	for _, key := range []tea.KeyType{tea.KeyEnter, tea.KeyCtrlT, tea.KeyCtrlR, tea.KeyCtrlX} {
 		model, cmd := m.Update(tea.KeyMsg{Type: key})
 		m = model.(Model)
 		if cmd != nil || m.renaming || m.confirmStop {
 			t.Fatalf("no-match key %v acted on an invisible session: cmd=%v rename=%v confirm=%v", key, cmd, m.renaming, m.confirmStop)
 		}
 	}
-	for range len([]rune("absent")) {
+	for range len([]rune("absent ")) {
 		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 		m = model.(Model)
 	}
@@ -783,7 +739,7 @@ func TestDashboardFilterMatchesEveryDocumentedFieldWithANDTerms(t *testing.T) {
 	}
 }
 
-func TestDashboardFilteredActionsTargetMatchedCompositeIdentityAndEscClosesPeekFirst(t *testing.T) {
+func TestDashboardFilteredRenameTargetsMatchedCompositeIdentity(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
 		{ID: "same", AgentType: "codex", DisplayName: "release", ProcAlive: adapter.Alive},
@@ -802,27 +758,8 @@ func TestDashboardFilteredActionsTargetMatchedCompositeIdentityAndEscClosesPeekF
 	}
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = model.(Model)
-
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
-	m = model.(Model)
-	if !m.peekOpen || m.peekTargetAgent != "claude" || m.peekTargetID != "same" {
-		t.Fatalf("peek targeted the wrong filtered session: open=%v agent=%q id=%q", m.peekOpen, m.peekTargetAgent, m.peekTargetID)
-	}
-	query := m.filterQuery
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("send reply")})
-	m = model.(Model)
-	if m.input != "send reply" || m.filterQuery != query {
-		t.Fatalf("Peek reply text leaked into filter: input=%q query=%q", m.input, m.filterQuery)
-	}
-	model, reply := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = model.(Model)
-	if reply == nil || m.input != "" || m.filterQuery != query {
-		t.Fatalf("Enter did not route filtered Peek text as a reply: cmd=%v input=%q query=%q", reply, m.input, m.filterQuery)
-	}
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = model.(Model)
-	if m.peekOpen || !m.filterActive {
-		t.Fatalf("first Esc should close Peek while retaining filter: peek=%v filter=%v", m.peekOpen, m.filterActive)
+	if !m.filterActive {
+		t.Fatal("closing rename should retain filter")
 	}
 	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = model.(Model)

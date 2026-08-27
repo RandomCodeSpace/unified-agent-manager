@@ -27,9 +27,7 @@ type svcFakeAdapter struct {
 	available  bool
 	stopped    bool
 	stoppedID  string
-	peekedID   string
 	attachedID string
-	replied    string
 	dispatched *adapter.DispatchRequest
 	resumed    *adapter.ResumeRequest
 	// F04: simulate a failed kill (stopErr) and a still-live pane (alive). The
@@ -87,14 +85,6 @@ func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) 
 }
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
 	return f.sessions, f.listErr
-}
-func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
-	f.peekedID = id
-	return adapter.PeekResult{TailText: "tail"}, nil
-}
-func (f *svcFakeAdapter) Reply(ctx adapter.Context, id, text string) error {
-	f.replied = text
-	return nil
 }
 func (f *svcFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 	f.attachedID = id
@@ -239,22 +229,16 @@ func TestProviderExactServiceActionsDoNotCrossDuplicateIDs(t *testing.T) {
 	if err := svc.TogglePinExact(ctx, "codex", id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.PeekExact(ctx, "codex", id); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.ReplyExact(ctx, "codex", id, "hello codex"); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := svc.AttachSpecExact(ctx, "codex", id); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.StopExact(ctx, "codex", id, false); err != nil {
 		t.Fatal(err)
 	}
-	if claude.stopped || claude.peekedID != "" || claude.replied != "" || claude.attachedID != "" {
+	if claude.stopped || claude.attachedID != "" {
 		t.Fatalf("claude adapter was targeted: %+v", claude)
 	}
-	if codex.stoppedID != id || codex.peekedID != id || codex.replied != "hello codex" || codex.attachedID != id {
+	if codex.stoppedID != id || codex.attachedID != id {
 		t.Fatalf("codex adapter did not receive exact actions: %+v", codex)
 	}
 	cfg, err := st.Load()
@@ -402,12 +386,6 @@ func assertWorkflowMetadataMutations(t *testing.T, svc *Service, list []adapter.
 
 func assertWorkflowAdapterActions(t *testing.T, svc *Service, fake *svcFakeAdapter) {
 	t.Helper()
-	if p, err := svc.Peek(context.Background(), "live"); err != nil || p.TailText != "tail" {
-		t.Fatalf("peek=%+v err=%v", p, err)
-	}
-	if err := svc.Reply(context.Background(), "live", "yes"); err != nil || fake.replied != "yes" {
-		t.Fatalf("reply %q %v", fake.replied, err)
-	}
 	if spec, err := svc.AttachSpec(context.Background(), "live"); err != nil || len(spec.Argv) == 0 {
 		t.Fatalf("attach=%+v err=%v", spec, err)
 	}

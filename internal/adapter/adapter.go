@@ -76,10 +76,6 @@ type Session struct {
 	Closed bool
 }
 
-type PeekResult struct {
-	TailText string
-}
-
 type AttachProfileSnapshot struct {
 	Selected      string
 	Effective     string
@@ -164,8 +160,6 @@ type AgentAdapter interface {
 	Available() (bool, string)
 	Dispatch(ctx Context, req DispatchRequest) (Session, error)
 	List(ctx Context) ([]Session, error)
-	Peek(ctx Context, id string) (PeekResult, error)
-	Reply(ctx Context, id, text string) error
 	Attach(id string) (AttachSpec, error)
 	Stop(ctx Context, id string) error
 }

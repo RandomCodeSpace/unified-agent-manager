@@ -118,7 +118,7 @@ func assertViewHelpers(t *testing.T) {
 	if prStatusDot(adapter.PRMerged) == " " {
 		t.Fatal("status helpers bad")
 	}
-	if truncate("abcdef", 4) != "abc…" || trimLines("a\nb\nc", 2) != "b\nc" {
+	if truncate("abcdef", 4) != "abc…" {
 		t.Fatal("text helpers bad")
 	}
 }
@@ -129,11 +129,6 @@ func TestModelUpdateMessages(t *testing.T) {
 	m = model.(Model)
 	if len(m.sessions) != 1 || m.defaultAgent != "fake" || !m.groupByDir {
 		t.Fatalf("bad load %+v", m)
-	}
-	model, _ = m.Update(peekLoadedMsg{text: "tail"})
-	m = model.(Model)
-	if m.peekText != "tail" {
-		t.Fatal(m.peekText)
 	}
 	model, _ = m.Update(dispatchedMsg{session: adapter.Session{ID: "abc"}})
 	m = model.(Model)
@@ -166,14 +161,7 @@ func TestPRRefreshCommandsAndMessages(t *testing.T) {
 	}
 }
 
-func TestRenderPeekAndLongestCommonPrefix(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.peekText = "one\ntwo\nthree\nfour\nfive\nsix"
-	m.height = 9
-	peek := m.renderPeek()
-	if !strings.Contains(peek, "PEEK") || strings.Contains(peek, "one") || !strings.Contains(peek, "six") {
-		t.Fatalf("renderPeek = %q", peek)
-	}
+func TestLongestCommonPrefix(t *testing.T) {
 	for _, tc := range []struct {
 		items []string
 		want  string
@@ -333,21 +321,18 @@ func TestViewExpandsSelectedSessionInsideDashboard(t *testing.T) {
 	}
 }
 
-func TestSpaceRestartsStoppedSessionInsteadOfPeeking(t *testing.T) {
-	// A running session: Space opens the peek panel.
+func TestSpaceRestartsStoppedSessionOtherwiseTypes(t *testing.T) {
+	// A running session: Space is ordinary composer input.
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "live", ProcAlive: adapter.Alive}}
-	if cmd := m.handleSpaceKey(" "); cmd == nil || !m.peekOpen {
-		t.Fatalf("space on a running session should peek: cmd=%v peekOpen=%v", cmd, m.peekOpen)
+	if cmd := m.handleSpaceKey(" "); cmd != nil || m.input != " " {
+		t.Fatalf("space on a running session should type: cmd=%v input=%q", cmd, m.input)
 	}
 
-	// A stopped session: Space restarts it and does not open the peek panel.
+	// A stopped session: Space restarts it.
 	m = NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "2", AgentType: "fake", DisplayName: "stopped", ProcAlive: adapter.Exited}}
 	cmd := m.handleSpaceKey(" ")
-	if m.peekOpen {
-		t.Fatal("space on a stopped session should not open the peek panel")
-	}
 	if cmd == nil {
 		t.Fatal("space on a stopped session should return a resume command")
 	}
@@ -423,12 +408,6 @@ func TestMovementAndQuitBranches(t *testing.T) {
 	}
 
 	m = modelWithTwoSessions()
-	m.peekOpen = true
-	if handled, cmd := m.handleActionKey("esc"); !handled || cmd != nil || m.peekOpen || m.quitting {
-		t.Fatalf("esc should close peek first: handled=%v cmd=%v peek=%v quitting=%v", handled, cmd, m.peekOpen, m.quitting)
-	}
-
-	m = modelWithTwoSessions()
 	m.input = "draft"
 	if handled, cmd := m.handleActionKey("esc"); !handled || cmd != nil || m.input != "" || m.quitting {
 		t.Fatalf("esc should clear input next: handled=%v cmd=%v input=%q quitting=%v", handled, cmd, m.input, m.quitting)
@@ -450,14 +429,8 @@ func TestInputWindowAndStateBranches(t *testing.T) {
 		t.Fatalf("space input branch cmd=%v input=%q", cmd, m.input)
 	}
 	m = modelWithTwoSessions()
-	m.peekOpen = true
-	if cmd := m.handleSpaceKey(" "); cmd != nil || m.peekOpen {
-		t.Fatalf("closing peek cmd=%v peek=%v", cmd, m.peekOpen)
-	}
-
 	m.height = 12
 	m.selected = 1
-	m.peekOpen = true
 	start, end := m.visibleSessionWindow()
 	if start < 0 || end < start || end > len(m.sessions) {
 		t.Fatalf("bad window %d:%d", start, end)

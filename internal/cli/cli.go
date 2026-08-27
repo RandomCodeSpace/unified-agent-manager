@@ -75,7 +75,6 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam version")
 	fmt.Fprintln(os.Stderr, "  uam ls [--json]")
 	fmt.Fprintln(os.Stderr, "  uam doctor [<session-id>] [--json]")
-	fmt.Fprintln(os.Stderr, "  uam peek <id>")
 	fmt.Fprintln(os.Stderr, "  uam stop <id>")
 	fmt.Fprintln(os.Stderr, "  uam restart [--allow-latest] <id> stop the agent and resume it in place")
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
@@ -169,8 +168,6 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		return RunDispatch(ctx, svc, args[1:])
 	case "ls", "list":
 		return runList(ctx, svc, args[1:])
-	case "peek":
-		return runPeek(ctx, svc, args[1:])
 	case "stop", "rm":
 		return runStop(ctx, svc, args[0], args[1:])
 	case "restart":
@@ -206,19 +203,6 @@ func runList(ctx context.Context, svc *app.Service, args []string) error {
 		return err
 	}
 	return svc.PrintList(ctx, *asJSON)
-}
-
-func runPeek(ctx context.Context, svc *app.Service, args []string) error {
-	id, err := requireArg(args, "peek requires <id>")
-	if err != nil {
-		return err
-	}
-	p, err := svc.Peek(ctx, id)
-	if err != nil {
-		return err
-	}
-	fmt.Print(p.TailText)
-	return nil
 }
 
 func runStop(ctx context.Context, svc *app.Service, cmd string, args []string) error {
