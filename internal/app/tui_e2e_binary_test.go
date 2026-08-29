@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -146,7 +147,7 @@ func TestE2ETUICtrlCQuitsFromEveryModal(t *testing.T) {
 		ready string
 	}{
 		{name: "base dashboard", open: "", ready: ""},
-		{name: "help", open: "?", ready: "Keys:"},
+		{name: "expanded help", open: "?", ready: "ctrl+t"},
 		{name: "wizard", open: "e", ready: ""},
 		{name: "rename", open: "\x12", ready: ""},
 		{name: "filter", open: "/abc", ready: "abc"},
@@ -154,7 +155,7 @@ func TestE2ETUICtrlCQuitsFromEveryModal(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			session := startTUI(t)
-			if !session.await("UAM", 15*time.Second) {
+			if !session.await("Agents", 15*time.Second) {
 				t.Fatalf("dashboard never rendered: %q", session.seen.tail())
 			}
 			if test.open != "" {
@@ -169,18 +170,39 @@ func TestE2ETUICtrlCQuitsFromEveryModal(t *testing.T) {
 	}
 }
 
-// '?' opens help on an empty composer and is ordinary text otherwise — the
-// rule every other letter-shaped binding already followed.
-func TestE2ETUIQuestionMarkGuard(t *testing.T) {
+// Printable text is inert on the dashboard and '?' remains the explicit help
+// action.
+func TestE2ETUIPrintableTextIsInertAndQuestionMarkOpensHelp(t *testing.T) {
 	session := startTUI(t)
-	if !session.await("UAM", 15*time.Second) {
+	if !session.await("Agents", 15*time.Second) {
 		t.Fatalf("dashboard never rendered: %q", session.seen.tail())
 	}
 	session.send("why")
 	session.send("?")
-	if !session.await("why?", 5*time.Second) {
-		t.Fatalf("'?' did not type into the composer: %q", session.seen.tail())
+	if !session.await("ctrl+t", 5*time.Second) {
+		t.Fatalf("'?' did not expand the Bubbles help footer: %q", session.seen.tail())
+	}
+	if strings.Contains(session.seen.tail(), "why?") {
+		t.Fatalf("dashboard accepted hidden printable input: %q", session.seen.tail())
 	}
 	session.send("\x03")
 	session.requireExit("Ctrl+C after typing", 10*time.Second)
+}
+
+func TestE2ETUIMouseModeAndResizeMinimum(t *testing.T) {
+	session := startTUI(t)
+	if !session.await("Agents", 15*time.Second) {
+		t.Fatalf("dashboard never rendered: %q", session.seen.tail())
+	}
+	if !session.seen.contains("\x1b[?1002h") || !session.seen.contains("\x1b[?1006h") {
+		t.Fatalf("Bubble Tea did not enable cell-motion and SGR mouse reporting: %q", session.seen.tail())
+	}
+	if err := pty.Setsize(session.ptmx, &pty.Winsize{Cols: 39, Rows: 11}); err != nil {
+		t.Fatal(err)
+	}
+	if !session.await("Agents needs 40x12", 5*time.Second) {
+		t.Fatalf("real PTY resize did not reach safe minimum view: %q", session.seen.tail())
+	}
+	session.send("\x03")
+	session.requireExit("Ctrl+C after resize", 10*time.Second)
 }

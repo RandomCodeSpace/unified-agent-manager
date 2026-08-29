@@ -1,13 +1,114 @@
 package app
 
 import (
+	"image/color"
+	"math"
+	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 )
+
+func TestPaletteClearsContrastOnLightAndDarkTerminals(t *testing.T) {
+	white := lipgloss.Color("#FFFFFF")
+	black := lipgloss.Color("#000000")
+	foregrounds := map[string]compat.AdaptiveColor{
+		"accent":  accentColor,
+		"text":    textColor,
+		"muted":   mutedColor,
+		"divider": dividerColor,
+		"task":    taskColor,
+		"live":    liveColor,
+		"fail":    failColor,
+		"warn":    warnColor,
+		"pin":     pinColor,
+		"pr":      prColor,
+		"idle":    idleColor,
+	}
+	for name, adaptive := range foregrounds {
+		if ratio := contrastRatio(adaptive.Light, white); ratio < 4.5 {
+			t.Errorf("%s light contrast = %.2f:1, want at least 4.5:1", name, ratio)
+		}
+		if ratio := contrastRatio(adaptive.Dark, black); ratio < 4.5 {
+			t.Errorf("%s dark contrast = %.2f:1, want at least 4.5:1", name, ratio)
+		}
+	}
+	if ratio := contrastRatio(actionTextColor.Light, accentColor.Light); ratio < 4.5 {
+		t.Errorf("light action contrast = %.2f:1, want at least 4.5:1", ratio)
+	}
+	if ratio := contrastRatio(actionTextColor.Dark, accentColor.Dark); ratio < 4.5 {
+		t.Errorf("dark action contrast = %.2f:1, want at least 4.5:1", ratio)
+	}
+	if ratio := contrastRatio(actionTextColor.Light, dividerColor.Light); ratio < 4.5 {
+		t.Errorf("light provider label contrast = %.2f:1, want at least 4.5:1", ratio)
+	}
+	if ratio := contrastRatio(actionTextColor.Dark, dividerColor.Dark); ratio < 4.5 {
+		t.Errorf("dark provider label contrast = %.2f:1, want at least 4.5:1", ratio)
+	}
+	if ratio := contrastRatio(actionTextColor.Light, failColor.Light); ratio < 4.5 {
+		t.Errorf("light destructive button contrast = %.2f:1, want at least 4.5:1", ratio)
+	}
+	if ratio := contrastRatio(actionTextColor.Dark, failColor.Dark); ratio < 4.5 {
+		t.Errorf("dark destructive button contrast = %.2f:1, want at least 4.5:1", ratio)
+	}
+}
+
+func TestInitRequestsTerminalBackgroundColor(t *testing.T) {
+	batch, ok := NewWithDeps(nil, nil).Init()().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("Init command = %T, want tea.BatchMsg", NewWithDeps(nil, nil).Init()())
+	}
+	want := reflect.ValueOf(tea.RequestBackgroundColor).Pointer()
+	for _, cmd := range batch {
+		if reflect.ValueOf(cmd).Pointer() == want {
+			return
+		}
+	}
+	t.Fatal("Init does not request the terminal background color")
+}
+
+func TestBackgroundColorEventSwitchesAdaptivePalette(t *testing.T) {
+	previous := compat.HasDarkBackground
+	t.Cleanup(func() { compat.HasDarkBackground = previous })
+
+	m := NewWithDeps(nil, nil)
+	light, _ := m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#FFFFFF")})
+	m = light.(Model)
+	if m.darkBackground || compat.HasDarkBackground {
+		t.Fatal("white terminal background did not select the light palette")
+	}
+	dark, _ := m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#000000")})
+	m = dark.(Model)
+	if !m.darkBackground || !compat.HasDarkBackground {
+		t.Fatal("black terminal background did not select the dark palette")
+	}
+}
+
+func contrastRatio(a, b color.Color) float64 {
+	left, right := relativeLuminance(a), relativeLuminance(b)
+	if left < right {
+		left, right = right, left
+	}
+	return (left + 0.05) / (right + 0.05)
+}
+
+func relativeLuminance(c color.Color) float64 {
+	r, g, b, _ := c.RGBA()
+	linear := func(component uint32) float64 {
+		value := float64(component) / 65535
+		if value <= 0.04045 {
+			return value / 12.92
+		}
+		return math.Pow((value+0.055)/1.055, 2.4)
+	}
+	return 0.2126*linear(r) + 0.7152*linear(g) + 0.0722*linear(b)
+}
 
 // TestToneTableNeverEncodesADatumInHueAlone is the compiled form of the rule
 // the palette expansion rests on: every tone that carries meaning owns a
@@ -101,7 +202,7 @@ func TestGlyphSetSubstitutionIsWholesale(t *testing.T) {
 func TestToneColorsAreAdaptiveAndCarryNoBackground(t *testing.T) {
 	for _, tn := range tones {
 		style := tn.style()
-		if _, ok := style.GetForeground().(lipgloss.AdaptiveColor); !ok {
+		if _, ok := style.GetForeground().(compat.AdaptiveColor); !ok {
 			t.Fatalf("tone %q foreground should adapt to light/dark terminals, got %T", tn.key, style.GetForeground())
 		}
 		// A background fill cannot be truncated safely: ansi.Truncate can clip a

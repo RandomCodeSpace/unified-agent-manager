@@ -12,8 +12,11 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
@@ -30,6 +33,8 @@ type Model struct {
 	sizeKnown           bool
 	quitting            bool
 	loading             bool
+	hasLoaded           bool
+	activity            spinner.Model
 	service             *Service
 	sessions            []adapter.Session
 	selected            int
@@ -41,7 +46,9 @@ type Model struct {
 	defaultAgent        string
 	message             string
 	messageSetAt        time.Time
+	refreshError        string
 	helpOpen            bool
+	darkBackground      bool
 	confirmStop         bool
 	confirmStopID       string
 	confirmStopAgent    string
@@ -50,6 +57,14 @@ type Model struct {
 	confirmLatestID     string
 	confirmLatestName   string
 	confirmLatestAction latestAction
+	confirmForm         *huh.Form
+	confirmField        *huh.Confirm
+	confirmValue        *bool
+	confirmIntent       confirmationIntent
+	confirmName         string
+	confirmSignature    string
+	confirmAffirmative  string
+	confirmGeneration   uint64
 	renaming            bool
 	renameTargetID      string
 	renameTargetAgent   string
@@ -64,6 +79,7 @@ type Model struct {
 	profileProviders    map[string]string
 	defaultProfile      string
 	profileBySession    map[sessionIdentity]string
+	lastSeenBySession   map[sessionIdentity]time.Time
 	groupByDir          bool
 	execProcess         func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 	// reorderSeq increments on every reorder; a debounced flush tick only
@@ -82,6 +98,11 @@ type Model struct {
 	// Discovery refreshes LastChange on every scan, so the dashboard deliberately
 	// derives age from CreatedAt instead.
 	now func() time.Time
+	// dashboardRevision invalidates pointer intent captured by a previously
+	// displayed frame after refresh or resize.
+	dashboardRevision     uint64
+	sessionLoads          *sessionLoadCoordinator
+	appliedLoadGeneration uint64
 }
 
 // messageTTL is how long a status/error line stays on screen before a refresh
@@ -97,14 +118,22 @@ const messageTTL = 8 * time.Second
 const reorderDebounce = 500 * time.Millisecond
 
 type sessionsLoadedMsg struct {
-	sessions         []adapter.Session
-	defaultAgent     string
-	groupByDir       bool
-	profileNames     []string
-	profileProviders map[string]string
-	defaultProfile   string
-	profileBySession map[sessionIdentity]string
-	err              error
+	refresh           bool
+	loadGeneration    uint64
+	sessions          []adapter.Session
+	defaultAgent      string
+	groupByDir        bool
+	profileNames      []string
+	profileProviders  map[string]string
+	defaultProfile    string
+	profileBySession  map[sessionIdentity]string
+	lastSeenBySession map[sessionIdentity]time.Time
+	err               error
+}
+
+type sessionLoadCoordinator struct {
+	mu   sync.Mutex
+	next uint64
 }
 type dispatchedMsg struct {
 	session adapter.Session
@@ -182,7 +211,15 @@ func New() Model {
 }
 
 func NewWithDeps(st *store.Store, reg *adapter.Registry) Model {
-	m := Model{service: NewService(st, reg), defaultAgent: store.DefaultAgentName, wizardCwd: ".", profileProviders: map[string]string{}, profileBySession: map[sessionIdentity]string{}, execProcess: tea.ExecProcess}
+	m := Model{
+		service: NewService(st, reg), defaultAgent: store.DefaultAgentName,
+		wizardCwd: ".", profileProviders: map[string]string{},
+		profileBySession: map[sessionIdentity]string{}, lastSeenBySession: map[sessionIdentity]time.Time{}, execProcess: tea.ExecProcess,
+		activity:       spinner.New(spinner.WithSpinner(spinner.Line), spinner.WithStyle(brandStyle)),
+		loading:        true,
+		darkBackground: compat.HasDarkBackground,
+		sessionLoads:   &sessionLoadCoordinator{},
+	}
 	// The baked-in OpenCode default may not be installed; reconcile it to an
 	// enabled provider so Enter-with-no-input and the prompt hint never point at
 	// a disabled agent (C2-9).
@@ -208,7 +245,7 @@ func (m Model) validateDefaultAgent(candidate string) string {
 	return candidate
 }
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadSessionsCmd(), refreshTick(), prRefreshTick(100*time.Millisecond))
+	return tea.Batch(m.refreshSessionsCmd(), m.activity.Tick, refreshTick(), prRefreshTick(100*time.Millisecond), tea.RequestBackgroundColor)
 }
 
 func refreshTick() tea.Cmd {
@@ -234,9 +271,28 @@ func (m Model) refreshStep(now time.Time) (Model, bool) {
 }
 
 func (m Model) loadSessionsCmd() tea.Cmd {
+	return m.sessionLoadCmd(false)
+}
+
+func (m Model) refreshSessionsCmd() tea.Cmd {
+	return m.sessionLoadCmd(true)
+}
+
+func (m Model) sessionLoadCmd(refresh bool) tea.Cmd {
+	coordinator := m.sessionLoads
+	if coordinator == nil {
+		coordinator = &sessionLoadCoordinator{}
+	}
 	return func() tea.Msg {
+		coordinator.mu.Lock()
+		defer coordinator.mu.Unlock()
+		coordinator.next++
+		generation := coordinator.next
 		if m.reloadSessions != nil {
-			return m.reloadSessions()
+			loaded := m.reloadSessions()
+			loaded.refresh = refresh
+			loaded.loadGeneration = generation
+			return loaded
 		}
 		sessions, cfg, err := m.service.LoadSessions(context.Background())
 		profileNames := make([]string, 0, len(cfg.Profiles))
@@ -249,10 +305,13 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 		}
 		sort.Strings(profileNames)
 		profileBySession := make(map[sessionIdentity]string, len(cfg.Sessions))
+		lastSeenBySession := make(map[sessionIdentity]time.Time, len(cfg.Sessions))
 		for _, record := range cfg.Sessions {
-			profileBySession[sessionIdentity{agent: record.Agent, id: record.ID}] = record.Profile
+			identity := sessionIdentity{agent: record.Agent, id: record.ID}
+			profileBySession[identity] = record.Profile
+			lastSeenBySession[identity] = record.LastSeenAt
 		}
-		return sessionsLoadedMsg{sessions: sessions, defaultAgent: cfg.DefaultAgent, groupByDir: cfg.UI.GroupByDir, profileNames: profileNames, profileProviders: profileProviders, defaultProfile: cfg.DefaultProfile, profileBySession: profileBySession, err: err}
+		return sessionsLoadedMsg{refresh: refresh, loadGeneration: generation, sessions: sessions, defaultAgent: cfg.DefaultAgent, groupByDir: cfg.UI.GroupByDir, profileNames: profileNames, profileProviders: profileProviders, defaultProfile: cfg.DefaultProfile, profileBySession: profileBySession, lastSeenBySession: lastSeenBySession, err: err}
 	}
 }
 
@@ -266,12 +325,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg), nil
+	case tea.BackgroundColorMsg:
+		m.darkBackground = msg.IsDark()
+		// The v2 compatibility colors resolve through this value. Keep it in
+		// sync with Bubble Tea's live terminal response instead of trusting the
+		// package-load probe forever.
+		compat.HasDarkBackground = m.darkBackground
+		if m.confirmForm != nil {
+			updated, _ := m.confirmForm.Update(msg)
+			m.confirmForm = updated.(*huh.Form)
+		}
+		return m, nil
+	case dashboardPointerIntent:
+		return m.handleDashboardPointer(msg)
+	case spinner.TickMsg:
+		activity, cmd := m.activity.Update(msg)
+		m.activity = activity
+		if m.loading || (!m.hasLoaded && len(m.sessions) == 0) {
+			return m, cmd
+		}
+		return m, nil
 	case refreshMsg:
 		next, startedLoad := m.refreshStep(time.Time(msg))
 		// The ticker is re-armed unconditionally so refreshes never stop; the
 		// load is added only when one wasn't already in flight (F17).
 		if startedLoad {
-			return next, tea.Batch(next.loadSessionsCmd(), refreshTick())
+			return next, tea.Batch(next.refreshSessionsCmd(), next.activity.Tick, refreshTick())
 		}
 		return next, refreshTick()
 	case prRefreshMsg:
@@ -285,7 +364,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = true
-		return m, m.loadSessionsCmd()
+		return m, tea.Batch(m.refreshSessionsCmd(), m.activity.Tick)
 	case reorderFlushMsg:
 		// Persist only if this is the latest reorder; a superseded tick is dropped
 		// so a held Shift+arrow coalesces into one write (F59).
@@ -310,26 +389,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case attachSpecMsg:
 		return m, m.execAttachSpec(msg.spec, msg.err)
 	case attachFinishedMsg:
-		return m.handleAttachFinished(msg), tea.Batch(m.loadSessionsCmd(), tea.ClearScreen, tea.WindowSize())
+		return m.handleAttachFinished(msg), tea.Batch(m.loadSessionsCmd(), tea.ClearScreen, tea.RequestWindowSize)
 	case latestRequiredMsg:
 		if !errors.Is(msg.err, ErrAmbiguousResume) {
 			m.setMessage(msg.err.Error())
 			return m, nil
 		}
-		m.confirmLatest = true
-		m.confirmLatestAction = msg.action
-		m.confirmLatestAgent = msg.agent
-		m.confirmLatestID = msg.id
-		m.confirmLatestName = msg.name
-		m.message = ""
-		m.messageSetAt = time.Time{}
+		m.openLatestConfirmation(msg.action, msg.agent, msg.id, msg.name)
 		return m, nil
+	case confirmationFormMsg:
+		return m.handleConfirmationFormMsg(msg)
+	case confirmationPointerIntent:
+		return m.handleConfirmationPointer(msg)
 	case promptEditedMsg:
 		return m.handlePromptEdited(msg), nil
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	case tea.PasteMsg:
+		return m.handlePaste(msg.Content), nil
 	}
 	return m, nil
 }
@@ -337,6 +416,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleWindowSize(msg tea.WindowSizeMsg) Model {
 	m.width, m.height = msg.Width, msg.Height
 	m.sizeKnown = true
+	m.dashboardRevision++
+	m.resizeConfirmation()
 	return m
 }
 
@@ -358,10 +439,28 @@ func (m *Model) expireMessage(now time.Time) {
 }
 
 func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
-	// Clear the in-flight guard unconditionally — even on error — or a single
-	// failed load wedges the refresh ticker forever (F17).
-	m.loading = false
-	if msg.err != nil {
+	if msg.loadGeneration != 0 && msg.loadGeneration < m.appliedLoadGeneration {
+		if msg.refresh {
+			m.loading = false
+		}
+		return m
+	}
+	if msg.loadGeneration != 0 {
+		m.appliedLoadGeneration = msg.loadGeneration
+	}
+	m.dashboardRevision++
+	if msg.refresh {
+		m.hasLoaded = true
+		// Only the completion of the load that acquired the guard may release it.
+		m.loading = false
+		if msg.err != nil {
+			// Refresh failures are persistent dashboard state, not a short-lived
+			// toast. Keep the last good roster and expose the explicit Retry command.
+			m.refreshError = msg.err.Error()
+			return m
+		}
+		m.refreshError = ""
+	} else if msg.err != nil {
 		m.setMessage(msg.err.Error())
 		return m
 	}
@@ -384,6 +483,9 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	m.defaultProfile = msg.defaultProfile
 	if msg.profileBySession != nil {
 		m.profileBySession = msg.profileBySession
+	}
+	if msg.lastSeenBySession != nil {
+		m.lastSeenBySession = msg.lastSeenBySession
 	}
 	if selectedID != "" {
 		for i, sess := range m.sessions {
@@ -443,7 +545,7 @@ func (m Model) handlePromptEdited(msg promptEditedMsg) Model {
 	return m
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	// Ctrl+C quits from anywhere. Routed before the modal dispatch because a
 	// modal claims every key it does not recognise, which left help, the
@@ -471,52 +573,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.handleActionKey(key); handled {
 		return m, cmd
 	}
-	if handled, cmd := m.handleChipKey(key); handled {
-		return m, cmd
-	}
-	m.appendKeyInput(msg)
+	// The base dashboard has no text composer. Printable keys are inert here;
+	// filter, wizard, rename, and confirmation input was routed above.
 	return m, nil
 }
 
-func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.Cmd) {
-	if m.helpOpen {
-		if key == "?" || key == "esc" {
-			m.helpOpen = false
-		}
-		return true, m, nil
-	}
-	if m.confirmLatest {
-		if key == "y" || key == "enter" {
-			action, agentName, id := m.confirmLatestAction, m.confirmLatestAgent, m.confirmLatestID
-			m.clearLatestConfirmation()
-			return true, m, m.retryLatestCmd(action, agentName, id)
-		}
-		if key == "n" || key == "esc" {
-			m.clearLatestConfirmation()
-		}
-		return true, m, nil
-	}
-	if m.confirmStop {
-		if key == "y" || key == "enter" {
-			m.confirmStop = false
-			agentName, id := m.confirmStopAgent, m.confirmStopID
-			m.confirmStopAgent = ""
-			m.confirmStopID = ""
-			return true, m, m.stopTargetExactCmd(agentName, id, true)
-		}
-		if key == "r" {
-			m.confirmStop = false
-			agentName, id := m.confirmStopAgent, m.confirmStopID
-			m.confirmStopAgent = ""
-			m.confirmStopID = ""
-			return true, m, m.restartTargetExactCmd(agentName, id)
-		}
-		if key == "n" || key == "esc" {
-			m.confirmStop = false
-			m.confirmStopAgent = ""
-			m.confirmStopID = ""
-		}
-		return true, m, nil
+func (m Model) handleModalKey(msg tea.KeyPressMsg, key string) (bool, tea.Model, tea.Cmd) {
+	if m.confirmLatest || m.confirmStop {
+		return m.handleConfirmationKey(msg, key)
 	}
 	if m.wizard {
 		model, cmd := m.handleWizardKey(msg)
@@ -754,14 +818,12 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 		m.cycleDefaultAgent()
 		return true, m.persistDefaultAgent()
 	case "?":
-		// Same guard the other letter-shaped bindings use: a leading key only
-		// binds on an empty composer, otherwise it is text. Without it a '?'
-		// could never be typed into a prompt.
-		if strings.TrimSpace(m.input) != "" {
-			m.input += key
-			return true, nil
+		m.helpOpen = !m.helpOpen
+	case "r":
+		if m.refreshError == "" {
+			return false, nil
 		}
-		m.helpOpen = true
+		return true, m.retryRefresh()
 	case "ctrl+s":
 		grouped := !m.groupByDir
 		generation := m.nextGroupToggleGeneration()
@@ -777,9 +839,7 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 		m.startRename()
 	case "ctrl+x":
 		if sess, ok := m.selectedSession(); ok {
-			m.confirmStop = true
-			m.confirmStopAgent = sess.AgentType
-			m.confirmStopID = sess.ID
+			m.openSessionConfirmation(sess)
 		}
 	case " ":
 		return true, m.handleSpaceKey(key)
@@ -788,7 +848,7 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "esc":
 		return true, m.handleEscKey()
 	case "backspace":
-		m.backspaceInput()
+		// No text field exists on the base dashboard.
 	case "e":
 		m.handleEditKey(key)
 	default:
@@ -797,95 +857,27 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	return true, nil
 }
 
-// chipPositionFor maps a pressed key to the chip position it addresses, or -1
-// when the key is not a chip digit.
-func chipPositionFor(key string) int {
-	if len(key) != 1 {
-		return -1
-	}
-	return strings.IndexByte(chipDigits, key[0])
-}
-
-// handleChipKey implements zero-chord addressing. A digit jumps to the session
-// wearing that chip; pressing it again attaches. It is deliberately the same
-// select-then-activate verb a tap runs, so a phone and a desktop share one
-// grammar instead of the phone getting a degraded copy of the keyboard one.
-//
-// Digits bind only on an empty composer, exactly like "e" and "?" already do,
-// and only when the chip is actually on screen — an out-of-range digit falls
-// through and types, so a smaller roster never swallows input. Letters were the
-// obvious choice here and are the wrong one: stealing nine of them would break
-// dispatching any prompt that happens to start with one.
-func (m *Model) handleChipKey(key string) (bool, tea.Cmd) {
-	if m.filterActive || m.renaming || m.wizard {
-		return false, nil
-	}
-	if strings.TrimSpace(m.input) != "" {
-		return false, nil
-	}
-	position := chipPositionFor(key)
-	if position < 0 {
-		return false, nil
-	}
-	visible := m.visibleSessionIndices()
-	if position >= len(visible) {
-		return false, nil
-	}
-	return true, m.selectOrActivate(visible[position])
-}
-
-// selectOrActivate is the shared verb behind a chip press and a mouse tap: the
-// first hit moves the cursor, a second hit on the session already under it
-// attaches.
-func (m *Model) selectOrActivate(index int) tea.Cmd {
-	if index < 0 || index >= len(m.sessions) {
+func (m *Model) retryRefresh() tea.Cmd {
+	if m.loading {
 		return nil
 	}
-	if m.selected == index {
-		return m.attachSelectedCmd()
-	}
-	m.selected = index
-	return nil
+	m.refreshError = ""
+	m.loading = true
+	return tea.Batch(m.refreshSessionsCmd(), m.activity.Tick)
 }
 
-// handleMouse routes pointer input through exactly the same verbs the keyboard
-// uses. A left press resolves the position under the pointer via
-// dashboardHitTarget — which recomposes the body rather than trusting a cached
-// hit map, so it can never select a session that has since moved — and the
-// wheel walks the cursor. A press inside a GATE cell runs that row's verb
-// immediately: the gate is a button, and a button that needed a second click
-// would not be one.
-func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress {
-		return m, nil
-	}
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		m.moveSelection(-1)
-		return m, nil
-	case tea.MouseButtonWheelDown:
-		m.moveSelection(1)
-		return m, nil
-	case tea.MouseButtonLeft:
-		index, gate, ok := m.dashboardHitTarget(msg.Y, msg.X)
-		if !ok {
-			return m, nil
-		}
-		if gate {
-			m.selected = index
-			return m, m.attachSelectedCmd()
-		}
-		return m, m.selectOrActivate(index)
-	}
+// handleMouse keeps raw pointer coordinates inert. The displayed view resolves
+// them through its captured compositor and sends a semantic intent instead.
+func (m Model) handleMouse(tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Bubble Tea v2 delivers this raw event to Update as well as to View.OnMouse.
+	// Only the view callback knows which compositor was actually displayed, so
+	// raw coordinates are deliberately inert here.
 	return m, nil
 }
 
-// handleEscKey clears the command input, then quits the uam TUI.
+// handleEscKey quits the base dashboard.
 func (m *Model) handleEscKey() tea.Cmd {
-	if m.input != "" {
-		m.input = ""
-		return nil
-	}
+	m.input = ""
 	m.quitting = true
 	// Flush a pending reorder before exiting (F59).
 	return tea.Batch(m.flushReorder(), tea.Quit)
@@ -902,9 +894,8 @@ func (m *Model) startRename() {
 	m.input = sess.DisplayName
 }
 
-func (m *Model) handleSpaceKey(key string) tea.Cmd {
-	if strings.TrimSpace(m.input) != "" || len(m.sessions) == 0 {
-		m.input += key
+func (m *Model) handleSpaceKey(_ string) tea.Cmd {
+	if len(m.sessions) == 0 {
 		return nil
 	}
 	// Space restarts a stopped session in the background.
@@ -912,26 +903,17 @@ func (m *Model) handleSpaceKey(key string) tea.Cmd {
 		m.setMessage("restarting " + firstNonEmpty(sess.DisplayName, sess.ID))
 		return m.resumeSelectedCmd()
 	}
-	m.input += key
 	return nil
 }
 
 func (m *Model) handleEnterKey() tea.Cmd {
-	if strings.TrimSpace(m.input) != "" {
-		spec := parseDispatchSpec(m.input, m.defaultAgent)
-		return m.dispatchNamedCmd(spec.Agent, spec.Alias, spec.Name, spec.Prompt)
-	}
 	if len(m.sessions) > 0 {
 		return m.attachSelectedCmd()
 	}
 	return nil
 }
 
-func (m *Model) handleEditKey(key string) {
-	if strings.TrimSpace(m.input) != "" {
-		m.input += key
-		return
-	}
+func (m *Model) handleEditKey(_ string) {
 	m.wizard = true
 	m.wizardStep = 0
 	m.input = ""
@@ -948,11 +930,22 @@ func (m *Model) backspaceInput() {
 	}
 }
 
-func (m *Model) appendKeyInput(msg tea.KeyMsg) {
-	m.editText(msg)
+func (m Model) handlePaste(content string) Model {
+	if content == "" {
+		return m
+	}
+	if m.filterActive {
+		m.filterQuery += content
+		m.reconcileFilterSelection()
+		return m
+	}
+	if m.wizard || m.renaming {
+		m.input += content
+	}
+	return m
 }
 
-func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleRenameKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "enter":
@@ -982,22 +975,20 @@ func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// editText applies a printable-input edit to m.input: it appends pasted/typed
-// runes (KeyRunes without Alt — covers multibyte and bracketed paste), handles
-// Space and Backspace, and ignores Alt-chords and control keys so they never
-// leak as literal text (F29).
-func (m *Model) editText(msg tea.KeyMsg) {
+// editText applies a printable keypress to m.input. PasteMsg is handled
+// separately by handlePaste; Alt chords and control keys never leak into text.
+func (m *Model) editText(msg tea.KeyPressMsg) {
 	switch {
-	case msg.Type == tea.KeyBackspace:
+	case msg.Code == tea.KeyBackspace:
 		m.backspaceInput()
-	case msg.Type == tea.KeySpace:
+	case msg.Code == tea.KeySpace:
 		m.input += " "
-	case msg.Type == tea.KeyRunes && !msg.Alt:
-		m.input += string(msg.Runes)
+	case msg.Text != "" && !msg.Mod.Contains(tea.ModAlt):
+		m.input += msg.Text
 	}
 }
 
-func (m Model) handleWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleWizardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "esc" {
 		m.closeWizard()
@@ -1148,7 +1139,7 @@ func isGitRepo(dir string) bool {
 		return false
 	}
 	for {
-		if _, statErr := os.Stat(filepath.Join(d, ".git")); statErr == nil {
+		if validGitMarker(filepath.Join(d, ".git")) {
 			return true
 		}
 		parent := filepath.Dir(d)
@@ -1157,6 +1148,38 @@ func isGitRepo(dir string) bool {
 		}
 		d = parent
 	}
+}
+
+// validGitMarker accepts both an ordinary .git directory and the gitdir file
+// used by linked worktrees. Mere existence is insufficient: temporary roots
+// and interrupted tooling sometimes leave an empty .git entry behind, which
+// must not suppress the wizard's no-checkpoint warning.
+func validGitMarker(marker string) bool {
+	info, err := os.Stat(marker)
+	if err != nil {
+		return false
+	}
+	gitDir := marker
+	if !info.IsDir() {
+		if !info.Mode().IsRegular() {
+			return false
+		}
+		contents, readErr := os.ReadFile(marker) // #nosec G304 -- marker is the literal .git entry found while walking the user-selected local workspace.
+		if readErr != nil {
+			return false
+		}
+		line := strings.TrimSpace(string(contents))
+		const prefix = "gitdir:"
+		if !strings.HasPrefix(strings.ToLower(line), prefix) {
+			return false
+		}
+		gitDir = strings.TrimSpace(line[len(prefix):])
+		if !filepath.IsAbs(gitDir) {
+			gitDir = filepath.Join(filepath.Dir(marker), gitDir)
+		}
+	}
+	head, headErr := os.Stat(filepath.Join(gitDir, "HEAD")) // #nosec G703 -- linked-worktree .git files intentionally name their local git directory; only HEAD metadata is inspected.
+	return headErr == nil && !head.IsDir()
 }
 
 // globComplete completes a partially-typed path against the filesystem. It
@@ -1583,16 +1606,14 @@ const (
 )
 
 func (m Model) layoutClass() LayoutClass {
-	w, h := m.width, m.height
+	w := m.width
 	if w <= 0 {
 		w = 98
 	}
-	// An unknown height means callers are rendering a component outside a real
-	// terminal (many legacy unit tests do this), so classify by width only.
-	if h > 0 && (w < 58 || h < 24) || w < 58 {
+	if w < dashboardCompactMin {
 		return LayoutCompact
 	}
-	if w >= 96 && (h == 0 || h >= 28) {
+	if w >= dashboardWideMin {
 		return LayoutWide
 	}
 	return LayoutStandard
@@ -1617,7 +1638,27 @@ func (m Model) layoutMode() int {
 	}
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
+	var view tea.View
+	if m.sizeKnown && m.confirmationActive() && !m.quitting {
+		frame := m.buildConfirmationOverlay()
+		view = tea.NewView(lipgloss.Sprint(frame.content))
+		view.OnMouse = frame.mouseCommand
+	} else if m.sizeKnown && !m.confirmLatest && !m.confirmStop && !m.wizard && !m.renaming && !m.quitting {
+		frame := m.buildDashboardFrame()
+		view = tea.NewView(lipgloss.Sprint(frame.content))
+		view.OnMouse = func(msg tea.MouseMsg) tea.Cmd { return m.dashboardMouseCommand(frame, msg) }
+	} else {
+		view = tea.NewView(lipgloss.Sprint(m.viewContent()))
+	}
+	view.AltScreen = true
+	if MouseReportingEnabled() {
+		view.MouseMode = tea.MouseModeCellMotion
+	}
+	return view
+}
+
+func (m Model) viewContent() string {
 	if m.quitting {
 		return ""
 	}
@@ -1626,10 +1667,10 @@ func (m Model) View() string {
 	if !m.sizeKnown {
 		// A confirmation can arrive before a WindowSizeMsg in tests and on very
 		// slow remote terminals. Never hide a safety-critical modal behind loading.
-		if m.helpOpen || m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
+		if m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
 			return m.unboundedView()
 		}
-		return bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("loading dashboard"+hintEllipsis())
+		return m.activityView() + " " + hintStyle.Render("Loading agents")
 	}
 	return m.dashboardView()
 }
@@ -1638,8 +1679,6 @@ func (m Model) unboundedView() string {
 	var b strings.Builder
 	b.WriteString(m.renderBranding())
 	switch {
-	case m.helpOpen:
-		b.WriteString(m.renderHelp())
 	case m.confirmLatest:
 		b.WriteString(m.renderLatestConfirmation())
 	case m.confirmStop:
@@ -1712,9 +1751,6 @@ func (m Model) responsiveHeader(width int) string {
 func (m Model) responsiveBody(width, budget int) []string {
 	if budget <= 0 {
 		return nil
-	}
-	if m.helpOpen {
-		return takeLines(boundedNonBlankLines(m.renderHelp(), width), budget)
 	}
 	if m.confirmLatest {
 		return takeLines(boundedNonBlankLines(m.renderLatestConfirmation(), width), budget)
@@ -2001,12 +2037,7 @@ func (m Model) renderPrompt() string {
 	if m.renaming {
 		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render(cursorGlyph()) + "\n")
 	} else {
-		field := hintStyle.Render("type a command" + hintEllipsis())
-		if m.input != "" {
-			field = titleStyle.Render(displaytext.Sanitize(m.input))
-		}
-		hints := hintStyle.Render(m.defaultAgent + "  ·  ? help  ·  e new  ·  Esc quit")
-		b.WriteString(bar() + " " + brandStyle.Render(caretGlyph()) + " " + field + brandStyle.Render(cursorGlyph()) + "   " + hints + "\n")
+		b.WriteString(bar() + " " + titleStyle.Render("Agents") + "  " + hintStyle.Render("? / Esc close help") + "\n")
 	}
 	if m.message != "" {
 		b.WriteString("  " + hintStyle.Render(displaytext.Sanitize(m.message)) + "\n")
@@ -2110,45 +2141,20 @@ func absCwd(cwd string) string {
 	return displaytext.Sanitize(cwd)
 }
 
-func (m Model) renderHelp() string {
-	rows := []string{
-		"1-9,0  jump to that chip   ·  press it again to attach",
-		"click / tap a row  ·  same as its chip   ·  wheel scrolls the cursor",
-		"↑/↓  move   Shift+↑/↓  reorder   Enter/→  attach/resume",
-		"Space  type / resume stopped",
-		"/  filter sessions when the command line is empty (re-chips the roster)",
-		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
-		"Ctrl+X  stop+remove / restart    Ctrl+S  group-by-dir",
-		"e  new session       Esc  back / quit     Ctrl+C  quit anywhere",
-		"in session:  ← detach (when input empty)    Ctrl+B d  detach",
-		"dispatch:  @agent:alias #name prompt   (alias, name & prompt optional)",
-		"legend  ● live  ○ stopped  ✕ failed  ★ pinned  ◇◆◐⊘ pr  ⇄ exact resume",
-		"UAM_NO_MOUSE=1 restores native terminal text selection",
-	}
-	var b strings.Builder
-	b.WriteString("\n " + sectionStyle.Render("Keys:") + "\n")
-	for _, r := range rows {
-		b.WriteString("  " + hintStyle.Render(r) + "\n")
-	}
-	return b.String()
-}
-
 func (m Model) renderConfirm() string {
-	sess, _ := m.sessionByIdentity(m.confirmStopAgent, m.confirmStopID)
-	name := displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID, "session"))
-	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
-		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +
-		"   " + brandStyle.Render("y") + hintStyle.Render(" / restart ") + brandStyle.Render("r") + hintStyle.Render(" / ") + titleStyle.Render("N") + "\n"
+	m.ensureConfirmationForm()
+	if m.confirmForm == nil {
+		return ""
+	}
+	return m.confirmForm.View()
 }
 
 func (m Model) renderLatestConfirmation() string {
-	provider := displaytext.Sanitize(firstNonEmpty(m.confirmLatestAgent, "provider"))
-	name := displaytext.Sanitize(firstNonEmpty(m.confirmLatestName, m.confirmLatestID, "session"))
-	return "\n " + sectionStyle.Render("Confirm latest conversation") + "\n  " +
-		hintStyle.Render("Several retained conversations share provider ") + titleStyle.Render(provider) +
-		hintStyle.Render(" and this workspace. Continuing ") + titleStyle.Render(string(m.confirmLatestAction)+" "+name) +
-		hintStyle.Render(" may select the provider's latest conversation.") +
-		"   " + brandStyle.Render("y/Enter") + hintStyle.Render(" continue · n/Esc cancel") + "\n"
+	m.ensureConfirmationForm()
+	if m.confirmForm == nil {
+		return ""
+	}
+	return m.confirmForm.View()
 }
 
 func (m Model) renderWizard() string {

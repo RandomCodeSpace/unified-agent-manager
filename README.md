@@ -124,52 +124,55 @@ uam profile effective <session-id> [--json]
 
 | Key | Action |
 |---|---|
-| `1`–`9`, `0` | Jump to that board number; press the same digit again to attach |
-| Click / tap a row | Same as its number — first tap selects, second attaches |
-| Click / tap a GATE cell | Run that row's verb immediately (attach or resume) |
+| Click / tap a row | Select that agent session without activating it |
+| Click / tap `Attach` or `Resume` | Run that row's explicit primary action |
+| Click / tap `Stop` or `Remove` | Open a Huh confirmation form for the selected record |
 | Wheel up / down | Move selection |
 | `↑` / `↓` | Move selection |
-| `Enter` / `→` | Attach selected session |
-| Type prompt + `Enter` | Dispatch to the default agent |
-| `@agent prompt` | Dispatch to a specific agent |
-| `@agent:alias prompt` | Dispatch with a command alias |
+| `Enter` / `→` | Run the selected session's `Attach` or `Resume` action |
 | `Tab` | Cycle default agent |
-| `Space` | Resume Stopped in the background; otherwise enter a space in the composer |
+| `Space` | Resume Stopped in the background |
 | `Ctrl+T` | Pin selected session |
 | `Ctrl+R` | Rename selected session |
-| `Ctrl+X` | Stop and remove the selected record, or restart it, with confirmation |
+| `Ctrl+X` | Open the selected session's Stop or Remove confirmation |
 | `Ctrl+S` | Toggle group-by-directory |
 | `Shift+↑/↓` | Reorder rows |
-| `/` with an empty command | Filter by name, provider, task, workspace, ID, or lifecycle |
+| `/` | Filter by name, provider, task, workspace, ID, or lifecycle |
+| `r` | Retry after a persistent refresh failure |
 | `e` | Open the guided dispatch wizard |
-| `?` with an empty command | Open help; with text typed it is ordinary input |
-| `Esc` | Close overlays, clear input, or quit |
+| `?` | Toggle the Bubbles help footer between primary and secondary commands |
+| `Esc` | Close the current overlay or quit |
 | `Ctrl+C` | Quit from anywhere, including modals |
 
-The dashboard is a **departures board**: one flat table, one row per session,
-under a masthead carrying the brand, version, clock, host and craft count.
-Columns are `Nº · SESSION · OPERATOR · TASK · STATUS · GATE · DUE`. STATUS
-speaks a three-word vocabulary — `██ EN ROUTE` (running), `▓▓ DIVERTED`
-(failed), `░░ ARRIVED` (stopped cleanly) — and GATE is a clickable cell
-running the row's one verb: `ATTACH` for a live session, `RESUME ⇄` for an
-exact resume, `RESUME ~` for the provider's most-recent heuristic. The newest
-failure is summarised as a *boarding call* above the composer, and two live
-sessions sharing a workspace raise a ground *advisory* there.
+The dashboard is one literal **Agents** roster. Every fixed-height row keeps a
+session identity, `Running`, `Stopped`, or `Failed`, and an explicit `Attach`
+or `Resume` action. A single click selects a row; activation requires its named
+action cell or `Enter`. The fixed context band carries provider/session detail
+and the destructive `Stop` or `Remove` action, which is confirmed by a Huh
+form with `Cancel` focused initially.
 
-Below 78 columns — a phone with the keyboard up — the board compacts to
-`Nº CODE NAME STATUS AGE` rows using airline-style operator codes (`CL`
-claude, `CX` codex, `OC` opencode, `OM` omp, `CP` copilot, `HM` hermes) with a
-legend above the composer. Both geometries carry the version in the masthead.
+If a refresh fails, the last good roster stays usable and the fixed context
+band shows a persistent `Retry` action. Click it or press `r`; the error clears
+only when retry begins and returns if the load fails again.
 
-Every mark comes from a single tone table: a datum is never carried by colour
-alone, so a monochrome terminal, an eight-colour palette or `NO_COLOR` loses
-hue and nothing else. The DUE column is tinted along a four-stop age ramp
-(fresh under an hour, recent under a day, old under a week, then stale). Age
-is derived from creation time, not from liveness discovery — see the note in
-`internal/app/fleet.go` for why the apparently better `LastChange` field
-cannot carry it. On terminals that draw ambiguous-width glyphs two cells wide
-or lack UTF-8, the whole vocabulary degrades to a plain-ASCII spelling — see
-[Terminal and OS support](docs/terminals.md).
+The roster uses width-only layouts: Wide at 96 columns, Compact from 60 to 95,
+and Narrow from 40 to 59. Height changes only the number of Bubbles viewport
+rows. At 40 by 12, identity, literal lifecycle, selection, action, context, and
+one line of Bubbles help remain visible. Secondary metadata disappears as
+whole fields rather than producing clipped punctuation.
+
+Bubble Tea binds mouse handling to the displayed view and Lip Gloss compositor
+layers resolve row and action targets. Refresh or resize therefore cannot turn
+an old coordinate into a different backend action. Lifecycle wording and glyphs
+remain distinct without colour and have measured ASCII fallbacks. The top band
+uses a single-cell-safe Lip Gloss `UAM` badge, then keeps the build version,
+local `HH:MM TZ` clock, and literal `Agents` surface visible at every supported
+width. Provider leads every row as a filled Lip Gloss label, including Narrow
+mode. The fixed context band shows `Updated HH:MM TZ`, sourced from UAM's persisted last
+liveness observation rather than guessed provider activity. Bubble Tea also
+queries the live terminal
+background so the high-contrast light or dark palette is selected after startup.
+See [Terminal and OS support](docs/terminals.md).
 
 Mouse reporting is enabled so the dashboard is tappable on a phone. Set
 `UAM_NO_MOUSE=1` to turn it off and restore the terminal's native
@@ -238,9 +241,10 @@ enabled by default so OpenCode and other mouse-aware providers can scroll. Set
 right-click paste is more important. Native Windows remains unsupported;
 Windows is the SSH client in this setup.
 
-In the TUI, `Ctrl+X` followed by `y` stops the process **and removes its stored
-record**. Use `uam stop <id>` when you want to stop the process but retain a
-Stopped row for later resume. For paste diagnosis, follow the
+In the TUI, `Ctrl+X` opens a Huh form with `Cancel` selected. Choosing the
+affirmative action stops a Running process and removes its stored record, or
+removes an already Stopped record. Use `uam stop <id>` when you want to stop the
+process but retain a Stopped row for later resume. For paste diagnosis, follow the
 [SSH troubleshooting steps](docs/responsive-tui.md#ssh-mouse-and-paste).
 
 ## Resuming sessions
@@ -437,6 +441,8 @@ for its own execution model.
 - [Terminal ownership over SSH](docs/adr/0002-terminal-ownership-over-ssh.md)
 - [Terminal client/session ownership and protocol v2](docs/adr/0003-terminal-client-session-ownership-and-protocol-v2.md)
 - [Responsive TUI design and operations](docs/responsive-tui.md)
+- [Minimalist Agent dashboard design](docs/superpowers/specs/2026-08-28-minimalist-agent-dashboard-design.md)
+- [Charm dashboard research](docs/research/2026-08-28-minimalist-mouse-first-charm-dashboard.md)
 
 ## Development
 

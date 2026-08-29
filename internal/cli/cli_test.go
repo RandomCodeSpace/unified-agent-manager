@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/creack/pty"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
@@ -106,7 +106,11 @@ func (m resizeSynchronizedQuitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-func (resizeSynchronizedQuitModel) View() string { return "dashboard-marker" }
+func (resizeSynchronizedQuitModel) View() tea.View {
+	view := tea.NewView("dashboard-marker")
+	view.AltScreen = true
+	return view
+}
 
 func TestRunTUICleansPrimaryLineAfterBubbleTeaExit(t *testing.T) {
 	ptmx, tty, err := pty.Open()

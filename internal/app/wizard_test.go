@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // C2-8 — the workdir step must warn when the chosen directory is not inside a git
@@ -17,6 +17,9 @@ import (
 func TestIsGitRepoWalksUp(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	nested := filepath.Join(root, "a", "b", "c")
@@ -35,6 +38,33 @@ func TestIsGitRepoWalksUp(t *testing.T) {
 	// not, but be explicit so the test is deterministic).
 	if isGitRepo(bare) && !ancestorHasGit(bare) {
 		t.Fatal("isGitRepo disagreed with the ancestor walk")
+	}
+}
+
+func TestIsGitRepoIgnoresIncompleteGitMarker(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if validGitMarker(filepath.Join(root, ".git")) {
+		t.Fatal("an empty .git directory is not a valid repository marker")
+	}
+}
+
+func TestIsGitRepoAcceptsWorktreeGitdirFile(t *testing.T) {
+	root := t.TempDir()
+	gitDir := filepath.Join(t.TempDir(), "worktrees", "child")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: "+gitDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !isGitRepo(root) {
+		t.Fatal("a worktree gitdir file pointing at a directory with HEAD should be accepted")
 	}
 }
 
@@ -158,7 +188,7 @@ func TestWizardCtrlGOpensEditorAndLoadsResult(t *testing.T) {
 		return func() tea.Msg { return cb(nil) }
 	}
 
-	model, cmd := m.handleWizardKey(tea.KeyMsg{Type: tea.KeyCtrlG})
+	model, cmd := m.handleWizardKey(keyMsg("ctrl+g"))
 	m = model.(Model)
 	if cmd == nil {
 		t.Fatal("Ctrl+G should return an exec command")

@@ -1,14 +1,16 @@
 package app
 
 import (
+	"image/color"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 func TestRenderTableGroupsSessionsByStatus(t *testing.T) {
@@ -115,7 +117,7 @@ func TestRenderTableNarrowShowsNamesWithoutInlineTask(t *testing.T) {
 }
 
 func TestThemeUsesAdaptiveProfessionalPaletteWithoutSelectedBackground(t *testing.T) {
-	adaptiveStyles := map[string]lipgloss.TerminalColor{
+	adaptiveStyles := map[string]color.Color{
 		"title":   titleStyle.GetForeground(),
 		"brand":   brandStyle.GetForeground(),
 		"section": sectionStyle.GetForeground(),
@@ -123,7 +125,7 @@ func TestThemeUsesAdaptiveProfessionalPaletteWithoutSelectedBackground(t *testin
 		"divider": dividerStyle.GetForeground(),
 	}
 	for name, color := range adaptiveStyles {
-		if _, ok := color.(lipgloss.AdaptiveColor); !ok {
+		if _, ok := color.(compat.AdaptiveColor); !ok {
 			t.Fatalf("%s color should auto-adapt to light/dark terminal backgrounds, got %T", name, color)
 		}
 	}
@@ -133,51 +135,50 @@ func TestThemeUsesAdaptiveProfessionalPaletteWithoutSelectedBackground(t *testin
 	}
 }
 
-func TestViewShowsCompactUAMBrandingAndDashboard(t *testing.T) {
+func TestViewShowsAgentsBrandingAndDashboard(t *testing.T) {
 	oldVersion := version.Override
 	version.Override = "v9.9.9"
 	t.Cleanup(func() { version.Override = oldVersion })
 
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "clean", Cwd: "/tmp/repo", ProcAlive: adapter.Alive}}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 120, Height: 30})
 
-	view := m.View()
+	view := m.View().Content
 	for _, want := range []string{
-		"UNIFIED AGENT MANAGER (UAM)",
-		"DEPARTURES",
+		"UAM",
+		"Agents",
 		"v9.9.9",
-		"CLEAN",
-		"EN ROUTE",
+		"clean",
+		"Running",
+		"Attach",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing UAM branding %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") {
+	if strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") || strings.Contains(view, "DEPARTURES") {
 		t.Fatalf("branding should not reintroduce aggregate header stats: %s", view)
 	}
 	if strings.Contains(view, uamANSILogo) {
 		t.Fatalf("responsive dashboard should not spend rows on the legacy ASCII logo: %s", view)
 	}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
-	if compact := m.View(); !strings.Contains(compact, "v9.9.9") {
-		t.Fatalf("compact dashboard should retain the version label: %s", compact)
+	if compact := m.View().Content; !strings.Contains(compact, "UAM") || !strings.Contains(compact, "v9.9.9") || !strings.Contains(compact, "Agents") {
+		t.Fatalf("compact dashboard should keep UAM, version, and Agents identity: %s", compact)
 	}
 }
 
-// TestViewUsesBorderlessSessionsRule replaces the bordered-panel contract. The
-// box cost two rows and two columns for no information; a single divider rule
-// carrying the roster count says more in one row, and the reclaimed budget goes
-// to the density ladder.
+// TestViewUsesBorderlessSessionsRule pins the borderless dashboard and literal
+// session count.
 func TestViewUsesBorderlessSessionsRule(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "clean", Cwd: "/tmp/repo", ProcAlive: adapter.Alive}}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 
-	view := m.View()
-	if !strings.Contains(view, "─") || !strings.Contains(view, "1 craft") {
-		t.Fatalf("view should frame the board with rules and carry the craft count: %s", view)
+	view := m.View().Content
+	if !strings.Contains(view, "─") || !strings.Contains(view, "1/1 sessions") {
+		t.Fatalf("view should frame the roster with rules and carry the session count: %s", view)
 	}
 	assertBorderless(t, view)
 }
@@ -190,8 +191,8 @@ func TestViewIsInformationRichAndBoundedOnNarrowScreens(t *testing.T) {
 	}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
 
-	view := m.View()
-	for _, want := range []string{"ACTIVE-ONE", "OLD-ONE", "EN ROUTE", "ARRIVED", "CX", "CL", "codex", "claude"} {
+	view := m.View().Content
+	for _, want := range []string{"active-one", "old-one", "Running", "Stopped", "Attach", "Resume", "codex"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("narrow view missing %q:\n%s", want, view)
 		}

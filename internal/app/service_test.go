@@ -22,14 +22,15 @@ import (
 )
 
 type svcFakeAdapter struct {
-	name       string
-	sessions   []adapter.Session
-	available  bool
-	stopped    bool
-	stoppedID  string
-	attachedID string
-	dispatched *adapter.DispatchRequest
-	resumed    *adapter.ResumeRequest
+	name        string
+	sessions    []adapter.Session
+	available   bool
+	stopped     bool
+	stoppedID   string
+	attachedID  string
+	attachCount int
+	dispatched  *adapter.DispatchRequest
+	resumed     *adapter.ResumeRequest
 	// F04: simulate a failed kill (stopErr) and a still-live pane (alive). The
 	// fake implements adapter.HasSessionAdapter, returning alive from HasSession.
 	stopErr error
@@ -88,6 +89,7 @@ func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
 }
 func (f *svcFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 	f.attachedID = id
+	f.attachCount++
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
 }
 func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error {

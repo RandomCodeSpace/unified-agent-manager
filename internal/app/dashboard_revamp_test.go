@@ -1,897 +1,503 @@
 package app
 
 import (
-	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// TestDepartureBoardWideShowsEveryColumn pins the locked design: one flat
-// table with Nº, SESSION, OPERATOR, TASK, STATUS, GATE and DUE — and nothing
-// else. No PR marks, no pin star, no workspace panes: forge state is a
-// provider concern and pins act on ordering, not on the board.
-func TestDepartureBoardWideShowsEveryColumn(t *testing.T) {
-	now := time.Date(2026, time.July, 13, 12, 4, 0, 0, time.UTC)
+func dashboardFixture(width, height int) Model {
+	now := time.Date(2026, time.August, 28, 12, 4, 0, 0, time.UTC)
 	m := NewWithDeps(nil, nil)
 	m.now = func() time.Time { return now }
 	m.sessions = []adapter.Session{
-		{
-			ID: "full-session-identity", AgentType: "codex", DisplayName: "release-check",
-			Prompt: "verify the release pipeline", Cwd: "/work/unified-agent-manager",
-			ProcAlive: adapter.Alive, CreatedAt: now.Add(-2 * time.Hour),
-			PR: &adapter.PRRef{Number: 41, Status: adapter.PROpen}, Pinned: true,
-		},
-		{
-			ID: "stopped-session", AgentType: "claude", DisplayName: "failed-tests",
-			Prompt: "repair integration tests", Cwd: "/work/other", ProcAlive: adapter.Exited,
-			CreatedAt: now.Add(-3 * 24 * time.Hour), ExitCode: exitCode(7),
-		},
+		{ID: "shared", AgentType: "codex", DisplayName: "release-check", Prompt: "verify release pipeline", Cwd: "/work/uam", ProcAlive: adapter.Alive, CreatedAt: now.Add(-4 * time.Minute)},
+		{ID: "shared", AgentType: "claude", DisplayName: "repair-tests", Prompt: "repair integration tests", Cwd: "/work/uam", ProcAlive: adapter.Exited, CreatedAt: now.Add(-2 * time.Hour)},
+		{ID: "failed", AgentType: "opencode", DisplayName: "failing-agent", Prompt: "inspect failure", Cwd: "/work/other", ProcAlive: adapter.Exited, ExitCode: exitCode(7), CreatedAt: now.Add(-3 * time.Hour)},
 	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.loading = false
+	m.hasLoaded = true
+	return m.handleWindowSize(tea.WindowSizeMsg{Width: width, Height: height})
+}
 
-	view := m.View()
+func TestDashboardHeaderKeepsSingleCellWordmarkVersionAndTime(t *testing.T) {
+	previousVersion := version.Override
+	version.Override = "v9.9.9"
+	t.Cleanup(func() { version.Override = previousVersion })
+
+	for _, width := range []int{40, 60, 96, 120} {
+		m := dashboardFixture(width, 12)
+		header := strings.SplitN(ansi.Strip(m.View().Content), "\n", 2)[0]
+		for _, want := range []string{"UAM", "v9.9.9", "12:04 UTC", "Agents"} {
+			if !strings.Contains(header, want) {
+				t.Fatalf("width %d header missing %q: %q", width, want, header)
+			}
+		}
+		if strings.Contains(header, "🤖") {
+			t.Fatalf("width %d header retained an ambiguous-width emoji wordmark: %q", width, header)
+		}
+		if got := ansi.StringWidth(header); got != width {
+			t.Fatalf("width %d header occupies %d cells: %q", width, got, header)
+		}
+	}
+}
+
+func TestDashboardShowsProviderAndObservedUpdateTimeAtEveryWidth(t *testing.T) {
+	updated := time.Date(2026, time.August, 28, 11, 57, 0, 0, time.UTC)
+	for _, width := range []int{40, 60, 96, 120} {
+		m := dashboardFixture(width, 20)
+		m.lastSeenBySession = map[sessionIdentity]time.Time{
+			{agent: "codex", id: "shared"}: updated,
+		}
+		view := ansi.Strip(m.View().Content)
+		for _, provider := range []string{"codex", "claude", "opencode"} {
+			if !strings.Contains(view, provider) {
+				t.Fatalf("width %d dashboard missing provider %q:\n%s", width, provider, view)
+			}
+		}
+		if !strings.Contains(view, "Updated 11:57 UTC") {
+			t.Fatalf("width %d dashboard missing observed update time and zone:\n%s", width, view)
+		}
+	}
+}
+
+func TestProviderLabelLeadsEveryDashboardRow(t *testing.T) {
+	style := providerLabelStyle(false)
+	if _, unset := style.GetBackground().(lipgloss.NoColor); unset {
+		t.Fatal("provider label has no background")
+	}
+	if style.GetPaddingLeft() != 1 || style.GetPaddingRight() != 1 {
+		t.Fatalf("provider label padding = (%d, %d), want (1, 1)", style.GetPaddingLeft(), style.GetPaddingRight())
+	}
+
+	for _, width := range []int{40, 60, 96, 120} {
+		m := dashboardFixture(width, 20)
+		for index, sess := range m.sessions {
+			row, _, _ := m.dashboardRowParts(sess, index, width)
+			plain := ansi.Strip(row)
+			providerAt := strings.Index(plain, providerBadge(sess))
+			stateAt := strings.Index(plain, lifecycleBadge(sess))
+			nameAt := strings.Index(plain, sess.DisplayName[:3])
+			if providerAt < 0 || stateAt < 0 || nameAt < 0 || providerAt >= stateAt || providerAt >= nameAt {
+				t.Fatalf("width %d row does not lead with provider label: %q", width, plain)
+			}
+		}
+	}
+}
+
+func TestSessionUpdatedLabelUsesDashboardTimezone(t *testing.T) {
+	zone := time.FixedZone("NPT", 5*60*60+45*60)
+	m := dashboardFixture(80, 20)
+	m.now = func() time.Time { return time.Date(2026, time.August, 28, 12, 4, 0, 0, zone) }
+	sess := m.sessions[0]
+	m.lastSeenBySession = map[sessionIdentity]time.Time{
+		sessionKey(sess): time.Date(2026, time.August, 28, 6, 12, 0, 0, time.UTC),
+	}
+	if got := m.sessionUpdatedLabel(sess); got != "Updated 11:57 NPT" {
+		t.Fatalf("session update label = %q, want local time with timezone", got)
+	}
+}
+
+func TestCompactContextDropsOptionalFieldsAsCompleteUnits(t *testing.T) {
+	const id = "123e4567-e89b-12d3-a456-426614174000"
+	const cwd = "/work/a-very-long-project-directory"
+	m := dashboardFixture(60, 20)
+	m.sessions = []adapter.Session{{ID: id, AgentType: "codex", DisplayName: "work", Cwd: cwd, ProcAlive: adapter.Alive}}
+	m.selected = 0
+	compact := ansi.Strip(m.dashboardContext(60))
+	if !strings.Contains(compact, "codex") || !strings.Contains(compact, "Updated unknown") {
+		t.Fatalf("compact context lost required fields: %q", compact)
+	}
+	if strings.Contains(compact, id[:8]) || strings.Contains(compact, "a-very-long") {
+		t.Fatalf("compact context clipped an optional field instead of dropping it: %q", compact)
+	}
+
+	wide := ansi.Strip(m.dashboardContext(120))
+	if !strings.Contains(wide, id) || !strings.Contains(wide, cwd) {
+		t.Fatalf("wide context dropped fields that fit: %q", wide)
+	}
+}
+
+func TestAgentsDashboardUsesLiteralOneScreenVocabulary(t *testing.T) {
+	m := dashboardFixture(120, 40)
+	view := ansi.Strip(m.View().Content)
 	assertViewGeometry(t, view, 120, 40)
 	for _, want := range []string{
-		// masthead
-		"UNIFIED AGENT MANAGER (UAM)", "DEPARTURES", "12:04", "2 craft",
-		// column headings
-		"Nº", "SESSION", "OPERATOR", "TASK", "STATUS", "GATE", "DUE",
-		// the live craft
-		"01", "RELEASE-CHECK", "CODEX", "verify the release pipeline", "EN ROUTE", "ATTACH", "2h",
-		// the diverted craft
-		"02", "FAILED-TESTS", "CLAUDE", "exit 7", "DIVERTED", "RESUME", "3d",
+		"UAM", "Agents", "3/3 sessions", "release-check", "Running", "codex", "Attach",
+		"repair-tests", "Stopped", "claude", "Resume", "failing-agent", "Failed", "Stop",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("wide board missing %q:\n%s", want, view)
+			t.Fatalf("dashboard missing %q:\n%s", want, view)
 		}
 	}
-	for _, banned := range []string{"◇", "◇41", "★", "pull request"} {
+	for _, banned := range []string{"DEPARTURES", "craft", "GATE", "boarding", "type a command"} {
 		if strings.Contains(view, banned) {
-			t.Fatalf("the board must not carry %q (PR and pin marks were dropped by design):\n%s", banned, view)
+			t.Fatalf("dashboard retained metaphor/composer copy %q:\n%s", banned, view)
 		}
-	}
-	if !lineContainsAll(view, "01", "RELEASE-CHECK", "CODEX", "EN ROUTE", "ATTACH") {
-		t.Fatalf("a departure must be one row, not a block:\n%s", view)
-	}
-	// The diverted craft calls for boarding above the composer.
-	if !strings.Contains(view, "boarding call: 02 diverted") {
-		t.Fatalf("newest failure must be summarised as a boarding call:\n%s", view)
 	}
 	assertBorderless(t, view)
 }
 
-// TestDepartureBoardCompactKeepsOperatorAndStatus pins the phone geometry:
-// with the keyboard up a 40x12 screen still shows number, operator code, name,
-// the full status cell and the age — plus the legend decoding the codes.
-func TestDepartureBoardCompactKeepsOperatorAndStatus(t *testing.T) {
-	now := time.Date(2026, time.July, 13, 12, 4, 0, 0, time.UTC)
-	m := NewWithDeps(nil, nil)
-	m.now = func() time.Time { return now }
-	m.sessions = []adapter.Session{
-		{ID: "one", AgentType: "codex", DisplayName: "selected", Prompt: "fix copy and paste", ProcAlive: adapter.Alive, CreatedAt: now.Add(-8 * time.Minute)},
-		{ID: "two", AgentType: "claude", DisplayName: "ordinary", Prompt: "collapsed", ProcAlive: adapter.Exited, CreatedAt: now.Add(-90 * time.Minute)},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 40, Height: 12})
-
-	view := m.View()
+func TestAgentsDashboardGuaranteesFortyByTwelve(t *testing.T) {
+	m := dashboardFixture(40, 12)
+	view := ansi.Strip(m.View().Content)
 	assertViewGeometry(t, view, 40, 12)
-	for _, want := range []string{
-		"UAM", "DEPARTURES", "12:04", // masthead with brand, version slot and clock
-		"01", "CX", "SELECTED", "EN ROUTE", "8m",
-		"02", "CL", "ORDINARY", "ARRIVED", "1h",
-		"CX codex", "CL claude", // legend
-		"▌", // selected edge bar — selection must not live in hue alone
-	} {
+	for _, want := range []string{"Agents", "Running", "Stopped", "Failed", "Attach", "Resume", "▌"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("compact board missing %q:\n%s", want, view)
+			t.Fatalf("40x12 dashboard missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "RUNNING") || strings.Contains(view, "STOPPED") {
-		t.Fatalf("the board speaks the departure vocabulary, not lifecycle words:\n%s", view)
+	if strings.Contains(view, "verify release pipeline") || strings.Contains(view, "/work/uam") {
+		t.Fatalf("narrow dashboard retained secondary fields:\n%s", view)
 	}
-	assertBorderless(t, view)
-	assertBottomContains(t, view, "›")
 }
 
-// TestBoardGeometrySwitchesAtTheWideBreakpoint pins where the two spellings
-// meet and that the gate geometry only exists on the wide board.
-func TestBoardGeometrySwitchesAtTheWideBreakpoint(t *testing.T) {
-	wide := boardColumns(boardWideMin)
-	if !wide.wide || wide.task < 10 {
-		t.Fatalf("at %d columns the full board must fit with a usable TASK column, got %+v", boardWideMin, wide)
-	}
-	if wide.gateW != boardGateWidth || wide.gateX <= 0 {
-		t.Fatalf("wide board must place the gate cells: %+v", wide)
-	}
-	compact := boardColumns(boardWideMin - 1)
-	if compact.wide || compact.name < 6 {
-		t.Fatalf("below the breakpoint the compact board must leave a readable name, got %+v", compact)
-	}
-	// The gate cell must sit exactly where the renderer draws it: the offset of
-	// the GATE heading equals gateX for every width.
-	for _, width := range []int{boardWideMin, 100, 120, 200} {
-		lay := boardColumns(width)
-		heading := ansi.Strip(boardHeadings(lay, width))
-		idx := strings.Index(heading, "GATE")
-		if idx < 0 {
-			t.Fatalf("width %d: heading lost its GATE column: %q", width, heading)
+func TestDashboardBreakpointsDependOnWidthOnly(t *testing.T) {
+	for _, tc := range []struct {
+		width int
+		want  dashboardLayout
+	}{{40, dashboardNarrow}, {59, dashboardNarrow}, {60, dashboardCompact}, {95, dashboardCompact}, {96, dashboardWide}} {
+		if got := dashboardLayoutFor(tc.width); got != tc.want {
+			t.Fatalf("layout(%d) = %d, want %d", tc.width, got, tc.want)
 		}
-		// Index is in bytes; the gate geometry is in display cells.
-		if got := ansi.StringWidth(heading[:idx]); got != lay.gateX {
-			t.Fatalf("width %d: GATE heading at column %d but gateX=%d:\n%q", width, got, lay.gateX, heading)
+	}
+	wideShort := dashboardFixture(96, 12).View().Content
+	wideTall := dashboardFixture(96, 40).View().Content
+	for _, view := range []string{wideShort, wideTall} {
+		if !strings.Contains(ansi.Strip(view), "verify release pipeline") {
+			t.Fatalf("height changed wide row grammar:\n%s", view)
 		}
 	}
 }
 
-// TestBoardStatusVocabularyMatchesToneForSession pins the mapping and the
-// pairwise-distinct words that carry the datum when color is gone.
-func TestBoardStatusVocabularyMatchesToneForSession(t *testing.T) {
-	cases := []struct {
-		sess adapter.Session
-		want string
-	}{
-		{adapter.Session{ProcAlive: adapter.Alive}, "EN ROUTE"},
-		{adapter.Session{ProcAlive: adapter.Exited, ExitCode: exitCode(1)}, "DIVERTED"},
-		{adapter.Session{ProcAlive: adapter.Exited}, "ARRIVED"},
+func TestDashboardUsesCompositeProviderSessionIdentity(t *testing.T) {
+	m := dashboardFixture(100, 20)
+	frame := m.buildDashboardFrame()
+	intent := pointerIntentFor(t, frame, dashboardSelect, sessionIdentity{agent: "claude", id: "shared"})
+	next, cmd := m.Update(intent)
+	if cmd != nil {
+		t.Fatal("row selection must not activate")
 	}
-	shades := map[string]string{}
-	for _, tc := range cases {
-		if got := boardStatusWord(tc.sess); got != tc.want {
-			t.Fatalf("boardStatusWord = %q, want %q", got, tc.want)
-		}
-		shade := boardShade(tc.sess)
-		if w := ansi.StringWidth(shade); w != 2 {
-			t.Fatalf("shade %q must be exactly two cells, got %d", shade, w)
-		}
-		if prior, dup := shades[shade]; dup {
-			t.Fatalf("statuses %q and %q share shade %q", tc.want, prior, shade)
-		}
-		shades[shade] = tc.want
+	selected, ok := next.(Model).selectedSession()
+	if !ok || selected.AgentType != "claude" || selected.ID != "shared" {
+		t.Fatalf("selected wrong duplicate id: %+v", selected)
 	}
 }
 
-// TestGateLabelNamesTheVerb pins the one action a row offers and the resume
-// fidelity mark it carries.
-func TestGateLabelNamesTheVerb(t *testing.T) {
-	if got := gateLabel(adapter.Session{ProcAlive: adapter.Alive}); got != "ATTACH" {
-		t.Fatalf("a live craft boards with ATTACH, got %q", got)
+func TestActionCellActivatesOnFirstClickButRowDoesNot(t *testing.T) {
+	m := dashboardFixture(100, 20)
+	frame := m.buildDashboardFrame()
+	identity := sessionIdentity{agent: "claude", id: "shared"}
+
+	row := pointerIntentFor(t, frame, dashboardSelect, identity)
+	next, cmd := m.Update(row)
+	if cmd != nil || next.(Model).selected != 1 {
+		t.Fatalf("row click should only select: selected=%d cmd=%v", next.(Model).selected, cmd)
 	}
-	exact := gateLabel(adapter.Session{ProcAlive: adapter.Exited, ProviderSessionID: "p-1"})
-	if exact != "RESUME ⇄" {
-		t.Fatalf("an exact resume gates with ⇄, got %q", exact)
-	}
-	recent := gateLabel(adapter.Session{ProcAlive: adapter.Exited})
-	if recent != "RESUME ~" {
-		t.Fatalf("a heuristic resume gates with ~, got %q", recent)
+
+	action := pointerIntentFor(t, frame, dashboardPrimary, identity)
+	next, cmd = m.Update(action)
+	if cmd == nil || next.(Model).selected != 1 {
+		t.Fatalf("action click should select and activate: selected=%d cmd=%v", next.(Model).selected, cmd)
 	}
 }
 
-// TestBoardGateCellRunsTheVerbOnFirstClick is the button contract: a click
-// inside a GATE cell acts immediately — even on an unselected row — while a
-// click anywhere else on the row selects first.
-func TestBoardGateCellRunsTheVerbOnFirstClick(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "a", AgentType: "codex", DisplayName: "first", Prompt: "one", ProcAlive: adapter.Alive},
-		{ID: "b", AgentType: "claude", DisplayName: "second", Prompt: "two", ProcAlive: adapter.Alive},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
-	lay := boardColumns(100)
-
-	entries := m.dashboardBodyEntries(100, 40-dashboardHeaderLines-len(m.dashboardBottom(100, 40)))
-	row := -1
-	for i, entry := range entries {
-		if entry.sessionIndex == 1 {
-			row = i + dashboardHeaderLines
+func TestViewOnMouseUsesDisplayedCompositor(t *testing.T) {
+	m := dashboardFixture(100, 20)
+	frame := m.buildDashboardFrame()
+	var actionID string
+	for id, node := range frame.nodes {
+		if node.action == dashboardPrimary && node.identity == (sessionIdentity{agent: "claude", id: "shared"}) {
+			actionID = id
+			break
 		}
 	}
-	if row < 0 {
-		t.Fatal("second session not on the board")
+	if actionID == "" {
+		t.Fatal("missing action layer")
 	}
-
-	// A click on the row body selects without attaching.
-	next, cmd := m.Update(tea.MouseMsg{X: 2, Y: row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
-	if got := next.(Model).selected; got != 1 || cmd == nil && false {
-		t.Fatalf("row click should select session 1, got %d", got)
+	layer := frame.compositor.GetLayer(actionID)
+	view := m.View()
+	if view.OnMouse == nil {
+		t.Fatal("dashboard view must install View.OnMouse")
 	}
-
-	// A click inside the GATE cell of the *unselected* row acts at once.
-	next, cmd = m.Update(tea.MouseMsg{X: lay.gateX + 1, Y: row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
-	if got := next.(Model).selected; got != 1 {
-		t.Fatalf("gate click should move the cursor to its row, got %d", got)
-	}
+	cmd := view.OnMouse(tea.MouseClickMsg{X: layer.GetX(), Y: layer.GetY(), Button: tea.MouseLeft})
 	if cmd == nil {
-		t.Fatal("gate click must run the verb immediately")
+		t.Fatal("action cell click produced no semantic command")
 	}
-
-	// Outside the wide board there are no gate cells.
-	if _, gate, ok := m.handleWindowSize(tea.WindowSizeMsg{Width: 60, Height: 40}).dashboardHitTarget(2, 50); ok && gate {
-		t.Fatal("the compact board has no gate column")
+	intent, ok := cmd().(dashboardPointerIntent)
+	if !ok || intent.action != dashboardPrimary || intent.identity.agent != "claude" {
+		t.Fatalf("wrong pointer intent: %#v", intent)
 	}
 }
 
-// TestOperatorCodesAndLegend pins the airline codes and their fallback.
-func TestOperatorCodesAndLegend(t *testing.T) {
-	for agent, want := range map[string]string{
-		"claude": "CL", "codex": "CX", "opencode": "OC", "omp": "OM",
-		"copilot": "CP", "hermes": "HM",
-		"aider": "AI", // unknown harness abbreviates rather than blanks
-		"x":     "X ",
-		"":      "??",
-	} {
-		if got := operatorCode(agent); got != want {
-			t.Fatalf("operatorCode(%q) = %q, want %q", agent, got, want)
+func TestStalePointerIntentNeverActivates(t *testing.T) {
+	base := dashboardFixture(100, 20)
+	identity := sessionIdentity{agent: "codex", id: "shared"}
+
+	t.Run("resize", func(t *testing.T) {
+		m := base
+		intent := pointerIntentFor(t, m.buildDashboardFrame(), dashboardPrimary, identity)
+		m = m.handleWindowSize(tea.WindowSizeMsg{Width: 101, Height: 20})
+		next, cmd := m.Update(intent)
+		assertStaleIntent(t, next.(Model), cmd)
+	})
+
+	t.Run("refresh", func(t *testing.T) {
+		m := base
+		intent := pointerIntentFor(t, m.buildDashboardFrame(), dashboardPrimary, identity)
+		m = m.handleSessionsLoaded(sessionsLoadedMsg{refresh: true})
+		next, cmd := m.Update(intent)
+		assertStaleIntent(t, next.(Model), cmd)
+	})
+
+	t.Run("reorder", func(t *testing.T) {
+		m := base
+		intent := pointerIntentFor(t, m.buildDashboardFrame(), dashboardPrimary, identity)
+		m.sessions[0], m.sessions[1] = m.sessions[1], m.sessions[0]
+		next, cmd := m.Update(intent)
+		assertStaleIntent(t, next.(Model), cmd)
+	})
+
+	t.Run("removal", func(t *testing.T) {
+		m := base
+		intent := pointerIntentFor(t, m.buildDashboardFrame(), dashboardPrimary, identity)
+		m.sessions = m.sessions[1:]
+		next, cmd := m.Update(intent)
+		assertStaleIntent(t, next.(Model), cmd)
+	})
+}
+
+func TestWheelOnlyMovesInsideRoster(t *testing.T) {
+	m := dashboardFixture(80, 20)
+	frame := m.buildDashboardFrame()
+	inside := m.dashboardMouseCommand(frame, tea.MouseWheelMsg{X: 2, Y: frame.rosterY, Button: tea.MouseWheelDown})
+	if inside == nil {
+		t.Fatal("roster wheel should produce navigation intent")
+	}
+	next, cmd := m.Update(inside())
+	if cmd != nil || next.(Model).selected != 1 {
+		t.Fatalf("wheel should move one row without backend command: selected=%d cmd=%v", next.(Model).selected, cmd)
+	}
+	if outside := m.dashboardMouseCommand(frame, tea.MouseWheelMsg{X: 2, Y: frame.height - 1, Button: tea.MouseWheelDown}); outside != nil {
+		t.Fatal("wheel over help must not move the roster")
+	}
+}
+
+func TestStopCellOnlyOpensConfirmation(t *testing.T) {
+	m := dashboardFixture(80, 20)
+	intent := pointerIntentFor(t, m.buildDashboardFrame(), dashboardStop, sessionIdentity{agent: "codex", id: "shared"})
+	next, cmd := m.Update(intent)
+	got := next.(Model)
+	if cmd != nil || !got.confirmStop || got.confirmStopAgent != "codex" || got.confirmStopID != "shared" {
+		t.Fatalf("stop click bypassed or targeted wrong confirmation: %+v cmd=%v", got, cmd)
+	}
+}
+
+func TestASCIIHeaderAndGlyphsAreMeasuredFallbacks(t *testing.T) {
+	previous := ApplyTermCaps(TermCaps{Glyphs: GlyphsASCII, UTF8: true})
+	defer ApplyTermCaps(previous)
+	m := dashboardFixture(40, 12)
+	view := ansi.Strip(m.View().Content)
+	if strings.Contains(view, "🤖") || strings.Contains(view, "●") || !strings.Contains(view, "Agents") || !strings.Contains(view, "*") {
+		t.Fatalf("ASCII fallback is incomplete:\n%s", view)
+	}
+	assertViewGeometry(t, view, 40, 12)
+}
+
+func TestSmallTerminalIsReadOnly(t *testing.T) {
+	m := dashboardFixture(39, 11)
+	frame := m.buildDashboardFrame()
+	if len(frame.nodes) != 0 || !strings.Contains(ansi.Strip(frame.content), "Agents needs 40x12") {
+		t.Fatalf("undersized frame exposed actions or hid minimum: nodes=%d\n%s", len(frame.nodes), frame.content)
+	}
+}
+
+func TestDashboardPrintableKeysAreInert(t *testing.T) {
+	m := dashboardFixture(80, 20)
+	m.hasLoaded = true
+	for _, pressed := range []string{"a", "9", " ", "backspace"} {
+		model, cmd := m.handleKey(keyMsg(pressed))
+		m = model.(Model)
+		if cmd != nil || m.input != "" || m.selected != 0 {
+			t.Fatalf("base key %q mutated dashboard: input=%q selected=%d cmd=%v", pressed, m.input, m.selected, cmd)
 		}
-		if w := ansi.StringWidth(operatorCode(agent)); w != 2 {
-			t.Fatalf("operatorCode(%q) is %d cells, want 2", agent, w)
+	}
+	model, _ := m.Update(tea.PasteMsg{Content: "invisible command"})
+	if got := model.(Model).input; got != "" {
+		t.Fatalf("base paste created hidden input %q", got)
+	}
+
+	filtered := m
+	filtered.enterFilter()
+	model, _ = filtered.handleKey(keyMsg("a"))
+	if got := model.(Model).filterQuery; got != "a" {
+		t.Fatalf("filter input stopped working: %q", got)
+	}
+}
+
+func TestDashboardFilterKeyboardLifecycle(t *testing.T) {
+	m := dashboardFixture(80, 20)
+	m.selected = 1
+	m.enterFilter()
+	if !m.filterActive || !m.filterSaved {
+		t.Fatal("filter did not snapshot the selected session")
+	}
+
+	handled, cmd := m.handleFilterKey(keyMsg("release"), "release")
+	if !handled || cmd != nil || m.filterQuery != "release" || m.selected != 0 {
+		t.Fatalf("filter text did not narrow and reconcile: query=%q selected=%d cmd=%v", m.filterQuery, m.selected, cmd)
+	}
+	handled, _ = m.handleFilterKey(keyMsg(" "), "space")
+	if !handled || m.filterQuery != "release " {
+		t.Fatalf("filter space = %q", m.filterQuery)
+	}
+	handled, _ = m.handleFilterKey(keyMsg("backspace"), "backspace")
+	if !handled || m.filterQuery != "release" {
+		t.Fatalf("filter backspace = %q", m.filterQuery)
+	}
+	if handled, _ := m.handleFilterKey(tea.KeyPressMsg{Code: 'x', Text: "x", Mod: tea.ModAlt}, "alt+x"); handled {
+		t.Fatal("Alt-modified text was consumed by the filter")
+	}
+
+	m.filterQuery = ""
+	m.selected = 0
+	m.handleFilterKey(keyMsg("down"), "down")
+	if m.selected != 1 {
+		t.Fatalf("filter down selected %d", m.selected)
+	}
+	m.handleFilterKey(keyMsg("up"), "up")
+	if m.selected != 0 {
+		t.Fatalf("filter up selected %d", m.selected)
+	}
+	if handled, cmd := m.handleFilterKey(keyMsg("enter"), "enter"); !handled || cmd == nil {
+		t.Fatal("filter Enter did not invoke the selected primary action")
+	}
+
+	m.filterQuery = "no-such-session"
+	for _, pressed := range []string{"enter", "right", "ctrl+t", "ctrl+r", "ctrl+x"} {
+		handled, cmd := m.handleFilterKey(keyMsg(pressed), pressed)
+		if !handled || cmd != nil {
+			t.Fatalf("no-match filter key %q escaped: handled=%v cmd=%v", pressed, handled, cmd)
 		}
 	}
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "a", AgentType: "codex", ProcAlive: adapter.Alive},
-		{ID: "b", AgentType: "codex", ProcAlive: adapter.Alive},
-		{ID: "c", AgentType: "claude", ProcAlive: adapter.Alive},
+
+	m.filterQuery = ""
+	m.selected = 0
+	m.sessions[1].ProcAlive = adapter.Alive
+	handled, cmd = m.handleFilterKey(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}, "shift+down")
+	if !handled || cmd == nil || m.selected != 1 {
+		t.Fatalf("filtered reorder did not use visible ordering: selected=%d cmd=%v", m.selected, cmd)
 	}
-	legend := ansi.Strip(m.operatorLegend(80))
-	if legend != "CX codex · CL claude" {
-		t.Fatalf("legend must list each operator once, in board order: %q", legend)
+
+	m.handleFilterKey(keyMsg("esc"), "esc")
+	restored, ok := m.selectedSession()
+	if m.filterActive || !ok || restored.AgentType != "claude" || restored.ID != "shared" {
+		t.Fatalf("filter exit did not restore identity: active=%v selected=%+v", m.filterActive, restored)
+	}
+	m.filterActive = true
+	m.filterSaved = false
+	m.handleFilterKey(keyMsg("backspace"), "backspace")
+	if m.filterActive {
+		t.Fatal("empty filter backspace did not exit")
 	}
 }
 
-// TestBoardingCallSummarisesTheNewestFailure pins the advisory line: the
-// newest diverted craft, its exit detail, and how its gate resumes it.
-func TestBoardingCallSummarisesTheNewestFailure(t *testing.T) {
-	now := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
-	m := NewWithDeps(nil, nil)
-	m.now = func() time.Time { return now }
-	m.sessions = []adapter.Session{
-		{ID: "live", AgentType: "codex", DisplayName: "fine", ProcAlive: adapter.Alive, CreatedAt: now.Add(-time.Hour)},
-		{ID: "old-fail", AgentType: "codex", DisplayName: "older", ProcAlive: adapter.Exited, ExitCode: exitCode(2), CreatedAt: now.Add(-3 * time.Hour)},
-		{ID: "new-fail", AgentType: "claude", DisplayName: "newer", ProcAlive: adapter.Exited, ExitCode: exitCode(1), CreatedAt: now.Add(-time.Minute), ProviderSessionID: "exact"},
+func TestDashboardComponentFallbackAndMouseRejections(t *testing.T) {
+	if len(newDashboardHelpMap(false, false, "stop").FullHelp()) != 1 {
+		t.Fatal("Bubbles full help did not project the short bindings")
 	}
-	m.width, m.height, m.sizeKnown = 100, 30, true
-
-	call := ansi.Strip(m.boardingCall(100, true))
-	if !strings.Contains(call, "boarding call: 03 diverted · exit 1") {
-		t.Fatalf("wide call must name the newest failure by board number: %q", call)
+	var empty Model
+	if empty.activityView() == "" {
+		t.Fatal("empty spinner model did not use the Bubbles fallback")
 	}
-	if !strings.Contains(call, "resumes exactly") {
-		t.Fatalf("wide call must state the resume fidelity: %q", call)
-	}
-	compact := ansi.Strip(m.boardingCall(40, false))
-	if !strings.Contains(compact, "03 diverted · exit 1") || !strings.Contains(compact, "gate ⇄") {
-		t.Fatalf("compact call must keep number, detail and gate mark: %q", compact)
+	if got := empty.dashboardBody(0, 0); len(got) != 0 {
+		t.Fatalf("zero-sized dashboard body = %#v", got)
 	}
 
-	// With no failures the line yields to the workspace-contention advisory,
-	// and stays empty when there is nothing to advise.
-	m.sessions = m.sessions[:1]
-	if got := m.boardAdvisory(100, true); got != "" {
-		t.Fatalf("a healthy board needs no advisory, got %q", got)
+	m := dashboardFixture(80, 20)
+	frame := m.buildDashboardFrame()
+	if cmd := m.dashboardMouseCommand(frame, tea.MouseWheelMsg{X: 2, Y: frame.rosterY, Button: tea.MouseWheelLeft}); cmd != nil {
+		t.Fatal("horizontal wheel produced a dashboard command")
 	}
-	m.sessions = []adapter.Session{
-		{ID: "a", AgentType: "codex", Cwd: "/work/shared", ProcAlive: adapter.Alive},
-		{ID: "b", AgentType: "claude", Cwd: "/work/shared", ProcAlive: adapter.Alive},
+	if cmd := m.dashboardMouseCommand(frame, tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseRight}); cmd != nil {
+		t.Fatal("right click produced a dashboard command")
 	}
-	advisory := ansi.Strip(m.boardAdvisory(100, true))
-	if !strings.Contains(advisory, "advisory: 2 live craft share") || !strings.Contains(advisory, "shared") {
-		t.Fatalf("contention advisory missing: %q", advisory)
+	frame.compositor = nil
+	if cmd := m.dashboardMouseCommand(frame, tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft}); cmd != nil {
+		t.Fatal("click without a compositor produced a dashboard command")
+	}
+	model, cmd := m.handleMouse(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	if cmd != nil || model.(Model).selected != m.selected {
+		t.Fatal("raw mouse coordinates bypassed the displayed-view callback")
 	}
 }
 
-// TestBoardRendersPureASCIIUnderTheDegradedSet is the whole point of the
-// glyph-set switch stated as one sweep: with the ASCII caps installed, every
-// byte of chrome the board emits is plain ASCII — masthead, headings, rows,
-// shades, gates, advisory, composer, everything.
-func TestBoardRendersPureASCIIUnderTheDegradedSet(t *testing.T) {
-	prev := ApplyTermCaps(TermCaps{Glyphs: GlyphsASCII})
-	defer ApplyTermCaps(prev)
-	now := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
+func TestDashboardUsesBubblesSpinnerForLoadingAndRefresh(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.now = func() time.Time { return now }
-	m.sessions = []adapter.Session{
-		{ID: "a", AgentType: "codex", DisplayName: "alpha", Prompt: "work", ProcAlive: adapter.Alive, CreatedAt: now.Add(-time.Minute)},
-		{ID: "b", AgentType: "claude", DisplayName: "beta", Prompt: "rest", ProcAlive: adapter.Exited, ExitCode: exitCode(3), CreatedAt: now.Add(-time.Hour), Cwd: "/work/x"},
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 20})
+	initial := ansi.Strip(m.View().Content)
+	if !strings.Contains(initial, "Loading agents") || !strings.Contains(initial, ansi.Strip(m.activity.View())) {
+		t.Fatalf("initial load lacks Bubbles spinner feedback:\n%s", initial)
 	}
-	for _, size := range []struct{ w, h int }{{100, 30}, {40, 12}} {
-		view := m.handleWindowSize(tea.WindowSizeMsg{Width: size.w, Height: size.h}).View()
-		for _, r := range ansi.Strip(view) {
-			if r > 127 {
-				t.Fatalf("%dx%d board leaked non-ASCII %q under the degraded set:\n%s", size.w, size.h, string(r), view)
+
+	model, cmd := m.Update(m.activity.Tick())
+	m = model.(Model)
+	if cmd == nil || m.activity.View() == "|" {
+		t.Fatalf("spinner did not advance or re-arm: frame=%q cmd=%v", m.activity.View(), cmd)
+	}
+
+	m.sessions = []adapter.Session{{ID: "one", AgentType: "codex", DisplayName: "one", ProcAlive: adapter.Alive}}
+	m.hasLoaded = true
+	m.loading = true
+	refresh := ansi.Strip(m.View().Content)
+	if !strings.Contains(refresh, "Refreshing") || !strings.Contains(refresh, ansi.Strip(m.activity.View())) || !strings.Contains(refresh, "one") {
+		t.Fatalf("refresh spinner displaced the last good roster:\n%s", refresh)
+	}
+	m = m.handleSessionsLoaded(sessionsLoadedMsg{refresh: true})
+	if settled := ansi.Strip(m.View().Content); strings.Contains(settled, "Refreshing") {
+		t.Fatalf("spinner feedback survived completed refresh:\n%s", settled)
+	}
+}
+
+func pointerIntentFor(t *testing.T, frame dashboardFrame, action dashboardAction, identity sessionIdentity) dashboardPointerIntent {
+	t.Helper()
+	for _, node := range frame.nodes {
+		if node.action == action && node.identity == identity {
+			return dashboardPointerIntent{
+				frameSignature:  frame.signature,
+				width:           frame.width,
+				height:          frame.height,
+				action:          node.action,
+				identity:        node.identity,
+				actionSignature: node.signature,
 			}
 		}
 	}
+	t.Fatalf("missing node action=%q identity=%+v", action, identity)
+	return dashboardPointerIntent{}
 }
 
-// TestBoardMastheadCarriesTheVersionOnBothLayouts — the version is required in
-// both mastheads by the locked design.
-func TestBoardMastheadCarriesTheVersionOnBothLayouts(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	for _, width := range []int{120, 40} {
-		header := ansi.Strip(m.dashboardHeader(width))
-		if !strings.Contains(header, "dev") { // version.String() in tests
-			t.Fatalf("masthead at %d columns lost the version: %q", width, header)
-		}
-		if !strings.Contains(header, "DEPARTURES") {
-			t.Fatalf("masthead at %d columns lost the board name: %q", width, header)
-		}
+func assertStaleIntent(t *testing.T, m Model, cmd tea.Cmd) {
+	t.Helper()
+	if cmd != nil {
+		t.Fatal("stale pointer intent returned a backend command")
+	}
+	if m.message != "View changed; select again." {
+		t.Fatalf("stale pointer feedback = %q", m.message)
 	}
 }
 
-// TestDashboardChipsAddressTheFirstTenVisibleSessions pins the zero-chord
-// addressing contract: a digit jumps to the row wearing that number, pressing
-// it again attaches.
-func TestDashboardChipsAddressTheFirstTenVisibleSessions(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	for i := 0; i < 12; i++ {
-		m.sessions = append(m.sessions, adapter.Session{
-			ID: fmt.Sprintf("id-%d", i), AgentType: "codex",
-			DisplayName: fmt.Sprintf("session-%d", i), ProcAlive: adapter.Alive,
-		})
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
-
-	if got := chipFor(0); got != "1" {
-		t.Fatalf("first chip = %q, want \"1\"", got)
-	}
-	if got := chipFor(9); got != "0" {
-		t.Fatalf("tenth chip = %q, want \"0\"", got)
-	}
-	if got := chipFor(10); got != " " {
-		t.Fatalf("eleventh session should have no chip, got %q", got)
-	}
-	// The board numbers agree with the chips: row 01 answers key 1.
-	if got := boardNumber(0); got != "01" {
-		t.Fatalf("first board number = %q, want \"01\"", got)
-	}
-	if got := boardNumber(9); got != "10" {
-		t.Fatalf("tenth board number = %q, want \"10\"", got)
-	}
-
-	// A chip press moves the cursor; the same chip again attaches.
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
-	moved := next.(Model)
-	if moved.selected != 2 {
-		t.Fatalf("chip 3 should select the third visible session, got %d", moved.selected)
-	}
-	if moved.input != "" {
-		t.Fatalf("a chip press must not leak into the composer, got %q", moved.input)
-	}
-
-	// An out-of-range digit is text, not navigation, so a small roster never
-	// swallows input.
-	small := NewWithDeps(nil, nil)
-	small.sessions = []adapter.Session{{ID: "only", AgentType: "codex", DisplayName: "only", ProcAlive: adapter.Alive}}
-	small = small.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
-	typed, _ := small.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("7")})
-	if got := typed.(Model).input; got != "7" {
-		t.Fatalf("an unassigned digit should type into the composer, got %q", got)
-	}
-
-	// A digit must never steal a keystroke from a non-empty composer.
-	busy := m
-	busy.input = "fix"
-	after, _ := busy.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
-	if got := after.(Model).input; got != "fix3" {
-		t.Fatalf("digits must be text once the composer is non-empty, got %q", got)
-	}
-}
-
-// TestDashboardTapResolvesToTheSessionUnderThePointer pins the property that
-// makes the dashboard usable on a phone: a tap and a chip press are the same
-// verb, and a tap on a row resolves to that row's session.
-func TestDashboardTapResolvesToTheSessionUnderThePointer(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "a", AgentType: "codex", DisplayName: "first", Prompt: "one", ProcAlive: adapter.Alive},
-		{ID: "b", AgentType: "claude", DisplayName: "second", Prompt: "two", ProcAlive: adapter.Alive},
-		{ID: "c", AgentType: "omp", DisplayName: "third", Prompt: "three", ProcAlive: adapter.Alive},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
-
-	entries := m.dashboardBodyEntries(100, 30)
-	targets := map[int][]int{}
-	for row, entry := range entries {
-		if entry.sessionIndex >= 0 {
-			targets[entry.sessionIndex] = append(targets[entry.sessionIndex], row+dashboardHeaderLines)
-		}
-	}
-	if len(targets) != 3 {
-		t.Fatalf("expected every session to be tappable, got %d", len(targets))
-	}
-	for index, rows := range targets {
-		for _, row := range rows {
-			got, ok := m.dashboardHitSession(row)
-			if !ok || got != index {
-				t.Fatalf("tap on row %d resolved to (%d,%v), want session %d", row, got, ok, index)
-			}
-		}
-	}
-
-	// The masthead is not a session, and neither is the composer.
-	if _, ok := m.dashboardHitSession(0); ok {
-		t.Fatalf("a tap on the masthead must not select a session")
-	}
-	if _, ok := m.dashboardHitSession(39); ok {
-		t.Fatalf("a tap on the composer must not select a session")
-	}
-
-	// A tap selects; a second tap on the same session attaches.
-	row := targets[2][0]
-	next, _ := m.Update(tea.MouseMsg{Y: row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
-	if got := next.(Model).selected; got != 2 {
-		t.Fatalf("tap should select session 2, got %d", got)
-	}
-	if _, cmd := next.(Model).Update(tea.MouseMsg{Y: row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}); cmd == nil {
-		t.Fatalf("a second tap on the selected session should attach")
-	}
-}
-
-// assertBorderless pins the standing preference for a borderless dashboard: no
-// box-drawing corners or verticals anywhere in the frame. The horizontal rule
-// glyph is allowed — it is a divider, not a border.
 func assertBorderless(t *testing.T, view string) {
 	t.Helper()
-	for _, glyph := range []string{"╭", "╮", "╰", "╯", "┌", "┐", "└", "┘", "│", "├", "┤"} {
+	for _, glyph := range []string{"┌", "┐", "└", "┘", "│"} {
 		if strings.Contains(view, glyph) {
-			t.Fatalf("dashboard should be borderless, found %q:\n%s", glyph, view)
+			t.Fatalf("dashboard contains box border %q:\n%s", glyph, view)
 		}
-	}
-}
-
-func TestDashboardFilterUsesEmptyPromptSlashAndPreservesPromptSlash(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "one", AgentType: "codex", DisplayName: "release", Prompt: "ship pipeline", Cwd: "/work/uam", ProcAlive: adapter.Alive},
-		{ID: "two", AgentType: "claude", DisplayName: "docs", Prompt: "write guide", Cwd: "/work/docs", ProcAlive: adapter.Exited},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	if !m.filterActive || m.input != "" {
-		t.Fatalf("empty-prompt slash should enter filter without editing command: active=%v input=%q", m.filterActive, m.input)
-	}
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("claude")})
-	m = model.(Model)
-	view := m.View()
-	if !strings.Contains(view, "filter / ") || !strings.Contains(view, "DOCS") || strings.Contains(view, "RELEASE") {
-		t.Fatalf("live provider filter did not project visible sessions:\n%s", view)
-	}
-	selected, ok := m.selectedSession()
-	if !ok || selected.AgentType != "claude" || selected.ID != "two" {
-		t.Fatalf("filter selection did not target matched identity: %+v ok=%v", selected, ok)
-	}
-
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = model.(Model)
-	if m.filterActive || m.filterQuery != "" {
-		t.Fatalf("Esc should clear and exit filtering: active=%v query=%q", m.filterActive, m.filterQuery)
-	}
-	selected, ok = m.selectedSession()
-	if !ok || selected.AgentType != "codex" || selected.ID != "one" {
-		t.Fatalf("Esc did not restore the pre-filter selection: %+v ok=%v", selected, ok)
-	}
-
-	m.input = "open"
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	if m.filterActive || m.input != "open/" {
-		t.Fatalf("slash in an existing prompt must stay literal: active=%v input=%q", m.filterActive, m.input)
-	}
-}
-
-func TestDashboardFilterShowsNoMatchesAndMatchesLifecycleWorkspaceAndTask(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "one", AgentType: "codex", DisplayName: "release", Prompt: "ship pipeline", Cwd: "/work/uam", ProcAlive: adapter.Alive},
-		{ID: "two", AgentType: "claude", DisplayName: "docs", Prompt: "write guide", Cwd: "/work/docs", ProcAlive: adapter.Exited},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-
-	// "arrived" exercises the board vocabulary as a filter term; "stopped"
-	// stays matchable through lifecycleBadge.
-	for _, query := range []string{"pipeline", "docs", "stopped", "arrived"} {
-		model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-		m = model.(Model)
-		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(query)})
-		m = model.(Model)
-		view := m.View()
-		if query == "pipeline" {
-			if !strings.Contains(view, "RELEASE") {
-				t.Fatalf("task query did not match release session:\n%s", view)
-			}
-		} else if !strings.Contains(view, "DOCS") {
-			t.Fatalf("query %q did not match expected session:\n%s", query, view)
-		}
-		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-		m = model.(Model)
-	}
-
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("definitely absent")})
-	m = model.(Model)
-	view := m.View()
-	if !strings.Contains(view, "no craft matches") || !strings.Contains(view, "0/2 craft") {
-		t.Fatalf("empty filter result needs an explicit state and matched count:\n%s", view)
-	}
-}
-
-func TestDashboardAgeAndLifecycleLabelsAreEvidenceBased(t *testing.T) {
-	now := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
-	tests := []struct {
-		name    string
-		session adapter.Session
-		wantAge string
-		want    string
-	}{
-		{"future", adapter.Session{ProcAlive: adapter.Alive, CreatedAt: now.Add(time.Hour)}, "now", "RUNNING"},
-		{"seconds", adapter.Session{ProcAlive: adapter.Alive, CreatedAt: now.Add(-45 * time.Second)}, "now", "RUNNING"},
-		{"minutes", adapter.Session{ProcAlive: adapter.Alive, CreatedAt: now.Add(-59 * time.Minute)}, "59m", "RUNNING"},
-		{"hours", adapter.Session{ProcAlive: adapter.Exited, CreatedAt: now.Add(-47 * time.Hour)}, "47h", "STOPPED"},
-		{"days", adapter.Session{ProcAlive: adapter.Exited, CreatedAt: now.Add(-48 * time.Hour), ExitCode: exitCode(9)}, "2d", "EXIT 9"},
-		{"signal", adapter.Session{ProcAlive: adapter.Exited, CreatedAt: now.Add(-time.Hour), ExitCode: exitCode(-1)}, "1h", "SIGNAL"},
-		{"explicit stop", adapter.Session{ProcAlive: adapter.Exited, CreatedAt: now.Add(-time.Hour), ExitCode: exitCode(-1), Closed: true}, "1h", "STOPPED"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := sessionAge(tc.session.CreatedAt, now); got != tc.wantAge {
-				t.Fatalf("sessionAge() = %q, want %q", got, tc.wantAge)
-			}
-			if got := lifecycleBadge(tc.session); got != tc.want {
-				t.Fatalf("lifecycleBadge() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestDashboardFilterRefreshAndNavigationUseCompositeIdentity(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "same", AgentType: "codex", DisplayName: "release", Prompt: "ship", ProcAlive: adapter.Alive},
-		{ID: "hidden", AgentType: "claude", DisplayName: "docs", Prompt: "write", ProcAlive: adapter.Alive},
-		{ID: "same", AgentType: "claude", DisplayName: "release notes", Prompt: "ship", ProcAlive: adapter.Alive},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("release")})
-	m = model.(Model)
-
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = model.(Model)
-	selected, ok := m.selectedSession()
-	if !ok || selected.AgentType != "claude" || selected.ID != "same" {
-		t.Fatalf("filtered navigation did not skip hidden row: %+v ok=%v", selected, ok)
-	}
-
-	m = m.handleSessionsLoaded(sessionsLoadedMsg{sessions: []adapter.Session{
-		{ID: "same", AgentType: "claude", DisplayName: "release notes", Prompt: "ship", ProcAlive: adapter.Alive},
-		{ID: "same", AgentType: "codex", DisplayName: "release", Prompt: "ship", ProcAlive: adapter.Alive},
-		{ID: "hidden", AgentType: "claude", DisplayName: "docs", Prompt: "write", ProcAlive: adapter.Alive},
-	}})
-	selected, ok = m.selectedSession()
-	if !ok || selected.AgentType != "claude" || selected.ID != "same" {
-		t.Fatalf("refresh retargeted duplicate ID across providers: %+v ok=%v", selected, ok)
-	}
-}
-
-func TestDashboardSlashCanFilterEmptyDashboard(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	if !m.filterActive || m.input != "" {
-		t.Fatalf("empty dashboard slash should enter filter mode: active=%v input=%q", m.filterActive, m.input)
-	}
-}
-
-// TestDashboardTinyFilteredBoardStaysBounded — a 44x10 phone screen holding a
-// filtered board must keep the count, the matched row and the composer inside
-// its geometry.
-func TestDashboardTinyFilteredBoardStaysBounded(t *testing.T) {
-	now := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
-	root := t.TempDir()
-	m := NewWithDeps(nil, nil)
-	m.now = func() time.Time { return now }
-	m.sessions = []adapter.Session{
-		{ID: "one", AgentType: "codex", DisplayName: "release", Prompt: "ship", Cwd: root, ProcAlive: adapter.Alive, CreatedAt: now.Add(-time.Minute)},
-		{ID: "two", AgentType: "claude", DisplayName: "docs", Prompt: "write", Cwd: root, ProcAlive: adapter.Alive, CreatedAt: now.Add(-time.Hour)},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 10})
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("codex")})
-	m = model.(Model)
-	view := m.View()
-	assertViewGeometry(t, view, 44, 10)
-	for _, want := range []string{"1/2", "01", "CX", "RELEASE", "EN ROUTE", "›"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("tiny filtered board missing %q:\n%s", want, view)
-		}
-	}
-	// Two live craft share the workspace; the advisory must survive the filter
-	// because contention is a property of the fleet, not of the projection.
-	if !strings.Contains(view, "advisory: 2 live craft share") {
-		t.Fatalf("workspace contention advisory missing:\n%s", view)
-	}
-}
-
-func TestDashboardFooterShowsDefaultProviderAndFilterComposer(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.defaultAgent = "opencode"
-	m.sessions = []adapter.Session{{ID: "one", AgentType: "opencode", DisplayName: "one", ProcAlive: adapter.Alive}}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	view := m.View()
-	if !assertLineWith(view, "opencode", "›") {
-		t.Fatalf("footer must expose the provider selected for bare dispatches:\n%s", view)
-	}
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	view = m.View()
-	if !strings.Contains(view, "filter / ") || !strings.Contains(view, "type to filter") {
-		t.Fatalf("active filter must replace the command-looking composer:\n%s", view)
-	}
-}
-
-// assertLineWith reports whether any single line carries both needles.
-func assertLineWith(view, a, b string) bool {
-	for _, line := range strings.Split(view, "\n") {
-		if strings.Contains(line, a) && strings.Contains(line, b) {
-			return true
-		}
-	}
-	return false
-}
-
-func TestDashboardTinyComposerStaysBoundedWithLongInput(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.defaultAgent = "codex"
-	m.input = strings.Repeat("界", 80)
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 10})
-	view := m.View()
-	assertViewGeometry(t, view, 44, 10)
-	assertBottomContains(t, view, "›")
-}
-
-func TestDashboardFilterNoMatchActionsAreSafeAndBackspaceExits(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{{ID: "one", AgentType: "codex", DisplayName: "release", ProcAlive: adapter.Alive}}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("absent")})
-	m = model.(Model)
-	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
-	m = model.(Model)
-	if cmd != nil || m.filterQuery != "absent " {
-		t.Fatalf("space should extend filter query: cmd=%v query=%q", cmd, m.filterQuery)
-	}
-	for _, key := range []tea.KeyType{tea.KeyEnter, tea.KeyCtrlT, tea.KeyCtrlR, tea.KeyCtrlX} {
-		model, cmd := m.Update(tea.KeyMsg{Type: key})
-		m = model.(Model)
-		if cmd != nil || m.renaming || m.confirmStop {
-			t.Fatalf("no-match key %v acted on an invisible session: cmd=%v rename=%v confirm=%v", key, cmd, m.renaming, m.confirmStop)
-		}
-	}
-	for range len([]rune("absent ")) {
-		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-		m = model.(Model)
-	}
-	if !m.filterActive || m.filterQuery != "" {
-		t.Fatalf("backspace should edit the Unicode-safe query before exiting: active=%v query=%q", m.filterActive, m.filterQuery)
-	}
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = model.(Model)
-	if m.filterActive {
-		t.Fatal("backspace on an empty filter should exit filtering")
-	}
-}
-
-func TestDashboardFilterHandlesUnicodePasteAndFilteredReorder(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "one", AgentType: "codex", DisplayName: "first 界", Prompt: "review 世界", ProcAlive: adapter.Alive, SortIndex: 0},
-		{ID: "hidden", AgentType: "codex", DisplayName: "plain", Prompt: "unrelated", ProcAlive: adapter.Alive, SortIndex: 1},
-		{ID: "two", AgentType: "codex", DisplayName: "second 界", Prompt: "review 世界", ProcAlive: adapter.Alive, SortIndex: 2},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("世界")})
-	m = model.(Model)
-	view := m.View()
-	if !strings.Contains(view, "FIRST 界") || !strings.Contains(view, "SECOND 界") || strings.Contains(view, "PLAIN") {
-		t.Fatalf("Unicode pasted filter did not preserve rune semantics:\n%s", view)
-	}
-	model, cmd := m.Update(tea.KeyMsg{Type: tea.KeyShiftDown})
-	m = model.(Model)
-	if cmd == nil || m.sessions[0].ID != "two" || m.sessions[1].ID != "hidden" || m.sessions[2].ID != "one" || m.selected != 2 {
-		t.Fatalf("filtered reorder did not exchange matching endpoints safely: ids=%v selected=%d cmd=%v", sessionIDs(m.sessions), m.selected, cmd)
-	}
-}
-
-func TestDashboardFilterMatchesEveryDocumentedFieldWithANDTerms(t *testing.T) {
-	base := []adapter.Session{
-		{ID: "managed-ABC-123", AgentType: "codex", CommandAlias: "nightly", DisplayName: "Release Captain", Prompt: "Ship the pipeline", Cwd: "/work/Unified-Agent-Manager", ProcAlive: adapter.Alive},
-		{ID: "other", AgentType: "claude", DisplayName: "Documentation", Prompt: "Write a guide", Cwd: "/work/docs", ProcAlive: adapter.Exited},
-	}
-	for _, query := range []string{"abc-123", "NIGHTLY", "release captain", "ship PIPELINE", "unified-agent-manager", "codex running", "claude stopped", "codex en", "claude arrived"} {
-		t.Run(query, func(t *testing.T) {
-			m := NewWithDeps(nil, nil)
-			m.sessions = append([]adapter.Session(nil), base...)
-			m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-			model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-			m = model.(Model)
-			model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(query)})
-			m = model.(Model)
-			if len(m.visibleSessionIndices()) != 1 {
-				t.Fatalf("query %q matched %d sessions, want 1:\n%s", query, len(m.visibleSessionIndices()), m.View())
-			}
-		})
-	}
-}
-
-func TestDashboardFilteredRenameTargetsMatchedCompositeIdentity(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "same", AgentType: "codex", DisplayName: "release", ProcAlive: adapter.Alive},
-		{ID: "same", AgentType: "claude", DisplayName: "docs", ProcAlive: adapter.Alive},
-	}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("claude")})
-	m = model.(Model)
-
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	m = model.(Model)
-	if !m.renaming || m.renameTargetAgent != "claude" || m.renameTargetID != "same" {
-		t.Fatalf("rename targeted the wrong filtered session: agent=%q id=%q", m.renameTargetAgent, m.renameTargetID)
-	}
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = model.(Model)
-	if !m.filterActive {
-		t.Fatal("closing rename should retain filter")
-	}
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = model.(Model)
-	if m.filterActive {
-		t.Fatal("second Esc should clear the retained filter")
-	}
-}
-
-func TestDashboardFilteredAttachPinStopAndGroupingStayOnMatchedIdentity(t *testing.T) {
-	id := "same0001"
-	codexSession := adapter.Session{ID: id, AgentType: "codex", DisplayName: "release", SessionName: "uam-codex-same0001", Cwd: "/work/codex", ProcAlive: adapter.Alive}
-	claudeSession := adapter.Session{ID: id, AgentType: "claude", DisplayName: "docs", SessionName: "uam-claude-same0001", Cwd: "/work/claude", ProcAlive: adapter.Alive}
-	codex := &svcFakeAdapter{name: "codex", available: true, sessions: []adapter.Session{codexSession}}
-	claude := &svcFakeAdapter{name: "claude", available: true, sessions: []adapter.Session{claudeSession}}
-	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Update(func(cfg *store.Config) error {
-		cfg.Sessions[store.Key("codex", id)] = RecordFromSession(codexSession, store.ModeYolo)
-		cfg.Sessions[store.Key("claude", id)] = RecordFromSession(claudeSession, store.ModeYolo)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{codex, claude}))
-	m.sessions = []adapter.Session{codexSession, claudeSession}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	m = model.(Model)
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("claude")})
-	m = model.(Model)
-
-	model, attach := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = model.(Model)
-	if attach == nil {
-		t.Fatal("filtered attach returned no command")
-	}
-	if msg := attach(); msg == nil {
-		t.Fatal("filtered attach returned no message")
-	}
-	if claude.attachedID != id || codex.attachedID != "" {
-		t.Fatalf("filtered attach crossed provider identity: claude=%q codex=%q", claude.attachedID, codex.attachedID)
-	}
-
-	model, pin := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
-	m = model.(Model)
-	if pin == nil {
-		t.Fatal("filtered pin returned no command")
-	}
-	_ = pin()
-	cfg, err := st.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.Sessions[store.Key("claude", id)].Pinned || cfg.Sessions[store.Key("codex", id)].Pinned {
-		t.Fatalf("filtered pin crossed provider identity: claude=%v codex=%v", cfg.Sessions[store.Key("claude", id)].Pinned, cfg.Sessions[store.Key("codex", id)].Pinned)
-	}
-
-	model, groupCmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
-	m = model.(Model)
-	selected, ok := m.selectedSession()
-	if groupCmd == nil || !m.groupByDir || !ok || selected.AgentType != "claude" || selected.ID != id {
-		t.Fatalf("filtered grouping lost selection/persistence command: cmd=%v grouped=%v selected=%+v", groupCmd, m.groupByDir, selected)
-	}
-
-	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
-	m = model.(Model)
-	if !m.confirmStop || m.confirmStopAgent != "claude" || m.confirmStopID != id {
-		t.Fatalf("filtered stop confirmation targeted wrong identity: agent=%q id=%q", m.confirmStopAgent, m.confirmStopID)
-	}
-	model, stop := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = model.(Model)
-	if stop == nil {
-		t.Fatal("filtered stop returned no command")
-	}
-	_ = stop()
-	if claude.stoppedID != id || codex.stoppedID != "" {
-		t.Fatalf("filtered stop crossed provider identity: claude=%q codex=%q", claude.stoppedID, codex.stoppedID)
-	}
-}
-
-func BenchmarkDashboardRenderAndFilter(b *testing.B) {
-	for _, count := range []int{100, 1000} {
-		b.Run(fmt.Sprintf("sessions-%d", count), func(b *testing.B) {
-			now := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
-			m := NewWithDeps(nil, nil)
-			m.now = func() time.Time { return now }
-			m = m.handleWindowSize(tea.WindowSizeMsg{Width: 120, Height: 40})
-			for i := range count {
-				m.sessions = append(m.sessions, adapter.Session{
-					ID: fmt.Sprintf("session-%04d", i), AgentType: []string{"codex", "claude"}[i%2],
-					DisplayName: fmt.Sprintf("session %04d", i), Prompt: "review the release pipeline",
-					Cwd: "/work/unified-agent-manager", ProcAlive: adapter.Alive, CreatedAt: now.Add(-time.Duration(i) * time.Minute),
-				})
-			}
-			m.filterActive = true
-			m.filterQuery = "codex release"
-			b.ResetTimer()
-			for range b.N {
-				_ = m.View()
-			}
-		})
-	}
-}
-
-// TestMastheadSurvivesAMonstrousHostname — cloud runners carry provisioning-id
-// hostnames sixty cells long; the masthead must shed the host (and then the
-// clock), never the brand, the version or the craft count.
-func TestMastheadSurvivesAMonstrousHostname(t *testing.T) {
-	host := "sjc22-bt147-e6c48904-906c-49c3-b443-5f457b73a6a9-CA6ACE11D88E"
-	for _, budget := range []int{70, 40, 24, 10, 3} {
-		right := ansi.Strip(mastheadRight(host, "12:04", "4 craft", budget))
-		if w := ansi.StringWidth(right); w > budget && budget >= ansi.StringWidth("dev") {
-			t.Fatalf("budget %d: right side is %d cells: %q", budget, w, right)
-		}
-		if !strings.Contains(right, "dev") { // version.String() in tests
-			t.Fatalf("budget %d: version lost: %q", budget, right)
-		}
-		if budget >= 40 && !strings.Contains(right, "craft") {
-			t.Fatalf("budget %d: craft count dropped before the host: %q", budget, right)
-		}
-		if strings.Contains(right, host) {
-			t.Fatalf("budget %d: uncapped hostname survived: %q", budget, right)
-		}
-	}
-
-	// The full wide view keeps its brand regardless of the host segment.
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{{ID: "a", AgentType: "codex", DisplayName: "one", ProcAlive: adapter.Alive}}
-	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	if view := m.View(); !strings.Contains(view, "UNIFIED AGENT MANAGER (UAM)") || !strings.Contains(view, "DEPARTURES") {
-		t.Fatalf("brand must survive any hostname:\n%s", view)
 	}
 }
