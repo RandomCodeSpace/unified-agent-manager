@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/cli"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"

@@ -51,6 +51,7 @@ type TermCaps struct {
 // program renders a frame, mirroring how the style variables are package-level.
 // Tests that want the ASCII set call ApplyTermCaps explicitly and restore.
 var activeCaps = TermCaps{Glyphs: GlyphsUnicode, UTF8: true}
+var mouseReportingEnabled = true
 
 // ApplyTermCaps installs the probe result. It returns the previous value so
 // tests can restore it with defer.
@@ -62,6 +63,14 @@ func ApplyTermCaps(caps TermCaps) TermCaps {
 
 // CurrentTermCaps exposes the active capabilities (doctor reports them).
 func CurrentTermCaps() TermCaps { return activeCaps }
+
+func ApplyMouseReporting(enabled bool) bool {
+	previous := mouseReportingEnabled
+	mouseReportingEnabled = enabled
+	return previous
+}
+
+func MouseReportingEnabled() bool { return mouseReportingEnabled }
 
 func asciiGlyphs() bool { return activeCaps.Glyphs == GlyphsASCII }
 
@@ -176,14 +185,6 @@ func dotSep() string {
 		return " - "
 	}
 	return " · "
-}
-
-// dashSep is the long break inside the boarding call.
-func dashSep() string {
-	if asciiGlyphs() {
-		return " - "
-	}
-	return " — "
 }
 
 // arrowsHint and enterHint spell the navigation keys in the footer.

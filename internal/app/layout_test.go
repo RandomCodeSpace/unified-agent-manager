@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -24,7 +24,7 @@ func TestLayoutClassAndDashboardModeAreDerived(t *testing.T) {
 		{80, 30, LayoutStandard},
 		{44, 20, LayoutCompact},
 		{44, 12, LayoutCompact},
-		{120, 20, LayoutCompact},
+		{120, 20, LayoutWide},
 	}
 	for _, tc := range tests {
 		m := Model{width: tc.width, height: tc.height}
@@ -50,7 +50,7 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 		set  func(*Model)
 		want string
 	}{
-		{"operations", func(*Model) {}, "›"},
+		{"operations", func(*Model) {}, "Agents"},
 		{"new", func(m *Model) { m.wizard = true; m.wizardStep = 3 }, "NEW SESSION"},
 	}
 	for _, size := range sizes {
@@ -59,7 +59,7 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 				m := responsiveFixture(0, 0)
 				m = m.handleWindowSize(tea.WindowSizeMsg{Width: size.width, Height: size.height})
 				mode.set(&m)
-				view := m.View()
+				view := m.View().Content
 				assertViewGeometry(t, view, size.width, size.height)
 				if !strings.Contains(view, mode.want) {
 					t.Fatalf("view lost required %s affordance %q:\n%s", mode.name, mode.want, view)
@@ -69,11 +69,11 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 	}
 }
 
-func TestWideOperationsUsesFullList(t *testing.T) {
+func TestWideOperationsUsesLiteralRoster(t *testing.T) {
 	m := responsiveFixture(120, 40)
-	operations := m.View()
-	if !strings.Contains(operations, "GATE") || strings.Contains(operations, "SELECTED") {
-		t.Fatalf("wide operations should render the full-width departures board:\n%s", operations)
+	operations := m.View().Content
+	if !strings.Contains(operations, "Attach") || !strings.Contains(operations, "Running") || strings.Contains(operations, "DEPARTURES") {
+		t.Fatalf("wide operations should render the literal agent roster:\n%s", operations)
 	}
 	assertBorderless(t, operations)
 }
@@ -82,23 +82,23 @@ func TestCompactRenderingKeepsUnicodeValidAndBoundsLongContent(t *testing.T) {
 	m := responsiveFixture(44, 12)
 	m.input = "部署 café e\u0301 🚀 " + strings.Repeat("界", 80)
 	m.message = strings.Repeat("status 🚀 ", 40)
-	view := m.View()
+	view := m.View().Content
 	if !utf8.ValidString(view) {
 		t.Fatal("responsive rendering produced invalid UTF-8")
 	}
 	assertViewGeometry(t, view, 44, 12)
 }
 
-func TestCompactModesAreExclusiveAndKeepBottomPrompt(t *testing.T) {
+func TestCompactModesAreExclusiveAndKeepBottomHelp(t *testing.T) {
 	m := responsiveFixture(44, 12)
-	operations := m.View()
+	operations := m.View().Content
 	if strings.Contains(operations, uamANSILogo) {
 		t.Fatalf("compact operations must omit the ASCII logo:\n%s", operations)
 	}
-	assertBottomContains(t, operations, "›")
+	assertBottomContains(t, operations, "move")
 
 	m.wizard = true
-	newView := m.View()
+	newView := m.View().Content
 	if strings.Contains(newView, "SESSIONS") {
 		t.Fatalf("compact new must replace other primary surfaces:\n%s", newView)
 	}
@@ -117,10 +117,9 @@ func TestNoColorResponsiveViewKeepsSemanticGlyphs(t *testing.T) {
 	if strings.Contains(view, "\x1b[") {
 		t.Fatalf("NO_COLOR view contains SGR escapes: %q", view)
 	}
-	// The selection bar, the status shades and the pairwise-distinct status
-	// words all survive a palette-free terminal, which is the whole point of
-	// the tone table: strip colour and no datum goes with it.
-	for _, semantic := range []string{"▌", "██", "▓▓", "░░", "EN ROUTE", "ARRIVED", "DIVERTED", "exit 1"} {
+	// The selection rail, lifecycle glyphs, and literal words survive a
+	// palette-free terminal. Color remains redundant.
+	for _, semantic := range []string{"▌", "●", "○", "✕", "Running", "Stopped", "Failed"} {
 		if !strings.Contains(view, semantic) {
 			t.Fatalf("NO_COLOR view lost semantic marker %q:\n%s", semantic, view)
 		}
@@ -142,7 +141,7 @@ func TestNoColorResponsiveViewHelper(t *testing.T) {
 	m.sessions[2].ExitCode = exitCode(1)
 	SortSessions(m.sessions)
 	m.selected = 0
-	_, _ = os.Stdout.WriteString(m.View())
+	_, _ = os.Stdout.WriteString(m.View().Content)
 }
 
 func withoutColorEnvironment(env []string) []string {
@@ -158,18 +157,18 @@ func withoutColorEnvironment(env []string) []string {
 	return filtered
 }
 
-func TestKnownZeroAndTinyHeightsStayBoundedAndRetainPrompt(t *testing.T) {
+func TestKnownZeroAndTinyHeightsStayBoundedAndReadOnly(t *testing.T) {
 	m := responsiveFixture(0, 0)
 	m.message = "refresh failed"
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 0})
-	if got := m.View(); got != "" {
+	if got := m.View().Content; got != "" {
 		t.Fatalf("known zero-height view must be empty, got %q", got)
 	}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 1})
-	view := m.View()
+	view := m.View().Content
 	assertViewGeometry(t, view, 44, 1)
-	if !strings.Contains(view, "›") || strings.Contains(view, "refresh failed") {
-		t.Fatalf("height-1 view must prioritize command prompt: %q", view)
+	if !strings.Contains(view, "Agents needs 40x12") || strings.Contains(view, "refresh failed") {
+		t.Fatalf("height-1 view must expose the safe minimum: %q", view)
 	}
 }
 
@@ -193,7 +192,7 @@ func TestCompactWizardEveryStepKeepsEssentialAffordances(t *testing.T) {
 				m.input = "/definitely-not-a-git-workspace"
 			}
 			m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
-			view := m.View()
+			view := m.View().Content
 			assertViewGeometry(t, view, 44, 12)
 			for _, want := range tc.want {
 				if !strings.Contains(view, want) {
@@ -212,7 +211,7 @@ func TestResizeAcrossFixturesPreservesSelectionAndInput(t *testing.T) {
 	wantInput := m.input
 	for _, size := range []struct{ width, height int }{{80, 30}, {44, 20}, {44, 12}, {120, 40}} {
 		m = m.handleWindowSize(tea.WindowSizeMsg{Width: size.width, Height: size.height})
-		assertViewGeometry(t, m.View(), size.width, size.height)
+		assertViewGeometry(t, m.View().Content, size.width, size.height)
 		got, ok := m.selectedSession()
 		if !ok || got.AgentType != want.AgentType || got.ID != want.ID {
 			t.Fatalf("resize to %dx%d changed selection from %s/%s to %+v", size.width, size.height, want.AgentType, want.ID, got)
@@ -277,19 +276,6 @@ func assertViewGeometry(t *testing.T, view string, width, height int) {
 			t.Fatalf("line %d is %d columns, terminal width is %d: %q", i+1, got, width, line)
 		}
 	}
-}
-
-func lineContainsAll(view string, needles ...string) bool {
-	for _, line := range strings.Split(view, "\n") {
-		all := true
-		for _, needle := range needles {
-			all = all && strings.Contains(line, needle)
-		}
-		if all {
-			return true
-		}
-	}
-	return false
 }
 
 func assertBottomContains(t *testing.T, view, needle string) {

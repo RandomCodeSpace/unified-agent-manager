@@ -1,8 +1,10 @@
 package app
 
 import (
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
+
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // ─── tones ───────────────────────────────────────────────────────────────────
@@ -22,7 +24,7 @@ import (
 
 type tone struct {
 	key   string
-	color lipgloss.AdaptiveColor
+	color compat.AdaptiveColor
 	glyph string
 	// ascii is the degraded spelling used when the terminal probe selects
 	// GlyphsASCII — a non-UTF-8 locale, or a font that draws the Unicode set
@@ -58,22 +60,27 @@ func (t tone) mark() string {
 func (t tone) render(text string) string { return t.style().Render(text) }
 
 var (
-	accentColor  = lipgloss.AdaptiveColor{Light: "#0F766E", Dark: "#2DD4BF"}
-	textColor    = lipgloss.AdaptiveColor{Light: "#0F172A", Dark: "#E8EDF4"}
-	mutedColor   = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#8B97AC"}
-	dividerColor = lipgloss.AdaptiveColor{Light: "#D6DEE8", Dark: "#2B3547"}
-	taskColor    = lipgloss.AdaptiveColor{Light: "#475569", Dark: "#AEBACD"}
-	liveColor    = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
-	failColor    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
-	warnColor    = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
+	// The light member is measured against white and the dark member against
+	// black. Every text-bearing pair clears a 4.5:1 contrast ratio; dividers do
+	// too, because invisible structure is still invisible. Bubble Tea's
+	// BackgroundColorMsg keeps compat.HasDarkBackground synchronized at runtime.
+	accentColor     = compat.AdaptiveColor{Light: lipgloss.Color("#0057B8"), Dark: lipgloss.Color("#7DD3FC")}
+	actionTextColor = compat.AdaptiveColor{Light: lipgloss.Color("#FFFFFF"), Dark: lipgloss.Color("#082F49")}
+	textColor       = compat.AdaptiveColor{Light: lipgloss.Color("#111827"), Dark: lipgloss.Color("#F8FAFC")}
+	mutedColor      = compat.AdaptiveColor{Light: lipgloss.Color("#475569"), Dark: lipgloss.Color("#CBD5E1")}
+	dividerColor    = compat.AdaptiveColor{Light: lipgloss.Color("#64748B"), Dark: lipgloss.Color("#94A3B8")}
+	taskColor       = compat.AdaptiveColor{Light: lipgloss.Color("#334155"), Dark: lipgloss.Color("#E2E8F0")}
+	liveColor       = compat.AdaptiveColor{Light: lipgloss.Color("#047857"), Dark: lipgloss.Color("#6EE7B7")}
+	failColor       = compat.AdaptiveColor{Light: lipgloss.Color("#B91C1C"), Dark: lipgloss.Color("#FCA5A5")}
+	warnColor       = compat.AdaptiveColor{Light: lipgloss.Color("#92400E"), Dark: lipgloss.Color("#FDE68A")}
 	// pinColor and prColor widen the palette without widening its meaning: a
 	// pin is a user intent rather than a health state, and pull-request data
 	// comes from outside the session, so neither may reuse a lifecycle hue.
-	pinColor = lipgloss.AdaptiveColor{Light: "#A16207", Dark: "#FCD34D"}
-	prColor  = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#A78BFA"}
+	pinColor = compat.AdaptiveColor{Light: lipgloss.Color("#854D0E"), Dark: lipgloss.Color("#FDE047")}
+	prColor  = compat.AdaptiveColor{Light: lipgloss.Color("#6D28D9"), Dark: lipgloss.Color("#C4B5FD")}
 	// idleColor is the cool stop on the age ramp — a session that has been up
 	// for a few hours is not a warning yet.
-	idleColor = lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#38BDF8"}
+	idleColor = compat.AdaptiveColor{Light: lipgloss.Color("#0369A1"), Dark: lipgloss.Color("#7DD3FC")}
 )
 
 const (
@@ -102,7 +109,7 @@ const (
 // longer renders forge state (a provider-coupled datum by the user's call).
 var tones = []tone{
 	{key: toneLive, color: liveColor, glyph: "●", ascii: "*", bold: true},
-	{key: toneStopped, color: mutedColor, glyph: "○", ascii: ".", faint: true},
+	{key: toneStopped, color: mutedColor, glyph: "○", ascii: "."},
 	{key: toneFailed, color: failColor, glyph: "✕", ascii: "x", bold: true},
 	{key: toneWarn, color: warnColor, glyph: "▲", ascii: "!"},
 	{key: tonePinned, color: pinColor, glyph: "★", ascii: "+"},

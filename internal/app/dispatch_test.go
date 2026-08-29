@@ -9,7 +9,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
-func TestEnterWithInputDispatches(t *testing.T) {
+func TestEnterIgnoresRemovedComposerAndAttaches(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "sessions.json"))
 	if err != nil {
@@ -24,10 +24,10 @@ func TestEnterWithInputDispatches(t *testing.T) {
 
 	_, cmd := m.handleActionKey("enter")
 	if cmd == nil {
-		t.Fatal("expected a dispatch command")
+		t.Fatal("expected an attach command")
 	}
 	msg := cmd()
-	if _, ok := msg.(dispatchedMsg); !ok {
-		t.Fatalf("expected dispatchedMsg, got %T", msg)
+	if _, ok := msg.(attachSpecMsg); !ok {
+		t.Fatalf("expected attachSpecMsg, got %T", msg)
 	}
 }

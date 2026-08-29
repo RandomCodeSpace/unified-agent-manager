@@ -113,11 +113,9 @@ func TestResumeToneReflectsProviderSessionIDOnly(t *testing.T) {
 	}
 }
 
-// TestHarnessIndependentRenderingIsIdenticalAcrossProviders is the deterministic
-// -across-harnesses guarantee stated as a test: two sessions differing only in
-// their provider name must produce byte-identical rows once that name is
-// substituted. Nothing on the row may come from provider-specific behaviour.
-func TestHarnessIndependentRenderingIsIdenticalAcrossProviders(t *testing.T) {
+// TestProviderIndependentRowsKeepTheSameSemanticGrammar ensures provider names
+// do not change lifecycle or action projection.
+func TestProviderIndependentRowsKeepTheSameSemanticGrammar(t *testing.T) {
 	now := time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 	base := adapter.Session{
 		ID: "same-id", DisplayName: "same-name", Prompt: "same task",
@@ -125,7 +123,6 @@ func TestHarnessIndependentRenderingIsIdenticalAcrossProviders(t *testing.T) {
 		CreatedAt: now.Add(-time.Hour),
 		PR:        &adapter.PRRef{Number: 7, Status: adapter.PROpen},
 	}
-	reference := ""
 	for _, provider := range []string{"claude", "codex", "opencode", "omp"} {
 		sess := base
 		sess.AgentType = provider
@@ -135,16 +132,10 @@ func TestHarnessIndependentRenderingIsIdenticalAcrossProviders(t *testing.T) {
 		m.width, m.height, m.sizeKnown = 100, 30, true
 
 		rendered := ansi.Strip(strings.Join(entryLines(m.dashboardBodyEntries(100, 12), 100), "\n"))
-		// Collapse runs of spaces: the right-aligned trailer legitimately shifts
-		// by the length of the provider's name. Everything else must match.
-		normalised := strings.Join(strings.Fields(strings.ReplaceAll(rendered, strings.ToUpper(provider), "<provider>")), " ")
-		if reference == "" {
-			reference = normalised
-			continue
-		}
-		if normalised != reference {
-			t.Fatalf("provider %q renders differently once its name is substituted:\n%s\n---\n%s",
-				provider, normalised, reference)
+		for _, want := range []string{"same-name", provider, "Running", "Attach"} {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("provider %q row missing %q: %s", provider, want, rendered)
+			}
 		}
 	}
 }

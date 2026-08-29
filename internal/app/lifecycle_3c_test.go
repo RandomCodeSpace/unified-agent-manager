@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -54,10 +54,10 @@ func TestAmbiguousSpaceConfirmationDeclineAndSnapshotAccept(t *testing.T) {
 	msg := m.handleSpaceKey(" ")()
 	model, _ := m.Update(msg)
 	m = model.(Model)
-	if !m.confirmLatest || !strings.Contains(strings.ToLower(m.View()), "several retained conversations") || !strings.Contains(m.View(), "fake") || !strings.Contains(m.View(), "chosen") {
-		t.Fatalf("missing provider/session-specific confirmation: %s", m.View())
+	if !m.confirmLatest || !strings.Contains(strings.ToLower(m.View().Content), "several retained conversations") || !strings.Contains(m.View().Content, "fake") || !strings.Contains(m.View().Content, "chosen") {
+		t.Fatalf("missing provider/session-specific confirmation: %s", m.View().Content)
 	}
-	declined, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	declined, cmd := m.handleKey(keyMsg("esc"))
 	if cmd != nil || declined.(Model).confirmLatest || fake.resumed != nil {
 		t.Fatal("declining ambiguity confirmation mutated provider")
 	}
@@ -68,8 +68,9 @@ func TestAmbiguousSpaceConfirmationDeclineAndSnapshotAccept(t *testing.T) {
 	// A refresh/reorder replaces the row under the cursor while the modal is open.
 	m.sessions = []adapter.Session{{ID: "22222222", AgentType: "fake", DisplayName: "other", ProcAlive: adapter.Exited}, {ID: "11111111", AgentType: "fake", DisplayName: "chosen", ProcAlive: adapter.Exited}}
 	m.selected = 0
-	accepted, retry := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if retry == nil || accepted.(Model).confirmLatest {
+	accepted, follow := m.handleKey(keyMsg("y"))
+	m, retry := settleConfirmation(t, accepted.(Model), follow)
+	if retry == nil || m.confirmLatest {
 		t.Fatal("accept did not close modal and retry")
 	}
 	_ = retry()
@@ -87,8 +88,8 @@ func TestAmbiguousAttachAndRestartConfirmation(t *testing.T) {
 				cmd = m.handleEnterKey()
 			} else {
 				m.confirmStop, m.confirmStopAgent, m.confirmStopID = true, "fake", "11111111"
-				_, model, restartCmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}, "r")
-				m, cmd = model.(Model), restartCmd
+				_, model, restartFollow := m.handleModalKey(keyMsg("r"), "r")
+				m, cmd = settleConfirmation(t, model.(Model), restartFollow)
 			}
 			model, _ := m.Update(cmd())
 			m = model.(Model)
@@ -98,8 +99,8 @@ func TestAmbiguousAttachAndRestartConfirmation(t *testing.T) {
 			if action == "restart" && (fake.stopped || fake.resumed != nil) {
 				t.Fatal("ambiguous restart preflight was destructive")
 			}
-			model, retry := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-			m = model.(Model)
+			model, follow := m.handleKey(keyMsg("y"))
+			m, retry := settleConfirmation(t, model.(Model), follow)
 			result := retry()
 			if action == "attach" {
 				attach, ok := result.(attachSpecMsg)
@@ -152,16 +153,14 @@ func TestRunningStoppedLabelsAcrossResponsiveAndGroupedRenderers(t *testing.T) {
 			t.Run(strings.Join([]string{boolName(grouped), string(rune(size.width))}, "/"), func(t *testing.T) {
 				m := Model{width: size.width, height: size.height, sizeKnown: true, sessions: lifecycleFixtures(), groupByDir: grouped}
 				SortSessions(m.sessions)
-				out := m.View()
+				out := m.View().Content
 				if strings.Contains(out, "ACTIVE") || strings.Contains(out, "CLOSED") || strings.Contains(strings.ToLower(out), "closed") {
 					t.Fatalf("legacy lifecycle wording remains: %s", out)
 				}
-				// Every geometry of the board speaks the departure vocabulary:
-				// the fixtures hold a live, a cleanly stopped and a crashed
-				// session, so all three words must be present.
-				for _, word := range []string{"EN ROUTE", "ARRIVED", "DIVERTED"} {
+				// Every geometry keeps literal lifecycle words.
+				for _, word := range []string{"Running", "Stopped", "Failed"} {
 					if !strings.Contains(out, word) {
-						t.Fatalf("board at %dx%d missing status word %q: %s", size.width, size.height, word, out)
+						t.Fatalf("dashboard at %dx%d missing status word %q: %s", size.width, size.height, word, out)
 					}
 				}
 			})
@@ -255,7 +254,7 @@ func TestFailureDetailAppendsToPromptWithoutReplacingOrDuplicatingIt(t *testing.
 			// The wide board carries the composed summary in its TASK column
 			// exactly once; the compact board drops the task by design.
 			m := Model{width: 100, height: 20, sizeKnown: true, sessions: []adapter.Session{sess}}
-			summary := m.View()
+			summary := m.View().Content
 			if !strings.Contains(summary, want) || strings.Count(summary, want) != 1 {
 				t.Fatalf("selected dashboard summary = %q, want one %q", summary, want)
 			}
@@ -271,7 +270,7 @@ func TestFailureDetailAppendsToPromptWithoutReplacingOrDuplicatingIt(t *testing.
 				t.Fatalf("bounded task column lost failure suffix: width=%d row=%q", ansi.StringWidth(boundedRow), boundedRow)
 			}
 			m.sessions[0] = sess
-			boundedSummary := m.View()
+			boundedSummary := m.View().Content
 			if !strings.Contains(boundedSummary, " · "+tc.detail) {
 				t.Fatalf("bounded selected summary lost failure suffix: %q", boundedSummary)
 			}

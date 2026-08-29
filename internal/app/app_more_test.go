@@ -8,16 +8,16 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestModelViewBasics(t *testing.T) {
 	m := modelWithTwoSessions()
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	out := m.View()
-	if !strings.Contains(out, "EN ROUTE") || !strings.Contains(out, "GATE") || !strings.Contains(out, "FAKE") {
+	out := m.View().Content
+	if !strings.Contains(out, "Running") || !strings.Contains(out, "Attach") || !strings.Contains(out, "fake") {
 		t.Fatalf("view=%s", out)
 	}
 	if strings.Contains(out, "TMUX: LIVE") || strings.Contains(out, "TMUX: DEAD") {
@@ -37,8 +37,8 @@ func TestModelKeyNavigationAndDispatchParsing(t *testing.T) {
 	m := modelWithTwoSessions()
 	model, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	m = model.(Model)
-	for _, key := range []string{"down", "up", " ", "esc", "?", "esc", "ctrl+s", "tab"} {
-		model, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	for _, key := range []string{"down", "up", " ", "?", "?", "ctrl+s", "tab"} {
+		model, _ = m.Update(keyMsg(key))
 		m = model.(Model)
 	}
 	assertSelectionAfterKey(t, &m, tea.KeyDown, 1)
@@ -48,18 +48,19 @@ func TestModelKeyNavigationAndDispatchParsing(t *testing.T) {
 
 func TestModelModalViewsAndHelpers(t *testing.T) {
 	m := modelWithTwoSessions()
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 20})
 	m.helpOpen = true
-	if !strings.Contains(m.View(), "Keys:") {
-		t.Fatal("missing help")
+	if !strings.Contains(m.View().Content, "ctrl+t") {
+		t.Fatal("missing expanded Bubbles help footer")
 	}
 	m.confirmStop = true
 	m.helpOpen = false
-	if !strings.Contains(m.View(), "Stop") {
+	if !strings.Contains(m.View().Content, "Stop") {
 		t.Fatal("missing confirm")
 	}
 	m.wizard = true
 	m.confirmStop = false
-	if !strings.Contains(m.View(), "NEW SESSION") {
+	if !strings.Contains(m.View().Content, "NEW SESSION") {
 		t.Fatal("missing wizard")
 	}
 	assertViewHelpers(t)
@@ -71,9 +72,9 @@ func modelWithTwoSessions() Model {
 	return m
 }
 
-func assertSelectionAfterKey(t *testing.T, m *Model, key tea.KeyType, want int) {
+func assertSelectionAfterKey(t *testing.T, m *Model, key rune, want int) {
 	t.Helper()
-	model, _ := m.handleKey(tea.KeyMsg{Type: key})
+	model, _ := m.handleKey(tea.KeyPressMsg{Code: key})
 	*m = model.(Model)
 	if m.selected != want {
 		t.Fatalf("selected=%d", m.selected)
@@ -139,6 +140,7 @@ func TestModelUpdateMessages(t *testing.T) {
 
 func TestPRRefreshCommandsAndMessages(t *testing.T) {
 	m := NewWithDeps(nil, nil)
+	m.loading = false // initial load has settled; overlap is covered separately
 	msg, ok := m.refreshPRCmd()().(prRefreshedMsg)
 	if !ok || msg.err != nil {
 		t.Fatalf("refreshPRCmd message = %#v", msg)
@@ -293,15 +295,15 @@ func TestDispatchedFailureWithoutSessionDoesNotAttach(t *testing.T) {
 	}
 }
 
-func TestViewExpandsSelectedSessionInsideDashboard(t *testing.T) {
+func TestViewKeepsSessionSemanticsInsideDashboard(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
 		{ID: "1", AgentType: "fake", DisplayName: "one", Prompt: "fix the parser", Cwd: "/tmp/project", SessionName: "uam-fake-1", ProcAlive: adapter.Alive},
 		{ID: "2", AgentType: "fake", DisplayName: "old", Prompt: "old prompt", Cwd: "/tmp/old", SessionName: "uam-fake-2", ProcAlive: adapter.Exited, Closed: true},
 	}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	view := m.View()
-	for _, want := range []string{"FAKE", "fix the parser", "EN ROUTE", "ARRIVED"} {
+	view := m.View().Content
+	for _, want := range []string{"fake", "Running", "Stopped", "Attach", "Resume"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expanded dashboard missing %q: %s", want, view)
 		}
@@ -309,7 +311,7 @@ func TestViewExpandsSelectedSessionInsideDashboard(t *testing.T) {
 	if strings.Contains(view, "⠋") || strings.Contains(view, "💀") || strings.Contains(view, "TMUX: LIVE") || strings.Contains(view, "🚀") || strings.Contains(view, "🟢") {
 		t.Fatalf("view should use compact styling, no spinner/skull/large emoji: %s", view)
 	}
-	if strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") {
+	if strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") || strings.Contains(view, "DEPARTURES") {
 		t.Fatalf("view should use dashboard metadata instead of legacy aggregates: %s", view)
 	}
 	table := m.renderTable()
@@ -321,12 +323,12 @@ func TestViewExpandsSelectedSessionInsideDashboard(t *testing.T) {
 	}
 }
 
-func TestSpaceRestartsStoppedSessionOtherwiseTypes(t *testing.T) {
-	// A running session: Space is ordinary composer input.
+func TestSpaceRestartsStoppedSessionOtherwiseDoesNothing(t *testing.T) {
+	// A running session has no space action.
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "live", ProcAlive: adapter.Alive}}
-	if cmd := m.handleSpaceKey(" "); cmd != nil || m.input != " " {
-		t.Fatalf("space on a running session should type: cmd=%v input=%q", cmd, m.input)
+	if cmd := m.handleSpaceKey(" "); cmd != nil || m.input != "" {
+		t.Fatalf("space on a running session should be inert: cmd=%v input=%q", cmd, m.input)
 	}
 
 	// A stopped session: Space restarts it.
@@ -363,7 +365,7 @@ func TestSessionRowsStayStaticAcrossRefresh(t *testing.T) {
 func TestWizardAndRenameKeys(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.wizard = true
-	model, _ := m.handleWizardKey(tea.KeyMsg{Type: tea.KeyEnter})
+	model, _ := m.handleWizardKey(keyMsg("enter"))
 	m = model.(Model)
 	if m.wizardStep != 1 {
 		t.Fatalf("step=%d", m.wizardStep)
@@ -371,7 +373,7 @@ func TestWizardAndRenameKeys(t *testing.T) {
 	if m.input != "" {
 		t.Fatalf("alias input=%q", m.input)
 	}
-	model, _ = m.handleWizardKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	model, _ = m.handleWizardKey(keyMsg("x"))
 	m = model.(Model)
 	if !strings.Contains(m.input, "x") {
 		t.Fatalf("input=%q", m.input)
@@ -379,7 +381,7 @@ func TestWizardAndRenameKeys(t *testing.T) {
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "old"}}
 	m.renaming = true
 	m.input = "new"
-	model, _ = m.handleRenameKey(tea.KeyMsg{Type: tea.KeyEsc})
+	model, _ = m.handleRenameKey(keyMsg("esc"))
 	m = model.(Model)
 	if m.renaming {
 		t.Fatal("still renaming")
@@ -401,16 +403,16 @@ func TestMovementAndQuitBranches(t *testing.T) {
 	}
 	m = modelWithTwoSessions()
 	m.input = "typed"
-	model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	model, cmd := m.handleKey(keyMsg("q"))
 	m = model.(Model)
-	if cmd != nil || m.input != "typedq" || m.quitting {
-		t.Fatalf("q should type into input: cmd=%v input=%q quitting=%v", cmd, m.input, m.quitting)
+	if cmd != nil || m.input != "typed" || m.quitting {
+		t.Fatalf("q should be inert on the dashboard: cmd=%v input=%q quitting=%v", cmd, m.input, m.quitting)
 	}
 
 	m = modelWithTwoSessions()
 	m.input = "draft"
-	if handled, cmd := m.handleActionKey("esc"); !handled || cmd != nil || m.input != "" || m.quitting {
-		t.Fatalf("esc should clear input next: handled=%v cmd=%v input=%q quitting=%v", handled, cmd, m.input, m.quitting)
+	if handled, cmd := m.handleActionKey("esc"); !handled || cmd == nil || m.input != "" || !m.quitting {
+		t.Fatalf("esc should discard stale hidden input and quit: handled=%v cmd=%v input=%q quitting=%v", handled, cmd, m.input, m.quitting)
 	}
 
 	m = modelWithTwoSessions()
@@ -425,7 +427,7 @@ func TestInputWindowAndStateBranches(t *testing.T) {
 		t.Fatalf("empty enter should not command: %v", cmd)
 	}
 	m.input = "draft"
-	if cmd := m.handleSpaceKey(" "); cmd != nil || m.input != "draft " {
+	if cmd := m.handleSpaceKey(" "); cmd != nil || m.input != "draft" {
 		t.Fatalf("space input branch cmd=%v input=%q", cmd, m.input)
 	}
 	m = modelWithTwoSessions()
@@ -442,17 +444,17 @@ func TestRenameEditingBranches(t *testing.T) {
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "old"}}
 	m.renaming = true
 	m.input = "ab"
-	model, cmd := m.handleRenameKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	model, cmd := m.handleRenameKey(keyMsg("backspace"))
 	m = model.(Model)
 	if cmd != nil || m.input != "a" {
 		t.Fatalf("backspace input=%q cmd=%v", m.input, cmd)
 	}
-	model, cmd = m.handleRenameKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	model, cmd = m.handleRenameKey(keyMsg("z"))
 	m = model.(Model)
 	if cmd != nil || m.input != "az" {
 		t.Fatalf("rune input=%q cmd=%v", m.input, cmd)
 	}
-	model, cmd = m.handleRenameKey(tea.KeyMsg{Type: tea.KeyEnter})
+	model, cmd = m.handleRenameKey(keyMsg("enter"))
 	m = model.(Model)
 	if cmd == nil || m.renaming || m.input != "" {
 		t.Fatalf("enter rename cmd=%v renaming=%v input=%q", cmd, m.renaming, m.input)

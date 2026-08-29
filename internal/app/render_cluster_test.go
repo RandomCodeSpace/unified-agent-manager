@@ -9,10 +9,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 var errTestBoom = errors.New("boom")
@@ -229,10 +229,10 @@ func TestDeadSessionFromRecordDoesNotEmitActiveState(t *testing.T) {
 // F58 — the live/fail glyph styles are package-level vars (allocated once), not
 // rebuilt per row per frame.
 func TestGlyphStylesAreHoisted(t *testing.T) {
-	if _, ok := liveGlyphStyle.GetForeground().(lipgloss.AdaptiveColor); !ok {
+	if _, ok := liveGlyphStyle.GetForeground().(compat.AdaptiveColor); !ok {
 		t.Fatalf("liveGlyphStyle must keep an AdaptiveColor foreground, got %T", liveGlyphStyle.GetForeground())
 	}
-	if _, ok := failGlyphStyle.GetForeground().(lipgloss.AdaptiveColor); !ok {
+	if _, ok := failGlyphStyle.GetForeground().(compat.AdaptiveColor); !ok {
 		t.Fatalf("failGlyphStyle must keep an AdaptiveColor foreground, got %T", failGlyphStyle.GetForeground())
 	}
 }
@@ -273,19 +273,19 @@ func TestMessageExpiresOnlyAfterTTL(t *testing.T) {
 	}
 }
 
-// F53 — a freshly emitted message must not be wiped by the very next 2s tick.
-func TestFreshMessageSurvivesNextTick(t *testing.T) {
+// A refresh failure is persistent dashboard state and must not be wiped by the
+// next periodic tick.
+func TestRefreshErrorSurvivesNextTick(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	// Simulate handleSessionsLoaded stamping a message right before a tick.
-	model, _ := m.Update(sessionsLoadedMsg{err: errTestBoom})
+	model, _ := m.Update(sessionsLoadedMsg{refresh: true, err: errTestBoom})
 	m = model.(Model)
-	if m.message == "" {
-		t.Fatal("error should populate the status line")
+	if m.refreshError == "" {
+		t.Fatal("refresh error should populate persistent dashboard state")
 	}
 	model, _ = m.Update(refreshMsg(time.Now()))
 	m = model.(Model)
-	if m.message == "" {
-		t.Fatal("a just-emitted error must survive the next refresh tick (no blanket clear)")
+	if m.refreshError == "" {
+		t.Fatal("refresh error must survive the next refresh tick")
 	}
 }
 
@@ -309,7 +309,7 @@ func TestTabSurfacesSetDefaultAgentError(t *testing.T) {
 func TestGroupByDirToggleSurfacesSetUIError(t *testing.T) {
 	st := readOnlyStore(t)
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "a", available: true}}))
-	model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, cmd := m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
 	if cmd == nil {
 		t.Fatal("group toggle should persist asynchronously")

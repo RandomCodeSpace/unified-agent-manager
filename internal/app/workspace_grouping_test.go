@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestWorkspaceProjectionPreservesCanonicalOrderWhenDisabled(t *testing.T) {
@@ -56,7 +56,7 @@ func TestGroupToggleRestoresProjectionAndSelectedIdentity(t *testing.T) {
 	m.sessions = groupingFixture(t)
 	m.selected = 2 // a3
 
-	model, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, _ := m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
 	if got := sessionIDs(m.sessions); !reflect.DeepEqual(got, []string{"a1", "a3", "a2", "u1", "u2", "c1", "c2"}) {
 		t.Fatalf("toggle on projection = %v", got)
@@ -65,7 +65,7 @@ func TestGroupToggleRestoresProjectionAndSelectedIdentity(t *testing.T) {
 		t.Fatalf("toggle on changed selection: %+v, ok=%v", selected, ok)
 	}
 
-	model, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, _ = m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
 	if got := sessionIDs(m.sessions); !reflect.DeepEqual(got, []string{"a1", "a2", "a3", "u1", "u2", "c1", "c2"}) {
 		t.Fatalf("toggle off did not restore canonical projection: %v", got)
@@ -75,7 +75,7 @@ func TestGroupToggleRestoresProjectionAndSelectedIdentity(t *testing.T) {
 	}
 }
 
-func TestGroupedViewShowsBoundedWorkspaceHeadingAndLiveSharingWarning(t *testing.T) {
+func TestGroupedViewRemainsAFlatSessionRoster(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "alpha-workspace")
 	m := NewWithDeps(nil, nil)
 	m.groupByDir = true
@@ -85,12 +85,12 @@ func TestGroupedViewShowsBoundedWorkspaceHeadingAndLiveSharingWarning(t *testing
 		{ID: "dead", AgentType: "fake", DisplayName: "dead", Cwd: root, ProcAlive: adapter.Exited},
 	}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 20})
-	view := m.View()
+	view := m.View().Content
 	assertViewGeometry(t, view, 44, 20)
-	// The board is flat; workspace contention surfaces as the ground advisory
-	// above the composer instead of a per-group warning line.
-	if !strings.Contains(view, "advisory: 2 live craft share") {
-		t.Fatalf("grouped view missing the contention advisory:\n%s", view)
+	for _, want := range []string{"a", "b", "dead", "Running", "Stopped"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("grouped roster missing %q:\n%s", want, view)
+		}
 	}
 }
 
@@ -103,9 +103,9 @@ func TestGroupedViewCountsLiveWorkspaceSharingAcrossPinPartitions(t *testing.T) 
 		{ID: "plain", AgentType: "fake", Cwd: root, ProcAlive: adapter.Alive},
 	}, true)
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	view := m.View()
-	if got := strings.Count(view, "advisory: 2 live craft share"); got != 1 {
-		t.Fatalf("sharing count must span pin partitions and render once, got %d:\n%s", got, view)
+	view := m.View().Content
+	if !strings.Contains(view, "pinned") || !strings.Contains(view, "plain") || strings.Contains(view, "craft") {
+		t.Fatalf("grouped roster must keep both sessions without metaphor copy:\n%s", view)
 	}
 }
 
@@ -118,10 +118,10 @@ func TestGroupedViewHandlesBlankWorkspaceWithoutSharingWarning(t *testing.T) {
 		{ID: "closed", AgentType: "fake", DisplayName: "closed", ProcAlive: adapter.Exited, Closed: true},
 	}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
-	view := m.View()
+	view := m.View().Content
 	assertViewGeometry(t, view, 80, 30)
-	if !strings.Contains(view, "BLANK") || !strings.Contains(view, "ALSO-BLANK") {
-		t.Fatalf("blank cwd sessions must still board:\n%s", view)
+	if !strings.Contains(view, "blank") || !strings.Contains(view, "also-blank") {
+		t.Fatalf("blank cwd sessions must remain visible:\n%s", view)
 	}
 	if strings.Contains(view, "craft share") {
 		t.Fatalf("an unknown workspace must not produce a sharing advisory:\n%s", view)
@@ -209,7 +209,7 @@ func TestGroupToggleCapturesPendingReorderBeforeProjection(t *testing.T) {
 		t.Fatal("precondition: grouped reorder should be pending")
 	}
 
-	model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, cmd := m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
 	if cmd == nil {
 		t.Fatal("toggle should retain commands for the captured reorder and view setting")

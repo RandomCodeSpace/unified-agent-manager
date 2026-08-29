@@ -11,7 +11,7 @@ import (
 	"os/exec"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
@@ -321,13 +321,8 @@ func mouseReportingDisabled() bool {
 // glyph-set decision is installed before the first frame renders.
 func RunTUI(ctx context.Context, model tea.Model) error {
 	app.ApplyTermCaps(probeTermCaps())
-	options := []tea.ProgramOption{tea.WithAltScreen(), tea.WithContext(ctx)}
-	if !mouseReportingDisabled() {
-		// Cell motion rather than all motion: the dashboard only needs presses
-		// and wheel events, and all-motion reporting floods the input path with
-		// events no handler consumes.
-		options = append(options, tea.WithMouseCellMotion())
-	}
+	app.ApplyMouseReporting(!mouseReportingDisabled())
+	options := []tea.ProgramOption{tea.WithContext(ctx)}
 	p := tea.NewProgram(model, options...)
 	_, err := p.Run()
 	if term.IsTerminal(os.Stdout.Fd()) {

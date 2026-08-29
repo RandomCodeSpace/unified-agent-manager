@@ -1,44 +1,130 @@
 package app
 
 import (
+	"encoding/base64"
 	"fmt"
-	"os"
+	"hash/fnv"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// ─── the DEPARTURES board ─────────────────────────────────────────────────────
-//
-// The dashboard is an airport departures board: one flat table, one row per
-// session, fixed columns that read top to bottom at a glance. The metaphor is
-// load-bearing rather than decorative — every column maps to an operational
-// question. SESSION is the craft, OPERATOR is the harness flying it, TASK is
-// the flight plan, STATUS is EN ROUTE / DIVERTED / ARRIVED over exactly the
-// distinctions toneForSession draws, GATE is the one verb that acts on the row,
-// and DUE is how long the craft has been out. Everything on the board is a pure
-// field read off adapter.Session, so a claude row and a codex row render
-// identically from the same facts.
-//
-// Two geometries share the vocabulary: the wide board spells every column out;
-// the compact board (a phone with the keyboard up) keeps Nº, a two-letter
-// operator code, the name, the status cell and the age on a single line.
+const (
+	dashboardWideMin     = 96
+	dashboardCompactMin  = 60
+	dashboardMinWidth    = 40
+	dashboardMinHeight   = 12
+	dashboardHeaderLines = 2
+)
 
-// dashboardEntry is one physical body line. sessionIndex ties every line back
-// to the session it describes, which is what lets a mouse tap anywhere on a row
-// resolve to the same target a chip keypress would select. blockStart marks the
-// first line of a session block so windowing can refuse to render a block
-// half-open.
+type dashboardLayout uint8
+
+const (
+	dashboardNarrow dashboardLayout = iota
+	dashboardCompact
+	dashboardWide
+)
+
+type dashboardAction string
+
+const (
+	dashboardSelect  dashboardAction = "select"
+	dashboardPrimary dashboardAction = "primary"
+	dashboardStop    dashboardAction = "stop"
+	dashboardRetry   dashboardAction = "retry"
+	dashboardMove    dashboardAction = "move"
+)
+
+// dashboardEntry is a compatibility projection used by component tests. The
+// actual screen is clipped by the Bubbles viewport in buildDashboardFrame.
 type dashboardEntry struct {
 	text         string
 	sessionIndex int
 	blockStart   bool
+}
+
+type dashboardNode struct {
+	action    dashboardAction
+	identity  sessionIdentity
+	signature string
+}
+
+type dashboardFrame struct {
+	content    string
+	compositor *lipgloss.Compositor
+	nodes      map[string]dashboardNode
+	signature  uint64
+	width      int
+	height     int
+	rosterY    int
+	rosterH    int
+}
+
+type dashboardPointerIntent struct {
+	frameSignature  uint64
+	width           int
+	height          int
+	action          dashboardAction
+	identity        sessionIdentity
+	actionSignature string
+	delta           int
+}
+
+type dashboardHelpMap struct {
+	move, open, filter, stop, quit key.Binding
+}
+
+func (m dashboardHelpMap) ShortHelp() []key.Binding {
+	return []key.Binding{m.move, m.open, m.filter, m.stop, m.quit}
+}
+
+func (m dashboardHelpMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{m.ShortHelp()}
+}
+
+func newDashboardHelpMap(retry, expanded bool, manageLabel string) dashboardHelpMap {
+	if expanded && !retry {
+		return dashboardHelpMap{
+			move:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "new")),
+			open:   key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("ctrl+t", "pin")),
+			filter: key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "rename")),
+			stop:   key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "group")),
+			quit:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "back")),
+		}
+	}
+	manage := key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("ctrl+x", manageLabel))
+	if retry {
+		manage = key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "retry"))
+	}
+	return dashboardHelpMap{
+		move:   key.NewBinding(key.WithKeys("up", "down"), key.WithHelp(arrowsHint(), "move")),
+		open:   key.NewBinding(key.WithKeys("enter"), key.WithHelp(enterHint(), "open")),
+		filter: key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+		stop:   manage,
+		quit:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "quit")),
+	}
+}
+
+func dashboardLayoutFor(width int) dashboardLayout {
+	switch {
+	case width >= dashboardWideMin:
+		return dashboardWide
+	case width >= dashboardCompactMin:
+		return dashboardCompact
+	default:
+		return dashboardNarrow
+	}
 }
 
 func (m Model) dashboardNow() time.Time {
@@ -49,20 +135,41 @@ func (m Model) dashboardNow() time.Time {
 }
 
 func lifecycleBadge(sess adapter.Session) string {
-	if sess.ProcAlive == adapter.Alive {
-		return "RUNNING"
+	switch {
+	case sess.ProcAlive == adapter.Alive:
+		return "Running"
+	case failureExitDetail(sess) != "":
+		return "Failed"
+	default:
+		return "Stopped"
 	}
-	if detail := failureExitDetail(sess); detail != "" {
-		return strings.ToUpper(detail)
-	}
-	return "STOPPED"
 }
 
-// providerBadge names the harness that owns a session. It is plain text rather
-// than a bracketed token: the borderless layout separates fields by position,
-// so brackets would only spend cells a 40-column phone cannot spare.
 func providerBadge(sess adapter.Session) string {
 	return displaytext.Sanitize(firstNonEmpty(sess.AgentType, "?"))
+}
+
+func primaryActionLabel(sess adapter.Session) string {
+	if sess.ProcAlive == adapter.Alive {
+		return "Attach"
+	}
+	return "Resume"
+}
+
+func sessionKey(sess adapter.Session) sessionIdentity {
+	return sessionIdentity{agent: sess.AgentType, id: sess.ID}
+}
+
+func dashboardSessionNodeID(identity sessionIdentity, action string) string {
+	key := base64.RawURLEncoding.EncodeToString([]byte(identity.agent + "\x00" + identity.id))
+	if action == "row" {
+		return "session/" + key + "/row"
+	}
+	return "session/" + key + "/action/" + action
+}
+
+func sessionActionSignature(sess adapter.Session) string {
+	return sess.AgentType + "\x00" + sess.ID + "\x00" + primaryActionLabel(sess)
 }
 
 func (m Model) sessionMatchesFilter(sess adapter.Session) bool {
@@ -78,7 +185,6 @@ func (m Model) sessionMatchesFilter(sess adapter.Session) bool {
 		displaytext.Sanitize(sess.Prompt),
 		displaytext.Sanitize(sess.Cwd),
 		lifecycleBadge(sess),
-		boardStatusWord(sess),
 	}, "\n"))
 	for _, term := range strings.Fields(strings.ToLower(query)) {
 		if !strings.Contains(haystack, term) {
@@ -143,9 +249,9 @@ func (m *Model) reconcileFilterSelection() {
 	}
 }
 
-func (m *Model) handleFilterKey(msg tea.KeyMsg, key string) (bool, tea.Cmd) {
+func (m *Model) handleFilterKey(msg tea.KeyPressMsg, pressed string) (bool, tea.Cmd) {
 	noMatches := len(m.visibleSessionIndices()) == 0
-	switch key {
+	switch pressed {
 	case "esc":
 		m.exitFilter()
 		return true, nil
@@ -173,7 +279,7 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg, key string) (bool, tea.Cmd) {
 			return true, nil
 		}
 		return true, m.handleEnterKey()
-	case " ":
+	case "space":
 		m.filterQuery += " "
 		m.reconcileFilterSelection()
 		return true, nil
@@ -182,8 +288,8 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg, key string) (bool, tea.Cmd) {
 			return true, nil
 		}
 	}
-	if msg.Type == tea.KeyRunes && !msg.Alt {
-		m.filterQuery += string(msg.Runes)
+	if msg.Text != "" && !msg.Mod.Contains(tea.ModAlt) {
+		m.filterQuery += msg.Text
 		m.reconcileFilterSelection()
 		return true, nil
 	}
@@ -206,564 +312,446 @@ func (m *Model) moveFilteredSession(delta int) tea.Cmd {
 }
 
 func (m Model) dashboardView() string {
-	w, h := max(1, m.width), max(0, m.height)
-	if h == 0 {
-		return ""
-	}
-	if m.helpOpen || m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
+	if m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
 		return m.responsiveView()
 	}
-	header := m.dashboardHeader(w)
-	bottom := m.dashboardBottom(w, h)
-	if len(bottom) >= h {
-		return fitScreen(bottom[:h], w, h)
-	}
-	bodyBudget := max(0, h-dashboardHeaderLines-len(bottom))
-	body := m.dashboardBody(w, bodyBudget)
-	// The body is padded out to its whole budget so the composer and footer stay
-	// pinned to the bottom of the terminal; a short roster must not collapse the
-	// layout upward and leave the command line floating mid-screen.
-	for len(body) < bodyBudget {
-		body = append(body, "")
-	}
-	lines := []string{header}
-	lines = append(lines, body...)
-	lines = append(lines, bottom...)
-	return fitScreen(lines, w, h)
+	return m.buildDashboardFrame().content
 }
 
-// dashboardHeaderLines is the number of lines dashboardView renders above the
-// body. Mouse hit-testing subtracts it from the event's row, so it must stay in
-// step with dashboardView's composition.
-const dashboardHeaderLines = 1
-
-// boardHost names the machine the fleet runs on — the datum that
-// distinguishes one uam masthead from another when the user has three SSH tabs
-// open to three hosts. Resolved once: a hostname does not change mid-session.
-var boardHost = sync.OnceValue(func() string {
-	host, err := os.Hostname()
-	if err != nil {
-		return ""
+func (m Model) buildDashboardFrame() dashboardFrame {
+	w, h := max(1, m.width), max(0, m.height)
+	frame := dashboardFrame{
+		width: w, height: h, signature: m.dashboardSignature(),
+		nodes: make(map[string]dashboardNode),
 	}
-	return displaytext.Sanitize(host)
-})
+	if h == 0 {
+		return frame
+	}
+	if w < dashboardMinWidth || h < dashboardMinHeight {
+		message := fmt.Sprintf("Agents needs %dx%d; current terminal is %dx%d", dashboardMinWidth, dashboardMinHeight, w, h)
+		frame.content = fitScreen([]string{dashboardBrandVersion(), "", warnStyle.Render(ansi.Truncate(message, w, truncTail()))}, w, h)
+		frame.compositor = lipgloss.NewCompositor(lipgloss.NewLayer(frame.content))
+		return frame
+	}
 
-// dashboardHeader is the masthead. Both geometries carry the brand and the
-// version — the version is how a "works here, broken there" report across the
-// user's machines starts being answerable.
+	frame.rosterY = dashboardHeaderLines
+	frame.rosterH = max(1, h-dashboardHeaderLines-3)
+	contextRuleY := frame.rosterY + frame.rosterH
+	contextY := contextRuleY + 1
+	helpY := contextY + 1
+
+	lines := make([]string, h)
+	lines[0] = m.dashboardHeader(w)
+	lines[1] = dividerStyle.Render(strings.Repeat(ruleGlyph(), w))
+	lines[contextRuleY] = dividerStyle.Render(strings.Repeat(ruleGlyph(), w))
+	lines[contextY] = m.dashboardContext(w)
+	lines[helpY] = m.dashboardHelp(w)
+
+	visible := m.visibleSessionIndices()
+	start := dashboardViewportStart(visible, m.selected, frame.rosterH)
+	end := min(len(visible), start+frame.rosterH)
+	// Keep the viewport's full logical line space while rendering only its
+	// visible window. Bubbles remains responsible for offset, clipping, and fill;
+	// UAM avoids styling hundreds of lines the viewport will immediately discard.
+	rowLines := make([]string, len(visible))
+	for position := start; position < end; position++ {
+		index := visible[position]
+		rowLines[position] = m.dashboardRow(m.sessions[index], index, w)
+	}
+	if len(visible) == 0 {
+		empty := "No agents yet"
+		if !m.hasLoaded {
+			empty = m.activityView() + " " + hintStyle.Render("Loading agents")
+		} else if m.filterActive {
+			empty = fmt.Sprintf("No agents match %q", displaytext.Sanitize(m.filterQuery))
+		}
+		rowLines = []string{"  " + hintStyle.Render(ansi.Truncate(empty, max(1, w-2), truncTail()))}
+	}
+
+	vp := viewport.New(viewport.WithWidth(w), viewport.WithHeight(frame.rosterH))
+	vp.FillHeight = true
+	vp.MouseWheelEnabled = false
+	vp.SetContentLines(rowLines)
+	vp.SetYOffset(start)
+	rosterLines := strings.Split(vp.View(), "\n")
+	for i := 0; i < frame.rosterH && i < len(rosterLines); i++ {
+		lines[frame.rosterY+i] = rosterLines[i]
+	}
+
+	base := fitScreen(lines, w, h)
+	layers := []*lipgloss.Layer{lipgloss.NewLayer(base).Z(0)}
+	for position := start; position < end; position++ {
+		index := visible[position]
+		sess := m.sessions[index]
+		identity := sessionKey(sess)
+		y := frame.rosterY + position - start
+		rowText, actionX, actionText := m.dashboardRowParts(sess, index, w)
+		rowHitText := ansi.Truncate(rowText, actionX, "")
+		rowID := dashboardSessionNodeID(identity, "row")
+		actionID := dashboardSessionNodeID(identity, strings.ToLower(primaryActionLabel(sess)))
+		layers = append(layers,
+			lipgloss.NewLayer(rowHitText).ID(rowID).X(0).Y(y).Z(1),
+			lipgloss.NewLayer(actionText).ID(actionID).X(actionX).Y(y).Z(2),
+		)
+		frame.nodes[rowID] = dashboardNode{action: dashboardSelect, identity: identity}
+		frame.nodes[actionID] = dashboardNode{action: dashboardPrimary, identity: identity, signature: sessionActionSignature(sess)}
+	}
+	if m.refreshError != "" && !m.loading {
+		retryText := dashboardRetryStyle().Render(" Retry ")
+		retryX := max(0, w-ansi.StringWidth(retryText))
+		retryID := "footer/retry"
+		layers = append(layers, lipgloss.NewLayer(retryText).ID(retryID).X(retryX).Y(contextY).Z(3))
+		frame.nodes[retryID] = dashboardNode{action: dashboardRetry}
+	} else if sess, ok := m.selectedSession(); ok {
+		stopText := dashboardStopStyle().Render(" " + secondaryActionLabel(sess) + " ")
+		stopX := max(0, w-ansi.StringWidth(stopText))
+		stopID := dashboardSessionNodeID(sessionKey(sess), strings.ToLower(secondaryActionLabel(sess)))
+		layers = append(layers, lipgloss.NewLayer(stopText).ID(stopID).X(stopX).Y(contextY).Z(3))
+		frame.nodes[stopID] = dashboardNode{action: dashboardStop, identity: sessionKey(sess), signature: sessionActionSignature(sess)}
+	}
+	frame.compositor = lipgloss.NewCompositor(layers...)
+	frame.content = fitScreen(strings.Split(frame.compositor.Render(), "\n"), w, h)
+	return frame
+}
+
+func dashboardViewportStart(visible []int, selected, height int) int {
+	position := 0
+	for i, index := range visible {
+		if index == selected {
+			position = i
+			break
+		}
+	}
+	start, _ := visibleWindow(len(visible), position, height)
+	return start
+}
+
+func (m Model) dashboardSignature() uint64 {
+	h := fnv.New64a()
+	write := func(value string) {
+		_, _ = h.Write([]byte(value))
+		_, _ = h.Write([]byte{0})
+	}
+	write(strconv.FormatUint(m.dashboardRevision, 10))
+	write(strconv.Itoa(m.width))
+	write(strconv.Itoa(m.height))
+	write(strconv.Itoa(m.selected))
+	write(strconv.FormatBool(m.filterActive))
+	write(m.filterQuery)
+	write(strconv.FormatBool(m.loading))
+	write(strconv.FormatBool(m.hasLoaded))
+	write(m.message)
+	write(m.refreshError)
+	for _, index := range m.visibleSessionIndices() {
+		sess := m.sessions[index]
+		write(sessionActionSignature(sess))
+		write(firstNonEmpty(sess.DisplayName, sess.ID))
+	}
+	return h.Sum64()
+}
+
 func (m Model) dashboardHeader(width int) string {
-	clock := m.dashboardNow().Format("15:04")
-	if !boardColumns(width).wide {
-		left := bar() + " " + brandStyle.Render("UAM") + " " + titleStyle.Render(version.String()) +
-			hintStyle.Render(dotSep()+"DEPARTURES"+dotSep()+clock)
-		// The filtered count is the one wide-masthead datum the phone cannot
-		// lose: it is how "why is the board suddenly short" answers itself.
-		if m.filterActive {
-			left += hintStyle.Render(dotSep() + fmt.Sprintf("%d/%d", len(m.visibleSessionIndices()), len(m.sessions)))
-		}
-		return ansi.Truncate(left, width, truncTail())
+	left := dashboardBrandVersion()
+	visible, total := len(m.visibleSessionIndices()), len(m.sessions)
+	clock := m.dashboardNow().Format("15:04 MST")
+	count := fmt.Sprintf("%d/%d sessions", visible, total)
+	if dashboardLayoutFor(width) == dashboardNarrow {
+		count = fmt.Sprintf("%d/%d", visible, total)
 	}
-	left := bar() + " " + brandStyle.Render("UNIFIED AGENT MANAGER (UAM)") + hintStyle.Render(dotSep()+"DEPARTURES")
-	craft := fmt.Sprintf("%d craft", len(m.sessions))
+	base := clock + dotSep() + "Agents" + dotSep() + count
+	right := base
+	available := max(1, width-ansi.StringWidth(left)-1)
+	if m.loading {
+		right = m.activityView() + " Refreshing" + dotSep() + base
+	} else if !m.hasLoaded && len(m.sessions) == 0 {
+		right = m.activityView() + " Loading" + dotSep() + base
+	}
+	if ansi.StringWidth(right) > available && m.loading {
+		// Narrow terminals keep the clock, surface identity, and activity mark;
+		// the verbose progress word and count yield first.
+		right = clock + dotSep() + "Agents" + dotSep() + m.activityView()
+	}
 	if m.filterActive {
-		craft = fmt.Sprintf("%d/%d craft", len(m.visibleSessionIndices()), len(m.sessions))
+		query := displaytext.Sanitize(m.filterQuery)
+		if query == "" {
+			query = "type to filter"
+		}
+		right = clock + dotSep() + "Agents" + dotSep() + "Filter: " + query + dotSep() + count
 	}
-	right := mastheadRight(boardHost(), clock, craft, width-ansi.StringWidth(left)-2)
-	return joinDashboardEnds(left, right, width)
+	// UAM and the version are the fixed identity of the application. Status,
+	// query, and counts share the remaining cells and truncate before branding.
+	right = ansi.Truncate(right, available, truncTail())
+	return joinDashboardEnds(left, hintStyle.Render(right), width)
 }
 
-// mastheadRightHostCap bounds the hostname's spend in the masthead. Cloud
-// hosts carry provisioning-id names sixty cells long; past this point the
-// name stops identifying the machine to a human and starts eating the brand.
-const mastheadRightHostCap = 20
+func dashboardBrandVersion() string {
+	badge := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(actionTextColor).
+		Background(accentColor).
+		Padding(0, 1).
+		Render("UAM")
+	return badge + " " + hintStyle.Render(version.String())
+}
 
-// mastheadRight fits the version, clock, host and craft count into the cells
-// the brand leaves over, dropping the host first and the clock second rather
-// than letting truncation shear the brand off the left edge — which is exactly
-// what a long cloud hostname used to do. The version and the craft count are
-// the two segments a bug report and a glance both need, so they go last.
-func mastheadRight(host, clock, craft string, budget int) string {
-	if host != "" {
-		host = ansi.Truncate(host, mastheadRightHostCap, truncTail())
+func (m Model) dashboardRow(sess adapter.Session, index, width int) string {
+	row, _, _ := m.dashboardRowParts(sess, index, width)
+	return row
+}
+
+func (m Model) dashboardRowParts(sess adapter.Session, index, width int) (string, int, string) {
+	action := dashboardActionStyle(index == m.selected).Render(" " + primaryActionLabel(sess) + " ")
+	actionWidth := ansi.StringWidth(action)
+	actionX := max(0, width-actionWidth)
+	contentWidth := max(1, actionX-1)
+	state := lifecycleBadge(sess)
+	stateText := toneForSession(sess).mark() + " " + toneForSession(sess).render(state)
+	name := displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID, "unnamed"))
+	provider := providerBadge(sess)
+	selected := index == m.selected
+	rail := " "
+	nameRender := titleStyle.Render(name)
+	if selected {
+		rail = toneOf(toneSelected).mark()
+		nameRender = selectedStyle.Render(name)
 	}
-	candidates := [][]string{{clock, host, craft}, {clock, craft}, {craft}}
-	for _, segments := range candidates {
-		kept := make([]string, 0, len(segments))
-		for _, segment := range segments {
-			if segment != "" {
-				kept = append(kept, segment)
+	providerLabel := providerLabelStyle(selected).Render(provider)
+	providerWidth := ansi.StringWidth(providerLabel)
+
+	var content string
+	switch dashboardLayoutFor(width) {
+	case dashboardWide:
+		stateCell := padRightANSI(stateText, 13)
+		nameWidth := min(24, max(12, contentWidth/4))
+		fixed := 26 + providerWidth + nameWidth
+		taskWidth := max(1, contentWidth-fixed)
+		content = rail + " " + providerLabel + " " + stateCell + "  " +
+			padRightANSI(ansi.Truncate(nameRender, nameWidth, truncTail()), nameWidth) + "  " +
+			padRightANSI(taskStyle.Render(boundedTaskSummary(sess, taskWidth)), taskWidth) + "  " +
+			padLeftANSI(ageText(sess, m.dashboardNow()), 4)
+	case dashboardCompact:
+		prefix := rail + " " + providerLabel + " " + stateText + dotSep()
+		nameWidth := max(1, contentWidth-ansi.StringWidth(prefix))
+		content = prefix + ansi.Truncate(nameRender, nameWidth, truncTail())
+	default:
+		prefix := rail + " " + providerLabel + " " + stateText + " "
+		nameWidth := max(1, contentWidth-ansi.StringWidth(prefix))
+		content = prefix + ansi.Truncate(nameRender, nameWidth, truncTail())
+	}
+	content = padRightANSI(ansi.Truncate(content, contentWidth, truncTail()), contentWidth)
+	return content + " " + action, actionX, action
+}
+
+func dashboardActionStyle(selected bool) lipgloss.Style {
+	style := lipgloss.NewStyle().Bold(true).Foreground(actionTextColor).Background(accentColor)
+	if !selected {
+		style = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	}
+	return style
+}
+
+func providerLabelStyle(selected bool) lipgloss.Style {
+	background := dividerColor
+	if selected {
+		background = accentColor
+	}
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(actionTextColor).
+		Background(background).
+		Padding(0, 1)
+}
+
+func dashboardStopStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(failColor)
+}
+
+func dashboardRetryStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Bold(true).Foreground(actionTextColor).Background(accentColor)
+}
+
+func secondaryActionLabel(sess adapter.Session) string {
+	if sessionIsRunning(sess) {
+		return "Stop"
+	}
+	return "Remove"
+}
+
+func (m Model) dashboardContext(width int) string {
+	if m.refreshError != "" && !m.loading {
+		retry := dashboardRetryStyle().Render(" Retry ")
+		budget := max(1, width-ansi.StringWidth(retry)-1)
+		failure := "Refresh failed: " + displaytext.Sanitize(m.refreshError)
+		return joinDashboardEnds(warnStyle.Render(ansi.Truncate(failure, budget, truncTail())), retry, width)
+	}
+	if m.message != "" {
+		return ansi.Truncate(warnStyle.Render(displaytext.Sanitize(m.message)), width, truncTail())
+	}
+	sess, ok := m.selectedSession()
+	if !ok {
+		return hintStyle.Render("Select an agent session to open it")
+	}
+	stop := dashboardStopStyle().Render(" " + secondaryActionLabel(sess) + " ")
+	budget := max(1, width-ansi.StringWidth(stop)-2)
+	id := displaytext.Sanitize(sess.ID)
+	provider := providerBadge(sess)
+	updated := m.sessionUpdatedLabel(sess)
+	detail := provider + dotSep() + updated
+	switch dashboardLayoutFor(width) {
+	case dashboardWide, dashboardCompact:
+		for _, field := range []string{id, displaytext.Sanitize(absCwd(sess.Cwd))} {
+			candidate := detail + dotSep() + field
+			if ansi.StringWidth(candidate) > budget {
+				break
 			}
-		}
-		right := titleStyle.Render(version.String()) + hintStyle.Render(dotSep()+strings.Join(kept, dotSep()))
-		if ansi.StringWidth(right) <= budget {
-			return right
+			detail = candidate
 		}
 	}
-	return titleStyle.Render(version.String())
+	return joinDashboardEnds(hintStyle.Render(ansi.Truncate(detail, budget, truncTail())), stop, width)
 }
 
-// ─── board geometry ───────────────────────────────────────────────────────────
-
-// boardWideMin is the width at which the full column board fits. Below it the
-// compact rows carry the same facts in an abbreviated spelling.
-const boardWideMin = 78
-
-const (
-	boardNumWidth    = 2
-	boardSessionCol  = 18
-	boardOperatorCol = 8
-	// boardStatusWidth fits the widest cell: two shade cells, a space, and
-	// "EN ROUTE".
-	boardStatusWidth = 11
-	// boardGateWidth fits "RESUME ⇄".
-	boardGateWidth = 8
-	boardDueWidth  = 3
-)
-
-// boardLayout is the resolved geometry for one frame. gateX/gateW exist so the
-// mouse hit-test and the renderer cannot disagree about where the GATE cells
-// are: both read the same numbers.
-type boardLayout struct {
-	wide bool
-	// task is the flexible column's width on the wide board.
-	task int
-	// name is the flexible name width on the compact board.
-	name  int
-	gateX int
-	gateW int
-}
-
-func boardColumns(width int) boardLayout {
-	// Fixed spend on the wide board: edge(1) sp(1) Nº(2) gap(3) session gap(2)
-	// operator gap(2) [task] gap(2) status gap(2) gate gap(2) due.
-	fixed := 1 + 1 + boardNumWidth + 3 + boardSessionCol + 2 + boardOperatorCol + 2 +
-		2 + boardStatusWidth + 2 + boardGateWidth + 2 + boardDueWidth
-	if width >= boardWideMin {
-		task := width - fixed
-		return boardLayout{
-			wide:  true,
-			task:  task,
-			gateX: 1 + 1 + boardNumWidth + 3 + boardSessionCol + 2 + boardOperatorCol + 2 + task + 2 + boardStatusWidth + 2,
-			gateW: boardGateWidth,
-		}
+func (m Model) sessionUpdatedLabel(sess adapter.Session) string {
+	stamp := m.lastSeenBySession[sessionKey(sess)]
+	if stamp.IsZero() {
+		return "Updated unknown"
 	}
-	// Compact spend: edge(1) Nº(2) sp code(2) sp [name] sp status sp(2) due.
-	compactFixed := 1 + boardNumWidth + 1 + 2 + 1 + 1 + boardStatusWidth + 2 + boardDueWidth
-	return boardLayout{wide: false, name: max(6, width-compactFixed)}
+	local := stamp.In(m.dashboardNow().Location())
+	return "Updated " + local.Format("15:04 MST")
 }
 
-// ─── board vocabulary ─────────────────────────────────────────────────────────
-
-// boardStatusWord maps the lifecycle onto the departure vocabulary using
-// exactly the distinctions toneForSession draws, so the word and the tone can
-// never disagree. The words are pairwise distinct on purpose: they are the
-// carrier of the datum when color is gone, the shade cell only reinforces.
-// HOLDING is reserved for a future blocked-state signal.
-func boardStatusWord(sess adapter.Session) string {
-	switch toneForSession(sess).key {
-	case toneLive:
-		return "EN ROUTE"
-	case toneFailed:
-		return "DIVERTED"
-	default:
-		return "ARRIVED"
+func (m Model) dashboardHelp(width int) string {
+	h := help.New()
+	h.SetWidth(width)
+	h.ShortSeparator = dotSep()
+	h.Ellipsis = truncTail()
+	h.Styles.ShortKey = brandStyle
+	h.Styles.ShortDesc = hintStyle
+	h.Styles.ShortSeparator = hintStyle
+	h.Styles.Ellipsis = hintStyle
+	manageLabel := "manage"
+	if sess, ok := m.selectedSession(); ok {
+		manageLabel = strings.ToLower(secondaryActionLabel(sess))
 	}
+	return ansi.Truncate(h.View(newDashboardHelpMap(m.refreshError != "" && !m.loading, m.helpOpen, manageLabel)), width, truncTail())
 }
 
-// boardShade is the two-cell fill in front of the status word: solid for a
-// craft en route, heavy shade for a diverted one, light shade for one arrived.
-// Block Elements are East-Asian-Ambiguous, so the ASCII set swaps them with
-// the rest of the vocabulary.
-func boardShade(sess adapter.Session) string {
-	if asciiGlyphs() {
-		switch toneForSession(sess).key {
-		case toneLive:
-			return "##"
-		case toneFailed:
-			return "XX"
-		default:
-			return ".."
-		}
+func (m Model) activityView() string {
+	if len(m.activity.Spinner.Frames) == 0 {
+		fallback := spinner.New(spinner.WithSpinner(spinner.Line), spinner.WithStyle(brandStyle))
+		return fallback.View()
 	}
-	switch toneForSession(sess).key {
-	case toneLive:
-		return "██"
-	case toneFailed:
-		return "▓▓"
-	default:
-		return "░░"
-	}
+	return m.activity.View()
 }
-
-func boardStatusCell(sess adapter.Session) string {
-	return toneForSession(sess).render(boardShade(sess) + " " + boardStatusWord(sess))
-}
-
-// gateLabel is the one verb the row offers: a live craft is boarded with
-// ATTACH; a stopped one is sent back out with RESUME, marked by whether the
-// resume is exact or the provider's most-recent heuristic — the same
-// distinction resumeTone draws everywhere else.
-func gateLabel(sess adapter.Session) string {
-	if sess.ProcAlive == adapter.Alive {
-		return "ATTACH"
-	}
-	return "RESUME " + resumeTone(sess).activeGlyph()
-}
-
-// operatorCodes are the airline codes the compact board flies under: two cells
-// per harness, legend rendered above the composer. An unknown harness keeps
-// its first two letters, so a new provider is abbreviated rather than blank.
-var operatorCodes = map[string]string{
-	"claude":   "CL",
-	"codex":    "CX",
-	"opencode": "OC",
-	"omp":      "OM",
-	"copilot":  "CP",
-	"hermes":   "HM",
-}
-
-func operatorCode(agentType string) string {
-	key := strings.ToLower(strings.TrimSpace(displaytext.Sanitize(agentType)))
-	if code, ok := operatorCodes[key]; ok {
-		return code
-	}
-	runes := []rune(strings.ToUpper(key))
-	switch {
-	case len(runes) >= 2:
-		return string(runes[:2])
-	case len(runes) == 1:
-		return string(runes) + " "
-	default:
-		return "??"
-	}
-}
-
-// ─── body ─────────────────────────────────────────────────────────────────────
 
 func (m Model) dashboardBody(width, budget int) []string {
 	return entryLines(m.dashboardBodyEntries(width, budget), width)
 }
 
-// dashboardBodyEntries is the single source of truth for the body: dashboardBody
-// renders it and the mouse hit-test indexes it, so a tap can never resolve to a
-// different session than the one under the pointer.
 func (m Model) dashboardBodyEntries(width, budget int) []dashboardEntry {
-	if budget <= 0 || width <= 0 {
+	if width <= 0 || budget <= 0 {
 		return nil
 	}
-	lay := boardColumns(width)
-	chrome := []dashboardEntry{{text: boardRule(width), sessionIndex: -1}}
-	if lay.wide && budget >= 4 {
-		chrome = append(chrome,
-			dashboardEntry{text: boardHeadings(lay, width), sessionIndex: -1},
-			dashboardEntry{text: boardRule(width), sessionIndex: -1},
-		)
-	}
-	rowBudget := budget - len(chrome)
-	if rowBudget <= 0 {
-		return chrome[:budget]
-	}
-	rows := m.boardRows(lay, width)
-	return append(chrome, windowBlocks(rows, m.selected, rowBudget)...)
-}
-
-// boardRule is the full-width hairline that frames the board.
-func boardRule(width int) string {
-	if width <= 0 {
-		return ""
-	}
-	return dividerStyle.Render(strings.Repeat(ruleGlyph(), width))
-}
-
-// boardHeadings mirrors boardRow's geometry cell for cell; a heading that
-// drifted from its column would be worse than none.
-func boardHeadings(lay boardLayout, width int) string {
-	heading := "  " + padRightANSI(numHeading(), boardNumWidth) + "   " +
-		padRightANSI("SESSION", boardSessionCol) + "  " +
-		padRightANSI("OPERATOR", boardOperatorCol) + "  " +
-		padRightANSI("TASK", lay.task) + "  " +
-		padRightANSI("STATUS", boardStatusWidth) + "  " +
-		padRightANSI("GATE", lay.gateW) + "  " +
-		padLeftANSI("DUE", boardDueWidth)
-	return ansi.Truncate(hintStyle.Render(heading), width, truncTail())
-}
-
-// numHeading spells Nº — U+00BA is East-Asian-Ambiguous, so the ASCII set
-// writes it out.
-func numHeading() string {
-	if asciiGlyphs() {
-		return "No"
-	}
-	return "Nº"
-}
-
-func (m Model) boardRows(lay boardLayout, width int) []dashboardEntry {
 	visible := m.visibleSessionIndices()
-	if len(visible) == 0 {
-		if m.filterActive {
-			query := displaytext.Sanitize(m.filterQuery)
-			return []dashboardEntry{
-				{text: "  " + titleStyle.Render("no craft matches \""+query+"\""), sessionIndex: -1},
-				{text: "  " + hintStyle.Render("Esc clears the filter"), sessionIndex: -1},
-			}
-		}
-		return []dashboardEntry{{text: "  " + hintStyle.Render("no scheduled departures — type a command or press e"), sessionIndex: -1}}
-	}
-	now := m.dashboardNow()
 	rows := make([]dashboardEntry, 0, len(visible))
-	for position, index := range visible {
-		text := ""
-		if lay.wide {
-			text = m.boardRow(m.sessions[index], index, position, lay, now)
-		} else {
-			text = m.boardRowCompact(m.sessions[index], index, position, lay, now)
+	for _, index := range visible {
+		rows = append(rows, dashboardEntry{text: m.dashboardRow(m.sessions[index], index, width), sessionIndex: index, blockStart: true})
+	}
+	if len(rows) == 0 {
+		return []dashboardEntry{{text: hintStyle.Render("No agents yet"), sessionIndex: -1}}
+	}
+	return windowBlocks(rows, m.selected, budget)
+}
+
+func (m Model) dashboardMouseCommand(frame dashboardFrame, msg tea.MouseMsg) tea.Cmd {
+	mouse := msg.Mouse()
+	switch typed := msg.(type) {
+	case tea.MouseWheelMsg:
+		if mouse.Y < frame.rosterY || mouse.Y >= frame.rosterY+frame.rosterH {
+			return nil
 		}
-		rows = append(rows, dashboardEntry{
-			text:         ansi.Truncate(text, width, truncTail()),
-			sessionIndex: index,
-			blockStart:   true,
-		})
-	}
-	return rows
-}
-
-// boardRow is one wide departure. The columns are fixed so thirty rows scan as
-// seven vertical stripes rather than thirty sentences.
-func (m Model) boardRow(sess adapter.Session, index, position int, lay boardLayout, now time.Time) string {
-	selected := index == m.selected
-	edge := " "
-	nameStyle, numStyle := titleStyle, hintStyle
-	if selected {
-		edge = toneOf(toneSelected).mark()
-		nameStyle, numStyle = selectedStyle, selectedStyle
-	}
-	name := strings.ToUpper(displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID)))
-	operator := strings.ToUpper(providerBadge(sess))
-	return edge + " " +
-		numStyle.Render(boardNumber(position)) + "   " +
-		padRightANSI(nameStyle.Render(ansi.Truncate(name, boardSessionCol, truncTail())), boardSessionCol) + "  " +
-		padRightANSI(hintStyle.Render(ansi.Truncate(operator, boardOperatorCol, truncTail())), boardOperatorCol) + "  " +
-		padRightANSI(taskStyle.Render(boundedTaskSummary(sess, lay.task)), lay.task) + "  " +
-		padRightANSI(boardStatusCell(sess), boardStatusWidth) + "  " +
-		padRightANSI(brandStyle.Render(gateLabel(sess)), lay.gateW) + "  " +
-		padLeftANSI(ageText(sess, now), boardDueWidth)
-}
-
-// boardRowCompact is one departure with the keyboard up: number, operator
-// code, name, status cell, age. Same facts, abbreviated spelling.
-func (m Model) boardRowCompact(sess adapter.Session, index, position int, lay boardLayout, now time.Time) string {
-	selected := index == m.selected
-	edge := " "
-	nameStyle, numStyle := titleStyle, hintStyle
-	if selected {
-		edge = toneOf(toneSelected).mark()
-		nameStyle, numStyle = selectedStyle, selectedStyle
-	}
-	name := strings.ToUpper(displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID)))
-	return edge +
-		numStyle.Render(boardNumber(position)) + " " +
-		brandStyle.Render(operatorCode(sess.AgentType)) + " " +
-		padRightANSI(nameStyle.Render(ansi.Truncate(name, lay.name, truncTail())), lay.name) + " " +
-		padRightANSI(boardStatusCell(sess), boardStatusWidth) + "  " +
-		padLeftANSI(ageText(sess, now), boardDueWidth)
-}
-
-// boardNumber is the two-digit flight number. It exists to match chipDigits:
-// row 01 answers key 1, row 10 answers key 0.
-func boardNumber(position int) string {
-	return fmt.Sprintf("%02d", position+1)
-}
-
-// chipDigits addresses the first ten visible sessions without a modifier. Digits
-// rather than letters: a leading letter is text the composer must be free to
-// receive, and stealing nine of them would break dispatching any prompt that
-// starts with one. Beyond ten, "/" narrows the roster and re-chips it.
-const chipDigits = "1234567890"
-
-func chipFor(position int) string {
-	if position < 0 || position >= len(chipDigits) {
-		return " "
-	}
-	return string(chipDigits[position])
-}
-
-// chipRangeLabel names the live digit range for the footer: "keys 1-4" for a
-// four-row board rather than a static promise about keys that do nothing.
-func chipRangeLabel(visible int) string {
-	bound := min(visible, len(chipDigits))
-	switch {
-	case bound <= 0:
-		return ""
-	case bound == 1:
-		return "key 1"
-	case bound == 10:
-		return "keys 1-0"
+		delta := 0
+		switch typed.Button {
+		case tea.MouseWheelUp:
+			delta = -1
+		case tea.MouseWheelDown:
+			delta = 1
+		default:
+			return nil
+		}
+		return func() tea.Msg {
+			return dashboardPointerIntent{frameSignature: frame.signature, width: frame.width, height: frame.height, action: dashboardMove, delta: delta}
+		}
+	case tea.MouseClickMsg:
+		if typed.Button != tea.MouseLeft || frame.compositor == nil {
+			return nil
+		}
 	default:
-		return fmt.Sprintf("keys 1-%d", bound)
+		return nil
+	}
+	hit := frame.compositor.Hit(mouse.X, mouse.Y)
+	if hit.Empty() {
+		return nil
+	}
+	node, ok := frame.nodes[hit.ID()]
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		return dashboardPointerIntent{
+			frameSignature:  frame.signature,
+			width:           frame.width,
+			height:          frame.height,
+			action:          node.action,
+			identity:        node.identity,
+			actionSignature: node.signature,
+		}
 	}
 }
 
-// ─── bottom: rule, legend, advisory, composer ────────────────────────────────
-
-func (m Model) dashboardBottom(width, height int) []string {
-	lay := boardColumns(width)
-	lines := make([]string, 0, 5)
-	// A terminal squeezed to a couple of rows keeps the composer — the one
-	// line the user acts through — and sheds the frame around it.
-	if height >= 4 {
-		lines = append(lines, boardRule(width))
+func (m Model) handleDashboardPointer(intent dashboardPointerIntent) (tea.Model, tea.Cmd) {
+	if intent.frameSignature != m.dashboardSignature() || intent.width != m.width || intent.height != m.height {
+		m.setMessage("View changed; select again.")
+		return m, nil
 	}
-	if !lay.wide && height >= 12 {
-		if legend := m.operatorLegend(width); legend != "" {
-			lines = append(lines, legend)
+	if intent.action == dashboardMove {
+		m.moveSelection(intent.delta)
+		return m, nil
+	}
+	if intent.action == dashboardRetry {
+		if m.refreshError == "" || m.loading {
+			m.setMessage("View changed; select again.")
+			return m, nil
 		}
+		return m, m.retryRefresh()
 	}
-	if height >= 10 {
-		if advisory := m.boardAdvisory(width, lay.wide); advisory != "" {
-			lines = append(lines, advisory)
-		}
-	}
-	lines = append(lines, m.boardComposer(width, lay.wide))
-	if m.message != "" && height >= 14 {
-		lines = append(lines, ansi.Truncate("  "+hintStyle.Render(displaytext.Sanitize(m.message)), width, truncTail()))
-	}
-	return lines
-}
-
-// operatorLegend decodes the compact board's airline codes, listing only the
-// operators actually on the board.
-func (m Model) operatorLegend(width int) string {
-	seen := map[string]bool{}
-	parts := make([]string, 0, 4)
-	for _, index := range m.visibleSessionIndices() {
-		name := strings.ToLower(providerBadge(m.sessions[index]))
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		parts = append(parts, brandStyle.Render(operatorCode(m.sessions[index].AgentType))+" "+hintStyle.Render(name))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return ansi.Truncate(strings.Join(parts, hintStyle.Render(dotSep())), width, truncTail())
-}
-
-// boardAdvisory is the one-line ground report above the composer. A boarding
-// call — the newest diverted craft and how its gate resumes it — outranks the
-// workspace-contention advisory; both are facts the operator should not have
-// to select a row to discover.
-func (m Model) boardAdvisory(width int, wide bool) string {
-	if call := m.boardingCall(width, wide); call != "" {
-		return call
-	}
-	return m.contentionAdvisory(width)
-}
-
-func (m Model) boardingCall(width int, wide bool) string {
-	visible := m.visibleSessionIndices()
-	position, found := -1, false
-	var newest time.Time
-	for pos, index := range visible {
-		sess := m.sessions[index]
-		if failureExitDetail(sess) == "" {
-			continue
-		}
-		if !found || sess.CreatedAt.After(newest) {
-			position, newest, found = pos, sess.CreatedAt, true
-		}
-	}
-	if !found {
-		return ""
-	}
-	sess := m.sessions[visible[position]]
-	detail := failureExitDetail(sess)
-	resume := "resumes exactly"
-	if resumeTone(sess).key == toneResumeRecent {
-		resume = "resumes most recent"
-	}
-	if !wide {
-		return ansi.Truncate(warnStyle.Render(boardNumber(position)+" diverted"+dotSep()+detail+dotSep()+"gate "+resumeTone(sess).activeGlyph()),
-			width, truncTail())
-	}
-	return ansi.Truncate("  "+warnStyle.Render("boarding call: "+boardNumber(position)+" diverted"+dotSep()+detail+dashSep()+"gate "+resume),
-		width, truncTail())
-}
-
-// contentionAdvisory warns when several live craft share one workspace — two
-// agents mutating the same checkout is the accident the operator most wants
-// called out before it happens.
-func (m Model) contentionAdvisory(width int) string {
-	counts := liveWorkspaceCounts(m.sessions)
-	worstKey, worst := "", 0
-	for key, n := range counts {
-		// Ties break lexically so the advisory is stable frame to frame.
-		if n > worst || (n == worst && key < worstKey) {
-			worstKey, worst = key, n
-		}
-	}
-	if worst <= 1 {
-		return ""
-	}
-	text := fmt.Sprintf("advisory: %d live craft share %s", worst, displaytext.Sanitize(workspaceDisplayName(worstKey)))
-	return ansi.Truncate("  "+toneOf(toneWarn).mark()+" "+warnStyle.Render(text), width, truncTail())
-}
-
-func (m Model) boardComposer(width int, wide bool) string {
-	visible := len(m.visibleSessionIndices())
-	placeholder := "type a command" + hintEllipsis()
-	if !wide {
-		hint := strings.TrimSpace(chipRangeLabel(visible) + " board" + dotSep() + "tap a row")
-		if visible == 0 {
-			hint = "type a command"
-		}
-		placeholder = hint + hintEllipsis()
-	}
-	field := hintStyle.Render(placeholder)
-	label := ""
-	typed := m.input != ""
-	if typed {
-		field = titleStyle.Render(displaytext.Sanitize(m.input))
-	}
-	if m.filterActive {
-		label = hintStyle.Render("filter / ")
-		field = hintStyle.Render("type to filter" + hintEllipsis())
-		if m.filterQuery != "" {
-			field = titleStyle.Render(displaytext.Sanitize(m.filterQuery))
-		}
-	}
-	composer := bar() + " " + label + brandStyle.Render(caretGlyph()) + " " + field + brandStyle.Render(cursorGlyph())
-	// While the operator is typing, the composer owns the whole line; the key
-	// hints return the moment it empties.
-	if typed || !wide {
-		return ansi.Truncate(composer, width, truncTail())
-	}
-	segments := []string{arrowsHint() + " " + enterHint(), "click a gate", "/ filter", "e new", "? help"}
-	if chips := chipRangeLabel(visible); chips != "" {
-		segments = append([]string{chips}, segments...)
-	}
-	if m.defaultAgent != "" {
-		segments = append([]string{m.defaultAgent}, segments...)
-	}
-	if m.filterActive {
-		segments = []string{arrowsHint(), enterHint() + " open", "Esc clears"}
-	}
-	// The composer owns the line; the hints fit in what it leaves, dropping
-	// their least essential tail segments rather than eating the prompt.
-	budget := width - ansi.StringWidth(composer) - 2
-	hints := ""
-	for len(segments) > 0 {
-		joined := strings.Join(segments, dotSep())
-		if ansi.StringWidth(joined) <= budget {
-			hints = joined
+	index := -1
+	for i, sess := range m.sessions {
+		if sessionKey(sess) == intent.identity {
+			index = i
 			break
 		}
-		segments = segments[:len(segments)-1]
 	}
-	if hints == "" {
-		return ansi.Truncate(composer, width, truncTail())
+	if index < 0 {
+		m.setMessage("View changed; select again.")
+		return m, nil
 	}
-	return joinDashboardEnds(composer, hintStyle.Render(hints), width)
+	sess := m.sessions[index]
+	if intent.action != dashboardSelect && intent.actionSignature != sessionActionSignature(sess) {
+		m.setMessage("View changed; select again.")
+		return m, nil
+	}
+	m.selected = index
+	switch intent.action {
+	case dashboardSelect:
+		return m, nil
+	case dashboardPrimary:
+		return m, m.attachSelectedCmd()
+	case dashboardStop:
+		m.openSessionConfirmation(sess)
+		return m, nil
+	default:
+		return m, nil
+	}
 }
 
 func joinDashboardEnds(left, right string, width int) string {
@@ -782,8 +770,6 @@ func entryLines(entries []dashboardEntry, width int) []string {
 	return lines
 }
 
-// windowBlocks scrolls in lines but never severs a block: the start is snapped
-// back to a block boundary, so a session is either fully on screen or absent.
 func windowBlocks(entries []dashboardEntry, selected, budget int) []dashboardEntry {
 	if budget <= 0 || len(entries) == 0 {
 		return nil
@@ -799,58 +785,5 @@ func windowBlocks(entries []dashboardEntry, selected, budget int) []dashboardEnt
 		}
 	}
 	start, _ := visibleWindow(len(entries), selectedLine, budget)
-	if start > len(entries)-budget {
-		start = len(entries) - budget
-	}
-	// Snapping back only ever decreases start, so start+budget stays in range.
-	for start > 0 && entries[start].sessionIndex >= 0 && !entries[start].blockStart {
-		start--
-	}
 	return entries[start : start+budget]
-}
-
-// ─── hit-testing ──────────────────────────────────────────────────────────────
-
-// dashboardHitSession maps a terminal row to the session rendered on it. It
-// recomposes the body with the same inputs dashboardView used rather than
-// caching a hit map, so the mapping cannot go stale between a frame and a click.
-func (m Model) dashboardHitSession(row int) (int, bool) {
-	index, _, ok := m.dashboardHitTarget(row, -1)
-	return index, ok
-}
-
-// dashboardHitTarget resolves a pointer position to a session and reports
-// whether it landed inside the row's GATE cell. The gate geometry comes from
-// the same boardColumns call the renderer used, so a button can only be where
-// a button is drawn. col < 0 means "row only" for callers without a column.
-func (m Model) dashboardHitTarget(row, col int) (int, bool, bool) {
-	w, h := max(1, m.width), max(0, m.height)
-	if h == 0 || !m.sizeKnown {
-		return 0, false, false
-	}
-	if m.helpOpen || m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
-		return 0, false, false
-	}
-	bottom := m.dashboardBottom(w, h)
-	if len(bottom) >= h {
-		return 0, false, false
-	}
-	bodyBudget := max(0, h-dashboardHeaderLines-len(bottom))
-	entries := m.dashboardBodyEntries(w, bodyBudget)
-	// fitScreen keeps the tail when a frame overflows, which would shift every
-	// row upward. Refuse to guess in that case rather than select the wrong
-	// session.
-	if dashboardHeaderLines+len(entries)+len(bottom) > h {
-		return 0, false, false
-	}
-	index := row - dashboardHeaderLines
-	if index < 0 || index >= len(entries) {
-		return 0, false, false
-	}
-	if entries[index].sessionIndex < 0 {
-		return 0, false, false
-	}
-	lay := boardColumns(w)
-	gate := lay.wide && col >= lay.gateX && col < lay.gateX+lay.gateW
-	return entries[index].sessionIndex, gate, true
 }

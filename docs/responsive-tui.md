@@ -17,14 +17,20 @@ UAM does not infer "working," "waiting," or "completed" by scraping provider
 text. The selected row's prompt is kept as its task summary; failure detail is
 added without replacing it.
 
-Every row includes its provider, evidence-based lifecycle label, and age since
-the Managed Session was created. Age is deliberately not an activity indicator:
+Every row begins with provider as a padded, filled Lip Gloss label after the
+selection rail; Wide rows additionally include creation age and task. Age is
+deliberately not an activity indicator:
 live discovery timestamps change on every refresh and cannot prove that an agent
 is busy or idle. The age is additionally tinted along a four-stop ramp (fresh
 under an hour, recent under a day, old under a week, then stale), which colours
 the same creation-time fact rather than introducing an activity claim —
 `adapter.Session.LastChange` is re-stamped by every discovery scan and so cannot
 support one.
+
+The selected-session context shows `Updated HH:MM TZ`, derived from the
+persisted `LastSeenAt` liveness observation and converted to the dashboard's
+local timezone. It means UAM last observed the Managed Session then; it does not
+claim that the provider produced output or changed conversational state then.
 
 Attaching to Running reconnects to the existing host. Acting on Stopped resumes
 the provider when supported. If that resume can only select the provider's most
@@ -33,53 +39,43 @@ asks for confirmation before launching anything.
 
 ## Layout classes
 
-The layout is derived from the current terminal dimensions on every resize.
+The dashboard derives its horizontal grammar from width only. Height changes the
+number of visible Bubbles viewport rows; it never changes row meaning or moves an
+action into a different field.
 
-| Layout | Geometry | Operations view |
-|---|---|---|
-| **Wide** | At least 96 columns and 28 rows | Borderless full-width list at the density the row budget affords; every session shows the same fields. |
-| **Standard** | At least 58 columns and 24 rows, but below Wide | Borderless full-width list; full session IDs are retained. |
-| **Compact** | Fewer than 58 columns or fewer than 24 rows | Same density ladder; the lifecycle word yields to its glyph and IDs shorten to an eight-character prefix. |
+| Layout | Width | Roster fields | Fixed context |
+|---|---|---|---|
+| **Wide** | At least 96 columns | lifecycle, identity, provider, task, age, primary action | provider, update time and zone, full ID, path, Stop or Remove |
+| **Compact** | 60 through 95 columns | lifecycle, identity, provider, primary action | provider, update time and zone, full ID, shortened path, Stop or Remove |
+| **Narrow** | 40 through 59 columns | lifecycle, identity, provider, primary action | provider, update time and zone, Stop or Remove |
 
-### Density ladder
+Every session occupies exactly one line. Optional fields disappear as complete
+units; identity, literal lifecycle, and the primary action never disappear. At
+40 by 12, the screen contains a header, divider, seven roster rows, a context
+divider, selected-session context, and one Bubbles help line. Smaller terminals
+show a non-destructive minimum-size notice rather than clipped controls.
 
-Row height is not fixed per layout. `densityFor(visibleCount, budget, overhead)`
-divides the body's remaining lines among the visible sessions and returns one,
-two, or three lines per session, applied uniformly:
+The header uses a fixed-width Lip Gloss `UAM` badge instead of an emoji wordmark,
+followed by the build version. A local 24-hour `HH:MM TZ` clock and the literal
+`Agents` label remain visible at every supported width; verbose refresh and
+session-count wording yield first.
 
-| Rung | Lines per session | Adds |
-|---|---|---|
-| 1 | 1 | Chip, lifecycle glyph, pin, name with the task inline, PR mark, provider, lifecycle word (non-compact), dwell |
-| 2 | 2 | The task summary on its own line, including any failure detail |
-| 3 | 3 | Workspace path, profile `selected→effective` (omitted when it is the empty `default→none`), resume fidelity, command alias when it differs from the provider, session ID |
+### Mouse and frame safety
 
-Section headings and workspace-contention warnings are counted as overhead
-*before* the rung is chosen, so the chosen density always fits whenever one line
-per session would fit. Blocks are atomic: windowing snaps the viewport back to a
-block boundary rather than rendering a session's task line with no name above it.
+A row is a selection target. `Attach` and `Resume` are separate Lip Gloss action
+layers, so clicking a row never activates it. The selected session's `Stop` or
+`Remove` action lives in the fixed context band. Wheel events move selection and
+the viewport follows it.
 
-### Addressing without modifier keys
+Bubble Tea v2 routes pointer input through `View.OnMouse` on the view that was
+actually displayed. The callback resolves the top Lip Gloss compositor layer
+and emits a semantic intent containing the captured frame signature, dimensions,
+provider, session ID, and action signature. Update discards the intent if a
+refresh, resize, reorder, filter, lifecycle change, or removal made it stale.
+Raw coordinates never call a service operation.
 
-The first ten visible sessions wear a chip (`1`-`9`, then `0`). Pressing a chip
-moves the cursor to it; pressing the same chip again attaches. A mouse click or
-a phone tap resolves through the same verb — any line of a block, including its
-task and provenance lines, resolves to that block's session — and the wheel
-walks the selection. `/` narrows the roster and re-chips it, which is how rosters
-larger than ten are addressed.
-
-Digits bind only on an empty composer, and only when the chip is actually on
-screen: an unassigned digit is ordinary text, so a small roster never swallows
-input. Letters were deliberately not used — taking nine of them would break
-dispatching any prompt that starts with one.
-
-Mouse reporting is on by default because it is what makes the dashboard usable
-by touch. It takes over the terminal's native drag-to-select copying, so
-`UAM_NO_MOUSE=1` disables it.
-
-The prompt is reserved at the bottom before the remaining rows are allocated.
-The New Session wizard is a primary surface in all layouts, so every step remains
-usable when a mobile keyboard reduces the available height. Content is truncated
-by terminal-cell width without splitting Unicode text.
+Mouse reporting is on by default. It takes over native drag-to-select copying,
+so `UAM_NO_MOUSE=1` disables it.
 
 ## Keyboard map
 
@@ -87,21 +83,27 @@ by terminal-cell width without splitting Unicode text.
 |---|---|
 | `↑` / `↓` | Move the selected row. |
 | `Enter` / `→` | Attach to Running, or resume and attach to Stopped. |
-| `Space` | Resume Stopped in the background; this may first require latest-conversation confirmation. Otherwise enter a space in the composer. |
-| Type + `Enter` | Dispatch with the default provider. |
-| `@provider:alias #name prompt` | Choose provider, optional command alias, optional name, and prompt inline. |
+| Mouse row click | Select only. |
+| Mouse `Attach` / `Resume` click | Invoke the explicit primary action. |
+| Mouse `Stop` / `Remove` click | Open the Huh confirmation form. |
+| Wheel | Move selection through the viewport. |
+| `Space` | Resume Stopped in the background; this may first require latest-conversation confirmation. |
 | `Tab` | Cycle the default provider. In the wizard, cycle provider or complete a path according to the current step. |
 | `e` | Open the four-step New Session wizard. |
 | `Ctrl+G` | Open `$VISUAL` or `$EDITOR` for the wizard prompt. |
 | `Ctrl+T` | Pin or unpin the selected row. |
 | `Ctrl+R` | Rename the selected Managed Session. |
-| `Ctrl+X` | Confirm stop **and record removal**; press `r` in the confirmation to restart in place. Use CLI `uam stop <id>` to retain a Stopped row. |
+| `Ctrl+X` | Open a Huh Stop or Remove form with Cancel focused; `r` selects the existing restart intent. |
 | `Ctrl+S` | Toggle Workspace grouping. |
 | `Shift+↑` / `Shift+↓` | Reorder within the same lifecycle, pin, and visible Workspace group. |
-| `/` with an empty command | Enter live filtering. Type to narrow, use arrows to move, and press `Esc` to clear. |
-| `?` with an empty command | Open key help. With text typed, `?` is ordinary input. |
-| `Esc` | Close the current overlay or input; from the base dashboard, quit. |
+| `/` | Enter live filtering. Type to narrow, use arrows to move, and press `Esc` to clear. |
+| `r` | Retry the existing load path while a persistent refresh failure is visible. |
+| `?` | Toggle the one-line Bubbles help footer between primary and secondary commands. |
+| `Esc` | Cancel the current form or overlay; from the base dashboard, quit. |
 | `Ctrl+C` | Quit from anywhere, including help, the wizard, rename, and confirmations. |
+
+The base dashboard has no command composer. Use `uam new`, the existing `e`
+wizard, or other CLI commands to create and configure sessions.
 
 Inside an attached session, `Ctrl+B d` detaches. A bare left arrow also detaches
 when the provider input is empty and the quick-detach option is enabled. See the
@@ -128,18 +130,17 @@ provider input. The full protocol and mixed-version matrix is
 
 ## Filtering sessions
 
-Press `/` while the command composer is empty to filter the existing dashboard.
+Press `/` from the base dashboard to filter the existing roster.
 Matching is case-insensitive across display name, managed-session ID, provider,
 command alias, task, Workspace, and lifecycle label. Space-separated terms must
-all match the same session. The dashboard shows matched/total counts and removes
-empty Workspace sections without changing the stored order.
+all match the same session. The dashboard shows matched/total counts without
+changing the stored order.
 
 Filtering is a temporary presentation state. It is not stored, and pin, rename,
 stop, attach, resume, grouping, and reorder actions still use the session's
 provider-and-ID identity. `Esc` clears the query and restores the prior selection
-when it still exists. A slash typed after command text has begun remains literal
-prompt content. An empty Operations dashboard still opens the filter and shows
-a zero-result state.
+when it still exists. An empty dashboard still opens the filter and shows a
+zero-result state.
 
 ## Workspace grouping and parallel sessions
 
@@ -147,11 +148,10 @@ a zero-result state.
 symlinks. The grouping is a presentation projection: turning it off restores the
 canonical lifecycle, pin, and manual ordering.
 
-When two or more Running sessions share one Workspace, the heading shows a
-warning. This is not an error and does not serialize the agents. It means the
-processes can read and modify the same files concurrently. Use separate Git
-worktrees or checkouts when tasks require filesystem isolation; UAM never creates
-them automatically.
+Grouping changes roster order only; the minimalist dashboard does not insert
+Workspace headings. Concurrent Running sessions can still read and modify the
+same files. Use separate Git worktrees or checkouts when tasks require filesystem
+isolation; UAM never creates them automatically.
 
 Reordering cannot cross a Running/Stopped boundary, a pin boundary, or (while
 grouped) a Workspace boundary. Rejected moves leave selection and persisted
@@ -159,22 +159,21 @@ order unchanged.
 
 ## Mobile operation
 
-With an on-screen keyboard, prefer Compact mode intentionally:
+With an on-screen keyboard, prefer Narrow mode intentionally:
 
 Mobile operation requires a terminal extra-keys row or hardware keyboard that
 can send Escape, Tab, arrows, and Control chords. UAM does not currently provide
 touch-only substitutes for those terminal keys.
 
-1. Keep the terminal narrower than 58 columns or let the keyboard reduce it
-   below 24 rows.
-2. Use the one-line rows and expanded two-line selection to scan sessions; use
-   the numbered chips or `Enter` to attach to the selected session.
-3. Use `e` for the bounded wizard instead of composing a long inline dispatch.
+1. Keep the terminal between 40 and 59 columns and at least 12 rows.
+2. Tap a row once to select it, then tap its explicit `Attach` or `Resume`
+   action. `Enter` activates the selected session without requiring a second tap.
+3. Use `e` for the bounded wizard; the base dashboard has no command composer.
 4. Use `Ctrl+G` with a terminal/editor combination that supports external editor
    handoff when a multi-line prompt is easier outside the small viewport.
 
-The bottom prompt and current primary action remain visible as the height
-changes. UAM does not assume a fixed phone aspect ratio.
+The selected-session context, destructive action, and one-line help remain
+visible as height changes. UAM does not assume a fixed phone aspect ratio.
 
 ## SSH, mouse, and paste
 
@@ -272,13 +271,18 @@ never persisted.
   exactly one cell wide, and that purely decorative tones (the dwell ramp) own no
   glyph at all — so no datum can be encoded by colour alone, and a two-cell glyph
   cannot silently shift the columns to its right.
-- No surface paints a background or uses reverse video: the selected session is
-  marked by an accent edge bar down the left of its block, which cannot bleed
-  across the frame when a styled run is truncated.
+- The terminal background remains untouched. Focused action cells, Retry, and
+  Huh's focused button use a tightly bounded accent background; the selected
+  session also has an accent edge marker, so focus never depends on colour or
+  reverse video alone.
+- Bubble Tea requests the terminal background colour at startup and updates the
+  shared Lip Gloss and Huh palette when the terminal reports a change. Every
+  text-bearing light/white and dark/black palette pair, including focused button
+  text against its accent fill, is regression-tested at a minimum 4.5:1 contrast.
 - Names, paths, prompts, headings, and status text are sanitized before display
   so stored control sequences cannot alter the terminal.
 - Width calculations account for emoji, combining characters, and CJK text.
-- The prompt, current selection, lifecycle headings, and modal choices remain
+- The wizard prompt, current selection, lifecycle headings, and modal choices remain
   textual and keyboard-operable.
 
 ## Operational checks

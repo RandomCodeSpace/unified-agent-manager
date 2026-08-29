@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // renameTestModel wires a real store backed by a fake adapter that lists two
@@ -50,7 +50,7 @@ func TestRenameEnterOnEmptiedListDoesNotPanic(t *testing.T) {
 	m.sessions = nil
 	m.selected = 0
 
-	model, _ := m.handleRenameKey(tea.KeyMsg{Type: tea.KeyEnter})
+	model, _ := m.handleRenameKey(keyMsg("enter"))
 	m = model.(Model)
 	if m.renaming {
 		t.Fatal("Enter on an emptied list should close the rename modal")
@@ -77,7 +77,7 @@ func TestRenameTargetsOriginalSessionAfterReorder(t *testing.T) {
 	m.sessions = []adapter.Session{live[1], live[0]}
 	m.selected = 0
 
-	model, cmd := m.handleRenameKey(tea.KeyMsg{Type: tea.KeyEnter})
+	model, cmd := m.handleRenameKey(keyMsg("enter"))
 	m = model.(Model)
 	if cmd == nil {
 		t.Fatal("expected a rename command")
@@ -110,7 +110,7 @@ func TestRenameAcceptsMultibyteAndPaste(t *testing.T) {
 			m.sessions = []adapter.Session{{ID: "1", DisplayName: "x"}}
 			m.renaming = true
 			m.input = ""
-			model, _ := m.handleRenameKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: tc.runes})
+			model, _ := m.handleRenameKey(keyMsg(string(tc.runes)))
 			m = model.(Model)
 			if m.input != string(tc.runes) {
 				t.Fatalf("rename input = %q, want %q", m.input, string(tc.runes))
@@ -126,7 +126,7 @@ func TestRenameIgnoresAltChord(t *testing.T) {
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "x"}}
 	m.renaming = true
 	m.input = ""
-	model, _ := m.handleRenameKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a"), Alt: true})
+	model, _ := m.handleRenameKey(tea.KeyPressMsg{Code: 'a', Text: "a", Mod: tea.ModAlt})
 	m = model.(Model)
 	if m.input != "" {
 		t.Fatalf("Alt+a should not type into the rename buffer, got %q", m.input)
@@ -139,12 +139,12 @@ func TestWizardInputAcceptsMultibyteAndIgnoresAlt(t *testing.T) {
 	m.wizard = true
 	m.wizardStep = 3
 	m.input = ""
-	model, _ := m.handleWizardKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("café 世界")})
+	model, _ := m.handleWizardKey(keyMsg("café 世界"))
 	m = model.(Model)
 	if m.input != "café 世界" {
 		t.Fatalf("wizard input = %q, want %q", m.input, "café 世界")
 	}
-	model, _ = m.handleWizardKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z"), Alt: true})
+	model, _ = m.handleWizardKey(tea.KeyPressMsg{Code: 'z', Text: "z", Mod: tea.ModAlt})
 	m = model.(Model)
 	if m.input != "café 世界" {
 		t.Fatalf("Alt+z should not type into the wizard buffer, got %q", m.input)
@@ -181,8 +181,8 @@ func TestStopConfirmTargetsOriginalSessionAfterReorder(t *testing.T) {
 	m.sessions = []adapter.Session{live[1], live[0]}
 	m.selected = 0
 
-	_, model, cmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyEnter}, "enter")
-	m = model.(Model)
+	_, model, follow := m.handleModalKey(keyMsg("y"), "y")
+	m, cmd := settleConfirmation(t, model.(Model), follow)
 	if cmd == nil {
 		t.Fatal("expected a stop command from confirm Enter")
 	}
@@ -232,8 +232,8 @@ func TestStopConfirmRestartsOriginalSessionAfterReorder(t *testing.T) {
 	m.sessions = []adapter.Session{live[1], live[0]}
 	m.selected = 0
 
-	_, model, cmd := m.handleModalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")}, "r")
-	m = model.(Model)
+	_, model, follow := m.handleModalKey(keyMsg("r"), "r")
+	m, cmd := settleConfirmation(t, model.(Model), follow)
 	if cmd == nil {
 		t.Fatal("expected a restart command from confirm r")
 	}
