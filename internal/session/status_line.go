@@ -37,6 +37,21 @@ func paintStatus(cols, rows int, message string) string {
 	return out + "\x1b8" // restore cursor and pen
 }
 
+// clearPaintedStatus removes a notice drawn by paintStatus without moving the
+// provider's cursor. Unknown geometry is never painted by the startup spinner.
+func clearPaintedStatus(cols, rows int, message string) string {
+	if cols <= 0 || rows <= 0 {
+		return ""
+	}
+	lines := wrapToWidth("[uam: "+message+"]", cols, max(1, rows-1))
+	out := "\x1b7"
+	top := rows - len(lines) + 1
+	for index := range lines {
+		out += "\x1b[" + strconv.Itoa(top+index) + ";1H\x1b[2K"
+	}
+	return out + "\x1b8"
+}
+
 // wrapToWidth splits text into at most maxLines runs of at most cols cells.
 // Anything past the last line is dropped: at that point the notice is longer
 // than the terminal is tall.

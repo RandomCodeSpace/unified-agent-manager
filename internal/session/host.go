@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"github.com/creack/pty"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
@@ -138,6 +139,11 @@ type host struct {
 	// paths can observe the same attach — the attach initializer and the PTY
 	// pump seeing ?1004h turn on — and the flag keeps them from both firing.
 	providerFocused bool
+	// providerOutputSeen separates a harness that is still starting from one
+	// that has begun drawing. The attach-time spinner never reaches the PTY.
+	providerOutputSeen   bool
+	startupSpinnerActive bool
+	startupSpinnerFrame  string
 
 	child *exec.Cmd
 	// exited is closed once the agent process has been reaped; the kill
@@ -281,6 +287,14 @@ func (h *host) pumpPTY() {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 			h.mu.Lock()
+			firstOutput := !h.providerOutputSeen
+			startupFrame := ""
+			if firstOutput {
+				h.providerOutputSeen = true
+				h.startupSpinnerActive = false
+				startupFrame = h.startupSpinnerFrame
+				h.startupSpinnerFrame = ""
+			}
 			_, _ = h.term.Write(data)
 			if !h.term.FocusReporting() {
 				// The mode is off (or was just turned off): a later re-enable
@@ -295,16 +309,83 @@ func (h *host) pumpPTY() {
 				h.providerFocused = true
 			}
 			clients := h.registry.readyClients()
+			var sizes []terminalSize
+			if firstOutput && startupFrame != "" {
+				sizes = make([]terminalSize, len(clients))
+				for index, client := range clients {
+					sizes[index] = client.latestSize
+				}
+			}
 			h.mu.Unlock()
 			if focusGained {
 				h.writeFocusEvent(focusIn)
 			}
-			for _, client := range clients {
-				h.enqueueClient(client, serverMessage{kind: serverFramePTY, payload: data})
+			for index, client := range clients {
+				payload := data
+				if firstOutput && startupFrame != "" && sizes[index].valid() {
+					clear := clearPaintedStatus(sizes[index].cols, sizes[index].rows, startupSpinnerMessage(startupFrame))
+					payload = append([]byte(clear), data...)
+				}
+				h.enqueueClient(client, serverMessage{kind: serverFramePTY, payload: payload})
 			}
 		}
 		if err != nil {
 			return
+		}
+	}
+}
+
+const startupSpinnerLabel = "Starting session"
+
+func startupSpinnerMessage(frame string) string {
+	return frame + " " + startupSpinnerLabel
+}
+
+// runStartupSpinner paints only to attached viewers. Waiting one frame avoids
+// flashing on harnesses that draw immediately, and skipping a busy output
+// queue keeps cosmetic frames from creating backpressure.
+func (h *host) runStartupSpinner() {
+	ticker := time.NewTicker(spinner.Line.FPS)
+	defer ticker.Stop()
+	frameIndex := 0
+	for {
+		select {
+		case <-h.exited:
+			return
+		case <-ticker.C:
+			h.mu.Lock()
+			if h.providerOutputSeen || !h.startupSpinnerActive {
+				h.mu.Unlock()
+				return
+			}
+			clients := h.registry.readyClients()
+			if len(clients) == 0 {
+				h.startupSpinnerActive = false
+				h.startupSpinnerFrame = ""
+				h.mu.Unlock()
+				return
+			}
+			frame := spinner.Line.Frames[frameIndex]
+			painted := false
+			for _, client := range clients {
+				if !client.latestSize.valid() || len(client.out) != 0 {
+					continue
+				}
+				message := serverMessage{
+					kind:    serverFramePTY,
+					payload: []byte(paintStatus(client.latestSize.cols, client.latestSize.rows, startupSpinnerMessage(frame))),
+				}
+				select {
+				case client.out <- message:
+					painted = true
+				default:
+				}
+			}
+			if painted {
+				h.startupSpinnerFrame = frame
+			}
+			h.mu.Unlock()
+			frameIndex = (frameIndex + 1) % len(spinner.Line.Frames)
 		}
 	}
 }

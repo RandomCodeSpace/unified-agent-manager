@@ -76,6 +76,10 @@ func (h *host) initializeAttachClient(client *attachClient, registration clientR
 	}
 	client.out <- serverMessage{kind: serverFramePTY, payload: append([]byte(titleSequence(label)), h.term.Redraw()...)}
 	client.ready = true
+	if !h.providerOutputSeen && !h.startupSpinnerActive {
+		h.startupSpinnerActive = true
+		go h.runStartupSpinner()
+	}
 	focusGained := controls && h.term.FocusReporting() && !h.providerFocused
 	if focusGained {
 		h.providerFocused = true
