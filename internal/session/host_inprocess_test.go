@@ -6,16 +6,19 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"charm.land/bubbles/v2/spinner"
 )
 
 // startInProcessHost runs runHost in a goroutine inside the test process so
 // the host runtime (PTY pump, control ops, attach machinery, shutdown) is
 // exercised under the coverage profiler — the normal test path spawns hosts
 // as child processes, which Go coverage cannot observe.
-func startInProcessHost(t *testing.T, c *Client, name, command string) chan error {
+func startInProcessHost(t *testing.T, c *Client, name, command string, extraEnv ...string) chan error {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -25,8 +28,9 @@ func startInProcessHost(t *testing.T, c *Client, name, command string) chan erro
 	done := make(chan error, 1)
 	go func() {
 		defer func() { _ = w.Close() }()
+		envs := append([]string{"UAM_T=1"}, extraEnv...)
 		done <- runHost(c.Dir, hostLaunchSpec{
-			name: name, cwd: cwd, label: "label0", envs: []string{"UAM_T=1"}, command: []string{"/bin/sh", "-c", command},
+			name: name, cwd: cwd, label: "label0", envs: envs, command: []string{"/bin/sh", "-c", command},
 		}, w)
 	}()
 	type readyResult struct {
@@ -56,6 +60,65 @@ func startInProcessHost(t *testing.T, c *Client, name, command string) chan erro
 		t.Fatalf("host not ready: %q (read: %v, host: %v)", result.line, result.err, hostErr)
 	}
 	return done
+}
+
+func TestInProcessAttachShowsSpinnerUntilProviderOutput(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "uam-fake-90909090"
+	gate := filepath.Join(t.TempDir(), "provider-ready")
+	done := startInProcessHost(t, c, name,
+		`while [ ! -e "$UAM_TEST_GATE" ]; do sleep 0.01; done; printf 'HARNESS-READY\n'; sleep 60`,
+		"UAM_TEST_GATE="+gate,
+	)
+
+	attached := startQuietAttach(t, c.Dir, name, 80, 24)
+	waitFor(t, "startup spinner", func() bool {
+		return strings.Contains(attached.Snapshot(), "[uam: | Starting session]")
+	})
+	waitFor(t, "animated startup spinner", func() bool {
+		return strings.Contains(attached.Snapshot(), "[uam: / Starting session]")
+	})
+	if strings.Contains(attached.Snapshot(), "HARNESS-READY") {
+		t.Fatal("provider produced output before the test released it")
+	}
+	if err := os.WriteFile(gate, []byte("ready"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "provider output", func() bool {
+		return strings.Contains(attached.Snapshot(), "HARNESS-READY")
+	})
+	output := attached.Snapshot()
+	lastSpinner := strings.LastIndex(output, "Starting session")
+	providerOutput := strings.Index(output, "HARNESS-READY")
+	if lastSpinner < 0 || providerOutput < 0 || lastSpinner > providerOutput {
+		t.Fatalf("startup spinner was not replaced by provider output: %q", output)
+	}
+	if !strings.Contains(output[lastSpinner:providerOutput], "\x1b[24;1H\x1b[2K") {
+		t.Fatalf("startup spinner row was not cleared before provider output: %q", output[lastSpinner:providerOutput])
+	}
+
+	attached.Detach(t)
+	second := startQuietAttach(t, c.Dir, name, 80, 24)
+	waitFor(t, "running provider replay", func() bool {
+		return strings.Contains(second.Snapshot(), "HARNESS-READY")
+	})
+	time.Sleep(2 * spinner.Line.FPS)
+	if strings.Contains(second.Snapshot(), "Starting session") {
+		t.Fatalf("running provider showed a startup spinner: %q", second.Snapshot())
+	}
+	second.Detach(t)
+	if err := c.Kill(ctx, name); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runHost: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("host did not exit after kill")
+	}
 }
 
 func TestInProcessHostLifecycle(t *testing.T) {

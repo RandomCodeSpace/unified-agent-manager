@@ -77,6 +77,24 @@ func TestStatusFallsBackWithoutGeometry(t *testing.T) {
 	}
 }
 
+func TestClearPaintedStatusErasesEveryNoticeRow(t *testing.T) {
+	const message = "| Starting session"
+	painted := paintStatus(8, 10, message)
+	cleared := clearPaintedStatus(8, 10, message)
+	if got, want := strings.Count(cleared, "\x1b[2K"), strings.Count(painted, "\x1b[2K"); got != want {
+		t.Fatalf("cleared %d rows, want %d: %q", got, want, cleared)
+	}
+	if strings.Contains(cleared, message) {
+		t.Fatalf("clear sequence repainted the notice: %q", cleared)
+	}
+	if !strings.HasPrefix(cleared, "\x1b7") || !strings.HasSuffix(cleared, "\x1b8") {
+		t.Fatalf("clear must preserve the provider cursor: %q", cleared)
+	}
+	if got := clearPaintedStatus(0, 0, message); got != "" {
+		t.Fatalf("clear without geometry = %q, want no output", got)
+	}
+}
+
 // The runtime uses its own terminal size when it has one.
 func TestRuntimeStatusUsesTheViewerGeometry(t *testing.T) {
 	var output bytes.Buffer
