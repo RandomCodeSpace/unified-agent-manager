@@ -105,7 +105,7 @@ suspects for "the colors look flat":
 | Client | Quirk | Handling |
 |---|---|---|
 | Windows Terminal | Does not forward `COLORTERM` over SSH | `SetEnv`/`AcceptEnv` above |
-| Termius (mobile) | Half the screen is keyboard while operating | Compact board fits 40×12; tap = select, tap again = attach |
+| Termius (mobile) | Half the screen is keyboard while operating | Compact board fits 40×12; tap a row to select, then tap its explicit `Attach` or `Resume` action |
 | VS Code terminal | Fonts often draw ambiguous glyphs wide | Caught by the startup probe |
 | JetBrains (JediTerm) | Renders its own font fallback; occasional wide ambiguous glyphs | Caught by the startup probe |
 | Any client | Terminal left odd after a crash | `uam` writes a reset sequence on TUI exit; `reset(1)` as a last resort |

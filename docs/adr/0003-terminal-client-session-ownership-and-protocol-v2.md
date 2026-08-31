@@ -81,7 +81,7 @@ Every provider keeps native provider input. The current outer-screen policy is:
 | OpenAI Codex | Primary | Native |
 | GitHub Copilot CLI | UAM | Native |
 | Hermes Agent | UAM | Native |
-| Oh My Pi | UAM | Native |
+| Oh My Pi | Primary | Native |
 | OpenCode | UAM | Native |
 
 `TERM` supplied to the provider is fixed to the UAM-supported value; a client

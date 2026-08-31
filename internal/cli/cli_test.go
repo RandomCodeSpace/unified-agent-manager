@@ -238,6 +238,14 @@ func TestRunWithTUIHelpVersionAndDefault(t *testing.T) {
 	}
 }
 
+func TestUsageShowsDispatchWorkingDirectoryFlagBeforeAgent(t *testing.T) {
+	usage := captureCLIStderr(t, Usage)
+	want := "uam dispatch [--safe] [--alias <name>] [--profile <name>] [--cwd <path>] <agent>"
+	if !strings.Contains(usage, want) {
+		t.Fatalf("dispatch usage missing working-directory flag before agent:\n%s", usage)
+	}
+}
+
 func TestRunWithTUIStateFreeCommandsDoNotOpenStore(t *testing.T) {
 	blocked := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {

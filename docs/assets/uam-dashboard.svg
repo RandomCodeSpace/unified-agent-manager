@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Unified Agent Manager dashboard preview</title>
+  <desc id="desc">A terminal dashboard showing Codex, Claude Code, OpenCode, and Oh My Pi sessions with running, stopped, and failed states.</desc>
+
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#020617" flood-opacity="0.65"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="720" rx="28" fill="url(#page)"/>
+  <circle cx="1100" cy="90" r="170" fill="#0ea5e9" opacity="0.05"/>
+  <circle cx="110" cy="650" r="210" fill="#8b5cf6" opacity="0.04"/>
+
+  <g filter="url(#shadow)" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">
+    <rect x="40" y="35" width="1120" height="650" rx="22" fill="#080d18" stroke="#334155" stroke-width="2"/>
+    <path d="M62 35h1076a22 22 0 0 1 22 22v36H40V57a22 22 0 0 1 22-22Z" fill="#111827"/>
+    <line x1="40" y1="93" x2="1160" y2="93" stroke="#334155"/>
+
+    <circle cx="76" cy="64" r="7" fill="#fb7185"/>
+    <circle cx="100" cy="64" r="7" fill="#fbbf24"/>
+    <circle cx="124" cy="64" r="7" fill="#34d399"/>
+    <text x="600" y="70" text-anchor="middle" fill="#94a3b8" font-size="16">uam · agents</text>
+
+    <rect x="76" y="112" width="72" height="32" rx="7" fill="#38bdf8"/>
+    <text x="112" y="134" text-anchor="middle" fill="#07111f" font-size="18" font-weight="700">UAM</text>
+    <text x="168" y="134" fill="#e2e8f0" font-size="20" font-weight="700">Agents</text>
+    <text x="1098" y="133" text-anchor="end" fill="#94a3b8" font-size="15">4 of 4 · refreshed just now</text>
+
+    <rect x="76" y="160" width="1048" height="38" rx="7" fill="#111827"/>
+    <text x="94" y="185" fill="#94a3b8" font-size="15">◆  ~/project</text>
+    <text x="1104" y="185" text-anchor="end" fill="#64748b" font-size="14">4 sessions</text>
+
+    <rect x="76" y="208" width="1048" height="70" rx="9" fill="#101a2d" stroke="#1e3a5f"/>
+    <rect x="76" y="208" width="5" height="70" rx="2.5" fill="#38bdf8"/>
+    <rect x="98" y="225" width="104" height="34" rx="6" fill="#0c4a6e"/>
+    <text x="150" y="247" text-anchor="middle" fill="#bae6fd" font-size="15" font-weight="700">codex</text>
+    <circle cx="229" cy="242" r="6" fill="#34d399"/>
+    <text x="245" y="248" fill="#a7f3d0" font-size="15">Running</text>
+    <text x="355" y="239" fill="#f8fafc" font-size="17" font-weight="700">api-cleanup</text>
+    <text x="355" y="260" fill="#94a3b8" font-size="13">reviewing handlers</text>
+    <text x="884" y="248" text-anchor="end" fill="#64748b" font-size="14">4m</text>
+    <rect x="952" y="224" width="146" height="36" rx="7" fill="#38bdf8"/>
+    <text x="1025" y="247" text-anchor="middle" fill="#07111f" font-size="15" font-weight="700">Attach</text>
+
+    <rect x="76" y="288" width="1048" height="70" rx="9" fill="#0b1220" stroke="#1e293b"/>
+    <rect x="98" y="305" width="104" height="34" rx="6" fill="#7c2d12"/>
+    <text x="150" y="327" text-anchor="middle" fill="#fed7aa" font-size="15" font-weight="700">claude</text>
+    <circle cx="229" cy="322" r="6" fill="#34d399"/>
+    <text x="245" y="328" fill="#a7f3d0" font-size="15">Running</text>
+    <text x="355" y="319" fill="#f8fafc" font-size="17" font-weight="700">docs-refresh</text>
+    <text x="355" y="340" fill="#94a3b8" font-size="13">writing the README</text>
+    <text x="884" y="328" text-anchor="end" fill="#64748b" font-size="14">9m</text>
+    <rect x="952" y="304" width="146" height="36" rx="7" fill="#0f253a" stroke="#38bdf8"/>
+    <text x="1025" y="327" text-anchor="middle" fill="#7dd3fc" font-size="15" font-weight="700">Attach</text>
+
+    <rect x="76" y="368" width="1048" height="70" rx="9" fill="#0b1220" stroke="#1e293b"/>
+    <rect x="98" y="385" width="104" height="34" rx="6" fill="#4c1d95"/>
+    <text x="150" y="407" text-anchor="middle" fill="#ddd6fe" font-size="15" font-weight="700">opencode</text>
+    <circle cx="229" cy="402" r="6" fill="#fbbf24"/>
+    <text x="245" y="408" fill="#fde68a" font-size="15">Stopped</text>
+    <text x="355" y="399" fill="#f8fafc" font-size="17" font-weight="700">ui-polish</text>
+    <text x="355" y="420" fill="#94a3b8" font-size="13">dashboard layout</text>
+    <text x="884" y="408" text-anchor="end" fill="#64748b" font-size="14">2h</text>
+    <rect x="952" y="384" width="146" height="36" rx="7" fill="#0f253a" stroke="#38bdf8"/>
+    <text x="1025" y="407" text-anchor="middle" fill="#7dd3fc" font-size="15" font-weight="700">Resume</text>
+
+    <rect x="76" y="448" width="1048" height="70" rx="9" fill="#0b1220" stroke="#1e293b"/>
+    <rect x="98" y="465" width="104" height="34" rx="6" fill="#27272a"/>
+    <text x="150" y="487" text-anchor="middle" fill="#e4e4e7" font-size="15" font-weight="700">omp</text>
+    <circle cx="229" cy="482" r="6" fill="#fb7185"/>
+    <text x="245" y="488" fill="#fecdd3" font-size="15">Failed</text>
+    <text x="355" y="479" fill="#f8fafc" font-size="17" font-weight="700">test-fix</text>
+    <text x="355" y="500" fill="#94a3b8" font-size="13">last run exited</text>
+    <text x="884" y="488" text-anchor="end" fill="#64748b" font-size="14">1d</text>
+    <rect x="952" y="464" width="146" height="36" rx="7" fill="#0f253a" stroke="#38bdf8"/>
+    <text x="1025" y="487" text-anchor="middle" fill="#7dd3fc" font-size="15" font-weight="700">Resume</text>
+
+    <rect x="76" y="536" width="1048" height="72" rx="9" fill="#111827" stroke="#1e293b"/>
+    <text x="96" y="562" fill="#64748b" font-size="13">SELECTED SESSION</text>
+    <text x="96" y="588" fill="#e2e8f0" font-size="15">api-cleanup · codex · ~/project</text>
+    <text x="828" y="588" text-anchor="end" fill="#64748b" font-size="13">updated 12:42 UTC</text>
+    <rect x="956" y="554" width="142" height="36" rx="7" fill="#2a1118" stroke="#fb7185"/>
+    <text x="1027" y="577" text-anchor="middle" fill="#fda4af" font-size="15">Stop</text>
+
+    <line x1="76" y1="628" x2="1124" y2="628" stroke="#1e293b"/>
+    <text x="78" y="655" fill="#64748b" font-size="13">/ filter   e new   ↑↓ select   enter attach   ? help</text>
+    <text x="1122" y="655" text-anchor="end" fill="#475569" font-size="13">mouse enabled</text>
+  </g>
+</svg>

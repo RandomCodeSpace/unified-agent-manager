@@ -940,6 +940,10 @@ func TestSameSizeAttachNudgeDoesNotTruncateReplay(t *testing.T) {
 	attachOnce("initial empty replay", func(out string) bool {
 		return strings.Contains(out, "\x1b[1;1H")
 	})
+	waitFor(t, "initial controller detach", func() bool {
+		report, err := c.Doctor(ctx, name)
+		return err == nil && report.Controller == 0
+	})
 	if err := c.SendLine(ctx, name, "paint"); err != nil {
 		t.Fatalf("SendLine: %v", err)
 	}

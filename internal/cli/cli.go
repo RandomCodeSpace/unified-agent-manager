@@ -69,7 +69,7 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam                              open the TUI")
 	fmt.Fprintln(os.Stderr, "  uam new                          guided dispatch wizard")
 	fmt.Fprintln(os.Stderr, "  uam new [--profile <name>]       guided dispatch wizard")
-	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] [--alias <name>] [--profile <name>] <agent> [#session-name] [prompt]")
+	fmt.Fprintln(os.Stderr, "  uam dispatch [--safe] [--alias <name>] [--profile <name>] [--cwd <path>] <agent> [#session-name] [prompt]")
 	fmt.Fprintln(os.Stderr, "  uam attach [--allow-latest] <name-or-id>")
 	fmt.Fprintln(os.Stderr, "  uam last")
 	fmt.Fprintln(os.Stderr, "  uam version")
