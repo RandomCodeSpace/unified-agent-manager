@@ -1201,6 +1201,13 @@ func TestSupervisorReconnectBackoff(t *testing.T) {
 	}
 }
 
+func TestSupervisorStartupTimeout(t *testing.T) {
+	const want = 30 * time.Second
+	if serverStartupTimeout != want {
+		t.Fatalf("serverStartupTimeout = %s, want %s", serverStartupTimeout, want)
+	}
+}
+
 func TestSupervisorLifecycleStartup(t *testing.T) {
 	t.Run("readiness timeout", func(t *testing.T) {
 		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{HealthNeverReady: true})

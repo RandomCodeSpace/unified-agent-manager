@@ -28,7 +28,7 @@ import (
 
 const (
 	openCodeServerUsername = "uam"
-	serverStartupTimeout   = 5 * time.Second
+	serverStartupTimeout   = 30 * time.Second
 	serverStartupAttempts  = 3
 	serverPollInterval     = 25 * time.Millisecond
 	serverRequestTimeout   = 250 * time.Millisecond
