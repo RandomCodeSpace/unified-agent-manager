@@ -212,9 +212,9 @@ Profile resolution is ordered: **hard safety invariants**, **global defaults**,
 overrides**, **client-local attachment overrides**, then **capability
 constraints**. The invariant layer fixes provider `TERM` to `xterm-256color`
 and rejects profile environment, terminal-capability, and resume-policy changes.
-Provider policy fixes native keys and outer-screen
-behavior; Codex is primary-screen while the other current providers use a UAM
-outer screen. `uam profile assign <session-id> <name|none>` selects the
+Provider policy fixes native keys and outer-screen behavior. Codex and Oh My Pi
+use the primary screen; the other current providers use a UAM outer screen.
+`uam profile assign <session-id> <name|none>` selects the
 per-session profile; `uam profile override <session-id> [profile flags]` sets
 the durable final profile layer; `uam profile effective <session-id> --json`
 shows it. Attachment-local mouse, prefix, and quick-detach choices last only for
@@ -225,12 +225,14 @@ selected by a session. Launch-time fields are provider, mode, alias, and
 scrollback; profiles and session selection/overrides persist; client identity,
 role, dimensions, protocol, and capabilities do not.
 
+### Provider resume and terminal policy
+
 | Provider | Resume policy | Outer screen |
 |---|---|---|
 | Claude Code | Exact when its seeded ID is retained; otherwise guarded latest continuation | UAM |
 | GitHub Copilot CLI | Exact for UAM-created records | UAM |
-| OpenCode | Exact root conversation only | UAM |
-| Oh My Pi | Exact with its dedicated state; legacy records use guarded latest continuation | UAM |
+| OpenCode | Exact with a retained valid root `ses_…` ID; otherwise create a new Managed Session | UAM |
+| Oh My Pi | Exact with its dedicated state; legacy records use guarded latest continuation | Primary |
 | OpenAI Codex | Guarded latest continuation | Primary |
 | Hermes Agent | Unsupported; create a new Managed Session | UAM |
 

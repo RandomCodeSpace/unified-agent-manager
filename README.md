@@ -90,6 +90,12 @@ dashboard instead of causing an error.
 
 OpenCode 1.18.1 or newer is required.
 
+Continuing a stopped session varies by agent. Some return to an exact
+conversation, while others may ask before continuing the latest one. Hermes
+requires a new Managed Session. See the
+[provider resume table](docs/responsive-tui.md#provider-resume-and-terminal-policy)
+for the exact behavior.
+
 ## Everyday commands
 
 | Command | What it does |

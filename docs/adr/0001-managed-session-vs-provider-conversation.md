@@ -40,13 +40,16 @@ The current provider behavior is:
 |---|---|---|
 | Claude Code | UAM seeded and retained a provider session ID | `--continue` for older records or provider versions that could not seed an ID |
 | GitHub Copilot CLI | Always for UAM-created records; the UAM ID is used as the provider name | None |
-| OpenCode | The UAM identity integration learned a `ses_…` ID | `-c` continues OpenCode's latest conversation |
+| OpenCode | UAM retained a valid root `ses_…` Provider Conversation ID | None; a missing or invalid ID requires a new Managed Session |
 | Oh My Pi | The Managed Session has its dedicated provider state directory | Legacy records use `-c` without isolated state |
 | OpenAI Codex | Not currently available | `resume --last` |
 | Hermes Agent | Not currently available | Resume is unsupported; create a new Managed Session |
 
 Other providers may declare exact, heuristic, or unsupported resume through the
 same contract.
+
+OpenCode has no heuristic fallback. `--allow-latest` cannot Resume an OpenCode
+record without a valid retained ID.
 
 ### Ambiguity guard
 
