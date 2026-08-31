@@ -1,115 +1,228 @@
 # unified-agent-manager (`uam`)
 
 <p align="center">
+  <a href="https://github.com/RandomCodeSpace/unified-agent-manager/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/unified-agent-manager/ci.yml?branch=main&label=ci&style=for-the-badge&logo=githubactions&logoColor=white"></a>
   <a href="https://github.com/RandomCodeSpace/unified-agent-manager/actions/workflows/security.yml"><img alt="Security" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/unified-agent-manager/security.yml?branch=main&label=security&style=for-the-badge&logo=githubactions&logoColor=white"></a>
-  <a href="https://github.com/RandomCodeSpace/unified-agent-manager/actions/workflows/sonar.yml"><img alt="SonarCloud" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/unified-agent-manager/sonar.yml?branch=main&label=sonarcloud&style=for-the-badge&logo=sonarcloud&logoColor=white"></a>
   <a href="https://sonarcloud.io/project/overview?id=RandomCodeSpace_unified-agent-manager"><img alt="Quality Gate" src="https://img.shields.io/sonar/quality_gate/RandomCodeSpace_unified-agent-manager?server=https%3A%2F%2Fsonarcloud.io&style=for-the-badge&logo=sonarcloud"></a>
   <a href="https://github.com/RandomCodeSpace/unified-agent-manager/releases"><img alt="Release" src="https://img.shields.io/github/v/release/RandomCodeSpace/unified-agent-manager?style=for-the-badge&logo=github"></a>
   <a href="https://go.dev/"><img alt="Go" src="https://img.shields.io/github/go-mod/go-version/RandomCodeSpace/unified-agent-manager?style=for-the-badge&logo=go"></a>
 </p>
 
-`uam` is a terminal dashboard for managing multiple coding-agent CLIs from one place.
-It gives you a single TUI for launching, attaching to, resuming, and stopping
-long-running agent sessions — no tmux (or any other multiplexer) required.
+`uam` keeps coding-agent terminals running after you close the dashboard or lose
+an SSH connection. It gives Claude Code, Codex, Copilot, Hermes, Oh My Pi, and
+OpenCode one session roster without depending on tmux.
 
-Supported providers:
+Each managed session runs under a small detached `uam` host that owns the
+provider PTY, terminal state, scrollback, and a private Unix socket. Reopening
+the dashboard reconnects to that host. If the process stopped, UAM can relaunch
+it with the provider's supported resume behavior.
 
-- Claude Code
-- OpenAI Codex
-- GitHub Copilot CLI
-- Hermes Agent
-- Oh My Pi
-- OpenCode
+```text
+your terminal <-> uam attach <-> Unix socket <-> detached host <-> PTY <-> agent CLI
+```
 
-## What it does
+## What you get
 
-- Runs each managed session under its own lightweight, detached host process
-  (a PTY + terminal emulator + Unix socket) — sessions keep running when the
-  TUI exits, exactly like a tmux server, with no external dependency
-- Shows Running and Stopped sessions in one dashboard, with grounded exit detail
-- Persists session metadata across restarts, including each agent's exit code
-- Supports pinning, renaming, manual reorder, and group-by-directory
-- Detects GitHub PR URLs from agent output and can refresh PR state when `gh` is available
-- Supports per-session command aliases such as a custom Copilot launcher
+- One mouse-friendly and keyboard-friendly dashboard for every installed agent
+  CLI.
+- Detached sessions that survive dashboard exit, terminal close, and SSH
+  disconnect.
+- Explicit `Running`, `Stopped`, and `Failed` states based on process liveness,
+  not guesses made from terminal text.
+- Attach, resume, restart, stop, remove, pin, rename, filter, reorder, and
+  workspace grouping.
+- Exact provider resume where the provider exposes stable identity, with a
+  fail-closed confirmation before ambiguous latest-session resumes.
+- One controller per attached session, deterministic handoff to standby
+  clients, and protocol-compatible multi-terminal viewing.
+- Persistent launch and attachment profiles for provider, approval mode,
+  command alias, mouse handling, control prefix, quick detach, and scrollback.
+- GitHub pull request discovery from provider output, with optional status
+  refresh through `gh`.
 
-## Requirements
+UAM manages processes and terminal connections. It does not create branches,
+worktrees, commits, stashes, or filesystem isolation.
 
-- Go 1.25+ to build from source (the pinned toolchain downloads automatically)
-- Any provider CLI you want to manage already installed and authenticated
-- OpenCode 1.18.1 or newer when using the OpenCode provider. If UAM reports an
-  older version, run `opencode upgrade 1.18.1` before dispatching or resuming.
+## Supported providers
 
-That's it — agents are spawned directly under uam's own session hosts, so
-there is nothing else to install.
+UAM probes provider executables at startup. Missing CLIs stay out of the
+dashboard instead of breaking it.
 
-Providers are capability-probed at runtime. If a CLI is missing, `uam` hides it
-from the dispatch UI instead of failing the whole app.
+| Provider | Command | Resume behavior | Outer screen |
+|---|---|---|---|
+| Claude Code | `claude` | Exact when Claude supports a seeded session ID; guarded latest continuation for older records | UAM |
+| OpenAI Codex | `codex` | Guarded `resume --last` | Primary |
+| GitHub Copilot CLI | `copilot` | Exact by UAM session ID | UAM |
+| Hermes Agent | `hermes` | Unsupported; start a new managed session | UAM |
+| Oh My Pi | `omp` | Exact for sessions with dedicated provider state; guarded latest continuation for legacy records | Primary |
+| OpenCode | `opencode` | Exact provider conversation only | UAM |
 
-## Supported platforms
+OpenCode must be version 1.18.1 or newer. Run `opencode upgrade 1.18.1` if UAM
+rejects an older installation.
 
-- Linux on AMD64 and ARM64 — Ubuntu, Debian, Arch Linux, UBI8 and RHEL are
-  full-support tier with identical behavior, verified by a per-distro CI
-  matrix; other distributions are best effort. The binary is fully static
-  (`CGO_ENABLED=0`), so it carries no distro dependencies.
-- macOS, on AMD64 (Intel) and ARM64 (Apple silicon)
-- Native Windows is not supported. Windows Terminal and PowerShell can be used
-  only as SSH clients connecting to a Linux or macOS host running `uam`.
+"Exact" means UAM can address the intended provider conversation. "Guarded"
+means the provider can only continue its most recent conversation. When more
+than one retained session for that provider shares a workspace, UAM refuses the
+heuristic launch until you confirm it in the TUI or pass `--allow-latest` in the
+CLI.
 
-Client terminals (Windows Terminal, Termius, VS Code, JetBrains, anything
-xterm-class) are adapted to per startup, not assumed: see
-[Terminal and OS support](docs/terminals.md).
+## Platform support
+
+| Tier | Systems |
+|---|---|
+| Release targets | Linux and macOS on AMD64 and ARM64 |
+| Distro CI | Ubuntu, Debian, Arch Linux, UBI8, and RHEL-compatible Linux |
+| Best effort | Other Linux distributions |
+| Client only | Windows Terminal or another Windows SSH client connected to a Linux or macOS host |
+| Unsupported host | Native Windows |
+
+Release binaries use `CGO_ENABLED=0`. They do not need distro-specific C
+libraries or a local tmux installation.
 
 ## Install
 
-Install the `uam` binary directly:
+Download a release archive and its signed checksum manifest from
+[GitHub Releases](https://github.com/RandomCodeSpace/unified-agent-manager/releases),
+or install the latest Go module version:
 
 ```sh
 go install github.com/RandomCodeSpace/unified-agent-manager/cmd/uam@latest
 ```
 
-Build locally:
+To build the current checkout:
 
 ```sh
 make build
+./bin/uam version
 ```
 
-## Quick start
+Source builds require Go 1.25.8 or newer. The module pins its build toolchain,
+which Go downloads automatically when needed.
 
-Open the dashboard:
+## Start your first session
+
+Install and authenticate at least one supported provider CLI, then run:
+
+```sh
+uam doctor
+uam new
+```
+
+`uam new` asks for a provider, optional command alias, workspace, session name,
+and prompt. It launches the provider and attaches immediately.
+
+Detach with `Ctrl+B d`. The provider keeps running. Open the dashboard later
+and select the session:
 
 ```sh
 uam
 ```
 
-Guided dispatch flow, using OpenCode by default when it is available, then opening the created session immediately:
+For a non-interactive launch, put flags before the provider name:
 
 ```sh
-uam new
-```
-
-Headless dispatch examples:
-
-```sh
-uam dispatch claude "fix flaky tests"
+uam dispatch claude "fix the flaky tests"
 uam dispatch --cwd /path/to/repo codex "review this package"
-uam dispatch --alias ghcp copilot "review this branch"
+uam dispatch --safe --alias ghcp copilot "review this branch"
+uam dispatch --profile focused opencode "implement the parser"
 ```
 
-## CLI
+The default launch mode adds the provider's full-access or auto-approve option
+when that provider has one. `--safe` omits those options and leaves the
+provider's normal approval behavior in place. It is not an operating-system
+sandbox.
 
-```sh
-uam                              # open the TUI
-uam new                          # guided dispatch wizard, then attach
-uam dispatch [--safe] [--alias <name>] <agent> [#session-name] [prompt]
+## Dashboard controls
+
+The dashboard is a single `Agents` roster. Clicking a row selects it. Only the
+named `Attach`, `Resume`, `Stop`, `Remove`, or `Retry` target performs an action.
+That separation prevents a tap used for navigation from launching or deleting
+anything.
+
+| Input | Action |
+|---|---|
+| Click a row | Select it |
+| Click `Attach` or `Resume` | Run the row's primary action |
+| Click `Stop` or `Remove` | Open a confirmation with Cancel focused |
+| Mouse wheel, `Up`, `Down` | Move selection |
+| `Enter`, `Right` | Attach to Running or resume and attach to Stopped |
+| `Space` | Resume a Stopped session without attaching |
+| `/` | Filter by name, ID, provider, task, workspace, alias, or lifecycle |
+| `e` | Open the new-session wizard |
+| `Tab` | Cycle the default provider |
+| `Ctrl+T` | Pin or unpin |
+| `Ctrl+R` | Rename |
+| `Ctrl+X` | Confirm Stop or Remove |
+| `Ctrl+S` | Toggle workspace grouping |
+| `Shift+Up`, `Shift+Down` | Reorder within the current lifecycle and group |
+| `r` | Retry a failed refresh |
+| `?` | Toggle the compact help footer |
+| `Esc` | Close the current overlay or quit the dashboard |
+| `Ctrl+C` | Quit from anywhere |
+
+The roster uses three width classes: Wide at 96 columns or more, Compact from
+60 to 95, and Narrow from 40 to 59. Height changes the visible row count, not
+row meaning. Below 40 columns or 12 rows, UAM hides destructive targets and
+shows a minimum-size notice.
+
+Mouse reporting is enabled by default. Set `UAM_NO_MOUSE=1` before launching
+the dashboard when native drag-to-select copying matters more than pointer
+controls.
+
+See [Responsive TUI design and operations](docs/responsive-tui.md) for layout,
+filtering, mobile use, no-color behavior, and terminal troubleshooting.
+
+## Attached-session controls
+
+An attachment is a temporary client. It is not another managed session. The
+first interactive client controls provider input and PTY size. Later clients
+receive output as standbys until control transfers or the controller leaves.
+
+The default local prefix is `Ctrl+B`:
+
+| Input | Action |
+|---|---|
+| `prefix d` | Detach |
+| `prefix c` | Send a literal `Ctrl+C` to the provider |
+| `prefix r` | Request control |
+| `prefix o` | Transfer control to the next standby |
+| `prefix i` | Show role and profile information |
+| `prefix m` | Toggle provider mouse passthrough for this attachment |
+| `prefix prefix` | Send the literal prefix byte to the provider |
+
+A profile can replace `Ctrl+B` with another control letter. Plain `Ctrl+C` and
+`Ctrl+Z` are swallowed while attached so they do not accidentally terminate or
+suspend a detached provider. Use `prefix c` when you intend to interrupt the
+provider.
+
+A bare Left arrow detaches only when the provider input is empty and quick
+detach is enabled. It remains a normal cursor key inside a draft. Copilot turns
+this shortcut off by default because it uses Left for its own navigation.
+
+Bracketed paste bypasses all prefix handling and passes through byte for byte.
+`UAM_ATTACH_MOUSE=off` keeps mouse gestures with the local terminal instead of
+the provider. `auto` and `on` preserve provider mouse reporting locally and
+over SSH.
+
+The normative controller, standby, observer, and compatibility rules are in
+[Terminal client/session ownership and protocol v2](docs/adr/0003-terminal-client-session-ownership-and-protocol-v2.md).
+
+## CLI reference
+
+```text
+uam
+uam new [--profile <name>]
+uam dispatch [--safe] [--cwd <path>] [--alias <name>] [--profile <name>] <agent> [#session-name] [prompt]
 uam ls [--json]
 uam attach [--allow-latest] <name-or-id>
 uam last
-uam stop <id>                    # kill the session, keep record
-uam restart [--allow-latest] <id>  # stop the agent and resume it in place
-uam rm <id>                      # kill the session and remove record
-uam kill-all                     # stop every managed session
-uam version
+uam stop <id>
+uam restart [--allow-latest] <id>
+uam rm <id>
+uam kill-all
 uam doctor [<session-id>] [--json]
+uam version
+
 uam profile ls [--json]
 uam profile show <name> [--json]
 uam profile set <name> [profile flags]
@@ -120,346 +233,120 @@ uam profile override <session-id> [profile flags]
 uam profile effective <session-id> [--json]
 ```
 
-## TUI keys
+`attach`, `stop`, `restart`, and `rm` accept a full ID, an unambiguous ID
+prefix, or the backend session name. `stop` keeps a resumable record. `rm`
+stops the process and deletes the record. `restart` keeps the UAM identity and
+asks the provider to resume its conversation.
 
-| Key | Action |
-|---|---|
-| Click / tap a row | Select that agent session without activating it |
-| Click / tap `Attach` or `Resume` | Run that row's explicit primary action |
-| Click / tap `Stop` or `Remove` | Open a Huh confirmation form for the selected record |
-| Wheel up / down | Move selection |
-| `↑` / `↓` | Move selection |
-| `Enter` / `→` | Run the selected session's `Attach` or `Resume` action |
-| `Tab` | Cycle default agent |
-| `Space` | Resume Stopped in the background |
-| `Ctrl+T` | Pin selected session |
-| `Ctrl+R` | Rename selected session |
-| `Ctrl+X` | Open the selected session's Stop or Remove confirmation |
-| `Ctrl+S` | Toggle group-by-directory |
-| `Shift+↑/↓` | Reorder rows |
-| `/` | Filter by name, provider, task, workspace, ID, or lifecycle |
-| `r` | Retry after a persistent refresh failure |
-| `e` | Open the guided dispatch wizard |
-| `?` | Toggle the Bubbles help footer between primary and secondary commands |
-| `Esc` | Close the current overlay or quit |
-| `Ctrl+C` | Quit from anywhere, including modals |
+### Profiles
 
-The dashboard is one literal **Agents** roster. Every fixed-height row keeps a
-session identity, `Running`, `Stopped`, or `Failed`, and an explicit `Attach`
-or `Resume` action. A single click selects a row; activation requires its named
-action cell or `Enter`. The fixed context band carries provider/session detail
-and the destructive `Stop` or `Remove` action, which is confirmed by a Huh
-form with `Cancel` focused initially.
-
-If a refresh fails, the last good roster stays usable and the fixed context
-band shows a persistent `Retry` action. Click it or press `r`; the error clears
-only when retry begins and returns if the load fails again.
-
-The roster uses width-only layouts: Wide at 96 columns, Compact from 60 to 95,
-and Narrow from 40 to 59. Height changes only the number of Bubbles viewport
-rows. At 40 by 12, identity, literal lifecycle, selection, action, context, and
-one line of Bubbles help remain visible. Secondary metadata disappears as
-whole fields rather than producing clipped punctuation.
-
-Bubble Tea binds mouse handling to the displayed view and Lip Gloss compositor
-layers resolve row and action targets. Refresh or resize therefore cannot turn
-an old coordinate into a different backend action. Lifecycle wording and glyphs
-remain distinct without colour and have measured ASCII fallbacks. The top band
-uses a single-cell-safe Lip Gloss `UAM` badge, then keeps the build version,
-local `HH:MM TZ` clock, and literal `Agents` surface visible at every supported
-width. Provider leads every row as a filled Lip Gloss label, including Narrow
-mode. The fixed context band shows `Updated HH:MM TZ`, sourced from UAM's persisted last
-liveness observation rather than guessed provider activity. Bubble Tea also
-queries the live terminal
-background so the high-contrast light or dark palette is selected after startup.
-See [Terminal and OS support](docs/terminals.md).
-
-Mouse reporting is enabled so the dashboard is tappable on a phone. Set
-`UAM_NO_MOUSE=1` to turn it off and restore the terminal's native
-drag-to-select text copying.
-
-See [Responsive TUI design and operations](docs/responsive-tui.md) for layout
-thresholds, filtering, mobile guidance, lifecycle labels, and accessibility.
-
-## Attached sessions
-
-`uam attach` (or `Enter` in the TUI) bridges your terminal straight to the
-agent's PTY. An attach client is temporary client state, not part of the
-Managed Session record. The host permits one controller at a time; additional
-interactive clients wait as standbys, and observers receive output without
-being allowed to send input, resize the PTY, or answer terminal queries. See
-[terminal client and session ownership](docs/adr/0003-terminal-client-session-ownership-and-protocol-v2.md)
-for the normative ownership and protocol rules.
-
-- `Ctrl+B d` detaches and returns to the dashboard by default. `prefix prefix`
-  sends a literal configured prefix (`Ctrl+B Ctrl+B` only when the profile uses
-  `C-b`); `prefix c` sends a literal `Ctrl+C`. A profile can change the prefix;
-  use the profile's `C-x` spelling, such as `C-a`, when configuring it.
-- `prefix r` requests control — the current controller is shown a notice, and
-  the handoff itself stays theirs to make. `prefix o` transfers control when
-  used by the current controller, `prefix i` reports the current role, and
-  `prefix m`
-  toggles mouse passthrough for this attachment only — turning it back on
-  restores the mouse modes the provider currently has set. A prefix command
-  never enters provider input.
-- The prefix, `Ctrl+C` and `Ctrl+Z` are recognised whether the terminal sends
-  them as plain control bytes or in the kitty keyboard / `modifyOtherKeys`
-  encodings that providers switch on.
-- UAM notices are painted on the bottom rows of your terminal and leave the
-  cursor where the agent had it, so they never scroll the agent's screen. The
-  agent's next repaint of those rows clears them.
-- Plain `Ctrl+C` is swallowed while attached so terminal copy shortcuts do not
-  cancel the agent
-- `←` (left arrow) also detaches when you haven't typed anything since the
-  last submit/clear — tap it to hop back to the dashboard. Inside a draft it
-  moves the cursor as usual, and after history/menu navigation it stays
-  passthrough until the next `Enter`/`Esc`. Set `UAM_ATTACH_BACK_DETACH=0`
-  to disable.
-- The session keeps running after you detach or close the terminal
-- `Ctrl+Z` is swallowed while attached — suspending an agent inside a detached
-  session would leave it impossible to foreground
-- Several terminals can attach to the same session at once
-
-`UAM_ATTACH_MOUSE` controls whether provider mouse reporting is preserved:
-
-- `auto` (the default) preserves provider mouse reporting; `on` is an accepted
-  alias for it. UAM does not vary the policy by transport — local and SSH
-  attachments behave identically
-- `off` suppresses provider mouse modes so the terminal keeps selection and
-  paste gestures
-
-Bracketed-paste payload is forwarded byte-for-byte. Control bytes inside a paste
-do not trigger UAM's attach shortcuts. UAM cannot access the client clipboard or
-turn an unsent mouse gesture into remote input. Terminal names and color hints
-reported by an attachment are diagnostics metadata, not proof that the client
-supports a terminal feature.
-
-For PowerShell SSH, use Windows Terminal and configure a keyboard paste binding
-such as `Ctrl+V`, `Ctrl+Shift+V`, or `Shift+Insert`. Provider mouse reporting is
-enabled by default so OpenCode and other mouse-aware providers can scroll. Set
-`UAM_ATTACH_MOUSE=off` on the remote host when terminal-owned selection or
-right-click paste is more important. Native Windows remains unsupported;
-Windows is the SSH client in this setup.
-
-In the TUI, `Ctrl+X` opens a Huh form with `Cancel` selected. Choosing the
-affirmative action stops a Running process and removes its stored record, or
-removes an already Stopped record. Use `uam stop <id>` when you want to stop the
-process but retain a Stopped row for later resume. For paste diagnosis, follow the
-[SSH troubleshooting steps](docs/responsive-tui.md#ssh-mouse-and-paste).
-
-## Resuming sessions
-
-Detach/reattach never restarts anything — the provider keeps running under its
-host and attach is a plain reconnect. Resume applies only when the provider
-process is Stopped, such as after a reboot, clean exit, or `uam stop`.
-
-UAM distinguishes an **exact resume**, which targets known provider state, from
-a **heuristic resume**, which asks the provider to continue its latest
-conversation. If a heuristic provider has multiple retained sessions in the
-same workspace, UAM fails closed before launching it. The TUI asks for explicit
-confirmation; CLI users may retry only when latest-conversation behavior is
-acceptable:
+Profiles make repeated launch and attach policy explicit:
 
 ```sh
-uam attach --allow-latest <name-or-id>
-uam restart --allow-latest <id>
+uam profile set focused \
+  --provider claude \
+  --mode safe \
+  --mouse off \
+  --prefix C-a \
+  --back-detach off \
+  --scrollback 8000
+
+uam profile default focused
+uam profile effective <session-id> --json
 ```
 
-Provider behavior:
+Profile flags are `--provider`, `--mode safe|yolo`, `--alias`,
+`--mouse auto|on|off`, `--prefix C-a` through `C-z`,
+`--back-detach auto|on|off`, `--scrollback`, and repeatable `--unset`.
 
-- **Claude Code**: uam seeds claude's session id with the uam id at dispatch
-  (`--session-id`, when the installed claude supports it) and resumes that
-  exact conversation with `--resume <id>` — several sessions in the same
-  directory each resume their own conversation. Sessions dispatched before
-  this feature (or with an older Claude Code) use the guarded `--continue`
-  heuristic.
-- **Copilot**: exact resume — the session is named with the uam id at
-  dispatch (`--name`) and resumed by that exact name (`--resume=<id>`).
-- **OpenCode**: exact resume only. UAM learns the current root conversation ID
-  and resumes it with `--session`. A stopped legacy record without a valid
-  exact identity cannot be resumed; dispatch a new Managed Session instead.
-- **Oh My Pi**: new sessions receive a UAM-ID-specific provider state directory,
-  making `-c` exact. Legacy records without that directory retain guarded
-  latest-conversation behavior.
-- **Codex**: `codex resume --last` is heuristic because Codex cannot currently
-  be given the UAM ID when the conversation is created.
-- **Hermes**: no provider resume command is configured. A stopped Hermes record
-  cannot be resumed; dispatch a new Managed Session instead.
-- After a reboot, records survive in the store and resume on attach — a
-  provider-aware relaunch, not a surviving PTY. The old terminal process and
-  its screen modes are gone. A SIGKILL similarly prevents normal terminal
-  cleanup; start a fresh terminal or run `reset` if the local terminal is left
-  in an unusable mode.
+Resolution order is fixed: built-in defaults, provider policy, the selected
+profile, per-session overrides, attachment-local overrides, then negotiated
+client capabilities. Profiles cannot inject arbitrary environment variables or
+change a provider's resume classification.
 
-### Multiple sessions in one workspace
+## Persistence and recovery
 
-UAM can run several Managed Sessions in one project directory. They have
-independent UAM IDs, terminal hosts, attach points, and provider conversations,
-but they share the same files. The grouped TUI warns when more than one Running
-session shares a Workspace. Use separate Git worktrees or checkouts when agents
-must not edit the same tree; UAM does not create them automatically.
-
-OpenCode's `/new` creates a new provider conversation *inside the current
-Managed Session*. It intentionally does not create another UAM row or host. UAM
-tracks the newly selected root conversation for later exact resume. To get two
-independently attachable sessions, use `uam new` or `uam dispatch` again.
-
-Each managed OpenCode terminal owns a private authenticated server bound to a
-distinct loopback port. UAM uses that server to create or validate the exact
-root conversation, attach to that exact ID, and observe `/new` root changes.
-Consequently, two OpenCode sessions in the same Workspace retain independent
-ports, credentials, terminal hosts, and provider conversation IDs.
-
-### OpenCode upgrade cleanup
-
-Current UAM releases do not create, inspect, repair, execute, or delete the
-legacy identity plugin at
-`$XDG_STATE_HOME/uam/providers/opencode/uam-identity-plugin.mjs` (under
-`~/.local/state` when `XDG_STATE_HOME` is unset). A stale file there is inert;
-its contents, type, ownership, or permissions cannot block OpenCode launch.
-
-No automatic cleanup is performed. If no older UAM installation still needs
-that generated state, cleanup is optional. First inspect and verify the exact
-UAM-generated directory, then remove only that directory:
-
-```sh
-legacy_dir="${XDG_STATE_HOME:-$HOME/.local/state}/uam/providers/opencode"
-printf 'Review before removal: %s\n' "$legacy_dir"
-ls -la -- "$legacy_dir"
-# After verifying the printed path and contents:
-rm -rf -- "$legacy_dir"
-```
-
-The terminology and compatibility decision are documented in
-[Managed Session vs. Provider Conversation](docs/adr/0001-managed-session-vs-provider-conversation.md).
-
-## Session storage
-
-`uam` stores session metadata at:
+Durable configuration lives at:
 
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/uam/sessions.json
 ```
 
-Writes are atomic and lock-protected. If the file needs migration or recovery,
-`uam` creates backup files next to it.
+Set `UAM_CONFIG_DIR` to place `sessions.json` elsewhere. Writes use a lock,
+temporary file, sync, and rename. Schema migrations create an adjacent backup
+first. A newer schema opens read-only in an older binary so unknown data is not
+silently destroyed.
 
-Per-session runtime state (control sockets and state files) lives in a
-per-user directory under the system temp dir — `/tmp/uam-<uid>` on most
-systems (override with `UAM_SESSION_DIR`) — created owner-only and verified
-to be owned by you. The temp dir is used instead of `$XDG_RUNTIME_DIR`
-deliberately: logind wipes the runtime dir when your last login session ends,
-which would strand detached sessions that survive logout (the same reason
-tmux lives in `/tmp/tmux-<uid>`). Hosts periodically refresh their files'
-timestamps so age-based `/tmp` cleanup never collects a long-idle session.
+Live runtime files use `UAM_SESSION_DIR` or a private per-user directory under
+the system temp directory, usually `/tmp/uam-<uid>`. That directory contains
+short-lived sockets, process identity, and provider handoff state. It is
+owner-only and deliberately separate from durable configuration.
 
-Note for distros with `KillUserProcesses=yes` in logind.conf: any detached
-process — uam session hosts and tmux alike — is killed at logout unless you
-run `loginctl enable-linger`.
+A reboot removes the old hosts and PTYs but leaves durable records. Selecting
+a Stopped row performs a provider-aware relaunch. It does not restore the old
+terminal buffer or attached clients.
 
-> Upgrading from a tmux-backed release: sessions still running inside the old
-> `tmux -L uam` server are not visible to the native backend. Finish or stop
-> them first (`tmux -L uam kill-server`); stored session records carry over
-> unchanged and remain resumable.
+## Safety boundaries
 
-### Profiles and diagnostics
+- UAM may launch providers with broad file and command permissions. Treat the
+  prompt, repository, provider configuration, and instructions the provider
+  reads as trusted input.
+- `--safe` changes provider arguments. It does not sandbox UAM or the provider
+  process.
+- Several managed sessions may share one workspace and edit the same files.
+  Use separate Git worktrees or checkouts when concurrent tasks need isolation.
+- Runtime socket ownership protects sessions from other local users. It does
+  not protect the current user from a provider launched under that same user.
+- UAM sanitizes stored text before terminal display and excludes terminal
+  content and secret-like values from diagnostics.
+- Normal detach and handled signals restore terminal modes. `SIGKILL` cannot
+  run cleanup. Use `reset` or start a fresh terminal if a killed client leaves
+  the terminal unusable.
 
-Profiles supply stable launch and attach defaults. Resolution is ordered; a
-later layer can refine only fields it is allowed to control:
+## Useful environment variables
 
-1. **Hard safety invariants** fix the provider `TERM` value to
-   `xterm-256color` and reject profile-supplied environment, capability, or
-   resume-policy changes.
-2. **Global defaults** select the default provider, yolo mode, scrollback,
-   mouse policy, `C-b` prefix, and quick-detach behavior.
-3. **Built-in provider policy** selects the provider identity, native key
-   protocol, and outer-screen policy. OpenAI Codex is the primary-screen
-   exception; the other current providers use a UAM outer screen.
-4. **Selected named profile** applies the default profile or a session-selected
-   profile. A provider-constrained profile must match the session provider.
-5. **Per-session overrides** refine the selected profile for that durable
-   session.
-6. **Client-local attachment overrides** can refine mouse, prefix, and
-   quick-detach for only the current attachment.
-7. **Capability constraints** apply the client's negotiated capabilities. For
-   example, local mouse filtering and an owned outer screen require that the
-   client supports them; terminal hints are not capability proof.
-
-Launch-time fields are provider, approval mode, command alias, and scrollback.
-The default profile, named profiles, selected session profile, and per-session
-overrides are persistent configuration. Mouse, control prefix, and quick-detach
-can also be attachment-local; client identity, role, dimensions, protocol, and
-capabilities are runtime-only and never enter `sessions.json`.
-
-```sh
-uam profile set focused --provider claude --mode safe --mouse off --prefix C-a --back-detach off --scrollback 8000
-uam profile default focused
-uam profile show focused --json
-uam profile ls --json
-uam doctor --json
-```
-
-Use `uam profile assign <session-id> <name|none>` to select a profile for one
-session, `uam profile override <session-id> [profile flags]` for its final
-overrides, and `uam profile effective <session-id> --json` to inspect the
-resolved result. `uam profile rm <name>` refuses to delete a default or a
-profile still selected by a session; clear those references first. `uam doctor
-<session-id> --json` reports runtime roles, supported protocol versions,
-resolved profile, provider terminal policy, and fallback reasons. Diagnostics
-redact secret-like values and do not print terminal input or output.
-
-Schema v4 migrates older records atomically. Before a migration, UAM writes an
-exact adjacent `sessions.json.bak.*` backup; if the write fails, the original
-remains in place. To roll back, stop UAM, replace `sessions.json` with the
-chosen backup, then start a compatible binary. Same-schema unknown fields round
-trip. A config from a newer schema opens read-only so an older binary cannot
-clobber fields it does not understand.
-
-## Safety model
-
-`uam` launches providers in their full-access or auto-approve ("yolo") mode by
-default when the provider supports it. In that mode, treat the repository,
-prompt, provider configuration, and any instructions the agent reads as trusted:
-the provider may execute commands and change files without pausing for approval.
-Use `uam dispatch --safe ...` when you want the provider's default approval
-behavior instead. Safe mode changes provider arguments; it is not an operating-
-system sandbox and does not reduce the permissions of the `uam` process itself.
-
-OpenCode keeps the same safety-mode contract as the other providers. Default
-yolo mode starts the full OpenCode TUI with its native `--auto` flag.
-`uam dispatch --safe ...` omits that flag and leaves OpenCode permission prompts
-visible for the user. Safe mode still is not an operating-system sandbox.
-
-`uam` does not make git checkpoints, stash changes, or modify your repository on
-its own. It starts and manages agent sessions; the provider remains responsible
-for its own execution model.
-
-## Design and operations
-
-- [Terminology glossary](CONTEXT.md)
-- [Managed Session vs. Provider Conversation](docs/adr/0001-managed-session-vs-provider-conversation.md)
-- [Terminal ownership over SSH](docs/adr/0002-terminal-ownership-over-ssh.md)
-- [Terminal client/session ownership and protocol v2](docs/adr/0003-terminal-client-session-ownership-and-protocol-v2.md)
-- [Responsive TUI design and operations](docs/responsive-tui.md)
-- [Minimalist Agent dashboard design](docs/superpowers/specs/2026-08-28-minimalist-agent-dashboard-design.md)
-- [Charm dashboard research](docs/research/2026-08-28-minimalist-mouse-first-charm-dashboard.md)
+| Variable | Purpose |
+|---|---|
+| `UAM_CONFIG_DIR` | Override the durable configuration directory |
+| `UAM_SESSION_DIR` | Override the runtime socket and state directory |
+| `UAM_CACHE_DIR` | Override the log and cache directory |
+| `UAM_NO_MOUSE=1` | Disable dashboard mouse reporting |
+| `UAM_ATTACH_MOUSE=auto|on|off` | Control provider mouse passthrough for one attachment |
+| `UAM_ATTACH_PREFIX=C-a` | Override the attachment prefix for one client |
+| `UAM_ATTACH_BACK_DETACH=0` | Disable bare-Left quick detach for one client |
+| `UAM_ASCII=1` | Force ASCII dashboard glyphs |
+| `UAM_WIDE=0` | Trust ambiguous Unicode glyphs as one cell wide |
+| `NO_COLOR=1` | Disable color styling |
+| `UAM_DEBUG=1` | Enable debug logging |
+| `VISUAL`, `EDITOR` | Select the external editor used by the TUI prompt editor |
 
 ## Development
 
 ```sh
-make test        # unit and integration
-make test-e2e    # drives the built binary over real PTYs
-make cover       # coverage total
-make build
-make lint
+make test        # unit, integration, in-process host, and real-PTY fixtures
+make test-e2e    # built binary through real host, attach, and dashboard PTYs
+make cover       # write coverage.out and print total coverage
+make lint        # golangci-lint
+make build       # static binary at bin/uam
 ```
 
-See [Testing uam](docs/testing.md) for the end-to-end harnesses, the evidence
-collectors and their required directory names, and the environment
-sensitivities to know about.
+CI also runs the race detector, `go vet`, Staticcheck, distro real-PTY tests,
+`govulncheck`, `gosec`, release configuration checks, and signed release
+publication.
 
-## Releases
+Read [Testing UAM](docs/testing.md) before changing PTY, terminal, attach, or
+session-host behavior. Those paths have failure modes that ordinary unit tests
+cannot reproduce.
 
-Prebuilt binaries are published on the
-[GitHub Releases](https://github.com/RandomCodeSpace/unified-agent-manager/releases)
-page.
+## Design and operations
+
+- [Terminology](CONTEXT.md)
+- [Managed Session vs. Provider Conversation](docs/adr/0001-managed-session-vs-provider-conversation.md)
+- [Terminal ownership over SSH](docs/adr/0002-terminal-ownership-over-ssh.md)
+- [Terminal client/session ownership and protocol v2](docs/adr/0003-terminal-client-session-ownership-and-protocol-v2.md)
+- [Responsive TUI design and operations](docs/responsive-tui.md)
+- [Terminal and OS support](docs/terminals.md)
+- [Testing UAM](docs/testing.md)
+
+Prebuilt binaries, checksums, SBOMs, and signing material are published on the
+[releases page](https://github.com/RandomCodeSpace/unified-agent-manager/releases).
