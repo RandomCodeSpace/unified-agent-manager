@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -362,7 +363,10 @@ func TestE2EAgentExitDeliversFinalOutput(t *testing.T) {
 	if !viewer.await("AGENT-EXITING", 25*time.Second) {
 		t.Fatalf("the agent's final output never reached the viewer: %q", viewer.seen.tail())
 	}
-	if !viewer.await("session ended", 10*time.Second) {
+	for i := range 60 {
+		viewer.requireSeen("complete final output", fmt.Sprintf("FINAL-LINE-%03d", i))
+	}
+	if !viewer.await("[uam: session ended]", 10*time.Second) {
 		t.Fatalf("no session-ended notice: %q", viewer.seen.tail())
 	}
 	if viewer.seen.contains("unexpected EOF") {
