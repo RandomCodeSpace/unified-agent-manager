@@ -2,7 +2,7 @@ module github.com/RandomCodeSpace/unified-agent-manager
 
 go 1.25.8
 
-toolchain go1.26.3
+toolchain go1.26.5
 
 require (
 	charm.land/bubbles/v2 v2.2.1
