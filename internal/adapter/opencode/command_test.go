@@ -130,8 +130,8 @@ func TestMinimumVersionValidation(t *testing.T) {
 
 			started := time.Now()
 			err = requireMinimumVersion(context.Background(), command)
-			if tt.delay && time.Since(started) > 1500*time.Millisecond {
-				t.Fatalf("version timeout took %s, want at most 1.5s", time.Since(started))
+			if tt.delay && time.Since(started) > versionProbeTimeout+time.Second {
+				t.Fatalf("version timeout took %s, want at most %s", time.Since(started), versionProbeTimeout+time.Second)
 			}
 			if !tt.wantErr {
 				if err != nil {
@@ -143,7 +143,11 @@ func TestMinimumVersionValidation(t *testing.T) {
 				t.Fatal("requireMinimumVersion() succeeded")
 			}
 			message := err.Error()
-			for _, want := range []string{tt.detected, minimumVersion, "opencode upgrade 1.18.1"} {
+			wantParts := []string{tt.detected, minimumVersion, "opencode upgrade 1.18.1"}
+			if tt.delay {
+				wantParts = []string{tt.detected, "timed out", "retried"}
+			}
+			for _, want := range wantParts {
 				if !strings.Contains(message, want) {
 					t.Errorf("error %q missing %q", message, want)
 				}
@@ -198,6 +202,43 @@ func TestMinimumVersionDirectCacheUsesStatIdentity(t *testing.T) {
 	}
 }
 
+func TestMinimumVersionDoesNotCacheTimedOutProbe(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode")
+	count := filepath.Join(dir, "count")
+	// First probe hangs past the timeout; every later probe answers promptly.
+	script := "#!/bin/sh\n" +
+		"printf x >> " + adapter.ShellJoin([]string{count}) + "\n" +
+		"if [ \"$(cat " + adapter.ShellJoin([]string{count}) + ")\" = x ]; then exec sleep 5; fi\n" +
+		"printf %s 1.18.1\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command, err := providerCommandFromFlags(path, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = requireMinimumVersion(context.Background(), command)
+	if err == nil {
+		t.Fatal("timed-out probe succeeded")
+	}
+	message := err.Error()
+	for _, want := range []string{"timed out", "retried"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("timeout error %q missing %q", message, want)
+		}
+	}
+	if strings.Contains(message, "upgrade") {
+		t.Errorf("timeout error %q tells the user to upgrade", message)
+	}
+
+	if err := requireMinimumVersion(context.Background(), command); err != nil {
+		t.Fatalf("probe after timeout error = %v, want retry to succeed", err)
+	}
+	assertProbeCount(t, count, "xx")
+}
+
 func TestMinimumVersionDoesNotCacheShellAliases(t *testing.T) {
 	dir := t.TempDir()
 	shell := filepath.Join(dir, "shell")
@@ -222,7 +263,7 @@ func writeVersionExecutable(t *testing.T, path, output string, exitCode int, del
 		script += "printf %s " + adapter.ShellJoin([]string{output}) + "\n"
 	}
 	if delay {
-		script += "exec sleep 2\n"
+		script += "exec sleep 5\n"
 	} else {
 		script += fmt.Sprintf("exit %d\n", exitCode)
 	}
