@@ -343,6 +343,9 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	case <-tui.process.done:
 		return tuiExitError(tui.process.waitError())
 	case err := <-streamDone:
+		if streamErr := streamCtx.Err(); streamErr != nil {
+			return streamErr
+		}
 		return sanitizedSupervisorError("OpenCode event subscription failed", err, password)
 	case <-startupCtx.Done():
 		return startupCtx.Err()
