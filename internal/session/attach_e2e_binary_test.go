@@ -228,7 +228,7 @@ func TestE2EAttachChordsAndMouse(t *testing.T) {
 		viewer.send("\x02d")
 		viewer.requireDetached("legacy Ctrl+B d")
 		viewer.requireSeen("detach teardown", mouseReset)
-		viewer.requireSeen("detach teardown", "\x1b[<u")
+		viewer.requireSeen("detach teardown", "\x1b[<7u")
 	})
 
 	// The chord has to survive the encodings a provider switches the terminal

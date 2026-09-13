@@ -105,3 +105,19 @@ func TestMouseModeSetsAgree(t *testing.T) {
 		}
 	}
 }
+
+// Redraw re-pushes the agent's kitty keyboard stack onto the physical
+// alternate-screen stack, which the terminal does not clear when the client
+// leaves it. Detach has to empty that stack: pop the deepest stack a terminal
+// keeps (the client cannot learn the real depth from the wire protocol), zero
+// the base, and do both before ?1049l so the pops never hit the user's
+// main-screen stack.
+func TestDetachEmptiesKittyStackBeforeLeavingAltScreen(t *testing.T) {
+	const empty = "\x1b[<7u" + "\x1b[=0;1u"
+	if !strings.HasPrefix(screenReset, empty) {
+		t.Fatalf("screenReset = %q, want it to start by emptying the kitty stack %q", screenReset, empty)
+	}
+	if pops, leave := strings.Index(screenExit, empty), strings.Index(screenExit, "\x1b[?1049l"); pops < 0 || leave < pops {
+		t.Fatalf("screenExit = %q, want the kitty pops before ?1049l", screenExit)
+	}
+}

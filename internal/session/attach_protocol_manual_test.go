@@ -47,11 +47,9 @@ func TestAttachProtocolRealPTYFixture(t *testing.T) {
 	if !bytes.Contains(v1Bytes, v1Payload) {
 		t.Fatalf("v1 payload missing from raw stream: %x", v1Bytes)
 	}
-	if err := writeFrame(v1Conn, frameDetach, nil); err != nil {
-		t.Fatal(err)
-	}
-	_ = v1Conn.Close()
 
+	// Keep v1 attached through the v2 handshake to exercise standby promotion
+	// deterministically instead of racing the host processing the detach.
 	v2Conn, err := net.Dial("unix", SocketPath(client.Dir, name))
 	if err != nil {
 		t.Fatal(err)
@@ -66,15 +64,20 @@ func TestAttachProtocolRealPTYFixture(t *testing.T) {
 	if err := readBoundedJSONLine(v2Reader, &v2Resp); err != nil || !v2Resp.OK || v2Resp.Version != protocolV2 {
 		t.Fatalf("v2 handshake = %+v, %v", v2Resp, err)
 	}
-	v2Payload := []byte{0x00, 0xff, 'V', '2', '\r', '\n'}
-	if err := writeFrame(v2Conn, frameStdin, mustOwnedFramePayload(t, v2Resp.Generation, v2Payload)); err != nil {
+	if v2Resp.AssignedRole != roleStandby {
+		t.Fatalf("v2 role with v1 controller attached = %q, want standby", v2Resp.AssignedRole)
+	}
+	if err := writeFrame(v1Conn, frameDetach, nil); err != nil {
 		t.Fatal(err)
 	}
+	_ = v1Conn.Close()
+	v2Payload := []byte{0x00, 0xff, 'V', '2', '\r', '\n'}
 	if err := v2Conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	var v2PTY []byte
 	var v2Controls [][]byte
+	sent := false
 	for !bytes.Contains(v2PTY, v2Payload) {
 		kind, payload, err := readFrame(v2Reader)
 		if err != nil {
@@ -85,6 +88,16 @@ func TestAttachProtocolRealPTYFixture(t *testing.T) {
 			v2PTY = append(v2PTY, payload...)
 		case serverFrameControl:
 			v2Controls = append(v2Controls, append([]byte{}, payload...))
+			var event roleEvent
+			if err := json.Unmarshal(payload, &event); err != nil {
+				t.Fatal(err)
+			}
+			if !sent && event.Type == "role" && event.Role == roleController {
+				if err := writeFrame(v2Conn, frameStdin, mustOwnedFramePayload(t, event.Generation, v2Payload)); err != nil {
+					t.Fatal(err)
+				}
+				sent = true
+			}
 		default:
 			t.Fatalf("unexpected server frame type %d", kind)
 		}

@@ -2,13 +2,10 @@
 set -euo pipefail
 
 # Temporary release waiver tracked by https://github.com/RandomCodeSpace/unified-agent-manager/issues/68.
-# Remove this script when the project can move beyond Go 1.26.3.
-readonly expected_go_version="go1.26.3"
+# Remove this script when the project can move beyond Go 1.26.5 (remaining IDs are fixed in Go 1.26.6).
+readonly expected_go_version="go1.26.5"
 readonly -a allowed_vulnerabilities=(
   GO-2026-5026
-  GO-2026-5037
-  GO-2026-5039
-  GO-2026-5856
   GO-2026-5972
   GO-2026-6090
   GO-2026-6218
@@ -48,11 +45,11 @@ fi
 
 unexpected="$(comm -13 "$allowed" "$found")"
 if [[ -n "$unexpected" ]]; then
-  echo "govulncheck found vulnerabilities outside the Go 1.26.3 waiver:" >&2
+  echo "govulncheck found vulnerabilities outside the Go 1.26.5 waiver:" >&2
   echo "$unexpected" >&2
   exit 1
 fi
 
 while IFS= read -r vulnerability; do
-  echo "::warning title=Accepted Go 1.26.3 vulnerability::$vulnerability is temporarily allowed by issue #68"
+  echo "::warning title=Accepted Go 1.26.5 vulnerability::$vulnerability is temporarily allowed by issue #68"
 done <"$found"
