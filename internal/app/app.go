@@ -468,7 +468,10 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	if sess, ok := m.selectedSession(); ok {
 		selectedAgent, selectedID = sess.AgentType, sess.ID
 	}
-	if msg.sessions != nil {
+	// A load that raced the reorder debounce carries the store's pre-move
+	// SortIndex; replacing the roster would make the pending flush persist the
+	// revert (#92). Keep the manual order; the next refresh follows the flush.
+	if msg.sessions != nil && !m.reorderPending {
 		m.sessions = projectSessions(msg.sessions, msg.groupByDir)
 		m.groupByDir = msg.groupByDir
 	}
@@ -812,8 +815,10 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "ctrl+c":
 		m.quitting = true
 		// Flush any pending reorder before exiting so the debounce timer not yet
-		// having fired doesn't lose the manual order (F59).
-		return true, tea.Batch(m.flushReorder(), tea.Quit)
+		// having fired doesn't lose the manual order (F59). Sequence, not Batch:
+		// Batch runs members concurrently and Run returns on Quit while the
+		// flush is still writing (#91).
+		return true, tea.Sequence(m.flushReorder(), tea.Quit)
 	case "tab":
 		m.cycleDefaultAgent()
 		return true, m.persistDefaultAgent()
@@ -879,8 +884,9 @@ func (m Model) handleMouse(tea.MouseMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleEscKey() tea.Cmd {
 	m.input = ""
 	m.quitting = true
-	// Flush a pending reorder before exiting (F59).
-	return tea.Batch(m.flushReorder(), tea.Quit)
+	// Flush a pending reorder before exiting (F59); Sequence so the flush
+	// completes before Quit is delivered (#91).
+	return tea.Sequence(m.flushReorder(), tea.Quit)
 }
 
 func (m *Model) startRename() {
@@ -1299,11 +1305,9 @@ func (m Model) dispatchNamedCmd(agent, alias, name, prompt string) tea.Cmd {
 }
 func (m Model) dispatchWithNameCwdProfileCmd(agent, alias, name, prompt, cwd, profile string) tea.Cmd {
 	return func() tea.Msg {
-		mode := string(store.ModeYolo)
-		if profile != "" {
-			mode = ""
-		}
-		sess, err := m.service.DispatchNamedWithAliasProfile(context.Background(), agent, alias, name, prompt, cwd, mode, profile)
+		// Mode is decided by the resolved launch policy (explicit, alias-assigned
+		// or default profile; built-in default is yolo), never by the call site.
+		sess, err := m.service.DispatchNamedWithAliasProfile(context.Background(), agent, alias, name, prompt, cwd, "", profile)
 		return dispatchedMsg{session: sess, err: err}
 	}
 }
