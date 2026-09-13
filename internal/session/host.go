@@ -178,7 +178,7 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	if err := EnsureDir(dir); err != nil {
 		return err
 	}
-	claim, err := claimSession(dir, name)
+	claim, err := lockSessionDir(dir)
 	if err != nil {
 		return err
 	}
@@ -247,6 +247,8 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 		h.signalChild(syscall.SIGKILL)
 		return fmt.Errorf("write session state: %w", err)
 	}
+	// Published live-host state now protects the name until shutdown.
+	_ = claim.Close()
 	if ready != nil {
 		_, _ = fmt.Fprintln(ready, "ok")
 		_ = ready.Close()
@@ -287,8 +289,6 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	// (the kill responder) are unaffected.
 	_ = ln.Close()
 	h.shutdown(exitCode)
-	// Kill permits immediate recreation once cleaned is closed.
-	_ = claim.Close()
 	close(h.cleaned)
 	// Give pending kill responders a moment to flush their replies before the
 	// process (and every connection it owns) goes away.
@@ -850,7 +850,12 @@ func (h *host) signalChild(sig syscall.Signal) {
 func (h *host) shutdown(exitCode int) {
 	h.shutdownClients()
 	providerID := readProviderIdentityHandoff(h.dir, h.name, h.providerIdentityFile)
-	if err := removeSessionFiles(h.dir, h.name); err != nil {
+	claim, err := lockSessionDir(h.dir)
+	if err == nil {
+		err = removeSessionFiles(h.dir, h.name)
+		_ = claim.Close()
+	}
+	if err != nil {
 		log.Warn("remove session files failed", "session", h.name, "error", err)
 	}
 	h.recordExit(exitCode, providerID)

@@ -206,32 +206,26 @@ func readState(dir, name string) (State, error) {
 	return st, nil
 }
 
-// claimSession serializes host ownership and stale cleanup across processes.
-// Keep the lock file after releasing it: unlinking a flock inode would let a
-// new caller acquire a different lock while an earlier caller still owns it.
-func claimSession(dir, name string) (*os.File, error) {
-	if err := ValidateName(name); err != nil {
-		return nil, err
-	}
+// lockSessionDir serializes runtime file transitions across processes. The
+// existing directory is a stable lock inode and leaves no runtime residue.
+// Hold it only while checking, publishing, or removing session files.
+func lockSessionDir(dir string) (*os.File, error) {
 	if err := VerifyDir(dir); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, name+".lock"), os.O_CREATE|os.O_RDWR, 0o600) // #nosec G304 -- validated name within a verified owner-only directory.
+	f, err := os.Open(dir) // #nosec G304 -- verified owner-only runtime directory.
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		_ = f.Close()
-		if err == syscall.EWOULDBLOCK {
-			return nil, fmt.Errorf("session %s already exists (name claimed): %w", name, err)
-		}
-		return nil, fmt.Errorf("claim session %s: %w", name, err)
+		return nil, fmt.Errorf("lock session directory: %w", err)
 	}
 	return f, nil
 }
 
 func removeStaleSessionFiles(dir, name string) error {
-	claim, err := claimSession(dir, name)
+	claim, err := lockSessionDir(dir)
 	if err != nil {
 		return err
 	}
