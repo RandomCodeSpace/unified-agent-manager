@@ -493,6 +493,23 @@ func TestAgentUnavailable(t *testing.T) {
 	}
 }
 
+func TestCommandWithModeArgsAppendsYoloArgsOnlyForYoloMode(t *testing.T) {
+	yolo := []string{"--yolo"}
+	for _, tt := range []struct {
+		mode string
+		want []string
+	}{
+		{mode: "yolo", want: []string{"fakeagent", "--yolo"}},
+		{mode: "safe", want: []string{"fakeagent"}},
+		{mode: "", want: []string{"fakeagent"}},
+		{mode: "turbo", want: []string{"fakeagent"}},
+	} {
+		if got := commandWithModeArgs([]string{"fakeagent"}, tt.mode, yolo); !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("mode %q: command = %#v, want %#v", tt.mode, got, tt.want)
+		}
+	}
+}
+
 func writeExecutable(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
