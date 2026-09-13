@@ -26,7 +26,7 @@ func sessionArgs(req adapter.ResumeRequest, activity string) []string {
 		}
 		return []string{"--continue"}
 	}
-	if req.ID != "" && supportsSessionID() {
+	if req.ID != "" && supportsSessionID(req.ExecutablePath) {
 		return []string{"--session-id", req.ID}
 	}
 	return nil
@@ -36,7 +36,7 @@ func sessionArgs(req adapter.ResumeRequest, activity string) []string {
 // persistence: the seeded uam UUID on dispatch, or the id an exact resume
 // re-targets. Empty when the installed claude cannot seed ids.
 func providerSession(req adapter.ResumeRequest, activity string) string {
-	if activity == "dispatched" && req.ID != "" && supportsSessionID() {
+	if activity == "dispatched" && req.ID != "" && supportsSessionID(req.ExecutablePath) {
 		return req.ID
 	}
 	return req.ProviderSessionID
@@ -49,9 +49,10 @@ func providerSession(req adapter.ResumeRequest, activity string) string {
 // re-probes.
 var sessionIDSupport sync.Map // map[string]bool
 
-func supportsSessionID() bool {
-	path, err := exec.LookPath("claude")
-	if err != nil {
+func supportsSessionID(path string) bool {
+	// Agent resolves the actual launch executable after validating aliases.
+	// Shell-only aliases have no resolved path, so skip optional seeding.
+	if path == "" {
 		return false
 	}
 	if v, ok := sessionIDSupport.Load(path); ok {
@@ -59,7 +60,7 @@ func supportsSessionID() bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, _ := exec.CommandContext(ctx, path, "--help").CombinedOutput() // #nosec G204 -- path resolved via LookPath for the fixed name "claude".
+	out, _ := exec.CommandContext(ctx, path, "--help").CombinedOutput() // #nosec G204 -- Agent supplies the resolved executable after alias validation.
 	supported := strings.Contains(string(out), "--session-id")
 	sessionIDSupport.Store(path, supported)
 	return supported
