@@ -451,6 +451,28 @@ func newTestAPIClient(t *testing.T, handler http.HandlerFunc) *apiClient {
 	return client
 }
 
+func TestAPIClientInitialPromptRejectsFailureWithoutLeakingOrRetrying(t *testing.T) {
+	const prompt = "private initial prompt must not appear in errors"
+	requests := 0
+	client := newTestAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.URL.Path != "/session/ses_prompt123/prompt_async" {
+			t.Errorf("initial prompt request = %s %s", r.Method, r.URL.Path)
+		}
+		http.Error(w, prompt, http.StatusServiceUnavailable)
+	})
+	err := client.sendInitialPrompt(t.Context(), "ses_prompt123", prompt)
+	if err == nil || !strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), prompt) {
+		t.Fatalf("initial prompt error = %v, want status without prompt", err)
+	}
+	if requests != 1 {
+		t.Fatalf("initial prompt requests = %d, want no retry", requests)
+	}
+	if err := client.sendInitialPrompt(t.Context(), "invalid/id", prompt); err == nil || requests != 1 {
+		t.Fatalf("invalid session reached prompt endpoint: requests=%d, error=%v", requests, err)
+	}
+}
+
 func testContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -2,9 +2,11 @@ package opencode
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
@@ -24,7 +26,7 @@ func New(backend adapter.Backend) adapter.AgentAdapter {
 	return agent
 }
 
-func prepareLaunch(ctx adapter.Context, req adapter.ResumeRequest, _, sessionName, cwd string) (adapter.LaunchPreparation, error) {
+func prepareLaunch(ctx adapter.Context, req adapter.ResumeRequest, activity, sessionName, cwd string) (adapter.LaunchPreparation, error) {
 	providerCommand, err := providerCommandFor(req)
 	if err != nil {
 		return adapter.LaunchPreparation{}, err
@@ -73,6 +75,14 @@ func prepareLaunch(ctx adapter.Context, req adapter.ResumeRequest, _, sessionNam
 	if req.ProviderSessionID != "" {
 		internalArgv = append(internalArgv, "--session", req.ProviderSessionID)
 	}
+	var prompt *os.File
+	if activity != "resumed" && strings.TrimSpace(req.Prompt) != "" {
+		prompt, err = initialPromptFile(runtimeDir, req.Prompt)
+		if err != nil {
+			return adapter.LaunchPreparation{}, err
+		}
+		internalArgv = append(internalArgv, "--prompt-fd", "3")
+	}
 
 	return adapter.LaunchPreparation{
 		Command: internalArgv,
@@ -80,7 +90,32 @@ func prepareLaunch(ctx adapter.Context, req adapter.ResumeRequest, _, sessionNam
 			session.ProviderIdentityFileEnv: identityPath,
 		},
 		ProviderSessionID: req.ProviderSessionID,
+		InitialPrompt:     prompt,
 	}, nil
+}
+
+func initialPromptFile(dir, prompt string) (*os.File, error) {
+	if err := session.EnsureDir(dir); err != nil {
+		return nil, err
+	}
+	file, err := os.CreateTemp(dir, "initial-prompt-")
+	if err != nil {
+		return nil, fmt.Errorf("create OpenCode initial prompt: %w", err)
+	}
+	// Unlink before writing so crashes cannot leave prompt material behind.
+	if err := os.Remove(file.Name()); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("unlink OpenCode initial prompt: %w", err)
+	}
+	if _, err := io.WriteString(file, prompt); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("write OpenCode initial prompt: %w", err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("rewind OpenCode initial prompt: %w", err)
+	}
+	return file, nil
 }
 
 func liveProviderSessionID(sessionName string) (string, error) {

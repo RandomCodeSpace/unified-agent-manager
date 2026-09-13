@@ -81,6 +81,7 @@ func RunHost(args []string) error {
 	label := fs.String("label", "", "user-facing session label")
 	providerIdentity := fs.String("provider", "", "managed-session provider identity")
 	scrollbackLines := fs.Int("scrollback", historyLines, "terminal scrollback lines")
+	hasInitialPrompt := fs.Bool("initial-prompt", false, "initial prompt inherited on fd 4")
 	var envs stringList
 	fs.Var(&envs, "env", "KEY=VALUE environment entry (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -88,8 +89,17 @@ func RunHost(args []string) error {
 	}
 	command := fs.Args()
 	ready := readyPipe()
+	var initialPrompt *os.File
+	if *hasInitialPrompt {
+		initialPrompt = os.NewFile(4, "initial-prompt")
+		// ExtraFiles remaps this to child fd 3; the original inherited fd
+		// must not survive exec alongside that explicit handoff.
+		syscall.CloseOnExec(4)
+		defer func() { _ = initialPrompt.Close() }()
+	}
 	err := runHost(*dir, hostLaunchSpec{
 		name: *name, cwd: *cwd, label: *label, providerIdentity: *providerIdentity, scrollbackLines: *scrollbackLines, envs: envs, command: command,
+		initialPrompt: initialPrompt,
 	}, ready)
 	if err != nil && ready != nil {
 		// Surface the startup failure to the waiting parent before exiting.
@@ -114,6 +124,7 @@ func (s *stringList) String() string     { return strings.Join(*s, ",") }
 func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
 type hostLaunchSpec struct {
+	initialPrompt    *os.File
 	name             string
 	cwd              string
 	label            string
@@ -201,7 +212,13 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	cmd.Dir = spec.cwd
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	cmd.Env = append(cmd.Env, spec.envs...)
+	if spec.initialPrompt != nil {
+		cmd.ExtraFiles = []*os.File{spec.initialPrompt}
+	}
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: defaultCols, Rows: defaultRows})
+	if spec.initialPrompt != nil {
+		_ = spec.initialPrompt.Close()
+	}
 	if err != nil {
 		return fmt.Errorf("start %s: %w", spec.command[0], err)
 	}

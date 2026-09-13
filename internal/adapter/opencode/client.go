@@ -143,6 +143,25 @@ func (c *apiClient) listSessions(ctx context.Context) ([]sessionInfo, error) {
 	return sessions, nil
 }
 
+func (c *apiClient) sendInitialPrompt(ctx context.Context, id, prompt string) error {
+	if !validOpenCodeSessionID(id) {
+		return fmt.Errorf("invalid OpenCode session ID")
+	}
+	payload := map[string]any{"parts": []map[string]string{{"type": "text", "text": prompt}}}
+	path := sessionPathPrefix + id + "/prompt_async"
+	resp, err := c.do(ctx, http.MethodPost, path, "", payload, "")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		// A provider error body may quote the prompt. Keep it out of the
+		// terminal and logs, and never retry an ambiguously accepted prompt.
+		return fmt.Errorf("OpenCode initial prompt returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *apiClient) subscribe(ctx context.Context, ready chan<- struct{}, events chan<- eventEnvelope) error {
 	if ready == nil {
 		return fmt.Errorf("OpenCode event readiness channel is required")
