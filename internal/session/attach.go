@@ -95,8 +95,15 @@ var mouseReset = privateModeSequence(mouseModes, 'l')
 // screenExit resets every mode the agent could have toggled mid-attach, then
 // leaves the alternate screen. Terminals ignore sequences they don't
 // implement, so the suffix is safe to emit unconditionally.
-var screenReset = "\x1b[<u" + // pop the kitty keyboard flags agents push
-	"\x1b[=0;1u" + // and zero them in case the agent pushed more than once
+//
+// The kitty keyboard pops come first and must precede ?1049l: every push the
+// agent made — live or replayed by Redraw — sits on the physical alternate-
+// screen stack, which the terminal keeps across screen switches. The client
+// cannot learn the real depth from the wire protocol, so it pops the deepest
+// stack a terminal keeps (kitty: 7 above the base; popping past empty is
+// defined to reset all flags) and then zeroes the base an agent may have set.
+var screenReset = "\x1b[<7u" + // empty the kitty keyboard stack
+	"\x1b[=0;1u" + // and zero the base (CSI = flags ; 1 u leaves no stack entry)
 	mouseReset + // mouse tracking off
 	"\x1b[?1004l" + // focus reporting off
 	"\x1b[?2004l" + // bracketed paste off

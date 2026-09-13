@@ -19,7 +19,7 @@ import (
 
 const minimumVersion = "1.18.1"
 
-const versionProbeTimeout = 750 * time.Millisecond
+const versionProbeTimeout = 2500 * time.Millisecond
 
 type providerCommand struct {
 	path  string
@@ -168,7 +168,8 @@ var minimumVersionCache = struct {
 
 func requireMinimumVersion(ctx context.Context, command providerCommand) error {
 	if command.path == "" {
-		return probeMinimumVersion(ctx, command)
+		err, _ := probeMinimumVersion(ctx, command)
+		return err
 	}
 
 	key, err := versionIdentity(command.path)
@@ -180,8 +181,10 @@ func requireMinimumVersion(ctx context.Context, command providerCommand) error {
 	if cached, ok := minimumVersionCache.values[key]; ok {
 		return cached
 	}
-	err = probeMinimumVersion(ctx, command)
-	minimumVersionCache.values[key] = err
+	err, deterministic := probeMinimumVersion(ctx, command)
+	if deterministic {
+		minimumVersionCache.values[key] = err
+	}
 	return err
 }
 
@@ -200,36 +203,46 @@ func versionIdentity(path string) (versionExecutableIdentity, error) {
 	return key, nil
 }
 
-func probeMinimumVersion(ctx context.Context, command providerCommand) error {
+// probeMinimumVersion reports whether the outcome is deterministic: only a
+// parsed version (pass, or too low) is; timeouts and other exec failures are
+// transient and must be retried on the next launch.
+func probeMinimumVersion(ctx context.Context, command providerCommand) (err error, deterministic bool) {
 	probeCtx, cancel := context.WithTimeout(ctx, versionProbeTimeout)
 	defer cancel()
 	out, err := command.command(probeCtx, "--version").CombinedOutput()
 	if err != nil {
 		if probeCtx.Err() != nil {
-			return minimumVersionError(command, out, "version probe timed out or was canceled")
+			return fmt.Errorf("OpenCode command %q version probe timed out after %s (detected %q); it will be retried on the next launch", commandIdentity(command), versionProbeTimeout, sanitizedOutput(out)), false
 		}
-		return minimumVersionError(command, out, "version probe exited unsuccessfully")
+		return minimumVersionError(command, out, "version probe exited unsuccessfully"), false
 	}
 	detected, err := parseSemanticVersion(string(out))
 	if err != nil {
-		return minimumVersionError(command, out, "unrecognized version output")
+		return minimumVersionError(command, out, "unrecognized version output"), false
 	}
 	required := semanticVersion{major: 1, minor: 18, patch: 1}
 	if detected.prerelease || detected.compare(required) < 0 {
-		return minimumVersionError(command, out, "unsupported version")
+		return minimumVersionError(command, out, "unsupported version"), true
 	}
-	return nil
+	return nil, true
 }
 
 func minimumVersionError(command providerCommand, output []byte, reason string) error {
+	return fmt.Errorf("OpenCode command %q version check failed: detected %q (%s); required version %s; run `opencode upgrade %s`", commandIdentity(command), sanitizedOutput(output), reason, minimumVersion, minimumVersion)
+}
+
+func sanitizedOutput(output []byte) string {
 	detected := strings.TrimSpace(displaytext.Sanitize(string(output)))
 	if detected == "" {
 		detected = "<no output>"
 	}
+	return detected
+}
+
+func commandIdentity(command providerCommand) string {
 	identity := command.path
 	if identity == "" {
 		identity = command.alias
 	}
-	identity = displaytext.Sanitize(identity)
-	return fmt.Errorf("OpenCode command %q version check failed: detected %q (%s); required version %s; run `opencode upgrade %s`", identity, detected, reason, minimumVersion, minimumVersion)
+	return displaytext.Sanitize(identity)
 }

@@ -65,6 +65,67 @@ type Terminal struct {
 	// mouseTracking is the active tracking level from mouseTrackingModes, 0
 	// when mouse reporting is off.
 	mouseTracking int
+	// mainKitty and altKitty are the kitty keyboard progressive-enhancement
+	// stacks, one per screen as the protocol requires. The attach client pops
+	// the physical stack on detach, so Redraw replays the active screen's.
+	mainKitty, altKitty kittyFlags
+}
+
+// kittyStackMax bounds the tracked pushes at what kitty itself keeps: eight
+// slots, one of them the base, so at most seven pushes survive. Tracking more
+// would replay entries the physical terminal had already evicted.
+const kittyStackMax = 7
+
+// kittyFlagMask keeps the five defined flag bits so a garbage parameter is
+// never replayed verbatim.
+const kittyFlagMask = 0x1f
+
+// kittyFlags is one screen's progressive-enhancement state: the stack of
+// pushed flag bytes plus the base value in force when the stack is empty
+// (set or overflow can make base non-zero).
+type kittyFlags struct {
+	stack []uint8 // bottom first; len <= kittyStackMax
+	base  uint8
+}
+
+func (k *kittyFlags) push(flags int) {
+	k.stack = append(k.stack, uint8(flags&kittyFlagMask))
+	if len(k.stack) > kittyStackMax {
+		k.base = k.stack[0]
+		k.stack = k.stack[1:]
+	}
+}
+
+// pop removes pushed entries first, then the base if the count reaches it.
+// An explicit count of 0 pops nothing, as in kitty.
+func (k *kittyFlags) pop(n int) {
+	if n <= 0 {
+		return
+	}
+	if n > len(k.stack) {
+		k.stack = nil
+		k.base = 0
+		return
+	}
+	k.stack = k.stack[:len(k.stack)-n]
+}
+
+// set rewrites the top of the stack (or the base when nothing is pushed) per
+// mode: 1 replaces, 2 sets the given bits, 3 clears them.
+func (k *kittyFlags) set(flags, mode int) {
+	target := &k.base
+	if len(k.stack) > 0 {
+		target = &k.stack[len(k.stack)-1]
+	}
+	f := uint8(flags & kittyFlagMask)
+	switch mode {
+	case 2:
+		*target |= f
+	case 3:
+		*target &^= f
+	default:
+		*target = f
+	}
 }
 
 // decSpecialGraphics maps the DEC special graphics set (ESC ( 0) onto the
@@ -282,14 +343,18 @@ func (t *Terminal) stepDCS(r rune) {
 
 func (t *Terminal) dispatchCSI(params string, final byte) {
 	private := strings.HasPrefix(params, "?")
+	if final == 'u' && (strings.HasPrefix(params, "<") || strings.HasPrefix(params, "=") || strings.HasPrefix(params, ">")) {
+		t.dispatchKitty(params[0], csiParams(params[1:]))
+		return
+	}
 	if strings.HasPrefix(params, "<") || strings.HasPrefix(params, "=") || strings.HasPrefix(params, ">") {
-		// Protocol negotiation, not drawing: kitty keyboard push/pop/set
-		// (CSI > flags u, CSI < u, CSI = flags ; mode u), xterm
-		// modifyOtherKeys (CSI > 4 ; Pm m) and secondary/tertiary device
-		// attributes. The prefix used to be trimmed away with the '?', so
-		// these fell through to SCORC and SGR: an agent pushing kitty flags
-		// teleported the cursor to the saved position and corrupted every
-		// following row of the capture and of Redraw.
+		// Protocol negotiation, not drawing: xterm modifyOtherKeys
+		// (CSI > 4 ; Pm m) and secondary/tertiary device attributes (kitty
+		// keyboard push/pop/set is tracked above). The prefix used to be
+		// trimmed away with the '?', so these fell through to SCORC and SGR:
+		// an agent pushing kitty flags teleported the cursor to the saved
+		// position and corrupted every following row of the capture and of
+		// Redraw.
 		return
 	}
 	params = strings.TrimLeft(params, "?")
@@ -664,6 +729,34 @@ func (t *Terminal) eraseDisplay(mode int) {
 	}
 }
 
+// dispatchKitty applies a kitty keyboard push (CSI > flags u, flags default
+// 0), pop (CSI < n u, n default 1) or set (CSI = flags ; mode u, mode default
+// 1) to the active screen's stack. Bare CSI u is SCORC and never reaches here.
+func (t *Terminal) dispatchKitty(prefix byte, n []int) {
+	arg := func(i, def int) int {
+		if i < len(n) {
+			return n[i]
+		}
+		return def
+	}
+	k := t.activeKitty()
+	switch prefix {
+	case '>':
+		k.push(arg(0, 0))
+	case '<':
+		k.pop(arg(0, 1))
+	case '=':
+		k.set(arg(0, 0), arg(1, 1))
+	}
+}
+
+func (t *Terminal) activeKitty() *kittyFlags {
+	if t.onAlt {
+		return &t.altKitty
+	}
+	return &t.mainKitty
+}
+
 func (t *Terminal) reset() {
 	t.onAlt = false
 	t.main = newScreen(t.cols, t.rows)
@@ -675,6 +768,8 @@ func (t *Terminal) reset() {
 	t.autoWrap = true
 	t.g0Graphics = false
 	t.mouseTracking = 0
+	t.mainKitty = kittyFlags{}
+	t.altKitty = kittyFlags{}
 }
 
 // Resize changes the grid size, preserving as much content as fits. Scroll
@@ -818,6 +913,16 @@ func (t *Terminal) Redraw() []byte {
 // re-attaching terminal is in the agent's expected state. Alt-screen and SGR
 // are handled elsewhere (the attach client owns ?1049; Redraw paints SGR).
 func (t *Terminal) writeReplayModes(b *strings.Builder) {
+	// Keyboard state first, so it is in place before any mode that can
+	// generate input (mouse, focus). Redraw runs after the client entered its
+	// alternate screen, so these pushes land on the stack the agent will pop.
+	k := t.activeKitty()
+	if k.base != 0 {
+		b.WriteString("\x1b[=" + strconv.Itoa(int(k.base)) + ";1u")
+	}
+	for _, e := range k.stack {
+		b.WriteString("\x1b[>" + strconv.Itoa(int(e)) + "u")
+	}
 	for _, p := range replayModes {
 		on, seen := t.privModes[p]
 		if !seen || on == modeDefaultOn(p) {

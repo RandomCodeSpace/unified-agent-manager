@@ -23,6 +23,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
 
 type cliFakeAdapter struct {
@@ -242,6 +243,23 @@ func TestRunWithTUIHelpVersionAndDefault(t *testing.T) {
 	}
 }
 
+func TestSubcommandHelpFlagSucceedsAndPrintsUsage(t *testing.T) {
+	t.Setenv("UAM_CONFIG_DIR", t.TempDir())
+	for _, args := range [][]string{{"dispatch", "-h"}, {"ls", "--help"}, {"restart", "-h"}, {"attach", "-h"}, {"new", "-h"}} {
+		var err error
+		stderr := captureCLIStderr(t, func() { err = RunWithTUI(context.Background(), args, noopRunTUI) })
+		if err != nil {
+			t.Fatalf("uam %s: help must not fail, got %v", strings.Join(args, " "), err)
+		}
+		if want := "Usage of " + args[0] + ":"; !strings.Contains(stderr, want) {
+			t.Fatalf("uam %s stderr = %q, want %q", strings.Join(args, " "), stderr, want)
+		}
+	}
+	if err := RunWithTUI(context.Background(), []string{"dispatch", "--bogus"}, noopRunTUI); err == nil || errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("unknown flag must still fail with a parse error, got %v", err)
+	}
+}
+
 func TestUsageShowsDispatchWorkingDirectoryFlagBeforeAgent(t *testing.T) {
 	usage := captureCLIStderr(t, Usage)
 	want := "uam dispatch [--safe] [--alias <name>] [--profile <name>] [--cwd <path>] <agent>"
@@ -287,6 +305,24 @@ func TestMainStatelessCommandsSkipLoggerAndStore(t *testing.T) {
 		}
 		if strings.Contains(string(output), "failed to initialize logger") {
 			t.Fatalf("uam %s initialized the logger: %s", command, output)
+		}
+	}
+}
+
+func TestMainVersionFlagsExitZeroWithVersionOnStdout(t *testing.T) {
+	for _, arg := range []string{"--version", "-v"} {
+		cmd := cliMainSubprocess(t, arg, t.TempDir(), t.TempDir())
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		stdout, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("uam %s: %v\nstderr=%s", arg, err, stderr.String())
+		}
+		if got := strings.TrimSpace(string(stdout)); got != version.String() {
+			t.Fatalf("uam %s stdout = %q, want %q", arg, got, version.String())
+		}
+		if stderr.Len() != 0 {
+			t.Fatalf("uam %s wrote to stderr: %q", arg, stderr.String())
 		}
 	}
 }
