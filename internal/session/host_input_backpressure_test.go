@@ -181,6 +181,15 @@ func TestNonblockingPTYCloseInterruptsReadAfterResize(t *testing.T) {
 }
 
 func TestInputSurvivesTransientBackpressure(t *testing.T) {
+	testInputSurvivesBackpressure(t, 0)
+}
+
+func TestInputSurvivesProgressingBackpressure(t *testing.T) {
+	testInputSurvivesBackpressure(t, 10*time.Millisecond)
+}
+
+func testInputSurvivesBackpressure(t *testing.T, readPause time.Duration) {
+	t.Helper()
 	master, slave, err := pty.Open()
 	if err != nil {
 		t.Fatal(err)
@@ -194,8 +203,16 @@ func TestInputSurvivesTransientBackpressure(t *testing.T) {
 	read := make(chan error, 1)
 	go func() {
 		time.Sleep(30 * time.Millisecond)
-		_, err := io.ReadFull(slave, got)
-		read <- err
+		for offset := 0; offset < len(got); {
+			n, err := io.ReadFull(slave, got[offset:min(offset+4096, len(got))])
+			if err != nil {
+				read <- err
+				return
+			}
+			offset += n
+			time.Sleep(readPause)
+		}
+		read <- nil
 	}()
 	h := &host{registry: newClientRegistry(), ptmx: master}
 	if err := h.writeOutOfBandInput(want); err != nil {
