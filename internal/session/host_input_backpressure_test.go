@@ -48,6 +48,7 @@ func TestInputBackpressureDoesNotBlockControls(t *testing.T) {
 	server := todo9StartServer(t, h)
 	controller, _ := openMonitoredAttach(t, server.client, todo9SessionName, roleController, false)
 	standby := registerTestClient(t, h.registry, roleController, terminalSize{cols: 80, rows: 24})
+	standbyGeneration := standby.generation
 	if err := controller.writeControlFrame(frameStdin, bytes.Repeat([]byte("x"), maxFrameLen-ownershipEpochLen)); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestInputBackpressureDoesNotBlockControls(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	resized := make(chan struct{})
 	go func() {
-		h.resizeClient(standby, standby.generation, terminalSize{cols: 100, rows: 30})
+		h.resizeClient(standby, standbyGeneration, terminalSize{cols: 100, rows: 30})
 		close(resized)
 	}()
 	select {
@@ -114,9 +115,10 @@ func TestPendingInputCannotCrossControlTransfer(t *testing.T) {
 	h := &host{registry: newClientRegistry(), term: vterm.New(80, 24, historyLines), ptmx: master}
 	controller := registerTestClient(t, h.registry, roleController, terminalSize{cols: 80, rows: 24})
 	standby := registerTestClient(t, h.registry, roleController, terminalSize{cols: 80, rows: 24})
+	controllerGeneration := controller.generation
 	written := make(chan error, 1)
 	go func() {
-		written <- h.writeControllerInput(controller, controller.generation, bytes.Repeat([]byte("x"), maxFrameLen))
+		written <- h.writeControllerInput(controller, controllerGeneration, bytes.Repeat([]byte("x"), maxFrameLen))
 	}()
 	time.Sleep(50 * time.Millisecond)
 	command, err := json.Marshal(roleCommand{Action: actionTransferControl})
