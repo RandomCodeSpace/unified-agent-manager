@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -293,17 +292,13 @@ type runningServer struct {
 }
 
 func runSupervisor(ctx context.Context, opts supervisorOptions) error {
-	password, err := randomServerPassword()
-	if err != nil {
-		return err
-	}
-	env := serverEnvironment(os.Environ(), openCodeServerUsername, password)
 	bootstrapCtx, cancelBootstrap := context.WithTimeout(ctx, serverStartupTimeout)
 	defer cancelBootstrap()
-	bootstrap, err := startOpenCodeServer(bootstrapCtx, opts, env, password)
+	bootstrap, err := startOpenCodeServer(bootstrapCtx, opts)
 	if err != nil {
 		return err
 	}
+	defer bootstrap.client.http.CloseIdleConnections()
 	root, err := selectRootSession(bootstrapCtx, opts, bootstrap.client)
 	if err != nil {
 		terminateAndReap(bootstrap.process)
@@ -326,11 +321,13 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 
 	startupCtx, cancelStartup := context.WithTimeout(ctx, serverStartupTimeout)
 	defer cancelStartup()
-	tui, err := startOpenCodeTUI(startupCtx, opts, env, password, root.ID)
+	tui, err := startOpenCodeTUI(startupCtx, opts, root.ID)
 	if err != nil {
 		return err
 	}
 	defer terminateAndReap(tui.process)
+	defer tui.client.http.CloseIdleConnections()
+	password := tui.client.password
 
 	streamCtx, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
@@ -395,9 +392,14 @@ func readySupervisorOutcome(ctx context.Context, tui *managedProcess) (error, bo
 	return nil, false
 }
 
-func startOpenCodeTUI(ctx context.Context, opts supervisorOptions, env []string, password, rootID string) (*runningServer, error) {
+func startOpenCodeTUI(ctx context.Context, opts supervisorOptions, rootID string) (*runningServer, error) {
 	var lastError error
 	for attempt := 1; attempt <= serverStartupAttempts; attempt++ {
+		password, err := randomServerPassword()
+		if err != nil {
+			return nil, err
+		}
+		env := serverEnvironment(os.Environ(), openCodeServerUsername, password)
 		port, err := reserveLoopbackPort()
 		if err != nil {
 			return nil, fmt.Errorf("reserve OpenCode TUI loopback port: %w", err)
@@ -418,7 +420,7 @@ func startOpenCodeTUI(ctx context.Context, opts supervisorOptions, env []string,
 		if err != nil {
 			return nil, sanitizedSupervisorError("start OpenCode TUI", err, password)
 		}
-		client, err := newAPIClient(baseURL, openCodeServerUsername, password, opts.Directory, &http.Client{})
+		client, err := newAPIClient(baseURL, openCodeServerUsername, password, opts.Directory, localHTTPClient(os.Geteuid()))
 		if err != nil {
 			terminateAndReap(process)
 			return nil, err
@@ -428,6 +430,7 @@ func startOpenCodeTUI(ctx context.Context, opts supervisorOptions, env []string,
 		if waitErr == nil {
 			return tui, nil
 		}
+		client.http.CloseIdleConnections()
 		if !retry {
 			return nil, waitErr
 		}
@@ -457,12 +460,17 @@ func serverEnvironment(base []string, username, password string) []string {
 	return append(result, "OPENCODE_SERVER_USERNAME="+username, "OPENCODE_SERVER_PASSWORD="+password)
 }
 
-func startOpenCodeServer(ctx context.Context, opts supervisorOptions, env []string, password string) (*runningServer, error) {
+func startOpenCodeServer(ctx context.Context, opts supervisorOptions) (*runningServer, error) {
 	var lastError error
 	for attempt := 1; attempt <= serverStartupAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		password, err := randomServerPassword()
+		if err != nil {
+			return nil, err
+		}
+		env := serverEnvironment(os.Environ(), openCodeServerUsername, password)
 		server, retry, err := startOpenCodeServerAttempt(opts, env, password)
 		if err != nil {
 			if !retry {
@@ -475,6 +483,7 @@ func startOpenCodeServer(ctx context.Context, opts supervisorOptions, env []stri
 		if err == nil {
 			return server, nil
 		}
+		server.client.http.CloseIdleConnections()
 		if !retry {
 			return nil, err
 		}
@@ -503,7 +512,7 @@ func startOpenCodeServerAttempt(opts supervisorOptions, env []string, password s
 	if err != nil {
 		return nil, true, sanitizedSupervisorError("start OpenCode server", err, password)
 	}
-	client, err := newAPIClient(baseURL, openCodeServerUsername, password, opts.Directory, &http.Client{})
+	client, err := newAPIClient(baseURL, openCodeServerUsername, password, opts.Directory, localHTTPClient(os.Geteuid()))
 	if err != nil {
 		terminateAndReap(process)
 		return nil, false, err
@@ -526,7 +535,11 @@ func waitForOpenCodeServer(ctx context.Context, server *runningServer, password 
 		switch waitForServerPoll(ctx, server.process) {
 		case serverPollCanceled:
 			terminateAndReap(server.process)
-			return false, startupFailureError(ctx.Err(), server, password)
+			cause := ctx.Err()
+			if healthErr != nil {
+				cause = fmt.Errorf("%w (last health check: %s)", cause, safeServerLogExcerpt([]byte(healthErr.Error()), password))
+			}
+			return false, startupFailureError(cause, server, password)
 		case serverPollExited:
 			return true, serverFailureError("before readiness", server, password)
 		}

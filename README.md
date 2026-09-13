@@ -89,6 +89,9 @@ dashboard instead of causing an error.
 | OpenCode | `opencode` |
 
 OpenCode 1.18.1 or newer is required.
+UAM verifies the owner of OpenCode's local connections before sending credentials.
+This requires access to `/proc/net/tcp` on Linux or the system `/usr/sbin/lsof`
+on macOS; startup fails if the connection owner cannot be verified.
 
 Continuing a stopped session varies by agent. Some return to an exact
 conversation, while others may ask before continuing the latest one. Hermes

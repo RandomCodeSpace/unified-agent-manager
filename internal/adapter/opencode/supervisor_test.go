@@ -538,8 +538,8 @@ func assertDistinctSupervisorBoundaries(t *testing.T, alpha, beta supervisorFixt
 	for name, fixture := range map[string]supervisorFixture{"alpha": alpha, "beta": beta} {
 		serve := fixture.recordsOfKind(t, "serve")[0]
 		tui := fixture.recordsOfKind(t, "tui_start")
-		if len(tui) != 1 || tui[0].CredentialHash != serve.CredentialHash {
-			t.Fatalf("%s bootstrap/TUI credential boundary differs: serve=%#v tui=%#v", name, serve, tui)
+		if len(tui) != 1 || tui[0].CredentialHash == serve.CredentialHash {
+			t.Fatalf("%s bootstrap/TUI credentials were reused", name)
 		}
 		if serve.ConfigHash != wantConfigHash || tui[0].ConfigHash != wantConfigHash {
 			t.Fatalf("%s config hashes = serve %q tui %q, want %q", name, serve.ConfigHash, tui[0].ConfigHash, wantConfigHash)
@@ -1206,6 +1206,26 @@ func TestSupervisorStartupTimeout(t *testing.T) {
 	if serverStartupTimeout != want {
 		t.Fatalf("serverStartupTimeout = %s, want %s", serverStartupTimeout, want)
 	}
+}
+
+func TestSupervisorCredentialsChangeForEveryProcessAttempt(t *testing.T) {
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{FailServeAttempts: 2})
+	if err := runSupervisor(t.Context(), fixture.options); err != nil {
+		t.Fatalf("runSupervisor: %v", err)
+	}
+	seen := make(map[string]bool)
+	for _, kind := range []string{"serve_attempt", "serve", "tui_server"} {
+		for _, record := range fixture.recordsOfKind(t, kind) {
+			if record.CredentialHash == "" || seen[record.CredentialHash] {
+				t.Fatalf("%s reused a previous process credential", kind)
+			}
+			seen[record.CredentialHash] = true
+		}
+	}
+	if len(seen) != 4 {
+		t.Fatalf("credential count = %d, want four distinct process attempts", len(seen))
+	}
+	assertLifecycleClean(t, fixture, nil)
 }
 
 func TestSupervisorLifecycleStartup(t *testing.T) {
