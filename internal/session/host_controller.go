@@ -2,9 +2,11 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
-	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
@@ -51,33 +53,66 @@ func (h *host) enqueueRoleChanges(changes []roleChange) {
 }
 
 func (h *host) writeControllerInput(client *attachClient, generation uint64, payload []byte) error {
-	h.controlMu.Lock()
-	defer h.controlMu.Unlock()
-	h.mu.Lock()
-	accepted := h.registry.acceptsControl(client, generation)
-	h.mu.Unlock()
-	if !accepted {
-		return nil
-	}
-	if _, err := h.ptmx.Write(payload); err != nil {
+	if err := h.writeInput(client, generation, payload); err != nil {
 		return fmt.Errorf("write controller input: %w", err)
 	}
 	return nil
 }
 
 func (h *host) writeOutOfBandInput(payload []byte) error {
-	h.controlMu.Lock()
-	defer h.controlMu.Unlock()
-	h.mu.Lock()
-	busy := h.registry.controller != nil
-	h.mu.Unlock()
-	if busy {
-		return &SessionBusyError{Operation: opSend}
-	}
-	if _, err := h.ptmx.Write(payload); err != nil {
+	if err := h.writeInput(nil, 0, payload); err != nil {
 		return fmt.Errorf("write out-of-band input: %w", err)
 	}
 	return nil
+}
+
+const inputWriteTimeout = 250 * time.Millisecond
+
+func (h *host) writeInput(client *attachClient, generation uint64, payload []byte) error {
+	deadline := time.Now().Add(inputWriteTimeout)
+	// Preserve frame ordering without making controls wait on provider input.
+	for !h.inputMu.TryLock() {
+		if time.Now().After(deadline) {
+			return errors.New("provider input backpressure")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	defer h.inputMu.Unlock()
+	for {
+		h.controlMu.Lock()
+		h.mu.Lock()
+		accepted := client == nil && h.registry.controller == nil || client != nil && h.registry.acceptsControl(client, generation)
+		if !accepted {
+			h.mu.Unlock()
+			h.controlMu.Unlock()
+			if client == nil {
+				return &SessionBusyError{Operation: opSend}
+			}
+			return nil
+		}
+		// The nonblocking syscall and ownership check share the control lock;
+		// no pending bytes can be committed after a control transfer.
+		n, err := writePTYNonblocking(h.ptmx, payload)
+		h.mu.Unlock()
+		h.controlMu.Unlock()
+		if n > 0 {
+			payload = payload[n:]
+			// Bound a stalled provider, not a paste that is still progressing.
+			deadline = time.Now().Add(inputWriteTimeout)
+		}
+		if len(payload) == 0 {
+			return err
+		}
+		if err != nil && !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EINTR) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return errors.New("provider input backpressure")
+		}
+		if n <= 0 {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
 }
 
 func (h *host) resizeOutOfBand(size terminalSize) error {
@@ -191,5 +226,11 @@ func (h *host) applyPTYSize(size terminalSize) {
 	if h.ptmx == nil || !size.valid() {
 		return
 	}
-	_ = pty.Setsize(h.ptmx, &pty.Winsize{Cols: uint16(size.cols), Rows: uint16(size.rows)}) // #nosec G115 -- bounds checked above
+	raw, err := h.ptmx.SyscallConn()
+	if err != nil {
+		return
+	}
+	_ = raw.Control(func(fd uintptr) {
+		_ = unix.IoctlSetWinsize(int(fd), unix.TIOCSWINSZ, &unix.Winsize{Col: uint16(size.cols), Row: uint16(size.rows)}) // #nosec G115 -- bounds checked above
+	})
 }
