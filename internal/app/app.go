@@ -1305,11 +1305,9 @@ func (m Model) dispatchNamedCmd(agent, alias, name, prompt string) tea.Cmd {
 }
 func (m Model) dispatchWithNameCwdProfileCmd(agent, alias, name, prompt, cwd, profile string) tea.Cmd {
 	return func() tea.Msg {
-		mode := string(store.ModeYolo)
-		if profile != "" {
-			mode = ""
-		}
-		sess, err := m.service.DispatchNamedWithAliasProfile(context.Background(), agent, alias, name, prompt, cwd, mode, profile)
+		// Mode is decided by the resolved launch policy (explicit, alias-assigned
+		// or default profile; built-in default is yolo), never by the call site.
+		sess, err := m.service.DispatchNamedWithAliasProfile(context.Background(), agent, alias, name, prompt, cwd, "", profile)
 		return dispatchedMsg{session: sess, err: err}
 	}
 }
