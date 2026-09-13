@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 )
 
@@ -127,6 +128,9 @@ func writeTodo6Evidence(t *testing.T, evidence todo6Evidence) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	events := append(parseTodo6ControlEvents("controller", evidence.controller.snapshot()), parseTodo6ControlEvents("standby", evidence.standby.snapshot())...)
+	events = append(events, parseTodo6ControlEvents("observer", evidence.observer.snapshot())...)
+	requireTodo6ControlEvents(t, events)
 	if dir == "" {
 		return
 	}
@@ -140,9 +144,6 @@ func writeTodo6Evidence(t *testing.T, evidence todo6Evidence) {
 	if err := os.WriteFile(filepath.Join(dir, "pty-transcript.bin"), transcript, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	events := append(parseTodo6ControlEvents("controller", evidence.controller.snapshot()), parseTodo6ControlEvents("standby", evidence.standby.snapshot())...)
-	events = append(events, parseTodo6ControlEvents("observer", evidence.observer.snapshot())...)
-	requireTodo6ControlEvents(t, events)
 	writeTodo6ControlEvents(t, filepath.Join(dir, "control-events.jsonl"), events)
 	providerBytes, err := parseTodo6ProviderBytes(evidence.providerOutput)
 	if err != nil {
@@ -167,6 +168,7 @@ func writeTodo6Evidence(t *testing.T, evidence todo6Evidence) {
 }
 
 func parseTodo6ControlEvents(client, snapshot string) []todo6ControlEvent {
+	snapshot = ansi.Strip(snapshot)
 	const prefix = "[uam: "
 	events := make([]todo6ControlEvent, 0)
 	for {
