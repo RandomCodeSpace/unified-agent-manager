@@ -589,6 +589,14 @@ func dropInvalidRecords(cfg *Config) {
 		if reason := validateRecord(rec); reason != "" {
 			log.Warn("dropping invalid session record", "key", key, "reason", reason)
 			delete(cfg.Sessions, key)
+			continue
+		}
+		// The PR URL is display metadata, never argv-bound: a malformed one
+		// costs the record its PR field, not the session its only durable handle.
+		if rec.PR != nil && !prURLRE.MatchString(rec.PR.URL) {
+			log.Warn("clearing invalid pr url on session record", "key", key)
+			rec.PR = nil
+			cfg.Sessions[key] = rec
 		}
 	}
 }
@@ -596,8 +604,8 @@ func dropInvalidRecords(cfg *Config) {
 // validateRecord returns a non-empty reason if the record must be dropped, or
 // "" if it is safe to keep. It rejects only the values that carry real risk —
 // shell metacharacters or control runes in the argv-bound ID/SessionName
-// fields, a non-absolute or control-char Workdir, and a PR URL that does not
-// match the GitHub PR shape. Empty optional fields are allowed.
+// fields, and a non-absolute or control-char Workdir. Empty optional fields
+// are allowed.
 //
 // The on-disk JSON key for SessionName remains "tmux_session" for backward
 // compatibility, which is why the drop reasons below keep that spelling.
@@ -615,9 +623,6 @@ func validateRecord(rec SessionRecord) string {
 		if hasControlChar(rec.Workdir) {
 			return "control char in workdir"
 		}
-	}
-	if rec.PR != nil && !prURLRE.MatchString(rec.PR.URL) {
-		return "invalid pr url"
 	}
 	if rec.CommandAlias != "" && !isSafeCommandAlias(rec.CommandAlias) {
 		return "unsafe command_alias"
