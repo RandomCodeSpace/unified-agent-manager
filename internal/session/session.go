@@ -206,6 +206,45 @@ func readState(dir, name string) (State, error) {
 	return st, nil
 }
 
+// lockSessionDir serializes runtime file transitions across processes. The
+// existing directory is a stable lock inode and leaves no runtime residue.
+// Hold it only while checking, publishing, or removing session files.
+func lockSessionDir(dir string) (*os.File, error) {
+	if err := VerifyDir(dir); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(dir) // #nosec G304 -- verified owner-only runtime directory.
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("lock session directory: %w", err)
+	}
+	return f, nil
+}
+
+func removeStaleSessionFiles(dir, name string) error {
+	claim, err := lockSessionDir(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = claim.Close() }()
+	// The caller's snapshot can predate a replacement host. Recheck only
+	// after acquiring its name; never unlink a live session's files.
+	st, err := readState(dir, name)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if st.hostAlive() || st.childAlive() {
+		return nil
+	}
+	return removeSessionFiles(dir, name)
+}
+
 func removeSessionFiles(dir, name string) error {
 	if err := ValidateName(name); err != nil {
 		return err

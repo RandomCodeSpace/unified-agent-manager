@@ -218,7 +218,7 @@ func (c *Client) infoFromStateEntry(entry os.DirEntry) (Info, bool) {
 		// and leave the runtime files for the next sweep.
 		return infoFromState(st), true
 	}
-	_ = removeSessionFiles(c.Dir, name)
+	_ = removeStaleSessionFiles(c.Dir, name)
 	return Info{}, false
 }
 
@@ -291,7 +291,7 @@ func (c *Client) Kill(ctx context.Context, name string) error {
 	deadline := time.Now().Add(callTimeout)
 	for time.Now().Before(deadline) {
 		if !st.childAlive() && !st.hostAlive() {
-			_ = removeSessionFiles(c.Dir, name)
+			_ = removeStaleSessionFiles(c.Dir, name)
 			return nil
 		}
 		select {
