@@ -61,6 +61,10 @@ const attachBufFrames = 512
 // reads cannot keep the Managed Session host alive.
 const shutdownFlushWindow = 250 * time.Millisecond
 
+// A descendant may retain the PTY slave after the managed agent exits.
+// Drain queued final output without letting that descendant retain the host.
+const ptyDrainWindow = 250 * time.Millisecond
+
 const (
 	markClosedRetryWindow = 2 * time.Second
 	markClosedRetryBase   = 25 * time.Millisecond
@@ -271,9 +275,14 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	go h.signalLoop()
 	go h.freshenLoop()
 
-	h.pumpPTY()
+	pumpDone := make(chan struct{})
+	go func() {
+		h.pumpPTY()
+		close(pumpDone)
+	}()
 
-	// PTY EOF: the agent exited (or the pty was torn down). Reap it.
+	// The direct child's exit defines the session lifetime, independently of
+	// PTY EOF: a grandchild may still have the slave open.
 	exitCode := 0
 	if waitErr := cmd.Wait(); waitErr != nil {
 		exitCode = -1
@@ -283,6 +292,12 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 		}
 	}
 	close(h.exited)
+	select {
+	case <-pumpDone:
+	case <-time.After(ptyDrainWindow):
+		_ = ptmx.Close()
+		<-pumpDone
+	}
 	// Release the socket path while it is still ours: closing the listener
 	// unlinks it, and leaving that to the deferred Close would unlink AFTER
 	// cleaned has signalled — i.e. after Kill has returned and a replacement
