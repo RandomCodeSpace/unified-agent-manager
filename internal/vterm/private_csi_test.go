@@ -180,6 +180,18 @@ func TestKittyPopPastEmptyResetsBase(t *testing.T) {
 	}
 }
 
+func TestKittyPopPreservesBaseUntilPopped(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[=1;1u\x1b[>2u\x1b[<u")
+	if out := string(term.Redraw()); !strings.Contains(out, "\x1b[=1;1u") || strings.Contains(out, "\x1b[>2u") {
+		t.Fatalf("redraw = %q, want the base restored after popping the pushed flags", out)
+	}
+	feed(t, term, "\x1b[<u")
+	if out := string(term.Redraw()); strings.Contains(out, "\x1b[=") || strings.Contains(out, "\x1b[>") {
+		t.Fatalf("redraw = %q, want no flags after popping the base", out)
+	}
+}
+
 // CSI = flags ; mode u rewrites the top entry, or the base when nothing is
 // pushed; mode 2 ors bits in and mode 3 clears them.
 func TestKittySetRewritesTopOrBase(t *testing.T) {
@@ -253,6 +265,19 @@ func TestKittyPushCapEvictsOldest(t *testing.T) {
 	}
 	if !strings.Contains(out, "\x1b[>2u\x1b[>3u\x1b[>4u\x1b[>5u\x1b[>6u\x1b[>7u\x1b[>8u") {
 		t.Fatalf("redraw = %q, want the seven newest pushes", out)
+	}
+}
+
+func TestKittyPushOverflowPromotesOldestPushToBase(t *testing.T) {
+	term := New(20, 3, 0)
+	feed(t, term, "\x1b[=16;1u\x1b[>1u\x1b[>2u\x1b[>3u\x1b[>4u\x1b[>5u\x1b[>6u\x1b[>7u\x1b[>8u")
+	const want = "\x1b[=1;1u\x1b[>2u\x1b[>3u\x1b[>4u\x1b[>5u\x1b[>6u\x1b[>7u\x1b[>8u"
+	if out := string(term.Redraw()); !strings.Contains(out, want) {
+		t.Fatalf("redraw = %q, want overflow to evict the old base: %q", out, want)
+	}
+	feed(t, term, "\x1b[<7u")
+	if out := string(term.Redraw()); !strings.Contains(out, "\x1b[=1;1u") || strings.Contains(out, "\x1b[>") {
+		t.Fatalf("redraw = %q, want promoted base after popping all seven pushed entries", out)
 	}
 }
 

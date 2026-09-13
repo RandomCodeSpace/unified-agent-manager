@@ -228,7 +228,7 @@ on `Terminal` selected by `onAlt` the way `active()` selects grids):
 ```go
 // kittyFlags is one screen's progressive-enhancement state: the stack of
 // pushed flag bytes plus the base value in force when the stack is empty
-// (only CSI = … u can make base non-zero).
+// (set or overflow can make base non-zero).
 type kittyFlags struct {
 	stack []uint8 // bottom first; len <= kittyStackMax
 	base  uint8
@@ -240,14 +240,20 @@ type kittyFlags struct {
 
 | Sequence | Effect on the active screen's `kittyFlags` |
 | --- | --- |
-| `CSI > f u` (`f` default 0) | `stack = append(stack, f & 0x1f)`; if `len > kittyStackMax`, drop `stack[0]` |
-| `CSI < n u` (`n` default 1) | pop `min(n, len)`; if that empties the stack, `base = 0` |
+| `CSI > f u` (`f` default 0) | `stack = append(stack, f & 0x1f)`; if `len > kittyStackMax`, promote `stack[0]` to `base`, then drop it from `stack` |
+| `CSI < n u` (`n` default 1) | pop `min(n, len)`; clear `base` only when `n > len`, since it occupies a separate slot |
 | `CSI = f ; m u` (`m` default 1) | target = top of stack if non-empty else `base`; m=1 `target = f`, m=2 `target \|= f`, m=3 `target &^= f` |
 | `CSI ? u` | no state change |
 | `reset()` (`vterm.go:667-678`) | both screens back to `{nil, 0}` |
 
 `current()` = top of stack if non-empty, else `base`. Mask to the five
 defined bits (`0x1f`) so a garbage parameter is never replayed verbatim.
+
+Correction verified against the pinned kitty implementation during #94 review:
+a set base of 1, push of 2, and one pop restores 1. A second pop clears it.
+When all eight slots are occupied, the next push evicts the old base and
+moves the oldest pushed value into its place. The original table incorrectly
+cleared the base one pop early and discarded that promoted value.
 
 `kittyStackMax = 7`: kitty keeps 8 slots of which one is the base, so a
 conforming agent can rely on at most 7 pushes surviving. Tracking more than

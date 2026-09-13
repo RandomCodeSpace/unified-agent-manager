@@ -82,7 +82,7 @@ const kittyFlagMask = 0x1f
 
 // kittyFlags is one screen's progressive-enhancement state: the stack of
 // pushed flag bytes plus the base value in force when the stack is empty
-// (only CSI = flags ; mode u can make base non-zero).
+// (set or overflow can make base non-zero).
 type kittyFlags struct {
 	stack []uint8 // bottom first; len <= kittyStackMax
 	base  uint8
@@ -91,17 +91,18 @@ type kittyFlags struct {
 func (k *kittyFlags) push(flags int) {
 	k.stack = append(k.stack, uint8(flags&kittyFlagMask))
 	if len(k.stack) > kittyStackMax {
+		k.base = k.stack[0]
 		k.stack = k.stack[1:]
 	}
 }
 
-// pop removes up to n entries; emptying the stack resets all flags, per spec.
+// pop removes pushed entries first, then the base if the count reaches it.
 // An explicit count of 0 pops nothing, as in kitty.
 func (k *kittyFlags) pop(n int) {
 	if n <= 0 {
 		return
 	}
-	if n >= len(k.stack) {
+	if n > len(k.stack) {
 		k.stack = nil
 		k.base = 0
 		return
