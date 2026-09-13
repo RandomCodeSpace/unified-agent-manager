@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/creack/pty"
 )
@@ -126,12 +127,21 @@ type fakeOpenCodeRecord struct {
 	PasswordReplaced bool     `json:"password_replaced,omitempty"`
 	CredentialHash   string   `json:"credential_hash,omitempty"`
 	ConfigHash       string   `json:"config_hash,omitempty"`
+	PromptFDs        []string `json:"prompt_fds,omitempty"`
 }
 
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "__supervisor_test":
+		case "__host":
+			if err := session.RunHost(os.Args[2:]); err != nil {
+				os.Exit(88)
+			}
+			os.Exit(0)
+		case "--version":
+			fmt.Println("1.18.1")
+			os.Exit(0)
+		case "__supervisor_test", "__opencode":
 			err := RunSupervisorCommand(os.Args[2:])
 			if err == nil || errors.Is(err, context.Canceled) {
 				os.Exit(0)
@@ -815,6 +825,64 @@ func TestSupervisorPromptOrder(t *testing.T) {
 		t.Fatalf("attach input = %#v, want %q exactly once", attach, want)
 	}
 	assertFakeChildrenReaped(t, fixture)
+}
+
+func TestOpenCodeInitialPromptRealPTY(t *testing.T) {
+	fixture := newSupervisorFixture(t, fakeOpenCodeConfig{
+		CreatedID: "ses_large_prompt123", CreateDelayMillis: 250, ReadStdinLine: true, DisconnectSSE: true,
+	})
+	t.Setenv("UAM_SESSION_DIR", fixture.options.RuntimeDir)
+	t.Setenv("UAM_CONFIG_DIR", t.TempDir())
+	backend := &session.Client{Dir: fixture.options.RuntimeDir, Exe: os.Args[0]}
+	agent := New(backend).(*adapter.Agent)
+	agent.Candidates = []adapter.CommandCandidate{{Args: []string{os.Args[0]}}}
+	prompt := strings.Repeat("prompt-π-", 1024) + "\nlast line\tunchanged"
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	managed, err := agent.Dispatch(ctx, adapter.DispatchRequest{Prompt: prompt, Cwd: fixture.options.Directory, Mode: "safe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = backend.Kill(context.Background(), managed.SessionName)
+		killFakeProcesses(fixture.records(t))
+	})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, record := range fixture.records(t) {
+			if record.Kind != "prompt" && record.Kind != "tui" {
+				continue
+			}
+			if record.Input != prompt {
+				t.Fatalf("initial prompt delivered %d bytes, want %d unchanged", len(record.Input), len(prompt))
+			}
+			if record.Kind != "prompt" {
+				t.Fatal("initial prompt went through the terminal instead of the provider API")
+			}
+			if record.ID != "ses_large_prompt123" {
+				t.Fatalf("initial prompt targeted session %q", record.ID)
+			}
+			for _, child := range fixture.records(t) {
+				if len(child.PromptFDs) != 0 {
+					t.Fatalf("provider %s retained prompt descriptors: %v", child.Kind, child.PromptFDs)
+				}
+			}
+			time.Sleep(150 * time.Millisecond)
+			if prompts := fixture.recordsOfKind(t, "prompt"); len(prompts) != 1 {
+				t.Fatalf("initial prompt submitted %d times, want once", len(prompts))
+			}
+			if events := fixture.recordsOfKind(t, "event"); len(events) < 2 {
+				t.Fatal("fixture did not exercise event reconnection")
+			}
+			capture, err := backend.Capture(ctx, managed.SessionName, 100)
+			if err != nil || strings.Contains(capture, "prompt-π-") {
+				t.Fatalf("initial prompt echoed to terminal: capture error = %v", err)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("initial prompt was not delivered")
 }
 
 func TestSupervisorLifecycleAttachForegroundTTY(t *testing.T) {
@@ -1861,6 +1929,15 @@ func writeFakeRecord(record fakeOpenCodeRecord) error {
 func fakeChildCredentialRecord(kind string, args []string) fakeOpenCodeRecord {
 	password := os.Getenv("OPENCODE_SERVER_PASSWORD")
 	pgid, _ := syscall.Getpgid(os.Getpid())
+	var promptFDs []string
+	if entries, err := os.ReadDir("/proc/self/fd"); err == nil {
+		for _, entry := range entries {
+			target, _ := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
+			if strings.Contains(target, "/initial-prompt-") {
+				promptFDs = append(promptFDs, entry.Name())
+			}
+		}
+	}
 	return fakeOpenCodeRecord{
 		Kind:             kind,
 		PID:              os.Getpid(),
@@ -1870,6 +1947,7 @@ func fakeChildCredentialRecord(kind string, args []string) fakeOpenCodeRecord {
 		PasswordReplaced: password != testSupervisorPassword && len(password) == 64,
 		CredentialHash:   fakeHash(password),
 		ConfigHash:       fakeHash(os.Getenv("OPENCODE_CONFIG_" + "CONTENT")),
+		PromptFDs:        promptFDs,
 	}
 }
 
@@ -2026,6 +2104,20 @@ func fakeOpenCodeServe(args []string) int {
 				return
 			}
 			<-request.Context().Done()
+		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/prompt_async"):
+			var payload struct {
+				Parts []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"parts"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || len(payload.Parts) != 1 || payload.Parts[0].Type != "text" {
+				http.Error(w, "invalid prompt", http.StatusBadRequest)
+				return
+			}
+			id := strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, "/session/"), "/prompt_async")
+			_ = writeFakeRecord(fakeOpenCodeRecord{Kind: "prompt", ID: id, Input: payload.Parts[0].Text})
+			w.WriteHeader(http.StatusNoContent)
 		case request.Method == http.MethodPost && request.URL.Path == "/session":
 			body, _ := io.ReadAll(request.Body)
 			_ = writeFakeRecord(fakeOpenCodeRecord{Kind: "create", Body: string(body)})

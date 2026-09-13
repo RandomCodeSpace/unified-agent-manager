@@ -259,6 +259,9 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 			return Session{}, fmt.Errorf("prepare %s launch: %w", a.Name(), err)
 		}
 	}
+	if preparation.InitialPrompt != nil {
+		defer func() { _ = preparation.InitialPrompt.Close() }()
+	}
 	extra := append([]string{}, preparation.ExtraArgs...)
 	if a.SessionArgs != nil {
 		extra = append(extra, a.SessionArgs(req, activity)...)
@@ -278,12 +281,13 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 	env["UAM_ID"] = req.ID
 	if err := a.Backend.CreateProviderSession(ctx, session.CreateSpec{
 		Name: sessionName, Cwd: cwd, ProviderIdentity: string(a.Terminal.Identity), ScrollbackLines: req.ScrollbackLines, Env: env, Command: cmd,
+		InitialPrompt: preparation.InitialPrompt,
 	}); err != nil {
 		return Session{}, fmt.Errorf("create session %s: %w", sessionName, err)
 	}
 	displayName := a.setSessionDisplayLabel(ctx, sessionName, req.Name, cwd)
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
-	if shouldSendPrompt {
+	if shouldSendPrompt && preparation.InitialPrompt == nil {
 		if err := a.Backend.SendLine(ctx, sessionName, req.Prompt); err != nil {
 			// The session is live but never received its prompt. Roll it back so
 			// it doesn't linger as an orphan the store records as Exited/closed.

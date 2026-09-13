@@ -47,6 +47,7 @@ type CreateSpec struct {
 	ScrollbackLines  int
 	Env              map[string]string
 	Command          []string
+	InitialPrompt    *os.File
 }
 
 func NewClient() *Client {
@@ -98,6 +99,9 @@ func (c *Client) CreateProviderSession(ctx context.Context, spec CreateSpec) err
 		return err
 	}
 	args := []string{"__host", "--dir", c.Dir, "--name", spec.Name}
+	if spec.InitialPrompt != nil {
+		args = append(args, "--initial-prompt")
+	}
 	args = append(args, "--scrollback", fmt.Sprintf("%d", scrollbackLines))
 	if spec.Cwd != "" {
 		args = append(args, "--cwd", spec.Cwd)
@@ -122,6 +126,9 @@ func (c *Client) CreateProviderSession(ctx context.Context, spec CreateSpec) err
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Env = append(os.Environ(), "UAM_HOST_READY_FD=3")
 	cmd.ExtraFiles = []*os.File{w}
+	if spec.InitialPrompt != nil {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, spec.InitialPrompt)
+	}
 	if err := cmd.Start(); err != nil {
 		_ = w.Close()
 		return fmt.Errorf("spawn session host: %w", err)

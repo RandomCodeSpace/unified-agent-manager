@@ -46,6 +46,7 @@ type supervisorOptions struct {
 	ProviderSessionID string
 	Yolo              bool
 	RuntimeDir        string
+	InitialPrompt     string
 }
 
 func validOpenCodeSessionID(id string) bool {
@@ -127,6 +128,18 @@ func parseSupervisorOptions(args []string) (supervisorOptions, error) {
 	if err != nil {
 		return supervisorOptions{}, err
 	}
+	var prompt []byte
+	if fd := values["prompt-fd"]; fd.set {
+		if fd.value != "3" || providerSessionID != "" {
+			return supervisorOptions{}, fmt.Errorf("OpenCode initial prompt requires fd 3 and a new session")
+		}
+		file := os.NewFile(3, "initial-prompt")
+		defer func() { _ = file.Close() }()
+		prompt, err = io.ReadAll(file)
+		if err != nil {
+			return supervisorOptions{}, fmt.Errorf("read OpenCode initial prompt: %w", err)
+		}
+	}
 	return supervisorOptions{
 		Command:           command,
 		Directory:         directory,
@@ -134,6 +147,7 @@ func parseSupervisorOptions(args []string) (supervisorOptions, error) {
 		ProviderSessionID: providerSessionID,
 		Yolo:              yolo,
 		RuntimeDir:        runtimeDir,
+		InitialPrompt:     string(prompt),
 	}, nil
 }
 
@@ -141,7 +155,7 @@ func parseSupervisorFlags(args []string) (map[string]*uniqueStringFlag, error) {
 	fs := flag.NewFlagSet("__opencode", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	values := map[string]*uniqueStringFlag{}
-	for _, name := range []string{"path", "shell", "alias", "dir", "name", runtimeDirFlag, "mode", "session"} {
+	for _, name := range []string{"path", "shell", "alias", "dir", "name", runtimeDirFlag, "mode", "session", "prompt-fd"} {
 		value := &uniqueStringFlag{name: name}
 		values[name] = value
 		fs.Var(value, name, "")
@@ -351,6 +365,11 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 		return startupCtx.Err()
 	}
 	eventState := newSupervisorEventState(opts, root.ID, root.Time.Updated)
+	if opts.InitialPrompt != "" && opts.ProviderSessionID == "" {
+		if err := tui.client.sendInitialPrompt(startupCtx, root.ID, opts.InitialPrompt); err != nil {
+			return err
+		}
+	}
 	cancelStartup()
 
 	for {

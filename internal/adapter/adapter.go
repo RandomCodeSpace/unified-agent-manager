@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"os"
 	"time"
 )
 
@@ -117,6 +118,9 @@ type LaunchPreparation struct {
 	ExtraArgs         []string
 	Env               map[string]string
 	ProviderSessionID string
+	// InitialPrompt bypasses terminal input and is inherited by the provider
+	// command as fd 3. Agent closes its copy after creating the session.
+	InitialPrompt *os.File
 }
 
 type PrepareLaunchFunc func(ctx Context, req ResumeRequest, activity, sessionName, cwd string) (LaunchPreparation, error)
