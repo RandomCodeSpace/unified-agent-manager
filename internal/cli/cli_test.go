@@ -31,6 +31,9 @@ type cliFakeAdapter struct {
 	stopped  bool
 	resumed  bool
 	attached []string
+	// lastDispatch is the request the adapter boundary received; tests assert
+	// the mode there so a call site cannot override a resolved safe profile.
+	lastDispatch adapter.DispatchRequest
 }
 
 func (f *cliFakeAdapter) Name() string {
@@ -51,6 +54,7 @@ func (f *cliFakeAdapter) TerminalPolicy() adapter.ProviderTerminalPolicy {
 	}
 }
 func (f *cliFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchRequest) (adapter.Session, error) {
+	f.lastDispatch = req
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}

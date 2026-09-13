@@ -516,14 +516,16 @@ func (s *Store) loadNoLock() (Config, error) {
 		}
 		return normalize(DefaultConfig()), nil
 	}
+	// Untrusted on-disk records are validated and coerced on every load path,
+	// including the read-only newer-schema one below.
+	dropInvalidRecords(&cfg)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
 	// erroring or clobbering it on the next save (F33).
 	if cfg.SchemaVersion > CurrentSchemaVersion {
 		cfg.ReadOnly = true
-		return cfg, nil
+		return normalize(cfg), nil
 	}
-	dropInvalidRecords(&cfg)
 	if cfg.SchemaVersion < CurrentSchemaVersion {
 		backupMigration := s.copyBackup
 		if s.migrationBackup != nil {
@@ -743,8 +745,9 @@ func clampPeekWidth(w int) int {
 
 // coerceRecord normalizes a record's enum fields to valid values, reporting
 // whether it changed anything. An empty or unknown Status becomes Active and an
-// unknown Mode becomes yolo — unknown values are NEVER coerced to ClosedByUser
-// or dropped, so a hostile/corrupt status can never silently retire a session.
+// empty or unknown Mode fails closed to safe (logged) — unknown values are
+// NEVER coerced to ClosedByUser or dropped, so a hostile/corrupt status can
+// never silently retire a session.
 func coerceRecord(rec *SessionRecord) bool {
 	changed := false
 	if rec.Status != StatusActive && rec.Status != StatusClosedByUser {
@@ -752,7 +755,8 @@ func coerceRecord(rec *SessionRecord) bool {
 		changed = true
 	}
 	if rec.Mode != ModeYolo && rec.Mode != ModeSafe {
-		rec.Mode = ModeYolo
+		log.Warn("coercing unknown session mode to safe", "id", rec.ID, "mode", string(rec.Mode))
+		rec.Mode = ModeSafe
 		changed = true
 	}
 	return changed

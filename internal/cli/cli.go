@@ -368,10 +368,9 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	if len(rem) > 1 && strings.HasPrefix(rem[1], "-") {
 		return fmt.Errorf("dispatch: %q looks like a flag; flags must come before <agent>", rem[1])
 	}
-	mode := string(store.ModeYolo)
-	if *profile != "" {
-		mode = ""
-	}
+	// Only an explicit --safe picks the mode here; otherwise the resolved
+	// launch policy (explicit, alias-assigned or default profile) decides.
+	mode := ""
 	if *safe {
 		mode = string(store.ModeSafe)
 	}
@@ -468,11 +467,8 @@ func runNewWithArgs(ctx context.Context, svc *app.Service, args []string, runTUI
 	if strings.TrimSpace(prompt) == "" {
 		prompt = ""
 	}
-	mode := string(store.ModeYolo)
-	if *profile != "" {
-		mode = ""
-	}
-	sess, err := svc.DispatchNamedWithAliasProfile(ctx, agent, alias, name, prompt, cwd, mode, *profile)
+	// Mode comes from the resolved launch policy, never from this call site.
+	sess, err := svc.DispatchNamedWithAliasProfile(ctx, agent, alias, name, prompt, cwd, "", *profile)
 	if err != nil {
 		if sess.ID == "" {
 			return err

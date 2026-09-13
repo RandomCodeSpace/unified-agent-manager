@@ -141,6 +141,61 @@ func TestNewProfileSelection(t *testing.T) {
 	}
 }
 
+func TestDispatchAndNewHonourSafeDefaultProfile(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		run  func(t *testing.T, svc *app.Service)
+	}{
+		{name: "dispatch", run: func(t *testing.T, svc *app.Service) {
+			_ = captureCLIStdout(t, func() {
+				must(t, RunDispatch(context.Background(), svc, []string{"--cwd", "/tmp", "fake", "work"}))
+			})
+		}},
+		{name: "new", run: func(t *testing.T, svc *app.Service) {
+			withCLIStdin(t, "fake\n\n/tmp\nwork\n", func() {
+				_ = captureCLIStdout(t, func() {
+					must(t, runNewWithArgs(context.Background(), svc, nil, noopRunTUI))
+				})
+			})
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			// Given
+			svc, fake := newCLITestService(t)
+			must(t, runCommand(context.Background(), svc, []string{"profile", "set", "focused", "--provider", "fake", "--mode", "safe"}, noopRunTUI))
+			must(t, runCommand(context.Background(), svc, []string{"profile", "default", "focused"}, noopRunTUI))
+
+			// When
+			tt.run(t, svc)
+
+			// Then
+			if fake.lastDispatch.Mode != string(store.ModeSafe) {
+				t.Fatalf("adapter mode = %q, want %q from the safe default profile", fake.lastDispatch.Mode, store.ModeSafe)
+			}
+			cfg, err := svc.Store.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := cfg.Sessions[store.Key("fake", "abc12345")]
+			if record.Mode != store.ModeSafe {
+				t.Fatalf("persisted mode = %q, want %q", record.Mode, store.ModeSafe)
+			}
+			out := captureCLIStdout(t, func() {
+				must(t, runCommand(context.Background(), svc, []string{"profile", "effective", "abc12345", "--json"}, noopRunTUI))
+			})
+			var effective struct {
+				Mode store.Mode `json:"mode"`
+			}
+			if err := json.Unmarshal([]byte(out), &effective); err != nil {
+				t.Fatalf("decode JSON: %v\n%s", err, out)
+			}
+			if effective.Mode != record.Mode {
+				t.Fatalf("profile effective mode = %q, persisted = %q", effective.Mode, record.Mode)
+			}
+		})
+	}
+}
+
 func TestProfileFlagValidation(t *testing.T) {
 	// Given
 	svc, _ := newCLITestService(t)

@@ -153,9 +153,10 @@ func (a *Agent) commandForRequest(ctx context.Context, req ResumeRequest, extra 
 
 func commandWithModeArgs(cmd []string, mode string, yoloArgs []string) []string {
 	cmd = append([]string{}, cmd...)
-	// Safe mode launches the bare command; no flag is the safe default for
-	// claude/codex. Only non-safe modes append the provider's full-access args.
-	if mode != "safe" {
+	// Fail closed: only an explicit yolo mode appends the provider's
+	// full-access args. Safe, empty or unknown modes launch the bare command,
+	// which is the safe default for claude/codex.
+	if mode == "yolo" {
 		cmd = append(cmd, yoloArgs...)
 	}
 	return cmd
