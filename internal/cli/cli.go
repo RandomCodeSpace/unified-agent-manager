@@ -432,13 +432,19 @@ func runNewWithArgs(ctx context.Context, svc *app.Service, args []string, runTUI
 	} else if line != "" {
 		agent = line
 	}
-	// Re-validate the typed provider: if its CLI is not installed, reconcile it
-	// to an enabled one rather than failing the dispatch on an "unavailable"
-	// name. Registry.Default returns nil only when nothing is enabled, in which
-	// case the typed value is kept and the dispatch surfaces the real error
-	// (C2-9).
-	if a := svc.Registry.Default(agent); a != nil {
-		agent = a.Name()
+	// Re-validate the typed provider. A known provider whose CLI is not
+	// installed is reconciled to an enabled one rather than failing the
+	// dispatch on an "unavailable" name; Registry.Default returns nil only when
+	// nothing is enabled, in which case the typed value is kept and the
+	// dispatch surfaces the real error (C2-9). A name that is no provider at
+	// all is a typo and must not silently launch something else.
+	if _, enabled := svc.Registry.Get(agent); !enabled {
+		if _, known := svc.Registry.DisabledReasons()[agent]; !known {
+			return fmt.Errorf("unknown provider %q", agent)
+		}
+		if a := svc.Registry.Default(agent); a != nil {
+			agent = a.Name()
+		}
 	}
 	fmt.Print("command alias [default]: ")
 	alias, err := readLine(reader)
