@@ -27,8 +27,13 @@ import (
 // Main is the process entrypoint shared by the root compatibility command and cmd/uam.
 func Main() {
 	flag.Usage = Usage
+	showVersion := flag.Bool("version", false, "print version and exit")
+	flag.BoolVar(showVersion, "v", false, "print version and exit")
 	flag.Parse()
 	args := flag.Args()
+	if *showVersion {
+		args = []string{"version"}
+	}
 
 	// Help and version are deliberately independent from both the cache logger
 	// and the persistent store. They must remain usable when either location is
@@ -182,7 +187,7 @@ func runCommand(ctx context.Context, svc *app.Service, args []string, runTUI fun
 		fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 		allowLatest := fs.Bool("allow-latest", false, "allow heuristic resume of the provider's latest session")
 		if err := fs.Parse(args[1:]); err != nil {
-			return err
+			return ignoreHelp(err)
 		}
 		id, err := requireArg(fs.Args(), "attach requires <id>")
 		if err != nil {
@@ -200,7 +205,7 @@ func runList(ctx context.Context, svc *app.Service, args []string) error {
 	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return ignoreHelp(err)
 	}
 	return svc.PrintList(ctx, *asJSON)
 }
@@ -219,7 +224,7 @@ func runRestart(ctx context.Context, svc *app.Service, args []string) error {
 	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
 	allowLatest := fs.Bool("allow-latest", false, "allow heuristic resume of the provider's latest session")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return ignoreHelp(err)
 	}
 	id, err := requireArg(fs.Args(), "restart requires <id>")
 	if err != nil {
@@ -288,6 +293,16 @@ func requireArg(args []string, message string) (string, error) {
 	return args[0], nil
 }
 
+// ignoreHelp maps flag.ErrHelp to nil: the FlagSet has already printed its
+// usage to stderr, so -h/--help exits 0 like `uam help` instead of failing
+// with "flag: help requested". Genuine parse errors pass through unchanged.
+func ignoreHelp(err error) error {
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	return err
+}
+
 // NewService wires the app service and supported agent adapters.
 func NewService(st *store.Store) *app.Service {
 	client := session.NewClient()
@@ -350,7 +365,7 @@ func RunDispatch(ctx context.Context, svc *app.Service, args []string) error {
 	cwd := fs.String("cwd", "", "working directory")
 	profile := fs.String("profile", "", "named profile")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return ignoreHelp(err)
 	}
 	rem := fs.Args()
 	if len(rem) < 1 {
@@ -397,7 +412,7 @@ func runNewWithArgs(ctx context.Context, svc *app.Service, args []string, runTUI
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	profile := fs.String("profile", "", "named profile")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return ignoreHelp(err)
 	}
 	if len(fs.Args()) != 0 {
 		return fmt.Errorf("new: unexpected arguments %q", fs.Args())
