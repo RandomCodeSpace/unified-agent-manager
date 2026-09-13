@@ -225,7 +225,7 @@ func (c *Client) infoFromStateEntry(entry os.DirEntry) (Info, bool) {
 		// and leave the runtime files for the next sweep.
 		return infoFromState(st), true
 	}
-	_ = removeSessionFiles(c.Dir, name)
+	_ = removeStaleSessionFiles(c.Dir, name)
 	return Info{}, false
 }
 
@@ -292,13 +292,13 @@ func (c *Client) Kill(ctx context.Context, name string) error {
 	// A live PID is not sufficient authority to signal: fallback control paths
 	// require a nonzero matching start identity so a recycled PID can never be
 	// signalled as if it were the session.
-	if err := signalVerifiedFallback(name, st); err != nil {
+	if err := signalVerifiedFallback(ctx, name, st); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(callTimeout)
 	for time.Now().Before(deadline) {
 		if !st.childAlive() && !st.hostAlive() {
-			_ = removeSessionFiles(c.Dir, name)
+			_ = removeStaleSessionFiles(c.Dir, name)
 			return nil
 		}
 		select {
@@ -310,7 +310,7 @@ func (c *Client) Kill(ctx context.Context, name string) error {
 	return fmt.Errorf("kill session %s: still running", name)
 }
 
-func signalVerifiedFallback(name string, st State) error {
+func signalVerifiedFallback(ctx context.Context, name string, st State) error {
 	if ProcAlive(st.HostPID) {
 		if !procIdentityMatches(st.HostPID, st.HostStart) {
 			return fmt.Errorf("kill session %s: cannot verify process identity for host pid %d", name, st.HostPID)
@@ -318,6 +318,31 @@ func signalVerifiedFallback(name string, st State) error {
 		_ = syscall.Kill(st.HostPID, syscall.SIGTERM)
 		return nil
 	}
+	// Give an orphan the same TERM grace as the host, then verify its
+	// recorded identity again before escalating to KILL.
+	if err := signalVerifiedOrphan(name, st, syscall.SIGTERM); err != nil {
+		return err
+	}
+	grace := time.NewTimer(killGrace)
+	defer grace.Stop()
+	poll := time.NewTicker(100 * time.Millisecond)
+	defer poll.Stop()
+	for st.childAlive() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-grace.C:
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return signalVerifiedOrphan(name, st, syscall.SIGKILL)
+		case <-poll.C:
+		}
+	}
+	return nil
+}
+
+func signalVerifiedOrphan(name string, st State, sig syscall.Signal) error {
 	if !ProcAlive(st.ChildPID) {
 		return nil
 	}
@@ -325,8 +350,8 @@ func signalVerifiedFallback(name string, st State) error {
 		return fmt.Errorf("kill session %s: cannot verify process identity for child pid %d", name, st.ChildPID)
 	}
 	// Orphaned agent (host crashed): signal its process group directly.
-	if err := syscall.Kill(-st.ChildPID, syscall.SIGTERM); err != nil {
-		_ = syscall.Kill(st.ChildPID, syscall.SIGTERM)
+	if err := syscall.Kill(-st.ChildPID, sig); err != nil {
+		_ = syscall.Kill(st.ChildPID, sig)
 	}
 	return nil
 }

@@ -159,6 +159,72 @@ func TestDispatchSkipsSessionIDWhenUnsupported(t *testing.T) {
 	}
 }
 
+func TestDispatchProbesAliasedExecutable(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		defaultHelp  string
+		aliasHelp    string
+		aliasSeeding bool
+	}{
+		{name: "older alias", defaultHelp: "--session-id", aliasHelp: "--continue"},
+		{name: "newer alias", defaultHelp: "--continue", aliasHelp: "--session-id", aliasSeeding: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, help := range map[string]string{"claude": tc.defaultHelp, "pinned-claude": tc.aliasHelp} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\necho '"+help+"'\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PATH", dir)
+			be := &adaptertest.Backend{}
+			a := New(be)
+			// Warm the default executable's cache before selecting the alias.
+			if _, err := a.Dispatch(context.Background(), adapter.DispatchRequest{Cwd: dir}); err != nil {
+				t.Fatal(err)
+			}
+			be = &adaptertest.Backend{}
+			a = New(be)
+			sess, err := a.Dispatch(context.Background(), adapter.DispatchRequest{CommandAlias: "pinned-claude", Cwd: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			argv := be.CommandLog()
+			if !strings.Contains(argv, filepath.Join(dir, "pinned-claude")) {
+				t.Fatalf("dispatch did not select the alias: %s", argv)
+			}
+			if seeded := strings.Contains(argv, "--session-id "+sess.ID); seeded != tc.aliasSeeding {
+				t.Errorf("session seeding = %v, want %v for alias: %s", seeded, tc.aliasSeeding, argv)
+			}
+			wantProviderID := ""
+			if tc.aliasSeeding {
+				wantProviderID = sess.ID
+			}
+			if sess.ProviderSessionID != wantProviderID {
+				t.Errorf("ProviderSessionID = %q, want %q", sess.ProviderSessionID, wantProviderID)
+			}
+		})
+	}
+}
+
+func TestDispatchShellAliasDoesNotInheritDefaultSessionIDSupport(t *testing.T) {
+	a, be := newSeedingClaudeAdapter(t)
+	dir := t.TempDir()
+	shell := filepath.Join(dir, "shell")
+	writeExecutable(t, shell) // The configured shell recognizes the alias.
+	t.Setenv("SHELL", shell)
+	sess, err := a.Dispatch(context.Background(), adapter.DispatchRequest{CommandAlias: "shell-only-claude", Cwd: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if argv := be.CommandLog(); strings.Contains(argv, "--session-id") {
+		t.Fatalf("unresolved shell alias must not inherit default claude capabilities: %s", argv)
+	}
+	if sess.ProviderSessionID != "" {
+		t.Fatalf("ProviderSessionID = %q, want empty without seeding", sess.ProviderSessionID)
+	}
+}
+
 // A record carrying a seeded provider session id must resume that EXACT
 // session (--resume <id>), not the cwd's most recent conversation
 // (--continue) — two uam sessions in one directory must not collapse into the
