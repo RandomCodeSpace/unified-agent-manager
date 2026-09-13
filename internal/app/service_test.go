@@ -1224,3 +1224,25 @@ func captureStdout(t *testing.T, fn func()) string {
 	_, _ = io.Copy(&buf, r)
 	return buf.String()
 }
+
+// Audit 2026-09-12 row 13 — a Service without a store must still produce an
+// attach spec (no profile overlay) instead of failing every attach with
+// "profile store unavailable". Mirrors the nil-store branch the dashboard
+// already takes for latest-required attaches.
+func TestAttachSpecWithoutStoreSkipsProfileResolution(t *testing.T) {
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{
+		{ID: "abc12345", AgentType: "fake", DisplayName: "one", SessionName: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()},
+	}}
+	svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+	spec, err := svc.AttachSpecExact(context.Background(), "fake", "abc12345")
+	if err != nil {
+		t.Fatalf("attach without a store should degrade to a plain attach, got %v", err)
+	}
+	if len(spec.Argv) == 0 || fake.attachedID != "abc12345" {
+		t.Fatalf("attach spec should come from the adapter, got %+v (attached %q)", spec, fake.attachedID)
+	}
+	if spec.Profile != (adapter.AttachProfileSnapshot{}) {
+		t.Fatalf("no store means no profile overlay, got %+v", spec.Profile)
+	}
+}

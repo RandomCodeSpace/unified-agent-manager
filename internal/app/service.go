@@ -844,6 +844,11 @@ func (s *Service) attachSpecWithProfile(ctx context.Context, sess adapter.Sessio
 	if err != nil {
 		return adapter.AttachSpec{}, err
 	}
+	if s.Store == nil {
+		// No store means no profiles to resolve: attach plainly rather than
+		// failing every attach with "profile store unavailable".
+		return spec, nil
+	}
 	lookup := sess.SessionName
 	if lookup == "" {
 		lookup = sess.ID
