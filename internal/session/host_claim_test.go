@@ -4,11 +4,11 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestCreatePreservesLiveOrphan(t *testing.T) {
@@ -45,7 +45,7 @@ func TestSessionClaimProtectsStartupFromCreateAndSweep(t *testing.T) {
 	c := newTestClient(t)
 	name := "uam-fake-104b"
 	// Another process owns the name but has not yet replaced the old state.
-	claim, err := os.OpenFile(filepath.Join(c.Dir, name+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	claim, err := os.Open(c.Dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,14 +56,35 @@ func TestSessionClaimProtectsStartupFromCreateAndSweep(t *testing.T) {
 	if err := writeState(c.Dir, State{Name: name}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.List(context.Background()); err != nil {
-		t.Fatal(err)
+	listDone := make(chan error, 1)
+	go func() { _, err := c.List(context.Background()); listDone <- err }()
+	createDone := make(chan error, 1)
+	cwd := t.TempDir()
+	go func() { createDone <- c.CreateSession(context.Background(), name, cwd, nil, []string{"/bin/true"}) }()
+	select {
+	case err := <-listDone:
+		t.Fatalf("List completed during another process's startup claim: %v", err)
+	case err := <-createDone:
+		t.Fatalf("Create completed during another process's startup claim: %v", err)
+	case <-time.After(100 * time.Millisecond):
 	}
 	if _, err := os.Stat(statePath(c.Dir, name)); err != nil {
 		t.Errorf("List removed state owned by a starting host: %v", err)
 	}
-	if err := c.CreateSession(context.Background(), name, t.TempDir(), nil, []string{"/bin/true"}); err == nil {
+	// The first host publishes its live identity before releasing the claim.
+	if err := writeState(c.Dir, State{Name: name, HostPID: os.Getpid(), HostStart: procStartTime(os.Getpid())}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(statePath(c.Dir, name)) })
+	_ = claim.Close()
+	if err := <-listDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-createDone; err == nil {
 		t.Error("second host claimed an already reserved name")
+	}
+	if _, err := os.Stat(statePath(c.Dir, name)); err != nil {
+		t.Fatalf("startup state lost after releasing claim: %v", err)
 	}
 }
 
