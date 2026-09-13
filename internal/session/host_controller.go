@@ -97,6 +97,8 @@ func (h *host) writeInput(client *attachClient, generation uint64, payload []byt
 		h.controlMu.Unlock()
 		if n > 0 {
 			payload = payload[n:]
+			// Bound a stalled provider, not a paste that is still progressing.
+			deadline = time.Now().Add(inputWriteTimeout)
 		}
 		if len(payload) == 0 {
 			return err
