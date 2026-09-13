@@ -1240,12 +1240,33 @@ func TestSupervisorLifecycleStartup(t *testing.T) {
 		assertLifecycleClean(t, fixture, err)
 	})
 
+	t.Run("event handshake stalls", func(t *testing.T) {
+		fixture := newSupervisorFixture(t, fakeOpenCodeConfig{StallEvent: true})
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- runSupervisor(ctx, fixture.options) }()
+		t.Cleanup(func() {
+			cancel()
+			err := awaitSupervisorResult(t, result, 3*time.Second)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("event handshake cancellation error = %v, want context.Canceled", err)
+			}
+			assertLifecycleClean(t, fixture, err)
+		})
+		// Start cancellation only after the supervisor reaches the stalled
+		// handshake. Bootstrap scheduling is not part of this assertion.
+		awaitFakeRecord(t, fixture, "event", 3*time.Second)
+		if got := fixture.recordsOfKind(t, "tui_start"); len(got) != 1 {
+			t.Fatalf("stalled startup TUI records = %#v, want one", got)
+		}
+		cancel()
+	})
+
 	for _, tt := range []struct {
 		name   string
 		config fakeOpenCodeConfig
 		resume bool
 	}{
-		{name: "event handshake stalls", config: fakeOpenCodeConfig{StallEvent: true}},
 		{name: "session create stalls", config: fakeOpenCodeConfig{StallCreate: true}},
 		{name: "exact session lookup stalls", config: fakeOpenCodeConfig{ExistingID: "ses_resume123", StallGet: true}, resume: true},
 	} {
@@ -1264,7 +1285,7 @@ func TestSupervisorLifecycleStartup(t *testing.T) {
 			if elapsed := time.Since(started); elapsed > 2*time.Second {
 				t.Fatalf("startup stall took %s, want bounded", elapsed)
 			}
-			if got := fixture.recordsOfKind(t, "tui_start"); tt.name == "event handshake stalls" && len(got) != 1 || tt.name != "event handshake stalls" && len(got) != 0 {
+			if got := fixture.recordsOfKind(t, "tui_start"); len(got) != 0 {
 				t.Fatalf("stalled startup TUI records = %#v", got)
 			}
 			assertLifecycleClean(t, fixture, err)
