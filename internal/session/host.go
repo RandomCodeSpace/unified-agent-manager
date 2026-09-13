@@ -140,6 +140,7 @@ type host struct {
 
 	mu        sync.Mutex
 	controlMu sync.Mutex
+	inputMu   sync.Mutex
 	term      *vterm.Terminal
 	ptmx      *os.File
 	label     string
@@ -232,6 +233,15 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	if err != nil {
 		return fmt.Errorf("start %s: %w", spec.command[0], err)
 	}
+	pollable, err := makePTYNonblocking(ptmx)
+	if err != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+		_ = ptmx.Close()
+		return fmt.Errorf("configure provider PTY: %w", err)
+	}
+	ptmx = pollable
+	defer func() { _ = ptmx.Close() }()
 	h.ptmx = ptmx
 	h.child = cmd
 	h.state = State{
@@ -299,11 +309,10 @@ var focusIn = []byte("\x1b[I")
 var focusOut = []byte("\x1b[O")
 
 // writeFocusEvent injects a synthetic focus event into the agent's input.
-// Like applyPTYSize it is deliberately unserialised against controller input:
-// the event is a complete three-byte sequence, and callers may hold neither
-// mutex (pumpPTY) or only controlMu (attach/drop paths).
+// Focus is best-effort under input backpressure. Callers may hold controlMu,
+// and the output pump must remain able to drain while the provider is busy.
 func (h *host) writeFocusEvent(event []byte) {
-	if _, err := h.ptmx.Write(event); err != nil {
+	if _, err := writePTYNonblocking(h.ptmx, event); err != nil {
 		log.Debug("write synthetic focus event failed", "session", h.name, "error", err)
 	}
 }
@@ -596,7 +605,7 @@ func (h *host) applyPTYSizeLocked(cols, rows int) {
 	if !validSize(cols, rows) {
 		return
 	}
-	_ = pty.Setsize(h.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}) // #nosec G115 -- bounds checked above
+	h.applyPTYSize(terminalSize{cols: cols, rows: rows})
 }
 
 func (h *host) handleAttach(conn net.Conn, br *bufio.Reader, req request) {
@@ -740,13 +749,9 @@ func (h *host) dropClientReason(client *attachClient, reason string) {
 	h.removeClient(client, reason)
 }
 
-// evictSlowClient drops a client whose output queue overflowed. Unlike every
-// other drop it deliberately does not take controlMu: pumpPTY is the only PTY
-// drainer, and the controller it is evicting may be blocked in ptmx.Write
-// holding controlMu while waiting for that same pump — taking the mutex here
-// wedges the host and every client attached to it. Registry state stays guarded
-// by h.mu, and applyPTYSize is a single ioctl that needs no serialisation
-// against an in-flight write.
+// evictSlowClient can run while a role update holds controlMu. Registry
+// changes and nonblocking input writes both hold mu, so removal still cannot
+// let stale input cross a controller handoff.
 func (h *host) evictSlowClient(client *attachClient) {
 	h.removeClient(client, "slow_client")
 }
