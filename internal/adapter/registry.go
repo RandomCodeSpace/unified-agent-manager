@@ -37,6 +37,11 @@ func newRegistry(backend Backend, adapters []AgentAdapter) *Registry {
 	return r
 }
 
+// ErrBackendList marks a ListAll failure of the shared session backend itself,
+// as opposed to a partial per-adapter failure whose surviving results are
+// still returned.
+var ErrBackendList = errors.New("list shared session backend")
+
 type snapshotListingAdapter interface {
 	ListFromSnapshot(ctx Context, infos []session.Info) ([]Session, error)
 }
@@ -51,7 +56,7 @@ func (r *Registry) ListAll(ctx Context) ([]Session, error) {
 		var err error
 		infos, err = r.backend.List(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("list shared session backend: %w", err)
+			return nil, fmt.Errorf("%w: %w", ErrBackendList, err)
 		}
 	}
 	var out []Session

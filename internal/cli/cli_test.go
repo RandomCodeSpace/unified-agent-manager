@@ -35,6 +35,9 @@ type cliFakeAdapter struct {
 	// lastDispatch is the request the adapter boundary received; tests assert
 	// the mode there so a call site cannot override a resolved safe profile.
 	lastDispatch adapter.DispatchRequest
+	// unavailable, when set, makes the adapter a known-but-disabled provider
+	// (CLI not installed) with this reason.
+	unavailable string
 }
 
 func (f *cliFakeAdapter) Name() string {
@@ -45,6 +48,9 @@ func (f *cliFakeAdapter) Name() string {
 }
 func (f *cliFakeAdapter) DisplayName() string { return f.Name() }
 func (f *cliFakeAdapter) Available() (bool, string) {
+	if f.unavailable != "" {
+		return false, f.unavailable
+	}
 	return true, ""
 }
 func (f *cliFakeAdapter) TerminalPolicy() adapter.ProviderTerminalPolicy {
@@ -576,6 +582,23 @@ func newCLITestService(t *testing.T) (*app.Service, *cliFakeAdapter) {
 	}
 	fake := &cliFakeAdapter{}
 	return app.NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake})), fake
+}
+
+// Audit 2026-09-12 row 6 — a typed provider that is not a provider at all
+// (a typo) must fail the wizard, not be silently swapped for the first
+// enabled adapter and launched.
+func TestRunNewRejectsUnknownTypedProvider(t *testing.T) {
+	svc, fake := newCLITestService(t)
+	var err error
+	captureCLIStdout(t, func() {
+		withCLIStdin(t, "bogus\n\n/tmp\ndo work\n", func() { err = runNew(context.Background(), svc, noopRunTUI) })
+	})
+	if err == nil || !strings.Contains(err.Error(), "bogus") {
+		t.Fatalf("new should reject an unknown provider by name, got %v", err)
+	}
+	if len(fake.sessions) != 0 {
+		t.Fatalf("no session may be dispatched for an unknown provider, got %d", len(fake.sessions))
+	}
 }
 
 func dispatchAndCaptureID(t *testing.T, svc *app.Service, args []string) string {
