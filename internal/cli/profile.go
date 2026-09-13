@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
@@ -41,10 +40,9 @@ func runProfile(ctx context.Context, svc *app.Service, args []string) error {
 
 func runProfileList(svc *app.Service, args []string) error {
 	fs := flag.NewFlagSet("profile ls", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return ignoreHelp(err)
 	}
 	if len(fs.Args()) != 0 {
 		return errors.New("profile ls takes no arguments")
@@ -71,10 +69,9 @@ func runProfileShow(svc *app.Service, args []string) error {
 		return errors.New("profile show requires <name>")
 	}
 	fs := flag.NewFlagSet("profile show", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
 	asJSON := fs.Bool("json", false, "print JSON")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
+	if err := parseAfterName(fs, args); err != nil {
+		return ignoreHelp(err)
 	}
 	if len(fs.Args()) != 0 {
 		return errors.New("profile show accepts one name")
@@ -95,8 +92,8 @@ func runProfileSet(svc *app.Service, args []string) error {
 		return errors.New("profile set requires <name>")
 	}
 	fs, opts := newProfileFlagSet("profile set")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
+	if err := parseAfterName(fs, args); err != nil {
+		return ignoreHelp(err)
 	}
 	if len(fs.Args()) != 0 {
 		return errors.New("profile set accepts one name")
@@ -133,8 +130,8 @@ func runProfileOverride(svc *app.Service, args []string) error {
 		return errors.New("profile override requires <session-id>")
 	}
 	fs, opts := newProfileFlagSet("profile override")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
+	if err := parseAfterName(fs, args); err != nil {
+		return ignoreHelp(err)
 	}
 	if len(fs.Args()) != 0 {
 		return errors.New("profile override accepts one session ID")
@@ -150,10 +147,9 @@ func runProfileEffective(ctx context.Context, svc *app.Service, args []string) e
 		return errors.New("profile effective requires <session-id>")
 	}
 	fs := flag.NewFlagSet("profile effective", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
 	asJSON := fs.Bool("json", false, "print JSON")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
+	if err := parseAfterName(fs, args); err != nil {
+		return ignoreHelp(err)
 	}
 	if len(fs.Args()) != 0 {
 		return errors.New("profile effective accepts one session ID")
@@ -173,6 +169,17 @@ func writeJSON(value any) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetEscapeHTML(false)
 	return encoder.Encode(value)
+}
+
+// parseAfterName parses the flags that follow a profile subcommand's leading
+// positional (name or session ID). A help flag in the positional slot still
+// prints usage and yields flag.ErrHelp instead of being rejected as a name.
+func parseAfterName(fs *flag.FlagSet, args []string) error {
+	switch args[0] {
+	case "-h", "-help", "--help":
+		return fs.Parse(args)
+	}
+	return fs.Parse(args[1:])
 }
 
 func exactlyOne(args []string, message string) (string, error) {

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -27,7 +26,6 @@ type profileOptions struct {
 
 func newProfileFlagSet(name string) (*flag.FlagSet, *profileOptions) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
 	opts := &profileOptions{}
 	fs.StringVar(&opts.provider, "provider", "", "provider")
 	fs.StringVar(&opts.mode, "mode", "", "safe or yolo")

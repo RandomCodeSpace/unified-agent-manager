@@ -141,6 +141,39 @@ func TestNewProfileSelection(t *testing.T) {
 	}
 }
 
+func TestProfileSubcommandHelpFlagSucceedsAndPrintsUsage(t *testing.T) {
+	svc, _ := newCLITestService(t)
+	cases := []struct {
+		args  []string
+		usage string
+	}{
+		{[]string{"profile", "ls", "-h"}, "Usage of profile ls:"},
+		{[]string{"profile", "show", "-h"}, "Usage of profile show:"},
+		{[]string{"profile", "show", "focused", "--help"}, "Usage of profile show:"},
+		{[]string{"profile", "set", "-h"}, "Usage of profile set:"},
+		{[]string{"profile", "set", "focused", "-h"}, "Usage of profile set:"},
+		{[]string{"profile", "override", "-h"}, "Usage of profile override:"},
+		{[]string{"profile", "effective", "-h"}, "Usage of profile effective:"},
+	}
+	for _, tc := range cases {
+		var err error
+		stderr := captureCLIStderr(t, func() { err = runCommand(context.Background(), svc, tc.args, noopRunTUI) })
+		if err != nil {
+			t.Fatalf("uam %s: help must not fail, got %v", strings.Join(tc.args, " "), err)
+		}
+		if !strings.Contains(stderr, tc.usage) || !strings.Contains(stderr, "-json") && !strings.Contains(stderr, "-mode") {
+			t.Fatalf("uam %s stderr = %q, want %q with flag list", strings.Join(tc.args, " "), stderr, tc.usage)
+		}
+	}
+	var err error
+	stderr := captureCLIStderr(t, func() {
+		err = runCommand(context.Background(), svc, []string{"profile", "set", "focused", "--bogus"}, noopRunTUI)
+	})
+	if err == nil || !strings.Contains(stderr, "Usage of profile set:") {
+		t.Fatalf("unknown profile flag: err=%v stderr=%q, want error with usage", err, stderr)
+	}
+}
+
 func TestProfileFlagValidation(t *testing.T) {
 	// Given
 	svc, _ := newCLITestService(t)
