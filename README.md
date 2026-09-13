@@ -166,3 +166,17 @@ before changing terminal, attach, or session-host behavior.
 
 Prebuilt binaries, checksums, SBOMs, and signing material are available on the
 [releases page](https://github.com/RandomCodeSpace/unified-agent-manager/releases).
+
+### Verify a release
+
+`SHA256SUMS` is signed with [cosign](https://github.com/sigstore/cosign) keyless
+signing from the release workflow. Download the archive, `SHA256SUMS`,
+`SHA256SUMS.sig`, and `SHA256SUMS.pem` from the release, then check the
+signature against the workflow identity before trusting the checksums:
+
+```sh
+cosign verify-blob --certificate SHA256SUMS.pem --signature SHA256SUMS.sig \
+  --certificate-identity-regexp '^https://github.com/RandomCodeSpace/unified-agent-manager/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+```
