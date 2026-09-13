@@ -174,10 +174,20 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	if err := EnsureDir(dir); err != nil {
 		return err
 	}
-	if st, err := readState(dir, name); err == nil && st.hostAlive() {
-		return fmt.Errorf("session %s already exists (host pid %d)", name, st.HostPID)
+	claim, err := lockSessionDir(dir)
+	if err != nil {
+		return err
 	}
-	// Stale leftovers from a crashed host: safe to clear, the pid is gone.
+	defer func() { _ = claim.Close() }()
+	if st, err := readState(dir, name); err == nil {
+		if st.hostAlive() {
+			return fmt.Errorf("session %s already exists (host pid %d)", name, st.HostPID)
+		}
+		if st.childAlive() {
+			return fmt.Errorf("session %s still has a running agent (pid %d); stop it before restarting", name, st.ChildPID)
+		}
+	}
+	// The name is exclusively ours, and neither previous process is alive.
 	if err := removeSessionFiles(dir, name); err != nil {
 		return fmt.Errorf("remove stale session files: %w", err)
 	}
@@ -233,6 +243,8 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 		h.signalChild(syscall.SIGKILL)
 		return fmt.Errorf("write session state: %w", err)
 	}
+	// Published live-host state now protects the name until shutdown.
+	_ = claim.Close()
 	if ready != nil {
 		_, _ = fmt.Fprintln(ready, "ok")
 		_ = ready.Close()
@@ -823,7 +835,12 @@ func (h *host) signalChild(sig syscall.Signal) {
 func (h *host) shutdown(exitCode int) {
 	h.shutdownClients()
 	providerID := readProviderIdentityHandoff(h.dir, h.name, h.providerIdentityFile)
-	if err := removeSessionFiles(h.dir, h.name); err != nil {
+	claim, err := lockSessionDir(h.dir)
+	if err == nil {
+		err = removeSessionFiles(h.dir, h.name)
+		_ = claim.Close()
+	}
+	if err != nil {
 		log.Warn("remove session files failed", "session", h.name, "error", err)
 	}
 	h.recordExit(exitCode, providerID)
