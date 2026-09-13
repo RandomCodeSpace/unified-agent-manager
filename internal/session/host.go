@@ -173,10 +173,20 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	if err := EnsureDir(dir); err != nil {
 		return err
 	}
-	if st, err := readState(dir, name); err == nil && st.hostAlive() {
-		return fmt.Errorf("session %s already exists (host pid %d)", name, st.HostPID)
+	claim, err := claimSession(dir, name)
+	if err != nil {
+		return err
 	}
-	// Stale leftovers from a crashed host: safe to clear, the pid is gone.
+	defer func() { _ = claim.Close() }()
+	if st, err := readState(dir, name); err == nil {
+		if st.hostAlive() {
+			return fmt.Errorf("session %s already exists (host pid %d)", name, st.HostPID)
+		}
+		if st.childAlive() {
+			return fmt.Errorf("session %s still has a running agent (pid %d); stop it before restarting", name, st.ChildPID)
+		}
+	}
+	// The name is exclusively ours, and neither previous process is alive.
 	if err := removeSessionFiles(dir, name); err != nil {
 		return fmt.Errorf("remove stale session files: %w", err)
 	}
@@ -252,6 +262,8 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	// (the kill responder) are unaffected.
 	_ = ln.Close()
 	h.shutdown(exitCode)
+	// Kill permits immediate recreation once cleaned is closed.
+	_ = claim.Close()
 	close(h.cleaned)
 	// Give pending kill responders a moment to flush their replies before the
 	// process (and every connection it owns) goes away.
