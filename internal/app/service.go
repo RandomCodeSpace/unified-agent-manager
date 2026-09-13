@@ -63,7 +63,10 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 	if err != nil {
 		return nil, cfg, err
 	}
-	live := s.liveSessions(ctx)
+	live, err := s.liveSessions(ctx)
+	if err != nil {
+		return nil, cfg, err
+	}
 	s.mergeStoredSessions(live, cfg, time.Now())
 	// Discovery and reconciliation are local-only. Network PR enrichment runs on
 	// the independent RefreshPRStatuses cadence and never delays this path.
@@ -86,8 +89,8 @@ func (s *Service) PruneStartup(ctx context.Context) error {
 	if s.Store == nil {
 		return nil
 	}
-	live := s.liveSessions(ctx)
-	if len(live) == 0 {
+	live, err := s.liveSessions(ctx)
+	if err != nil || len(live) == 0 {
 		// No live session visible — could be a scan failure; don't prune.
 		return nil
 	}
@@ -163,21 +166,26 @@ func (s *Service) loadConfig() (store.Config, error) {
 	return s.Store.Load()
 }
 
-func (s *Service) liveSessions(ctx context.Context) map[string]adapter.Session {
+// liveSessions returns the live roster. Partial custom-adapter failures are
+// logged and their surviving results retained; a failure of the shared session
+// backend itself is returned so callers do not mistake "could not list" for
+// "every session is gone" (audit 2026-09-12 row 12).
+func (s *Service) liveSessions(ctx context.Context) (map[string]adapter.Session, error) {
 	live := map[string]adapter.Session{}
 	if s.Registry == nil {
-		return live
+		return live, nil
 	}
 	sessions, err := s.Registry.ListAll(ctx)
+	if errors.Is(err, adapter.ErrBackendList) {
+		return nil, err
+	}
 	if err != nil {
-		// Partial custom-adapter results are retained; production's shared backend
-		// failure yields an empty snapshot and one actionable warning.
 		log.Warn("listing managed sessions failed", "error", err)
 	}
 	for _, sess := range sessions {
 		live[store.Key(sess.AgentType, sess.ID)] = sess
 	}
-	return live
+	return live, nil
 }
 
 func (s *Service) mergeStoredSessions(live map[string]adapter.Session, cfg store.Config, now time.Time) {
