@@ -89,25 +89,34 @@ func TestLoadDropsRecordWithMetacharID(t *testing.T) {
 	}
 }
 
-func TestLoadDropsRecordWithBadPRURL(t *testing.T) {
+// A PR URL is display metadata, never argv-bound. A malformed one must not
+// cost the session its only durable record: the PR field is cleared and the
+// record survives (audit 2026-09-12 row 17).
+func TestLoadClearsBadPRURLAndKeepsRecord(t *testing.T) {
+	bad := goodRecord()
+	bad["id"] = "badpr111"
+	bad["tmux_session"] = "uam-claude-badpr111"
+	bad["pr"] = map[string]any{
+		"url":    "https://evil.example.com/not/a/pull/req",
+		"number": 1,
+	}
 	s := writeConfig(t, map[string]any{
 		"claude:12345678": goodRecord(),
-		"claude:badpr111": map[string]any{
-			"id":           "badpr111",
-			"agent":        "claude",
-			"tmux_session": "uam-claude-badpr111",
-			"pr": map[string]any{
-				"url":    "https://evil.example.com/not/a/pull/req",
-				"number": 1,
-			},
-		},
+		"claude:badpr111": bad,
 	})
 	cfg, err := s.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if _, ok := cfg.Sessions["claude:badpr111"]; ok {
-		t.Fatal("record with non-github PR url was NOT dropped")
+	rec, ok := cfg.Sessions["claude:badpr111"]
+	if !ok {
+		t.Fatal("record with non-github PR url was dropped; only the PR field should be cleared")
+	}
+	if rec.PR != nil {
+		t.Fatalf("invalid PR should be cleared, got %+v", rec.PR)
+	}
+	if rec.Name != "fix tests" || rec.Workdir != "/tmp/repo" {
+		t.Fatalf("record fields must survive PR clearing, got %+v", rec)
 	}
 	if _, ok := cfg.Sessions["claude:12345678"]; !ok {
 		t.Fatal("valid sibling record was wrongly dropped")
