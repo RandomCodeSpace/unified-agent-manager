@@ -468,7 +468,10 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	if sess, ok := m.selectedSession(); ok {
 		selectedAgent, selectedID = sess.AgentType, sess.ID
 	}
-	if msg.sessions != nil {
+	// A load that raced the reorder debounce carries the store's pre-move
+	// SortIndex; replacing the roster would make the pending flush persist the
+	// revert (#92). Keep the manual order; the next refresh follows the flush.
+	if msg.sessions != nil && !m.reorderPending {
 		m.sessions = projectSessions(msg.sessions, msg.groupByDir)
 		m.groupByDir = msg.groupByDir
 	}

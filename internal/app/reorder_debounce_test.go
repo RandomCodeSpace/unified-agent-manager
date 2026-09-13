@@ -142,6 +142,44 @@ func TestQuitSequencesFlushBeforeQuit(t *testing.T) {
 	}
 }
 
+// #92 — a refresh that lands inside the debounce window carries the store's
+// pre-move SortIndex. It must not replace the roster while a reorder is
+// pending, or the debounced flush reads the stale indices and persists the
+// revert.
+func TestRefreshDuringPendingReorderKeepsManualOrder(t *testing.T) {
+	m, st := twoLiveSessionModel(t)
+	m.selected = 0
+	if cmd := m.moveSession(1); cmd == nil {
+		t.Fatal("move should schedule a flush")
+	}
+	stale := []adapter.Session{
+		{ID: "a", AgentType: "fake", DisplayName: "a", ProcAlive: adapter.Alive, SortIndex: 0},
+		{ID: "b", AgentType: "fake", DisplayName: "b", ProcAlive: adapter.Alive, SortIndex: 1},
+	}
+	model, _ := m.Update(sessionsLoadedMsg{refresh: true, sessions: stale})
+	m = model.(Model)
+	if got := sessionIDs(m.sessions); !reflect.DeepEqual(got, []string{"b", "a"}) {
+		t.Fatalf("refresh during debounce reverted the pending reorder: %v", got)
+	}
+	if !m.reorderPending {
+		t.Fatal("refresh must leave the reorder pending for the debounced flush")
+	}
+
+	model, flushCmd := m.Update(reorderFlushMsg{seq: m.reorderSeq})
+	m = model.(Model)
+	drainCmd(flushCmd)
+
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recB := cfg.Sessions[store.Key("fake", "b")]
+	recA := cfg.Sessions[store.Key("fake", "a")]
+	if recB.SortIndex != 0 || recA.SortIndex != 1 {
+		t.Fatalf("flush persisted the stale refresh order: a=%d b=%d", recA.SortIndex, recB.SortIndex)
+	}
+}
+
 // drainCmd executes a tea.Cmd and recursively runs any batched or sequenced
 // children so its side effects against the store run synchronously in the test.
 func drainCmd(cmd tea.Cmd) {
