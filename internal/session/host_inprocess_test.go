@@ -94,7 +94,9 @@ func TestInProcessAttachShowsSpinnerUntilProviderOutput(t *testing.T) {
 	if lastSpinner < 0 || providerOutput < 0 || lastSpinner > providerOutput {
 		t.Fatalf("startup spinner was not replaced by provider output: %q", output)
 	}
-	if !strings.Contains(output[lastSpinner:providerOutput], "\x1b[24;1H\x1b[2K") {
+	// The client keeps row 24 for its status bar, so the host's spinner —
+	// and its clear — live on the provider's last row, 23.
+	if !strings.Contains(output[lastSpinner:providerOutput], "\x1b[23;1H\x1b[2K") {
 		t.Fatalf("startup spinner row was not cleared before provider output: %q", output[lastSpinner:providerOutput])
 	}
 

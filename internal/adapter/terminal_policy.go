@@ -25,8 +25,8 @@ type KeyProtocolPolicy string
 const KeyProtocolNative KeyProtocolPolicy = "native"
 
 // BackDetachPolicy is a provider's default for the attach client's quick
-// detach (a bare left arrow while the input box is empty detaches). The
-// gesture assumes left arrow is a no-op at an empty prompt; providers that
+// detach (Ctrl+Left while the input box is empty detaches). The gesture
+// assumes Ctrl+Left is a no-op at an empty prompt; providers that
 // bind it to their own UI (pane or tab navigation) disable the default.
 // Profiles and session overrides still take precedence either way.
 type BackDetachPolicy string

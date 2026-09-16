@@ -129,8 +129,8 @@ func privateModeSequence(modes []string, final byte) string {
 
 // RunAttach is the entry point of `uam __attach`: it puts the terminal in raw
 // mode and bridges it to a session host — the native replacement for
-// `tmux attach`. It returns when the user detaches (Ctrl+B d, or a bare left
-// arrow while nothing is typed — see stdinFilter) or the agent exits.
+// `tmux attach`. It returns when the user detaches (Ctrl+B d, or Ctrl+Left
+// while nothing is typed — see stdinFilter) or the agent exits.
 func RunAttach(args []string) error {
 	fs := flag.NewFlagSet("__attach", flag.ContinueOnError)
 	dir := fs.String("dir", DefaultDir(), "session runtime directory")
@@ -183,9 +183,19 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	if w, h, err := term.GetSize(stdout.Fd()); err == nil {
 		cols, rows = w, h
 	}
-	hello := defaultClientHello(term.IsTerminal(stdin.Fd()) && term.IsTerminal(stdout.Fd()), os.Getenv("TERM"), os.Getenv("COLORTERM"))
+	inputTerminal := term.IsTerminal(stdin.Fd())
+	terminalOutput := term.IsTerminal(stdout.Fd())
+	ownScreen := terminalOutput && attachOwnsOuterScreen(dir, name)
+	// On uam's own alternate screen the last row is reserved for the status
+	// bar: the host sizes the provider one row short and the client pins the
+	// scroll region above the bar. Primary-screen providers keep every row —
+	// a scroll region there would cut them off from the terminal's scrollback,
+	// which is the whole reason they stay on the primary screen.
+	statusRows := statusBarReservation(ownScreen, rows)
+	display, cwd := statusBarIdentity(dir, name)
+	hello := defaultClientHello(inputTerminal && terminalOutput, os.Getenv("TERM"), os.Getenv("COLORTERM"))
 	handshake, err := performAttachHandshake(conn, name, request{
-		Op: opAttach, Cols: cols, Rows: rows, Version: protocolV2, RequestedRole: requestedRole, Hello: &hello,
+		Op: opAttach, Cols: cols, Rows: rows - statusRows, Version: protocolV2, RequestedRole: requestedRole, Hello: &hello,
 	})
 	if err != nil {
 		return err
@@ -193,9 +203,6 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	frames := newAttachFrameWriter(conn, handshake.version, handshake.clientID, handshake.generation)
 	frames.SetAssignedRole(handshake.assignedRole)
 	output := &synchronizedWriter{writer: stdout}
-	inputTerminal := term.IsTerminal(stdin.Fd())
-	terminalOutput := term.IsTerminal(stdout.Fd())
-	ownScreen := terminalOutput && attachOwnsOuterScreen(dir, name)
 	cleanup, err := beginAttachTerminal(attachTerminalConfig{
 		input: stdin, output: output, inputTerminal: inputTerminal, outputTerminal: terminalOutput, ownScreen: ownScreen,
 	})
@@ -205,6 +212,7 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	defer func() { _ = cleanup.Restore() }()
 	runtime := newAttachRuntime(attachRuntimeConfig{
 		session: name, output: output, input: stdin, inputTerminal: inputTerminal, mouseEnabled: policy.mouseEnabled, prefix: policy.controlPrefix, profile: opts.profile,
+		statusRows: statusRows, role: handshake.assignedRole, display: display, cwd: cwd,
 		terminalSize: func() (int, int, bool) {
 			if !terminalOutput {
 				return 0, 0, false
@@ -213,7 +221,15 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 			return w, h, err == nil
 		},
 	})
-	if terminalOutput && handshake.version == protocolV2 {
+	defer runtime.stopStatusBar()
+	if statusRows > 0 {
+		// The bar is painted before the host's first frame so a slow provider
+		// still shows where the user is; the frame's clear-screen is tracked
+		// by the output filter and triggers a repaint.
+		if err := runtime.paintStatusBar(true); err != nil {
+			return err
+		}
+	} else if terminalOutput && handshake.version == protocolV2 {
 		// Queued, not written: the host's first frame is a full repaint that
 		// opens with a clear-screen, so a banner written here is erased before
 		// the user can read it.
@@ -244,7 +260,8 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 				// size when it promotes — so a standby that stayed silent since
 				// attaching was promoted into a stale geometry.
 				if w, h, err := term.GetSize(stdout.Fd()); err == nil {
-					_ = frames.WriteFrame(frameResize, resizePayload(w, h))
+					_ = frames.WriteFrame(frameResize, resizePayload(w, h-statusRows))
+					_ = runtime.paintStatusBar(true)
 				}
 			}
 		}
@@ -304,6 +321,8 @@ func runAttachWithOptions(dir, name string, stdin *os.File, stdout *os.File, opt
 	if !inputFinished {
 		inputErr = <-inputDone
 	}
+	// A pending bar restore must never fire onto the primary screen.
+	runtime.stopStatusBar()
 	restoreErr := cleanup.Restore()
 	if inputErr != nil {
 		return errors.Join(inputErr, restoreErr)
@@ -407,6 +426,45 @@ func consumeAttachServerFrame(filter *attachOutputFilter, kind byte, payload []b
 	}
 }
 
+// statusBarIdentity is what the status bar calls the session: the launcher's
+// label ("<name> · <provider>") plus the short id from the canonical session
+// name, or the canonical name itself for sessions that were never labelled.
+// The working directory comes from the same state file, with the home
+// directory shortened to "~". The canonical name stays the machine identifier:
+// hosts, sockets and listings all parse it.
+func statusBarIdentity(dir, name string) (display, cwd string) {
+	display = name
+	state, err := readState(dir, name)
+	if err != nil {
+		return display, ""
+	}
+	if state.Label != "" {
+		display = state.Label
+		if id := name[strings.LastIndexByte(name, '-')+1:]; id != "" && id != name {
+			display += " · " + id
+		}
+	}
+	cwd = state.Cwd
+	if home, err := os.UserHomeDir(); err == nil && home != "" && home != "/" {
+		if cwd == home {
+			cwd = "~"
+		} else if strings.HasPrefix(cwd, home+"/") {
+			cwd = "~" + cwd[len(home):]
+		}
+	}
+	return display, cwd
+}
+
+// statusBarReservation is how many terminal rows the attach client keeps for
+// its status bar: one on uam's own alternate screen when there is room for a
+// provider row above it, otherwise none.
+func statusBarReservation(ownScreen bool, rows int) int {
+	if ownScreen && rows >= 2 {
+		return 1
+	}
+	return 0
+}
+
 func resizePayload(cols, rows int) []byte {
 	// Clamp to uint16 range; the host rejects anything over 1000 anyway.
 	out := make([]byte, 4)
@@ -416,9 +474,11 @@ func resizePayload(cols, rows int) []byte {
 }
 
 // stdinFilter is the attach client's input state machine. Besides the detach
-// chord and Ctrl+Z swallowing, it implements the Claude-Code-style quick
-// detach: pressing the left arrow detaches when the agent's input box is
-// (believed) empty.
+// chord and Ctrl+Z swallowing, it implements the quick detach: pressing
+// Ctrl+Left detaches when the agent's input box is (believed) empty. Bare
+// arrows are never taken — providers bind them (opencode switches subagents
+// with left/right, copilot opens its sidebar on left) — while Ctrl+Left is
+// word-left in every composer, a no-op on an empty box.
 //
 // uam is a byte bridge and cannot see the agent's real input box, so "empty"
 // is approximated locally: typed counts the runes put into the box, backspace
@@ -427,9 +487,9 @@ func resizePayload(cols, rows int) []byte {
 // history/menu navigation via forwarded escape sequences, a literal prefix
 // byte) until a key that submits or clears the box (Enter, Esc, Ctrl+U). Plain
 // Ctrl+C is swallowed so terminal copy shortcuts cannot cancel the agent;
-// Ctrl+B c sends a literal Ctrl+C when an explicit interrupt is needed. A bare
-// left arrow while the box is believed empty detaches; inside a draft it keeps
-// moving the cursor. Ctrl+B d always detaches regardless.
+// Ctrl+B c sends a literal Ctrl+C when an explicit interrupt is needed.
+// Ctrl+Left while the box is believed empty detaches; inside a draft it keeps
+// moving the cursor by a word. Ctrl+B d always detaches regardless.
 //
 // Not everything on stdin is a keystroke: agents query the terminal (Ink
 // re-requests the cursor position every render) and the replies — CPR, DA1,
@@ -685,6 +745,37 @@ type attachOutputFilter struct {
 	// tracked whether or not passthrough is suppressing them.
 	mouseState    map[string]bool
 	mouseTracking string
+	// viewportRows reports the provider's row count when the client reserves
+	// a status bar row (0 otherwise). Scroll-region sequences are clamped to
+	// it so a provider resetting its margins cannot scroll the bar away.
+	viewportRows func() int
+	// damage records provider output that clobbered the status bar row
+	// (clear-screen) or dropped the pinned scroll region (terminal resets);
+	// the runtime repaints after the write.
+	damage statusBarDamage
+}
+
+// statusBarDamage is what the output filter saw the provider do to the rows
+// the attach client owns.
+type statusBarDamage uint8
+
+const (
+	damageNone  statusBarDamage = iota
+	damageClear                 // ED 2/3: the bar row was erased
+	damageReset                 // DECSTR or RIS: margins and the bar are gone
+)
+
+// consumeDamage returns and clears the damage seen since the last call.
+func (f *attachOutputFilter) consumeDamage() statusBarDamage {
+	damage := f.damage
+	f.damage = damageNone
+	return damage
+}
+
+func (f *attachOutputFilter) noteDamage(damage statusBarDamage) {
+	if damage > f.damage {
+		f.damage = damage
+	}
 }
 
 var attachMouseTrackingModes = newModeSet(mouseTrackingModes)
@@ -725,6 +816,9 @@ func (f *attachOutputFilter) Write(p []byte) (int, error) {
 				if b == 0x1b {
 					f.pending = append(f.pending, b)
 				} else {
+					if b == 'c' { // RIS: full reset drops margins and the bar
+						f.noteDamage(damageReset)
+					}
 					out = append(out, b)
 				}
 			}
@@ -779,6 +873,9 @@ func (f *attachOutputFilter) Flush() error {
 }
 
 func (f *attachOutputFilter) rewriteCSI(seq []byte) []byte {
+	if rewritten, handled := f.rewriteStatusBarCSI(seq); handled {
+		return rewritten
+	}
 	if len(seq) < 5 || seq[0] != 0x1b || seq[1] != '[' || seq[2] != '?' || (seq[len(seq)-1] != 'h' && seq[len(seq)-1] != 'l') {
 		return seq
 	}
@@ -814,6 +911,75 @@ func (f *attachOutputFilter) rewriteCSI(seq []byte) []byte {
 	out = append(out, bytes.Join(kept, []byte{';'})...)
 	out = append(out, seq[len(seq)-1])
 	return out
+}
+
+// rewriteStatusBarCSI tracks the sequences that matter to a reserved status
+// bar and clamps DECSTBM into the provider's viewport. Everything it does not
+// recognise is reported unhandled so the private-mode rewrite runs as before.
+func (f *attachOutputFilter) rewriteStatusBarCSI(seq []byte) ([]byte, bool) {
+	if len(seq) < 3 || seq[0] != 0x1b || seq[1] != '[' {
+		return seq, false
+	}
+	params := seq[2 : len(seq)-1]
+	switch seq[len(seq)-1] {
+	case 'J':
+		if p := string(params); p == "2" || p == "3" {
+			f.noteDamage(damageClear)
+		}
+		return seq, true
+	case 'p':
+		if string(params) == "!" { // DECSTR
+			f.noteDamage(damageReset)
+		}
+		return seq, true
+	case 'r':
+		limit := 0
+		if f.viewportRows != nil {
+			limit = f.viewportRows()
+		}
+		if limit <= 0 || bytes.IndexByte(params, '?') >= 0 {
+			return seq, false
+		}
+		top, bottom, ok := parseScrollRegion(params, limit)
+		if !ok {
+			return seq, true
+		}
+		return []byte("\x1b[" + strconv.Itoa(top) + ";" + strconv.Itoa(bottom) + "r"), true
+	}
+	return seq, false
+}
+
+// parseScrollRegion reads DECSTBM parameters and clamps them to limit rows.
+// Defaults follow the terminal: an omitted top is 1, an omitted bottom is the
+// last row — which for a provider that thinks it has limit rows is limit.
+func parseScrollRegion(params []byte, limit int) (top, bottom int, ok bool) {
+	top, bottom = 1, limit
+	fields := bytes.Split(params, []byte{';'})
+	if len(fields) > 2 {
+		return 0, 0, false
+	}
+	for index, field := range fields {
+		if len(field) == 0 {
+			continue
+		}
+		value, err := strconv.Atoi(string(field))
+		if err != nil || value < 0 {
+			return 0, 0, false
+		}
+		if value == 0 {
+			continue
+		}
+		if index == 0 {
+			top = value
+		} else {
+			bottom = value
+		}
+	}
+	bottom = min(bottom, limit)
+	if top < 1 || top >= bottom {
+		return 1, limit, true
+	}
+	return top, bottom, true
 }
 
 func (f *attachOutputFilter) recordMouseMode(mode string, on bool) {
@@ -875,7 +1041,7 @@ func writeAttachBytes(dst io.Writer, p []byte) error {
 }
 
 // escByte feeds one byte into a pending escape sequence. It returns the
-// updated forward buffer and whether the left-arrow quick detach fired.
+// updated forward buffer and whether the Ctrl+Left quick detach fired.
 func (f *stdinFilter) escByte(out []byte, b byte) ([]byte, bool) {
 	f.esc = append(f.esc, b)
 	if len(f.esc) == 2 {
@@ -901,7 +1067,7 @@ func (f *stdinFilter) escByte(out []byte, b byte) ([]byte, bool) {
 	}
 	seq := f.esc
 	f.esc = nil
-	if f.backDetach && f.boxEmpty() && isLeftArrow(seq) {
+	if f.backDetach && f.boxEmpty() && isQuickDetachKey(seq) {
 		return out, true
 	}
 	if ctrl := decodeEnhancedCtrlKey(seq); ctrl != 0 {
@@ -1127,9 +1293,9 @@ func escComplete(esc []byte) bool {
 	}
 }
 
-// isLeftArrow matches an unmodified left arrow: CSI D (normal) or SS3 D
-// (application cursor mode). Modified arrows (e.g. shift-left, ESC[1;2D) are
-// real edits and pass through.
-func isLeftArrow(seq []byte) bool {
-	return string(seq) == "\x1b[D" || string(seq) == "\x1bOD"
+// isQuickDetachKey matches Ctrl+Left: CSI 1;5 D (xterm, kitty, and every
+// terminal following the xterm modifier encoding) or the parameterless CSI 5 D
+// some terminals emit. Bare and otherwise-modified arrows are real input.
+func isQuickDetachKey(seq []byte) bool {
+	return string(seq) == "\x1b[1;5D" || string(seq) == "\x1b[5D"
 }
