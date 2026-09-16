@@ -2,6 +2,7 @@ package session
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/mattn/go-runewidth"
 )
@@ -55,6 +56,42 @@ func clearPaintedStatus(cols, rows int, message string) string {
 // wrapToWidth splits text into at most maxLines runs of at most cols cells.
 // Anything past the last line is dropped: at that point the notice is longer
 // than the terminal is tall.
+// pinScrollRegion confines scrolling to the provider's viewport so a linefeed
+// on its last row can never push the status bar out of the terminal.
+func pinScrollRegion(viewportRows int) string {
+	if viewportRows <= 0 {
+		return ""
+	}
+	return "\x1b[1;" + strconv.Itoa(viewportRows) + "r"
+}
+
+// paintStatusBar draws the persistent attach status bar on the terminal's
+// last row, which the provider never owns: the host sizes the PTY to
+// viewportRows, one short of the terminal. The bar is reverse video across the
+// full width, truncated to one row. When pin is set the scroll region is
+// re-established first (initial paint, resize, or after a provider reset that
+// dropped it); repaints after a plain clear-screen leave the provider's own
+// region alone.
+func paintStatusBar(cols, rows, viewportRows int, text string, pin bool) string {
+	if cols <= 0 || rows <= 0 || viewportRows <= 0 || viewportRows >= rows {
+		return ""
+	}
+	line := wrapToWidth(text, cols, 1)[0]
+	width := 0
+	for _, r := range line {
+		width += runewidth.RuneWidth(r)
+	}
+	if width < cols {
+		line += strings.Repeat(" ", cols-width)
+	}
+	out := "\x1b7" // save cursor and pen
+	if pin {
+		out += pinScrollRegion(viewportRows)
+	}
+	out += "\x1b[" + strconv.Itoa(rows) + ";1H" + "\x1b[0m\x1b[7m" + line + "\x1b[0m"
+	return out + "\x1b8" // restore cursor and pen
+}
+
 func wrapToWidth(text string, cols, maxLines int) []string {
 	lines := make([]string, 0, 1)
 	line, width := "", 0

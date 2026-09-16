@@ -105,9 +105,11 @@ so `UAM_NO_MOUSE=1` disables it.
 The base dashboard has no command composer. Use `uam new`, the existing `e`
 wizard, or other CLI commands to create and configure sessions.
 
-Inside an attached session, `Ctrl+B d` detaches. A bare left arrow also detaches
-when the provider input is empty and the quick-detach option is enabled. See the
-README for the complete attach-key contract.
+Inside an attached session, `Ctrl+B d` detaches. Ctrl+Left also detaches when
+the provider input is empty and the quick-detach option is enabled; bare arrows
+always reach the provider. On uam's own alternate screen the last terminal row
+is a persistent status bar (role, session, profile, keys) and the provider gets
+the rows above it. See the README for the complete attach-key contract.
 
 ## Multiple attached terminals
 

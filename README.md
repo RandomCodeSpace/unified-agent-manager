@@ -132,6 +132,15 @@ While attached, the default prefix is `Ctrl+B`:
 | `Ctrl+B`, then `d` | Detach and leave the agent running |
 | `Ctrl+B`, then `c` | Send `Ctrl+C` to the agent |
 | `Ctrl+B`, then `i` | Show connection and profile details |
+| `Ctrl+Left` | Detach when the agent's input box is empty (word-left otherwise) |
+
+Bare arrow keys always reach the agent. On uam's own alternate screen the last
+terminal row is a persistent status bar: your role, the session as
+`<name> · <provider> · <id>`, the keys above, the working directory, the
+profile, and a note when mouse passthrough is off. The agent gets the rows
+above it, and narrower terminals drop the trailing items. Providers that draw
+on the primary screen (codex, omp) keep every row so their terminal scrollback
+stays intact.
 
 Plain `Ctrl+C` and `Ctrl+Z` are held back while attached so they do not
 accidentally terminate or suspend the detached agent.

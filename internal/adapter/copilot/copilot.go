@@ -6,9 +6,10 @@ import (
 
 func New(backend adapter.Backend) adapter.AgentAdapter {
 	agent := adapter.NewAgent("copilot", "GitHub Copilot", []adapter.CommandCandidate{{Display: "copilot", Args: []string{"copilot"}}}, []string{"--yolo"}, backend)
-	// Copilot binds left arrow to its own pane navigation at an empty
-	// composer, so the attach client's quick detach would steal the key.
-	agent.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderCopilot, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative, BackDetach: adapter.BackDetachDisabled}
+	// Copilot binds bare left arrow to its session sidebar; the attach
+	// client's quick detach is Ctrl+Left, which copilot does not bind, so the
+	// gesture stays at its default.
+	agent.Terminal = adapter.ProviderTerminalPolicy{Identity: adapter.ProviderCopilot, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative}
 	// copilot supports exact-session resume natively. The uam id is a UUID,
 	// so --session-id pins the new Copilot session's primary id to it at
 	// dispatch and --resume then matches by session id — the most stable

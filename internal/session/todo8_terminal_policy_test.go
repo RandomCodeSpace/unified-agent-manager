@@ -88,7 +88,7 @@ func TestProfileControlPrefix(t *testing.T) {
 }
 
 func TestProfileBackDetach(t *testing.T) {
-	left := []byte("\x1b[D")
+	left := []byte("\x1b[1;5D")
 	for _, test := range []struct {
 		name       string
 		backDetach bool
@@ -104,7 +104,7 @@ func TestProfileBackDetach(t *testing.T) {
 				t.Fatalf("detached = %v, want %v", detached, test.wantDetach)
 			}
 			if !test.wantDetach && !bytes.Equal(got, left) {
-				t.Fatalf("left arrow = %q, want byte-exact %q", got, left)
+				t.Fatalf("Ctrl+Left = %q, want byte-exact %q", got, left)
 			}
 		})
 	}

@@ -283,8 +283,8 @@ func TestE2EAttachChordsAndMouse(t *testing.T) {
 		}
 		// A click whose column byte falls in the UTF-8 continuation range.
 		viewer.send("\x1b[M \x84\x30")
-		viewer.send("\x1b[D")
-		viewer.requireDetached("left-arrow quick detach")
+		viewer.send("\x1b[1;5D")
+		viewer.requireDetached("Ctrl+Left quick detach")
 	})
 
 	t.Run("meta chord does not latch the filter", func(t *testing.T) {

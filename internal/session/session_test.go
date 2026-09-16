@@ -903,16 +903,18 @@ func TestAttachReplayUsesCurrentTerminalSize(t *testing.T) {
 	})
 
 	attached := startQuietAttach(t, c.Dir, name, 80, 24)
+	// A 24-row terminal gives the provider 23 rows; the client keeps the
+	// last one for its status bar.
 	waitFor(t, "initial replay cursor", func() bool {
 		out := attached.Snapshot()
-		return strings.Contains(out, "\x1b[24;80H") || strings.Contains(out, "\x1b[50;200H")
+		return strings.Contains(out, "\x1b[23;80H") || strings.Contains(out, "\x1b[50;200H")
 	})
 	out := attached.Snapshot()
 	if !strings.Contains(out, "edge") {
 		t.Fatalf("attach replay missing edge marker: %q", out)
 	}
-	if !strings.Contains(out, "\x1b[24;80H") {
-		t.Fatalf("attach replay must park cursor using attached terminal size: %q", out)
+	if !strings.Contains(out, "\x1b[23;80H") {
+		t.Fatalf("attach replay must park cursor using the attached viewport: %q", out)
 	}
 	if strings.Contains(out, "\x1b[50;200H") {
 		t.Fatalf("attach replay must not use detached terminal size: %q", out)
@@ -1300,9 +1302,9 @@ func validateMouseOffAttachOutput(output string) error {
 	return nil
 }
 
-// The left-arrow quick detach works end to end through the real attach
-// client: with nothing typed since attach, a bare left arrow detaches.
-func TestAttachLeftArrowDetaches(t *testing.T) {
+// The Ctrl+Left quick detach works end to end through the real attach
+// client: with nothing typed since attach, Ctrl+Left detaches.
+func TestAttachCtrlLeftDetaches(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
 	name := "uam-fake-77778888"
@@ -1319,7 +1321,7 @@ func TestAttachLeftArrowDetaches(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- runAttach(c.Dir, name, stdinR, stdoutW) }()
-	if _, err := stdinW.Write([]byte("\x1b[D")); err != nil {
+	if _, err := stdinW.Write([]byte("\x1b[1;5D")); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -1328,7 +1330,7 @@ func TestAttachLeftArrowDetaches(t *testing.T) {
 			t.Fatalf("runAttach: %v", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("left arrow did not detach")
+		t.Fatal("Ctrl+Left did not detach")
 	}
 	_ = stdoutW.Close()
 	buf := make([]byte, 64*1024)
