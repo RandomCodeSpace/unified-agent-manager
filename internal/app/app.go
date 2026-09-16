@@ -99,7 +99,11 @@ type Model struct {
 	// derives age from CreatedAt instead.
 	now func() time.Time
 	// dashboardRevision invalidates pointer intent captured by a previously
-	// displayed frame after refresh or resize.
+	// displayed frame after a resize. Refreshes do not bump it: the frame
+	// signature already covers the visible roster, and Bubble Tea keeps the
+	// displayed view's OnMouse callback until the content changes, so a
+	// counter that moves on a no-op refresh would reject every click that
+	// follows one.
 	dashboardRevision     uint64
 	sessionLoads          *sessionLoadCoordinator
 	appliedLoadGeneration uint64
@@ -448,7 +452,6 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	if msg.loadGeneration != 0 {
 		m.appliedLoadGeneration = msg.loadGeneration
 	}
-	m.dashboardRevision++
 	if msg.refresh {
 		m.hasLoaded = true
 		// Only the completion of the load that acquired the guard may release it.
