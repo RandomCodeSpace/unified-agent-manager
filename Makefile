@@ -5,7 +5,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 
-.PHONY: all build install run test test-e2e cover lint tidy clean
+.PHONY: all build install run test test-e2e test-e2e-real cover lint tidy clean
 
 all: build
 
@@ -26,6 +26,12 @@ test:
 # first and are skipped unless UAM_E2E_BIN points at it.
 test-e2e: build
 	UAM_E2E_BIN=$(CURDIR)/bin/$(BINARY) go test ./internal/session/ ./internal/app/ -run TestE2E -count=1 -v
+
+# Real-provider end-to-end tests launch the installed opencode, copilot and
+# codex CLIs and make model calls on the operator's accounts. Opt in with
+# UAM_E2E_REAL_PROVIDERS (comma-separated); provider state is isolated per run.
+test-e2e-real: build
+	UAM_E2E_BIN=$(CURDIR)/bin/$(BINARY) UAM_E2E_REAL_PROVIDERS=$${UAM_E2E_REAL_PROVIDERS:-opencode,copilot,codex} go test ./internal/e2e/ -run TestRealProvider -count=1 -v -timeout 30m
 
 cover:
 	go test -coverprofile=coverage.out ./... >/dev/null
