@@ -248,12 +248,29 @@ func TestStalePointerIntentNeverActivates(t *testing.T) {
 		assertStaleIntent(t, next.(Model), cmd)
 	})
 
-	t.Run("refresh", func(t *testing.T) {
+	t.Run("refresh that changes the roster", func(t *testing.T) {
 		m := base
 		intent := pointerIntentFor(t, m.buildDashboardFrame(), dashboardPrimary, identity)
-		m = m.handleSessionsLoaded(sessionsLoadedMsg{refresh: true})
+		m = m.handleSessionsLoaded(sessionsLoadedMsg{refresh: true, sessions: []adapter.Session{m.sessions[0]}})
 		next, cmd := m.Update(intent)
 		assertStaleIntent(t, next.(Model), cmd)
+	})
+
+	// The periodic refresh usually changes nothing. Bubble Tea keeps the
+	// displayed view's OnMouse callback until the content changes, so intent
+	// captured before such a refresh must still be current afterwards.
+	t.Run("refresh that changes nothing", func(t *testing.T) {
+		roster := sessionsLoadedMsg{refresh: true, sessions: append([]adapter.Session(nil), base.sessions...)}
+		m := base.handleSessionsLoaded(roster)
+		intent := pointerIntentFor(t, m.buildDashboardFrame(), dashboardPrimary, identity)
+		m = m.handleSessionsLoaded(roster)
+		next, cmd := m.Update(intent)
+		if cmd == nil {
+			t.Fatal("pointer intent was rejected after a refresh that changed nothing")
+		}
+		if msg := next.(Model).message; msg != "" {
+			t.Fatalf("unexpected feedback after an unchanged refresh: %q", msg)
+		}
 	})
 
 	t.Run("reorder", func(t *testing.T) {

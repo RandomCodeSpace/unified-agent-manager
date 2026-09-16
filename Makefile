@@ -5,7 +5,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 
-.PHONY: all build install run test test-e2e test-e2e-real cover lint tidy clean
+.PHONY: all build install run test test-e2e test-e2e-real cover lint tidy clean test-e2e-dashboard
 
 all: build
 
@@ -32,6 +32,11 @@ test-e2e: build
 # UAM_E2E_REAL_PROVIDERS (comma-separated); provider state is isolated per run.
 test-e2e-real: build
 	UAM_E2E_BIN=$(CURDIR)/bin/$(BINARY) UAM_E2E_REAL_PROVIDERS=$${UAM_E2E_REAL_PROVIDERS:-opencode,copilot,codex} go test ./internal/e2e/ -run TestRealProvider -count=1 -v -timeout 30m
+
+# Dashboard pointer checks on a real PTY (and over ssh to localhost when a
+# key-based login is available); needs no provider account.
+test-e2e-dashboard: build
+	UAM_E2E_BIN=$(CURDIR)/bin/uam go test ./internal/e2e/ -run TestE2EDashboard -count=1 -v -timeout 10m
 
 cover:
 	go test -coverprofile=coverage.out ./... >/dev/null
