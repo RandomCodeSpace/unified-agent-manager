@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func FuzzStateDecoding(f *testing.F) {
@@ -414,4 +416,95 @@ func TestKillEscalatesWithoutSocket(t *testing.T) {
 	if err := c.Kill(t.Context(), st2.Name); err != nil {
 		t.Fatalf("Kill (orphan agent): %v", err)
 	}
+}
+
+func TestKillOrphanEscalatesWhenAgentIgnoresTERM(t *testing.T) {
+	c := newTestClient(t)
+	st, child, done := startTERMInsensitiveOrphan(t, c)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*killGrace)
+	defer cancel()
+	started := time.Now()
+	if err := c.Kill(ctx, st.Name); err != nil {
+		t.Fatalf("Kill TERM-ignoring orphan: %v", err)
+	}
+	if time.Since(started) < killGrace {
+		t.Fatal("orphan was killed before the TERM grace period elapsed")
+	}
+	select {
+	case <-done:
+		status, ok := child.ProcessState.Sys().(syscall.WaitStatus)
+		if !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
+			t.Fatalf("agent exit = %v, want SIGKILL", child.ProcessState)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("agent was not reaped after Kill returned")
+	}
+	if _, err := os.Stat(statePath(c.Dir, st.Name)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("terminated orphan state remains: %v", err)
+	}
+}
+
+func TestKillOrphanCancellationStopsEscalation(t *testing.T) {
+	c := newTestClient(t)
+	st, _, done := startTERMInsensitiveOrphan(t, c)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	if err := c.Kill(ctx, st.Name); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Kill canceled orphan: %v", err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("orphan terminated after cancellation: %v", err)
+	case <-time.After(killGrace + 100*time.Millisecond):
+	}
+}
+
+func TestKillOrphanRefusesUnverifiedIdentity(t *testing.T) {
+	for _, identity := range []string{"missing", "mismatched"} {
+		t.Run(identity, func(t *testing.T) {
+			c := newTestClient(t)
+			st, _, _ := startTERMInsensitiveOrphan(t, c)
+			if identity == "missing" {
+				st.ChildStart = 0
+			} else {
+				st.ChildStart++
+			}
+			if err := writeState(c.Dir, st); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Kill(t.Context(), st.Name); err == nil || !strings.Contains(err.Error(), "cannot verify process identity") {
+				t.Fatalf("Kill error = %v, want process-identity safety error", err)
+			}
+			if !ProcAlive(st.ChildPID) {
+				t.Fatal("unverified orphan was terminated")
+			}
+		})
+	}
+}
+
+func startTERMInsensitiveOrphan(t *testing.T, c *Client) (State, *exec.Cmd, <-chan error) {
+	t.Helper()
+	child := exec.Command("sh", "-c", "trap '' TERM; printf 'ready\\n'; exec sleep 60")
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	output, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	t.Cleanup(func() { _ = child.Process.Kill() })
+	if line, err := bufio.NewReader(output).ReadString('\n'); err != nil || line != "ready\n" {
+		t.Fatalf("agent readiness = %q, %v", line, err)
+	}
+	go func() { done <- child.Wait() }()
+	st := State{Name: "uam-fake-b3b3b3b3", ChildPID: child.Process.Pid, ChildStart: procStartTime(child.Process.Pid)}
+	if st.ChildStart == 0 {
+		t.Skip("process start identity unavailable on this platform")
+	}
+	if err := writeState(c.Dir, st); err != nil {
+		t.Fatal(err)
+	}
+	return st, child, done
 }

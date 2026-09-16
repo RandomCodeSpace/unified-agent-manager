@@ -85,6 +85,10 @@ func TestAttachScreenOwnershipUsesExplicitProviderIdentity(t *testing.T) {
 		{name: "unknown provider is safely generic", sessionName: "uam-fake-33333333", providerIdentity: "futureagent", want: true},
 		{name: "legacy Codex name keeps primary screen", sessionName: "uam-codex-44444444", want: false},
 		{name: "legacy generic name owns outer screen", sessionName: "uam-fake-55555555", want: true},
+		// omp renders on the primary screen exactly like codex: wrapping it in
+		// uam's alternate screen threw away the scrollback the wheel moves.
+		{name: "omp keeps the primary screen and its scrollback", sessionName: "uam-fake-66666666", providerIdentity: "omp", want: false},
+		{name: "legacy omp name keeps primary screen", sessionName: "uam-omp-77777777", want: false},
 	}
 
 	for _, test := range tests {

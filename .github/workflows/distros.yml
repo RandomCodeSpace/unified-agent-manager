@@ -1,0 +1,94 @@
+name: Distros
+
+# The support promise is "same behavior on Ubuntu, Debian, Arch, UBI8 and
+# RHEL". The binary is CGO_ENABLED=0 static, so distro independence holds by
+# construction — this matrix exists to keep that construction honest: the same
+# static uam and the same statically-built e2e test binaries run their real-PTY
+# suites inside each distro's userland. Anything PTY-, procfs- or
+# signal-shaped that a distro does differently fails here, not on a user's VPS.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-artifacts:
+    name: build static binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build uam and e2e test binaries (static)
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          go build -trimpath -o dist/uam ./cmd/uam
+          go test -c -o dist/app.test ./internal/app/
+          go test -c -o dist/session.test ./internal/session/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: distro-binaries
+          path: dist/
+          retention-days: 1
+
+  matrix:
+    name: ${{ matrix.name }}
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: ubuntu, image: "ubuntu:24.04" }
+          - { name: debian, image: "debian:12" }
+          - { name: arch, image: "archlinux:latest" }
+          - { name: ubi8, image: "redhat/ubi8:latest" }
+          # rockylinux:9 is the bug-for-bug RHEL 9 stand-in Red Hat does not
+          # publish a freely pullable image for.
+          - { name: rhel9-rocky, image: "rockylinux:9" }
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: distro-binaries
+          path: dist
+
+      - name: Smoke uam on this distro
+        shell: sh
+        run: |
+          set -eu
+          chmod +x dist/uam dist/app.test dist/session.test
+          mkdir -p tmp/cfg tmp/run tmp/cache
+          UAM_CONFIG_DIR="$PWD/tmp/cfg" UAM_SESSION_DIR="$PWD/tmp/run" UAM_CACHE_DIR="$PWD/tmp/cache" \
+            ./dist/uam doctor
+          UAM_CONFIG_DIR="$PWD/tmp/cfg" UAM_SESSION_DIR="$PWD/tmp/run" UAM_CACHE_DIR="$PWD/tmp/cache" \
+            ./dist/uam help
+
+      - name: TUI e2e suite on a real PTY
+        shell: sh
+        run: |
+          set -eu
+          UAM_E2E_BIN="$PWD/dist/uam" ./dist/app.test -test.run '^TestE2E' -test.v
+
+      - name: Attach e2e suite on a real PTY
+        shell: sh
+        run: |
+          set -eu
+          UAM_E2E_BIN="$PWD/dist/uam" ./dist/session.test -test.run '^TestE2E' -test.v

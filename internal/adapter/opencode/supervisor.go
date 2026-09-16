@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -28,7 +27,7 @@ import (
 
 const (
 	openCodeServerUsername = "uam"
-	serverStartupTimeout   = 5 * time.Second
+	serverStartupTimeout   = 30 * time.Second
 	serverStartupAttempts  = 3
 	serverPollInterval     = 25 * time.Millisecond
 	serverRequestTimeout   = 250 * time.Millisecond
@@ -47,6 +46,7 @@ type supervisorOptions struct {
 	ProviderSessionID string
 	Yolo              bool
 	RuntimeDir        string
+	InitialPrompt     string
 }
 
 func validOpenCodeSessionID(id string) bool {
@@ -58,7 +58,7 @@ type ExitError struct {
 }
 
 func (e *ExitError) Error() string {
-	return fmt.Sprintf("OpenCode attach exited with code %d", e.Code)
+	return fmt.Sprintf("OpenCode TUI exited with code %d", e.Code)
 }
 
 func (e *ExitError) ExitCode() int {
@@ -128,6 +128,18 @@ func parseSupervisorOptions(args []string) (supervisorOptions, error) {
 	if err != nil {
 		return supervisorOptions{}, err
 	}
+	var prompt []byte
+	if fd := values["prompt-fd"]; fd.set {
+		if fd.value != "3" || providerSessionID != "" {
+			return supervisorOptions{}, fmt.Errorf("OpenCode initial prompt requires fd 3 and a new session")
+		}
+		file := os.NewFile(3, "initial-prompt")
+		defer func() { _ = file.Close() }()
+		prompt, err = io.ReadAll(file)
+		if err != nil {
+			return supervisorOptions{}, fmt.Errorf("read OpenCode initial prompt: %w", err)
+		}
+	}
 	return supervisorOptions{
 		Command:           command,
 		Directory:         directory,
@@ -135,6 +147,7 @@ func parseSupervisorOptions(args []string) (supervisorOptions, error) {
 		ProviderSessionID: providerSessionID,
 		Yolo:              yolo,
 		RuntimeDir:        runtimeDir,
+		InitialPrompt:     string(prompt),
 	}, nil
 }
 
@@ -142,7 +155,7 @@ func parseSupervisorFlags(args []string) (map[string]*uniqueStringFlag, error) {
 	fs := flag.NewFlagSet("__opencode", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	values := map[string]*uniqueStringFlag{}
-	for _, name := range []string{"path", "shell", "alias", "dir", "name", runtimeDirFlag, "mode", "session"} {
+	for _, name := range []string{"path", "shell", "alias", "dir", "name", runtimeDirFlag, "mode", "session", "prompt-fd"} {
 		value := &uniqueStringFlag{name: name}
 		values[name] = value
 		fs.Var(value, name, "")
@@ -231,7 +244,7 @@ func startManagedProcess(cmd *exec.Cmd) (*managedProcess, error) {
 	return process, nil
 }
 
-func startAttachProcess(cmd *exec.Cmd, stdin *os.File) (*managedProcess, error) {
+func startInteractiveProcess(cmd *exec.Cmd, stdin *os.File) (*managedProcess, error) {
 	if stdin != nil && term.IsTerminal(stdin.Fd()) {
 		if cmd.SysProcAttr == nil {
 			cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -293,21 +306,42 @@ type runningServer struct {
 }
 
 func runSupervisor(ctx context.Context, opts supervisorOptions) error {
-	password, err := randomServerPassword()
+	bootstrapCtx, cancelBootstrap := context.WithTimeout(ctx, serverStartupTimeout)
+	defer cancelBootstrap()
+	bootstrap, err := startOpenCodeServer(bootstrapCtx, opts)
 	if err != nil {
 		return err
 	}
-	env := serverEnvironment(os.Environ(), openCodeServerUsername, password)
+	defer bootstrap.client.http.CloseIdleConnections()
+	root, err := selectRootSession(bootstrapCtx, opts, bootstrap.client)
+	if err != nil {
+		terminateAndReap(bootstrap.process)
+		return err
+	}
+	if err := requireActiveStartup(bootstrapCtx); err != nil {
+		terminateAndReap(bootstrap.process)
+		return err
+	}
+	if err := session.WriteProviderIdentity(opts.RuntimeDir, opts.SessionName, root.ID); err != nil {
+		terminateAndReap(bootstrap.process)
+		return fmt.Errorf("write OpenCode provider identity: %w", err)
+	}
+	if err := requireActiveStartup(bootstrapCtx); err != nil {
+		terminateAndReap(bootstrap.process)
+		return err
+	}
+	terminateAndReap(bootstrap.process)
+	cancelBootstrap()
+
 	startupCtx, cancelStartup := context.WithTimeout(ctx, serverStartupTimeout)
 	defer cancelStartup()
-	server, err := startOpenCodeServer(startupCtx, opts, env, password)
+	tui, err := startOpenCodeTUI(startupCtx, opts, root.ID)
 	if err != nil {
 		return err
 	}
-	var attach *managedProcess
-	defer func() {
-		terminateAndReap(attach, server.process)
-	}()
+	defer terminateAndReap(tui.process)
+	defer tui.client.http.CloseIdleConnections()
+	password := tui.client.password
 
 	streamCtx, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
@@ -316,76 +350,51 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	ready := make(chan struct{})
 	streamDone := make(chan error, 1)
 	go func() {
-		streamDone <- subscribeWithReconnect(streamCtx, server.client, ready, reconnects, events)
+		streamDone <- subscribeWithReconnect(streamCtx, tui.client, ready, reconnects, events)
 	}()
 	select {
 	case <-ready:
-	case <-server.process.done:
-		return serverFailureError("before event subscription became ready", server, password)
+	case <-tui.process.done:
+		return tuiExitError(tui.process.waitError())
 	case err := <-streamDone:
+		if streamErr := streamCtx.Err(); streamErr != nil {
+			return streamErr
+		}
 		return sanitizedSupervisorError("OpenCode event subscription failed", err, password)
 	case <-startupCtx.Done():
 		return startupCtx.Err()
 	}
-
-	root, err := selectRootSession(startupCtx, opts, server.client)
-	if err != nil {
-		return err
-	}
-	if err := requireActiveStartup(startupCtx); err != nil {
-		return err
-	}
-	if err := session.WriteProviderIdentity(opts.RuntimeDir, opts.SessionName, root.ID); err != nil {
-		return fmt.Errorf("write OpenCode provider identity: %w", err)
-	}
-	if err := requireActiveStartup(startupCtx); err != nil {
-		return err
-	}
 	eventState := newSupervisorEventState(opts, root.ID, root.Time.Updated)
-
-	attachCommand := opts.Command.command(context.Background(), "attach", server.baseURL, "--dir", opts.Directory, "--session", root.ID)
-	attachCommand.Dir = opts.Directory
-	attachCommand.Env = env
-	attachCommand.Stdin = os.Stdin
-	attachCommand.Stdout = os.Stdout
-	attachCommand.Stderr = os.Stderr
-	if err := requireActiveStartup(startupCtx); err != nil {
-		return err
-	}
-	attach, err = startAttachProcess(attachCommand, os.Stdin)
-	if err != nil {
-		return sanitizedSupervisorError("start OpenCode attach", err, password)
-	}
-	if err := requireActiveStartupOrReapAttach(startupCtx, attach); err != nil {
-		attach = nil
-		return err
+	if opts.InitialPrompt != "" && opts.ProviderSessionID == "" {
+		if err := tui.client.sendInitialPrompt(startupCtx, root.ID, opts.InitialPrompt); err != nil {
+			return err
+		}
 	}
 	cancelStartup()
 
 	for {
-		if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
+		if outcome, ready := readySupervisorOutcome(ctx, tui.process); ready {
 			return outcome
 		}
 		select {
-		case <-attach.done:
-		case <-server.process.done:
+		case <-tui.process.done:
 		case <-ctx.Done():
 		case event := <-events:
-			if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
+			if outcome, ready := readySupervisorOutcome(ctx, tui.process); ready {
 				return outcome
 			}
-			if err := eventState.handle(ctx, server.client, event); err != nil {
+			if err := eventState.handle(event); err != nil {
 				return err
 			}
 		case notice := <-reconnects:
-			if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
+			if outcome, ready := readySupervisorOutcome(ctx, tui.process); ready {
 				return outcome
 			}
-			if err := eventState.recoverAfterReconnect(ctx, server.client, notice.recoverySince); err != nil {
+			if err := eventState.recoverAfterReconnect(ctx, tui.client, notice.recoverySince); err != nil {
 				return err
 			}
 		case err := <-streamDone:
-			if outcome, ready := readySupervisorOutcome(ctx, server, attach, password); ready {
+			if outcome, ready := readySupervisorOutcome(ctx, tui.process); ready {
 				return outcome
 			}
 			return sanitizedSupervisorError("OpenCode event stream stopped", err, password)
@@ -393,21 +402,64 @@ func runSupervisor(ctx context.Context, opts supervisorOptions) error {
 	}
 }
 
-func readySupervisorOutcome(ctx context.Context, server *runningServer, attach *managedProcess, password string) (error, bool) {
+func readySupervisorOutcome(ctx context.Context, tui *managedProcess) (error, bool) {
 	select {
-	case <-server.process.done:
-		return serverFailureError("while attach was active", server, password), true
-	default:
-	}
-	select {
-	case <-attach.done:
-		return attachExitError(attach.waitError()), true
+	case <-tui.done:
+		return tuiExitError(tui.waitError()), true
 	default:
 	}
 	if err := ctx.Err(); err != nil {
 		return err, true
 	}
 	return nil, false
+}
+
+func startOpenCodeTUI(ctx context.Context, opts supervisorOptions, rootID string) (*runningServer, error) {
+	var lastError error
+	for attempt := 1; attempt <= serverStartupAttempts; attempt++ {
+		password, err := randomServerPassword()
+		if err != nil {
+			return nil, err
+		}
+		env := serverEnvironment(os.Environ(), openCodeServerUsername, password)
+		port, err := reserveLoopbackPort()
+		if err != nil {
+			return nil, fmt.Errorf("reserve OpenCode TUI loopback port: %w", err)
+		}
+		baseURL := "http://127.0.0.1:" + fmt.Sprint(port)
+		args := []string{"--hostname", "127.0.0.1", "--port", fmt.Sprint(port), "--session", rootID}
+		if opts.Yolo {
+			args = append(args, "--auto")
+		}
+		args = append(args, opts.Directory)
+		command := opts.Command.command(context.Background(), args...)
+		command.Dir = opts.Directory
+		command.Env = env
+		command.Stdin = os.Stdin
+		command.Stdout = os.Stdout
+		command.Stderr = os.Stderr
+		process, err := startInteractiveProcess(command, os.Stdin)
+		if err != nil {
+			return nil, sanitizedSupervisorError("start OpenCode TUI", err, password)
+		}
+		client, err := newAPIClient(baseURL, openCodeServerUsername, password, opts.Directory, localHTTPClient(os.Geteuid()))
+		if err != nil {
+			terminateAndReap(process)
+			return nil, err
+		}
+		tui := &runningServer{process: process, client: client, baseURL: baseURL, logs: newByteRing(0)}
+		retry, waitErr := waitForOpenCodeServer(ctx, tui, password)
+		if waitErr == nil {
+			return tui, nil
+		}
+		client.http.CloseIdleConnections()
+		if !retry {
+			return nil, waitErr
+		}
+		terminateAndReap(process)
+		lastError = waitErr
+	}
+	return nil, fmt.Errorf("OpenCode TUI failed after %d attempts: %w", serverStartupAttempts, lastError)
 }
 
 func randomServerPassword() (string, error) {
@@ -430,12 +482,17 @@ func serverEnvironment(base []string, username, password string) []string {
 	return append(result, "OPENCODE_SERVER_USERNAME="+username, "OPENCODE_SERVER_PASSWORD="+password)
 }
 
-func startOpenCodeServer(ctx context.Context, opts supervisorOptions, env []string, password string) (*runningServer, error) {
+func startOpenCodeServer(ctx context.Context, opts supervisorOptions) (*runningServer, error) {
 	var lastError error
 	for attempt := 1; attempt <= serverStartupAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		password, err := randomServerPassword()
+		if err != nil {
+			return nil, err
+		}
+		env := serverEnvironment(os.Environ(), openCodeServerUsername, password)
 		server, retry, err := startOpenCodeServerAttempt(opts, env, password)
 		if err != nil {
 			if !retry {
@@ -448,6 +505,7 @@ func startOpenCodeServer(ctx context.Context, opts supervisorOptions, env []stri
 		if err == nil {
 			return server, nil
 		}
+		server.client.http.CloseIdleConnections()
 		if !retry {
 			return nil, err
 		}
@@ -476,7 +534,7 @@ func startOpenCodeServerAttempt(opts supervisorOptions, env []string, password s
 	if err != nil {
 		return nil, true, sanitizedSupervisorError("start OpenCode server", err, password)
 	}
-	client, err := newAPIClient(baseURL, openCodeServerUsername, password, opts.Directory, &http.Client{})
+	client, err := newAPIClient(baseURL, openCodeServerUsername, password, opts.Directory, localHTTPClient(os.Geteuid()))
 	if err != nil {
 		terminateAndReap(process)
 		return nil, false, err
@@ -499,7 +557,11 @@ func waitForOpenCodeServer(ctx context.Context, server *runningServer, password 
 		switch waitForServerPoll(ctx, server.process) {
 		case serverPollCanceled:
 			terminateAndReap(server.process)
-			return false, startupFailureError(ctx.Err(), server, password)
+			cause := ctx.Err()
+			if healthErr != nil {
+				cause = fmt.Errorf("%w (last health check: %s)", cause, safeServerLogExcerpt([]byte(healthErr.Error()), password))
+			}
+			return false, startupFailureError(cause, server, password)
 		case serverPollExited:
 			return true, serverFailureError("before readiness", server, password)
 		}
@@ -632,13 +694,13 @@ func reapProcesses(processes []*managedProcess) {
 	}
 }
 
-func attachExitError(err error) error {
+func tuiExitError(err error) error {
 	if err == nil {
 		return nil
 	}
 	var exitError *exec.ExitError
 	if !errors.As(err, &exitError) {
-		return fmt.Errorf("wait for OpenCode attach: %w", err)
+		return fmt.Errorf("wait for OpenCode TUI: %w", err)
 	}
 	code := exitError.ExitCode()
 	if code < 1 || code > 255 {
@@ -705,14 +767,6 @@ func requireActiveStartup(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func requireActiveStartupOrReapAttach(ctx context.Context, attach *managedProcess) error {
-	if err := requireActiveStartup(ctx); err != nil {
-		terminateAndReap(attach)
-		return err
-	}
-	return nil
-}
-
 type reconnectNotice struct {
 	recoverySince time.Time
 }
@@ -743,8 +797,6 @@ func subscribeWithReconnect(ctx context.Context, client *apiClient, initialReady
 				return ctx.Err()
 			} else if err == nil {
 				return fmt.Errorf("OpenCode event stream ended without an error")
-			} else {
-				warnOpenCode("OpenCode event stream interrupted; reconnecting: %s", client.safeText(err.Error()))
 			}
 		case err := <-done:
 			if ctx.Err() != nil {
@@ -773,17 +825,10 @@ type sessionCreatedEvent struct {
 	Info      sessionInfo `json:"info"`
 }
 
-type permissionAskedEvent struct {
-	ID        string `json:"id"`
-	SessionID string `json:"sessionID"`
-}
-
 type supervisorEventState struct {
 	opts          supervisorOptions
 	activeRoot    string
-	rootFor       map[string]string
 	acceptedRoots map[string]struct{}
-	replied       map[string]struct{}
 	activeUpdated int64
 }
 
@@ -795,19 +840,15 @@ func newSupervisorEventState(opts supervisorOptions, rootID string, updated ...i
 	return &supervisorEventState{
 		opts:          opts,
 		activeRoot:    rootID,
-		rootFor:       map[string]string{rootID: rootID},
 		acceptedRoots: map[string]struct{}{rootID: {}},
-		replied:       make(map[string]struct{}),
 		activeUpdated: activeUpdated,
 	}
 }
 
-func (s *supervisorEventState) handle(ctx context.Context, client *apiClient, event eventEnvelope) error {
+func (s *supervisorEventState) handle(event eventEnvelope) error {
 	switch event.Type {
 	case "session.created":
 		return s.handleSessionCreated(event.Properties)
-	case "permission.asked":
-		return s.handlePermissionAsked(ctx, client, event.Properties)
 	default:
 		return nil
 	}
@@ -823,11 +864,6 @@ func (s *supervisorEventState) handleSessionCreated(properties json.RawMessage) 
 		return nil
 	}
 	if info.ParentID != "" {
-		root, ok := s.rootFor[info.ParentID]
-		if !ok {
-			return nil
-		}
-		s.rootFor[info.ID] = root
 		return nil
 	}
 	if _, accepted := s.acceptedRoots[info.ID]; accepted {
@@ -851,7 +887,6 @@ func (s *supervisorEventState) acceptRoot(info sessionInfo) error {
 	if info.Time.Updated > s.activeUpdated {
 		s.activeUpdated = info.Time.Updated
 	}
-	s.rootFor[info.ID] = info.ID
 	s.acceptedRoots[info.ID] = struct{}{}
 	return nil
 }
@@ -878,42 +913,14 @@ func (s *supervisorEventState) recoverAfterReconnect(ctx context.Context, client
 		}
 		candidates = append(candidates, info)
 	}
+	if len(candidates) == 0 {
+		return nil
+	}
 	if len(candidates) != 1 {
 		warnOpenCode("OpenCode event recovery found %d unambiguous newer roots; continuing with %s", len(candidates), s.activeRoot)
 		return nil
 	}
 	return s.acceptRoot(candidates[0])
-}
-
-func (s *supervisorEventState) handlePermissionAsked(ctx context.Context, client *apiClient, properties json.RawMessage) error {
-	if !s.opts.Yolo {
-		return nil
-	}
-	var asked permissionAskedEvent
-	if err := decodeStrictJSON(properties, &asked); err != nil {
-		warnOpenCode("ignored malformed OpenCode permission event")
-		return nil
-	}
-	if !permissionIDRE.MatchString(asked.ID) || !store.ValidProviderSessionID(asked.ID) || !validOpenCodeSessionID(asked.SessionID) {
-		warnOpenCode("ignored invalid OpenCode permission event")
-		return nil
-	}
-	root, ok := s.rootFor[asked.SessionID]
-	if !ok || root != s.activeRoot {
-		warnOpenCode("ignored OpenCode permission %s for an unowned or stale session", asked.ID)
-		return nil
-	}
-	if _, duplicate := s.replied[asked.ID]; duplicate {
-		warnOpenCode("ignored duplicate OpenCode permission %s", asked.ID)
-		return nil
-	}
-	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	if err := client.replyPermission(requestCtx, asked.ID); err != nil {
-		return fmt.Errorf("reply to OpenCode permission %s: %w", asked.ID, err)
-	}
-	s.replied[asked.ID] = struct{}{}
-	return nil
 }
 
 func warnOpenCode(format string, args ...any) {

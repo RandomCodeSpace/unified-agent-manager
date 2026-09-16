@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestGroupToggleWaitsForPendingReorderBeforeReload(t *testing.T) {
@@ -32,7 +32,7 @@ func TestGroupToggleWaitsForPendingReorderBeforeReload(t *testing.T) {
 	m.selected = 0
 	_ = m.moveSession(1)
 
-	model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, cmd := m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
 	if cmd == nil {
 		t.Fatal("pending reorder toggle needs a sequenced command")
@@ -153,7 +153,7 @@ func TestFailedSequencedReorderDoesNotPersistGroupSetting(t *testing.T) {
 	m.persistSortIndices = func([]adapter.Session) error { return errTestBoom }
 	m.selected = 0
 	_ = m.moveSession(1)
-	model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, cmd := m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
 	msg := cmd()
 	model, _ = m.Update(msg)
@@ -197,7 +197,7 @@ func TestRapidGroupToggleLastGenerationWinsModelAndStore(t *testing.T) {
 	m.selected = 0
 	_ = m.moveSession(1)
 
-	model, firstCmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, firstCmd := m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
 	firstDone := make(chan tea.Msg, 1)
 	go func() { firstDone <- firstCmd() }()
@@ -207,7 +207,7 @@ func TestRapidGroupToggleLastGenerationWinsModelAndStore(t *testing.T) {
 		t.Fatal("first toggle did not block in reorder persistence")
 	}
 
-	model, secondCmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, secondCmd := m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
 	secondMsg := secondCmd()
 	model, _ = m.Update(secondMsg)

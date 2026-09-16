@@ -63,9 +63,6 @@ func TestAPIClientContracts(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/session/ses_abc123":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":"ses_abc123","directory":"/tmp/uam project","title":"UAM: workspace name"}`)
-		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/permission/per_abc123/reply":
-			assertJSONBody(t, r, map[string]any{"reply": "once"})
-			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && r.URL.Path == "/event":
 			if got := r.Header.Get("Accept"); got != "text/event-stream" {
 				t.Errorf("Accept = %q, want text/event-stream", got)
@@ -110,10 +107,6 @@ func TestAPIClientContracts(t *testing.T) {
 		t.Fatalf("getSession = %#v, want %#v", got, created)
 	}
 
-	if err := client.replyPermission(ctx, "per_abc123"); err != nil {
-		t.Fatalf("replyPermission: %v", err)
-	}
-
 	ready := make(chan struct{})
 	events := make(chan eventEnvelope, 1)
 	if err := client.subscribe(ctx, ready, events); err == nil {
@@ -133,11 +126,11 @@ func TestAPIClientContracts(t *testing.T) {
 		t.Fatal("subscribe did not emit event")
 	}
 
-	if got := requests.Load(); got != 5 {
-		t.Fatalf("requests = %d, want 5", got)
+	if got := requests.Load(); got != 4 {
+		t.Fatalf("requests = %d, want 4", got)
 	}
-	if got := transport.seen.Load(); got != 5 {
-		t.Fatalf("deadline transport saw %d requests, want 5", got)
+	if got := transport.seen.Load(); got != 4 {
+		t.Fatalf("deadline transport saw %d requests, want 4", got)
 	}
 	if transport.missing.Load() {
 		t.Fatal("a request did not propagate the bounded caller context")
@@ -279,11 +272,6 @@ func TestAPIClientRejectsInvalidIDsWithoutRequest(t *testing.T) {
 			t.Errorf("getSession(%q) succeeded", id)
 		}
 	}
-	for _, id := range []string{"", "per_ab", "per_abc/def", "-per_abc123", strings.Repeat("p", 65)} {
-		if err := client.replyPermission(ctx, id); err == nil {
-			t.Errorf("replyPermission(%q) succeeded", id)
-		}
-	}
 	if got := requests.Load(); got != 0 {
 		t.Fatalf("invalid IDs issued %d requests", got)
 	}
@@ -331,23 +319,33 @@ func TestSSERejectsInvalidResponseBeforeReady(t *testing.T) {
 	}
 }
 
-func TestSSERejectsOversizedEvent(t *testing.T) {
+func TestSSEAcceptsLargeEventAndContinues(t *testing.T) {
 	t.Parallel()
 
 	client := newTestAPIClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: "+strings.Repeat("x", (256<<10)+1)+"\n\n")
+		_, _ = io.WriteString(w, `data: {"type":"message.updated","properties":{"content":"`+strings.Repeat("x", (256<<10)+1)+`"}}`+"\n\n")
+		_, _ = io.WriteString(w, "data: {\"type\":\"session.created\",\"properties\":{\"id\":\"ses_abc123\"}}\n\n")
 	})
 	ready := make(chan struct{})
-	err := client.subscribe(testContext(t), ready, make(chan eventEnvelope, 1))
-	assertSafeAPIError(t, err)
+	events := make(chan eventEnvelope, 1)
+	err := client.subscribe(testContext(t), ready, events)
+	if err == nil || !errors.Is(err, io.EOF) {
+		t.Fatalf("subscribe error = %v, want EOF", err)
+	}
 	select {
 	case <-ready:
 	default:
 		t.Fatal("ready was not closed after valid SSE headers")
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "large") {
-		t.Fatalf("oversized SSE error = %q", err)
+	requiredEvent := <-events
+	if requiredEvent.Type != "session.created" || string(requiredEvent.Properties) != `{"id":"ses_abc123"}` {
+		t.Fatalf("required event = %#v", requiredEvent)
+	}
+	select {
+	case unexpected := <-events:
+		t.Fatalf("unexpected event = %#v", unexpected)
+	default:
 	}
 }
 
@@ -451,6 +449,28 @@ func newTestAPIClient(t *testing.T, handler http.HandlerFunc) *apiClient {
 		t.Fatal(err)
 	}
 	return client
+}
+
+func TestAPIClientInitialPromptRejectsFailureWithoutLeakingOrRetrying(t *testing.T) {
+	const prompt = "private initial prompt must not appear in errors"
+	requests := 0
+	client := newTestAPIClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.URL.Path != "/session/ses_prompt123/prompt_async" {
+			t.Errorf("initial prompt request = %s %s", r.Method, r.URL.Path)
+		}
+		http.Error(w, prompt, http.StatusServiceUnavailable)
+	})
+	err := client.sendInitialPrompt(t.Context(), "ses_prompt123", prompt)
+	if err == nil || !strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), prompt) {
+		t.Fatalf("initial prompt error = %v, want status without prompt", err)
+	}
+	if requests != 1 {
+		t.Fatalf("initial prompt requests = %d, want no retry", requests)
+	}
+	if err := client.sendInitialPrompt(t.Context(), "invalid/id", prompt); err == nil || requests != 1 {
+		t.Fatalf("invalid session reached prompt endpoint: requests=%d, error=%v", requests, err)
+	}
 }
 
 func testContext(t *testing.T) context.Context {

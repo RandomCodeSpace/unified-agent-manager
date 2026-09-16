@@ -280,16 +280,68 @@ func TestNormalizeRejectsUnknownStatus(t *testing.T) {
 	}
 }
 
-func TestNormalizeCoercesUnknownMode(t *testing.T) {
+func TestNormalizeCoercesUnknownOrEmptyModeToSafe(t *testing.T) {
 	cfg := Config{
 		SchemaVersion: CurrentSchemaVersion,
 		Sessions: map[string]SessionRecord{
 			"claude:weirdmod": {ID: "weirdmod", Agent: "claude", Mode: Mode("turbo"), Status: StatusActive},
+			"claude:nomode":   {ID: "nomode", Agent: "claude", Status: StatusActive},
+			"claude:yolo":     {ID: "yolo", Agent: "claude", Mode: ModeYolo, Status: StatusActive},
 		},
 	}
 	got := normalize(cfg)
-	if rec := got.Sessions["claude:weirdmod"]; rec.Mode != ModeYolo {
-		t.Fatalf("mode = %q, want %q (unknown mode must coerce to yolo)", rec.Mode, ModeYolo)
+	for _, key := range []string{"claude:weirdmod", "claude:nomode"} {
+		if rec := got.Sessions[key]; rec.Mode != ModeSafe {
+			t.Fatalf("%s mode = %q, want %q (unknown/empty mode must fail closed to safe)", key, rec.Mode, ModeSafe)
+		}
+	}
+	if rec := got.Sessions["claude:yolo"]; rec.Mode != ModeYolo {
+		t.Fatalf("valid yolo mode = %q, want %q (valid modes must survive)", rec.Mode, ModeYolo)
+	}
+}
+
+func TestLoadNewerSchemaStillDropsInvalidAndCoercesRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	future := map[string]any{
+		"schema_version": CurrentSchemaVersion + 1,
+		"default_agent":  "claude",
+		"sessions": map[string]any{
+			"claude:bad;id":   map[string]any{"id": "bad;id", "agent": "claude", "status": "active", "mode": "yolo"},
+			"claude:weirdmod": map[string]any{"id": "weirdmod", "agent": "claude", "status": "active", "mode": "turbo"},
+		},
+		"ui": map[string]any{"sort": "state", "peek_width": 60},
+	}
+	data, err := json.MarshalIndent(future, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.ReadOnly {
+		t.Fatal("newer-schema config must stay read-only")
+	}
+	if _, ok := cfg.Sessions["claude:bad;id"]; ok {
+		t.Fatal("unsafe record must be dropped even on a newer-schema load")
+	}
+	if rec := cfg.Sessions["claude:weirdmod"]; rec.Mode != ModeSafe {
+		t.Fatalf("mode = %q, want %q (newer-schema load must still coerce)", rec.Mode, ModeSafe)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, after) {
+		t.Fatalf("newer-schema file mutated on disk:\nbefore=%s\nafter=%s", data, after)
 	}
 }
 

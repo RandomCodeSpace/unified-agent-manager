@@ -122,7 +122,12 @@ func TestTodo11FakeProviderProcess(t *testing.T) {
 					t.Fatal(err)
 				}
 				pending = pending[:0]
-				if bytes.Equal(record, todo11ProviderExit) {
+				// The exit marker may carry a leading synthetic focus-in: the
+				// fixture provider enables ?1004, so the host injects \x1b[I
+				// when a controller attaches (and \x1b[O when the last one
+				// detaches), and those bytes merge into whatever record the
+				// next delimiter closes.
+				if bytes.HasSuffix(record, todo11ProviderExit) {
 					return
 				}
 				continue

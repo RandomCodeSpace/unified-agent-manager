@@ -24,9 +24,13 @@ type serverMessage struct {
 }
 
 type attachClient struct {
-	conn          net.Conn
-	out           chan serverMessage
-	done          chan struct{}
+	conn net.Conn
+	out  chan serverMessage
+	done chan struct{}
+	// flush asks the writer to drain queued output before closing. done keeps
+	// its existing meaning: stop immediately and discard anything left.
+	flush         chan struct{}
+	flushOnce     sync.Once
 	version       protocolVersion
 	id            string
 	requestedRole clientRole
@@ -45,6 +49,14 @@ func (client *attachClient) drop() {
 		close(client.done)
 		if client.conn != nil {
 			_ = client.conn.Close()
+		}
+	})
+}
+
+func (client *attachClient) requestFlush() {
+	client.flushOnce.Do(func() {
+		if client.flush != nil {
+			close(client.flush)
 		}
 	})
 }

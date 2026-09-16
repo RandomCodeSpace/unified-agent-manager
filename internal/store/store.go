@@ -516,14 +516,16 @@ func (s *Store) loadNoLock() (Config, error) {
 		}
 		return normalize(DefaultConfig()), nil
 	}
+	// Untrusted on-disk records are validated and coerced on every load path,
+	// including the read-only newer-schema one below.
+	dropInvalidRecords(&cfg)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
 	// erroring or clobbering it on the next save (F33).
 	if cfg.SchemaVersion > CurrentSchemaVersion {
 		cfg.ReadOnly = true
-		return cfg, nil
+		return normalize(cfg), nil
 	}
-	dropInvalidRecords(&cfg)
 	if cfg.SchemaVersion < CurrentSchemaVersion {
 		backupMigration := s.copyBackup
 		if s.migrationBackup != nil {
@@ -589,6 +591,14 @@ func dropInvalidRecords(cfg *Config) {
 		if reason := validateRecord(rec); reason != "" {
 			log.Warn("dropping invalid session record", "key", key, "reason", reason)
 			delete(cfg.Sessions, key)
+			continue
+		}
+		// The PR URL is display metadata, never argv-bound: a malformed one
+		// costs the record its PR field, not the session its only durable handle.
+		if rec.PR != nil && !prURLRE.MatchString(rec.PR.URL) {
+			log.Warn("clearing invalid pr url on session record", "key", key)
+			rec.PR = nil
+			cfg.Sessions[key] = rec
 		}
 	}
 }
@@ -596,8 +606,8 @@ func dropInvalidRecords(cfg *Config) {
 // validateRecord returns a non-empty reason if the record must be dropped, or
 // "" if it is safe to keep. It rejects only the values that carry real risk —
 // shell metacharacters or control runes in the argv-bound ID/SessionName
-// fields, a non-absolute or control-char Workdir, and a PR URL that does not
-// match the GitHub PR shape. Empty optional fields are allowed.
+// fields, and a non-absolute or control-char Workdir. Empty optional fields
+// are allowed.
 //
 // The on-disk JSON key for SessionName remains "tmux_session" for backward
 // compatibility, which is why the drop reasons below keep that spelling.
@@ -615,9 +625,6 @@ func validateRecord(rec SessionRecord) string {
 		if hasControlChar(rec.Workdir) {
 			return "control char in workdir"
 		}
-	}
-	if rec.PR != nil && !prURLRE.MatchString(rec.PR.URL) {
-		return "invalid pr url"
 	}
 	if rec.CommandAlias != "" && !isSafeCommandAlias(rec.CommandAlias) {
 		return "unsafe command_alias"
@@ -743,8 +750,9 @@ func clampPeekWidth(w int) int {
 
 // coerceRecord normalizes a record's enum fields to valid values, reporting
 // whether it changed anything. An empty or unknown Status becomes Active and an
-// unknown Mode becomes yolo — unknown values are NEVER coerced to ClosedByUser
-// or dropped, so a hostile/corrupt status can never silently retire a session.
+// empty or unknown Mode fails closed to safe (logged) — unknown values are
+// NEVER coerced to ClosedByUser or dropped, so a hostile/corrupt status can
+// never silently retire a session.
 func coerceRecord(rec *SessionRecord) bool {
 	changed := false
 	if rec.Status != StatusActive && rec.Status != StatusClosedByUser {
@@ -752,7 +760,8 @@ func coerceRecord(rec *SessionRecord) bool {
 		changed = true
 	}
 	if rec.Mode != ModeYolo && rec.Mode != ModeSafe {
-		rec.Mode = ModeYolo
+		log.Warn("coercing unknown session mode to safe", "id", rec.ID, "mode", string(rec.Mode))
+		rec.Mode = ModeSafe
 		changed = true
 	}
 	return changed

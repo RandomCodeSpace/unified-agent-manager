@@ -13,5 +13,6 @@ coverage.*
 /CLAUDE.md
 /HANDOFF.md
 /PLAN.md
+*.local.md
 graphify_out/
 graphify-out/

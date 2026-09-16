@@ -12,8 +12,11 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
@@ -26,31 +29,26 @@ import (
 )
 
 type Model struct {
-	width, height int
-	sizeKnown     bool
-	quitting      bool
-	loading       bool
-	service       *Service
-	sessions      []adapter.Session
-	selected      int
-	input         string
-	filterActive  bool
-	filterQuery   string
-	filterRestore sessionIdentity
-	filterSaved   bool
-	defaultAgent  string
-	message       string
-	messageSetAt  time.Time
-	peekOpen      bool
-	peekText      string
-	// peekTargetID is the session whose pane the open peek panel shows. While
-	// peek is open the command line doubles as a reply composer: typed text +
-	// Enter sends to this session via Service.Reply rather than dispatching a new
-	// agent. Snapshotting the id (mirroring renameTargetID) keeps a reorder under
-	// the cursor from misrouting the reply (F36).
-	peekTargetID        string
-	peekTargetAgent     string
+	width, height       int
+	sizeKnown           bool
+	quitting            bool
+	loading             bool
+	hasLoaded           bool
+	activity            spinner.Model
+	service             *Service
+	sessions            []adapter.Session
+	selected            int
+	input               string
+	filterActive        bool
+	filterQuery         string
+	filterRestore       sessionIdentity
+	filterSaved         bool
+	defaultAgent        string
+	message             string
+	messageSetAt        time.Time
+	refreshError        string
 	helpOpen            bool
+	darkBackground      bool
 	confirmStop         bool
 	confirmStopID       string
 	confirmStopAgent    string
@@ -59,6 +57,14 @@ type Model struct {
 	confirmLatestID     string
 	confirmLatestName   string
 	confirmLatestAction latestAction
+	confirmForm         *huh.Form
+	confirmField        *huh.Confirm
+	confirmValue        *bool
+	confirmIntent       confirmationIntent
+	confirmName         string
+	confirmSignature    string
+	confirmAffirmative  string
+	confirmGeneration   uint64
 	renaming            bool
 	renameTargetID      string
 	renameTargetAgent   string
@@ -73,6 +79,7 @@ type Model struct {
 	profileProviders    map[string]string
 	defaultProfile      string
 	profileBySession    map[sessionIdentity]string
+	lastSeenBySession   map[sessionIdentity]time.Time
 	groupByDir          bool
 	execProcess         func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 	// reorderSeq increments on every reorder; a debounced flush tick only
@@ -87,17 +94,15 @@ type Model struct {
 	persistSortIndices func([]adapter.Session) error
 	reloadSessions     func() sessionsLoadedMsg
 	groupToggle        *groupToggleCoordinator
-	// lastPeekAt records, per session id, when its pane was last captured for
-	// the peek panel. The peek-focus ticker re-polls the focused session at most
-	// once per peekFocusInterval; the map is keyed by id (not row index) because
-	// rows reorder every refresh tick (C2-11). peekClock is the injectable clock
-	// for that gate.
-	lastPeekAt map[string]time.Time
-	peekClock  func() time.Time
 	// now is the presentation clock used for deterministic session-age labels.
 	// Discovery refreshes LastChange on every scan, so the dashboard deliberately
 	// derives age from CreatedAt instead.
 	now func() time.Time
+	// dashboardRevision invalidates pointer intent captured by a previously
+	// displayed frame after refresh or resize.
+	dashboardRevision     uint64
+	sessionLoads          *sessionLoadCoordinator
+	appliedLoadGeneration uint64
 }
 
 // messageTTL is how long a status/error line stays on screen before a refresh
@@ -112,31 +117,23 @@ const messageTTL = 8 * time.Second
 // (F59).
 const reorderDebounce = 500 * time.Millisecond
 
-// peekTickInterval drives the peek-focus poll. The tick is what makes an open
-// peek panel update live without coupling peek freshness to the slower 2s
-// session refresh (C2-11).
-const peekTickInterval = time.Second
-
-// peekFocusInterval is the minimum spacing between captures of the focused
-// session's pane while the peek panel is open. The peek-focus ticker fires
-// every second; this gate (id-keyed) keeps a focused session from being
-// captured faster than once per interval even if rows reorder under the cursor
-// (C2-11).
-const peekFocusInterval = time.Second
-
 type sessionsLoadedMsg struct {
-	sessions         []adapter.Session
-	defaultAgent     string
-	groupByDir       bool
-	profileNames     []string
-	profileProviders map[string]string
-	defaultProfile   string
-	profileBySession map[sessionIdentity]string
-	err              error
+	refresh           bool
+	loadGeneration    uint64
+	sessions          []adapter.Session
+	defaultAgent      string
+	groupByDir        bool
+	profileNames      []string
+	profileProviders  map[string]string
+	defaultProfile    string
+	profileBySession  map[sessionIdentity]string
+	lastSeenBySession map[sessionIdentity]time.Time
+	err               error
 }
-type peekLoadedMsg struct {
-	text string
-	err  error
+
+type sessionLoadCoordinator struct {
+	mu   sync.Mutex
+	next uint64
 }
 type dispatchedMsg struct {
 	session adapter.Session
@@ -165,11 +162,6 @@ type latestRequiredMsg struct {
 type refreshMsg time.Time
 type prRefreshMsg time.Time
 type prRefreshedMsg struct{ err error }
-
-// peekTickMsg is the peek-focus poll tick. When the peek panel is open it
-// re-captures the focused session's pane (rate-limited per id) so the panel
-// follows live output; when closed it just re-arms (C2-11).
-type peekTickMsg time.Time
 
 // reorderFlushMsg is the debounced reorder-persist tick. It carries the seq of
 // the reorder that scheduled it; the handler persists only when the seq still
@@ -219,7 +211,15 @@ func New() Model {
 }
 
 func NewWithDeps(st *store.Store, reg *adapter.Registry) Model {
-	m := Model{service: NewService(st, reg), defaultAgent: store.DefaultAgentName, wizardCwd: ".", profileProviders: map[string]string{}, profileBySession: map[sessionIdentity]string{}, execProcess: tea.ExecProcess, lastPeekAt: map[string]time.Time{}, peekClock: time.Now}
+	m := Model{
+		service: NewService(st, reg), defaultAgent: store.DefaultAgentName,
+		wizardCwd: ".", profileProviders: map[string]string{},
+		profileBySession: map[sessionIdentity]string{}, lastSeenBySession: map[sessionIdentity]time.Time{}, execProcess: tea.ExecProcess,
+		activity:       spinner.New(spinner.WithSpinner(spinner.Line), spinner.WithStyle(brandStyle)),
+		loading:        true,
+		darkBackground: compat.HasDarkBackground,
+		sessionLoads:   &sessionLoadCoordinator{},
+	}
 	// The baked-in OpenCode default may not be installed; reconcile it to an
 	// enabled provider so Enter-with-no-input and the prompt hint never point at
 	// a disabled agent (C2-9).
@@ -245,7 +245,7 @@ func (m Model) validateDefaultAgent(candidate string) string {
 	return candidate
 }
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadSessionsCmd(), refreshTick(), peekTick(), prRefreshTick(100*time.Millisecond))
+	return tea.Batch(m.refreshSessionsCmd(), m.activity.Tick, refreshTick(), prRefreshTick(100*time.Millisecond), tea.RequestBackgroundColor)
 }
 
 func refreshTick() tea.Cmd {
@@ -254,10 +254,6 @@ func refreshTick() tea.Cmd {
 
 func prRefreshTick(after time.Duration) tea.Cmd {
 	return tea.Tick(after, func(t time.Time) tea.Msg { return prRefreshMsg(t) })
-}
-
-func peekTick() tea.Cmd {
-	return tea.Tick(peekTickInterval, func(t time.Time) tea.Msg { return peekTickMsg(t) })
 }
 
 // refreshStep advances the refresh state machine for one tick. It always
@@ -275,9 +271,28 @@ func (m Model) refreshStep(now time.Time) (Model, bool) {
 }
 
 func (m Model) loadSessionsCmd() tea.Cmd {
+	return m.sessionLoadCmd(false)
+}
+
+func (m Model) refreshSessionsCmd() tea.Cmd {
+	return m.sessionLoadCmd(true)
+}
+
+func (m Model) sessionLoadCmd(refresh bool) tea.Cmd {
+	coordinator := m.sessionLoads
+	if coordinator == nil {
+		coordinator = &sessionLoadCoordinator{}
+	}
 	return func() tea.Msg {
+		coordinator.mu.Lock()
+		defer coordinator.mu.Unlock()
+		coordinator.next++
+		generation := coordinator.next
 		if m.reloadSessions != nil {
-			return m.reloadSessions()
+			loaded := m.reloadSessions()
+			loaded.refresh = refresh
+			loaded.loadGeneration = generation
+			return loaded
 		}
 		sessions, cfg, err := m.service.LoadSessions(context.Background())
 		profileNames := make([]string, 0, len(cfg.Profiles))
@@ -290,10 +305,13 @@ func (m Model) loadSessionsCmd() tea.Cmd {
 		}
 		sort.Strings(profileNames)
 		profileBySession := make(map[sessionIdentity]string, len(cfg.Sessions))
+		lastSeenBySession := make(map[sessionIdentity]time.Time, len(cfg.Sessions))
 		for _, record := range cfg.Sessions {
-			profileBySession[sessionIdentity{agent: record.Agent, id: record.ID}] = record.Profile
+			identity := sessionIdentity{agent: record.Agent, id: record.ID}
+			profileBySession[identity] = record.Profile
+			lastSeenBySession[identity] = record.LastSeenAt
 		}
-		return sessionsLoadedMsg{sessions: sessions, defaultAgent: cfg.DefaultAgent, groupByDir: cfg.UI.GroupByDir, profileNames: profileNames, profileProviders: profileProviders, defaultProfile: cfg.DefaultProfile, profileBySession: profileBySession, err: err}
+		return sessionsLoadedMsg{refresh: refresh, loadGeneration: generation, sessions: sessions, defaultAgent: cfg.DefaultAgent, groupByDir: cfg.UI.GroupByDir, profileNames: profileNames, profileProviders: profileProviders, defaultProfile: cfg.DefaultProfile, profileBySession: profileBySession, lastSeenBySession: lastSeenBySession, err: err}
 	}
 }
 
@@ -307,12 +325,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg), nil
+	case tea.BackgroundColorMsg:
+		m.darkBackground = msg.IsDark()
+		// The v2 compatibility colors resolve through this value. Keep it in
+		// sync with Bubble Tea's live terminal response instead of trusting the
+		// package-load probe forever.
+		compat.HasDarkBackground = m.darkBackground
+		if m.confirmForm != nil {
+			updated, _ := m.confirmForm.Update(msg)
+			m.confirmForm = updated.(*huh.Form)
+		}
+		return m, nil
+	case dashboardPointerIntent:
+		return m.handleDashboardPointer(msg)
+	case spinner.TickMsg:
+		activity, cmd := m.activity.Update(msg)
+		m.activity = activity
+		if m.loading || (!m.hasLoaded && len(m.sessions) == 0) {
+			return m, cmd
+		}
+		return m, nil
 	case refreshMsg:
 		next, startedLoad := m.refreshStep(time.Time(msg))
 		// The ticker is re-armed unconditionally so refreshes never stop; the
 		// load is added only when one wasn't already in flight (F17).
 		if startedLoad {
-			return next, tea.Batch(next.loadSessionsCmd(), refreshTick())
+			return next, tea.Batch(next.refreshSessionsCmd(), next.activity.Tick, refreshTick())
 		}
 		return next, refreshTick()
 	case prRefreshMsg:
@@ -326,13 +364,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = true
-		return m, m.loadSessionsCmd()
-	case peekTickMsg:
-		// Re-arm the peek ticker unconditionally; only re-capture the focused
-		// session when the panel is open and the per-id rate limit allows it
-		// (C2-11).
-		next, peekCmd := m.peekFocusStep(time.Time(msg))
-		return next, tea.Batch(peekCmd, peekTick())
+		return m, tea.Batch(m.refreshSessionsCmd(), m.activity.Tick)
 	case reorderFlushMsg:
 		// Persist only if this is the latest reorder; a superseded tick is dropped
 		// so a held Shift+arrow coalesces into one write (F59).
@@ -352,31 +384,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSessionsLoaded(msg.loaded), nil
 	case sessionsLoadedMsg:
 		return m.handleSessionsLoaded(msg), nil
-	case peekLoadedMsg:
-		return m.handlePeekLoaded(msg), nil
 	case dispatchedMsg:
 		return m.handleDispatched(msg)
 	case attachSpecMsg:
 		return m, m.execAttachSpec(msg.spec, msg.err)
 	case attachFinishedMsg:
-		return m.handleAttachFinished(msg), tea.Batch(m.loadSessionsCmd(), tea.ClearScreen, tea.WindowSize())
+		return m.handleAttachFinished(msg), tea.Batch(m.loadSessionsCmd(), tea.ClearScreen, tea.RequestWindowSize)
 	case latestRequiredMsg:
 		if !errors.Is(msg.err, ErrAmbiguousResume) {
 			m.setMessage(msg.err.Error())
 			return m, nil
 		}
-		m.confirmLatest = true
-		m.confirmLatestAction = msg.action
-		m.confirmLatestAgent = msg.agent
-		m.confirmLatestID = msg.id
-		m.confirmLatestName = msg.name
-		m.message = ""
-		m.messageSetAt = time.Time{}
+		m.openLatestConfirmation(msg.action, msg.agent, msg.id, msg.name)
 		return m, nil
+	case confirmationFormMsg:
+		return m.handleConfirmationFormMsg(msg)
+	case confirmationPointerIntent:
+		return m.handleConfirmationPointer(msg)
 	case promptEditedMsg:
 		return m.handlePromptEdited(msg), nil
-	case tea.KeyMsg:
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	case tea.PasteMsg:
+		return m.handlePaste(msg.Content), nil
 	}
 	return m, nil
 }
@@ -384,6 +416,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleWindowSize(msg tea.WindowSizeMsg) Model {
 	m.width, m.height = msg.Width, msg.Height
 	m.sizeKnown = true
+	m.dashboardRevision++
+	m.resizeConfirmation()
 	return m
 }
 
@@ -405,10 +439,28 @@ func (m *Model) expireMessage(now time.Time) {
 }
 
 func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
-	// Clear the in-flight guard unconditionally — even on error — or a single
-	// failed load wedges the refresh ticker forever (F17).
-	m.loading = false
-	if msg.err != nil {
+	if msg.loadGeneration != 0 && msg.loadGeneration < m.appliedLoadGeneration {
+		if msg.refresh {
+			m.loading = false
+		}
+		return m
+	}
+	if msg.loadGeneration != 0 {
+		m.appliedLoadGeneration = msg.loadGeneration
+	}
+	m.dashboardRevision++
+	if msg.refresh {
+		m.hasLoaded = true
+		// Only the completion of the load that acquired the guard may release it.
+		m.loading = false
+		if msg.err != nil {
+			// Refresh failures are persistent dashboard state, not a short-lived
+			// toast. Keep the last good roster and expose the explicit Retry command.
+			m.refreshError = msg.err.Error()
+			return m
+		}
+		m.refreshError = ""
+	} else if msg.err != nil {
 		m.setMessage(msg.err.Error())
 		return m
 	}
@@ -416,20 +468,12 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	if sess, ok := m.selectedSession(); ok {
 		selectedAgent, selectedID = sess.AgentType, sess.ID
 	}
-	if msg.sessions != nil {
+	// A load that raced the reorder debounce carries the store's pre-move
+	// SortIndex; replacing the roster would make the pending flush persist the
+	// revert (#92). Keep the manual order; the next refresh follows the flush.
+	if msg.sessions != nil && !m.reorderPending {
 		m.sessions = projectSessions(msg.sessions, msg.groupByDir)
 		m.groupByDir = msg.groupByDir
-		// Drop peek throttle stamps for sessions that no longer exist so the
-		// map cannot grow without bound across many session lifetimes.
-		live := make(map[string]struct{}, len(m.sessions))
-		for _, sess := range m.sessions {
-			live[sess.ID] = struct{}{}
-		}
-		for id := range m.lastPeekAt {
-			if _, ok := live[id]; !ok {
-				delete(m.lastPeekAt, id)
-			}
-		}
 	}
 	if msg.defaultAgent != "" {
 		// A persisted default may name an agent whose CLI was since uninstalled;
@@ -442,6 +486,9 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	m.defaultProfile = msg.defaultProfile
 	if msg.profileBySession != nil {
 		m.profileBySession = msg.profileBySession
+	}
+	if msg.lastSeenBySession != nil {
+		m.lastSeenBySession = msg.lastSeenBySession
 	}
 	if selectedID != "" {
 		for i, sess := range m.sessions {
@@ -457,15 +504,6 @@ func (m Model) handleSessionsLoaded(msg sessionsLoadedMsg) Model {
 	m.selected = max(0, min(m.selected, len(m.sessions)-1))
 	if m.filterActive {
 		m.reconcileFilterSelection()
-	}
-	return m
-}
-
-func (m Model) handlePeekLoaded(msg peekLoadedMsg) Model {
-	if msg.err != nil {
-		m.setMessage(msg.err.Error())
-	} else {
-		m.peekText = msg.text
 	}
 	return m
 }
@@ -510,7 +548,7 @@ func (m Model) handlePromptEdited(msg promptEditedMsg) Model {
 	return m
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	// Ctrl+C quits from anywhere. Routed before the modal dispatch because a
 	// modal claims every key it does not recognise, which left help, the
@@ -523,14 +561,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if handled, model, cmd := m.handleModalKey(msg, key); handled {
 		return model, cmd
 	}
-	// Peek owns the command composer for replies. Keep the filtered projection,
-	// but route text/Enter/Esc through the established reply flow while it is open.
-	if m.filterActive && !m.peekOpen {
+	if m.filterActive {
 		if handled, cmd := m.handleFilterKey(msg, key); handled {
 			return m, cmd
 		}
 	}
-	if key == "/" && m.input == "" && !m.peekOpen {
+	if key == "/" && m.input == "" {
 		m.enterFilter()
 		return m, nil
 	}
@@ -540,49 +576,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.handleActionKey(key); handled {
 		return m, cmd
 	}
-	m.appendKeyInput(msg)
+	// The base dashboard has no text composer. Printable keys are inert here;
+	// filter, wizard, rename, and confirmation input was routed above.
 	return m, nil
 }
 
-func (m Model) handleModalKey(msg tea.KeyMsg, key string) (bool, tea.Model, tea.Cmd) {
-	if m.helpOpen {
-		if key == "?" || key == "esc" {
-			m.helpOpen = false
-		}
-		return true, m, nil
-	}
-	if m.confirmLatest {
-		if key == "y" || key == "enter" {
-			action, agentName, id := m.confirmLatestAction, m.confirmLatestAgent, m.confirmLatestID
-			m.clearLatestConfirmation()
-			return true, m, m.retryLatestCmd(action, agentName, id)
-		}
-		if key == "n" || key == "esc" {
-			m.clearLatestConfirmation()
-		}
-		return true, m, nil
-	}
-	if m.confirmStop {
-		if key == "y" || key == "enter" {
-			m.confirmStop = false
-			agentName, id := m.confirmStopAgent, m.confirmStopID
-			m.confirmStopAgent = ""
-			m.confirmStopID = ""
-			return true, m, m.stopTargetExactCmd(agentName, id, true)
-		}
-		if key == "r" {
-			m.confirmStop = false
-			agentName, id := m.confirmStopAgent, m.confirmStopID
-			m.confirmStopAgent = ""
-			m.confirmStopID = ""
-			return true, m, m.restartTargetExactCmd(agentName, id)
-		}
-		if key == "n" || key == "esc" {
-			m.confirmStop = false
-			m.confirmStopAgent = ""
-			m.confirmStopID = ""
-		}
-		return true, m, nil
+func (m Model) handleModalKey(msg tea.KeyPressMsg, key string) (bool, tea.Model, tea.Cmd) {
+	if m.confirmLatest || m.confirmStop {
+		return m.handleConfirmationKey(msg, key)
 	}
 	if m.wizard {
 		model, cmd := m.handleWizardKey(msg)
@@ -631,36 +632,17 @@ func (m Model) retryLatestCmd(action latestAction, agentName, id string) tea.Cmd
 func (m *Model) handleMovementKey(key string) (bool, tea.Cmd) {
 	switch key {
 	case "up":
-		return true, m.moveSelectionPeek(-1)
+		m.moveSelection(-1)
+		return true, nil
 	case "down":
-		return true, m.moveSelectionPeek(1)
+		m.moveSelection(1)
+		return true, nil
 	case "shift+up":
 		return true, m.moveSession(-1)
 	case "shift+down":
 		return true, m.moveSession(1)
 	}
 	return false, nil
-}
-
-// moveSelectionPeek moves the cursor and, when the peek panel is open and the
-// selection actually changed, re-fires the peek for the newly selected session.
-// The stale peek text is blanked synchronously so the panel never shows a frame
-// of the previous session's tail. Gated on peekOpen so plain navigation with the
-// panel closed doesn't trigger an N+1 capture storm (C2-2).
-func (m *Model) moveSelectionPeek(delta int) tea.Cmd {
-	prev := m.selected
-	m.moveSelection(delta)
-	if !m.peekOpen || m.selected == prev {
-		return nil
-	}
-	// The peek panel follows the cursor; keep the reply target in sync so a reply
-	// goes to the session the user is actually looking at (F36).
-	if sess, ok := m.selectedSession(); ok {
-		m.peekTargetAgent = sess.AgentType
-		m.peekTargetID = sess.ID
-	}
-	m.peekText = ""
-	return m.peekSelectedCmd()
 }
 
 func (m *Model) moveSelection(delta int) {
@@ -686,45 +668,6 @@ func (m *Model) moveSelection(delta int) {
 	if next >= 0 && next < len(m.sessions) {
 		m.selected = next
 	}
-}
-
-// peekFocusStep handles a peek-focus tick: when the panel is open it re-captures
-// the focused session's pane at most once per peekFocusInterval (gated by id so
-// a reorder under the cursor can't double-capture), keeping the panel live. It
-// returns the (possibly nil) peek command; the caller re-arms the ticker (C2-11).
-func (m Model) peekFocusStep(now time.Time) (Model, tea.Cmd) {
-	if m.peekClock != nil {
-		now = m.peekClock()
-	}
-	if !m.peekOpen {
-		return m, nil
-	}
-	sess, ok := m.selectedSession()
-	if !ok {
-		return m, nil
-	}
-	if !m.shouldPollFocusedPeek(sess.ID, now) {
-		return m, nil
-	}
-	if m.lastPeekAt == nil {
-		m.lastPeekAt = map[string]time.Time{}
-	}
-	m.lastPeekAt[sess.ID] = now
-	return m, m.peekSelectedCmd()
-}
-
-// shouldPollFocusedPeek reports whether the focused session id is due for a
-// peek capture: never polled, or last polled at least peekFocusInterval ago.
-// Keyed by id so the rate limit follows the session, not the row index (C2-11).
-func (m Model) shouldPollFocusedPeek(id string, now time.Time) bool {
-	if id == "" {
-		return false
-	}
-	last, seen := m.lastPeekAt[id]
-	if !seen {
-		return true
-	}
-	return now.Sub(last) >= peekFocusInterval
 }
 
 func (m *Model) moveSession(delta int) tea.Cmd {
@@ -872,20 +815,20 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "ctrl+c":
 		m.quitting = true
 		// Flush any pending reorder before exiting so the debounce timer not yet
-		// having fired doesn't lose the manual order (F59).
-		return true, tea.Batch(m.flushReorder(), tea.Quit)
+		// having fired doesn't lose the manual order (F59). Sequence, not Batch:
+		// Batch runs members concurrently and Run returns on Quit while the
+		// flush is still writing (#91).
+		return true, tea.Sequence(m.flushReorder(), tea.Quit)
 	case "tab":
 		m.cycleDefaultAgent()
 		return true, m.persistDefaultAgent()
 	case "?":
-		// Same guard the other letter-shaped bindings use: a leading key only
-		// binds on an empty composer, otherwise it is text. Without it a '?'
-		// could never be typed into a prompt or a reply.
-		if strings.TrimSpace(m.input) != "" {
-			m.input += key
-			return true, nil
+		m.helpOpen = !m.helpOpen
+	case "r":
+		if m.refreshError == "" {
+			return false, nil
 		}
-		m.helpOpen = true
+		return true, m.retryRefresh()
 	case "ctrl+s":
 		grouped := !m.groupByDir
 		generation := m.nextGroupToggleGeneration()
@@ -901,9 +844,7 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 		m.startRename()
 	case "ctrl+x":
 		if sess, ok := m.selectedSession(); ok {
-			m.confirmStop = true
-			m.confirmStopAgent = sess.AgentType
-			m.confirmStopID = sess.ID
+			m.openSessionConfirmation(sess)
 		}
 	case " ":
 		return true, m.handleSpaceKey(key)
@@ -912,7 +853,7 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	case "esc":
 		return true, m.handleEscKey()
 	case "backspace":
-		m.backspaceInput()
+		// No text field exists on the base dashboard.
 	case "e":
 		m.handleEditKey(key)
 	default:
@@ -921,24 +862,31 @@ func (m *Model) handleActionKey(key string) (bool, tea.Cmd) {
 	return true, nil
 }
 
-// handleEscKey makes Esc back out one level per press: close the peek panel,
-// then clear the command input, and finally quit the uam TUI.
+func (m *Model) retryRefresh() tea.Cmd {
+	if m.loading {
+		return nil
+	}
+	m.refreshError = ""
+	m.loading = true
+	return tea.Batch(m.refreshSessionsCmd(), m.activity.Tick)
+}
+
+// handleMouse keeps raw pointer coordinates inert. The displayed view resolves
+// them through its captured compositor and sends a semantic intent instead.
+func (m Model) handleMouse(tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Bubble Tea v2 delivers this raw event to Update as well as to View.OnMouse.
+	// Only the view callback knows which compositor was actually displayed, so
+	// raw coordinates are deliberately inert here.
+	return m, nil
+}
+
+// handleEscKey quits the base dashboard.
 func (m *Model) handleEscKey() tea.Cmd {
-	if m.peekOpen {
-		// Esc backs out of the peek/reply composer WITHOUT sending the in-progress
-		// reply (F36).
-		m.peekOpen = false
-		m.peekTargetAgent = ""
-		m.peekTargetID = ""
-		return nil
-	}
-	if m.input != "" {
-		m.input = ""
-		return nil
-	}
+	m.input = ""
 	m.quitting = true
-	// Flush a pending reorder before exiting (F59).
-	return tea.Batch(m.flushReorder(), tea.Quit)
+	// Flush a pending reorder before exiting (F59); Sequence so the flush
+	// completes before Quit is delivered (#91).
+	return tea.Sequence(m.flushReorder(), tea.Quit)
 }
 
 func (m *Model) startRename() {
@@ -952,77 +900,26 @@ func (m *Model) startRename() {
 	m.input = sess.DisplayName
 }
 
-func (m *Model) handleSpaceKey(key string) tea.Cmd {
-	if strings.TrimSpace(m.input) != "" || len(m.sessions) == 0 {
-		m.input += key
+func (m *Model) handleSpaceKey(_ string) tea.Cmd {
+	if len(m.sessions) == 0 {
 		return nil
 	}
-	// A stopped session has no live process to peek into — Space restarts it
-	// in the background instead.
+	// Space restarts a stopped session in the background.
 	if sess, ok := m.selectedSession(); ok && sess.ProcAlive == adapter.Exited {
 		m.setMessage("restarting " + firstNonEmpty(sess.DisplayName, sess.ID))
 		return m.resumeSelectedCmd()
 	}
-	m.peekOpen = !m.peekOpen
-	if m.peekOpen {
-		// Snapshot the peeked session so an Enter-to-reply routes to it even if a
-		// refresh reorders the list under the cursor (F36).
-		if sess, ok := m.selectedSession(); ok {
-			m.peekTargetAgent = sess.AgentType
-			m.peekTargetID = sess.ID
-		}
-		return m.peekSelectedCmd()
-	}
-	m.peekTargetAgent = ""
-	m.peekTargetID = ""
 	return nil
 }
 
 func (m *Model) handleEnterKey() tea.Cmd {
-	// Reply sub-mode: while the peek panel is open the command line is a reply
-	// composer. Non-empty input + Enter sends to the peeked session via
-	// Service.Reply and re-peeks, instead of dispatching a new agent. Checked
-	// before the dispatch/attach branch so peek+typed-text never spawns a session
-	// (F36).
-	if m.peekOpen && strings.TrimSpace(m.input) != "" {
-		return m.replyToPeekCmd()
-	}
-	if strings.TrimSpace(m.input) != "" {
-		spec := parseDispatchSpec(m.input, m.defaultAgent)
-		return m.dispatchNamedCmd(spec.Agent, spec.Alias, spec.Name, spec.Prompt)
-	}
 	if len(m.sessions) > 0 {
 		return m.attachSelectedCmd()
 	}
 	return nil
 }
 
-// replyToPeekCmd sends the typed input to the peeked session via Service.Reply,
-// clears the composer, and re-peeks so the panel shows the agent's response. The
-// reply target is the snapshotted peekTargetID (falling back to the selected
-// session) so a reorder under the cursor can't misroute it (F36).
-func (m *Model) replyToPeekCmd() tea.Cmd {
-	sess, ok := m.sessionByIdentity(m.peekTargetAgent, m.peekTargetID)
-	if !ok {
-		return nil
-	}
-	text := m.input
-	m.input = ""
-	agentName, id := sess.AgentType, sess.ID
-	return func() tea.Msg {
-		if err := m.service.ReplyExact(context.Background(), agentName, id, text); err != nil {
-			return peekLoadedMsg{err: err}
-		}
-		p, err := m.service.PeekExact(context.Background(), agentName, id)
-		return peekLoadedMsg{text: p.TailText, err: err}
-	}
-}
-
-func (m *Model) handleEditKey(key string) {
-	if strings.TrimSpace(m.input) != "" {
-		m.input += key
-		return
-	}
+func (m *Model) handleEditKey(_ string) {
 	m.wizard = true
 	m.wizardStep = 0
 	m.input = ""
@@ -1039,11 +936,22 @@ func (m *Model) backspaceInput() {
 	}
 }
 
-func (m *Model) appendKeyInput(msg tea.KeyMsg) {
-	m.editText(msg)
+func (m Model) handlePaste(content string) Model {
+	if content == "" {
+		return m
+	}
+	if m.filterActive {
+		m.filterQuery += content
+		m.reconcileFilterSelection()
+		return m
+	}
+	if m.wizard || m.renaming {
+		m.input += content
+	}
+	return m
 }
 
-func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleRenameKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "enter":
@@ -1073,22 +981,20 @@ func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// editText applies a printable-input edit to m.input: it appends pasted/typed
-// runes (KeyRunes without Alt — covers multibyte and bracketed paste), handles
-// Space and Backspace, and ignores Alt-chords and control keys so they never
-// leak as literal text (F29).
-func (m *Model) editText(msg tea.KeyMsg) {
+// editText applies a printable keypress to m.input. PasteMsg is handled
+// separately by handlePaste; Alt chords and control keys never leak into text.
+func (m *Model) editText(msg tea.KeyPressMsg) {
 	switch {
-	case msg.Type == tea.KeyBackspace:
+	case msg.Code == tea.KeyBackspace:
 		m.backspaceInput()
-	case msg.Type == tea.KeySpace:
+	case msg.Code == tea.KeySpace:
 		m.input += " "
-	case msg.Type == tea.KeyRunes && !msg.Alt:
-		m.input += string(msg.Runes)
+	case msg.Text != "" && !msg.Mod.Contains(tea.ModAlt):
+		m.input += msg.Text
 	}
 }
 
-func (m Model) handleWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleWizardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "esc" {
 		m.closeWizard()
@@ -1239,7 +1145,7 @@ func isGitRepo(dir string) bool {
 		return false
 	}
 	for {
-		if _, statErr := os.Stat(filepath.Join(d, ".git")); statErr == nil {
+		if validGitMarker(filepath.Join(d, ".git")) {
 			return true
 		}
 		parent := filepath.Dir(d)
@@ -1248,6 +1154,38 @@ func isGitRepo(dir string) bool {
 		}
 		d = parent
 	}
+}
+
+// validGitMarker accepts both an ordinary .git directory and the gitdir file
+// used by linked worktrees. Mere existence is insufficient: temporary roots
+// and interrupted tooling sometimes leave an empty .git entry behind, which
+// must not suppress the wizard's no-checkpoint warning.
+func validGitMarker(marker string) bool {
+	info, err := os.Stat(marker)
+	if err != nil {
+		return false
+	}
+	gitDir := marker
+	if !info.IsDir() {
+		if !info.Mode().IsRegular() {
+			return false
+		}
+		contents, readErr := os.ReadFile(marker) // #nosec G304 -- marker is the literal .git entry found while walking the user-selected local workspace.
+		if readErr != nil {
+			return false
+		}
+		line := strings.TrimSpace(string(contents))
+		const prefix = "gitdir:"
+		if !strings.HasPrefix(strings.ToLower(line), prefix) {
+			return false
+		}
+		gitDir = strings.TrimSpace(line[len(prefix):])
+		if !filepath.IsAbs(gitDir) {
+			gitDir = filepath.Join(filepath.Dir(marker), gitDir)
+		}
+	}
+	head, headErr := os.Stat(filepath.Join(gitDir, "HEAD")) // #nosec G703 -- linked-worktree .git files intentionally name their local git directory; only HEAD metadata is inspected.
+	return headErr == nil && !head.IsDir()
 }
 
 // globComplete completes a partially-typed path against the filesystem. It
@@ -1367,11 +1305,9 @@ func (m Model) dispatchNamedCmd(agent, alias, name, prompt string) tea.Cmd {
 }
 func (m Model) dispatchWithNameCwdProfileCmd(agent, alias, name, prompt, cwd, profile string) tea.Cmd {
 	return func() tea.Msg {
-		mode := string(store.ModeYolo)
-		if profile != "" {
-			mode = ""
-		}
-		sess, err := m.service.DispatchNamedWithAliasProfile(context.Background(), agent, alias, name, prompt, cwd, mode, profile)
+		// Mode is decided by the resolved launch policy (explicit, alias-assigned
+		// or default profile; built-in default is yolo), never by the call site.
+		sess, err := m.service.DispatchNamedWithAliasProfile(context.Background(), agent, alias, name, prompt, cwd, "", profile)
 		return dispatchedMsg{session: sess, err: err}
 	}
 }
@@ -1411,17 +1347,6 @@ func (m Model) sessionByIdentity(agentName, id string) (adapter.Session, bool) {
 		}
 	}
 	return adapter.Session{}, false
-}
-
-func (m Model) peekSelectedCmd() tea.Cmd {
-	sess, ok := m.selectedSession()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
-		p, err := m.service.PeekExact(context.Background(), sess.AgentType, sess.ID)
-		return peekLoadedMsg{text: p.TailText, err: err}
-	}
 }
 
 // resumeSelectedCmd restarts the selected session's backend session in the
@@ -1662,34 +1587,7 @@ func (m Model) persistGroupToggleCmd(sessions []adapter.Session, grouped bool, g
 	}
 }
 
-// ─── theme ───────────────────────────────────────────────────────────────
-// Borderless adaptive palette: one teal accent, semantic status colors, and
-// AdaptiveColor everywhere so the UI reads well on light and dark terminals.
-
-var (
-	accentColor  = lipgloss.AdaptiveColor{Light: "#0F766E", Dark: "#2DD4BF"}
-	textColor    = lipgloss.AdaptiveColor{Light: "#0F172A", Dark: "#E8EDF4"}
-	mutedColor   = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#8B97AC"}
-	dividerColor = lipgloss.AdaptiveColor{Light: "#D6DEE8", Dark: "#2B3547"}
-	taskColor    = lipgloss.AdaptiveColor{Light: "#475569", Dark: "#AEBACD"}
-	liveColor    = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
-	failColor    = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
-	warnColor    = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
-)
-
-var (
-	brandStyle    = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(textColor)
-	sectionStyle  = lipgloss.NewStyle().Bold(true).Foreground(mutedColor)
-	hintStyle     = lipgloss.NewStyle().Foreground(mutedColor)
-	dividerStyle  = lipgloss.NewStyle().Foreground(dividerColor)
-	taskStyle     = lipgloss.NewStyle().Foreground(taskColor)
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(accentColor)
-	warnStyle     = lipgloss.NewStyle().Foreground(warnColor)
-)
-
-// bar is the accent rule that marks the brand and command lines.
-func bar() string { return brandStyle.Render("▌") }
+// The palette and the tone table live in theme.go.
 
 // LayoutClass names the three responsive dashboard geometries. It is derived
 // from the current terminal dimensions; Model deliberately stores no parallel
@@ -1703,27 +1601,23 @@ const (
 )
 
 // DashboardMode is the primary dashboard surface. Like LayoutClass it is
-// derived from the existing interaction state, keeping wizard/peek behavior as
-// the source of truth for all existing key flows.
+// derived from the existing interaction state.
 type DashboardMode uint8
 
 const (
 	ModeOperations DashboardMode = iota
-	ModePeek
 	ModeNew
 )
 
 func (m Model) layoutClass() LayoutClass {
-	w, h := m.width, m.height
+	w := m.width
 	if w <= 0 {
 		w = 98
 	}
-	// An unknown height means callers are rendering a component outside a real
-	// terminal (many legacy unit tests do this), so classify by width only.
-	if h > 0 && (w < 58 || h < 24) || w < 58 {
+	if w < dashboardCompactMin {
 		return LayoutCompact
 	}
-	if w >= 96 && (h == 0 || h >= 28) {
+	if w >= dashboardWideMin {
 		return LayoutWide
 	}
 	return LayoutStandard
@@ -1732,9 +1626,6 @@ func (m Model) layoutClass() LayoutClass {
 func (m Model) dashboardMode() DashboardMode {
 	if m.wizard {
 		return ModeNew
-	}
-	if m.peekOpen {
-		return ModePeek
 	}
 	return ModeOperations
 }
@@ -1751,7 +1642,27 @@ func (m Model) layoutMode() int {
 	}
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
+	var view tea.View
+	if m.sizeKnown && m.confirmationActive() && !m.quitting {
+		frame := m.buildConfirmationOverlay()
+		view = tea.NewView(lipgloss.Sprint(frame.content))
+		view.OnMouse = frame.mouseCommand
+	} else if m.sizeKnown && !m.confirmLatest && !m.confirmStop && !m.wizard && !m.renaming && !m.quitting {
+		frame := m.buildDashboardFrame()
+		view = tea.NewView(lipgloss.Sprint(frame.content))
+		view.OnMouse = func(msg tea.MouseMsg) tea.Cmd { return m.dashboardMouseCommand(frame, msg) }
+	} else {
+		view = tea.NewView(lipgloss.Sprint(m.viewContent()))
+	}
+	view.AltScreen = true
+	if MouseReportingEnabled() {
+		view.MouseMode = tea.MouseModeCellMotion
+	}
+	return view
+}
+
+func (m Model) viewContent() string {
 	if m.quitting {
 		return ""
 	}
@@ -1760,10 +1671,10 @@ func (m Model) View() string {
 	if !m.sizeKnown {
 		// A confirmation can arrive before a WindowSizeMsg in tests and on very
 		// slow remote terminals. Never hide a safety-critical modal behind loading.
-		if m.helpOpen || m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
+		if m.confirmLatest || m.confirmStop || m.wizard || m.renaming {
 			return m.unboundedView()
 		}
-		return bar() + " " + brandStyle.Render("UAM") + "  " + hintStyle.Render("loading dashboard…")
+		return m.activityView() + " " + hintStyle.Render("Loading agents")
 	}
 	return m.dashboardView()
 }
@@ -1772,8 +1683,6 @@ func (m Model) unboundedView() string {
 	var b strings.Builder
 	b.WriteString(m.renderBranding())
 	switch {
-	case m.helpOpen:
-		b.WriteString(m.renderHelp())
 	case m.confirmLatest:
 		b.WriteString(m.renderLatestConfirmation())
 	case m.confirmStop:
@@ -1783,9 +1692,6 @@ func (m Model) unboundedView() string {
 	default:
 		b.WriteString(m.renderDetails())
 		b.WriteString(m.renderTable())
-		if m.peekOpen {
-			b.WriteString(m.renderPeek())
-		}
 	}
 	b.WriteString(m.renderPrompt())
 	return b.String()
@@ -1805,7 +1711,7 @@ func (m Model) responsiveView() string {
 		prompt = m.wizardPromptLines(w)
 	}
 	if len(prompt) == 0 {
-		prompt = []string{bar() + " " + brandStyle.Render("›")}
+		prompt = []string{bar() + " " + brandStyle.Render(caretGlyph())}
 	}
 	if len(prompt) >= h {
 		return fitScreen(prompt[:h], w, h)
@@ -1833,8 +1739,8 @@ func (m Model) wizardPromptLines(width int) []string {
 		field += "  profile=" + m.wizardProfileLabel()
 	}
 	return []string{
-		ansi.Truncate(bar()+" "+hintStyle.Render("new")+" "+brandStyle.Render("›")+" "+titleStyle.Render(field)+brandStyle.Render("▏"), width, "…"),
-		ansi.Truncate("  "+hintStyle.Render(hints[step]), width, "…"),
+		ansi.Truncate(bar()+" "+hintStyle.Render("new")+" "+brandStyle.Render(caretGlyph())+" "+titleStyle.Render(field)+brandStyle.Render(cursorGlyph()), width, truncTail()),
+		ansi.Truncate("  "+hintStyle.Render(hints[step]), width, truncTail()),
 	}
 }
 
@@ -1843,15 +1749,12 @@ func (m Model) responsiveHeader(width int) string {
 	if m.layoutClass() != LayoutCompact {
 		text += "  " + hintStyle.Render(version.String())
 	}
-	return ansi.Truncate(text, width, "…")
+	return ansi.Truncate(text, width, truncTail())
 }
 
 func (m Model) responsiveBody(width, budget int) []string {
 	if budget <= 0 {
 		return nil
-	}
-	if m.helpOpen {
-		return takeLines(boundedNonBlankLines(m.renderHelp(), width), budget)
 	}
 	if m.confirmLatest {
 		return takeLines(boundedNonBlankLines(m.renderLatestConfirmation(), width), budget)
@@ -1865,46 +1768,18 @@ func (m Model) responsiveBody(width, budget int) []string {
 	return m.dashboardBody(width, budget)
 }
 
-// boundedTailLines scans backward only far enough to find the requested tail.
-// It retains empty physical lines because terminal output spacing is content,
-// while avoiding a split/join of a potentially multi-thousand-line pane.
-func boundedTailLines(s string, n, width int) []string {
-	if n <= 0 || s == "" {
-		return nil
-	}
-	start, breaks := 0, 0
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] != '\n' {
-			continue
-		}
-		breaks++
-		if breaks == n {
-			start = i + 1
-			break
-		}
-	}
-	lines := strings.Split(s[start:], "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "…")
-	}
-	return lines
-}
-
 func (m Model) renderSectionAtWidth(label, right string, width int) string {
 	head := sectionStyle.Render(label)
 	rightWidth := ansi.StringWidth(right)
 	fill := max(0, width-ansi.StringWidth(head)-rightWidth-4)
 	line := " " + head
 	if fill > 0 {
-		line += "  " + dividerStyle.Render(strings.Repeat("─", fill))
+		line += "  " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill))
 	}
 	if right != "" {
 		line += " " + hintStyle.Render(right)
 	}
-	return ansi.Truncate(line, width, "…")
+	return ansi.Truncate(line, width, truncTail())
 }
 
 func tableWidthsFor(width int, class LayoutClass) (int, int, bool) {
@@ -1933,30 +1808,20 @@ func boundedNonBlankLines(s string, width int) []string {
 		if line == "" {
 			continue
 		}
-		lines = append(lines, ansi.Truncate(line, width, "…"))
-	}
-	return lines
-}
-
-func joinColumns(left, right []string, leftWidth, rightWidth, budget int) []string {
-	n := min(budget, max(len(left), len(right)))
-	lines := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		l, r := "", ""
-		if i < len(left) {
-			l = left[i]
-		}
-		if i < len(right) {
-			r = right[i]
-		}
-		lines = append(lines, padRightANSI(l, leftWidth)+"   "+ansi.Truncate(r, rightWidth, "…"))
+		lines = append(lines, ansi.Truncate(line, width, truncTail()))
 	}
 	return lines
 }
 
 func padRightANSI(s string, width int) string {
-	s = ansi.Truncate(s, width, "…")
+	s = ansi.Truncate(s, width, truncTail())
 	return s + strings.Repeat(" ", max(0, width-ansi.StringWidth(s)))
+}
+
+// padLeftANSI right-aligns s in width cells; wider input is returned intact so
+// the caller's truncation policy — not the padder's — decides what to cut.
+func padLeftANSI(s string, width int) string {
+	return strings.Repeat(" ", max(0, width-ansi.StringWidth(s))) + s
 }
 
 func takeLines(lines []string, n int) []string {
@@ -1968,7 +1833,7 @@ func fitScreen(lines []string, width, height int) string {
 		lines = lines[len(lines)-height:]
 	}
 	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "…")
+		lines[i] = ansi.Truncate(lines[i], width, truncTail())
 	}
 	return strings.Join(lines, "\n")
 }
@@ -2004,7 +1869,7 @@ func (m Model) renderBranding() string {
 func (m Model) renderSection(label, right string) string {
 	head := sectionStyle.Render(label)
 	fill := max(3, m.contentWidth()-lipgloss.Width(head)-lipgloss.Width(right)-4)
-	line := " " + head + "  " + dividerStyle.Render(strings.Repeat("─", fill))
+	line := " " + head + "  " + dividerStyle.Render(strings.Repeat(ruleGlyph(), fill))
 	if right != "" {
 		line += " " + hintStyle.Render(right)
 	}
@@ -2170,31 +2035,13 @@ func renderRow(s adapter.Session, selected bool, nameWidth, taskWidth int, showT
 	return row
 }
 
-func (m Model) renderPeek() string {
-	return "\n" + m.renderSection("PEEK", "") + "\n" + trimLines(m.peekText, max(5, m.height/3)) + "\n"
-}
-
 func (m Model) renderPrompt() string {
 	var b strings.Builder
 	b.WriteString("\n")
 	if m.renaming {
-		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render("▏") + "\n")
-	} else if m.peekOpen {
-		// The command line doubles as a reply composer while peek is open: label
-		// it so the sub-mode is discoverable (Enter sends, Esc closes) (F36).
-		field := hintStyle.Render("type a reply…")
-		if m.input != "" {
-			field = titleStyle.Render(displaytext.Sanitize(m.input))
-		}
-		hints := hintStyle.Render("Enter send  ·  Esc close")
-		b.WriteString(bar() + " " + hintStyle.Render("reply") + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
+		b.WriteString(bar() + " " + hintStyle.Render("rename") + "  " + titleStyle.Render(displaytext.Sanitize(m.input)) + brandStyle.Render(cursorGlyph()) + "\n")
 	} else {
-		field := hintStyle.Render("type a command…")
-		if m.input != "" {
-			field = titleStyle.Render(displaytext.Sanitize(m.input))
-		}
-		hints := hintStyle.Render(m.defaultAgent + "  ·  ? help  ·  e new  ·  Esc quit")
-		b.WriteString(bar() + " " + brandStyle.Render("›") + " " + field + brandStyle.Render("▏") + "   " + hints + "\n")
+		b.WriteString(bar() + " " + titleStyle.Render("Agents") + "  " + hintStyle.Render("? / Esc close help") + "\n")
 	}
 	if m.message != "" {
 		b.WriteString("  " + hintStyle.Render(displaytext.Sanitize(m.message)) + "\n")
@@ -2226,9 +2073,6 @@ func (m Model) visibleSessionWindow() (int, int) {
 		return 0, limit
 	}
 	reserve := 20
-	if m.peekOpen {
-		reserve += max(5, m.height/3) + 2
-	}
 	limit = min(len(m.sessions), max(3, m.height-reserve))
 	start := 0
 	if m.selected >= limit {
@@ -2256,7 +2100,7 @@ func taskSummaryText(sess adapter.Session) string {
 	if detail == "" || base == detail || strings.HasSuffix(base, " · "+detail) {
 		return base
 	}
-	return base + " · " + detail
+	return base + dotSep() + detail
 }
 
 // boundedTaskSummary truncates the prompt portion first so grounded failure
@@ -2266,7 +2110,7 @@ func boundedTaskSummary(sess adapter.Session, width int) string {
 	if detail == "" || strings.TrimSpace(sess.Prompt) == "" {
 		return truncate(taskSummaryText(sess), width)
 	}
-	suffix := " · " + detail
+	suffix := dotSep() + detail
 	base := promptText(sess)
 	if base == detail {
 		return truncate(detail, width)
@@ -2301,41 +2145,20 @@ func absCwd(cwd string) string {
 	return displaytext.Sanitize(cwd)
 }
 
-func (m Model) renderHelp() string {
-	rows := []string{
-		"↑/↓  move   Shift+↑/↓  reorder   Enter/→  attach/resume",
-		"Space  peek running / resume stopped",
-		"/  filter sessions when the command line is empty",
-		"Tab  cycle agent     Ctrl+T  pin        Ctrl+R  rename",
-		"Ctrl+X  stop+remove / restart    Ctrl+S  group-by-dir",
-		"e  new session       Esc  quit",
-		"in session:  ← detach (when input empty)    Ctrl+B d  detach",
-		"dispatch:  @agent:alias #name prompt   (alias, name & prompt optional)",
-	}
-	var b strings.Builder
-	b.WriteString("\n " + sectionStyle.Render("Keys:") + "\n")
-	for _, r := range rows {
-		b.WriteString("  " + hintStyle.Render(r) + "\n")
-	}
-	return b.String()
-}
-
 func (m Model) renderConfirm() string {
-	sess, _ := m.sessionByIdentity(m.confirmStopAgent, m.confirmStopID)
-	name := displaytext.Sanitize(firstNonEmpty(sess.DisplayName, sess.ID, "session"))
-	return "\n " + sectionStyle.Render("Stop session") + "\n  " +
-		hintStyle.Render("Stop and remove ") + titleStyle.Render(name) + hintStyle.Render("?") +
-		"   " + brandStyle.Render("y") + hintStyle.Render(" / restart ") + brandStyle.Render("r") + hintStyle.Render(" / ") + titleStyle.Render("N") + "\n"
+	m.ensureConfirmationForm()
+	if m.confirmForm == nil {
+		return ""
+	}
+	return m.confirmForm.View()
 }
 
 func (m Model) renderLatestConfirmation() string {
-	provider := displaytext.Sanitize(firstNonEmpty(m.confirmLatestAgent, "provider"))
-	name := displaytext.Sanitize(firstNonEmpty(m.confirmLatestName, m.confirmLatestID, "session"))
-	return "\n " + sectionStyle.Render("Confirm latest conversation") + "\n  " +
-		hintStyle.Render("Several retained conversations share provider ") + titleStyle.Render(provider) +
-		hintStyle.Render(" and this workspace. Continuing ") + titleStyle.Render(string(m.confirmLatestAction)+" "+name) +
-		hintStyle.Render(" may select the provider's latest conversation.") +
-		"   " + brandStyle.Render("y/Enter") + hintStyle.Render(" continue · n/Esc cancel") + "\n"
+	m.ensureConfirmationForm()
+	if m.confirmForm == nil {
+		return ""
+	}
+	return m.confirmForm.View()
 }
 
 func (m Model) renderWizard() string {
@@ -2352,7 +2175,7 @@ func (m Model) renderWizard() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n " + sectionStyle.Render("NEW SESSION") + "  " + hintStyle.Render(fmt.Sprintf("step %d of 4 · profile %s", step+1, profileLabel)) + "\n")
-	b.WriteString("  " + titleStyle.Render(displaytext.Sanitize(steps[step])) + brandStyle.Render("▏") + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
+	b.WriteString("  " + titleStyle.Render(displaytext.Sanitize(steps[step])) + brandStyle.Render(cursorGlyph()) + "\n") // #nosec G602 -- step is clamped to [0, len(steps)) just above.
 	switch step {
 	case 2:
 		// Warn when the chosen working directory is not inside a git repo: there
@@ -2380,30 +2203,14 @@ func (m Model) wizardProfileLabel() string {
 	return "default:none"
 }
 
-// liveGlyphStyle / failGlyphStyle are hoisted to package vars so renderRow does
-// not allocate a fresh lipgloss.Style per row per frame. They keep AdaptiveColor
-// (resolved at render time, not pre-baked) so the palette still adapts to
-// light/dark terminals (F58).
-var (
-	liveGlyphStyle = lipgloss.NewStyle().Bold(true).Foreground(liveColor)
-	failGlyphStyle = lipgloss.NewStyle().Bold(true).Foreground(failColor)
-)
-
 // sessionGlyph uses process liveness and recorded exit metadata rather than the
 // broad State enum. Explicit stops remain neutral even when SIGTERM produced a
-// negative compatibility exit code.
+// negative compatibility exit code. Both the glyph and its style come from the
+// tone table (theme.go), so every surface speaks one visual vocabulary and the
+// glyph-distinctness invariant covers this path too.
 func sessionGlyph(s adapter.Session) (string, lipgloss.Style) {
-	switch {
-	case s.ProcAlive == adapter.Alive:
-		return "⟳", liveGlyphStyle
-	case failureExitDetail(s) != "":
-		return "!", failGlyphStyle
-	default:
-		// Clean exits and explicit stops are both stopped and resumable. An
-		// explicit SIGTERM is not a provider failure merely because its stored
-		// compatibility exit code is -1.
-		return "◦", hintStyle
-	}
+	t := toneForSession(s)
+	return t.glyph, t.style()
 }
 
 func failureExitDetail(s adapter.Session) string {
@@ -2419,32 +2226,21 @@ func failureExitDetail(s adapter.Session) string {
 // prStatusDot returns a distinct glyph per PR status (not color-only) so the PR
 // state survives a monochrome terminal or a screen scrape: open=hollow circle,
 // merged=filled circle, draft=half circle, closed=cross (F26).
+// prStatusDot and prStatusStyle both resolve through the tone table, which is
+// what keeps a PR dot from being mistaken for a lifecycle dot: the table's
+// distinctness invariant spans both families, so merged (◆) can never collide
+// with live (●) the way the previous hand-written glyph sets did.
 func prStatusDot(s adapter.PRStatus) string {
-	switch s {
-	case adapter.PROpen:
-		return "○"
-	case adapter.PRMerged:
-		return "●"
-	case adapter.PRDraft:
-		return "◐"
-	case adapter.PRClosed:
-		return "✕"
-	default:
+	if s == "" {
 		return " "
 	}
+	return toneForPR(s).glyph
 }
 
 // prStatusStyle colours the PR dot by status. Colour is a secondary cue; the
 // glyph in prStatusDot is the primary, color-independent signal (F26).
 func prStatusStyle(s adapter.PRStatus) lipgloss.Style {
-	switch s {
-	case adapter.PRMerged:
-		return liveGlyphStyle
-	case adapter.PRClosed:
-		return failGlyphStyle
-	default:
-		return hintStyle
-	}
+	return toneForPR(s).style()
 }
 
 // truncate clips s to at most n display columns, measuring with lipgloss.Width
@@ -2473,7 +2269,7 @@ func truncate(s string, n int) string {
 		b.WriteRune(r)
 		w += rw
 	}
-	return b.String() + "…"
+	return b.String() + truncTail()
 }
 
 // padRight pads s with spaces to occupy exactly n display columns. If s already
@@ -2485,11 +2281,4 @@ func padRight(s string, n int) string {
 		return s + strings.Repeat(" ", pad)
 	}
 	return s
-}
-func trimLines(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }

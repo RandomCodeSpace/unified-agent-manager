@@ -9,8 +9,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/mattn/go-runewidth"
 	"golang.org/x/sys/unix"
 )
 
@@ -45,6 +47,11 @@ func copyAttachOutputConfigured(config attachOutputConfig) error {
 			if _, err := filter.Write(payload); err != nil {
 				return err
 			}
+			if damage := filter.consumeDamage(); damage != damageNone {
+				if err := config.runtime.paintStatusBar(damage == damageReset); err != nil {
+					return err
+				}
+			}
 			// Both the attach banner and a role change are followed by the
 			// host's repaint, which opens with a clear-screen. Writing them
 			// before that frame meant the user never saw either one.
@@ -57,6 +64,7 @@ func copyAttachOutputConfigured(config attachOutputConfig) error {
 				return err
 			}
 			if changed {
+				config.runtime.setRole(event.Role)
 				// A promoted client owns the PTY geometry from here on. The host
 				// sized the PTY from whatever this client last reported, which for
 				// a standby that never resized is its attach-time size — report
@@ -102,7 +110,21 @@ type attachRuntime struct {
 	// erase them; queued from the output pump and from the attach setup.
 	statusMu      sync.Mutex
 	pendingStatus []string
+	// statusRows is the number of terminal rows reserved for the status bar
+	// (0 when the client does not own the outer screen). The host is told the
+	// terminal is that much shorter; the bar lives on the physical last row.
+	statusRows int
+	display    string
+	cwd        string
+	barMu      sync.Mutex
+	barRole    clientRole
+	barRestore *time.Timer
+	barStopped bool
 }
+
+// statusNoticeHold is how long a transient notice (role change, prefix i,
+// mouse toggle) stays on the reserved row before the status bar is repainted.
+const statusNoticeHold = 3 * time.Second
 
 type attachRuntimeConfig struct {
 	session       string
@@ -113,15 +135,147 @@ type attachRuntimeConfig struct {
 	prefix        byte
 	profile       attachProfileSnapshot
 	terminalSize  func() (int, int, bool)
+	statusRows    int
+	role          clientRole
+	display       string
+	cwd           string
 }
 
 func newAttachRuntime(config attachRuntimeConfig) *attachRuntime {
 	runtime := &attachRuntime{
 		session: config.session, output: config.output, input: config.input, inputTerminal: config.inputTerminal, profile: config.profile, prefix: config.prefix,
-		terminalSize: config.terminalSize,
+		terminalSize: config.terminalSize, statusRows: config.statusRows, barRole: config.role,
+		display: config.display, cwd: config.cwd,
 	}
 	runtime.mouse.Store(config.mouseEnabled)
 	return runtime
+}
+
+// viewportSize is the geometry reported to the host: the terminal minus the
+// rows the client keeps for itself.
+func (runtime *attachRuntime) viewportSize() (int, int, bool) {
+	if runtime.terminalSize == nil {
+		return 0, 0, false
+	}
+	cols, rows, ok := runtime.terminalSize()
+	if !ok {
+		return 0, 0, false
+	}
+	return cols, rows - runtime.statusRows, true
+}
+
+func (runtime *attachRuntime) setRole(role clientRole) {
+	runtime.barMu.Lock()
+	runtime.barRole = role
+	runtime.barMu.Unlock()
+}
+
+// statusBarText is the persistent bar. Segments in priority order: role,
+// session identity ("<name> · <provider> · <id>"), the keys, the working
+// directory, the profile, and the mouse state when passthrough is off. Lower
+// priority segments are dropped whole when the terminal is too narrow; the
+// first two are always kept and cut if they must be. Keys use the tmux-style
+// short form. It leads with the same "[uam: role <role>;" as the transient
+// banner it replaced so anything that watched for it still matches.
+func (runtime *attachRuntime) statusBarText(cols int) string {
+	prefix := "C-b"
+	if runtime.prefix >= 1 && runtime.prefix <= 26 {
+		prefix = fmt.Sprintf("C-%c", 'a'+rune(runtime.prefix)-1)
+	}
+	display := displaytext.Sanitize(runtime.display)
+	if display == "" {
+		display = displaytext.Sanitize(runtime.session)
+	}
+	segments := []string{
+		fmt.Sprintf("[uam: role %s", runtime.barRole),
+		display,
+		fmt.Sprintf("%s d / C-Left detach", prefix),
+		fmt.Sprintf("%s i info", prefix),
+	}
+	if cwd := displaytext.Sanitize(runtime.cwd); cwd != "" {
+		segments = append(segments, cwd)
+	}
+	// "none" is what the launcher reports when no profile applies; it is not
+	// worth a slot on the bar.
+	if effective := displaytext.Sanitize(runtime.profile.effective); effective != "" && effective != "none" {
+		segments = append(segments, "profile "+effective)
+	}
+	if !runtime.mouse.Load() {
+		segments = append(segments, "mouse off ("+prefix+" m)")
+	}
+	text := segments[0] + "; " + segments[1]
+	for _, segment := range segments[2:] {
+		candidate := text + "; " + segment
+		if cols > 0 && runewidth.StringWidth(candidate+"]") > cols {
+			break
+		}
+		text = candidate
+	}
+	return text + "]"
+}
+
+// paintStatusBar draws the reserved bar, re-pinning the scroll region when the
+// caller knows the terminal lost it. It is a no-op without a reservation.
+func (runtime *attachRuntime) paintStatusBar(pin bool) error {
+	if runtime.statusRows == 0 || runtime.terminalSize == nil {
+		return nil
+	}
+	runtime.barMu.Lock()
+	defer runtime.barMu.Unlock()
+	return runtime.paintStatusBarLocked(pin)
+}
+
+func (runtime *attachRuntime) paintStatusBarLocked(pin bool) error {
+	if runtime.barStopped {
+		return nil
+	}
+	cols, rows, ok := runtime.terminalSize()
+	if !ok {
+		return nil
+	}
+	if runtime.barRestore != nil {
+		runtime.barRestore.Stop()
+		runtime.barRestore = nil
+	}
+	sequence := paintStatusBar(cols, rows, rows-runtime.statusRows, runtime.statusBarText(cols), pin)
+	if sequence == "" {
+		return nil
+	}
+	return writeAttachBytes(runtime.output, []byte(sequence))
+}
+
+// holdNoticeThenRestore lets a transient notice sit on the reserved row, then
+// brings the bar back. Only one restore is ever pending.
+func (runtime *attachRuntime) holdNoticeThenRestore() {
+	if runtime.statusRows == 0 {
+		return
+	}
+	runtime.barMu.Lock()
+	defer runtime.barMu.Unlock()
+	if runtime.barStopped {
+		return
+	}
+	if runtime.barRestore != nil {
+		runtime.barRestore.Stop()
+	}
+	runtime.barRestore = time.AfterFunc(statusNoticeHold, func() {
+		runtime.barMu.Lock()
+		defer runtime.barMu.Unlock()
+		runtime.barRestore = nil
+		_ = runtime.paintStatusBarLocked(false)
+	})
+}
+
+// stopStatusBar cancels any pending restore so nothing is painted after the
+// terminal has been handed back. Safe to call more than once.
+func (runtime *attachRuntime) stopStatusBar() {
+	runtime.barMu.Lock()
+	defer runtime.barMu.Unlock()
+	runtime.barStopped = true
+	if runtime.barRestore != nil {
+		runtime.barRestore.Stop()
+		runtime.barRestore = nil
+	}
 }
 
 type attachProfileSnapshot struct {
@@ -188,10 +342,7 @@ func (runtime *attachRuntime) runCommand(command attachCommand, frames *frameWri
 // reportSize sends the viewer's current terminal size to the host. It is a
 // no-op when the attachment has no terminal.
 func (runtime *attachRuntime) reportSize(frames *frameWriter) error {
-	if runtime.terminalSize == nil {
-		return nil
-	}
-	cols, rows, ok := runtime.terminalSize()
+	cols, rows, ok := runtime.viewportSize()
 	if !ok {
 		return nil
 	}
@@ -202,6 +353,16 @@ func (runtime *attachRuntime) reportSize(frames *frameWriter) error {
 }
 
 func (runtime *attachRuntime) setOutputFilter(filter *attachOutputFilter) {
+	filter.viewportRows = func() int {
+		if runtime.statusRows == 0 {
+			return 0
+		}
+		_, rows, ok := runtime.viewportSize()
+		if !ok {
+			return 0
+		}
+		return rows
+	}
 	runtime.filter.Store(filter)
 }
 
@@ -240,7 +401,17 @@ func (runtime *attachRuntime) toggleMouse() bool {
 }
 
 func (runtime *attachRuntime) writeStatus(message string) error {
-	return writeAttachBytes(runtime.output, []byte("\r\n[uam: "+message+"]\r\n"))
+	cols, rows := 0, 0
+	if runtime.terminalSize != nil {
+		if width, height, ok := runtime.terminalSize(); ok {
+			cols, rows = width, height
+		}
+	}
+	if err := writeAttachBytes(runtime.output, []byte(paintStatus(cols, rows, message))); err != nil {
+		return err
+	}
+	runtime.holdNoticeThenRestore()
+	return nil
 }
 
 // queueStatus holds a notice until after the next PTY frame. Notices that

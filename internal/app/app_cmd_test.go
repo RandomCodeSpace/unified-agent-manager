@@ -3,13 +3,12 @@ package app
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestCycleAndPRDots(t *testing.T) {
@@ -28,6 +27,30 @@ func TestCycleAndPRDots(t *testing.T) {
 	}
 	if _, ok := (Model{}).selectedSession(); ok {
 		t.Fatal("empty selected should fail")
+	}
+}
+
+func TestLoadSessionsCommandCarriesLastSeenMetadataForDashboard(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := time.Now().Truncate(time.Second)
+	sess := adapter.Session{ID: "seen0001", AgentType: "fake", DisplayName: "seen", ProcAlive: adapter.Alive, CreatedAt: seen.Add(-time.Hour)}
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.Sessions[store.Key(sess.AgentType, sess.ID)] = store.SessionRecord{
+			ID: sess.ID, Agent: sess.AgentType, Name: sess.DisplayName,
+			CreatedAt: sess.CreatedAt, LastSeenAt: seen, Status: store.StatusActive,
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{sess}}
+	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+	loaded := m.loadSessionsCmd()().(sessionsLoadedMsg)
+	if got := loaded.lastSeenBySession[sessionIdentity{agent: "fake", id: "seen0001"}]; !got.Equal(seen) {
+		t.Fatalf("dashboard last-seen metadata = %v, want %v", got, seen)
 	}
 }
 
@@ -89,9 +112,6 @@ func TestModelCommandFactories(t *testing.T) {
 	if msg := m.dispatchNamedCmd("fake", "", "", "prompt")(); msg.(dispatchedMsg).err != nil {
 		t.Fatalf("dispatch msg=%+v", msg)
 	}
-	if msg := m.peekSelectedCmd()(); msg.(peekLoadedMsg).text != "tail" {
-		t.Fatalf("peek msg=%+v", msg)
-	}
 	if msg := m.pinSelectedCmd()(); msg.(sessionsLoadedMsg).err != nil {
 		t.Fatalf("pin msg=%+v", msg)
 	}
@@ -121,19 +141,22 @@ func TestHandleKeyBranches(t *testing.T) {
 	m.input = "abc"
 	model, _ := m.handleKey(keyMsg("backspace"))
 	m = model.(Model)
-	if m.input != "ab" {
+	if m.input != "abc" {
 		t.Fatalf("backspace=%q", m.input)
 	}
 	model, _ = m.handleKey(keyMsg("x"))
 	m = model.(Model)
-	if !strings.HasSuffix(m.input, "x") {
-		t.Fatalf("rune input=%q", m.input)
+	if m.input != "abc" {
+		t.Fatalf("base dashboard accepted hidden input=%q", m.input)
 	}
 	m.input = "@fake hello"
 	model, cmd := m.handleKey(keyMsg("enter"))
 	m = model.(Model)
 	if cmd == nil {
-		t.Fatal("expected dispatch cmd")
+		t.Fatal("expected attach cmd")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatal("attach command returned nil message")
 	}
 	m.input = ""
 	model, cmd = m.handleKey(keyMsg("right"))
@@ -143,13 +166,17 @@ func TestHandleKeyBranches(t *testing.T) {
 	}
 }
 
-func TestPromptTypingAllowsAgentMentionsSpacesAndShortcutLetters(t *testing.T) {
+func TestWizardPromptTypingAllowsAgentMentionsSpacesAndShortcutLetters(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
 	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", SessionName: "uam-fake-abc12345", State: adapter.Active, CreatedAt: time.Now()}}}
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	m.sessions = fake.sessions
 	m.defaultAgent = "fake"
+	m.wizard = true
+	m.wizardStep = 3
+	m.wizardAgent = "fake"
+	m.wizardCwd = "/tmp"
 
 	for _, r := range "@fake #bugfix hello world" {
 		model, _ := m.handleKey(keyMsg(string(r)))
@@ -204,34 +231,43 @@ func TestRenameAndWizardEnterBranches(t *testing.T) {
 	}
 }
 
-func keyMsg(s string) tea.KeyMsg {
+func keyMsg(s string) tea.KeyPressMsg {
 	switch s {
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
 	case "backspace":
-		return tea.KeyMsg{Type: tea.KeyBackspace}
+		return tea.KeyPressMsg{Code: tea.KeyBackspace}
 	case "ctrl+t":
-		return tea.KeyMsg{Type: tea.KeyCtrlT}
+		return tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}
 	case "ctrl+r":
-		return tea.KeyMsg{Type: tea.KeyCtrlR}
+		return tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}
 	case "ctrl+x":
-		return tea.KeyMsg{Type: tea.KeyCtrlX}
+		return tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}
+	case "ctrl+s":
+		return tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
+	case "ctrl+c":
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	case "ctrl+g":
+		return tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl}
+	case "up":
+		return tea.KeyPressMsg{Code: tea.KeyUp}
+	case "down":
+		return tea.KeyPressMsg{Code: tea.KeyDown}
 	case "right":
-		return tea.KeyMsg{Type: tea.KeyRight}
+		return tea.KeyPressMsg{Code: tea.KeyRight}
 	case "tab":
-		return tea.KeyMsg{Type: tea.KeyTab}
+		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case " ":
-		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune(" ")}
-	case "n":
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}
-	case "e":
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")}
-	case "x":
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")}
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	default:
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+		runes := []rune(s)
+		code := tea.KeyExtended
+		if len(runes) == 1 {
+			code = runes[0]
+		}
+		return tea.KeyPressMsg{Code: code, Text: s}
 	}
 }
 

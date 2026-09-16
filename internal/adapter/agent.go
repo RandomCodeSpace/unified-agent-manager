@@ -29,8 +29,7 @@ import (
 const prRescanInterval = 60 * time.Second
 
 // prCaptureLines is the output tail captured for PR scraping. A PR URL is
-// emitted near where `gh`/the agent prints it, so a short tail is enough — the
-// 200-line grab the peek path uses is wasteful here (F16).
+// emitted near where `gh`/the agent prints it, so a short tail is enough.
 const prCaptureLines = 40
 
 type CommandCandidate struct {
@@ -39,7 +38,7 @@ type CommandCandidate struct {
 }
 
 // Backend is the session-management surface an Agent drives: create / list /
-// capture / reply / kill / attach against uam's native session hosts
+// capture / input / kill / attach against uam's native session hosts
 // (internal/session.Client in production, fakes in tests).
 type Backend interface {
 	CreateProviderSession(ctx context.Context, spec session.CreateSpec) error
@@ -154,9 +153,10 @@ func (a *Agent) commandForRequest(ctx context.Context, req ResumeRequest, extra 
 
 func commandWithModeArgs(cmd []string, mode string, yoloArgs []string) []string {
 	cmd = append([]string{}, cmd...)
-	// Safe mode launches the bare command; no flag is the safe default for
-	// claude/codex. Only non-safe modes append the provider's full-access args.
-	if mode != "safe" {
+	// Fail closed: only an explicit yolo mode appends the provider's
+	// full-access args. Safe, empty or unknown modes launch the bare command,
+	// which is the safe default for claude/codex.
+	if mode == "yolo" {
 		cmd = append(cmd, yoloArgs...)
 	}
 	return cmd
@@ -259,6 +259,9 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 			return Session{}, fmt.Errorf("prepare %s launch: %w", a.Name(), err)
 		}
 	}
+	if preparation.InitialPrompt != nil {
+		defer func() { _ = preparation.InitialPrompt.Close() }()
+	}
 	extra := append([]string{}, preparation.ExtraArgs...)
 	if a.SessionArgs != nil {
 		extra = append(extra, a.SessionArgs(req, activity)...)
@@ -278,12 +281,13 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 	env["UAM_ID"] = req.ID
 	if err := a.Backend.CreateProviderSession(ctx, session.CreateSpec{
 		Name: sessionName, Cwd: cwd, ProviderIdentity: string(a.Terminal.Identity), ScrollbackLines: req.ScrollbackLines, Env: env, Command: cmd,
+		InitialPrompt: preparation.InitialPrompt,
 	}); err != nil {
 		return Session{}, fmt.Errorf("create session %s: %w", sessionName, err)
 	}
 	displayName := a.setSessionDisplayLabel(ctx, sessionName, req.Name, cwd)
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
-	if shouldSendPrompt {
+	if shouldSendPrompt && preparation.InitialPrompt == nil {
 		if err := a.Backend.SendLine(ctx, sessionName, req.Prompt); err != nil {
 			// The session is live but never received its prompt. Roll it back so
 			// it doesn't linger as an orphan the store records as Exited/closed.
@@ -431,17 +435,6 @@ func (a *Agent) prunePRScan(live map[string]struct{}) {
 	}
 }
 
-func (a *Agent) Peek(ctx context.Context, id string) (PeekResult, error) {
-	capture, err := a.Backend.Capture(ctx, a.target(id), 200)
-	if err != nil {
-		return PeekResult{}, fmt.Errorf("peek %s session %s: %w", a.Name(), id, err)
-	}
-	return PeekResult{TailText: capture}, nil
-}
-
-func (a *Agent) Reply(ctx context.Context, id, text string) error {
-	return a.Backend.SendLine(ctx, a.target(id), text)
-}
 func (a *Agent) Attach(id string) (AttachSpec, error) {
 	argv, err := a.Backend.AttachArgv(a.target(id))
 	if err != nil {

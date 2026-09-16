@@ -64,13 +64,6 @@ func TestAgentLifecycle(t *testing.T) {
 	if list[0].State != Active || list[0].ProcAlive != Alive || list[0].Cwd != "/tmp/repo" {
 		t.Fatalf("bad list session: %+v", list[0])
 	}
-	peek, err := ag.Peek(context.Background(), "abc12345")
-	if err != nil || !strings.Contains(peek.TailText, "Thinking") {
-		t.Fatalf("Peek: %+v %v", peek, err)
-	}
-	if err := ag.Reply(context.Background(), "abc12345", "ok"); err != nil {
-		t.Fatal(err)
-	}
 	if spec, err := ag.Attach("abc12345"); err != nil || len(spec.Argv) == 0 {
 		t.Fatalf("Attach: %+v %v", spec, err)
 	}
@@ -497,6 +490,23 @@ func TestAgentUnavailable(t *testing.T) {
 	none := NewAgent("none", "None", nil, nil, be)
 	if ok, reason := none.Available(); ok || reason != "no command configured" {
 		t.Fatalf("Available = %v %q", ok, reason)
+	}
+}
+
+func TestCommandWithModeArgsAppendsYoloArgsOnlyForYoloMode(t *testing.T) {
+	yolo := []string{"--yolo"}
+	for _, tt := range []struct {
+		mode string
+		want []string
+	}{
+		{mode: "yolo", want: []string{"fakeagent", "--yolo"}},
+		{mode: "safe", want: []string{"fakeagent"}},
+		{mode: "", want: []string{"fakeagent"}},
+		{mode: "turbo", want: []string{"fakeagent"}},
+	} {
+		if got := commandWithModeArgs([]string{"fakeagent"}, tt.mode, yolo); !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("mode %q: command = %#v, want %#v", tt.mode, got, tt.want)
+		}
 	}
 }
 

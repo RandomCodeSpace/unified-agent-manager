@@ -15,7 +15,10 @@ func ResolveProfilePolicy(input ResolutionInput) (EffectivePolicy, error) {
 			scrollbackLines: defaultScrollbackLines, term: fixedTERM,
 		},
 		attachment: attachmentDefaults{
-			mouse: store.MousePolicyAuto, controlPrefix: defaultControlPrefix, backDetach: true,
+			mouse: store.MousePolicyAuto, controlPrefix: defaultControlPrefix,
+			// The provider's terminal policy supplies the quick-detach
+			// default; profiles and session overrides below still win.
+			backDetach: input.ProviderPolicy.BackDetach != adapter.BackDetachDisabled,
 		},
 	}
 	if policy.launch.provider == "" {

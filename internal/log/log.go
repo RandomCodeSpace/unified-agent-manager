@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 )
 
 const (
@@ -19,7 +20,6 @@ type rotatingFile struct {
 	mu   sync.Mutex
 	path string
 	file *os.File
-	size int64
 }
 
 func Init() (io.Closer, error) {
@@ -28,6 +28,21 @@ func Init() (io.Closer, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, "uam.log")
+	w, err := openRotatingFile(path)
+	if err != nil {
+		return nil, err
+	}
+	current = newLogger(w)
+	current.Info("logger initialized", "path", path)
+	return w, nil
+}
+
+func openRotatingFile(path string) (*rotatingFile, error) {
+	unlock, err := lockLog(path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := rotateIfNeeded(path); err != nil {
 		return nil, err
 	}
@@ -39,15 +54,20 @@ func Init() (io.Closer, error) {
 		_ = f.Close()
 		return nil, err
 	}
-	info, err := f.Stat()
+	return &rotatingFile{path: path, file: f}, nil
+}
+
+// The lock file must retain its inode while the active log and backups rotate.
+func lockLog(path string) (func(), error) {
+	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600) // #nosec G304 -- UAM intentionally writes its own cache log lock path.
 	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		_ = f.Close()
 		return nil, err
 	}
-	w := &rotatingFile{path: path, file: f, size: info.Size()}
-	current = newLogger(w)
-	current.Info("logger initialized", "path", f.Name())
-	return w, nil
+	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
 }
 
 func openLogFile(path string) (*os.File, error) {
@@ -60,7 +80,32 @@ func (w *rotatingFile) Write(p []byte) (int, error) {
 	if w.file == nil {
 		return 0, os.ErrClosed
 	}
-	if w.size > 0 && w.size+int64(len(p)) > maxLogSize {
+	unlock, err := lockLog(w.path)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	info, err := w.file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	active, err := os.Stat(w.path)
+	if err != nil && !os.IsNotExist(err) {
+		return 0, err
+	}
+	if os.IsNotExist(err) || !os.SameFile(info, active) {
+		f, err := openLogFile(w.path)
+		if err != nil {
+			return 0, err
+		}
+		_ = w.file.Close()
+		w.file = f
+		info, err = f.Stat()
+		if err != nil {
+			return 0, err
+		}
+	}
+	if info.Size() > 0 && info.Size()+int64(len(p)) > maxLogSize {
 		if err := w.file.Close(); err != nil {
 			return 0, err
 		}
@@ -73,16 +118,13 @@ func (w *rotatingFile) Write(p []byte) (int, error) {
 			return 0, err
 		}
 		w.file = f
-		w.size = 0
 		if err := enforcePrivateLogModes(w.path); err != nil {
 			_ = w.file.Close()
 			w.file = nil
 			return 0, err
 		}
 	}
-	n, err := w.file.Write(p)
-	w.size += int64(n)
-	return n, err
+	return w.file.Write(p)
 }
 
 func (w *rotatingFile) Close() error {
@@ -139,7 +181,7 @@ func rotateLogs(path string) error {
 			return err
 		}
 	}
-	if err := os.Rename(path, path+".1"); err != nil {
+	if err := os.Rename(path, path+".1"); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return enforcePrivateLogModes(path)

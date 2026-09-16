@@ -26,13 +26,14 @@ terminal policy decides the outer screen:
 
 | Outer-screen policy | Current providers | Attach behavior |
 |---|---|---|
-| UAM | Claude Code, Copilot, Hermes, Oh My Pi, OpenCode | UAM enters and owns an alternate screen. Provider alternate-screen sequences are contained inside that boundary. |
-| Primary | OpenAI Codex | UAM attaches on the primary screen and does not create an outer alternate screen. |
+| UAM | Claude Code, Copilot, Hermes, OpenCode | UAM enters and owns an alternate screen. Provider alternate-screen sequences are contained inside that boundary. |
+| Primary | OpenAI Codex, Oh My Pi | UAM attaches on the primary screen and does not create an outer alternate screen. |
 
-The Codex primary-screen exception is deliberate. It does not change the host's
-PTY ownership, the one-controller input/resize/reply rule, or native provider
-keys. Seven-bit DEC-private CSI handling remains bounded; UAM does not interpret
-a bare C1 byte as CSI because that byte can occur inside UTF-8 input.
+The Codex and Oh My Pi primary-screen policies are deliberate. They do not
+change the host's PTY ownership, the one-controller input/resize/reply rule, or
+native provider keys. Seven-bit DEC-private CSI handling remains bounded; UAM
+does not interpret a bare C1 byte as CSI because that byte can occur inside
+UTF-8 input.
 
 On detach or return, UAM drains output and restores the terminal contract it
 owns: reset attributes, disable mouse/focus tracking, disable bracketed paste,

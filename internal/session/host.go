@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"github.com/creack/pty"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
@@ -55,6 +56,15 @@ const killGrace = 1500 * time.Millisecond
 // disconnected rather than allowed to stall the session.
 const attachBufFrames = 512
 
+// shutdownFlushWindow is one fixed budget for the complete Attach cohort.
+// Responsive clients get their queued final output; a client that no longer
+// reads cannot keep the Managed Session host alive.
+const shutdownFlushWindow = 250 * time.Millisecond
+
+// A descendant may retain the PTY slave after the managed agent exits.
+// Drain queued final output without letting that descendant retain the host.
+const ptyDrainWindow = 250 * time.Millisecond
+
 const (
 	markClosedRetryWindow = 2 * time.Second
 	markClosedRetryBase   = 25 * time.Millisecond
@@ -75,6 +85,7 @@ func RunHost(args []string) error {
 	label := fs.String("label", "", "user-facing session label")
 	providerIdentity := fs.String("provider", "", "managed-session provider identity")
 	scrollbackLines := fs.Int("scrollback", historyLines, "terminal scrollback lines")
+	hasInitialPrompt := fs.Bool("initial-prompt", false, "initial prompt inherited on fd 4")
 	var envs stringList
 	fs.Var(&envs, "env", "KEY=VALUE environment entry (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -82,8 +93,17 @@ func RunHost(args []string) error {
 	}
 	command := fs.Args()
 	ready := readyPipe()
+	var initialPrompt *os.File
+	if *hasInitialPrompt {
+		initialPrompt = os.NewFile(4, "initial-prompt")
+		// ExtraFiles remaps this to child fd 3; the original inherited fd
+		// must not survive exec alongside that explicit handoff.
+		syscall.CloseOnExec(4)
+		defer func() { _ = initialPrompt.Close() }()
+	}
 	err := runHost(*dir, hostLaunchSpec{
 		name: *name, cwd: *cwd, label: *label, providerIdentity: *providerIdentity, scrollbackLines: *scrollbackLines, envs: envs, command: command,
+		initialPrompt: initialPrompt,
 	}, ready)
 	if err != nil && ready != nil {
 		// Surface the startup failure to the waiting parent before exiting.
@@ -108,6 +128,7 @@ func (s *stringList) String() string     { return strings.Join(*s, ",") }
 func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
 type hostLaunchSpec struct {
+	initialPrompt    *os.File
 	name             string
 	cwd              string
 	label            string
@@ -123,11 +144,22 @@ type host struct {
 
 	mu        sync.Mutex
 	controlMu sync.Mutex
+	inputMu   sync.Mutex
 	term      *vterm.Terminal
 	ptmx      *os.File
 	label     string
 	state     State
 	registry  *clientRegistry
+	// providerFocused records whether the host has told the agent its
+	// terminal is focused (synthetic ?1004 focus events, guarded by mu). Two
+	// paths can observe the same attach — the attach initializer and the PTY
+	// pump seeing ?1004h turn on — and the flag keeps them from both firing.
+	providerFocused bool
+	// providerOutputSeen separates a harness that is still starting from one
+	// that has begun drawing. The attach-time spinner never reaches the PTY.
+	providerOutputSeen   bool
+	startupSpinnerActive bool
+	startupSpinnerFrame  string
 
 	child *exec.Cmd
 	// exited is closed once the agent process has been reaped; the kill
@@ -157,10 +189,20 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	if err := EnsureDir(dir); err != nil {
 		return err
 	}
-	if st, err := readState(dir, name); err == nil && st.hostAlive() {
-		return fmt.Errorf("session %s already exists (host pid %d)", name, st.HostPID)
+	claim, err := lockSessionDir(dir)
+	if err != nil {
+		return err
 	}
-	// Stale leftovers from a crashed host: safe to clear, the pid is gone.
+	defer func() { _ = claim.Close() }()
+	if st, err := readState(dir, name); err == nil {
+		if st.hostAlive() {
+			return fmt.Errorf("session %s already exists (host pid %d)", name, st.HostPID)
+		}
+		if st.childAlive() {
+			return fmt.Errorf("session %s still has a running agent (pid %d); stop it before restarting", name, st.ChildPID)
+		}
+	}
+	// The name is exclusively ours, and neither previous process is alive.
 	if err := removeSessionFiles(dir, name); err != nil {
 		return fmt.Errorf("remove stale session files: %w", err)
 	}
@@ -185,10 +227,25 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	cmd.Dir = spec.cwd
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	cmd.Env = append(cmd.Env, spec.envs...)
+	if spec.initialPrompt != nil {
+		cmd.ExtraFiles = []*os.File{spec.initialPrompt}
+	}
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: defaultCols, Rows: defaultRows})
+	if spec.initialPrompt != nil {
+		_ = spec.initialPrompt.Close()
+	}
 	if err != nil {
 		return fmt.Errorf("start %s: %w", spec.command[0], err)
 	}
+	pollable, err := makePTYNonblocking(ptmx)
+	if err != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+		_ = ptmx.Close()
+		return fmt.Errorf("configure provider PTY: %w", err)
+	}
+	ptmx = pollable
+	defer func() { _ = ptmx.Close() }()
 	h.ptmx = ptmx
 	h.child = cmd
 	h.state = State{
@@ -207,6 +264,8 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 		h.signalChild(syscall.SIGKILL)
 		return fmt.Errorf("write session state: %w", err)
 	}
+	// Published live-host state now protects the name until shutdown.
+	_ = claim.Close()
 	if ready != nil {
 		_, _ = fmt.Fprintln(ready, "ok")
 		_ = ready.Close()
@@ -216,9 +275,14 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 	go h.signalLoop()
 	go h.freshenLoop()
 
-	h.pumpPTY()
+	pumpDone := make(chan struct{})
+	go func() {
+		h.pumpPTY()
+		close(pumpDone)
+	}()
 
-	// PTY EOF: the agent exited (or the pty was torn down). Reap it.
+	// The direct child's exit defines the session lifetime, independently of
+	// PTY EOF: a grandchild may still have the slave open.
 	exitCode := 0
 	if waitErr := cmd.Wait(); waitErr != nil {
 		exitCode = -1
@@ -228,6 +292,12 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 		}
 	}
 	close(h.exited)
+	select {
+	case <-pumpDone:
+	case <-time.After(ptyDrainWindow):
+		_ = ptmx.Close()
+		<-pumpDone
+	}
 	// Release the socket path while it is still ours: closing the listener
 	// unlinks it, and leaving that to the deferred Close would unlink AFTER
 	// cleaned has signalled — i.e. after Kill has returned and a replacement
@@ -245,6 +315,23 @@ func runHost(dir string, spec hostLaunchSpec, ready *os.File) error {
 
 // pumpPTY copies agent output into the emulator and to every attached client
 // until the PTY reaches EOF (agent exit).
+// focusIn and focusOut are the xterm focus-tracking events an application
+// with ?1004 enabled expects from its terminal. The host synthesizes them at
+// controller attach/detach boundaries (and on late ?1004 enablement) because
+// the real terminal's focus events can only reach the agent while a client is
+// attached — see initializeAttachClient and removeClient.
+var focusIn = []byte("\x1b[I")
+var focusOut = []byte("\x1b[O")
+
+// writeFocusEvent injects a synthetic focus event into the agent's input.
+// Focus is best-effort under input backpressure. Callers may hold controlMu,
+// and the output pump must remain able to drain while the provider is busy.
+func (h *host) writeFocusEvent(event []byte) {
+	if _, err := writePTYNonblocking(h.ptmx, event); err != nil {
+		log.Debug("write synthetic focus event failed", "session", h.name, "error", err)
+	}
+}
+
 func (h *host) pumpPTY() {
 	buf := make([]byte, 32*1024)
 	for {
@@ -253,15 +340,105 @@ func (h *host) pumpPTY() {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 			h.mu.Lock()
+			firstOutput := !h.providerOutputSeen
+			startupFrame := ""
+			if firstOutput {
+				h.providerOutputSeen = true
+				h.startupSpinnerActive = false
+				startupFrame = h.startupSpinnerFrame
+				h.startupSpinnerFrame = ""
+			}
 			_, _ = h.term.Write(data)
+			if !h.term.FocusReporting() {
+				// The mode is off (or was just turned off): a later re-enable
+				// deserves a fresh focus-in.
+				h.providerFocused = false
+			}
+			// An agent that enables ?1004 after a controller attached (every
+			// resume works this way: the client attaches while the replacement
+			// process is still starting) missed the attach-time focus-in.
+			focusGained := h.term.FocusReporting() && h.registry.controller != nil && !h.providerFocused
+			if focusGained {
+				h.providerFocused = true
+			}
 			clients := h.registry.readyClients()
+			var sizes []terminalSize
+			if firstOutput && startupFrame != "" {
+				sizes = make([]terminalSize, len(clients))
+				for index, client := range clients {
+					sizes[index] = client.latestSize
+				}
+			}
 			h.mu.Unlock()
-			for _, client := range clients {
-				h.enqueueClient(client, serverMessage{kind: serverFramePTY, payload: data})
+			if focusGained {
+				h.writeFocusEvent(focusIn)
+			}
+			for index, client := range clients {
+				payload := data
+				if firstOutput && startupFrame != "" && sizes[index].valid() {
+					clear := clearPaintedStatus(sizes[index].cols, sizes[index].rows, startupSpinnerMessage(startupFrame))
+					payload = append([]byte(clear), data...)
+				}
+				h.enqueueClient(client, serverMessage{kind: serverFramePTY, payload: payload})
 			}
 		}
 		if err != nil {
 			return
+		}
+	}
+}
+
+const startupSpinnerLabel = "Starting session"
+
+func startupSpinnerMessage(frame string) string {
+	return frame + " " + startupSpinnerLabel
+}
+
+// runStartupSpinner paints only to attached viewers. Waiting one frame avoids
+// flashing on harnesses that draw immediately, and skipping a busy output
+// queue keeps cosmetic frames from creating backpressure.
+func (h *host) runStartupSpinner() {
+	ticker := time.NewTicker(spinner.Line.FPS)
+	defer ticker.Stop()
+	frameIndex := 0
+	for {
+		select {
+		case <-h.exited:
+			return
+		case <-ticker.C:
+			h.mu.Lock()
+			if h.providerOutputSeen || !h.startupSpinnerActive {
+				h.mu.Unlock()
+				return
+			}
+			clients := h.registry.readyClients()
+			if len(clients) == 0 {
+				h.startupSpinnerActive = false
+				h.startupSpinnerFrame = ""
+				h.mu.Unlock()
+				return
+			}
+			frame := spinner.Line.Frames[frameIndex]
+			painted := false
+			for _, client := range clients {
+				if !client.latestSize.valid() || len(client.out) != 0 {
+					continue
+				}
+				message := serverMessage{
+					kind:    serverFramePTY,
+					payload: []byte(paintStatus(client.latestSize.cols, client.latestSize.rows, startupSpinnerMessage(frame))),
+				}
+				select {
+				case client.out <- message:
+					painted = true
+				default:
+				}
+			}
+			if painted {
+				h.startupSpinnerFrame = frame
+			}
+			h.mu.Unlock()
+			frameIndex = (frameIndex + 1) % len(spinner.Line.Frames)
 		}
 	}
 }
@@ -443,7 +620,7 @@ func (h *host) applyPTYSizeLocked(cols, rows int) {
 	if !validSize(cols, rows) {
 		return
 	}
-	_ = pty.Setsize(h.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}) // #nosec G115 -- bounds checked above
+	h.applyPTYSize(terminalSize{cols: cols, rows: rows})
 }
 
 func (h *host) handleAttach(conn net.Conn, br *bufio.Reader, req request) {
@@ -464,7 +641,8 @@ func (h *host) handleAttach(conn net.Conn, br *bufio.Reader, req request) {
 		return
 	}
 	client := &attachClient{
-		conn: conn, out: make(chan serverMessage, attachBufFrames), done: make(chan struct{}), version: version,
+		conn: conn, out: make(chan serverMessage, attachBufFrames), done: make(chan struct{}),
+		flush: make(chan struct{}), version: version,
 		fallback: version == protocolV1 && !req.versionPresent,
 	}
 	attachResponse, err := h.registerAttachClient(client, registration)
@@ -491,11 +669,33 @@ func (h *host) attachWriter(client *attachClient) {
 		select {
 		case <-client.done:
 			return
+		case <-client.flush:
+			h.flushClient(client)
+			return
 		case message := <-client.out:
 			if err := h.writeServerMessage(client, message); err != nil {
 				h.dropClientReason(client, "connection_write")
 				return
 			}
+		}
+	}
+}
+
+func (h *host) flushClient(client *attachClient) {
+	defer client.drop()
+	if client.conn != nil {
+		if err := client.conn.SetWriteDeadline(time.Now().Add(shutdownFlushWindow)); err != nil {
+			return
+		}
+	}
+	for {
+		select {
+		case message := <-client.out:
+			if err := h.writeServerMessage(client, message); err != nil {
+				return
+			}
+		default:
+			return
 		}
 	}
 }
@@ -564,13 +764,9 @@ func (h *host) dropClientReason(client *attachClient, reason string) {
 	h.removeClient(client, reason)
 }
 
-// evictSlowClient drops a client whose output queue overflowed. Unlike every
-// other drop it deliberately does not take controlMu: pumpPTY is the only PTY
-// drainer, and the controller it is evicting may be blocked in ptmx.Write
-// holding controlMu while waiting for that same pump — taking the mutex here
-// wedges the host and every client attached to it. Registry state stays guarded
-// by h.mu, and applyPTYSize is a single ioctl that needs no serialisation
-// against an in-flight write.
+// evictSlowClient can run while a role update holds controlMu. Registry
+// changes and nonblocking input writes both hold mu, so removal still cannot
+// let stale input cross a controller handoff.
 func (h *host) evictSlowClient(client *attachClient) {
 	h.removeClient(client, "slow_client")
 }
@@ -593,7 +789,17 @@ func (h *host) removeClient(client *attachClient, reason string) {
 			promotedReplay = h.term.Redraw()
 		}
 	}
+	// The counterpart of the attach-time synthetic focus-in: with no
+	// controller left there is no terminal whose focus the agent could hold.
+	focusLost := registered && wasController && h.registry.controller == nil &&
+		h.term != nil && h.term.FocusReporting() && h.providerFocused
+	if focusLost {
+		h.providerFocused = false
+	}
 	h.mu.Unlock()
+	if focusLost {
+		h.writeFocusEvent(focusOut)
+	}
 	if promotedSize.valid() {
 		h.applyPTYSize(promotedSize)
 	}
@@ -659,6 +865,20 @@ func (h *host) signalChild(sig syscall.Signal) {
 // closed (the native replacement for the tmux session-closed hook), tell any
 // attached clients, and remove the runtime files.
 func (h *host) shutdown(exitCode int) {
+	h.shutdownClients()
+	providerID := readProviderIdentityHandoff(h.dir, h.name, h.providerIdentityFile)
+	claim, err := lockSessionDir(h.dir)
+	if err == nil {
+		err = removeSessionFiles(h.dir, h.name)
+		_ = claim.Close()
+	}
+	if err != nil {
+		log.Warn("remove session files failed", "session", h.name, "error", err)
+	}
+	h.recordExit(exitCode, providerID)
+}
+
+func (h *host) shutdownClients() {
 	h.mu.Lock()
 	clients := h.registry.drain()
 	h.mu.Unlock()
@@ -667,13 +887,16 @@ func (h *host) shutdown(exitCode int) {
 			Event: "attach.lifecycle", Session: h.name, ClientID: client.id,
 			Protocol: int(client.version), Role: string(client.assignedRole), Reason: "host_shutdown",
 		})
-		client.drop()
+		client.requestFlush()
 	}
-	providerID := readProviderIdentityHandoff(h.dir, h.name, h.providerIdentityFile)
-	if err := removeSessionFiles(h.dir, h.name); err != nil {
-		log.Warn("remove session files failed", "session", h.name, "error", err)
+	flushBy := time.Now().Add(shutdownFlushWindow)
+	for _, client := range clients {
+		select {
+		case <-client.done:
+		case <-time.After(time.Until(flushBy)):
+			client.drop()
+		}
 	}
-	h.recordExit(exitCode, providerID)
 }
 
 func (h *host) recordExit(exitCode int, providerID string) {

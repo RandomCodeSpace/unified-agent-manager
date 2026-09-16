@@ -1,11 +1,141 @@
 package log
 
 import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestLoggerRotationAcrossProcesses(t *testing.T) {
+	for _, concurrent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("concurrent=%t", concurrent), func(t *testing.T) {
+			dir := t.TempDir()
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			t.Cleanup(cancel)
+			type writer struct {
+				input  io.WriteCloser
+				output *bufio.Scanner
+			}
+			var writers []writer
+			for i := range 3 {
+				cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestLogRotationProcess$")
+				cmd.Env = append(os.Environ(), "UAM_LOG_TEST_PROCESS=1", "UAM_CACHE_DIR="+dir, fmt.Sprintf("UAM_LOG_TEST_WRITER=%d", i))
+				input, err := cmd.StdinPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				output, err := cmd.StdoutPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					_ = input.Close()
+					if err := cmd.Wait(); err != nil {
+						t.Errorf("log writer: %v: %s", err, stderr.String())
+					}
+				})
+				scanner := bufio.NewScanner(output)
+				if !scanner.Scan() || scanner.Text() != "ready" {
+					t.Fatal("writer failed to initialize")
+				}
+				writers = append(writers, writer{input, scanner})
+			}
+			ack := func(w writer) {
+				t.Helper()
+				if !w.output.Scan() || w.output.Text() != "written" {
+					t.Fatal("writer failed to append")
+				}
+			}
+			for range 5 {
+				for _, w := range writers {
+					if _, err := io.WriteString(w.input, "write\n"); err != nil {
+						t.Fatal(err)
+					}
+					if !concurrent {
+						ack(w)
+					}
+				}
+				if concurrent {
+					for _, w := range writers {
+						ack(w)
+					}
+				}
+			}
+			for _, w := range writers {
+				if err := w.input.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var logs strings.Builder
+			for i := range maxBackups + 1 {
+				path := filepath.Join(dir, "uam.log")
+				if i > 0 {
+					path += fmt.Sprintf(".%d", i)
+				}
+				data, err := os.ReadFile(path)
+				if os.IsNotExist(err) {
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(data) > int(maxLogSize) {
+					t.Errorf("%s size = %d, exceeds %d", path, len(data), maxLogSize)
+				}
+				logs.Write(data)
+			}
+			for i := range writers {
+				for n := range 5 {
+					marker := fmt.Sprintf("writer-%d-entry-%d:", i, n)
+					if got := strings.Count(logs.String(), marker); got != 1 {
+						t.Errorf("%s occurs %d times, want 1", marker, got)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestLogRotationProcess(t *testing.T) {
+	if os.Getenv("UAM_LOG_TEST_PROCESS") != "1" {
+		return
+	}
+	c, err := Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("close logger: %v", err)
+		}
+	})
+	w := c.(io.Writer)
+	fmt.Println("ready")
+	scanner := bufio.NewScanner(os.Stdin)
+	for n := 0; scanner.Scan(); n++ {
+		marker := fmt.Sprintf("writer-%s-entry-%d:", os.Getenv("UAM_LOG_TEST_WRITER"), n)
+		if _, err := w.Write([]byte(marker + strings.Repeat("x", (512<<10)-len(marker)-1) + "\n")); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Println("written")
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestInitAndLogging(t *testing.T) {
 	dir := t.TempDir()

@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"os"
 	"time"
 )
 
@@ -76,10 +77,6 @@ type Session struct {
 	Closed bool
 }
 
-type PeekResult struct {
-	TailText string
-}
-
 type AttachProfileSnapshot struct {
 	Selected      string
 	Effective     string
@@ -121,6 +118,9 @@ type LaunchPreparation struct {
 	ExtraArgs         []string
 	Env               map[string]string
 	ProviderSessionID string
+	// InitialPrompt bypasses terminal input and is inherited by the provider
+	// command as fd 3. Agent closes its copy after creating the session.
+	InitialPrompt *os.File
 }
 
 type PrepareLaunchFunc func(ctx Context, req ResumeRequest, activity, sessionName, cwd string) (LaunchPreparation, error)
@@ -164,8 +164,6 @@ type AgentAdapter interface {
 	Available() (bool, string)
 	Dispatch(ctx Context, req DispatchRequest) (Session, error)
 	List(ctx Context) ([]Session, error)
-	Peek(ctx Context, id string) (PeekResult, error)
-	Reply(ctx Context, id, text string) error
 	Attach(id string) (AttachSpec, error)
 	Stop(ctx Context, id string) error
 }

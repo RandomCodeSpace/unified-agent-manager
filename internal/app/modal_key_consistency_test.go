@@ -4,15 +4,14 @@ import (
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Ctrl+C is the universal quit. A modal used to claim every key it did not
-// recognise, so help, the wizard, rename and both confirmations swallowed it
+// recognise, so the wizard, rename and both confirmations swallowed it
 // and left no way out for a user who never reaches for Esc.
 func TestCtrlCQuitsFromEveryModal(t *testing.T) {
 	modals := map[string]func(*Model){
-		"help":           func(m *Model) { m.helpOpen = true },
+		"expanded help":  func(m *Model) { m.helpOpen = true },
 		"stop confirm":   func(m *Model) { m.confirmStop = true },
 		"latest confirm": func(m *Model) { m.confirmLatest = true },
 		"wizard":         func(m *Model) { m.wizard = true },
@@ -27,7 +26,7 @@ func TestCtrlCQuitsFromEveryModal(t *testing.T) {
 			open(&m)
 
 			// When
-			model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+			model, cmd := m.handleKey(keyMsg("ctrl+c"))
 
 			// Then
 			if !model.(Model).quitting {
@@ -40,10 +39,9 @@ func TestCtrlCQuitsFromEveryModal(t *testing.T) {
 	}
 }
 
-// '?' opens help on an empty composer and is ordinary text otherwise — the same
-// rule the other letter-shaped bindings follow. Without the guard a prompt
-// could never contain a question mark.
-func TestQuestionMarkTypesIntoNonEmptyComposer(t *testing.T) {
+// '?' is an explicit dashboard action. Stale hidden input must not resurrect a
+// removed text field or change the binding.
+func TestQuestionMarkTogglesDashboardHelpFooter(t *testing.T) {
 	// Given
 	m := NewWithDeps(nil, adapter.NewRegistry(nil))
 	m.input = "why"
@@ -53,17 +51,21 @@ func TestQuestionMarkTypesIntoNonEmptyComposer(t *testing.T) {
 
 	// Then
 	m = model.(Model)
-	if m.helpOpen {
-		t.Fatal("'?' opened help instead of typing into the composer")
+	if !m.helpOpen {
+		t.Fatal("'?' did not open help")
 	}
-	if m.input != "why?" {
-		t.Fatalf("input = %q, want %q", m.input, "why?")
+	if m.input != "why" {
+		t.Fatalf("question mark mutated hidden input: %q", m.input)
+	}
+	model, _ = m.handleKey(keyMsg("?"))
+	if model.(Model).helpOpen {
+		t.Fatal("second '?' did not restore primary help hints")
 	}
 
-	// And it still opens help on an empty composer.
+	// And it still opens help on an empty dashboard state.
 	empty := NewWithDeps(nil, adapter.NewRegistry(nil))
 	model, _ = empty.handleKey(keyMsg("?"))
 	if !model.(Model).helpOpen {
-		t.Fatal("'?' on an empty composer must open help")
+		t.Fatal("'?' must expand help")
 	}
 }

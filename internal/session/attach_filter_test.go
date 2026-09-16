@@ -302,7 +302,7 @@ func TestAttachOutputFilterPreservesUnrelatedControls(t *testing.T) {
 }
 
 func FuzzAttachFiltering(f *testing.F) {
-	for _, seed := range []string{"plain text", "世界🚀", "\x02d", "\x1b[D", "\x1b]11;rgb:ffff/ffff/ffff\x1b\\"} {
+	for _, seed := range []string{"plain text", "世界🚀", "\x02d", "\x1b[1;5D", "\x1b]11;rgb:ffff/ffff/ffff\x1b\\"} {
 		f.Add(seed, true)
 	}
 	f.Fuzz(func(t *testing.T, input string, backDetach bool) {
@@ -316,26 +316,32 @@ func FuzzAttachFiltering(f *testing.F) {
 
 func TestLeftArrowDetachesWhenNothingTyped(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
-	out, detach := runFilter(t, f, "\x1b[D")
+	out, detach := runFilter(t, f, "\x1b[1;5D")
 	if !detach || out != "" {
-		t.Fatalf("fresh left arrow should detach cleanly, out=%q detach=%v", out, detach)
+		t.Fatalf("fresh Ctrl+Left should detach cleanly, out=%q detach=%v", out, detach)
 	}
 }
 
-func TestSS3LeftArrowAlsoDetaches(t *testing.T) {
-	f := &stdinFilter{backDetach: true}
-	if _, detach := runFilter(t, f, "\x1bOD"); !detach {
-		t.Fatal("application-cursor-mode left arrow should detach")
+func TestBareArrowsPassThroughAndCtrlLeftVariantsDetach(t *testing.T) {
+	for _, bare := range []string{"\x1b[D", "\x1bOD"} {
+		f := &stdinFilter{prefix: detachPrefix, backDetach: true, role: roleController}
+		if out, detach := runFilter(t, f, bare); detach || out != bare {
+			t.Fatalf("bare left arrow %q must reach the provider, out=%q detach=%v", bare, out, detach)
+		}
+	}
+	f := &stdinFilter{prefix: detachPrefix, backDetach: true, role: roleController}
+	if _, detach := runFilter(t, f, "\x1b[5D"); !detach {
+		t.Fatal("parameterless Ctrl+Left should detach")
 	}
 }
 
 func TestLeftArrowInsideDraftMovesCursor(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
-	out, detach := runFilter(t, f, "abc", "\x1b[D")
+	out, detach := runFilter(t, f, "abc", "\x1b[1;5D")
 	if detach {
 		t.Fatal("left arrow inside a typed draft must not detach")
 	}
-	if out != "abc\x1b[D" {
+	if out != "abc\x1b[1;5D" {
 		t.Fatalf("draft cursor movement must pass through, out=%q", out)
 	}
 }
@@ -345,7 +351,7 @@ func TestEnterReArmsQuickDetach(t *testing.T) {
 	if _, detach := runFilter(t, f, "fix the bug\r"); detach {
 		t.Fatal("typing must not detach")
 	}
-	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "\x1b[1;5D"); !detach {
 		t.Fatal("left arrow right after Enter should detach")
 	}
 }
@@ -359,7 +365,7 @@ func TestNavigationDisarmsUntilClear(t *testing.T) {
 	if detach || out != "\x1b[A" {
 		t.Fatalf("up arrow must pass through, out=%q detach=%v", out, detach)
 	}
-	if _, detach := runFilter(t, f, "\x1b[D"); detach {
+	if _, detach := runFilter(t, f, "\x1b[1;5D"); detach {
 		t.Fatal("left arrow after navigation must not detach")
 	}
 	// Bare Esc clears the input box (Claude Code semantics), is forwarded
@@ -367,7 +373,7 @@ func TestNavigationDisarmsUntilClear(t *testing.T) {
 	if out, detach := runFilter(t, f, "\x1b"); detach || out != "\x1b" {
 		t.Fatalf("bare Esc must pass through without detaching, out=%q detach=%v", out, detach)
 	}
-	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "\x1b[1;5D"); !detach {
 		t.Fatal("left arrow after bare Esc should detach")
 	}
 }
@@ -375,7 +381,7 @@ func TestNavigationDisarmsUntilClear(t *testing.T) {
 func TestCtrlCAndCtrlUReArm(t *testing.T) {
 	for _, clear := range []string{"\x03", "\x15"} {
 		f := &stdinFilter{backDetach: true}
-		if _, detach := runFilter(t, f, "draft"+clear, "\x1b[D"); !detach {
+		if _, detach := runFilter(t, f, "draft"+clear, "\x1b[1;5D"); !detach {
 			t.Fatalf("left arrow after %q should detach", clear)
 		}
 	}
@@ -397,26 +403,28 @@ func TestChordCSendsLiteralCtrlC(t *testing.T) {
 	}
 }
 
-func TestModifiedLeftArrowPassesThrough(t *testing.T) {
-	f := &stdinFilter{backDetach: true}
-	out, detach := runFilter(t, f, "\x1b[1;2D") // shift-left
-	if detach || out != "\x1b[1;2D" {
-		t.Fatalf("modified arrow must pass through, out=%q detach=%v", out, detach)
+func TestOtherModifiedLeftArrowsPassThrough(t *testing.T) {
+	for _, seq := range []string{"\x1b[1;2D", "\x1b[1;3D", "\x1b[1;7D"} { // shift, alt, ctrl+alt
+		f := &stdinFilter{backDetach: true}
+		out, detach := runFilter(t, f, seq)
+		if detach || out != seq {
+			t.Fatalf("modified arrow %q must pass through, out=%q detach=%v", seq, out, detach)
+		}
 	}
 }
 
 func TestQuickDetachDisabledPassesArrowThrough(t *testing.T) {
 	f := &stdinFilter{backDetach: false}
-	out, detach := runFilter(t, f, "\x1b[D")
-	if detach || out != "\x1b[D" {
+	out, detach := runFilter(t, f, "\x1b[1;5D")
+	if detach || out != "\x1b[1;5D" {
 		t.Fatalf("disabled quick detach must forward the arrow, out=%q detach=%v", out, detach)
 	}
 }
 
 func TestSequenceSplitAcrossReadsStillDetaches(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
-	if _, detach := runFilter(t, f, "\x1b[", "D"); !detach {
-		t.Fatal("left arrow split across reads should still detach")
+	if _, detach := runFilter(t, f, "\x1b[1;", "5D"); !detach {
+		t.Fatal("Ctrl+Left split across reads should still detach")
 	}
 }
 
@@ -452,14 +460,14 @@ func TestBackspacedEmptyDraftReArmsQuickDetach(t *testing.T) {
 	if _, detach := runFilter(t, f, "ab\x7f\x7f"); detach {
 		t.Fatal("typing and deleting must not detach by itself")
 	}
-	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "\x1b[1;5D"); !detach {
 		t.Fatal("left arrow after deleting the whole draft should detach")
 	}
 }
 
 func TestPartialDeleteStaysDisarmed(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
-	if _, detach := runFilter(t, f, "ab\x7f", "\x1b[D"); detach {
+	if _, detach := runFilter(t, f, "ab\x7f", "\x1b[1;5D"); detach {
 		t.Fatal("left arrow with a char still in the box must not detach")
 	}
 }
@@ -468,7 +476,7 @@ func TestExtraBackspacesAtEmptyStayArmed(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
 	// Backspace on an empty box is a no-op; more deletes than chars typed
 	// must not wedge the estimate below zero.
-	if _, detach := runFilter(t, f, "\x7f\x7fa\x7f\x7f\x7f", "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "\x7f\x7fa\x7f\x7f\x7f", "\x1b[1;5D"); !detach {
 		t.Fatal("left arrow after over-deleting should still detach")
 	}
 }
@@ -476,14 +484,14 @@ func TestExtraBackspacesAtEmptyStayArmed(t *testing.T) {
 func TestMultibyteRuneDeletesWithOneBackspace(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
 	// é is two bytes but one rune: a single backspace empties the box.
-	if _, detach := runFilter(t, f, "é\x7f", "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "é\x7f", "\x1b[1;5D"); !detach {
 		t.Fatal("left arrow after deleting a multibyte rune should detach")
 	}
 }
 
 func TestCtrlHBackspaceAlsoDeletes(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
-	if _, detach := runFilter(t, f, "a\x08", "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "a\x08", "\x1b[1;5D"); !detach {
 		t.Fatal("Ctrl+H backspace should re-arm like DEL")
 	}
 }
@@ -492,10 +500,10 @@ func TestCtrlHBackspaceAlsoDeletes(t *testing.T) {
 // not re-arm — only a submit/clear does.
 func TestTabDisarmsUntilClear(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
-	if _, detach := runFilter(t, f, "a\t\x7f\x7f", "\x1b[D"); detach {
+	if _, detach := runFilter(t, f, "a\t\x7f\x7f", "\x1b[1;5D"); detach {
 		t.Fatal("backspaces after a tab must not re-arm the quick detach")
 	}
-	if _, detach := runFilter(t, f, "\x15", "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "\x15", "\x1b[1;5D"); !detach {
 		t.Fatal("Ctrl+U after a tab should re-arm")
 	}
 }
@@ -518,7 +526,7 @@ func TestTerminalRepliesDoNotDisarm(t *testing.T) {
 		if detach || out != reply {
 			t.Fatalf("reply %q must pass through untouched, out=%q detach=%v", reply, out, detach)
 		}
-		if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+		if _, detach := runFilter(t, f, "\x1b[1;5D"); !detach {
 			t.Fatalf("left arrow after reply %q should still detach", reply)
 		}
 	}
@@ -538,7 +546,7 @@ func TestStringRepliesDoNotDisarm(t *testing.T) {
 		if detach || out != reply {
 			t.Fatalf("string reply %q must pass through untouched, out=%q detach=%v", reply, out, detach)
 		}
-		if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+		if _, detach := runFilter(t, f, "\x1b[1;5D"); !detach {
 			t.Fatalf("left arrow after string reply %q should still detach", reply)
 		}
 	}
@@ -546,7 +554,7 @@ func TestStringRepliesDoNotDisarm(t *testing.T) {
 
 func TestStringReplySplitAcrossReads(t *testing.T) {
 	f := &stdinFilter{backDetach: true}
-	out, detach := runFilter(t, f, "\x1b]11;rgb:1e", "1e/1e1e/1e1e\x1b", "\\", "\x1b[D")
+	out, detach := runFilter(t, f, "\x1b]11;rgb:1e", "1e/1e1e/1e1e\x1b", "\\", "\x1b[1;5D")
 	if !detach {
 		t.Fatal("left arrow after a split string reply should still detach")
 	}
@@ -562,7 +570,7 @@ func TestMouseEventsDoNotDisarm(t *testing.T) {
 	if detach || out != wheel {
 		t.Fatalf("mouse events must pass through untouched, out=%q detach=%v", out, detach)
 	}
-	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "\x1b[1;5D"); !detach {
 		t.Fatal("left arrow after mouse events should still detach")
 	}
 }
@@ -573,7 +581,7 @@ func TestFocusEventsDoNotDisarm(t *testing.T) {
 	if detach || out != "\x1b[I\x1b[O" {
 		t.Fatalf("focus events must pass through untouched, out=%q detach=%v", out, detach)
 	}
-	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "\x1b[1;5D"); !detach {
 		t.Fatal("left arrow after focus events should still detach")
 	}
 }
@@ -583,7 +591,7 @@ func TestFocusEventsDoNotDisarm(t *testing.T) {
 func TestArrowAndFunctionKeysStillDisarm(t *testing.T) {
 	for _, key := range []string{"\x1b[A", "\x1b[B", "\x1b[Z", "\x1bOP", "\x1bf"} {
 		f := &stdinFilter{backDetach: true}
-		if _, detach := runFilter(t, f, key, "\x1b[D"); detach {
+		if _, detach := runFilter(t, f, key, "\x1b[1;5D"); detach {
 			t.Fatalf("left arrow after key %q must not detach", key)
 		}
 	}
@@ -600,7 +608,7 @@ func TestModifiedF3ReadsAsCursorReply(t *testing.T) {
 	if detach || out != "\x1b[1;2R" {
 		t.Fatalf("CSI 1;2R must pass through untouched, out=%q detach=%v", out, detach)
 	}
-	if _, detach := runFilter(t, f, "\x1b[D"); !detach {
+	if _, detach := runFilter(t, f, "\x1b[1;5D"); !detach {
 		t.Fatal("left arrow after a CPR-shaped sequence should still detach")
 	}
 }
@@ -614,7 +622,7 @@ func TestLegacyMouseReportDoesNotDisarmQuickDetach(t *testing.T) {
 	if detach || out != "\x1b[M \x21\x21" {
 		t.Fatalf("legacy mouse report must pass through verbatim, out=%q detach=%v", out, detach)
 	}
-	if _, detach := f.filter([]byte("\x1b[D")); !detach {
+	if _, detach := f.filter([]byte("\x1b[1;5D")); !detach {
 		t.Fatal("quick detach stayed disarmed after a legacy mouse report")
 	}
 }
@@ -660,7 +668,7 @@ func TestEnhancedKeyboardEncodingKeepsControlChords(t *testing.T) {
 	})
 	t.Run("ctrl+c stays swallowed and re-arms", func(t *testing.T) {
 		f := &stdinFilter{backDetach: true, role: roleController}
-		out, detach := runFilter(t, f, "abc", "\x1b[99;5u", "\x1b[D")
+		out, detach := runFilter(t, f, "abc", "\x1b[99;5u", "\x1b[1;5D")
 		if !detach || out != "abc" {
 			t.Fatalf("encoded Ctrl+C did not clear the box, out=%q detach=%v", out, detach)
 		}
@@ -749,7 +757,7 @@ func TestEnhancedClearKeysReArmQuickDetach(t *testing.T) {
 			if !f.boxEmpty() {
 				t.Fatalf("box not cleared: typed=%d unknown=%v", f.typed, f.unknown)
 			}
-			if _, detach := f.filter([]byte("\x1b[D")); !detach {
+			if _, detach := f.filter([]byte("\x1b[1;5D")); !detach {
 				t.Fatal("quick detach did not re-arm")
 			}
 		})

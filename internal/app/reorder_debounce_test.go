@@ -2,9 +2,10 @@ package app
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -97,16 +98,112 @@ func TestQuitFlushesPendingReorder(t *testing.T) {
 	}
 }
 
-// drainCmd executes a tea.Cmd and recursively runs any batched children so its
-// side effects against the store run synchronously in the test.
+// #91 — Bubble Tea runs tea.Batch members concurrently, so Run can return on
+// tea.Quit while the flush is still writing. The quit command must be a
+// tea.Sequence whose flush has landed in the store before it yields QuitMsg.
+func TestQuitSequencesFlushBeforeQuit(t *testing.T) {
+	for _, key := range []string{"ctrl+c", "esc"} {
+		t.Run(key, func(t *testing.T) {
+			m, st := twoLiveSessionModel(t)
+			m.selected = 0
+			if cmd := m.moveSession(1); cmd == nil {
+				t.Fatal("move should schedule a flush")
+			}
+			model, cmd := m.handleKey(keyMsg(key))
+			m = model.(Model)
+			if !m.quitting || cmd == nil {
+				t.Fatalf("%s should quit with a command", key)
+			}
+			msg := cmd()
+			if _, ok := msg.(tea.BatchMsg); ok {
+				t.Fatal("quit must tea.Sequence the flush before Quit; tea.Batch gives no ordering")
+			}
+			steps, ok := cmdChildren(msg)
+			if !ok {
+				t.Fatalf("quit must return a tea.Sequence, got %T", msg)
+			}
+			for _, step := range steps {
+				if _, quit := step().(tea.QuitMsg); !quit {
+					continue
+				}
+				cfg, err := st.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				recB := cfg.Sessions[store.Key("fake", "b")]
+				recA := cfg.Sessions[store.Key("fake", "a")]
+				if recB.SortIndex != 0 || recA.SortIndex != 1 {
+					t.Fatalf("flush must land before QuitMsg: a=%d b=%d", recA.SortIndex, recB.SortIndex)
+				}
+				return
+			}
+			t.Fatal("quit command never yielded tea.QuitMsg")
+		})
+	}
+}
+
+// #92 — a refresh that lands inside the debounce window carries the store's
+// pre-move SortIndex. It must not replace the roster while a reorder is
+// pending, or the debounced flush reads the stale indices and persists the
+// revert.
+func TestRefreshDuringPendingReorderKeepsManualOrder(t *testing.T) {
+	m, st := twoLiveSessionModel(t)
+	m.selected = 0
+	if cmd := m.moveSession(1); cmd == nil {
+		t.Fatal("move should schedule a flush")
+	}
+	stale := []adapter.Session{
+		{ID: "a", AgentType: "fake", DisplayName: "a", ProcAlive: adapter.Alive, SortIndex: 0},
+		{ID: "b", AgentType: "fake", DisplayName: "b", ProcAlive: adapter.Alive, SortIndex: 1},
+	}
+	model, _ := m.Update(sessionsLoadedMsg{refresh: true, sessions: stale})
+	m = model.(Model)
+	if got := sessionIDs(m.sessions); !reflect.DeepEqual(got, []string{"b", "a"}) {
+		t.Fatalf("refresh during debounce reverted the pending reorder: %v", got)
+	}
+	if !m.reorderPending {
+		t.Fatal("refresh must leave the reorder pending for the debounced flush")
+	}
+
+	model, flushCmd := m.Update(reorderFlushMsg{seq: m.reorderSeq})
+	m = model.(Model)
+	drainCmd(flushCmd)
+
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recB := cfg.Sessions[store.Key("fake", "b")]
+	recA := cfg.Sessions[store.Key("fake", "a")]
+	if recB.SortIndex != 0 || recA.SortIndex != 1 {
+		t.Fatalf("flush persisted the stale refresh order: a=%d b=%d", recA.SortIndex, recB.SortIndex)
+	}
+}
+
+// drainCmd executes a tea.Cmd and recursively runs any batched or sequenced
+// children so its side effects against the store run synchronously in the test.
 func drainCmd(cmd tea.Cmd) {
 	if cmd == nil {
 		return
 	}
-	msg := cmd()
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		for _, c := range batch {
+	if children, ok := cmdChildren(cmd()); ok {
+		for _, c := range children {
 			drainCmd(c)
 		}
 	}
+}
+
+// cmdChildren unpacks a tea.BatchMsg or a tea.Sequence message into its member
+// commands. Sequence's message type is unexported, so both are matched
+// structurally as a []tea.Cmd.
+func cmdChildren(msg tea.Msg) ([]tea.Cmd, bool) {
+	v := reflect.ValueOf(msg)
+	if v.Kind() != reflect.Slice || v.Type().Elem() != reflect.TypeOf(tea.Cmd(nil)) {
+		return nil, false
+	}
+	children := make([]tea.Cmd, v.Len())
+	for i := range children {
+		children[i], _ = v.Index(i).Interface().(tea.Cmd)
+	}
+	return children, true
 }

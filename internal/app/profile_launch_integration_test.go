@@ -34,6 +34,37 @@ func TestDispatchNamedWithAliasUsesDefaultProfileWhenLaunchArgumentsUnset(t *tes
 	}
 }
 
+func TestTUIDispatchHonoursSafeDefaultProfileAndResumeMatches(t *testing.T) {
+	// Given
+	cfg := profileLaunchConfig("fake", "default", store.ModeSafe, "profile-alias", 8100)
+	svc, fake := newProfileLaunchService(t, cfg)
+	m := NewWithDeps(svc.Store, svc.Registry)
+
+	// When
+	msg := m.dispatchNamedCmd("fake", "", "profiled", "do work")().(dispatchedMsg)
+
+	// Then
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	if fake.dispatched == nil || fake.dispatched.Mode != string(store.ModeSafe) {
+		t.Fatalf("dispatch request = %+v, want safe default profile mode", fake.dispatched)
+	}
+	cfg, err := svc.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record := cfg.Sessions[store.Key("fake", msg.session.ID)]; record.Mode != store.ModeSafe {
+		t.Fatalf("persisted mode = %q, want %q", record.Mode, store.ModeSafe)
+	}
+	if err := svc.ResumeBackground(context.Background(), msg.session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if fake.resumed == nil || fake.resumed.Mode != string(store.ModeSafe) {
+		t.Fatalf("resume request = %+v, want same mode as first launch", fake.resumed)
+	}
+}
+
 func TestDispatchNamedWithAliasKeepsExplicitLaunchArgumentsOverProfile(t *testing.T) {
 	// Given
 	cfg := profileLaunchConfig("fake", "default", store.ModeSafe, "profile-alias", 8100)

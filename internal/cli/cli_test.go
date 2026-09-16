@@ -17,12 +17,13 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/creack/pty"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 )
 
 type cliFakeAdapter struct {
@@ -31,6 +32,12 @@ type cliFakeAdapter struct {
 	stopped  bool
 	resumed  bool
 	attached []string
+	// lastDispatch is the request the adapter boundary received; tests assert
+	// the mode there so a call site cannot override a resolved safe profile.
+	lastDispatch adapter.DispatchRequest
+	// unavailable, when set, makes the adapter a known-but-disabled provider
+	// (CLI not installed) with this reason.
+	unavailable string
 }
 
 func (f *cliFakeAdapter) Name() string {
@@ -41,6 +48,9 @@ func (f *cliFakeAdapter) Name() string {
 }
 func (f *cliFakeAdapter) DisplayName() string { return f.Name() }
 func (f *cliFakeAdapter) Available() (bool, string) {
+	if f.unavailable != "" {
+		return false, f.unavailable
+	}
 	return true, ""
 }
 func (f *cliFakeAdapter) TerminalPolicy() adapter.ProviderTerminalPolicy {
@@ -51,6 +61,7 @@ func (f *cliFakeAdapter) TerminalPolicy() adapter.ProviderTerminalPolicy {
 	}
 }
 func (f *cliFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchRequest) (adapter.Session, error) {
+	f.lastDispatch = req
 	if req.Prompt == "fail" {
 		return adapter.Session{}, errors.New("fail")
 	}
@@ -59,10 +70,6 @@ func (f *cliFakeAdapter) Dispatch(ctx adapter.Context, req adapter.DispatchReque
 	return sess, nil
 }
 func (f *cliFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) { return f.sessions, nil }
-func (f *cliFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
-	return adapter.PeekResult{TailText: "tail for " + id}, nil
-}
-func (f *cliFakeAdapter) Reply(ctx adapter.Context, id, text string) error { return nil }
 func (f *cliFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 	f.attached = append(f.attached, id)
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
@@ -110,7 +117,11 @@ func (m resizeSynchronizedQuitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-func (resizeSynchronizedQuitModel) View() string { return "dashboard-marker" }
+func (resizeSynchronizedQuitModel) View() tea.View {
+	view := tea.NewView("dashboard-marker")
+	view.AltScreen = true
+	return view
+}
 
 func TestRunTUICleansPrimaryLineAfterBubbleTeaExit(t *testing.T) {
 	ptmx, tty, err := pty.Open()
@@ -147,7 +158,7 @@ func TestRunTUICleansPrimaryLineAfterBubbleTeaExit(t *testing.T) {
 	}
 }
 
-func TestRunDispatchListPeekAndStop(t *testing.T) {
+func TestRunDispatchListAndStop(t *testing.T) {
 	svc, fake := newCLITestService(t)
 	id := dispatchAndCaptureID(t, svc, []string{"--cwd", "/tmp", "fake", "#bugfix", "fix", "thing"})
 	if id != "abc12345" {
@@ -155,9 +166,6 @@ func TestRunDispatchListPeekAndStop(t *testing.T) {
 	}
 	if out := captureCLIStdout(t, func() { must(t, runList(context.Background(), svc, []string{"--json"})) }); !strings.Contains(out, "bugfix") {
 		t.Fatalf("list=%q", out)
-	}
-	if out := captureCLIStdout(t, func() { must(t, runPeek(context.Background(), svc, []string{id})) }); !strings.Contains(out, "tail for") {
-		t.Fatalf("peek=%q", out)
 	}
 	must(t, runStop(context.Background(), svc, "stop", []string{id}))
 	if !fake.stopped {
@@ -241,6 +249,31 @@ func TestRunWithTUIHelpVersionAndDefault(t *testing.T) {
 	}
 }
 
+func TestSubcommandHelpFlagSucceedsAndPrintsUsage(t *testing.T) {
+	t.Setenv("UAM_CONFIG_DIR", t.TempDir())
+	for _, args := range [][]string{{"dispatch", "-h"}, {"ls", "--help"}, {"restart", "-h"}, {"attach", "-h"}, {"new", "-h"}} {
+		var err error
+		stderr := captureCLIStderr(t, func() { err = RunWithTUI(context.Background(), args, noopRunTUI) })
+		if err != nil {
+			t.Fatalf("uam %s: help must not fail, got %v", strings.Join(args, " "), err)
+		}
+		if want := "Usage of " + args[0] + ":"; !strings.Contains(stderr, want) {
+			t.Fatalf("uam %s stderr = %q, want %q", strings.Join(args, " "), stderr, want)
+		}
+	}
+	if err := RunWithTUI(context.Background(), []string{"dispatch", "--bogus"}, noopRunTUI); err == nil || errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("unknown flag must still fail with a parse error, got %v", err)
+	}
+}
+
+func TestUsageShowsDispatchWorkingDirectoryFlagBeforeAgent(t *testing.T) {
+	usage := captureCLIStderr(t, Usage)
+	want := "uam dispatch [--safe] [--alias <name>] [--profile <name>] [--cwd <path>] <agent>"
+	if !strings.Contains(usage, want) {
+		t.Fatalf("dispatch usage missing working-directory flag before agent:\n%s", usage)
+	}
+}
+
 func TestRunWithTUIStateFreeCommandsDoNotOpenStore(t *testing.T) {
 	blocked := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
@@ -282,6 +315,24 @@ func TestMainStatelessCommandsSkipLoggerAndStore(t *testing.T) {
 	}
 }
 
+func TestMainVersionFlagsExitZeroWithVersionOnStdout(t *testing.T) {
+	for _, arg := range []string{"--version", "-v"} {
+		cmd := cliMainSubprocess(t, arg, t.TempDir(), t.TempDir())
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		stdout, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("uam %s: %v\nstderr=%s", arg, err, stderr.String())
+		}
+		if got := strings.TrimSpace(string(stdout)); got != version.String() {
+			t.Fatalf("uam %s stdout = %q, want %q", arg, got, version.String())
+		}
+		if stderr.Len() != 0 {
+			t.Fatalf("uam %s wrote to stderr: %q", arg, stderr.String())
+		}
+	}
+}
+
 func TestMainFallsBackToStderrWhenFileLoggerFails(t *testing.T) {
 	blocked := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
@@ -319,7 +370,7 @@ func TestCLIMainHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestMainPropagatesOpenCodeAttachExitCodeWithoutPrintingError(t *testing.T) {
+func TestMainPropagatesOpenCodeTUIExitCodeWithoutPrintingError(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -329,9 +380,8 @@ func TestMainPropagatesOpenCodeAttachExitCodeWithoutPrintingError(t *testing.T) 
 case "$1" in
   --version) printf '1.18.1\n'; exit 0 ;;
   serve) shift; exec "$UAM_CLI_TEST_EXE" -test.run=^TestCLIOpenCodeProviderHelper$ -- serve "$@" ;;
-  attach) exit 23 ;;
+  *) exec "$UAM_CLI_TEST_EXE" -test.run=^TestCLIOpenCodeProviderHelper$ -- tui "$@" ;;
 esac
-exit 97
 `
 	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -366,7 +416,7 @@ exit 97
 		t.Fatalf("Main() subprocess = (%v, %q), want exit code 23", err, output)
 	}
 	if len(output) != 0 {
-		t.Fatalf("Main() printed an attach/credential error: %q", output)
+		t.Fatalf("Main() printed a TUI/credential error: %q", output)
 	}
 }
 
@@ -381,12 +431,18 @@ func TestCLIOpenCodeProviderHelper(t *testing.T) {
 			break
 		}
 	}
-	if separator < 0 || separator+1 >= len(os.Args) || os.Args[separator+1] != "serve" {
+	if separator < 0 || separator+1 >= len(os.Args) {
 		t.Fatalf("provider helper argv = %q", os.Args)
 	}
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	mode := os.Args[separator+1]
+	if mode != "serve" && mode != "tui" {
+		t.Fatalf("provider helper mode = %q", mode)
+	}
+	fs := flag.NewFlagSet(mode, flag.ContinueOnError)
 	hostname := fs.String("hostname", "", "")
 	port := fs.Int("port", 0, "")
+	_ = fs.String("session", "", "")
+	_ = fs.Bool("auto", false, "")
 	if err := fs.Parse(os.Args[separator+2:]); err != nil {
 		t.Fatal(err)
 	}
@@ -400,6 +456,10 @@ func TestCLIOpenCodeProviderHelper(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
+			}
+			if mode == "tui" {
+				time.Sleep(25 * time.Millisecond)
+				os.Exit(23)
 			}
 			<-request.Context().Done()
 		case request.Method == http.MethodPost && request.URL.Path == "/session":
@@ -522,6 +582,23 @@ func newCLITestService(t *testing.T) (*app.Service, *cliFakeAdapter) {
 	}
 	fake := &cliFakeAdapter{}
 	return app.NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{fake})), fake
+}
+
+// Audit 2026-09-12 row 6 — a typed provider that is not a provider at all
+// (a typo) must fail the wizard, not be silently swapped for the first
+// enabled adapter and launched.
+func TestRunNewRejectsUnknownTypedProvider(t *testing.T) {
+	svc, fake := newCLITestService(t)
+	var err error
+	captureCLIStdout(t, func() {
+		withCLIStdin(t, "bogus\n\n/tmp\ndo work\n", func() { err = runNew(context.Background(), svc, noopRunTUI) })
+	})
+	if err == nil || !strings.Contains(err.Error(), "bogus") {
+		t.Fatalf("new should reject an unknown provider by name, got %v", err)
+	}
+	if len(fake.sessions) != 0 {
+		t.Fatalf("no session may be dispatched for an unknown provider, got %d", len(fake.sessions))
+	}
 }
 
 func dispatchAndCaptureID(t *testing.T, svc *app.Service, args []string) string {

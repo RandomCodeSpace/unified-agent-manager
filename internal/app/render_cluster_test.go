@@ -9,10 +9,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 var errTestBoom = errors.New("boom")
@@ -229,69 +229,25 @@ func TestDeadSessionFromRecordDoesNotEmitActiveState(t *testing.T) {
 // F58 — the live/fail glyph styles are package-level vars (allocated once), not
 // rebuilt per row per frame.
 func TestGlyphStylesAreHoisted(t *testing.T) {
-	if _, ok := liveGlyphStyle.GetForeground().(lipgloss.AdaptiveColor); !ok {
+	if _, ok := liveGlyphStyle.GetForeground().(compat.AdaptiveColor); !ok {
 		t.Fatalf("liveGlyphStyle must keep an AdaptiveColor foreground, got %T", liveGlyphStyle.GetForeground())
 	}
-	if _, ok := failGlyphStyle.GetForeground().(lipgloss.AdaptiveColor); !ok {
+	if _, ok := failGlyphStyle.GetForeground().(compat.AdaptiveColor); !ok {
 		t.Fatalf("failGlyphStyle must keep an AdaptiveColor foreground, got %T", failGlyphStyle.GetForeground())
 	}
 }
 
-// C2-2 — moving the cursor up/down while the peek panel is open must re-fire the
-// peek for the newly selected session and blank the stale text synchronously.
-func TestUpDownRefiresPeekWhenPanelOpen(t *testing.T) {
+func TestUpDownMovesSelectionWithoutCommand(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
 		{ID: "1", AgentType: "fake", DisplayName: "one", ProcAlive: adapter.Alive},
 		{ID: "2", AgentType: "fake", DisplayName: "two", ProcAlive: adapter.Alive},
 	}
-	m.peekOpen = true
-	m.peekText = "stale tail from session one"
-
-	handled, cmd := m.handleMovementKey("down")
-	if !handled {
-		t.Fatal("down should be handled")
+	if handled, cmd := m.handleMovementKey("down"); !handled || cmd != nil || m.selected != 1 {
+		t.Fatalf("down should move without a command: handled=%v cmd=%v selected=%d", handled, cmd, m.selected)
 	}
-	if m.selected != 1 {
-		t.Fatalf("selection should advance to 1, got %d", m.selected)
-	}
-	if m.peekText != "" {
-		t.Fatalf("peek text should be blanked synchronously on move, got %q", m.peekText)
-	}
-	if cmd == nil {
-		t.Fatal("moving with the peek panel open should re-fire the peek command")
-	}
-}
-
-// C2-2 — with the panel closed, up/down must NOT fire a peek (avoids an N+1
-// capture storm on every keystroke).
-func TestUpDownDoesNotPeekWhenPanelClosed(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{
-		{ID: "1", AgentType: "fake", DisplayName: "one", ProcAlive: adapter.Alive},
-		{ID: "2", AgentType: "fake", DisplayName: "two", ProcAlive: adapter.Alive},
-	}
-	m.peekOpen = false
-
-	if _, cmd := m.handleMovementKey("down"); cmd != nil {
-		t.Fatalf("down with the peek panel closed should not fire a peek command, got %v", cmd)
-	}
-	if _, cmd := m.handleMovementKey("up"); cmd != nil {
-		t.Fatalf("up with the peek panel closed should not fire a peek command, got %v", cmd)
-	}
-}
-
-// C2-2 — moving onto the same row (boundary no-op) must not re-fire the peek.
-func TestPeekNotRefiredWhenSelectionUnchanged(t *testing.T) {
-	m := NewWithDeps(nil, nil)
-	m.sessions = []adapter.Session{{ID: "1", AgentType: "fake", DisplayName: "one", ProcAlive: adapter.Alive}}
-	m.peekOpen = true
-	m.peekText = "tail"
-	if _, cmd := m.handleMovementKey("up"); cmd != nil { // already at top → no-op
-		t.Fatalf("a no-op move should not re-fire the peek, got %v", cmd)
-	}
-	if m.peekText != "tail" {
-		t.Fatalf("a no-op move should not blank the peek text, got %q", m.peekText)
+	if handled, cmd := m.handleMovementKey("up"); !handled || cmd != nil || m.selected != 0 {
+		t.Fatalf("up should move without a command: handled=%v cmd=%v selected=%d", handled, cmd, m.selected)
 	}
 }
 
@@ -317,19 +273,19 @@ func TestMessageExpiresOnlyAfterTTL(t *testing.T) {
 	}
 }
 
-// F53 — a freshly emitted message must not be wiped by the very next 2s tick.
-func TestFreshMessageSurvivesNextTick(t *testing.T) {
+// A refresh failure is persistent dashboard state and must not be wiped by the
+// next periodic tick.
+func TestRefreshErrorSurvivesNextTick(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	// Simulate handleSessionsLoaded stamping a message right before a tick.
-	model, _ := m.Update(sessionsLoadedMsg{err: errTestBoom})
+	model, _ := m.Update(sessionsLoadedMsg{refresh: true, err: errTestBoom})
 	m = model.(Model)
-	if m.message == "" {
-		t.Fatal("error should populate the status line")
+	if m.refreshError == "" {
+		t.Fatal("refresh error should populate persistent dashboard state")
 	}
 	model, _ = m.Update(refreshMsg(time.Now()))
 	m = model.(Model)
-	if m.message == "" {
-		t.Fatal("a just-emitted error must survive the next refresh tick (no blanket clear)")
+	if m.refreshError == "" {
+		t.Fatal("refresh error must survive the next refresh tick")
 	}
 }
 
@@ -353,7 +309,7 @@ func TestTabSurfacesSetDefaultAgentError(t *testing.T) {
 func TestGroupByDirToggleSurfacesSetUIError(t *testing.T) {
 	st := readOnlyStore(t)
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "a", available: true}}))
-	model, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, cmd := m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
 	if cmd == nil {
 		t.Fatal("group toggle should persist asynchronously")

@@ -15,13 +15,15 @@ const (
 var diagnosticIdentifierRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 
 var diagnosticEvents = allowedDiagnostics(
-	"attach.lifecycle", "attach.negotiation", "controller.failover", "profile.resolution",
+	"attach.lifecycle", "attach.negotiation", "control.requested", "controller.failover",
+	"profile.resolution",
 	"provider.exception", "resize.accepted", "resize.ignored", "role.assignment",
 	"role.promotion", "role.transfer", "role.vacancy", "slow_client.eviction",
 )
 
 var diagnosticReasons = allowedDiagnostics(
 	"accepted", "assigned", "attached", "connection_drop", "connection_write",
+	"control_requested",
 	"deadline_reset", "default_profile", "detached", "dropped", "fallback",
 	"handshake_write", "host_shutdown", "invalid_size", "legacy", "malformed_frame",
 	"no_controller", "not_controller", "observer", "output_backpressure",

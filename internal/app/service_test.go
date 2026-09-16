@@ -22,16 +22,15 @@ import (
 )
 
 type svcFakeAdapter struct {
-	name       string
-	sessions   []adapter.Session
-	available  bool
-	stopped    bool
-	stoppedID  string
-	peekedID   string
-	attachedID string
-	replied    string
-	dispatched *adapter.DispatchRequest
-	resumed    *adapter.ResumeRequest
+	name        string
+	sessions    []adapter.Session
+	available   bool
+	stopped     bool
+	stoppedID   string
+	attachedID  string
+	attachCount int
+	dispatched  *adapter.DispatchRequest
+	resumed     *adapter.ResumeRequest
 	// F04: simulate a failed kill (stopErr) and a still-live pane (alive). The
 	// fake implements adapter.HasSessionAdapter, returning alive from HasSession.
 	stopErr error
@@ -88,16 +87,9 @@ func (f *svcFakeAdapter) Resume(ctx adapter.Context, req adapter.ResumeRequest) 
 func (f *svcFakeAdapter) List(ctx adapter.Context) ([]adapter.Session, error) {
 	return f.sessions, f.listErr
 }
-func (f *svcFakeAdapter) Peek(ctx adapter.Context, id string) (adapter.PeekResult, error) {
-	f.peekedID = id
-	return adapter.PeekResult{TailText: "tail"}, nil
-}
-func (f *svcFakeAdapter) Reply(ctx adapter.Context, id, text string) error {
-	f.replied = text
-	return nil
-}
 func (f *svcFakeAdapter) Attach(id string) (adapter.AttachSpec, error) {
 	f.attachedID = id
+	f.attachCount++
 	return adapter.AttachSpec{Argv: []string{"echo", id}}, nil
 }
 func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error {
@@ -239,22 +231,16 @@ func TestProviderExactServiceActionsDoNotCrossDuplicateIDs(t *testing.T) {
 	if err := svc.TogglePinExact(ctx, "codex", id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.PeekExact(ctx, "codex", id); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.ReplyExact(ctx, "codex", id, "hello codex"); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := svc.AttachSpecExact(ctx, "codex", id); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.StopExact(ctx, "codex", id, false); err != nil {
 		t.Fatal(err)
 	}
-	if claude.stopped || claude.peekedID != "" || claude.replied != "" || claude.attachedID != "" {
+	if claude.stopped || claude.attachedID != "" {
 		t.Fatalf("claude adapter was targeted: %+v", claude)
 	}
-	if codex.stoppedID != id || codex.peekedID != id || codex.replied != "hello codex" || codex.attachedID != id {
+	if codex.stoppedID != id || codex.attachedID != id {
 		t.Fatalf("codex adapter did not receive exact actions: %+v", codex)
 	}
 	cfg, err := st.Load()
@@ -402,12 +388,6 @@ func assertWorkflowMetadataMutations(t *testing.T, svc *Service, list []adapter.
 
 func assertWorkflowAdapterActions(t *testing.T, svc *Service, fake *svcFakeAdapter) {
 	t.Helper()
-	if p, err := svc.Peek(context.Background(), "live"); err != nil || p.TailText != "tail" {
-		t.Fatalf("peek=%+v err=%v", p, err)
-	}
-	if err := svc.Reply(context.Background(), "live", "yes"); err != nil || fake.replied != "yes" {
-		t.Fatalf("reply %q %v", fake.replied, err)
-	}
 	if spec, err := svc.AttachSpec(context.Background(), "live"); err != nil || len(spec.Argv) == 0 {
 		t.Fatalf("attach=%+v err=%v", spec, err)
 	}
@@ -1243,4 +1223,26 @@ func captureStdout(t *testing.T, fn func()) string {
 	var buf bytes.Buffer
 	_, _ = io.Copy(&buf, r)
 	return buf.String()
+}
+
+// Audit 2026-09-12 row 13 — a Service without a store must still produce an
+// attach spec (no profile overlay) instead of failing every attach with
+// "profile store unavailable". Mirrors the nil-store branch the dashboard
+// already takes for latest-required attaches.
+func TestAttachSpecWithoutStoreSkipsProfileResolution(t *testing.T) {
+	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{
+		{ID: "abc12345", AgentType: "fake", DisplayName: "one", SessionName: "uam-fake-abc12345", State: adapter.Active, ProcAlive: adapter.Alive, CreatedAt: time.Now()},
+	}}
+	svc := NewService(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
+
+	spec, err := svc.AttachSpecExact(context.Background(), "fake", "abc12345")
+	if err != nil {
+		t.Fatalf("attach without a store should degrade to a plain attach, got %v", err)
+	}
+	if len(spec.Argv) == 0 || fake.attachedID != "abc12345" {
+		t.Fatalf("attach spec should come from the adapter, got %+v (attached %q)", spec, fake.attachedID)
+	}
+	if spec.Profile != (adapter.AttachProfileSnapshot{}) {
+		t.Fatalf("no store means no profile overlay, got %+v", spec.Profile)
+	}
 }

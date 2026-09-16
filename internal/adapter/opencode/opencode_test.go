@@ -2,6 +2,8 @@ package opencode
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -254,12 +256,12 @@ func TestOpenCodeResumeKindIsExactOnly(t *testing.T) {
 }
 
 func TestOpenCodePromptDeliveryAndResumeNoReplay(t *testing.T) {
-	newAgent := func(t *testing.T) (*adapter.Agent, *adaptertest.Backend, string) {
+	newAgent := func(t *testing.T) (*adapter.Agent, *promptRecordingBackend, string) {
 		t.Helper()
 		providerPath := writeVersionedOpenCode(t, "1.18.1")
 		t.Setenv("PATH", filepath.Dir(providerPath))
 		t.Setenv("UAM_SESSION_DIR", secureOpenCodeRuntimeDir(t))
-		backend := &adaptertest.Backend{}
+		backend := &promptRecordingBackend{}
 		return New(backend).(*adapter.Agent), backend, filepath.Clean(t.TempDir())
 	}
 
@@ -273,8 +275,14 @@ func TestOpenCodePromptDeliveryAndResumeNoReplay(t *testing.T) {
 			t.Fatalf("OpenCode dispatch must preserve provider-native terminal behavior: %s", command)
 		}
 		sends := backend.CallsOf("send")
-		if len(sends) != 1 || sends[0].Text != prompt {
-			t.Fatalf("dispatch sends = %#v, want one byte-preserved prompt %q", sends, prompt)
+		if len(sends) != 0 || backend.prompt != prompt {
+			t.Fatalf("dispatch sends = %#v, handoff = %q, want one byte-preserved prompt %q", sends, backend.prompt, prompt)
+		}
+		if _, err := backend.file.Stat(); !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("parent prompt descriptor remains open: %v", err)
+		}
+		if strings.Contains(backend.CommandLog(), prompt) {
+			t.Fatal("initial prompt leaked into process arguments")
 		}
 	})
 
@@ -285,6 +293,9 @@ func TestOpenCodePromptDeliveryAndResumeNoReplay(t *testing.T) {
 		}
 		if sends := backend.CallsOf("send"); len(sends) != 0 {
 			t.Fatalf("empty dispatch sends = %#v, want none", sends)
+		}
+		if backend.file != nil {
+			t.Fatal("empty dispatch created a prompt handoff")
 		}
 	})
 
@@ -299,7 +310,49 @@ func TestOpenCodePromptDeliveryAndResumeNoReplay(t *testing.T) {
 		if sends := backend.CallsOf("send"); len(sends) != 0 {
 			t.Fatalf("exact resume replayed prompt: %#v", sends)
 		}
+		if backend.file != nil {
+			t.Fatal("resume created a prompt handoff")
+		}
 	})
+
+	t.Run("failed create closes anonymous prompt", func(t *testing.T) {
+		agent, backend, cwd := newAgent(t)
+		backend.CreateErr = errors.New("fixture create failure")
+		if _, err := agent.Dispatch(t.Context(), adapter.DispatchRequest{Prompt: "private prompt", Cwd: cwd}); err == nil {
+			t.Fatal("Dispatch accepted failed create")
+		}
+		if _, err := backend.file.Stat(); !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("failed-create prompt descriptor remains open: %v", err)
+		}
+	})
+}
+
+type promptRecordingBackend struct {
+	adaptertest.Backend
+	prompt string
+	file   *os.File
+}
+
+func (b *promptRecordingBackend) CreateProviderSession(ctx context.Context, spec session.CreateSpec) error {
+	if spec.InitialPrompt != nil {
+		b.file = spec.InitialPrompt
+		info, err := b.file.Stat()
+		if err != nil {
+			return err
+		}
+		if info.Mode().Perm() != 0o600 {
+			return errors.New("initial prompt file is not private")
+		}
+		if _, err := os.Stat(b.file.Name()); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("initial prompt file is still named")
+		}
+		prompt, err := io.ReadAll(b.file)
+		if err != nil {
+			return err
+		}
+		b.prompt = string(prompt)
+	}
+	return b.Backend.CreateProviderSession(ctx, spec)
 }
 
 func TestOpenCodeLegacyPluginAndProviderStateAreInert(t *testing.T) {

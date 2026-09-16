@@ -63,7 +63,10 @@ func (s *Service) LoadSessions(ctx context.Context) ([]adapter.Session, store.Co
 	if err != nil {
 		return nil, cfg, err
 	}
-	live := s.liveSessions(ctx)
+	live, err := s.liveSessions(ctx)
+	if err != nil {
+		return nil, cfg, err
+	}
 	s.mergeStoredSessions(live, cfg, time.Now())
 	// Discovery and reconciliation are local-only. Network PR enrichment runs on
 	// the independent RefreshPRStatuses cadence and never delays this path.
@@ -86,8 +89,8 @@ func (s *Service) PruneStartup(ctx context.Context) error {
 	if s.Store == nil {
 		return nil
 	}
-	live := s.liveSessions(ctx)
-	if len(live) == 0 {
+	live, err := s.liveSessions(ctx)
+	if err != nil || len(live) == 0 {
 		// No live session visible — could be a scan failure; don't prune.
 		return nil
 	}
@@ -163,21 +166,26 @@ func (s *Service) loadConfig() (store.Config, error) {
 	return s.Store.Load()
 }
 
-func (s *Service) liveSessions(ctx context.Context) map[string]adapter.Session {
+// liveSessions returns the live roster. Partial custom-adapter failures are
+// logged and their surviving results retained; a failure of the shared session
+// backend itself is returned so callers do not mistake "could not list" for
+// "every session is gone" (audit 2026-09-12 row 12).
+func (s *Service) liveSessions(ctx context.Context) (map[string]adapter.Session, error) {
 	live := map[string]adapter.Session{}
 	if s.Registry == nil {
-		return live
+		return live, nil
 	}
 	sessions, err := s.Registry.ListAll(ctx)
+	if errors.Is(err, adapter.ErrBackendList) {
+		return nil, err
+	}
 	if err != nil {
-		// Partial custom-adapter results are retained; production's shared backend
-		// failure yields an empty snapshot and one actionable warning.
 		log.Warn("listing managed sessions failed", "error", err)
 	}
 	for _, sess := range sessions {
 		live[store.Key(sess.AgentType, sess.ID)] = sess
 	}
-	return live
+	return live, nil
 }
 
 func (s *Service) mergeStoredSessions(live map[string]adapter.Session, cfg store.Config, now time.Time) {
@@ -193,7 +201,7 @@ func (s *Service) mergeStoredSessions(live map[string]adapter.Session, cfg store
 func mergeStoredMetadata(sess adapter.Session, rec store.SessionRecord) adapter.Session {
 	// A live session only knows the 8-char id embedded in its session name;
 	// the record carries the full UUID. Restore it so Find can match the full
-	// id the dispatch command printed — without this, peek/stop/attach by full
+	// id the dispatch command printed — without this, stop/attach by full
 	// id fail exactly while the session is alive (they worked once it died,
 	// because dead rows are built from the record).
 	if rec.ID != "" && strings.HasPrefix(rec.ID, sess.ID) {
@@ -789,54 +797,6 @@ func (s *Service) FindExact(ctx context.Context, agentName, id string) (adapter.
 	return adapter.Session{}, cfg, fmt.Errorf("session %q for provider %q not found", id, agentName)
 }
 
-func (s *Service) Peek(ctx context.Context, id string) (adapter.PeekResult, error) {
-	sess, _, err := s.Find(ctx, id)
-	if err != nil {
-		return adapter.PeekResult{}, err
-	}
-	a, ok := s.Registry.Get(sess.AgentType)
-	if !ok {
-		return adapter.PeekResult{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
-	}
-	return a.Peek(ctx, sess.ID)
-}
-
-func (s *Service) PeekExact(ctx context.Context, agentName, id string) (adapter.PeekResult, error) {
-	sess, _, err := s.FindExact(ctx, agentName, id)
-	if err != nil {
-		return adapter.PeekResult{}, err
-	}
-	a, ok := s.Registry.Get(sess.AgentType)
-	if !ok {
-		return adapter.PeekResult{}, fmt.Errorf(agentUnavailableFormat, sess.AgentType)
-	}
-	return a.Peek(ctx, sess.ID)
-}
-
-func (s *Service) Reply(ctx context.Context, id, text string) error {
-	sess, _, err := s.Find(ctx, id)
-	if err != nil {
-		return err
-	}
-	a, ok := s.Registry.Get(sess.AgentType)
-	if !ok {
-		return fmt.Errorf(agentUnavailableFormat, sess.AgentType)
-	}
-	return a.Reply(ctx, sess.ID, text)
-}
-
-func (s *Service) ReplyExact(ctx context.Context, agentName, id, text string) error {
-	sess, _, err := s.FindExact(ctx, agentName, id)
-	if err != nil {
-		return err
-	}
-	a, ok := s.Registry.Get(sess.AgentType)
-	if !ok {
-		return fmt.Errorf(agentUnavailableFormat, sess.AgentType)
-	}
-	return a.Reply(ctx, sess.ID, text)
-}
-
 func (s *Service) AttachSpec(ctx context.Context, id string) (adapter.AttachSpec, error) {
 	return s.AttachSpecWithOptions(ctx, id, ResumeOptions{})
 }
@@ -883,6 +843,11 @@ func (s *Service) attachSpecWithProfile(ctx context.Context, sess adapter.Sessio
 	spec, err := agent.Attach(sess.ID)
 	if err != nil {
 		return adapter.AttachSpec{}, err
+	}
+	if s.Store == nil {
+		// No store means no profiles to resolve: attach plainly rather than
+		// failing every attach with "profile store unavailable".
+		return spec, nil
 	}
 	lookup := sess.SessionName
 	if lookup == "" {
