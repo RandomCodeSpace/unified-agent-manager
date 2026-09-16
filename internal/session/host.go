@@ -519,7 +519,9 @@ func (h *host) handleConn(conn net.Conn) {
 		_ = writeJSONLine(conn, response{OK: true, Data: data})
 		_ = conn.Close()
 	case opSend:
-		err := h.writeOutOfBandInput([]byte(req.Text))
+		err := h.writeOutOfBandLine([]byte(req.Text), req.AwaitRawInput)
+		// The wait for raw input may outlive the deadline set above.
+		_ = conn.SetWriteDeadline(time.Now().Add(attachHandshakeTimeout))
 		_ = writeJSONLine(conn, errResponse(err))
 		_ = conn.Close()
 	case opResize:

@@ -115,6 +115,13 @@ func (b *Backend) SendLine(_ context.Context, name, text string) error {
 	return b.SendErr
 }
 
+// SendPrompt records as a "send" call: tests assert on what was typed, not
+// on the readiness wait the real host performs.
+func (b *Backend) SendPrompt(_ context.Context, name, text string) error {
+	b.record(Call{Op: "send", Name: name, Text: text})
+	return b.SendErr
+}
+
 func (b *Backend) Kill(_ context.Context, name string) error {
 	b.record(Call{Op: "kill", Name: name})
 	return b.KillErr

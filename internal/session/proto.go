@@ -40,6 +40,7 @@ var (
 type request struct {
 	Op             string          `json:"op"`
 	Text           string          `json:"text,omitempty"`
+	AwaitRawInput  bool            `json:"await_raw_input,omitempty"`
 	Lines          int             `json:"lines,omitempty"`
 	Cols           int             `json:"cols,omitempty"`
 	Rows           int             `json:"rows,omitempty"`

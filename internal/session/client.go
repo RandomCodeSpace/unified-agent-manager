@@ -266,6 +266,16 @@ func (c *Client) SendLine(ctx context.Context, name, text string) error {
 	return err
 }
 
+// SendPrompt is SendLine for a provider that is still starting: the host
+// types the prompt only once the provider has taken the terminal out of
+// canonical mode. Before that switch the line discipline turns the trailing
+// Enter into a newline, and the composer that later reads it never submits.
+func (c *Client) SendPrompt(ctx context.Context, name, text string) error {
+	payload := strings.TrimRight(text, "\n") + "\r"
+	_, err := c.roundTrip(ctx, name, request{Op: opSend, Text: payload, AwaitRawInput: true})
+	return err
+}
+
 // Kill terminates the session's agent and waits for the host to confirm the
 // session is gone. Killing a session that does not exist is an error, like
 // `tmux kill-session` (callers that need idempotence probe HasSession).
