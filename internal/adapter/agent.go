@@ -46,6 +46,9 @@ type Backend interface {
 	List(ctx context.Context) ([]session.Info, error)
 	Capture(ctx context.Context, name string, lines int) (string, error)
 	SendLine(ctx context.Context, name, text string) error
+	// SendPrompt types the initial prompt once the provider has taken the
+	// terminal, so a starting TUI receives it as keys rather than a cooked line.
+	SendPrompt(ctx context.Context, name, text string) error
 	Kill(ctx context.Context, name string) error
 	HasSession(ctx context.Context, name string) bool
 	AttachArgv(name string) ([]string, error)
@@ -288,7 +291,7 @@ func (a *Agent) startSession(ctx context.Context, req ResumeRequest, activity st
 	displayName := a.setSessionDisplayLabel(ctx, sessionName, req.Name, cwd)
 	shouldSendPrompt := strings.TrimSpace(req.Prompt) != "" && (activity != "resumed" || !a.SkipPromptOnResume)
 	if shouldSendPrompt && preparation.InitialPrompt == nil {
-		if err := a.Backend.SendLine(ctx, sessionName, req.Prompt); err != nil {
+		if err := a.Backend.SendPrompt(ctx, sessionName, req.Prompt); err != nil {
 			// The session is live but never received its prompt. Roll it back so
 			// it doesn't linger as an orphan the store records as Exited/closed.
 			// Use WithoutCancel so a cancelled dispatch context still tears the

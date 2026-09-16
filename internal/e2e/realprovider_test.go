@@ -920,7 +920,7 @@ func TestRealProviderLifecycle(t *testing.T) {
 					}
 					// Recorded as a failure, then recovered so the rest of the
 					// lifecycle still produces evidence.
-					t.Errorf("initial prompt reached the composer but was never submitted (text and Enter arrive in one write); submitting manually")
+					t.Errorf("initial prompt reached the composer but was never submitted; submitting manually")
 					v.send("\r")
 					v.mustAwait("initial prompt reply after manual Enter", firstReply, replyTimeout)
 				}

@@ -66,6 +66,45 @@ func (h *host) writeOutOfBandInput(payload []byte) error {
 	return nil
 }
 
+// submitSettleDelay separates typed text from the Enter that submits it.
+// Codex and Copilot treat bytes that arrive in one read as a paste and insert
+// a trailing CR as a newline instead of submitting the prompt.
+const submitSettleDelay = 200 * time.Millisecond
+
+// splitSubmit separates a line into the text to type and the Enter that
+// submits it. A bare Enter or text without one is written as-is.
+func splitSubmit(payload []byte) (text, enter []byte) {
+	if last := len(payload) - 1; last > 0 && payload[last] == '\r' {
+		return payload[:last], payload[last:]
+	}
+	return payload, nil
+}
+
+// rawInputTimeout bounds the wait for a starting provider to take the
+// terminal. It must stay under the client's call timeout; a provider that
+// never leaves canonical mode receives the line when the wait ends.
+const rawInputTimeout = 5 * time.Second
+
+// writeOutOfBandLine types payload into the provider, pausing before a
+// trailing Enter so the composer sees a keypress rather than a paste. With
+// awaitRaw it first waits for the provider to switch the terminal out of
+// canonical mode: until then the line discipline, not the composer, owns the
+// input and rewrites the submitting CR into a newline (ICRNL).
+func (h *host) writeOutOfBandLine(payload []byte, awaitRaw bool) error {
+	if awaitRaw {
+		h.awaitRawInput(rawInputTimeout)
+	}
+	text, enter := splitSubmit(payload)
+	if err := h.writeOutOfBandInput(text); err != nil {
+		return err
+	}
+	if enter == nil {
+		return nil
+	}
+	time.Sleep(submitSettleDelay)
+	return h.writeOutOfBandInput(enter)
+}
+
 const inputWriteTimeout = 250 * time.Millisecond
 
 func (h *host) writeInput(client *attachClient, generation uint64, payload []byte) error {
@@ -220,6 +259,35 @@ func (h *host) notifyControlRequest(client *attachClient) {
 		Event: "control.requested", Session: h.name, ClientID: requesterID,
 		Protocol: int(client.version), Role: string(client.assignedRole), Reason: "control_requested",
 	})
+}
+
+func (h *host) awaitRawInput(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for h.inputIsCanonical() && time.Now().Before(deadline) {
+		select {
+		case <-h.exited:
+			return
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+// inputIsCanonical reports whether the child's terminal still cooks input.
+// The master shares the slave's termios, so no slave descriptor is kept.
+func (h *host) inputIsCanonical() bool {
+	if h.ptmx == nil {
+		return false
+	}
+	raw, err := h.ptmx.SyscallConn()
+	if err != nil {
+		return false
+	}
+	canonical := false
+	_ = raw.Control(func(fd uintptr) {
+		attrs, err := unix.IoctlGetTermios(int(fd), ioctlReadTermios) // #nosec G115 -- descriptor from the runtime
+		canonical = err == nil && attrs.Lflag&unix.ICANON != 0
+	})
+	return canonical
 }
 
 func (h *host) applyPTYSize(size terminalSize) {
