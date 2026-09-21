@@ -131,7 +131,7 @@ func TestProviderIndependentRowsKeepTheSameSemanticGrammar(t *testing.T) {
 		m.sessions = []adapter.Session{sess}
 		m.width, m.height, m.sizeKnown = 100, 30, true
 
-		rendered := ansi.Strip(strings.Join(entryLines(m.dashboardBodyEntries(100, 12), 100), "\n"))
+		rendered := ansi.Strip(m.View().Content)
 		for _, want := range []string{"same-name", provider, "Running", "Attach"} {
 			if !strings.Contains(rendered, want) {
 				t.Fatalf("provider %q row missing %q: %s", provider, want, rendered)

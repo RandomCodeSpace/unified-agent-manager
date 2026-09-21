@@ -15,34 +15,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestLayoutClassAndDashboardModeAreDerived(t *testing.T) {
-	tests := []struct {
-		width, height int
-		want          LayoutClass
-	}{
-		{120, 40, LayoutWide},
-		{80, 30, LayoutStandard},
-		{44, 20, LayoutCompact},
-		{44, 12, LayoutCompact},
-		{120, 20, LayoutWide},
-	}
-	for _, tc := range tests {
-		m := Model{width: tc.width, height: tc.height}
-		if got := m.layoutClass(); got != tc.want {
-			t.Errorf("layoutClass(%dx%d) = %v, want %v", tc.width, tc.height, got, tc.want)
-		}
-	}
-
-	m := Model{}
-	if got := m.dashboardMode(); got != ModeOperations {
-		t.Fatalf("default dashboard mode = %v, want operations", got)
-	}
-	m.wizard = true
-	if got := m.dashboardMode(); got != ModeNew {
-		t.Fatalf("wizard dashboard mode = %v, want new", got)
-	}
-}
-
 func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 	sizes := []struct{ width, height int }{{120, 40}, {80, 30}, {44, 20}, {44, 12}, {44, 10}}
 	modes := []struct {
@@ -50,8 +22,8 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 		set  func(*Model)
 		want string
 	}{
-		{"operations", func(*Model) {}, "Agents"},
-		{"new", func(m *Model) { m.wizard = true; m.wizardStep = 3 }, "NEW SESSION"},
+		{"operations", func(*Model) {}, "UAM"},
+		{"new", func(m *Model) { m.openLaunchPad() }, "provider"},
 	}
 	for _, size := range sizes {
 		for _, mode := range modes {
@@ -61,8 +33,12 @@ func TestDashboardRequiredFixturesStayWithinTerminal(t *testing.T) {
 				mode.set(&m)
 				view := m.View().Content
 				assertViewGeometry(t, view, size.width, size.height)
-				if !strings.Contains(view, mode.want) {
-					t.Fatalf("view lost required %s affordance %q:\n%s", mode.name, mode.want, view)
+				want := mode.want
+				if size.height < dashboardMinHeight {
+					want = "UAM needs"
+				}
+				if !strings.Contains(view, want) {
+					t.Fatalf("view lost required %s affordance %q:\n%s", mode.name, want, view)
 				}
 			})
 		}
@@ -92,17 +68,16 @@ func TestCompactRenderingKeepsUnicodeValidAndBoundsLongContent(t *testing.T) {
 func TestCompactModesAreExclusiveAndKeepBottomHelp(t *testing.T) {
 	m := responsiveFixture(44, 12)
 	operations := m.View().Content
-	if strings.Contains(operations, uamANSILogo) {
-		t.Fatalf("compact operations must omit the ASCII logo:\n%s", operations)
-	}
 	assertBottomContains(t, operations, "move")
 
-	m.wizard = true
+	m.openLaunchPad()
 	newView := m.View().Content
-	if strings.Contains(newView, "SESSIONS") {
-		t.Fatalf("compact new must replace other primary surfaces:\n%s", newView)
+	for _, want := range []string{"provider", "directory", "name", "prompt"} {
+		if !strings.Contains(newView, want) {
+			t.Fatalf("compact launch pad lost the %q field:\n%s", want, newView)
+		}
 	}
-	assertBottomContains(t, newView, "›")
+	assertBottomContains(t, newView, "start")
 }
 
 func TestNoColorResponsiveViewKeepsSemanticGlyphs(t *testing.T) {
@@ -136,9 +111,10 @@ func TestNoColorResponsiveViewHelper(t *testing.T) {
 	m := responsiveFixture(0, 0)
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	m.sessions[0].PR = &adapter.PRRef{Status: adapter.PRMerged}
-	m.sessions[1].ProcAlive = adapter.Exited
-	m.sessions[2].ProcAlive = adapter.Exited
-	m.sessions[2].ExitCode = exitCode(1)
+	// The newest sessions sort first, so these land on the first page.
+	m.sessions[15].ProcAlive = adapter.Exited
+	m.sessions[11].ProcAlive = adapter.Exited
+	m.sessions[11].ExitCode = exitCode(1)
 	SortSessions(m.sessions)
 	m.selected = 0
 	_, _ = os.Stdout.WriteString(m.View().Content)
@@ -167,40 +143,33 @@ func TestKnownZeroAndTinyHeightsStayBoundedAndReadOnly(t *testing.T) {
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 1})
 	view := m.View().Content
 	assertViewGeometry(t, view, 44, 1)
-	if !strings.Contains(view, "Agents needs 40x12") || strings.Contains(view, "refresh failed") {
+	if !strings.Contains(view, "UAM needs 40x12") || strings.Contains(view, "refresh failed") {
 		t.Fatalf("height-1 view must expose the safe minimum: %q", view)
 	}
 }
 
-func TestCompactWizardEveryStepKeepsEssentialAffordances(t *testing.T) {
-	tests := []struct {
-		step int
-		want []string
-	}{
-		{0, []string{"provider", "Tab", "Enter", "Esc"}},
-		{1, []string{"command alias", "Enter", "Esc"}},
-		{2, []string{"working directory", "Tab", "Enter", "Esc", "⚠ not a git repo"}},
-		{3, []string{"#name prompt", "Ctrl+G", "Enter", "Esc"}},
+func TestCompactLaunchPadKeepsEveryFieldAndWarnsOutsideGit(t *testing.T) {
+	m := responsiveFixture(0, 0)
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
+	m.openLaunchPad()
+	m.input = "typed-name"
+	view := m.View().Content
+	assertViewGeometry(t, view, 44, 12)
+	for _, want := range []string{"provider", "claude", "directory", "name", "typed-name", "prompt", "Running"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("compact launch pad lost %q:\n%s", want, view)
+		}
 	}
-	for _, tc := range tests {
-		t.Run(fmt.Sprintf("step-%d", tc.step+1), func(t *testing.T) {
-			m := responsiveFixture(0, 0)
-			m.wizard = true
-			m.wizardStep = tc.step
-			m.input = "typed-current-step"
-			if tc.step == 2 {
-				m.input = "/definitely-not-a-git-workspace"
-			}
-			m = m.handleWindowSize(tea.WindowSizeMsg{Width: 44, Height: 12})
-			view := m.View().Content
-			assertViewGeometry(t, view, 44, 12)
-			for _, want := range tc.want {
-				if !strings.Contains(view, want) {
-					t.Fatalf("wizard step %d lost %q:\n%s", tc.step+1, want, view)
-				}
-			}
-			assertBottomContains(t, view, m.input)
-		})
+	assertBottomContains(t, view, "start")
+
+	// The git warning rides the hint column, which Compact and Wide have.
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.focusLaunchField(launchFieldDir)
+	m.input = "/definitely-not-a-git-workspace"
+	wide := m.View().Content
+	assertViewGeometry(t, wide, 80, 24)
+	if !strings.Contains(wide, "not a git repo") || !strings.Contains(wide, m.input) {
+		t.Fatalf("launch pad lost the git warning or the typed directory:\n%s", wide)
 	}
 }
 

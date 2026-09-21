@@ -6,31 +6,30 @@ what stays visible and how to operate sessions safely in each layout.
 
 ## Lifecycle at a glance
 
-Rows are partitioned by process liveness:
+Every stamp carries a literal lifecycle word next to its glyph:
 
 - **Running** means the provider process is alive.
 - **Stopped** means the provider process is gone but the Managed Session record
-  remains. Clean exits and explicit stops use a neutral marker. A known nonzero
-  exit or signal uses a failure marker and displays `exit N` or `signal`.
+  remains. Clean exits and explicit stops use a neutral marker.
+- **Failed N** means a known nonzero exit (`Failed 7`) or a signal
+  (`Failed signal`); the failure marker replaces the neutral one.
 
 UAM does not infer "working," "waiting," or "completed" by scraping provider
-text. The selected row's prompt is kept as its task summary; failure detail is
-added without replacing it.
+text, and the dashboard never reads session output. Everything on screen comes
+from the stored record (name, provider, directory, creation time, pin, pull
+request, profile) and the live process check. Nothing moves on a refresh tick
+except the clock and a real lifecycle change.
 
-Every row begins with provider as a padded, filled Lip Gloss label after the
-selection rail; Wide rows additionally include creation age and task. Age is
-deliberately not an activity indicator:
-live discovery timestamps change on every refresh and cannot prove that an agent
-is busy or idle. The age is additionally tinted along a four-stop ramp (fresh
-under an hour, recent under a day, old under a week, then stale), which colours
-the same creation-time fact rather than introducing an activity claim —
-`adapter.Session.LastChange` is re-stamped by every discovery scan and so cannot
-support one.
+Lifecycle is displayed, never sorted: a session keeps its position (and its
+door digit) when it stops or fails. The canonical order is pinned first, then
+the manual order, then newest first.
 
-The selected-session context shows `Updated HH:MM TZ`, derived from the
-persisted `LastSeenAt` liveness observation and converted to the dashboard's
-local timezone. It means UAM last observed the Managed Session then; it does not
-claim that the provider produced output or changed conversational state then.
+Creation time is shown as the clock when the session was created today, the day
+when it was created this year, and the month and year otherwise. The ledger
+adds `Updated HH:MM TZ` for stopped sessions, derived from the persisted
+`LastSeenAt` observation and converted to the dashboard's local timezone. It
+means UAM last observed the Managed Session then; it does not claim that the
+provider produced output then.
 
 Attaching to Running reconnects to the existing host. Acting on Stopped resumes
 the provider when supported. If that resume can only select the provider's most
@@ -39,40 +38,59 @@ asks for confirmation before launching anything.
 
 ## Layout classes
 
-The dashboard derives its horizontal grammar from width only. Height changes the
-number of visible Bubbles viewport rows; it never changes row meaning or moves an
-action into a different field.
+The dashboard is a launcher and a switchboard. Top to bottom:
 
-| Layout | Width | Roster fields | Fixed context |
-|---|---|---|---|
-| **Wide** | At least 96 columns | lifecycle, identity, provider, task, age, primary action | provider, update time and zone, full ID, path, Stop or Remove |
-| **Compact** | 60 through 95 columns | lifecycle, identity, provider, primary action | provider, update time and zone, full ID, shortened path, Stop or Remove |
-| **Narrow** | 40 through 59 columns | lifecycle, identity, provider, primary action | provider, update time and zone, Stop or Remove |
+1. **Header**: the `UAM` badge and build version, the page range with fleet
+   counts (`sessions 1-6 of 6 · 2 running · 1 failed`), and a local 24-hour
+   `HH:MM TZ` clock. The clock and identity survive every width.
+2. **Launch pad**: the provider and directory a new session would start with.
+   `n` expands it in place into four fields (provider, directory, name, prompt)
+   with the deck still visible beneath.
+3. **Deck**: every session is a two-line stamp. Line one: selection rail, door
+   digit, lifecycle glyph and word, name (with `★` when pinned) and provider.
+   Line two: directory (elided from the left at a segment boundary) and creation
+   time. Stamps fill columns left to right and rows top to bottom.
+4. **Ledger**: the selected session in full, plus the action words that
+   `Enter`, `Space`, `Ctrl+X`, `Ctrl+R` and `Ctrl+T` perform on it.
+5. One Bubbles help line.
 
-Every session occupies exactly one line. Optional fields disappear as complete
-units; identity, literal lifecycle, and the primary action never disappear. At
-40 by 12, the screen contains a header, divider, seven roster rows, a context
-divider, selected-session context, and one Bubbles help line. Smaller terminals
-show a non-destructive minimum-size notice rather than clipped controls.
+The deck's geometry depends on width only. Height changes how many stamp rows
+fit on a page; it never changes what a stamp says.
 
-The header uses a fixed-width Lip Gloss `UAM` badge instead of an emoji wordmark,
-followed by the build version. A local 24-hour `HH:MM TZ` clock and the literal
-`Agents` label remain visible at every supported width; verbose refresh and
-session-count wording yield first.
+| Width | Deck columns | Ledger |
+|---|---|---|
+| 40 through 79 columns | 1 | one line: the action words |
+| 80 through 119 columns | 2 | three lines: identity, directory, actions |
+| 120 columns and up | 3 (one more per further 40 columns) | two lines: identity with directory and ID, actions |
+
+A stamp is at least 39 cells wide and grows to fill its column. No field is
+ever dropped from a stamp; only the name and directory truncate. The ledger
+appends optional facts (last observation, pull request, profile, directory, ID)
+only while each fits whole and hands the rest to its next line, so nothing is
+clipped mid-word.
+
+When the fleet does not fit on one page, the header prints the visible range
+and `PgUp`/`PgDn` page the deck. The first nine stamps on a page carry door
+digits `1` through `9`.
+
+At 40 by 12 the screen holds the header, the launch pad line, a rule, three
+stamps, a rule, the action line and the help line. Smaller terminals show a
+non-destructive minimum-size notice rather than clipped controls.
 
 ### Mouse and frame safety
 
-A row is a selection target. `Attach` and `Resume` are separate Lip Gloss action
-layers, so clicking a row never activates it. The selected session's `Stop` or
-`Remove` action lives in the fixed context band. Wheel events move selection and
-the viewport follows it.
+A stamp body is a selection target. The door digit is a separate Lip Gloss
+layer that attaches, and the ledger's `Attach`/`Resume` and `Stop`/`Remove`
+words are layers of their own, so clicking a stamp never activates it. The
+launch pad line is a layer that opens the pad. Wheel events move the selection
+one deck row at a time.
 
 Bubble Tea v2 routes pointer input through `View.OnMouse` on the view that was
 actually displayed. The callback resolves the top Lip Gloss compositor layer
 and emits a semantic intent containing the captured frame signature, dimensions,
 provider, session ID, and action signature. Update discards the intent if a
-refresh, resize, reorder, filter, lifecycle change, or removal made it stale.
-Raw coordinates never call a service operation.
+refresh, resize, reorder, filter, lifecycle change, removal, or pad toggle made
+it stale. Raw coordinates never call a service operation.
 
 Mouse reporting is on by default. It takes over native drag-to-select copying,
 so `UAM_NO_MOUSE=1` disables it.
@@ -81,35 +99,40 @@ so `UAM_NO_MOUSE=1` disables it.
 
 | Key | Action |
 |---|---|
-| `↑` / `↓` | Move the selected row. |
-| `Enter` / `→` | Attach to Running, or resume and attach to Stopped. |
-| Mouse row click | Select only. |
-| Mouse `Attach` / `Resume` click | Invoke the explicit primary action. |
-| Mouse `Stop` / `Remove` click | Open the Huh confirmation form. |
-| Wheel | Move selection through the viewport. |
+| `↑` / `↓` | Move the selection one deck row. |
+| `←` / `→` | Move the selection one stamp. |
+| `PgUp` / `PgDn`, `Home` / `End` | Page the deck; jump to the first or last stamp. |
+| `1` … `9` | Open the stamp behind that door digit on the visible page (attach, or resume and attach). |
+| `0` | Reopen the session most recently attached this run. |
+| `Enter` | Attach to Running, or resume and attach to Stopped. |
+| Mouse stamp click | Select only. |
+| Mouse door digit click, or ledger `Attach` / `Resume` click | Invoke the explicit primary action. |
+| Mouse ledger `Stop` / `Remove` click | Open the Huh confirmation form. |
+| Mouse launch pad click | Expand the launch pad. |
+| Wheel | Move the selection one deck row. |
 | `Space` | Resume Stopped in the background; this may first require latest-conversation confirmation. |
-| `Tab` | Cycle the default provider. In the wizard, cycle provider or complete a path according to the current step. |
-| `e` | Open the four-step New Session wizard. |
-| `Ctrl+G` | Open `$VISUAL` or `$EDITOR` for the wizard prompt. |
-| `Ctrl+T` | Pin or unpin the selected row. |
-| `Ctrl+R` | Rename the selected Managed Session. |
+| `n` (or `e`) | Expand the launch pad in place. Inside it: `↑`/`↓` move between fields, `Tab` cycles the provider or completes the directory, `Shift+Tab` cycles the profile on the provider field, `Ctrl+G` opens `$VISUAL` or `$EDITOR` for the prompt, `Enter` starts the session, `Esc` cancels. The prompt still accepts the `@agent:alias #name prompt` shorthand. |
+| `Tab` | Cycle the default provider shown on the launch pad. |
+| `Ctrl+T` | Pin or unpin the selected session. |
+| `Ctrl+R` | Rename the selected Managed Session inline in the ledger. |
 | `Ctrl+X` | Open a Huh Stop or Remove form with Cancel focused; `r` selects the existing restart intent. |
 | `Ctrl+S` | Toggle Workspace grouping. |
-| `Shift+↑` / `Shift+↓` | Reorder within the same lifecycle, pin, and visible Workspace group. |
+| `Shift+↑` / `Shift+↓` / `Shift+←` / `Shift+→` | Reorder along the same axes, within the same pin state and visible Workspace group. |
 | `/` | Enter live filtering. Type to narrow, use arrows to move, and press `Esc` to clear. |
 | `r` | Retry the existing load path while a persistent refresh failure is visible. |
 | `?` | Toggle the one-line Bubbles help footer between primary and secondary commands. |
-| `Esc` | Cancel the current form or overlay; from the base dashboard, quit. |
-| `Ctrl+C` | Quit from anywhere, including help, the wizard, rename, and confirmations. |
+| `Esc` | Cancel the current form, pad, or filter; from the base dashboard, quit. |
+| `Ctrl+C` | Quit from anywhere, including help, the launch pad, rename, and confirmations. |
 
-The base dashboard has no command composer. Use `uam new`, the existing `e`
-wizard, or other CLI commands to create and configure sessions.
+The base dashboard has no free-text composer. Use the launch pad, `uam new`,
+or other CLI commands to create and configure sessions.
 
 Inside an attached session, `Ctrl+B d` detaches. Ctrl+Left also detaches when
 the provider input is empty and the quick-detach option is enabled; bare arrows
 always reach the provider. On uam's own alternate screen the last terminal row
 is a persistent status bar (role, session, profile, keys) and the provider gets
-the rows above it. See the README for the complete attach-key contract.
+the rows above it. See the README for the complete attach-key contract. After a
+detach the cursor lands on the stamp you just left, so `Enter` re-enters it.
 
 ## Multiple attached terminals
 
@@ -132,7 +155,7 @@ provider input. The full protocol and mixed-version matrix is
 
 ## Filtering sessions
 
-Press `/` from the base dashboard to filter the existing roster.
+Press `/` from the base dashboard to filter the existing deck.
 Matching is case-insensitive across display name, managed-session ID, provider,
 command alias, task, Workspace, and lifecycle label. Space-separated terms must
 all match the same session. The dashboard shows matched/total counts without
@@ -167,15 +190,15 @@ Mobile operation requires a terminal extra-keys row or hardware keyboard that
 can send Escape, Tab, arrows, and Control chords. UAM does not currently provide
 touch-only substitutes for those terminal keys.
 
-1. Keep the terminal between 40 and 59 columns and at least 12 rows.
-2. Tap a row once to select it, then tap its explicit `Attach` or `Resume`
-   action. `Enter` activates the selected session without requiring a second tap.
-3. Use `e` for the bounded wizard; the base dashboard has no command composer.
+1. Keep the terminal between 40 and 79 columns and at least 12 rows.
+2. Tap a stamp once to select it, then tap its door digit or the ledger's
+   `Attach`/`Resume` word. Typing the digit opens the stamp without a tap.
+3. Use `n` for the launch pad; the base dashboard has no free-text composer.
 4. Use `Ctrl+G` with a terminal/editor combination that supports external editor
    handoff when a multi-line prompt is easier outside the small viewport.
 
-The selected-session context, destructive action, and one-line help remain
-visible as height changes. UAM does not assume a fixed phone aspect ratio.
+The ledger's action line and the one-line help remain visible as height
+changes. UAM does not assume a fixed phone aspect ratio.
 
 ## SSH, mouse, and paste
 
@@ -286,8 +309,8 @@ never persisted.
 - Names, paths, prompts, headings, and status text are sanitized before display
   so stored control sequences cannot alter the terminal.
 - Width calculations account for emoji, combining characters, and CJK text.
-- The wizard prompt, current selection, lifecycle headings, and modal choices remain
-  textual and keyboard-operable.
+- The launch pad, current selection, ledger, and modal choices remain textual
+  and keyboard-operable.
 
 ## Operational checks
 

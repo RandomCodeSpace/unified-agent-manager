@@ -14,7 +14,7 @@ func TestCtrlCQuitsFromEveryModal(t *testing.T) {
 		"expanded help":  func(m *Model) { m.helpOpen = true },
 		"stop confirm":   func(m *Model) { m.confirmStop = true },
 		"latest confirm": func(m *Model) { m.confirmLatest = true },
-		"wizard":         func(m *Model) { m.wizard = true },
+		"launch pad":     func(m *Model) { m.openLaunchPad() },
 		"rename":         func(m *Model) { m.renaming = true },
 		"filter":         func(m *Model) { m.filterActive = true; m.filterQuery = "abc" },
 		"none":           func(m *Model) {},

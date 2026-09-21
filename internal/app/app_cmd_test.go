@@ -73,16 +73,17 @@ func TestTabPersistsDefaultAgentChoice(t *testing.T) {
 	}
 }
 
-func TestWizardTabPersistsDefaultAgentChoice(t *testing.T) {
+func TestLaunchPadTabPersistsDefaultAgentChoice(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "a", available: true}, &svcFakeAdapter{name: "b", available: true}}))
-	m.wizard = true
 	m.defaultAgent = "a"
-	model, _ := m.handleWizardKey(keyMsg("tab"))
+	m.openLaunchPad()
+	m.focusLaunchField(launchFieldProvider)
+	model, _ := m.handleLaunchKey(keyMsg("tab"))
 	m = model.(Model)
-	if m.defaultAgent != "b" || m.wizardAgent != "b" {
-		t.Fatalf("default=%s wizard=%s", m.defaultAgent, m.wizardAgent)
+	if m.defaultAgent != "b" || m.launchAgent != "b" {
+		t.Fatalf("default=%s launch=%s", m.defaultAgent, m.launchAgent)
 	}
 	cfg, err := st.Load()
 	if err != nil {
@@ -161,22 +162,21 @@ func TestHandleKeyBranches(t *testing.T) {
 	m.input = ""
 	model, cmd = m.handleKey(keyMsg("right"))
 	_ = model.(Model)
-	if cmd == nil {
-		t.Fatal("expected attach cmd")
+	if cmd != nil {
+		t.Fatal("right moves the cursor on the deck; it must not attach")
 	}
 }
 
-func TestWizardPromptTypingAllowsAgentMentionsSpacesAndShortcutLetters(t *testing.T) {
+func TestLaunchPromptTypingAllowsAgentMentionsSpacesAndShortcutLetters(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(filepath.Join(dir, "sessions.json"))
 	fake := &svcFakeAdapter{name: "fake", available: true, sessions: []adapter.Session{{ID: "abc12345", AgentType: "fake", DisplayName: "live", Cwd: "/tmp", SessionName: "uam-fake-abc12345", State: adapter.Active, CreatedAt: time.Now()}}}
 	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	m.sessions = fake.sessions
 	m.defaultAgent = "fake"
-	m.wizard = true
-	m.wizardStep = 3
-	m.wizardAgent = "fake"
-	m.wizardCwd = "/tmp"
+	m.openLaunchPad()
+	m.launchDir = "/tmp"
+	m.focusLaunchField(launchFieldPrompt)
 
 	for _, r := range "@fake #bugfix hello world" {
 		model, _ := m.handleKey(keyMsg(string(r)))
@@ -213,21 +213,14 @@ func TestRenameAndWizardEnterBranches(t *testing.T) {
 	if m.renaming || cmd == nil {
 		t.Fatal("rename enter failed")
 	}
-	m.wizard = true
-	m.wizardStep = 0
 	m.defaultAgent = "fake"
-	model, _ = m.handleWizardKey(keyMsg("enter"))
+	m.openLaunchPad()
+	m.launchDir = "/tmp"
+	m.input = "named"
+	model, cmd = m.handleLaunchKey(keyMsg("enter"))
 	m = model.(Model)
-	model, _ = m.handleWizardKey(keyMsg("enter"))
-	m = model.(Model)
-	m.input = "/tmp"
-	model, _ = m.handleWizardKey(keyMsg("enter"))
-	m = model.(Model)
-	m.input = "prompt"
-	model, cmd = m.handleWizardKey(keyMsg("enter"))
-	m = model.(Model)
-	if m.wizard || cmd == nil {
-		t.Fatal("wizard dispatch failed")
+	if m.launchOpen || cmd == nil {
+		t.Fatal("launch pad dispatch failed")
 	}
 }
 

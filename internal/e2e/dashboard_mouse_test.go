@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -46,46 +47,55 @@ func runDashboardMouse(t *testing.T, viaSSH bool) {
 	h.mustRun("dispatch", "codex", "#beta")
 
 	d := startDashboard(t, h, viaSSH)
-	d.mustAwait("both rows", func() bool { return d.row("alpha") >= 0 && d.row("beta") >= 0 })
+	d.mustAwait("both stamps", func() bool { return d.row("alpha") >= 0 && d.row("beta") >= 0 })
 
-	// A row click selects and does nothing else.
+	// A stamp click selects and does nothing else.
 	target := "beta"
-	if d.selectedRow() == d.row("beta") {
+	if d.selectedIs("beta") {
 		target = "alpha"
 	}
-	col, row := d.locateOnRow(target, target)
+	col, row := d.locate(target)
 	d.click(col, row)
-	d.mustAwait(target+" selected by click", func() bool { return d.selectedRow() == d.row(target) })
+	d.mustAwait(target+" selected by click", func() bool { return d.selectedIs(target) })
 	if d.seen.contains("[uam: role") {
-		t.Fatalf("row click attached; screen:\n%s", d.screen())
+		t.Fatalf("stamp click attached; screen:\n%s", d.screen())
 	}
 
-	// The explicit Attach button attaches on the first click even after the
+	// The ledger's Attach word attaches on the first click even after the
 	// periodic refresh has run since the last repaint; the prefix detaches.
 	time.Sleep(3 * time.Second)
-	col, row = d.locateOnRow(target, "Attach")
+	col, row = d.locate("Attach")
 	d.click(col, row)
-	d.mustAwait("attach client from the button", func() bool { return d.seen.contains("[uam: role") && d.seen.contains("FAKE CODEX") })
-	d.send("\x02d")
+	d.mustAwait("attach client from the ledger", func() bool { return d.seen.contains("[uam: role") && d.seen.contains("FAKE CODEX") })
+	d.detach()
 	d.mustAwait("dashboard back after detach", func() bool { return d.row("alpha") >= 0 && d.row("beta") >= 0 && d.row("[uam: role") < 0 })
+	d.mustAwait("cursor returns to the session just left", func() bool { return d.selectedIs(target) })
 
-	// The wheel moves the selection inside the roster, whatever the order.
+	// The wheel moves the selection inside the deck, whatever the order.
 	first, second := "alpha", "beta"
-	if d.row("beta") < d.row("alpha") {
+	if d.doorOf("beta") < d.doorOf("alpha") {
 		first, second = "beta", "alpha"
 	}
-	col, row = d.locateOnRow(first, first)
+	col, row = d.locate(first)
 	d.click(col, row)
-	d.mustAwait(first+" selected", func() bool { return d.selectedRow() == d.row(first) })
+	d.mustAwait(first+" selected", func() bool { return d.selectedIs(first) })
 	d.wheel(col, row, false)
-	d.mustAwait("wheel down selects "+second, func() bool { return d.selectedRow() == d.row(second) })
+	d.mustAwait("wheel down selects "+second, func() bool { return d.selectedIs(second) })
 	d.wheel(col, row, true)
-	d.mustAwait("wheel up selects "+first, func() bool { return d.selectedRow() == d.row(first) })
+	d.mustAwait("wheel up selects "+first, func() bool { return d.selectedIs(first) })
+
+	// A door digit opens its stamp directly.
+	d.send(strconv.Itoa(d.doorOf(second)))
+	// The recorder is cumulative and already saw the first attach, so wait on
+	// the live screen instead.
+	d.mustAwait("door digit attaches "+second, func() bool { return d.row("[uam: role") >= 0 && d.row("FAKE CODEX") >= 0 })
+	d.detach()
+	d.mustAwait("dashboard back after door", func() bool { return d.row("alpha") >= 0 && d.row("[uam: role") < 0 && d.selectedIs(second) })
 
 	// Stop opens the Huh confirmation; its pointer buttons cancel and confirm.
-	col, row = d.locateOnRow("alpha", "alpha")
+	col, row = d.locate("alpha")
 	d.click(col, row)
-	d.mustAwait("alpha selected for stop", func() bool { return d.selectedRow() == d.row("alpha") })
+	d.mustAwait("alpha selected for stop", func() bool { return d.selectedIs("alpha") })
 	col, row = d.locate("Stop")
 	d.click(col, row)
 	d.mustAwait("stop confirmation", func() bool { return d.row("Stop session") >= 0 && d.row("Cancel") >= 0 })
@@ -110,11 +120,13 @@ func runDashboardMouse(t *testing.T, viaSSH bool) {
 		t.Fatalf("confirm stopped the wrong session; screen:\n%s", d.screen())
 	}
 
-	// The minimum geometry keeps identity, state and the primary action.
+	// The minimum geometry keeps identity, provider, state, directory and the
+	// primary action for whichever stamp is selected.
 	d.resize(40, 12)
 	d.mustAwait("40x12 layout", func() bool {
 		line := d.line(d.row("beta"))
-		return d.row("UAM") >= 0 && strings.Contains(line, "codex") && strings.Contains(line, "Running") && strings.Contains(line, "Attach")
+		return d.row("UAM") >= 0 && strings.Contains(line, "codex") && strings.Contains(line, "Running") &&
+			d.row("/") >= 0 && (d.row("Attach") >= 0 || d.row("Resume") >= 0)
 	})
 
 	d.send("\x03")
@@ -179,7 +191,7 @@ func startDashboard(t *testing.T, h *harness, viaSSH bool) *dashboard {
 		<-d.seen.done
 		_ = os.WriteFile(capture, d.seen.bytes(), 0o600)
 	})
-	d.mustAwait("dashboard header", func() bool { return d.row("Agents") >= 0 })
+	d.mustAwait("dashboard header", func() bool { return d.row("UAM") >= 0 })
 	if !d.seen.contains("\x1b[?1006h") {
 		t.Fatalf("dashboard did not enable SGR mouse reporting: %q", d.seen.tail())
 	}
@@ -222,14 +234,36 @@ func (d *dashboard) row(text string) int {
 	return -1
 }
 
-// selectedRow is the row carrying the selection rail (glyph or ASCII fallback).
-func (d *dashboard) selectedRow() int {
-	for i, line := range d.lines() {
-		if strings.HasPrefix(line, "|") || strings.HasPrefix(line, "▌") {
-			return i
+// ledgerLine is the ledger's identity line: it carries the selection rail
+// (glyph or ASCII fallback) and dot-separated fields, which stamps never do.
+func (d *dashboard) ledgerLine() string {
+	for _, line := range d.lines() {
+		if (strings.HasPrefix(line, "|") || strings.HasPrefix(line, "▌")) && (strings.Contains(line, " · ") || strings.Contains(line, " - ")) {
+			return line
 		}
 	}
-	return -1
+	return ""
+}
+
+// selectedIs reports whether the ledger names the given session.
+func (d *dashboard) selectedIs(name string) bool {
+	line := d.ledgerLine()
+	return strings.HasPrefix(line, "▌ "+name+" ") || strings.HasPrefix(line, "| "+name+" ")
+}
+
+// doorOf returns the digit printed on the named stamp, or 0.
+func (d *dashboard) doorOf(name string) int {
+	line := d.line(d.row(name))
+	before, _, found := strings.Cut(line, name)
+	if !found {
+		return 0
+	}
+	for i := len(before) - 1; i >= 0; i-- {
+		if before[i] >= '1' && before[i] <= '9' {
+			return int(before[i] - '0')
+		}
+	}
+	return 0
 }
 
 // locate returns 1-based terminal coordinates of the first cell of text.
@@ -244,18 +278,23 @@ func (d *dashboard) locate(text string) (col, row int) {
 	return 0, 0
 }
 
-func (d *dashboard) locateOnRow(rowText, text string) (col, row int) {
+// detach sends the prefix chord until the attach client hands the screen back.
+// The client draws its status bar before it reads stdin, so a chord sent the
+// instant the bar appears can land in the cooked-mode line buffer and vanish.
+func (d *dashboard) detach() {
 	d.t.Helper()
-	i := d.row(rowText)
-	if i < 0 {
-		d.t.Fatalf("row %q not on screen:\n%s", rowText, d.screen())
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		d.send("\x02d")
+		settle := time.Now().Add(2 * time.Second)
+		for time.Now().Before(settle) {
+			if d.row("[uam: role") < 0 {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
-	line := d.line(i)
-	before, _, found := strings.Cut(line, text)
-	if !found {
-		d.t.Fatalf("%q not on row %q: %q", text, rowText, line)
-	}
-	return runewidth.StringWidth(before) + 1, i + 1
+	d.t.Fatalf("attach client ignored the detach chord; screen:\n%s", d.screen())
 }
 
 func (d *dashboard) send(keys string) {

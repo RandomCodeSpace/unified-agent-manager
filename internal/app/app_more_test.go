@@ -58,10 +58,10 @@ func TestModelModalViewsAndHelpers(t *testing.T) {
 	if !strings.Contains(m.View().Content, "Stop") {
 		t.Fatal("missing confirm")
 	}
-	m.wizard = true
+	m.openLaunchPad()
 	m.confirmStop = false
-	if !strings.Contains(m.View().Content, "NEW SESSION") {
-		t.Fatal("missing wizard")
+	if !strings.Contains(m.View().Content, "provider") {
+		t.Fatal("missing launch pad")
 	}
 	assertViewHelpers(t)
 }
@@ -303,23 +303,21 @@ func TestViewKeepsSessionSemanticsInsideDashboard(t *testing.T) {
 	}
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 30})
 	view := m.View().Content
-	for _, want := range []string{"fake", "Running", "Stopped", "Attach", "Resume"} {
+	for _, want := range []string{"fake", "Running", "Stopped", "Attach"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expanded dashboard missing %q: %s", want, view)
 		}
 	}
+	m.selected = 1
+	if stopped := m.View().Content; !strings.Contains(stopped, "Resume") {
+		t.Fatalf("ledger for the stopped session missing Resume: %s", stopped)
+	}
+	m.selected = 0
 	if strings.Contains(view, "⠋") || strings.Contains(view, "💀") || strings.Contains(view, "TMUX: LIVE") || strings.Contains(view, "🚀") || strings.Contains(view, "🟢") {
 		t.Fatalf("view should use compact styling, no spinner/skull/large emoji: %s", view)
 	}
 	if strings.Contains(view, "1 live") || strings.Contains(view, "1 dead") || strings.Contains(view, "agent fake") || strings.Contains(view, "DEPARTURES") {
 		t.Fatalf("view should use dashboard metadata instead of legacy aggregates: %s", view)
-	}
-	table := m.renderTable()
-	if !strings.Contains(table, "RUNNING") || !strings.Contains(table, "STOPPED") {
-		t.Fatalf("table should group sessions into RUNNING and STOPPED: %s", table)
-	}
-	if !strings.Contains(table, "one") || !strings.Contains(table, "fix the parser") {
-		t.Fatalf("table should show session name and task: %s", table)
 	}
 }
 
@@ -340,15 +338,18 @@ func TestSpaceRestartsStoppedSessionOtherwiseDoesNothing(t *testing.T) {
 	}
 }
 
-func TestSessionRowsStayStaticAcrossRefresh(t *testing.T) {
+func TestSessionStampsStayStaticAcrossRefresh(t *testing.T) {
 	m := NewWithDeps(nil, nil)
+	m.now = func() time.Time { return time.Date(2026, time.May, 18, 12, 0, 0, 0, time.UTC) }
 	m.sessions = []adapter.Session{{ID: "live", DisplayName: "live", ProcAlive: adapter.Alive}, {ID: "dead", DisplayName: "dead", ProcAlive: adapter.Exited, Closed: true}}
-	before := m.renderTable()
-	if !strings.Contains(before, "RUNNING") || !strings.Contains(before, "STOPPED") {
-		t.Fatalf("table should group sessions into RUNNING and STOPPED: %s", before)
+	g := deckGeometryFor(80, 10)
+	deck := func() string { return strings.Join(m.deckLines(g, m.visibleSessionIndices(), 0, 2, 10), "\n") }
+	before := deck()
+	if !strings.Contains(before, "Running") || !strings.Contains(before, "Stopped") {
+		t.Fatalf("deck should spell each stamp's lifecycle: %s", before)
 	}
 	if strings.Contains(before, "⠋") || strings.Contains(before, "💀") || strings.Contains(before, "🚀") || strings.Contains(before, "🔴") || strings.Contains(before, "🟢") {
-		t.Fatalf("table should stay glyph-based, no spinner/skull/emoji: %s", before)
+		t.Fatalf("deck should stay glyph-based, no spinner/skull/emoji: %s", before)
 	}
 
 	model, cmd := m.Update(refreshMsg(time.Now()))
@@ -356,27 +357,26 @@ func TestSessionRowsStayStaticAcrossRefresh(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected refresh command batch")
 	}
-	after := m.renderTable()
-	if after != before {
-		t.Fatalf("table should remain static across refresh\nbefore=%s\nafter=%s", before, after)
+	if after := deck(); after != before {
+		t.Fatalf("deck should remain static across refresh\nbefore=%s\nafter=%s", before, after)
 	}
 }
 
-func TestWizardAndRenameKeys(t *testing.T) {
+func TestLaunchPadAndRenameKeys(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.wizard = true
-	model, _ := m.handleWizardKey(keyMsg("enter"))
-	m = model.(Model)
-	if m.wizardStep != 1 {
-		t.Fatalf("step=%d", m.wizardStep)
+	m.openLaunchPad()
+	if m.launchField != launchFieldName || m.input != "" {
+		t.Fatalf("launch pad should open on an empty name field: field=%d input=%q", m.launchField, m.input)
 	}
-	if m.input != "" {
-		t.Fatalf("alias input=%q", m.input)
-	}
-	model, _ = m.handleWizardKey(keyMsg("x"))
+	model, _ := m.handleLaunchKey(keyMsg("x"))
 	m = model.(Model)
-	if !strings.Contains(m.input, "x") {
+	if m.input != "x" {
 		t.Fatalf("input=%q", m.input)
+	}
+	model, _ = m.handleLaunchKey(keyMsg("down"))
+	m = model.(Model)
+	if m.launchField != launchFieldPrompt || m.launchName != "x" || m.input != "" {
+		t.Fatalf("down did not commit the name and focus the prompt: field=%d name=%q input=%q", m.launchField, m.launchName, m.input)
 	}
 	m.sessions = []adapter.Session{{ID: "1", DisplayName: "old"}}
 	m.renaming = true
@@ -393,8 +393,10 @@ func TestMovementAndQuitBranches(t *testing.T) {
 	if handled, cmd := m.handleMovementKey("shift+up"); !handled || cmd != nil {
 		t.Fatalf("boundary move handled=%v cmd=%v", handled, cmd)
 	}
-	if handled, cmd := m.handleMovementKey("shift+down"); !handled || cmd != nil || m.selected != 0 || m.sessions[0].ID != "1" {
-		t.Fatalf("cross-lifecycle move was not rejected handled=%v cmd=%v selected=%d sessions=%v", handled, cmd, m.selected, m.sessions)
+	// Liveness is not a partition: a running stamp may swap with a stopped one,
+	// so doors stay stable when a session exits.
+	if handled, cmd := m.handleMovementKey("shift+down"); !handled || cmd == nil || m.selected != 1 || m.sessions[0].ID != "2" {
+		t.Fatalf("cross-lifecycle move was rejected handled=%v cmd=%v selected=%d sessions=%v", handled, cmd, m.selected, m.sessions)
 	}
 
 	m = modelWithTwoSessions()
@@ -433,9 +435,9 @@ func TestInputWindowAndStateBranches(t *testing.T) {
 	m = modelWithTwoSessions()
 	m.height = 12
 	m.selected = 1
-	start, end := m.visibleSessionWindow()
-	if start < 0 || end < start || end > len(m.sessions) {
-		t.Fatalf("bad window %d:%d", start, end)
+	start, end := m.deckGeometry().pageBounds(len(m.sessions), 1)
+	if start != 0 || end != 2 {
+		t.Fatalf("bad page %d:%d", start, end)
 	}
 }
 

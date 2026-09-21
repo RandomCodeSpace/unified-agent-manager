@@ -22,10 +22,12 @@ func TestWorkspaceProjectionPreservesCanonicalOrderWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestWorkspaceProjectionGroupsWithinLifecycleAndPinPartitions(t *testing.T) {
+func TestWorkspaceProjectionGroupsWithinPinPartitions(t *testing.T) {
 	sessions := groupingFixture(t)
 	got := projectSessions(sessions, true)
-	want := []string{"a1", "a3", "a2", "u1", "u2", "c1", "c2"}
+	// Pinned sessions form one partition, everything else the other; liveness
+	// does not split a partition, so u1 and c1 share the "two" workspace group.
+	want := []string{"a1", "a3", "a2", "u1", "c1", "u2", "c2"}
 	if !reflect.DeepEqual(sessionIDs(got), want) {
 		t.Fatalf("grouped projection = %v, want %v", sessionIDs(got), want)
 	}
@@ -58,7 +60,7 @@ func TestGroupToggleRestoresProjectionAndSelectedIdentity(t *testing.T) {
 
 	model, _ := m.handleKey(keyMsg("ctrl+s"))
 	m = model.(Model)
-	if got := sessionIDs(m.sessions); !reflect.DeepEqual(got, []string{"a1", "a3", "a2", "u1", "u2", "c1", "c2"}) {
+	if got := sessionIDs(m.sessions); !reflect.DeepEqual(got, []string{"a1", "a3", "a2", "u1", "c1", "u2", "c2"}) {
 		t.Fatalf("toggle on projection = %v", got)
 	}
 	if selected, ok := m.selectedSession(); !ok || selected.ID != "a3" {
@@ -253,37 +255,6 @@ func TestGroupedReorderPersistsPairIndicesWithoutReindexingOtherWorkspaces(t *te
 	want := map[string]int{"a1": 2, "a2": 0, "b": 1}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("persisted grouped indices = %v, want %v", got, want)
-	}
-}
-
-func TestGroupedNarrowWindowKeepsSelectedWorkspaceHeading(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "selected-workspace")
-	m := NewWithDeps(nil, nil)
-	m.groupByDir = true
-	for i := 0; i < 10; i++ {
-		m.sessions = append(m.sessions, adapter.Session{
-			ID:          string(rune('a' + i)),
-			AgentType:   "fake",
-			DisplayName: "row-" + string(rune('a'+i)),
-			Cwd:         root,
-			ProcAlive:   adapter.Alive,
-			SortIndex:   i,
-		})
-	}
-	m.selected = 6
-	lines := m.groupedSessionListLines(44, 4, LayoutCompact)
-	view := strings.Join(lines, "\n")
-	if !strings.Contains(view, "selected-workspace") || !strings.Contains(view, "row-g") {
-		t.Fatalf("scrolled grouped window orphaned selected row from its heading:\n%s", view)
-	}
-}
-
-func TestWorkspaceHeadingIncludesPathAndCountWhenTheyFit(t *testing.T) {
-	line := workspaceHeadingLine("/tmp/ws", 2, 44)
-	for _, want := range []string{"ws", "/tmp/ws", "2"} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("workspace heading missing %q: %q", want, line)
-		}
 	}
 }
 

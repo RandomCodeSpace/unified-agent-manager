@@ -1,12 +1,13 @@
 package app
 
 import (
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 	"github.com/charmbracelet/x/ansi"
@@ -34,7 +35,7 @@ func TestDashboardHeaderKeepsSingleCellWordmarkVersionAndTime(t *testing.T) {
 	for _, width := range []int{40, 60, 96, 120} {
 		m := dashboardFixture(width, 12)
 		header := strings.SplitN(ansi.Strip(m.View().Content), "\n", 2)[0]
-		for _, want := range []string{"UAM", "v9.9.9", "12:04 UTC", "Agents"} {
+		for _, want := range []string{"UAM", "v9.9.9", "12:04 UTC"} {
 			if !strings.Contains(header, want) {
 				t.Fatalf("width %d header missing %q: %q", width, want, header)
 			}
@@ -52,8 +53,9 @@ func TestDashboardShowsProviderAndObservedUpdateTimeAtEveryWidth(t *testing.T) {
 	updated := time.Date(2026, time.August, 28, 11, 57, 0, 0, time.UTC)
 	for _, width := range []int{40, 60, 96, 120} {
 		m := dashboardFixture(width, 20)
+		m.selected = 1
 		m.lastSeenBySession = map[sessionIdentity]time.Time{
-			{agent: "codex", id: "shared"}: updated,
+			{agent: "claude", id: "shared"}: updated,
 		}
 		view := ansi.Strip(m.View().Content)
 		for _, provider := range []string{"codex", "claude", "opencode"} {
@@ -61,31 +63,32 @@ func TestDashboardShowsProviderAndObservedUpdateTimeAtEveryWidth(t *testing.T) {
 				t.Fatalf("width %d dashboard missing provider %q:\n%s", width, provider, view)
 			}
 		}
-		if !strings.Contains(view, "Updated 11:57 UTC") {
+		// The ledger identity line exists from Compact up. Narrow keeps every
+		// required field on the stamp and spends its one ledger line on verbs.
+		if width >= dashboardCompactMin && !strings.Contains(view, "Updated 11:57 UTC") {
 			t.Fatalf("width %d dashboard missing observed update time and zone:\n%s", width, view)
 		}
 	}
 }
 
-func TestProviderLabelLeadsEveryDashboardRow(t *testing.T) {
-	style := providerLabelStyle(false)
-	if _, unset := style.GetBackground().(lipgloss.NoColor); unset {
-		t.Fatal("provider label has no background")
-	}
-	if style.GetPaddingLeft() != 1 || style.GetPaddingRight() != 1 {
-		t.Fatalf("provider label padding = (%d, %d), want (1, 1)", style.GetPaddingLeft(), style.GetPaddingRight())
-	}
-
-	for _, width := range []int{40, 60, 96, 120} {
+func TestStampCarriesEveryRequiredFieldAtEveryWidth(t *testing.T) {
+	for _, width := range []int{40, 60, 80, 96, 120} {
 		m := dashboardFixture(width, 20)
+		g := deckGeometryFor(width, 10)
 		for index, sess := range m.sessions {
-			row, _, _ := m.dashboardRowParts(sess, index, width)
-			plain := ansi.Strip(row)
-			providerAt := strings.Index(plain, providerBadge(sess))
-			stateAt := strings.Index(plain, lifecycleBadge(sess))
-			nameAt := strings.Index(plain, sess.DisplayName[:3])
-			if providerAt < 0 || stateAt < 0 || nameAt < 0 || providerAt >= stateAt || providerAt >= nameAt {
-				t.Fatalf("width %d row does not lead with provider label: %q", width, plain)
+			line1, line2 := m.stampLines(stamp{sess: sess, door: index + 1, selected: index == m.selected}, g.cell)
+			plain1, plain2 := ansi.Strip(line1), ansi.Strip(line2)
+			if ansi.StringWidth(plain1) != g.cell || ansi.StringWidth(plain2) != g.cell {
+				t.Fatalf("width %d stamp lines are %d/%d cells, want %d: %q %q", width, ansi.StringWidth(plain1), ansi.StringWidth(plain2), g.cell, plain1, plain2)
+			}
+			for _, want := range []string{strconv.Itoa(index + 1), lifecycleBadge(sess), sess.DisplayName, providerBadge(sess)} {
+				if !strings.Contains(plain1, want) {
+					t.Fatalf("width %d stamp line 1 lost %q: %q", width, want, plain1)
+				}
+			}
+			created := createdStamp(sess.CreatedAt, m.dashboardNow())
+			if !strings.Contains(plain2, filepath.Base(sess.Cwd)) || !strings.Contains(plain2, created) {
+				t.Fatalf("width %d stamp line 2 lost directory or created time: %q", width, plain2)
 			}
 		}
 	}
@@ -104,23 +107,33 @@ func TestSessionUpdatedLabelUsesDashboardTimezone(t *testing.T) {
 	}
 }
 
-func TestCompactContextDropsOptionalFieldsAsCompleteUnits(t *testing.T) {
+func TestLedgerDropsOptionalFieldsAsCompleteUnits(t *testing.T) {
 	const id = "123e4567-e89b-12d3-a456-426614174000"
 	const cwd = "/work/a-very-long-project-directory"
 	m := dashboardFixture(60, 20)
-	m.sessions = []adapter.Session{{ID: id, AgentType: "codex", DisplayName: "work", Cwd: cwd, ProcAlive: adapter.Alive}}
+	m.sessions = []adapter.Session{{ID: id, AgentType: "codex", DisplayName: "work", Cwd: cwd, ProcAlive: adapter.Exited}}
 	m.selected = 0
-	compact := ansi.Strip(m.dashboardContext(60))
-	if !strings.Contains(compact, "codex") || !strings.Contains(compact, "Updated unknown") {
-		t.Fatalf("compact context lost required fields: %q", compact)
+	compactLine, rest := m.ledgerIdentityLine(m.sessions[0], 80, false)
+	compact := ansi.Strip(compactLine)
+	if !strings.Contains(compact, "codex") || !strings.Contains(compact, "Updated unknown") || len(rest) != 0 {
+		t.Fatalf("compact ledger lost required fields: %q rest=%v", compact, rest)
 	}
 	if strings.Contains(compact, id[:8]) || strings.Contains(compact, "a-very-long") {
-		t.Fatalf("compact context clipped an optional field instead of dropping it: %q", compact)
+		t.Fatalf("compact ledger showed optional fields it has no room for: %q", compact)
 	}
-
-	wide := ansi.Strip(m.dashboardContext(120))
+	tightLine, rest := m.ledgerIdentityLine(m.sessions[0], 70, true)
+	tight := ansi.Strip(tightLine)
+	if strings.Contains(tight, "a-very") || strings.Contains(tight, id[:8]) || len(rest) != 2 {
+		t.Fatalf("tight ledger clipped an optional field instead of dropping it: %q rest=%v", tight, rest)
+	}
+	narrowLine, rest := m.ledgerIdentityLine(m.sessions[0], 50, false)
+	if narrow := ansi.Strip(narrowLine); strings.Contains(narrow, "Updated") || len(rest) != 1 {
+		t.Fatalf("a field that does not fit must be handed to the next line whole: %q rest=%v", narrow, rest)
+	}
+	wideLine, _ := m.ledgerIdentityLine(m.sessions[0], 160, true)
+	wide := ansi.Strip(wideLine)
 	if !strings.Contains(wide, id) || !strings.Contains(wide, cwd) {
-		t.Fatalf("wide context dropped fields that fit: %q", wide)
+		t.Fatalf("wide ledger dropped fields that fit: %q", wide)
 	}
 }
 
@@ -129,11 +142,18 @@ func TestAgentsDashboardUsesLiteralOneScreenVocabulary(t *testing.T) {
 	view := ansi.Strip(m.View().Content)
 	assertViewGeometry(t, view, 120, 40)
 	for _, want := range []string{
-		"UAM", "Agents", "3/3 sessions", "release-check", "Running", "codex", "Attach",
-		"repair-tests", "Stopped", "claude", "Resume", "failing-agent", "Failed", "Stop",
+		"UAM", "sessions 1-3 of 3", "release-check", "Running", "codex", "Attach",
+		"repair-tests", "Stopped", "claude", "failing-agent", "Failed", "Stop", "new session",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("dashboard missing %q:\n%s", want, view)
+		}
+	}
+	m.selected = 1
+	stopped := ansi.Strip(m.View().Content)
+	for _, want := range []string{"Resume", "Remove"} {
+		if !strings.Contains(stopped, want) {
+			t.Fatalf("ledger for a stopped session missing %q:\n%s", want, stopped)
 		}
 	}
 	for _, banned := range []string{"DEPARTURES", "craft", "GATE", "boarding", "type a command"} {
@@ -148,13 +168,17 @@ func TestAgentsDashboardGuaranteesFortyByTwelve(t *testing.T) {
 	m := dashboardFixture(40, 12)
 	view := ansi.Strip(m.View().Content)
 	assertViewGeometry(t, view, 40, 12)
-	for _, want := range []string{"Agents", "Running", "Stopped", "Failed", "Attach", "Resume", "▌"} {
+	for _, want := range []string{"UAM", "Running", "Stopped", "Failed", "Attach", "▌", "/work/uam", "codex", "12:00"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("40x12 dashboard missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "verify release pipeline") || strings.Contains(view, "/work/uam") {
-		t.Fatalf("narrow dashboard retained secondary fields:\n%s", view)
+	if strings.Contains(view, "verify release pipeline") {
+		t.Fatalf("narrow dashboard retained the prompt:\n%s", view)
+	}
+	m.selected = 1
+	if stopped := ansi.Strip(m.View().Content); !strings.Contains(stopped, "Resume") {
+		t.Fatalf("40x12 ledger for a stopped session lost Resume:\n%s", stopped)
 	}
 }
 
@@ -167,13 +191,25 @@ func TestDashboardBreakpointsDependOnWidthOnly(t *testing.T) {
 			t.Fatalf("layout(%d) = %d, want %d", tc.width, got, tc.want)
 		}
 	}
-	wideShort := dashboardFixture(96, 12).View().Content
-	wideTall := dashboardFixture(96, 40).View().Content
-	for _, view := range []string{wideShort, wideTall} {
-		if !strings.Contains(ansi.Strip(view), "verify release pipeline") {
-			t.Fatalf("height changed wide row grammar:\n%s", view)
+	short := lineWith(ansi.Strip(dashboardFixture(96, 12).View().Content), "release-check")
+	tall := lineWith(ansi.Strip(dashboardFixture(96, 40).View().Content), "release-check")
+	if short == "" || short != tall {
+		t.Fatalf("height changed stamp grammar:\n%q\n%q", short, tall)
+	}
+	for _, tc := range []struct{ width, cols int }{{40, 1}, {79, 2}, {80, 2}, {119, 3}, {120, 3}} {
+		if got := deckGeometryFor(tc.width, 20).cols; got != tc.cols {
+			t.Fatalf("deck columns at %d = %d, want %d", tc.width, got, tc.cols)
 		}
 	}
+}
+
+func lineWith(view, needle string) string {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
 }
 
 func TestDashboardUsesCompositeProviderSessionIdentity(t *testing.T) {
@@ -298,8 +334,8 @@ func TestWheelOnlyMovesInsideRoster(t *testing.T) {
 		t.Fatal("roster wheel should produce navigation intent")
 	}
 	next, cmd := m.Update(inside())
-	if cmd != nil || next.(Model).selected != 1 {
-		t.Fatalf("wheel should move one row without backend command: selected=%d cmd=%v", next.(Model).selected, cmd)
+	if cmd != nil || next.(Model).selected != frame.geometry.cols {
+		t.Fatalf("wheel should move one deck row without backend command: selected=%d cols=%d cmd=%v", next.(Model).selected, frame.geometry.cols, cmd)
 	}
 	if outside := m.dashboardMouseCommand(frame, tea.MouseWheelMsg{X: 2, Y: frame.height - 1, Button: tea.MouseWheelDown}); outside != nil {
 		t.Fatal("wheel over help must not move the roster")
@@ -321,7 +357,7 @@ func TestASCIIHeaderAndGlyphsAreMeasuredFallbacks(t *testing.T) {
 	defer ApplyTermCaps(previous)
 	m := dashboardFixture(40, 12)
 	view := ansi.Strip(m.View().Content)
-	if strings.Contains(view, "🤖") || strings.Contains(view, "●") || !strings.Contains(view, "Agents") || !strings.Contains(view, "*") {
+	if strings.Contains(view, "🤖") || strings.Contains(view, "●") || !strings.Contains(view, "UAM") || !strings.Contains(view, "*") {
 		t.Fatalf("ASCII fallback is incomplete:\n%s", view)
 	}
 	assertViewGeometry(t, view, 40, 12)
@@ -330,14 +366,39 @@ func TestASCIIHeaderAndGlyphsAreMeasuredFallbacks(t *testing.T) {
 func TestSmallTerminalIsReadOnly(t *testing.T) {
 	m := dashboardFixture(39, 11)
 	frame := m.buildDashboardFrame()
-	if len(frame.nodes) != 0 || !strings.Contains(ansi.Strip(frame.content), "Agents needs 40x12") {
+	if len(frame.nodes) != 0 || !strings.Contains(ansi.Strip(frame.content), "UAM needs 40x12") {
 		t.Fatalf("undersized frame exposed actions or hid minimum: nodes=%d\n%s", len(frame.nodes), frame.content)
+	}
+}
+
+func TestDoorDigitsOpenTheStampAndZeroReturnsToTheLastOne(t *testing.T) {
+	m := dashboardFixture(80, 20)
+	model, cmd := m.handleKey(keyMsg("2"))
+	m = model.(Model)
+	if cmd == nil || m.selected != 1 {
+		t.Fatalf("door 2 did not select and open the second stamp: selected=%d cmd=%v", m.selected, cmd)
+	}
+	model, cmd = m.handleKey(keyMsg("9"))
+	if cmd != nil || model.(Model).selected != 1 {
+		t.Fatalf("a door past the page's last stamp must be inert: cmd=%v", cmd)
+	}
+	model, cmd = m.handleKey(keyMsg("0"))
+	m = model.(Model)
+	if cmd != nil || m.message == "" {
+		t.Fatalf("0 before any attach must explain itself: cmd=%v message=%q", cmd, m.message)
+	}
+	m.lastAttached = sessionIdentity{agent: "opencode", id: "failed"}
+	model, cmd = m.handleKey(keyMsg("0"))
+	m = model.(Model)
+	if cmd == nil || m.selected != 2 {
+		t.Fatalf("0 did not return to the last attached session: selected=%d cmd=%v", m.selected, cmd)
 	}
 }
 
 func TestDashboardPrintableKeysAreInert(t *testing.T) {
 	m := dashboardFixture(80, 20)
 	m.hasLoaded = true
+	// 9 is a door digit, but this page has three stamps, so it stays inert.
 	for _, pressed := range []string{"a", "9", " ", "backspace"} {
 		model, cmd := m.handleKey(keyMsg(pressed))
 		m = model.(Model)
@@ -359,7 +420,8 @@ func TestDashboardPrintableKeysAreInert(t *testing.T) {
 }
 
 func TestDashboardFilterKeyboardLifecycle(t *testing.T) {
-	m := dashboardFixture(80, 20)
+	// One deck column, so up and down step by one stamp.
+	m := dashboardFixture(40, 20)
 	m.selected = 1
 	m.enterFilter()
 	if !m.filterActive || !m.filterSaved {
@@ -433,9 +495,6 @@ func TestDashboardComponentFallbackAndMouseRejections(t *testing.T) {
 	if empty.activityView() == "" {
 		t.Fatal("empty spinner model did not use the Bubbles fallback")
 	}
-	if got := empty.dashboardBody(0, 0); len(got) != 0 {
-		t.Fatalf("zero-sized dashboard body = %#v", got)
-	}
 
 	m := dashboardFixture(80, 20)
 	frame := m.buildDashboardFrame()
@@ -459,7 +518,7 @@ func TestDashboardUsesBubblesSpinnerForLoadingAndRefresh(t *testing.T) {
 	m := NewWithDeps(nil, nil)
 	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 20})
 	initial := ansi.Strip(m.View().Content)
-	if !strings.Contains(initial, "Loading agents") || !strings.Contains(initial, ansi.Strip(m.activity.View())) {
+	if !strings.Contains(initial, "Loading") || !strings.Contains(initial, ansi.Strip(m.activity.View())) {
 		t.Fatalf("initial load lacks Bubbles spinner feedback:\n%s", initial)
 	}
 

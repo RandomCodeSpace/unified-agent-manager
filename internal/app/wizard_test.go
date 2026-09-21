@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // C2-8 — the workdir step must warn when the chosen directory is not inside a git
@@ -110,70 +111,68 @@ func TestGlobCompleteNoMatchKeepsInput(t *testing.T) {
 
 // C2-8 — the workdir step shows a yellow "no checkpoint" warning when the chosen
 // directory is not a git repo.
-func TestWizardWorkdirShowsNoGitWarning(t *testing.T) {
+func TestLaunchDirectoryShowsNoGitWarning(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.wizard = true
-	m.wizardStep = 2
+	m.openLaunchPad()
+	m.focusLaunchField(launchFieldDir)
 	m.input = t.TempDir() // not a git repo
-	out := m.renderWizard()
-	if !strings.Contains(strings.ToLower(out), "checkpoint") && !strings.Contains(strings.ToLower(out), "not a git") {
-		t.Fatalf("workdir step should warn about the missing git checkpoint: %q", out)
+	_, _, _, warning := m.launchFieldParts(launchFieldDir)
+	if !strings.Contains(strings.ToLower(warning), "not a git") {
+		t.Fatalf("directory field should warn about the missing git checkpoint: %q", warning)
 	}
 }
 
 // C2-8 — Tab in the workdir step completes m.input via globComplete.
-func TestWizardWorkdirTabCompletes(t *testing.T) {
+func TestLaunchDirectoryTabCompletes(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "completed")
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	m := NewWithDeps(nil, nil)
-	m.wizard = true
-	m.wizardStep = 2
+	m.openLaunchPad()
+	m.focusLaunchField(launchFieldDir)
 	m.input = filepath.Join(dir, "compl")
-	model, _ := m.handleWizardKey(keyMsg("tab"))
+	model, _ := m.handleLaunchKey(keyMsg("tab"))
 	m = model.(Model)
 	if m.input != target {
 		t.Fatalf("Tab should complete the path to %q, got %q", target, m.input)
 	}
 }
 
-func TestWizardAliasStepBetweenProviderAndWorkdir(t *testing.T) {
-	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
-	m.wizard = true
+// The alias step is gone; the prompt's @agent:alias shorthand carries it.
+func TestLaunchPromptAliasShorthandReachesDispatch(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &svcFakeAdapter{name: "fake", available: true}
+	m := NewWithDeps(st, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
 	m.defaultAgent = "fake"
-	m.wizardCwd = "."
-
-	model, _ := m.handleWizardKey(keyMsg("enter"))
+	m.openLaunchPad()
+	m.launchDir = "/tmp"
+	m.focusLaunchField(launchFieldPrompt)
+	m.input = "@fake:review look at this"
+	model, cmd := m.handleLaunchKey(keyMsg("enter"))
 	m = model.(Model)
-	if m.wizardStep != 1 || m.input != "" {
-		t.Fatalf("after provider step=%d input=%q", m.wizardStep, m.input)
+	if m.launchOpen || cmd == nil {
+		t.Fatal("launch pad did not dispatch")
 	}
-
-	model, _ = m.handleWizardKey(keyMsg("enter"))
-	m = model.(Model)
-	if m.wizardAlias != "" || m.wizardStep != 2 || m.input != "." {
-		t.Fatalf("blank alias should advance to workdir with default command, alias=%q step=%d input=%q", m.wizardAlias, m.wizardStep, m.input)
+	msg, ok := cmd().(dispatchedMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("dispatch = %#v", msg)
 	}
-
-	m.wizardStep = 1
-	m.input = "review"
-	model, _ = m.handleWizardKey(keyMsg("enter"))
-	m = model.(Model)
-	if m.wizardAlias != "review" || m.wizardStep != 2 {
-		t.Fatalf("alias step alias=%q step=%d", m.wizardAlias, m.wizardStep)
+	if msg.session.CommandAlias != "review" || msg.session.Prompt != "look at this" {
+		t.Fatalf("session = %+v", msg.session)
 	}
 }
 
 // C2-8 — Ctrl+G in the prompt step opens $EDITOR via the injected exec runner
 // (tea.ExecProcess in production) and the round-trip loads the edited file back
 // into the prompt buffer.
-func TestWizardCtrlGOpensEditorAndLoadsResult(t *testing.T) {
+func TestLaunchCtrlGOpensEditorAndLoadsResult(t *testing.T) {
 	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
-	m.wizard = true
-	m.wizardStep = 3
-	m.input = ""
+	m.openLaunchPad()
 
 	// Capture the command tea.ExecProcess would have run; simulate the editor by
 	// writing into the temp file it was pointed at, then invoke the callback.
@@ -188,7 +187,7 @@ func TestWizardCtrlGOpensEditorAndLoadsResult(t *testing.T) {
 		return func() tea.Msg { return cb(nil) }
 	}
 
-	model, cmd := m.handleWizardKey(keyMsg("ctrl+g"))
+	model, cmd := m.handleLaunchKey(keyMsg("ctrl+g"))
 	m = model.(Model)
 	if cmd == nil {
 		t.Fatal("Ctrl+G should return an exec command")

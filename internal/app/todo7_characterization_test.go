@@ -37,18 +37,16 @@ func TestTodo7CharacterizationFindExactRejectsIDPrefixes(t *testing.T) {
 	}
 }
 
-func TestTodo7CharacterizationWizardProviderSelectionPrecedesLaunchFields(t *testing.T) {
+func TestTodo7CharacterizationLaunchPadSeedsProviderBeforeLaunchFields(t *testing.T) {
 	// Given
 	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
-	m.wizard = true
 	m.defaultAgent = "fake"
 
 	// When
-	model, _ := m.handleWizardKey(keyMsg("enter"))
-	m = model.(Model)
+	m.openLaunchPad()
 
 	// Then
-	if m.wizardAgent != "fake" || m.wizardStep != 1 || m.input != "" {
-		t.Fatalf("wizard state = agent=%q step=%d input=%q", m.wizardAgent, m.wizardStep, m.input)
+	if m.launchAgent != "fake" || m.launchField != launchFieldName || m.input != "" {
+		t.Fatalf("launch state = agent=%q field=%d input=%q", m.launchAgent, m.launchField, m.input)
 	}
 }

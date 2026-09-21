@@ -133,21 +133,20 @@ func TestRenameIgnoresAltChord(t *testing.T) {
 	}
 }
 
-// F29 — the wizard prompt input must also accept multibyte/paste and ignore Alt.
-func TestWizardInputAcceptsMultibyteAndIgnoresAlt(t *testing.T) {
+// F29 — the launch prompt input must also accept multibyte/paste and ignore Alt.
+func TestLaunchInputAcceptsMultibyteAndIgnoresAlt(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	m.wizard = true
-	m.wizardStep = 3
-	m.input = ""
-	model, _ := m.handleWizardKey(keyMsg("café 世界"))
+	m.openLaunchPad()
+	m.focusLaunchField(launchFieldPrompt)
+	model, _ := m.handleLaunchKey(keyMsg("café 世界"))
 	m = model.(Model)
 	if m.input != "café 世界" {
-		t.Fatalf("wizard input = %q, want %q", m.input, "café 世界")
+		t.Fatalf("launch input = %q, want %q", m.input, "café 世界")
 	}
-	model, _ = m.handleWizardKey(tea.KeyPressMsg{Code: 'z', Text: "z", Mod: tea.ModAlt})
+	model, _ = m.handleLaunchKey(tea.KeyPressMsg{Code: 'z', Text: "z", Mod: tea.ModAlt})
 	m = model.(Model)
 	if m.input != "café 世界" {
-		t.Fatalf("Alt+z should not type into the wizard buffer, got %q", m.input)
+		t.Fatalf("Alt+z should not type into the launch buffer, got %q", m.input)
 	}
 }
 

@@ -187,6 +187,14 @@ func dotSep() string {
 	return " · "
 }
 
+// arrowsAllHint spells the four deck-navigation arrows in the footer.
+func arrowsAllHint() string {
+	if asciiGlyphs() {
+		return "arrows"
+	}
+	return "↑↓←→"
+}
+
 // arrowsHint and enterHint spell the navigation keys in the footer.
 func arrowsHint() string {
 	if asciiGlyphs() {

@@ -511,11 +511,9 @@ func sessionsFromMap(live map[string]adapter.Session) []adapter.Session {
 
 func SortSessions(sessions []adapter.Session) {
 	sort.SliceStable(sessions, func(i, j int) bool {
-		// Process liveness is the dashboard lifecycle source of truth. Persisted
-		// Closed is reason/compatibility metadata and must not split stopped rows.
-		if sessions[i].ProcAlive != sessions[j].ProcAlive {
-			return sessions[i].ProcAlive == adapter.Alive
-		}
+		// Liveness is deliberately not a sort key: the deck numbers sessions by
+		// position, and a session that stops must keep its door. Lifecycle is
+		// shown on the stamp, not encoded in the order.
 		if sessions[i].Pinned != sessions[j].Pinned {
 			return sessions[i].Pinned
 		}

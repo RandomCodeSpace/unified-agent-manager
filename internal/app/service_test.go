@@ -504,7 +504,7 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	now := time.Now()
 	sessions := []adapter.Session{{ID: "dead", ProcAlive: adapter.Exited, CreatedAt: now}, {ID: "live", ProcAlive: adapter.Alive, CreatedAt: now}, {ID: "p", ProcAlive: adapter.Exited, Pinned: true, CreatedAt: now}}
 	SortSessions(sessions)
-	if sessions[0].ID != "live" || sessions[1].ID != "p" {
+	if sessions[0].ID != "p" || sessions[1].ID != "dead" || sessions[2].ID != "live" {
 		t.Fatalf("order=%+v", sessions)
 	}
 	rec := RecordFromSession(adapter.Session{ID: "id", AgentType: "fake", CommandAlias: "ghcp", Prompt: "do work", Cwd: "/tmp", SessionName: "tm", CreatedAt: now}, "")
@@ -516,17 +516,17 @@ func TestSortSessionsAndRecord(t *testing.T) {
 	}
 }
 
-func TestSortSessionsGroupsAllStoppedBelowRunning(t *testing.T) {
+func TestSortSessionsIgnoresLivenessAndHonoursPinFirst(t *testing.T) {
 	now := time.Now()
-	// All exited sessions belong below running ones; Closed does not define a
-	// separate lifecycle partition, while pin order applies within STOPPED.
+	// Neither liveness nor Closed defines a partition: a pinned stopped session
+	// sorts above a running one, and the rest keep their manual order.
 	sessions := []adapter.Session{
 		{ID: "closed-pinned", Pinned: true, Closed: true, ProcAlive: adapter.Exited, CreatedAt: now},
 		{ID: "live", ProcAlive: adapter.Alive, CreatedAt: now},
 		{ID: "stopped-active", ProcAlive: adapter.Exited, CreatedAt: now},
 	}
 	SortSessions(sessions)
-	if sessions[0].ID != "live" || sessions[1].ID != "closed-pinned" || sessions[2].ID != "stopped-active" {
+	if sessions[0].ID != "closed-pinned" || sessions[1].ID != "live" || sessions[2].ID != "stopped-active" {
 		t.Fatalf("order=%+v", sessions)
 	}
 }

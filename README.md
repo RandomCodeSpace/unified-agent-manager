@@ -117,10 +117,11 @@ In the dashboard:
 
 | Input | Action |
 |---|---|
-| Click a row or press `Up` / `Down` | Select a session |
-| Click `Attach` / `Resume` or press `Enter` | Open the selected session |
+| Click a stamp or press the arrow keys | Select a session |
+| Press its door digit `1`-`9`, click the digit, or press `Enter` | Open the selected session |
+| `0` | Reopen the session you last left |
 | `/` | Filter sessions |
-| `e` | Create a session |
+| `n` | Expand the launch pad and start a session |
 | `Ctrl+X` | Stop or remove the selected session after confirmation |
 | `?` | Show more shortcuts |
 | `Esc` | Close the current view or leave the dashboard |

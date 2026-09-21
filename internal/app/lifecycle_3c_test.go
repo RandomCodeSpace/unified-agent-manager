@@ -136,14 +136,13 @@ func TestExactAndUniqueResumeDoNotPrompt(t *testing.T) {
 	}
 }
 
-func TestSortSessionsPartitionsByRunningBeforeStoppedRegardlessOfClosed(t *testing.T) {
+func TestSortSessionsKeepsManualOrderAcrossLifecycle(t *testing.T) {
+	// A session keeps its door when it stops: liveness is displayed on the
+	// stamp, never encoded in the order.
 	sessions := lifecycleFixtures()
 	SortSessions(sessions)
-	if sessions[0].ID != "run" {
-		t.Fatalf("first session = %q, want running session; order=%v", sessions[0].ID, sessionIDs(sessions))
-	}
-	if got := sessionIDs(sessions[1:]); strings.Join(got, ",") != "clean,crash,signal,explicit" {
-		t.Fatalf("stopped manual order = %v", got)
+	if got := strings.Join(sessionIDs(sessions), ","); got != "clean,crash,signal,explicit,run" {
+		t.Fatalf("manual order = %v", got)
 	}
 }
 
@@ -166,30 +165,6 @@ func TestRunningStoppedLabelsAcrossResponsiveAndGroupedRenderers(t *testing.T) {
 			})
 		}
 	}
-
-	m := Model{width: 100, sessions: lifecycleFixtures()}
-	SortSessions(m.sessions)
-	out := m.renderTable()
-	if !strings.Contains(out, "RUNNING") || !strings.Contains(out, "STOPPED") || strings.Contains(out, "ACTIVE") || strings.Contains(out, "CLOSED") {
-		t.Fatalf("unbounded table lifecycle labels: %s", out)
-	}
-}
-
-func TestGroupedLifecycleHeadingsDoNotRepeatAcrossPinPartitions(t *testing.T) {
-	m := Model{width: 80, height: 30, sizeKnown: true, groupByDir: true, sessions: []adapter.Session{
-		{ID: "rp", AgentType: "fake", Cwd: "/tmp/p", ProcAlive: adapter.Alive, Pinned: true},
-		{ID: "ru", AgentType: "fake", Cwd: "/tmp/u", ProcAlive: adapter.Alive},
-		{ID: "sp", AgentType: "fake", Cwd: "/tmp/p", ProcAlive: adapter.Exited, Pinned: true},
-		{ID: "su", AgentType: "fake", Cwd: "/tmp/u", ProcAlive: adapter.Exited},
-	}}
-	SortSessions(m.sessions)
-	out := strings.Join(m.groupedSessionListLines(80, 30, LayoutStandard), "\n")
-	if got := strings.Count(out, "RUNNING"); got != 1 {
-		t.Fatalf("RUNNING heading count=%d, want 1:\n%s", got, out)
-	}
-	if got := strings.Count(out, "STOPPED"); got != 1 {
-		t.Fatalf("STOPPED heading count=%d, want 1:\n%s", got, out)
-	}
 }
 
 func boolName(v bool) string {
@@ -207,92 +182,70 @@ func TestStoppedExitPresentationDistinguishesFailureAndExplicitStop(t *testing.T
 		detail string
 		forbid string
 	}{
-		{name: "clean", sess: adapter.Session{DisplayName: "clean", ProcAlive: adapter.Exited, ExitCode: exitCode(0)}, glyph: "○", forbid: "exit 0"},
-		{name: "crash", sess: adapter.Session{DisplayName: "crash", ProcAlive: adapter.Exited, ExitCode: exitCode(23)}, glyph: "✕", detail: "exit 23"},
-		{name: "signal", sess: adapter.Session{DisplayName: "signal", ProcAlive: adapter.Exited, ExitCode: exitCode(-1)}, glyph: "✕", detail: "signal"},
+		{name: "clean", sess: adapter.Session{DisplayName: "clean", ProcAlive: adapter.Exited, ExitCode: exitCode(0)}, glyph: "○", forbid: "Failed"},
+		{name: "crash", sess: adapter.Session{DisplayName: "crash", ProcAlive: adapter.Exited, ExitCode: exitCode(23)}, glyph: "✕", detail: "Failed 23"},
+		{name: "signal", sess: adapter.Session{DisplayName: "signal", ProcAlive: adapter.Exited, ExitCode: exitCode(-1)}, glyph: "✕", detail: "Failed signal"},
 		{name: "explicit", sess: adapter.Session{DisplayName: "explicit", ProcAlive: adapter.Exited, ExitCode: exitCode(-1), Closed: true}, glyph: "○", forbid: "signal"},
 	}
+	var m Model
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			row := renderRow(tc.sess, false, 14, 22, true)
-			if !strings.Contains(row, tc.glyph) || (tc.detail != "" && !strings.Contains(row, tc.detail)) || (tc.forbid != "" && strings.Contains(row, tc.forbid)) {
-				t.Fatalf("row = %q", row)
+			line, _ := m.stampLines(stamp{sess: tc.sess}, stampMinWidth)
+			plain := ansi.Strip(line)
+			if !strings.Contains(plain, tc.glyph) || (tc.detail != "" && !strings.Contains(plain, tc.detail)) || (tc.forbid != "" && strings.Contains(plain, tc.forbid)) {
+				t.Fatalf("stamp = %q", plain)
 			}
-			if ansi.StringWidth(ansi.Truncate(row, 44, "…")) > 44 {
-				t.Fatalf("row wider than 44: %q", row)
+			if ansi.StringWidth(plain) != stampMinWidth {
+				t.Fatalf("stamp is %d cells, want %d: %q", ansi.StringWidth(plain), stampMinWidth, plain)
 			}
 		})
 	}
 	long := adapter.Session{DisplayName: strings.Repeat("界", 40), ProcAlive: adapter.Exited, ExitCode: exitCode(123456)}
-	row := ansi.Truncate(renderRow(long, false, 20, 17, true), 44, "…")
-	if ansi.StringWidth(row) > 44 || !strings.Contains(row, "exit 123456") {
-		t.Fatalf("bounded failure detail lost: width=%d row=%q", ansi.StringWidth(row), row)
-	}
-	compact := renderRow(long, false, 39, 0, false)
-	if ansi.StringWidth(compact) > 44 || !strings.Contains(compact, "exit 123456") {
-		t.Fatalf("compact failure detail lost: width=%d row=%q", ansi.StringWidth(compact), compact)
+	line, _ := m.stampLines(stamp{sess: long}, stampMinWidth)
+	plain := ansi.Strip(line)
+	if ansi.StringWidth(plain) != stampMinWidth || !strings.Contains(plain, "Failed 123456") {
+		t.Fatalf("bounded failure detail lost: width=%d stamp=%q", ansi.StringWidth(plain), plain)
 	}
 }
 
-func TestFailureDetailAppendsToPromptWithoutReplacingOrDuplicatingIt(t *testing.T) {
+func TestFailureDetailRidesTheStatusWord(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		code   int
-		detail string
+		status string
 	}{
-		{name: "crash", code: 17, detail: "exit 17"},
-		{name: "signal", code: -1, detail: "signal"},
+		{name: "crash", code: 17, status: "Failed 17"},
+		{name: "signal", code: -1, status: "Failed signal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sess := adapter.Session{ID: tc.name, DisplayName: "provider session", Prompt: "preserve this task", ProcAlive: adapter.Exited, ExitCode: exitCode(tc.code)}
-			row := renderRow(sess, false, 14, 44, true)
-			want := "preserve this task · " + tc.detail
-			if !strings.Contains(row, want) || strings.Count(row, tc.detail) != 1 {
-				t.Fatalf("task-column failure summary = %q, want one %q", row, want)
+			if got := stampStatus(sess); got != tc.status {
+				t.Fatalf("stampStatus = %q, want %q", got, tc.status)
 			}
-
-			// The wide board carries the composed summary in its TASK column
-			// exactly once; the compact board drops the task by design.
+			var stampModel Model
+			line, _ := stampModel.stampLines(stamp{sess: sess}, stampMinWidth)
+			if plain := ansi.Strip(line); strings.Count(plain, tc.status) != 1 || strings.Contains(plain, sess.Prompt) {
+				t.Fatalf("stamp = %q, want one %q and no prompt", plain, tc.status)
+			}
 			m := Model{width: 100, height: 20, sizeKnown: true, sessions: []adapter.Session{sess}}
-			summary := m.View().Content
-			if !strings.Contains(summary, want) || strings.Count(summary, want) != 1 {
-				t.Fatalf("selected dashboard summary = %q, want one %q", summary, want)
+			view := m.View().Content
+			if !strings.Contains(view, tc.status) || strings.Contains(view, "exit 17") {
+				t.Fatalf("dashboard must spell the failure once as a status word: %q", view)
 			}
-
-			compactRow := renderRow(sess, false, 39, 0, false)
-			if strings.Contains(compactRow, sess.Prompt) || strings.Count(compactRow, tc.detail) != 1 {
-				t.Fatalf("compact name-only row should show detail once, got %q", compactRow)
-			}
-
-			sess.Prompt = strings.Repeat("long task ", 20)
-			boundedRow := renderRow(sess, false, 14, 28, true)
-			if !strings.Contains(boundedRow, " · "+tc.detail) || ansi.StringWidth(boundedRow) > 50 {
-				t.Fatalf("bounded task column lost failure suffix: width=%d row=%q", ansi.StringWidth(boundedRow), boundedRow)
-			}
-			m.sessions[0] = sess
-			boundedSummary := m.View().Content
-			if !strings.Contains(boundedSummary, " · "+tc.detail) {
-				t.Fatalf("bounded selected summary lost failure suffix: %q", boundedSummary)
-			}
-			assertViewGeometry(t, boundedSummary, 100, 20)
-
-			sess.Prompt = "already recorded · " + tc.detail
-			if got := boundedTaskSummary(sess, 44); strings.Count(got, tc.detail) != 1 {
-				t.Fatalf("pre-suffixed prompt duplicated failure detail: %q", got)
-			}
+			assertViewGeometry(t, view, 100, 20)
 		})
 	}
 }
 
-func TestReorderRejectsAcrossRunningStoppedWithoutSideEffects(t *testing.T) {
+func TestReorderAcrossRunningStoppedSwapsAndPersists(t *testing.T) {
 	m := Model{sessions: []adapter.Session{
 		{ID: "run", AgentType: "fake", ProcAlive: adapter.Alive, SortIndex: 0},
 		{ID: "stop", AgentType: "fake", ProcAlive: adapter.Exited, SortIndex: 1},
 	}, selected: 0}
-	if cmd := m.moveSession(1); cmd != nil {
-		t.Fatal("cross-lifecycle reorder scheduled persistence")
+	if cmd := m.moveSession(1); cmd == nil {
+		t.Fatal("cross-lifecycle reorder must schedule persistence: doors do not depend on liveness")
 	}
-	if m.selected != 0 || m.reorderPending || m.reorderSeq != 0 || sessionIDs(m.sessions)[0] != "run" {
-		t.Fatalf("rejected move mutated state: %+v", m)
+	if m.selected != 1 || !m.reorderPending || sessionIDs(m.sessions)[0] != "stop" {
+		t.Fatalf("move did not swap: %+v", sessionIDs(m.sessions))
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2/compat"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var errTestBoom = errors.New("boom")
@@ -117,31 +118,33 @@ func TestRenderedMetadataCannotInjectTerminalControls(t *testing.T) {
 		Cwd:         "/tmp/evil\x1b[Hrepo",
 		ProcAlive:   adapter.Alive,
 	}
-	m := Model{width: 100, sessions: []adapter.Session{sess}, selected: 0, confirmStopID: "1"}
-	out := m.renderDetails() + renderRow(sess, false, 30, 40, true) + m.renderConfirm()
+	m := Model{width: 100, height: 24, sizeKnown: true, sessions: []adapter.Session{sess}, selected: 0}
+	out := m.View().Content
+	m.openSessionConfirmation(sess)
+	out += m.View().Content
 	for _, unsafe := range []string{"\x1b[2J", "\x1b]52", "\x1b[31m", "\x1b[H"} {
 		if strings.Contains(out, unsafe) {
 			t.Fatalf("rendered control sequence %q: %q", unsafe, out)
 		}
 	}
-	for _, want := range []string{"safename", "fix this now", "/tmp/evilrepo"} {
+	for _, want := range []string{"safename", "/tmp/evilrepo"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("sanitized text missing %q: %q", want, out)
 		}
 	}
 }
 
-// F28 — the task column must stay aligned even when a row's name contains wide
-// characters: byte-length padding would push the task cell out of alignment.
-func TestRenderRowAlignsTaskColumnForMultibyte(t *testing.T) {
-	asciiRow := renderRow(adapter.Session{ID: "1", DisplayName: "ascii", Prompt: "task", ProcAlive: adapter.Alive}, false, 14, 16, true)
-	wideRow := renderRow(adapter.Session{ID: "2", DisplayName: "世界世界", Prompt: "task", ProcAlive: adapter.Alive}, false, 14, 16, true)
-	// The cursor + glyph prefix is identical; the name cell must occupy the same
-	// number of display columns up to the task text in both rows.
-	asciiTaskIdx := lipgloss.Width(asciiRow[:strings.Index(asciiRow, "task")])
-	wideTaskIdx := lipgloss.Width(wideRow[:strings.Index(wideRow, "task")])
-	if asciiTaskIdx != wideTaskIdx {
-		t.Fatalf("task column misaligned for wide name: ascii col=%d wide col=%d\nascii=%q\nwide=%q", asciiTaskIdx, wideTaskIdx, asciiRow, wideRow)
+// F28 — the provider column must stay aligned even when a stamp's name
+// contains wide characters: byte-length padding would push it out of place.
+func TestStampAlignsProviderColumnForMultibyte(t *testing.T) {
+	var m Model
+	asciiLine, _ := m.stampLines(stamp{sess: adapter.Session{ID: "1", AgentType: "fake", DisplayName: "ascii", ProcAlive: adapter.Alive}}, stampMinWidth)
+	wideLine, _ := m.stampLines(stamp{sess: adapter.Session{ID: "2", AgentType: "fake", DisplayName: "世界世界", ProcAlive: adapter.Alive}}, stampMinWidth)
+	asciiPlain, widePlain := ansi.Strip(asciiLine), ansi.Strip(wideLine)
+	asciiIdx := lipgloss.Width(asciiPlain[:strings.LastIndex(asciiPlain, "fake")])
+	wideIdx := lipgloss.Width(widePlain[:strings.LastIndex(widePlain, "fake")])
+	if asciiIdx != wideIdx {
+		t.Fatalf("provider column misaligned for wide name: ascii col=%d wide col=%d\nascii=%q\nwide=%q", asciiIdx, wideIdx, asciiPlain, widePlain)
 	}
 }
 
@@ -163,29 +166,18 @@ func TestPRStatusDotGlyphsAreDistinct(t *testing.T) {
 	}
 }
 
-// F26 — a row whose session carries a PR must render its status dot; a PR-less
-// row must not.
-func TestRenderRowShowsPRDotOnlyWhenPRPresent(t *testing.T) {
-	withPR := renderRow(adapter.Session{ID: "1", DisplayName: "x", ProcAlive: adapter.Alive, PR: &adapter.PRRef{Status: adapter.PRMerged}}, false, 14, 16, true)
-	noPR := renderRow(adapter.Session{ID: "2", DisplayName: "x", ProcAlive: adapter.Alive}, false, 14, 16, true)
-	dot := strings.TrimSpace(prStatusDot(adapter.PRMerged))
-	if !strings.Contains(withPR, dot) {
-		t.Fatalf("row with a PR should show its status dot %q: %q", dot, withPR)
+// F26 — the ledger names a session's pull request when it has one, and says
+// nothing about pull requests otherwise.
+func TestLedgerShowsPRNumberOnlyWhenPRPresent(t *testing.T) {
+	var m Model
+	withLine, _ := m.ledgerIdentityLine(adapter.Session{ID: "1", DisplayName: "x", ProcAlive: adapter.Alive, PR: &adapter.PRRef{Number: 7, Status: adapter.PRMerged}}, 100, true)
+	noLine, _ := m.ledgerIdentityLine(adapter.Session{ID: "2", DisplayName: "x", ProcAlive: adapter.Alive}, 100, true)
+	withPR, noPR := ansi.Strip(withLine), ansi.Strip(noLine)
+	if !strings.Contains(withPR, "PR #7") {
+		t.Fatalf("ledger with a PR should name it: %q", withPR)
 	}
-	if strings.Contains(noPR, dot) {
-		t.Fatalf("row without a PR should not show a PR dot: %q", noPR)
-	}
-}
-
-// F26/F28 — adding the PR dot must not break column alignment between a row with
-// a PR and a row without one.
-func TestRenderRowColumnsAlignWithPRDot(t *testing.T) {
-	withPR := renderRow(adapter.Session{ID: "1", DisplayName: "name", Prompt: "task", ProcAlive: adapter.Alive, PR: &adapter.PRRef{Status: adapter.PROpen}}, false, 14, 16, true)
-	noPR := renderRow(adapter.Session{ID: "2", DisplayName: "name", Prompt: "task", ProcAlive: adapter.Alive}, false, 14, 16, true)
-	withIdx := lipgloss.Width(withPR[:strings.Index(withPR, "task")])
-	noIdx := lipgloss.Width(noPR[:strings.Index(noPR, "task")])
-	if withIdx != noIdx {
-		t.Fatalf("task column misaligned with/without PR dot: with=%d no=%d\nwith=%q\nno=%q", withIdx, noIdx, withPR, noPR)
+	if strings.Contains(noPR, "PR") {
+		t.Fatalf("ledger without a PR should not mention one: %q", noPR)
 	}
 }
 
@@ -206,13 +198,14 @@ func TestStateGlyphDistinguishesResumableFromFailed(t *testing.T) {
 
 // F30 — the rendered row for a reboot-survivor dead session must not contain the
 // literal word "failed" nor the failure glyph.
-func TestRenderRowResumableSessionNotMarkedFailed(t *testing.T) {
-	row := renderRow(adapter.Session{ID: "1", DisplayName: "rebooted", ProcAlive: adapter.Exited}, false, 14, 16, true)
-	if strings.Contains(strings.ToLower(row), "failed") {
-		t.Fatalf("resumable row should not show the literal \"failed\": %q", row)
+func TestStampResumableSessionNotMarkedFailed(t *testing.T) {
+	var m Model
+	line, _ := m.stampLines(stamp{sess: adapter.Session{ID: "1", DisplayName: "rebooted", ProcAlive: adapter.Exited}}, stampMinWidth)
+	if strings.Contains(strings.ToLower(line), "failed") {
+		t.Fatalf("resumable stamp should not show the literal \"failed\": %q", line)
 	}
-	if strings.Contains(row, "✕") {
-		t.Fatalf("resumable row should not show the failure glyph: %q", row)
+	if strings.Contains(line, "✕") {
+		t.Fatalf("resumable stamp should not show the failure glyph: %q", line)
 	}
 }
 

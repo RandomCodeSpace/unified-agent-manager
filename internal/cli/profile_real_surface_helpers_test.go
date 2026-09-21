@@ -99,16 +99,21 @@ func runTodo7ProfilePTY(t *testing.T, binary string, env []string) ([]byte, []by
 			}
 		}
 	}
-	// The literal Agents dashboard preserves the stored display name.
-	readUntil("Agents")
+	// The dashboard preserves the stored display name on its stamp.
+	readUntil("UAM")
 	readUntil("seeded")
 	wizardOpenOffset := capture.Len()
-	if _, err := io.WriteString(ptmx, "e"); err != nil {
+	// n expands the launch pad in place with the name field focused; two
+	// presses of Up reach the provider field, where Shift+Tab cycles profiles.
+	if _, err := io.WriteString(ptmx, "n"); err != nil {
 		t.Fatal(err)
 	}
-	readUntilSince(wizardOpenOffset, "NEW SESSION", "provider", "claude", "profile")
+	readUntilSince(wizardOpenOffset, "provider", "claude", "profile")
 	wizardSurface := strings.ToLower(ansi.Strip(capture.String()[wizardOpenOffset:]))
 	providerDefault := strings.Contains(wizardSurface, "provider") && strings.Contains(wizardSurface, "claude")
+	if _, err := io.WriteString(ptmx, "\x1b[A\x1b[A"); err != nil {
+		t.Fatal(err)
+	}
 	profileCycleOffset := capture.Len()
 	if _, err := io.WriteString(ptmx, "\x1b[Z"); err != nil {
 		t.Fatal(err)
@@ -123,10 +128,8 @@ func runTodo7ProfilePTY(t *testing.T, binary string, env []string) ([]byte, []by
 	if _, err := io.WriteString(ptmx, "\x1b"); err != nil {
 		t.Fatal(err)
 	}
-	// The Agents dashboard deliberately carries no profile column, so there is
-	// nothing profile-shaped to wait for after the wizard closes; the wizard's
-	// own profile field (asserted above) is the real surface. A second Esc
-	// quits from the dashboard.
+	// The pad's own profile field (asserted above) is the launch-time surface;
+	// the first Esc closes the pad and a second Esc quits from the dashboard.
 	if _, err := io.WriteString(ptmx, "\x1b"); err != nil {
 		t.Fatal(err)
 	}

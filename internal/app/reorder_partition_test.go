@@ -10,25 +10,23 @@ import (
 // partition boundary: SortSessions re-buckets by Closed then Pinned on the next
 // refresh, so a cross-partition swap silently reverts. The move is a no-op at
 // the boundary with honest feedback, and the rows stay put.
-func TestMoveSessionAcrossActiveClosedBoundaryIsNoOp(t *testing.T) {
+func TestMoveSessionAcrossLifecycleSwaps(t *testing.T) {
+	// Liveness is not a partition: the deck numbers sessions by position, so a
+	// running and a stopped stamp may trade places and the order persists.
 	m := NewWithDeps(nil, nil)
 	m.sessions = []adapter.Session{
 		{ID: "active", AgentType: "fake", DisplayName: "active", ProcAlive: adapter.Alive},
 		{ID: "closed", AgentType: "fake", DisplayName: "closed", ProcAlive: adapter.Exited, Closed: true},
 	}
 	m.selected = 0
-	cmd := m.moveSession(1) // would cross into the Closed partition
-	if cmd != nil {
-		t.Fatal("a cross-partition move must not persist a new order")
+	if cmd := m.moveSession(1); cmd == nil {
+		t.Fatal("a cross-lifecycle move must persist the new order")
 	}
-	if m.selected != 0 {
-		t.Fatalf("selection must stay put on a boundary move, got %d", m.selected)
+	if m.selected != 1 || m.sessions[0].ID != "closed" || m.sessions[1].ID != "active" {
+		t.Fatalf("rows did not swap: selected=%d %+v", m.selected, sessionIDs(m.sessions))
 	}
-	if m.sessions[0].ID != "active" || m.sessions[1].ID != "closed" {
-		t.Fatalf("rows must not swap across the partition boundary: %+v", m.sessions)
-	}
-	if m.message == "" {
-		t.Fatal("a boundary move should give honest feedback, not silently no-op")
+	if m.message != "" {
+		t.Fatalf("a legal move must not complain: %q", m.message)
 	}
 }
 

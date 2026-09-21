@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+	"github.com/charmbracelet/x/ansi"
 )
 
-func TestWizardProfileSelection(t *testing.T) {
+func TestLaunchPadProfileSelection(t *testing.T) {
 	// Given
 	persistentStore, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {
@@ -24,18 +26,18 @@ func TestWizardProfileSelection(t *testing.T) {
 	}
 	m := NewWithDeps(persistentStore, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
 	m = m.handleSessionsLoaded(m.loadSessionsCmd()().(sessionsLoadedMsg))
-	m.wizard = true
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m.defaultAgent = "fake"
+	m.openLaunchPad()
+	m.focusLaunchField(launchFieldProvider)
 
 	// When
-	model, _ := m.handleWizardKey(keyMsg("shift+tab"))
-	m = model.(Model)
-	model, _ = m.handleWizardKey(keyMsg("enter"))
+	model, _ := m.handleLaunchKey(keyMsg("shift+tab"))
 	m = model.(Model)
 
 	// Then
-	if view := m.renderWizard(); !strings.Contains(view, "profile") || !strings.Contains(view, "focused") {
-		t.Fatalf("profile selection step missing:\n%s", view)
+	if view := ansi.Strip(m.View().Content); !strings.Contains(view, "profile") || !strings.Contains(view, "focused") {
+		t.Fatalf("profile selection missing from the launch pad:\n%s", view)
 	}
 }
 
@@ -54,15 +56,15 @@ func TestSessionDetailsShowEffectiveProfile(t *testing.T) {
 	}
 	m := NewWithDeps(persistentStore, adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "fake", available: true}}))
 	m = m.handleSessionsLoaded(m.loadSessionsCmd()().(sessionsLoadedMsg))
-	m.width = 100
+	m = m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m.sessions = []adapter.Session{{ID: "exact-session-id", AgentType: "fake", DisplayName: "work", Cwd: "/tmp", CreatedAt: time.Now()}}
 
 	// When
-	out := m.renderDetails()
+	out := ansi.Strip(m.View().Content)
 
 	// Then
-	if !strings.Contains(out, "selected: default") || !strings.Contains(out, "effective: focused") {
-		t.Fatalf("profile details missing:\n%s", out)
+	if !strings.Contains(out, "profile default:focused") {
+		t.Fatalf("ledger profile missing:\n%s", out)
 	}
 }
 
@@ -115,17 +117,17 @@ func TestWizardProfileProviderBecomesDefault(t *testing.T) {
 	})
 	m := NewWithDeps(persistentStore, registry)
 	m = m.handleSessionsLoaded(m.loadSessionsCmd()().(sessionsLoadedMsg))
-	m.wizard = true
 	m.defaultAgent = "codex"
-	m.wizardAgent = "codex"
+	m.openLaunchPad()
+	m.focusLaunchField(launchFieldProvider)
 
 	// When
-	model, _ := m.handleWizardKey(keyMsg("shift+tab"))
+	model, _ := m.handleLaunchKey(keyMsg("shift+tab"))
 	m = model.(Model)
 
 	// Then
-	if m.wizardProfile != "claudeprof" || m.wizardAgent != "claude" {
-		t.Fatalf("wizard profile=%q provider=%q", m.wizardProfile, m.wizardAgent)
+	if m.launchProfile != "claudeprof" || m.launchAgent != "claude" {
+		t.Fatalf("launch profile=%q provider=%q", m.launchProfile, m.launchAgent)
 	}
 }
 
@@ -133,19 +135,20 @@ func TestWizardExplicitProviderSurvivesProfileSelection(t *testing.T) {
 	// Given
 	m := Model{
 		defaultAgent:        "codex",
-		wizard:              true,
-		wizardAgent:         "codex",
-		wizardAgentExplicit: true,
+		launchOpen:          true,
+		launchField:         launchFieldProvider,
+		launchAgent:         "codex",
+		launchAgentExplicit: true,
 		profileNames:        []string{"claudeprof"},
 		profileProviders:    map[string]string{"claudeprof": "claude"},
 	}
 
 	// When
-	model, _ := m.handleWizardKey(keyMsg("shift+tab"))
+	model, _ := m.handleLaunchKey(keyMsg("shift+tab"))
 	m = model.(Model)
 
 	// Then
-	if m.wizardProfile != "claudeprof" || m.wizardAgent != "codex" {
-		t.Fatalf("wizard explicit provider lost: profile=%q provider=%q", m.wizardProfile, m.wizardAgent)
+	if m.launchProfile != "claudeprof" || m.launchAgent != "codex" {
+		t.Fatalf("explicit provider lost: profile=%q provider=%q", m.launchProfile, m.launchAgent)
 	}
 }

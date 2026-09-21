@@ -22,7 +22,7 @@ func TestDashboardGoldenGeometryMatrix(t *testing.T) {
 			m.hasLoaded = true
 			view := ansi.Strip(m.View().Content)
 			assertViewGeometry(t, view, size.width, size.height)
-			for _, literal := range []string{"Agents", "Running", "Stopped", "Failed", "Attach", "Resume"} {
+			for _, literal := range []string{"UAM", "Running", "Stopped", "Failed", "Attach"} {
 				if !strings.Contains(view, literal) {
 					t.Fatalf("dashboard missing %q:\n%s", literal, view)
 				}

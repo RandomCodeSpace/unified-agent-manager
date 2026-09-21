@@ -148,14 +148,14 @@ func TestE2ETUICtrlCQuitsFromEveryModal(t *testing.T) {
 	}{
 		{name: "base dashboard", open: "", ready: ""},
 		{name: "expanded help", open: "?", ready: "ctrl+t"},
-		{name: "wizard", open: "e", ready: ""},
+		{name: "launch pad", open: "n", ready: "provider"},
 		{name: "rename", open: "\x12", ready: ""},
 		{name: "filter", open: "/abc", ready: "abc"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			session := startTUI(t)
-			if !session.await("Agents", 15*time.Second) {
+			if !session.await("UAM", 15*time.Second) {
 				t.Fatalf("dashboard never rendered: %q", session.seen.tail())
 			}
 			if test.open != "" {
@@ -174,7 +174,7 @@ func TestE2ETUICtrlCQuitsFromEveryModal(t *testing.T) {
 // action.
 func TestE2ETUIPrintableTextIsInertAndQuestionMarkOpensHelp(t *testing.T) {
 	session := startTUI(t)
-	if !session.await("Agents", 15*time.Second) {
+	if !session.await("UAM", 15*time.Second) {
 		t.Fatalf("dashboard never rendered: %q", session.seen.tail())
 	}
 	session.send("why")
@@ -191,7 +191,7 @@ func TestE2ETUIPrintableTextIsInertAndQuestionMarkOpensHelp(t *testing.T) {
 
 func TestE2ETUIMouseModeAndResizeMinimum(t *testing.T) {
 	session := startTUI(t)
-	if !session.await("Agents", 15*time.Second) {
+	if !session.await("UAM", 15*time.Second) {
 		t.Fatalf("dashboard never rendered: %q", session.seen.tail())
 	}
 	if !session.seen.contains("\x1b[?1002h") || !session.seen.contains("\x1b[?1006h") {
@@ -200,7 +200,7 @@ func TestE2ETUIMouseModeAndResizeMinimum(t *testing.T) {
 	if err := pty.Setsize(session.ptmx, &pty.Winsize{Cols: 39, Rows: 11}); err != nil {
 		t.Fatal(err)
 	}
-	if !session.await("Agents needs 40x12", 5*time.Second) {
+	if !session.await("UAM needs 40x12", 5*time.Second) {
 		t.Fatalf("real PTY resize did not reach safe minimum view: %q", session.seen.tail())
 	}
 	session.send("\x03")
