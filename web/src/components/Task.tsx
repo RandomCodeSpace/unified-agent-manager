@@ -1,4 +1,4 @@
-import { ArrowDown, Bot, ChevronRight, Ellipsis, Pencil } from 'lucide-react';
+import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { LIVE, api, describeError, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Project, type SessionDetail, type SessionSummary } from '../api';
 import type { AgentTranscript } from '../state';
@@ -244,6 +244,20 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
             )}
             {busy && <Spinner className="shrink-0" />}
           </div>
+          {/* The project strip (DESIGN.md D3): the branch, then Changes, beside the title. */}
+          {project?.branch && (
+            <span className="flex min-w-0 max-w-40 items-center gap-1 font-mono text-meta text-muted max-sm:hidden" title={`Project branch: ${project.branch}\nProject folder: ${session.workdir}`}>
+              <GitBranch aria-hidden="true" className="size-3 shrink-0" />
+              <span className="truncate">{project.branch}</span>
+            </span>
+          )}
+          <Tip label={`Changes in ${project?.name ?? 'the project'}`}>
+            <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={`Open changes${fileCount !== null ? `, ${fileCount} files` : ''}`} className="px-2 text-muted" onClick={openChanges}>
+              <FileDiff />
+              <span className="max-sm:hidden">Changes</span>
+              {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
+            </Button>
+          </Tip>
           {session.subagents.length > 0 && (
             <Tip label="Subagents">
               <Button
@@ -272,7 +286,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll}>
-          <div className="mx-auto flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
+          <div className="mx-auto flex w-full max-w-column flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
             <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />
             {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
@@ -307,7 +321,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
           </div>
         </div>
 
-        <div className="relative shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-4 md:px-6">
+        <div className="relative mx-auto w-full max-w-column shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-4 md:px-6">
           {showJump && (
             <Button variant="secondary" size="sm" className="absolute -top-10 left-1/2 -translate-x-1/2 shadow-float animate-rise" onClick={scrollToBottom}>
               <ArrowDown />
@@ -315,7 +329,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
             </Button>
           )}
           <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
-          <Composer key={session.id} session={session} project={project} fileCount={fileCount} onChanges={openChanges} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
+          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
         </div>
       </div>
 
