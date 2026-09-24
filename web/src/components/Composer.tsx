@@ -803,7 +803,7 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
         )}
 
         {busy === 'settings' && <Spinner className="mr-1" />}
-        {(live || autopilot) && (
+        {(live || session.execution?.objective?.status === 'active') && (
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop execution and pause queued follow-ups'}>
             <Button size="icon-md" variant="danger" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="animate-rise rounded-full bg-error text-on-primary hover:bg-error/90" disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
               {busy === 'stop' ? <Spinner /> : <Square className="!size-3.5" fill="currentColor" />}
