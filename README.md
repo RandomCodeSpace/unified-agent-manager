@@ -109,7 +109,7 @@ for the exact behavior.
 | `uam ls` | List every saved session |
 | `uam last` | Attach to the most recent session |
 | `uam doctor` | Check providers, sessions, and configuration |
-| `uam web` | Start the browser interface for Copilot and OpenCode ([guide](docs/web.md)) |
+| `uam web` | Start the browser interface for Copilot ([guide](docs/web.md)) |
 | `uam --help` | Show the full command reference |
 
 ## Essential controls

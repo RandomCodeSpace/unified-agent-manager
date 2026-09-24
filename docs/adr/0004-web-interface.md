@@ -22,6 +22,10 @@ structured APIs:
 | GitHub Copilot | Official Copilot Go SDK driving the installed `copilot` CLI |
 | OpenCode | `opencode serve` HTTP API and event stream, one UAM-owned server per project directory |
 
+Only Copilot is registered for now. Web features are built against Copilot
+first, and a provider is offered only when it supports them the same way.
+The OpenCode integration stays in the code base, unregistered.
+
 ### Ownership
 
 | Owner | Owns |
@@ -137,7 +141,7 @@ a subscriber.
   turn is reported as interrupted and is never replayed.
 - Survival across SSH logout depends on the host not killing user processes
   at logout (`KillUserProcesses`); UAM does not change that policy.
-- Copilot and OpenCode must be installed and signed in on the Linux host.
-  UAM does not download or update them.
+- Copilot must be installed and signed in on the Linux host. UAM does not
+  download or update it.
 - Older `uam` binaries do not know `surface` and would show web records as
   ordinary stopped sessions.

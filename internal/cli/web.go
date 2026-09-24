@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
@@ -22,8 +21,10 @@ import (
 
 // webProviders lists the structured provider integrations the web service
 // drives. A provider whose Check fails is shown as unavailable, not fatal.
+// Only Copilot is offered: a provider is added once it supports the web
+// features the same way (docs/adr/0004-web-interface.md).
 func webProviders() []agentapi.Provider {
-	return []agentapi.Provider{copilot.NewWebProvider(), opencode.NewWebProvider()}
+	return []agentapi.Provider{copilot.NewWebProvider()}
 }
 
 type originList []string

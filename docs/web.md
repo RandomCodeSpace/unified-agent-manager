@@ -1,14 +1,14 @@
 # Web interface
 
 `uam web` runs a small background service on the Linux host that lets a
-browser start and follow GitHub Copilot and OpenCode conversations. The work
+browser start and follow GitHub Copilot conversations. The work
 runs on Linux. Closing the browser, VS Code, or the SSH connection does not
 stop it; when you reconnect, the page shows the current progress or the
 finished result.
 
-The web interface talks to the providers through their structured APIs (the
-Copilot SDK and the OpenCode server API). It is not a terminal in a browser,
-and it does not use the terminal sessions that `uam` and `uam attach` manage.
+The web interface talks to Copilot through its structured API (the Copilot
+SDK). It is not a terminal in a browser, and it does not use the terminal
+sessions that `uam` and `uam attach` manage.
 See [ADR 0004](adr/0004-web-interface.md) for the design.
 
 ## Requirements
@@ -17,18 +17,17 @@ On the Linux host:
 
 - `uam` installed from a release or `make install`. The web assets are built
   into the binary; Node.js is not needed to serve them.
-- The providers you want to use, installed and signed in exactly as for the
-  terminal: `copilot` (GitHub Copilot CLI, which needs `node` on `PATH`) and
-  `opencode` 1.18.1 or newer. UAM reuses their existing configuration,
-  credentials, model settings, and permission rules. It does not install,
-  update, or reconfigure them.
-- Start `uam web` from a normal login shell, where `copilot` and `opencode`
-  resolve on `PATH`. The service inherits that environment.
+- `copilot` (GitHub Copilot CLI, which needs `node` on `PATH`), installed and
+  signed in exactly as for the terminal. UAM reuses its existing
+  configuration, credentials, model settings, and permission rules. It does
+  not install, update, or reconfigure it.
+- Start `uam web` from a normal login shell, where `copilot` resolves on
+  `PATH`. The service inherits that environment.
 
 On Windows: the built-in OpenSSH client (PowerShell) and a browser. Nothing is
 installed on Windows.
 
-Tested with Copilot CLI 1.0.88, OpenCode 1.18.32, and Go 1.26.5 on Linux 6.8.
+Tested with Copilot CLI 1.0.88 and Go 1.26.5 on Linux 6.8.
 
 ## Start the service
 
@@ -94,9 +93,10 @@ off, run `uam web stop`, then `uam web` without the flag.
 
 ## Use it
 
-- **New session**: choose Copilot or OpenCode, a project directory on the
-  Linux host, a name, and optionally a first prompt. Providers that are not
-  installed or not compatible are shown as unavailable with the reason.
+- **New session**: choose the provider (only Copilot for now), a project
+  directory on the Linux host, a name, and optionally a first prompt. A
+  provider that is not installed or not compatible is shown as unavailable
+  with the reason.
 - **Conversation**: responses stream in; tool calls appear as expandable rows
   that update in place.
 - **Approvals and questions**: when the provider asks for permission or asks a
@@ -109,8 +109,7 @@ off, run `uam web stop`, then `uam web` without the flag.
   the record. Sending another prompt reopens the same conversation.
 - **Changes**: *Workspace* shows `git` changes in the project versus `HEAD`.
   That includes edits made by anything else in the working tree, not only
-  this session. *Session* (OpenCode only) shows the file changes OpenCode
-  recorded for this conversation.
+  this session.
 
 States shown for each session:
 
@@ -196,16 +195,11 @@ private and rotate it if it leaks. With `--no-auth` it is not protected at all
   reopened after the service restarts.
 - **Copilot session diffs.** Copilot does not report per-conversation file
   changes; use the Workspace view.
-- **OpenCode servers.** UAM starts one `opencode serve` per project directory
-  and stops it when the last session using it closes or the service stops. It
-  never stops an OpenCode server it did not start.
 - **Opening a web conversation elsewhere at the same time.** Do not
-  continue a web session's conversation in the provider's own terminal UI
-  while the web interface has it open. Copilot shows a "session in use"
-  prompt in that case; OpenCode has no such check, and two writers can
-  interleave messages in the same conversation.
-- **Commands started by a provider that crashes.** Copilot and OpenCode run
-  shell commands in their own process sessions. If the provider process is
+  continue a web session's conversation in Copilot's own terminal UI while
+  the web interface has it open.
+- **Commands started by a provider that crashes.** Copilot runs shell
+  commands in separate process sessions. If the provider process is
   killed abruptly, a command it had already started may keep running until it
   finishes; UAM does not track or stop it.
 - **Older uam binaries** do not know about web sessions and show them as
