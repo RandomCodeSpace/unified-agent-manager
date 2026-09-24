@@ -181,8 +181,21 @@ export default function App() {
         .catch(later);
     };
     const selected = state.selectedId;
+    // Stream deltas wait for the next animation frame and land in one dispatch; any other
+    // frame (and a snapshot) flushes them first, so the order on the wire is kept.
+    let queue: UpdateData[] = [];
+    let frame = 0;
+    const flush = () => {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      if (!queue.length) return;
+      const data = queue;
+      queue = [];
+      dispatch({ type: 'updates', data });
+    };
     es.addEventListener('snapshot', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as SnapshotData;
+      flush();
       dispatch({ type: 'snapshot', data });
       setFilter((current) => {
         if (!current || data.projects.some((p) => p.id === current)) return current;
@@ -194,6 +207,13 @@ export default function App() {
     for (const name of UPDATE_EVENTS) {
       es.addEventListener(name, (e) => {
         const data = { name, ...JSON.parse((e as MessageEvent).data) } as UpdateData;
+        // A hidden tab gets no animation frames: apply at once there.
+        if (data.name === 'delta' && !document.hidden) {
+          queue.push(data);
+          frame ||= requestAnimationFrame(flush);
+          return;
+        }
+        flush();
         dispatch({ type: 'update', data });
         if (data.name === 'project_removed') {
           setFilter((current) => {
@@ -208,6 +228,8 @@ export default function App() {
     return () => {
       es.close();
       window.clearTimeout(retry);
+      // Deltas still queued belong to this stream; the next one starts with a snapshot.
+      cancelAnimationFrame(frame);
     };
   }, [auth, state.selectedId, streamKey, markViewed]);
 

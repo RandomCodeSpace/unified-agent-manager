@@ -209,3 +209,18 @@ test('switching Tasks keeps the previous detail until the next one arrives', () 
   assert.equal(reducer(state, { type: 'select', id: null }).previous, null);
   assert.equal(reducer(state, { type: 'remove_session', id: 'task' }).previous, null);
 });
+
+test('a batch of frames applies in order, exactly as one frame at a time', () => {
+  const frames = [
+    { name: 'delta', seq: 11, session_id: 'task', item_id: 'reply', kind: 'assistant', text: 'a' },
+    { name: 'delta', seq: 12, session_id: 'task', item_id: 'reply', kind: 'assistant', text: 'b' },
+    { name: 'delta', seq: 12, session_id: 'task', item_id: 'reply', kind: 'assistant', text: 'dup' },
+    { name: 'delta', seq: 13, session_id: 'other', item_id: 'reply', kind: 'assistant', text: 'x' },
+    { name: 'delta', seq: 14, session_id: 'task', item_id: 'reply', kind: 'assistant', text: 'c' },
+  ];
+  const oneByOne = frames.reduce(update, loading());
+  const batched = reducer(loading(), { type: 'updates', data: frames });
+  assert.equal(batched.detail.items[0].text, 'abc');
+  assert.deepEqual(batched.detail.items.map((i) => i.text), oneByOne.detail.items.map((i) => i.text));
+  assert.equal(batched.detailSeq, 14);
+});

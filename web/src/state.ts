@@ -57,6 +57,8 @@ export type Action =
   | { type: 'connection'; status: Connection }
   | { type: 'snapshot'; data: SnapshotData }
   | { type: 'update'; data: UpdateData }
+  /** Frames batched by the stream handler (deltas, one animation frame's worth), applied in order in one render. */
+  | { type: 'updates'; data: UpdateData[] }
   | { type: 'settings'; settings: Settings }
   | { type: 'detail_loaded'; detail: SessionDetail }
   /** A session from an HTTP reply; ignored when the live state is already newer (by updated_at). */
@@ -139,6 +141,8 @@ export function reducer(state: State, action: Action): State {
         ...state,
         agents: { ...state.agents, [action.agentId]: { loading: false, snapshotSeq: -1, error: action.error, items: [], buffered: [] } },
       };
+    case 'updates':
+      return action.data.reduce((next, data) => reducer(next, { type: 'update', data }), state);
     case 'update': {
       const d = action.data;
       if (d.seq <= state.snapshotSeq) return state;
