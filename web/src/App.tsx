@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
+import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -257,6 +257,16 @@ export default function App() {
     document.getElementById('composer-text')?.focus();
   }, [detailId]);
 
+  const logout = useCallback(() => {
+    void api.logout().finally(() => setAuth('out'));
+  }, []);
+  const onSheet = useCallback((open: boolean) => {
+    setSheetOpen(open);
+    if (!open) document.getElementById('changes-link')?.focus();
+  }, []);
+  const onSessionUpdate = useCallback((s: SessionSummary) => dispatch({ type: 'upsert_session', session: s }), []);
+  const onInteractionUpdate = useCallback((sessionId: string, interaction: Interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction }), []);
+
   const openDialog = useCallback((d: Exclude<ProjectDialog, null>) => {
     setDialog(d);
     setDialogOpen(true);
@@ -381,14 +391,6 @@ export default function App() {
     select(null);
   }
 
-  async function logout() {
-    try {
-      await api.logout();
-    } finally {
-      setAuth('out');
-    }
-  }
-
   async function confirmTaskDialog() {
     if (!taskDialog) return;
     const { kind, id } = taskDialog;
@@ -412,7 +414,7 @@ export default function App() {
       selectedId={state.selectedId}
       actions={actions}
       authRequired={authRequired}
-      onLogout={() => void logout()}
+      onLogout={logout}
       connection={connection}
       version={meta?.version}
     />
@@ -438,12 +440,9 @@ export default function App() {
         snapshotSeq={state.snapshotSeq}
         sheetOpen={sheetOpen}
         sidePanelInline={sheetInline}
-        onSheet={(open) => {
-          setSheetOpen(open);
-          if (!open) document.getElementById('changes-link')?.focus();
-        }}
-        onSessionUpdate={(s) => dispatch({ type: 'upsert_session', session: s })}
-        onInteractionUpdate={(sessionId, interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction })}
+        onSheet={onSheet}
+        onSessionUpdate={onSessionUpdate}
+        onInteractionUpdate={onInteractionUpdate}
         leading={leading}
       />
     );

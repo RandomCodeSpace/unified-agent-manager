@@ -1,5 +1,5 @@
 import { ArrowUp, ChevronDown, Cpu, File, FileDiff, Folder, Gauge, GitBranch, ListEnd, ListPlus, Paperclip, Shield, ShieldOff, Square, X, Zap } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type Project, type PromptMode, type SessionDetail, type SessionSummary, type Submission } from '../api';
 import { LIMITS, acceptFor, checkUpload, fileKind, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -151,7 +151,28 @@ function FileRow({ f }: { f: FileEntry }) {
 
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
 
-export function Composer({ session, project, fileCount, onChanges, onRename, onSessionUpdate }: { session: SessionDetail; project?: Project; fileCount: number | null; onChanges: () => void; onRename: () => void; onSessionUpdate: (s: SessionSummary) => void }) {
+interface ComposerProps {
+  session: SessionDetail;
+  project?: Project;
+  fileCount: number | null;
+  onChanges: () => void;
+  onRename: () => void;
+  onSessionUpdate: (s: SessionSummary) => void;
+}
+
+/** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
+function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
+  if (a.project !== b.project || a.fileCount !== b.fileCount || a.onChanges !== b.onChanges || a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate) return false;
+  if (a.session === b.session) return true;
+  const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
+  keys.delete('items');
+  for (const k of keys) if (a.session[k] !== b.session[k]) return false;
+  return true;
+}
+
+export const Composer = memo(ComposerView, sameComposerProps);
+
+function ComposerView({ session, project, fileCount, onChanges, onRename, onSessionUpdate }: ComposerProps) {
   const { meta, settings: appSettings, dispatch } = useApp();
   const [text, setText] = useState('');
   const [caret, setCaret] = useState(0);

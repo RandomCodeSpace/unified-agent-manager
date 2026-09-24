@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, Ellipsis, FolderMinus, FolderPlus, GitBranch, ListFilter, LogOut, Settings as SettingsIcon, Settings2, Search, SquarePen, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { filteredProject, groupTasks, mostRecentProject, sidebarTasks, visibleProjects } from '../lib/tasks';
@@ -318,7 +318,7 @@ function ProjectFilter({ projects, filter, onFilter, actions }: { projects: Proj
 
 /* ---------- Sidebar ---------- */
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
   projects,
   sessions,
   selectedId,
@@ -452,4 +452,4 @@ export function Sidebar({
       </footer>
     </nav>
   );
-}
+});

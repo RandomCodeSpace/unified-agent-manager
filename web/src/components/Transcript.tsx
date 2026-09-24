@@ -205,7 +205,7 @@ function Copyable({ text, label, className, children, extra = [] }: { text: stri
 }
 
 /** The user's turn: a bubble with the text as typed, then its uploads. The item carries no list of its `@path` references, so those stay plain text. */
-function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
+const UserBubble = memo(function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
   const attachments = item.attachments ?? [];
   return (
     <div className={cn('flex justify-end', className)}>
@@ -219,7 +219,7 @@ function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: st
       </Copyable>
     </div>
   );
-}
+});
 
 /** Consecutive tools share a compact disclosure; prose and questions stay in time order. */
 function ToolRun({ items, ctx }: { items: Item[]; ctx: RenderContext }) {
@@ -355,7 +355,8 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
  * waits, the action card below the transcript takes the answer; a call left open by a
  * restart or a stopped turn reads "No answer".
  */
-function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuestion; className?: string }) {
+// `asked` is rebuilt on every transcript render; equal content means nothing to redraw.
+const QuestionBlock = memo(function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuestion; className?: string }) {
   const [, copy] = useCopied();
   const text = asked.questions.map((q) => q.text).join('\n') || 'The agent asked a question.';
   const items: ActionItem[] = [
@@ -413,7 +414,7 @@ function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuest
       </ContextMenu.Content>
     </ContextMenu.Root>
   );
-}
+}, (a, b) => a.id === b.id && a.className === b.className && JSON.stringify(a.asked) === JSON.stringify(b.asked));
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
 export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, className }: { item: Item; sessionId?: string; streaming: boolean; endedAt?: string; className?: string }) {

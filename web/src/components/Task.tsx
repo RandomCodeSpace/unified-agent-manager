@@ -140,6 +140,13 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
     panelOpener.current = null;
   }, []);
 
+  const openChanges = useCallback(() => {
+    setPanel(null);
+    onSheet(true);
+  }, [onSheet]);
+  const { startRename } = actions;
+  const renameInHeader = useCallback(() => startRename(session.id, 'header'), [startRename, session.id]);
+
   function openPanel(view: PanelView, opener: HTMLElement) {
     panelOpener.current = opener;
     if (sheetOpen) onSheet(false);
@@ -284,7 +291,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
             </Button>
           )}
           <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
-          <Composer key={session.id} session={session} project={project} fileCount={fileCount} onChanges={() => { setPanel(null); onSheet(true); }} onRename={() => actions.startRename(session.id, 'header')} onSessionUpdate={onSessionUpdate} />
+          <Composer key={session.id} session={session} project={project} fileCount={fileCount} onChanges={openChanges} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
         </div>
       </div>
 
