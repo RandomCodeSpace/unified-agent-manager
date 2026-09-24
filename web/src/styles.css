@@ -2140,6 +2140,10 @@ dialog::backdrop {
   height: 52px;
 }
 
+.narrow .deck-history-nav .btn {
+  min-height: 44px;
+}
+
 .narrow .deck-row-model,
 .narrow .deck-row-project,
 .narrow .deck-row-state {
