@@ -70,7 +70,8 @@ type Capabilities struct {
 	// Import is a capability-gated exception to provider parity: the provider lists
 	// the conversations recorded for a folder and tells when another client
 	// holds one open (Importer).
-	Import bool `json:"import"`
+	Import         bool `json:"import"`
+	ExecutionModes bool `json:"execution_modes,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
@@ -388,10 +389,58 @@ type File struct {
 // Command is one slash command. Kind is "skill" for a skill and "command"
 // for any other prompt command.
 type Command struct {
+	Name            string          `json:"name"`
+	Description     string          `json:"description"`
+	Kind            string          `json:"kind"`
+	InputHint       string          `json:"input_hint"`
+	Aliases         []string        `json:"aliases,omitempty"`
+	AllowDuringTurn bool            `json:"allow_during_turn,omitempty"`
+	DisabledReason  string          `json:"disabled_reason,omitempty"`
+	InputChoices    []CommandOption `json:"input_choices,omitempty"`
+	InputRequired   bool            `json:"input_required,omitempty"`
+}
+
+type CommandOption struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Kind        string `json:"kind"`
-	InputHint   string `json:"input_hint"`
+	Group       string `json:"group,omitempty"`
+}
+
+// CommandExecutor handles commands with typed results as well as prompts.
+// A nil result means an agent prompt was submitted. Ambiguous provider
+// failures wrap ErrSubmissionUncertain and must never be retried implicitly.
+type CommandExecutor interface {
+	ExecuteCommand(context.Context, string, Prompt) (*CommandResult, error)
+}
+
+type CommandResult struct {
+	Kind         string          `json:"kind"`
+	Text         string          `json:"text,omitempty"`
+	Markdown     bool            `json:"markdown,omitempty"`
+	PrefillInput string          `json:"prefill_input,omitempty"`
+	Title        string          `json:"title,omitempty"`
+	Command      string          `json:"command,omitempty"`
+	Options      []CommandOption `json:"options,omitempty"`
+	Action       string          `json:"action,omitempty"`
+}
+
+// ExecutionState is a runtime observation, separate from permission policy.
+// A disconnected runtime retains the last observation with Known=false.
+type ExecutionState struct {
+	Known     bool                `json:"known"`
+	Mode      string              `json:"mode,omitempty"`
+	Objective *AutopilotObjective `json:"objective,omitempty"`
+}
+
+type AutopilotObjective struct {
+	ID                int64    `json:"id"`
+	Objective         string   `json:"objective"`
+	Status            string   `json:"status"`
+	TurnCount         int64    `json:"turn_count"`
+	PauseReason       string   `json:"pause_reason,omitempty"`
+	CompletionSummary string   `json:"completion_summary,omitempty"`
+	CreditsUsed       *float64 `json:"credits_used,omitempty"`
+	CreditLimit       *float64 `json:"credit_limit,omitempty"`
 }
 
 // Command kinds.
@@ -445,7 +494,8 @@ const (
 	// EventContext reports main-agent context usage; it is never persisted.
 	EventContext EventKind = "context"
 	// EventUsage reports the conversation's AI units so far in Event.Usage.
-	EventUsage EventKind = "usage"
+	EventUsage     EventKind = "usage"
+	EventExecution EventKind = "execution"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -459,6 +509,7 @@ type Event struct {
 	BackgroundTasks *BackgroundTasks
 	Context         *Context
 	Usage           *Usage
+	Execution       *ExecutionState
 	// Error is the sanitized reason for EventExit.
 	Error string
 	// Title is the untrusted provider title for EventTitle.
@@ -720,3 +771,14 @@ type FileDiff struct {
 	After     string `json:"after,omitempty"`
 	Patch     string `json:"patch,omitempty"`
 }
+
+// BackgroundTaskController stops a provider-owned shell process independently
+// of the foreground turn. The returned snapshot is freshly read when Known.
+type BackgroundTaskController interface {
+	CancelBackgroundTask(context.Context, string) (BackgroundTasks, error)
+}
+
+var (
+	ErrBackgroundTaskNotFound = errors.New("background shell task not found")
+	ErrBackgroundTaskInactive = errors.New("background shell task is not running")
+)

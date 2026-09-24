@@ -337,8 +337,10 @@ type WebState struct {
 	RequestID string `json:"request_id,omitempty"`
 	// RequestStatus is that submission's outcome: accepted, rejected or
 	// uncertain.
-	RequestStatus string    `json:"request_status,omitempty"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	RequestStatus      string          `json:"request_status,omitempty"`
+	CommandResult      json.RawMessage `json:"command_result,omitempty"`
+	CommandSubmissions json.RawMessage `json:"command_submissions,omitempty"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 	// Detail is a sanitized, short explanation of the state (usually an error).
 	Detail string `json:"detail,omitempty"`
 	// ProjectID is the WebProject the session (a Task) belongs to.
@@ -379,21 +381,23 @@ func (w *WebState) Update(v WebState) {
 type webStateAlias WebState
 
 var knownWebStateFields = map[string]struct{}{
-	"turn":             {},
-	"request_id":       {},
-	"request_status":   {},
-	"updated_at":       {},
-	"detail":           {},
-	"project_id":       {},
-	"model":            {},
-	"effort":           {},
-	"context_size":     {},
-	"title":            {},
-	"stage":            {},
-	"settled_at":       {},
-	"archived_at":      {},
-	"terminal_session": {},
-	"imported":         {},
+	"turn":                {},
+	"request_id":          {},
+	"request_status":      {},
+	"command_result":      {},
+	"command_submissions": {},
+	"updated_at":          {},
+	"detail":              {},
+	"project_id":          {},
+	"model":               {},
+	"effort":              {},
+	"context_size":        {},
+	"title":               {},
+	"stage":               {},
+	"settled_at":          {},
+	"archived_at":         {},
+	"terminal_session":    {},
+	"imported":            {},
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {

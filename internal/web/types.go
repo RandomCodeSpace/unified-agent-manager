@@ -197,7 +197,8 @@ type SessionSummary struct {
 	Queued int `json:"queued"`
 	// Mode is safe or yolo. A yolo Task's permission requests are allowed
 	// once without asking; questions still wait for the user.
-	Mode string `json:"mode"`
+	Mode      string                   `json:"mode"`
+	Execution *agentapi.ExecutionState `json:"execution"`
 	// Stage is omitted for an active Task, otherwise StageSettled or
 	// StageArchived; SettledAt and ArchivedAt say when.
 	Stage      string    `json:"stage,omitempty"`
@@ -296,10 +297,11 @@ type SubagentDetail struct {
 
 // Submission is the recorded outcome of one prompt request.
 type Submission struct {
-	RequestID string    `json:"request_id"`
-	Status    string    `json:"status"`
-	Error     string    `json:"error"`
-	Time      time.Time `json:"time"`
+	RequestID     string                  `json:"request_id"`
+	Status        string                  `json:"status"`
+	Error         string                  `json:"error"`
+	Time          time.Time               `json:"time"`
+	CommandResult *agentapi.CommandResult `json:"command_result,omitempty"`
 }
 
 // ChangedFile is one entry of a Changes listing.

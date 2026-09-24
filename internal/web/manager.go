@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -234,10 +235,14 @@ type webSession struct {
 	subIdx           map[string]*agentapi.Subagent
 	stoppedSubagents map[string]bool // accepted stops awaiting the provider event
 	backgroundTasks  *agentapi.BackgroundTasks
+	execution        *agentapi.ExecutionState
 
-	submissions []Submission
-	last        *Submission
-	createReq   string
+	commandSubmissions []Submission
+	commandLedger      string
+	stopSeq            uint64
+	submissions        []Submission
+	last               *Submission
+	createReq          string
 	// subagentPrompts are the outcomes of follow-ups to subagents, within
 	// maxSubmissions. They are not Task submissions: last never holds one.
 	subagentPrompts []Submission
@@ -295,9 +300,10 @@ type interaction struct {
 // persistKey is the durable part of a session; sessions.json is written only
 // when it changes, never per streamed token.
 type persistKey struct {
-	turn, detail, name, convID, reqID, reqStatus, projectID, model, effort, contextSize, title, stage string
-	mode                                                                                              store.Mode
-	settledAt, archivedAt                                                                             time.Time
+	commandResult                                                                                                    *agentapi.CommandResult
+	turn, detail, name, convID, reqID, reqStatus, commandLedger, projectID, model, effort, contextSize, title, stage string
+	mode                                                                                                             store.Mode
+	settledAt, archivedAt                                                                                            time.Time
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -358,7 +364,9 @@ func (s *webSession) key() persistKey {
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
+		k.commandResult = s.last.CommandResult
 	}
+	k.commandLedger = s.commandLedger
 	return k
 }
 
@@ -547,6 +555,8 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.mode = store.ModeYolo
 	}
 	if web := rec.Web; web != nil {
+		_ = json.Unmarshal(web.CommandSubmissions, &s.commandSubmissions)
+		s.commandLedger = string(web.CommandSubmissions)
 		if knownStates[web.Turn] {
 			s.base = web.Turn
 		}
@@ -564,6 +574,9 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		}
 		if web.RequestID != "" {
 			sub := Submission{RequestID: web.RequestID, Status: web.RequestStatus, Time: web.UpdatedAt}
+			if len(web.CommandResult) > 0 {
+				_ = json.Unmarshal(web.CommandResult, &sub.CommandResult)
+			}
 			s.submissions = []Submission{sub}
 			s.last = &sub
 		}
@@ -749,7 +762,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
 		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context, Usage: s.usage,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), Workdir: s.workdir, ConversationID: s.convID,
-		State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
+		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt,
 	}
@@ -1351,10 +1364,14 @@ func (m *Manager) flush() error {
 			continue
 		}
 		key := s.key()
+		var commandResult json.RawMessage
+		if key.commandResult != nil {
+			commandResult, _ = json.Marshal(key.commandResult)
+		}
 		patches = append(patches, recordPatch{
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
-				Turn: key.turn, RequestID: key.reqID, RequestStatus: key.reqStatus, UpdatedAt: s.updatedAt, Detail: s.detail,
+				Turn: key.turn, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 			},
@@ -1537,6 +1554,11 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventSubagent:
 		if ev.Subagent != nil && ev.Subagent.ID != "" {
 			m.upsertSubagentLocked(s, *ev.Subagent, true)
+		}
+	case agentapi.EventExecution:
+		if ev.Execution != nil {
+			state := *ev.Execution
+			s.execution = &state
 		}
 	case agentapi.EventBackgroundTasks:
 		if ev.BackgroundTasks != nil {
@@ -2107,6 +2129,9 @@ func (m *Manager) Command(id string, req CommandRequest) (Submission, error) {
 	if provider == agentapi.ProviderOpenCode && strings.Contains(req.Arguments, "!`") {
 		return Submission{}, newError(http.StatusBadRequest, "command arguments must not contain !`")
 	}
+	if provider == agentapi.ProviderCopilot {
+		return m.executeCommand(s, req)
+	}
 	return m.submit(s, turnInput{text: req.Arguments, command: req.Name, files: req.Files, attachments: req.Attachments}, req.RequestID, ModeSend)
 }
 
@@ -2119,18 +2144,29 @@ func validCommandName(name string) bool {
 	return !strings.ContainsFunc(name, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
 }
 
-// Commands lists the Task's slash commands. It opens the conversation as a
-// viewer does; a Task whose conversation is not open has none to list.
+// Commands lists the live catalogue, reopening only the exact conversation
+// of an active Task. Discovery never submits a prompt.
 func (m *Manager) Commands(ctx context.Context, id string) ([]agentapi.Command, error) {
-	if err := m.View(ctx, id); err != nil {
-		return nil, err
-	}
 	s, err := m.lookup(id)
 	if err != nil {
 		return nil, err
 	}
+	s.op.Lock()
+	defer s.op.Unlock()
 	m.mu.Lock()
-	conv := s.conv
+	err = s.readOnlyLocked()
+	m.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if err = m.checkHolder(s); err != nil {
+		return nil, err
+	}
+	if err = m.openLocked(s, true); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	conv, state := s.conv, s.state()
 	m.mu.Unlock()
 	if conv == nil {
 		return nil, newError(http.StatusConflict, "the provider conversation is not open")
@@ -2138,6 +2174,11 @@ func (m *Manager) Commands(ctx context.Context, id string) ([]agentapi.Command, 
 	commands, err := m.listCommands(conv)
 	if errors.Is(err, agentapi.ErrUnsupported) {
 		return []agentapi.Command{}, nil
+	}
+	for i := range commands {
+		if turnRunning(state) && !commands[i].AllowDuringTurn && commands[i].DisabledReason == "" {
+			commands[i].DisabledReason = "Wait for the active turn to finish"
+		}
 	}
 	return commands, err
 }
@@ -2164,6 +2205,8 @@ func (m *Manager) listCommands(conv agentapi.Conversation) ([]agentapi.Command, 
 		}
 		c.Description = clipRunes(strings.TrimSpace(displaytext.Sanitize(c.Description)), maxDetailRunes)
 		c.InputHint = clipRunes(strings.TrimSpace(displaytext.Sanitize(c.InputHint)), maxDetailRunes)
+		c.Aliases = slices.DeleteFunc(slices.Clone(c.Aliases), func(alias string) bool { return !validCommandName(alias) })
+		c.DisabledReason = clipRunes(displaytext.Sanitize(c.DisabledReason), maxDetailRunes)
 		out = append(out, c)
 	}
 	return out, nil
@@ -2381,6 +2424,11 @@ func (s *webSession) findSubmission(reqID string) (Submission, bool) {
 // findRequest returns the recorded outcome of reqID, or "queued" while it
 // waits in the queue.
 func (s *webSession) findRequest(reqID string) (Submission, bool) {
+	for i := len(s.commandSubmissions) - 1; i >= 0; i-- {
+		if s.commandSubmissions[i].RequestID == reqID {
+			return s.commandSubmissions[i], true
+		}
+	}
 	if sub, ok := s.findSubmission(reqID); ok {
 		return sub, true
 	}
@@ -2619,27 +2667,33 @@ func (m *Manager) cancelledLocked(s *webSession, reqID string) {
 // Cancel aborts the running turn. It is distinct from a viewer leaving and
 // from Close: the conversation stays open.
 func (m *Manager) Cancel(id string) (SessionSummary, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
 	m.mu.Lock()
-	s := m.sessions[id]
-	if s == nil {
+	if err := s.readOnlyLocked(); err != nil {
 		m.mu.Unlock()
-		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+		return SessionSummary{}, err
 	}
 	conv, state, caps := s.conv, s.state(), m.infos[s.provider].Capabilities
 	if !caps.Cancel {
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusConflict, "this provider does not support cancelling a turn")
 	}
-	if conv == nil || state == StateStarting || !busy(state) {
+	if conv == nil || state == StateStarting || (!busy(state) && (s.execution == nil || s.execution.Mode != "autopilot")) {
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusConflict, "no turn is running")
 	}
+	s.stopSeq++
 	before := m.summaryLocked(s)
 	m.pauseQueueLocked(s)
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
-	err := conv.Cancel(ctx)
+	err = conv.Cancel(ctx)
 	cancel()
 	switch {
 	case err == nil:
@@ -2998,6 +3052,12 @@ func (m *Manager) SetModel(id string, model, effort, contextSize *string) (Sessi
 	}
 	s.op.Lock()
 	defer s.op.Unlock()
+	return m.setModelLocked(s, model, effort, contextSize)
+}
+
+// The caller holds s.op, shared by command invocation and Stop.
+func (m *Manager) setModelLocked(s *webSession, model, effort, contextSize *string) (SessionSummary, error) {
+	id := s.id
 	m.mu.Lock()
 	if s.removed {
 		m.mu.Unlock()

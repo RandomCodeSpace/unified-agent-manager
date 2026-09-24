@@ -320,6 +320,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   permissions, context, usage or rename control. Choosing a subcommand fills
   the composer for explicit submission. `/yolo` and `/allow-all` change the
   same Safe/Yolo permission policy as the toolbar; autopilot does not change it.
+  See [Web commands and execution state](web-commands.md) for the exact supported
+  command list, limits and retry behavior.
 - **Execution mode**: supported providers report Interactive, Plan or Autopilot
   separately from permissions. The composer shows the runtime's objective
   status and, on expansion, reported turns, credits, limits and pause or

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -53,7 +52,7 @@ func TestWebSendAttachesReferencedFiles(t *testing.T) {
 	}
 }
 
-func TestWebCommandsListSkillsInitAndReview(t *testing.T) {
+func TestWebCommandsListSupportedAndDisabledNativeCommands(t *testing.T) {
 	h := openWeb(t)
 	h.fs.commands = []rpc.SlashCommandInfo{
 		{Name: "review", Kind: rpc.SlashCommandKindBuiltin, Description: "Review changes", Input: &rpc.SlashCommandInput{Hint: "focus"}},
@@ -68,18 +67,21 @@ func TestWebCommandsListSkillsInitAndReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []agentapi.Command{
-		{Name: "review", Description: "Review changes", Kind: agentapi.CommandPrompt, InputHint: "focus"},
-		{Name: "init", Kind: agentapi.CommandPrompt},
-		{Name: "probe-skill", Description: "Probe", Kind: agentapi.CommandSkill},
+	if len(got) != len(h.fs.commands) {
+		t.Fatalf("catalog dropped commands: %+v", got)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("commands = %+v", got)
+	for _, cmd := range got {
+		disabled := cmd.Name == "plan" || cmd.Name == "add-dir" || cmd.Name == "extension"
+		if (cmd.DisabledReason != "") != disabled {
+			t.Fatalf("wrong support state: %+v", cmd)
+		}
 	}
+
 }
 
-func TestWebRunCommandSendsOnlyAPromptWithoutModeChange(t *testing.T) {
+func TestWebRunCommandSendsPromptAndRejectsUnsupportedBeforeInvoke(t *testing.T) {
 	h := openWeb(t)
+	h.fs.commands = []rpc.SlashCommandInfo{{Name: "probe-skill", Kind: rpc.SlashCommandKindSkill}, {Name: "review", Kind: rpc.SlashCommandKindBuiltin}, {Name: "plan", Kind: rpc.SlashCommandKindBuiltin}}
 	h.fs.invoke = &rpc.SlashCommandAgentPromptResult{Prompt: "<skill-context>probe</skill-context>\nARGUMENTS: alpha", DisplayPrompt: "/probe-skill alpha"}
 	if err := h.conv.RunCommand(context.Background(), "probe-skill", agentapi.Prompt{Text: "alpha", Files: composerFiles}); err != nil {
 		t.Fatal(err)
@@ -97,26 +99,15 @@ func TestWebRunCommandSendsOnlyAPromptWithoutModeChange(t *testing.T) {
 		t.Fatalf("no-argument command: %v, %+v", err, h.fs.msgs[1])
 	}
 
-	plan := rpc.SessionModePlan
-	for _, tc := range []struct {
-		res  rpc.SlashCommandInvocationResult
-		err  error
-		want string
-	}{
-		{res: &rpc.SlashCommandTextResult{Text: "usage"}, want: "with text, not a prompt"},
-		{res: &rpc.SlashCommandAgentPromptResult{Prompt: "plan it", Mode: &plan}, want: "switch the session to plan mode"},
-		{res: &rpc.SlashCommandCompletedResult{}, want: "with completed"},
-		{err: errors.New("Unknown slash command: /x"), want: "refused /x"},
-	} {
-		h.fs.invoke, h.fs.invokeErr = tc.res, tc.err
-		err := h.conv.RunCommand(context.Background(), "x", agentapi.Prompt{Text: "y"})
-		if err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) || !strings.Contains(err.Error(), tc.want) {
-			t.Fatalf("result %T/%v = %v, want rejection %q", tc.res, tc.err, err, tc.want)
+	for _, name := range []string{"plan", "unknown"} {
+		if err := h.conv.RunCommand(context.Background(), name, agentapi.Prompt{}); err == nil {
+			t.Fatal("unsupported command accepted")
 		}
 	}
-	if len(h.fs.msgs) != 2 {
-		t.Fatalf("a refused command sent %d messages", len(h.fs.msgs)-2)
+	if len(h.fs.invoked) != 2 || len(h.fs.msgs) != 2 {
+		t.Fatal("unsupported command reached provider")
 	}
+
 }
 
 func TestWebModelsReportTheMediaGate(t *testing.T) {

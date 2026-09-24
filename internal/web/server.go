@@ -150,6 +150,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDelete)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}", s.handleSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/cancel", s.handleCancelSubagent)
+	mux.HandleFunc("POST /api/sessions/{id}/background-tasks/{task_id}/cancel", s.handleCancelBackgroundTask)
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/prompt", s.handlePromptSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
 	mux.HandleFunc("POST /api/sessions/{id}/command", s.handleCommand)

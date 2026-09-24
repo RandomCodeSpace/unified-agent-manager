@@ -47,7 +47,7 @@ func (m *Manager) terminalLive(s *webSession) bool {
 func (m *Manager) checkHolder(s *webSession) error {
 	m.mu.Lock()
 	prov, convID, external := m.providers[s.provider], s.convID, s.imported || s.terminalID != ""
-	key, gen := s.key(), s.gen
+	key, gen, stop := s.key(), s.gen, s.stopSeq
 	m.mu.Unlock()
 	if !external || convID == "" {
 		return nil
@@ -56,7 +56,7 @@ func (m *Manager) checkHolder(s *webSession) error {
 	held, err := m.holders(m.ctx, prov, []string{convID})
 	s.op.Lock()
 	m.mu.Lock()
-	changed, removed, closed := s.key() != key || s.gen != gen, s.removed, m.closed
+	changed, removed, closed := s.key() != key || s.gen != gen || s.stopSeq != stop, s.removed, m.closed
 	m.mu.Unlock()
 	switch {
 	case closed:

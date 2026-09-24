@@ -357,7 +357,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -633,15 +633,16 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	var sess sdkSession
 	if req.ConversationID == "" {
 		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{
-			SessionID:           req.SessionID,
-			WorkingDirectory:    req.Workdir,
-			Model:               req.Model,
-			ReasoningEffort:     req.Effort,
-			ContextTier:         copilot.ContextTier(req.ContextSize),
-			Streaming:           copilot.Bool(true),
-			OnPermissionRequest: deferPermission,
-			OnUserInputRequest:  c.askUser,
-			OnEvent:             c.onEvent,
+			SessionID:             req.SessionID,
+			WorkingDirectory:      req.Workdir,
+			Model:                 req.Model,
+			ReasoningEffort:       req.Effort,
+			ContextTier:           copilot.ContextTier(req.ContextSize),
+			Streaming:             copilot.Bool(true),
+			OnPermissionRequest:   deferPermission,
+			OnUserInputRequest:    c.askUser,
+			OnExitPlanModeRequest: refusePlanExit,
+			OnEvent:               c.onEvent,
 			// Discovery loads what the terminal CLI loads for this directory:
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
@@ -653,10 +654,11 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Streaming:        copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
-			ContinuePendingWork: copilot.Bool(false),
-			OnPermissionRequest: deferPermission,
-			OnUserInputRequest:  c.askUser,
-			OnEvent:             c.onEvent,
+			ContinuePendingWork:   copilot.Bool(false),
+			OnPermissionRequest:   deferPermission,
+			OnUserInputRequest:    c.askUser,
+			OnExitPlanModeRequest: refusePlanExit,
+			OnEvent:               c.onEvent,
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 		})
@@ -683,6 +685,9 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		_ = c.Close(ctx)
 		return nil, agentapi.ErrClosed
 	}
+	c.control.Lock()
+	c.refreshExecution(ctx)
+	c.control.Unlock()
 	return c, nil
 }
 
@@ -983,8 +988,12 @@ type conversation struct {
 	// Once the provider reports foreground idle, session.idle is only its
 	// broader background-work boundary and must not end another turn.
 	assistantIdleSeen bool
+	autopilotTurn     bool
 	foregroundIdle    bool
 	backgroundTasks   *agentapi.BackgroundTasks
+	execution         *agentapi.ExecutionState
+	executionRevision uint64
+	control           sync.Mutex
 	reportEmptyTasks  bool
 	// turnModel is the model of the turn's latest main-agent model call.
 	turnModel string
@@ -1365,71 +1374,6 @@ func (c *conversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
 	return c.send(ctx, copilot.MessageOptions{Prompt: prompt.Text, Attachments: attachments(prompt)})
 }
 
-// Commands lists skills and the built-in prompt commands init and review.
-// Other built-ins duplicate web controls, change the mode, only print text,
-// or reach outside the Task.
-func (c *conversation) Commands(ctx context.Context) ([]agentapi.Command, error) {
-	if c.isClosed() {
-		return nil, agentapi.ErrClosed
-	}
-	listed, err := c.sess.ListCommands(ctx)
-	if err != nil {
-		c.p.poke()
-		return nil, fmt.Errorf("copilot commands: %s", errText(err))
-	}
-	out := []agentapi.Command{}
-	for _, cmd := range listed {
-		kind := agentapi.CommandSkill
-		switch {
-		case cmd.Kind == rpc.SlashCommandKindSkill:
-		case cmd.Kind == rpc.SlashCommandKindBuiltin && (cmd.Name == "init" || cmd.Name == "review"):
-			kind = agentapi.CommandPrompt
-		default:
-			continue
-		}
-		hint := ""
-		if cmd.Input != nil {
-			hint = cmd.Input.Hint
-		}
-		out = append(out, agentapi.Command{Name: cmd.Name, Description: cmd.Description, Kind: kind, InputHint: hint})
-	}
-	return out, nil
-}
-
-// RunCommand resolves the command, then sends the prompt it returns, shown
-// as "/name arguments". Only a prompt that keeps the session's mode is
-// sent; any other result was not a turn and is refused.
-func (c *conversation) RunCommand(ctx context.Context, name string, args agentapi.Prompt) error {
-	if c.isClosed() {
-		return agentapi.ErrClosed
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	res, err := c.sess.InvokeCommand(ctx, name, args.Text)
-	if err != nil {
-		// Invoking starts no turn, so nothing was submitted.
-		c.p.poke()
-		return fmt.Errorf("copilot refused /%s: %s", name, errText(err))
-	}
-	prompt, ok := res.(*rpc.SlashCommandAgentPromptResult)
-	switch {
-	case !ok:
-		kind := "no result"
-		if res != nil {
-			kind = string(res.Kind())
-		}
-		return fmt.Errorf("copilot answered /%s with %s, not a prompt; uam sent nothing", name, kind)
-	case prompt.Mode != nil:
-		return fmt.Errorf("copilot's /%s would switch the session to %s mode; uam sent nothing", name, *prompt.Mode)
-	case prompt.Prompt == "":
-		return fmt.Errorf("copilot's /%s returned an empty prompt; uam sent nothing", name)
-	}
-	return c.send(ctx, copilot.MessageOptions{
-		Prompt: prompt.Prompt, DisplayPrompt: strings.TrimSpace("/" + name + " " + args.Text), Attachments: attachments(args),
-	})
-}
-
 // attachments maps a prompt's references to Copilot attachments; uploads go
 // inline as blobs, so no file is needed on the host.
 func attachments(p agentapi.Prompt) []copilot.Attachment {
@@ -1500,6 +1444,7 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	// An idle seen while Send was in flight already ended this turn.
 	if c.idles == idles {
 		c.foregroundIdle = false
+		c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 	}
 	return nil
@@ -1557,12 +1502,23 @@ func (c *conversation) Steer(ctx context.Context, prompt string) error {
 }
 
 func (c *conversation) Cancel(ctx context.Context) error {
+	c.control.Lock()
+	defer c.control.Unlock()
 	if c.isClosed() {
 		return agentapi.ErrClosed
 	}
-	if err := c.sess.Abort(ctx); err != nil {
-		c.p.poke()
-		return fmt.Errorf("copilot cancel: %s", errText(err))
+	var modeErr error
+	if runtime, ok := c.sess.(executionSession); ok {
+		modeErr = runtime.SetExecutionMode(ctx, rpc.SessionModeInteractive)
+		c.refreshExecution(ctx)
+	}
+	// Abort must still run after a partial mode failure, with its own bounded
+	// context if the mode operation used up the original deadline.
+	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	abortErr := c.sess.Abort(abortCtx)
+	if modeErr != nil || abortErr != nil {
+		return fmt.Errorf("copilot stop: %w", errors.Join(modeErr, abortErr))
 	}
 	return nil
 }
@@ -2102,6 +2058,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.AssistantTurnStartData:
 		if agentID == "" {
 			c.foregroundIdle = false
+			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 		}
 		return
@@ -2120,18 +2077,60 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		// reached the CLI after the idle of the turn it was meant for.
 		if agentID == "" && d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliveryIdle {
 			c.foregroundIdle = false
+			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 		}
+	case *rpc.SessionModeChangedData:
+		if agentID == "" {
+			c.executionRevision++
+			if c.execution == nil {
+				c.execution = &agentapi.ExecutionState{}
+			}
+			next := *c.execution
+			next.Mode, next.Known = string(d.NewMode), false
+			if d.NewMode != rpc.SessionModeAutopilot {
+				c.autopilotTurn = false
+			}
+			c.execution = &next
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventExecution, Execution: &next})
+			c.checkExecutionLocked()
+		}
+		return
+	case *rpc.SessionAutopilotObjectiveChangedData:
+		if agentID == "" {
+			c.executionRevision++
+			c.checkExecutionLocked()
+		}
+		return
 	case *rpc.AssistantIdleData:
 		if agentID != "" {
+			return
+		}
+		if (c.autopilotTurn || c.execution != nil && (c.execution.Mode == "autopilot" || c.execution.Mode == "")) && (d.Aborted == nil || !*d.Aborted) {
+			c.autopilotTurn = true
 			return
 		}
 		c.assistantIdleSeen = true
 		c.finishTurnLocked(d.Aborted, ev.Timestamp)
 		return
 	case *rpc.SessionIdleData:
-		if agentID == "" && !c.assistantIdleSeen {
+		if agentID == "" && d.Mode != nil && *d.Mode == rpc.SessionModeAutopilot && (d.Aborted == nil || !*d.Aborted) {
+			c.autopilotTurn = true
+			next := agentapi.ExecutionState{Mode: "autopilot"}
+			if c.execution != nil {
+				next = *c.execution
+				next.Mode = "autopilot"
+				next.Known = false
+			}
+			c.execution = &next
+			c.executionRevision++
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventExecution, Execution: &next})
+			c.checkExecutionLocked()
+			return
+		}
+		if agentID == "" && (!c.assistantIdleSeen || c.autopilotTurn) && (d.Mode == nil || *d.Mode != rpc.SessionModeAutopilot || d.Aborted != nil && *d.Aborted) {
 			c.finishTurnLocked(d.Aborted, ev.Timestamp)
+			c.autopilotTurn = false
 		}
 		return
 	case *rpc.PermissionRequestedData:
