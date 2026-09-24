@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -856,9 +857,11 @@ func (c *webConversation) checkIdle(ctx context.Context, client *apiClient) erro
 	return nil
 }
 
-// webFileParts maps referenced files to OpenCode file parts. The source
-// links a part to its @path in the text, in UTF-16 offsets as OpenCode's
-// own clients count.
+// webFileParts maps referenced files and uploads to OpenCode file parts. A
+// file's source links it to its @path in the text, in UTF-16 offsets as
+// OpenCode's own clients count. An upload goes inline as a data: URL;
+// OpenCode inlines text/plain into the prompt and passes images and PDFs to
+// models that take them.
 func webFileParts(prompt agentapi.Prompt) []map[string]any {
 	parts := []map[string]any{}
 	for _, f := range prompt.Files {
@@ -875,6 +878,10 @@ func webFileParts(prompt agentapi.Prompt) []map[string]any {
 			}}
 		}
 		parts = append(parts, part)
+	}
+	for _, b := range prompt.Attachments {
+		parts = append(parts, map[string]any{"type": "file", "mime": b.MIME, "filename": b.Name,
+			"url": "data:" + b.MIME + ";base64," + base64.StdEncoding.EncodeToString(b.Data)})
 	}
 	return parts
 }

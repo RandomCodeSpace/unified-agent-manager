@@ -2,6 +2,9 @@ package opencode
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -259,9 +262,37 @@ func (c *webConversation) mapPartLocked(part webPart, fallback time.Time) (*agen
 			call.Output = webTruncate(part.State.Error)
 		}
 		return &agentapi.Item{ID: part.ID, Kind: agentapi.ItemTool, Tool: call, Time: when}, state
+	case "file":
+		// An upload a user message carried shows as its own user item,
+		// described without the data: URL's bytes. Project file references
+		// (file://) stay hidden, as before.
+		state := webPartState{kind: agentapi.ItemUser, dropDeltas: true}
+		att, ok := webDataAttachment(part)
+		if !ok || c.roles[part.MessageID] != "user" {
+			return nil, state
+		}
+		return &agentapi.Item{ID: part.ID, Kind: agentapi.ItemUser, Time: when, Attachments: []agentapi.Attachment{att}}, state
 	default:
 		return nil, webPartState{dropDeltas: true}
 	}
+}
+
+// webDataAttachment describes a base64 data: URL file part.
+func webDataAttachment(part webPart) (agentapi.Attachment, bool) {
+	rest, ok := strings.CutPrefix(part.URL, "data:")
+	if !ok {
+		return agentapi.Attachment{}, false
+	}
+	header, payload, ok := strings.Cut(rest, ",")
+	if !ok || !strings.HasSuffix(header, ";base64") {
+		return agentapi.Attachment{}, false
+	}
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return agentapi.Attachment{}, false
+	}
+	sum := sha256.Sum256(data)
+	return agentapi.Attachment{Name: part.Filename, MIME: part.Mime, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}, true
 }
 
 func webToolStatus(status string) agentapi.ToolStatus {

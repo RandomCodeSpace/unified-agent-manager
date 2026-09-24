@@ -24,7 +24,8 @@ structured APIs:
 
 Only Copilot is registered for now. Web features are built against Copilot
 first, and a provider is offered only when it supports them the same way.
-Per-Task context size is the sole capability-gated exception to this rule.
+Per-Task context size and the per-model image and PDF gate for attachments
+are the capability-gated exceptions to this rule.
 The OpenCode integration stays in the code base, unregistered.
 
 ### Ownership
@@ -643,6 +644,30 @@ before. This replaces the New Task form.
   default. A Project without defaults uses `auto`, no effort, `default` and
   `safe`.
 
+## Project branch
+
+- Date: 2026-09-24 (decided in #175)
+
+`Project` gains `branch`: the branch checked out in the git work tree that
+holds `dir`, linked worktrees included. It is omitted when `dir` is not in a
+work tree, HEAD is detached, or git cannot tell within two seconds. UAM runs
+`git symbolic-ref --quiet HEAD` through the Changes view's git runner and
+cleans the name like other labels. The branch lives only in memory; it is
+never written to `sessions.json`.
+
+UAM reads it when the Project is added and re-reads it when Projects are
+listed (`GET /api/projects` and the `snapshot` frame, at most once per Project
+every two seconds), when a Task in the Project ends a turn, and when a Task's
+Changes load. Nothing polls. When the branch changes, the `project` frame
+carries the Project again.
+
+| `GET /api/sessions/{id}/commands` | – | `{"commands": [{"name", "description", "kind", "input_hint"}]}`; opens the conversation as a viewer does; 409 when it is not open |
+| `GET /api/sessions/{id}/files?q=&limit=` | – | `{"files": [{"path", "type"}], "reason"}`; `type` is `file` or `directory`; `limit` 1 to 200, default 50, else 400 |
+| `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path, or for files on a steer during a turn |
+| `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, a refused file, or `` !` `` on OpenCode; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
+
+`QueuedPrompt` gains `files` (omitted when empty).
+
 ## Slash commands and file references
 
 - Date: 2026-09-24 (decided in #176, from the research for #172)
@@ -741,26 +766,90 @@ probe folder was not trusted, and this host has no user MCP configuration.
 omitted when the Project has none; `context_size` is `default` unless a tier is
 chosen. A change sends a `project` frame, as a rename does.
 
-## Project branch
+## Browser attachments
 
-- Date: 2026-09-24 (decided in #175)
+- Date: 2026-09-24 (decided in #177, from the research for #172)
 
-`Project` gains `branch`: the branch checked out in the git work tree that
-holds `dir`, linked worktrees included. It is omitted when `dir` is not in a
-work tree, HEAD is detached, or git cannot tell within two seconds. UAM runs
-`git symbolic-ref --quiet HEAD` through the Changes view's git runner and
-cleans the name like other labels. The branch lives only in memory; it is
-never written to `sessions.json`.
+The browser uploads a file to UAM first and then names it by ID in a prompt.
+No request carries base64 in JSON.
 
-UAM reads it when the Project is added and re-reads it when Projects are
-listed (`GET /api/projects` and the `snapshot` frame, at most once per Project
-every two seconds), when a Task in the Project ends a turn, and when a Task's
-Changes load. Nothing polls. When the branch changes, the `project` frame
-carries the Project again.
+- **Upload.** `POST /api/sessions/{id}/attachments?name=<file name>` takes the
+  raw file as the body with `Content-Type: application/octet-stream`. That
+  route alone has a 10 MiB body cap; every other route keeps the 1 MiB cap and
+  the JSON rule. The server makes one exception to the JSON rule, for exactly
+  that method and path. The Host, cross-origin and sign-in checks still apply,
+  and `application/octet-stream`, like JSON, is not a type a cross-site form
+  can send. The name is for display only: UAM keeps the base name, sanitized
+  and clipped to 120 characters.
+- **Types.** UAM takes the type from the bytes, never from the name or a
+  header. An image is what `http.DetectContentType` calls png, jpeg, gif or
+  webp. A PDF must be `application/pdf` there and start with `%PDF-`. Anything
+  else must sniff as `text/`, be valid UTF-8 and hold no NUL byte; UAM stores
+  and sends it as `text/plain`. A text file whose first element is `<svg>` is
+  refused, and so are HEIC, audio, video, archives and executables (415). HTML
+  passes as text and is never served as HTML.
+- **Limits.** Images 3 MiB, PDFs 10 MiB, text 256 KiB (413). A prompt carries
+  at most 5 uploads, and no more images than the model's `max_images` (400).
+- **Model gate.** The owner chose to gate images and PDFs per model. Copilot's
+  `capabilities.supports.vision` allows images, and
+  `capabilities.limits.vision` gives `max_prompt_images` and
+  `supported_media_types`; a PDF needs `application/pdf` in that list. A model
+  that reports neither, such as `auto`, is not gated. Text is never gated. UAM
+  checks the gate at upload and again when the prompt goes out, so a model
+  change cannot slip an image past it. OpenCode reports `capabilities.input`
+  per model, but its adapter has no model catalog yet, so OpenCode Tasks are
+  not gated.
+- **Storage.** Uploads live in `web-attachments/<task id>/` next to
+  `sessions.json`, never in a project directory. Directories are 0700 and
+  files 0600: `<upload id>` holds the bytes and `<upload id>.json` the name,
+  type, size, SHA-256 and the times it was stored and first sent. Deleting a
+  Task or removing its Project deletes its directory. At start UAM reads the
+  records and deletes the directories of Tasks it no longer has. An upload
+  that no sent or queued prompt carries expires after 24 hours; UAM checks at
+  start, after each upload and every hour. A sent upload lives as long as its
+  Task, because the transcript shows it.
+- **Sending.** A prompt, a queued prompt and a command take
+  `attachments: [id]`; a steer takes none (400). A queued prompt keeps the IDs,
+  and UAM reads the bytes when it sends; a missing file then is a `rejected`
+  submission that pauses the queue. A retried `request_id` returns the
+  recorded outcome, so nothing is uploaded or sent twice. Copilot receives each
+  upload as an `AttachmentBlob` with base64 data, the MIME type and the name as
+  display name. OpenCode receives a `file` part with a `data:` URL after the
+  text and file-reference parts.
+- **Transcript.** User items carry `attachments: [{"id"?, "name", "mime",
+  "size"?}]`. Copilot's live `user.message` holds the blob data, and its
+  recorded event holds `assetId: "sha256:<hex>"` and `byteLength` instead.
+  OpenCode's user `file` part keeps its `data:` URL. The adapters report the
+  SHA-256 of the content, and UAM gives each item attachment the ID of this
+  Task's stored upload with the same content. Matching on content works for
+  both providers after a reload or a restart, and needs no message ID from the
+  send, which Copilot does not return. An attachment without a stored copy has
+  no `id`, and the browser shows it as a chip without a preview.
+- **Serving.** `GET /api/sessions/{id}/attachments/{attachment_id}` returns a
+  stored upload to a signed-in browser with the sniffed `Content-Type`
+  (`text/plain; charset=utf-8` for text), `X-Content-Type-Options: nosniff`,
+  the service CSP and `Cache-Control: no-store`. Images are `inline`; PDFs and
+  text are `attachment`. `mime.FormatMediaType` encodes the file name. The
+  browser shows images from this route, never from `blob:` URLs, and the
+  existing `img-src 'self'` allows it.
 
-| `GET /api/sessions/{id}/commands` | – | `{"commands": [{"name", "description", "kind", "input_hint"}]}`; opens the conversation as a viewer does; 409 when it is not open |
-| `GET /api/sessions/{id}/files?q=&limit=` | – | `{"files": [{"path", "type"}], "reason"}`; `type` is `file` or `directory`; `limit` 1 to 200, default 50, else 400 |
-| `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path, or for files on a steer during a turn |
-| `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, a refused file, or `` !` `` on OpenCode; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
+### Provider contract additions (`internal/agentapi`)
 
-`QueuedPrompt` gains `files` (omitted when empty).
+| Addition | Meaning |
+|---|---|
+| `Model.Media *Media` | `Media{Images, PDF, MaxImages, Types}`; nil means the model reports nothing and is not gated. `MaxImages` 0 means no limit; empty `Types` means any type `Images` and `PDF` allow. |
+| `Prompt.Attachments []Blob` | `Blob{Name, MIME, Data}`: checked upload bytes to send inline. |
+| `Item.Attachments []Attachment` | `Attachment{ID, Name, MIME, Size, SHA256}`. Adapters fill `Name`, `MIME`, `Size` and `SHA256`; UAM sets `ID`. `SHA256` never reaches a browser. |
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `POST /api/sessions/{id}/attachments?name=` | the raw file, `Content-Type: application/octet-stream` | 201 `{"id", "name", "mime", "size"}`; 400 empty file or refused by the model gate; 404 unknown Task; 409 settled or archived Task; 413 over a limit; 415 wrong request type or file type |
+| `GET /api/sessions/{id}/attachments/{attachment_id}` | – | the file; 404 for an unknown Task or attachment, or another Task's |
+| `POST /api/sessions/{id}/prompt` | gains `"attachments"?: [string]` | 400 for an unknown ID, more than 5, too many images, a gate refusal, or attachments on a steer |
+| `POST /api/sessions/{id}/command` | gains `"attachments"?: [string]` | the same checks |
+| `GET /api/meta` | each model gains `"media"?: {"images", "pdf", "max_images"?, "types"?}` | absent when the model reports nothing |
+
+`QueuedPrompt` gains `attachments: [{"id", "name", "mime", "size"}]`, omitted
+when empty.

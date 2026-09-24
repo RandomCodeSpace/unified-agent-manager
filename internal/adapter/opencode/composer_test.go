@@ -1,6 +1,8 @@
 package opencode
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -92,5 +94,40 @@ func TestWebCommandsAndRunCommand(t *testing.T) {
 	before := len(h.fake.requestsFor(http.MethodPost, commandPath))
 	if err := conversation.RunCommand(t.Context(), "init", agentapi.Prompt{}); !errors.Is(err, agentapi.ErrBusy) || len(h.fake.requestsFor(http.MethodPost, commandPath)) != before {
 		t.Fatalf("busy command = %v", err)
+	}
+}
+
+func TestWebUploadsGoAsDataURLsAndShowAsUserItems(t *testing.T) {
+	h := newWebHarness(t)
+	conversation, sink := h.open(t, "")
+	id := conversation.ID()
+	prompt := agentapi.Prompt{Text: "look", Files: []agentapi.File{{Path: "/work/a.go", Rel: "a.go"}}, Attachments: []agentapi.Blob{{Name: "note.txt", MIME: "text/plain", Data: []byte("hi")}}}
+	if err := conversation.Send(t.Context(), prompt); err != nil {
+		t.Fatal(err)
+	}
+	requests := h.fake.requestsFor(http.MethodPost, "/session/"+id+"/prompt_async")
+	var body struct {
+		Parts []map[string]any `json:"parts"`
+	}
+	if err := json.Unmarshal([]byte(requests[0].Body), &body); err != nil || len(body.Parts) != 3 {
+		t.Fatalf("parts = %+v, %v", body.Parts, err)
+	}
+	if want := map[string]any{"type": "file", "mime": "text/plain", "filename": "note.txt", "url": "data:text/plain;base64,aGk="}; !reflect.DeepEqual(body.Parts[2], want) {
+		t.Fatalf("upload part = %#v", body.Parts[2])
+	}
+
+	h.fake.emit("message.updated", map[string]any{"sessionID": id, "info": map[string]any{"id": "msg_u1", "sessionID": id, "role": "user", "time": map[string]any{"created": 1}}})
+	h.fake.emit("message.part.updated", map[string]any{"sessionID": id, "part": map[string]any{"id": "prt_ref", "messageID": "msg_u1", "sessionID": id, "type": "file", "mime": "text/plain", "filename": "a.go", "url": "file:///work/a.go"}})
+	h.fake.emit("message.part.updated", map[string]any{"sessionID": id, "part": map[string]any{"id": "prt_up", "messageID": "msg_u1", "sessionID": id, "type": "file", "mime": "text/plain", "filename": "note.txt", "url": "data:text/plain;base64,aGk="}})
+	item := sink.waitFor(t, "upload item", func(e agentapi.Event) bool { return e.Kind == agentapi.EventItem && e.Item.ID == "prt_up" })
+	sum := sha256.Sum256([]byte("hi"))
+	want := []agentapi.Attachment{{Name: "note.txt", MIME: "text/plain", Size: 2, SHA256: hex.EncodeToString(sum[:])}}
+	if item.Item.Kind != agentapi.ItemUser || item.Item.Text != "" || !reflect.DeepEqual(item.Item.Attachments, want) {
+		t.Fatalf("upload item = %+v", item.Item)
+	}
+	for _, e := range sink.snapshot() {
+		if e.Kind == agentapi.EventItem && e.Item.ID == "prt_ref" {
+			t.Fatalf("a file reference showed as an item: %+v", e.Item)
+		}
 	}
 }

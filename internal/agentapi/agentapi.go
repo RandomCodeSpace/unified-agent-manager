@@ -92,6 +92,21 @@ type Model struct {
 	Name         string        `json:"name"`
 	Efforts      []string      `json:"efforts"`
 	ContextSizes []ContextSize `json:"context_sizes"`
+	// Media is what the model accepts besides text. Nil means the provider
+	// reports nothing (Copilot's auto), and uploads are not gated.
+	Media *Media `json:"media,omitempty"`
+}
+
+// Media gates image and PDF uploads for one model. Text is always accepted.
+type Media struct {
+	Images bool `json:"images"`
+	PDF    bool `json:"pdf"`
+	// MaxImages is the most images one prompt may carry; 0 means no limit
+	// was reported.
+	MaxImages int `json:"max_images,omitempty"`
+	// Types lists the accepted image and document MIME types; empty means
+	// any type Images and PDF allow.
+	Types []string `json:"types,omitempty"`
 }
 
 // ContextSize is a selectable provider tier and its prompt token budget.
@@ -188,11 +203,34 @@ type Conversation interface {
 	Close(ctx context.Context) error
 }
 
-// Prompt is one user message: the text as typed, plus project files the web
-// service has already checked.
+// Prompt is one user message: the text as typed, plus project files and
+// uploads the web service has already checked.
 type Prompt struct {
-	Text  string
-	Files []File
+	Text        string
+	Files       []File
+	Attachments []Blob
+}
+
+// Blob is uploaded content sent inline. MIME is image/png, image/jpeg,
+// image/gif, image/webp, application/pdf or text/plain.
+type Blob struct {
+	Name string
+	MIME string
+	Data []byte
+}
+
+// Attachment describes uploaded content: an upload's metadata, or content a
+// user item carried. ID names the web service's stored copy and is empty
+// when it has none.
+type Attachment struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
+	MIME string `json:"mime"`
+	Size int64  `json:"size,omitempty"`
+	// SHA256 is the hex digest of the content, when the provider's record
+	// has it; the web service matches it to its stored copy. It is never
+	// sent to browsers.
+	SHA256 string `json:"-"`
 }
 
 // File is a project file or directory the user referenced. Path is
@@ -294,6 +332,9 @@ type Item struct {
 	// Delivery is DeliverySteer on a user item that joined a running turn
 	// as a steer, and empty otherwise.
 	Delivery string `json:"delivery,omitempty"`
+	// Attachments are the uploads a user item carried; the adapter never
+	// includes their bytes.
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 // DeliverySteer marks a user item that arrived as a steer.

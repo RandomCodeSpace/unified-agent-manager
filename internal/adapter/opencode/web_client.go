@@ -164,6 +164,9 @@ type webPart struct {
 	Time      *webPartTime  `json:"time"`
 	Tool      string        `json:"tool"`
 	State     *webToolState `json:"state"`
+	Mime      string        `json:"mime"`
+	Filename  string        `json:"filename"`
+	URL       string        `json:"url"`
 }
 
 type webSessionStatus struct {

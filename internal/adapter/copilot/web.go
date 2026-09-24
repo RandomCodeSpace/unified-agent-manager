@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -313,7 +316,7 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 		if m.ID == "" || (m.Policy != nil && m.Policy.State != rpc.ModelPolicyStateEnabled) {
 			continue
 		}
-		mo := agentapi.Model{ID: m.ID, Name: m.Name, Efforts: append([]string{}, m.SupportedReasoningEfforts...), ContextSizes: []agentapi.ContextSize{}}
+		mo := agentapi.Model{ID: m.ID, Name: m.Name, Efforts: append([]string{}, m.SupportedReasoningEfforts...), ContextSizes: []agentapi.ContextSize{}, Media: media(m.Capabilities)}
 		if m.ID == "auto" {
 			mo.Efforts = []string{}
 		}
@@ -329,6 +332,30 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 		out = append(out, mo)
 	}
 	return out, nil
+}
+
+// media is a model's upload gate from the catalog: images need
+// supports.vision, PDFs application/pdf among the vision media types. A
+// model that reports neither (auto) gets no gate.
+func media(c rpc.ModelCapabilities) *agentapi.Media {
+	var vision *bool
+	if c.Supports != nil {
+		vision = c.Supports.Vision
+	}
+	var limits *rpc.ModelCapabilitiesLimitsVision
+	if c.Limits != nil {
+		limits = c.Limits.Vision
+	}
+	if vision == nil && limits == nil {
+		return nil
+	}
+	md := &agentapi.Media{Images: vision != nil && *vision}
+	if limits != nil {
+		md.MaxImages = int(limits.MaxPromptImages)
+		md.Types = slices.Clone(limits.SupportedMediaTypes)
+		md.PDF = slices.Contains(limits.SupportedMediaTypes, "application/pdf")
+	}
+	return md
 }
 
 func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agentapi.Conversation, error) {
@@ -810,7 +837,8 @@ func (c *conversation) RunCommand(ctx context.Context, name string, args agentap
 	})
 }
 
-// attachments maps a prompt's references to Copilot attachments.
+// attachments maps a prompt's references to Copilot attachments; uploads go
+// inline as blobs, so no file is needed on the host.
 func attachments(p agentapi.Prompt) []copilot.Attachment {
 	var out []copilot.Attachment
 	for _, f := range p.Files {
@@ -819,6 +847,43 @@ func attachments(p agentapi.Prompt) []copilot.Attachment {
 		} else {
 			out = append(out, &rpc.AttachmentFile{Path: f.Path, DisplayName: f.Rel})
 		}
+	}
+	for _, b := range p.Attachments {
+		data, name := base64.StdEncoding.EncodeToString(b.Data), b.Name
+		out = append(out, &rpc.AttachmentBlob{Data: &data, MIMEType: b.MIME, DisplayName: &name})
+	}
+	return out
+}
+
+// blobAttachments describes the blobs a user message carried, without their
+// bytes. A live message has the data; a recorded one has the asset ID, the
+// SHA-256 of the bytes, instead.
+func blobAttachments(atts []copilot.Attachment) []agentapi.Attachment {
+	var out []agentapi.Attachment
+	for _, a := range atts {
+		b, ok := a.(*rpc.AttachmentBlob)
+		if !ok {
+			continue
+		}
+		att := agentapi.Attachment{MIME: b.MIMEType}
+		if b.DisplayName != nil {
+			att.Name = *b.DisplayName
+		}
+		if b.ByteLength != nil {
+			att.Size = *b.ByteLength
+		}
+		switch {
+		case b.Data != nil:
+			if data, err := base64.StdEncoding.DecodeString(*b.Data); err == nil {
+				sum := sha256.Sum256(data)
+				att.SHA256, att.Size = hex.EncodeToString(sum[:]), int64(len(data))
+			}
+		case b.AssetID != nil:
+			if digest, ok := strings.CutPrefix(*b.AssetID, "sha256:"); ok {
+				att.SHA256 = strings.ToLower(digest)
+			}
+		}
+		out = append(out, att)
 	}
 	return out
 }
@@ -1616,6 +1681,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		if d.MessageID != nil && *d.MessageID != "" {
 			it.ID = *d.MessageID
 		}
+		it.Attachments = blobAttachments(d.Attachments)
 		if d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliverySteering {
 			it.Delivery = agentapi.DeliverySteer
 		}

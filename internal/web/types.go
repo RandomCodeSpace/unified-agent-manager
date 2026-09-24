@@ -172,6 +172,8 @@ type QueuedPrompt struct {
 	// Files are the project paths the prompt references; they are checked
 	// again when it is sent.
 	Files []string `json:"files,omitempty"`
+	// Attachments are the uploads the prompt carries.
+	Attachments []agentapi.Attachment `json:"attachments,omitempty"`
 }
 
 // PromptRequest is the POST /api/sessions/{id}/prompt body.
@@ -182,15 +184,19 @@ type PromptRequest struct {
 	// Files are project paths relative to the Task's directory, sent as
 	// structured references. A steer takes none.
 	Files []string `json:"files"`
+	// Attachments are IDs from POST /api/sessions/{id}/attachments. A steer
+	// takes none.
+	Attachments []string `json:"attachments"`
 }
 
 // CommandRequest is the POST /api/sessions/{id}/command body. Name is a
 // command from GET /api/sessions/{id}/commands, without the slash.
 type CommandRequest struct {
-	RequestID string   `json:"request_id"`
-	Name      string   `json:"name"`
-	Arguments string   `json:"arguments"`
-	Files     []string `json:"files"`
+	RequestID   string   `json:"request_id"`
+	Name        string   `json:"name"`
+	Arguments   string   `json:"arguments"`
+	Files       []string `json:"files"`
+	Attachments []string `json:"attachments"`
 }
 
 // SubagentDetail is one subagent and its retained transcript.

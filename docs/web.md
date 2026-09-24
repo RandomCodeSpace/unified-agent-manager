@@ -222,7 +222,10 @@ off, run `uam web stop`, then `uam web` without the flag.
   or not, to put it away for good; an archived Task cannot be reopened. Only
   an archived Task can be deleted, and a Project can be removed only once
   every Task in it is archived. Deleting or removing never deletes the
-  provider's copy of the conversation and never touches the directory.
+  provider's copy of the conversation and never touches the directory. It does
+  delete the files you attached to the Task's prompts, which UAM keeps in
+  `~/.config/uam/web-attachments/` (or `$UAM_CONFIG_DIR/web-attachments/`).
+  An attachment you upload but never send is deleted after 24 hours.
 
   | Action | Allowed on | Also needs | Result |
   |---|---|---|---|

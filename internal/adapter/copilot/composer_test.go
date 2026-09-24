@@ -2,10 +2,14 @@ package copilot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
@@ -112,5 +116,63 @@ func TestWebRunCommandSendsOnlyAPromptWithoutModeChange(t *testing.T) {
 	}
 	if len(h.fs.msgs) != 2 {
 		t.Fatalf("a refused command sent %d messages", len(h.fs.msgs)-2)
+	}
+}
+
+func TestWebModelsReportTheMediaGate(t *testing.T) {
+	vision := rpc.ModelCapabilities{
+		Supports: &rpc.ModelCapabilitiesSupports{Vision: copilot.Bool(true)},
+		Limits:   &rpc.ModelCapabilitiesLimits{Vision: &rpc.ModelCapabilitiesLimitsVision{MaxPromptImages: 3, SupportedMediaTypes: []string{"image/png", "application/pdf"}}},
+	}
+	fc := &fakeClient{models: []rpc.Model{
+		{ID: "auto", Name: "Auto"},
+		{ID: "seeing", Name: "Seeing", Capabilities: vision},
+		{ID: "text", Name: "Text", Capabilities: rpc.ModelCapabilities{Supports: &rpc.ModelCapabilitiesSupports{Vision: copilot.Bool(false)}}},
+	}}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	models, err := p.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []*agentapi.Media{nil, {Images: true, PDF: true, MaxImages: 3, Types: []string{"image/png", "application/pdf"}}, {}}
+	for i, m := range models {
+		if !reflect.DeepEqual(m.Media, want[i]) {
+			t.Fatalf("%s media = %+v, want %+v", m.ID, m.Media, want[i])
+		}
+	}
+}
+
+func TestWebSendCarriesUploadsAsBlobsAndShowsThem(t *testing.T) {
+	h := openWeb(t)
+	png := []byte("\x89PNG\r\n\x1a\nimage")
+	blobs := []agentapi.Blob{{Name: "shot.png", MIME: "image/png", Data: png}}
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "look", Files: composerFiles[:1], Attachments: blobs}); err != nil {
+		t.Fatal(err)
+	}
+	data, name := base64.StdEncoding.EncodeToString(png), "shot.png"
+	want := append(wantFileAttachments()[:1], &rpc.AttachmentBlob{Data: &data, MIMEType: "image/png", DisplayName: &name})
+	if got := h.fs.msgs[0].Attachments; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attachments = %+v", got)
+	}
+
+	sum := sha256.Sum256(png)
+	digest := hex.EncodeToString(sum[:])
+	live := userMessage("msg-1", rpc.UserMessageDeliveryIdle, "look")
+	live.Attachments = h.fs.msgs[0].Attachments
+	h.fs.onEvent(ev("u1", live))
+	wantItem := []agentapi.Attachment{{Name: "shot.png", MIME: "image/png", Size: int64(len(png)), SHA256: digest}}
+	if it := h.sink.last().Item; it == nil || !reflect.DeepEqual(it.Attachments, wantItem) {
+		t.Fatalf("live item = %+v", it)
+	}
+
+	// The recorded event keeps a content address instead of the bytes.
+	asset, size := "sha256:"+strings.ToUpper(digest), int64(len(png))
+	recorded := userMessage("msg-1", rpc.UserMessageDeliveryIdle, "look")
+	recorded.Attachments = []copilot.Attachment{&rpc.AttachmentFile{Path: "/work/src/a.go", DisplayName: "src/a.go"}, &rpc.AttachmentBlob{AssetID: &asset, ByteLength: &size, MIMEType: "image/png", DisplayName: &name}}
+	h.fs.events = []copilot.SessionEvent{ev("u1", recorded)}
+	history, err := h.conv.History(context.Background())
+	if err != nil || len(history.Items) != 1 || !reflect.DeepEqual(history.Items[0].Attachments, wantItem) {
+		t.Fatalf("history = %+v, %v", history.Items, err)
 	}
 }
