@@ -763,6 +763,18 @@ func TestWebBackgroundedShellOutputKeepsTheCallCompleted(t *testing.T) {
 	}
 }
 
+func TestWebToolStartReusingAnEndedIDStreamsItsOutput(t *testing.T) {
+	h := openWeb(t)
+	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
+	h.fs.onEvent(ev("e2", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true}))
+	h.fs.onEvent(ev("e3", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
+	h.fs.onEvent(ev("e4", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "second\n"}))
+	last := h.sink.last().Item
+	if last == nil || last.Tool == nil || last.Tool.Status != agentapi.ToolRunning || last.Tool.Output != "second\n" {
+		t.Fatalf("last item = %+v", last)
+	}
+}
+
 // The CLI can use a steer before the Send that carried it returns its ID.
 func TestWebSteerUsedBeforeSendReturns(t *testing.T) {
 	h := openWeb(t)

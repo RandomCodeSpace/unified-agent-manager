@@ -1084,6 +1084,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	case *rpc.ToolExecutionStartData:
 		tc := &agentapi.ToolCall{Name: d.ToolName, Status: agentapi.ToolRunning, Input: clip(compactJSON(d.Arguments), maxToolText)}
 		t.tools[d.ToolCallID] = tc
+		delete(t.ended, d.ToolCallID) // a new call reusing an ended ID
 		it.ID, it.Kind, it.Tool = d.ToolCallID, agentapi.ItemTool, cloneTool(tc)
 	case *rpc.ToolExecutionPartialResultData:
 		if _, ended := t.ended[d.ToolCallID]; ended {
