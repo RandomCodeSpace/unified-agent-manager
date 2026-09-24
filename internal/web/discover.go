@@ -43,6 +43,10 @@ type DiscoverResult struct {
 
 var errRedirect = errors.New("redirect refused")
 
+// discoverSlots bounds concurrent discoveries, so callers cannot hold many
+// outbound requests carrying an operator's key at once.
+var discoverSlots = make(chan struct{}, 2)
+
 // discoverClient never follows a redirect, so the only request is GET
 // base_url/models.
 var discoverClient = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return errRedirect }}
@@ -59,6 +63,12 @@ func (m *Manager) DiscoverModels(ctx context.Context, req DiscoverRequest) (Disc
 	key := os.Getenv(req.APIKeyEnv)
 	if key == "" {
 		return DiscoverResult{}, newError(http.StatusBadRequest, "%s is not set in the uam web service's environment; export it where the service starts and restart the service", req.APIKeyEnv)
+	}
+	select {
+	case discoverSlots <- struct{}{}:
+		defer func() { <-discoverSlots }()
+	default:
+		return DiscoverResult{}, newError(http.StatusTooManyRequests, "another model list is loading; try again in a moment")
 	}
 	ctx, cancel := context.WithTimeout(ctx, discoverTimeout)
 	defer cancel()

@@ -96,6 +96,16 @@ func TestDiscoverModels(t *testing.T) {
 	if _, err := m.DiscoverModels(ctx, DiscoverRequest{BaseURL: "file:///etc", APIKeyEnv: "UAM_BYOM_DISCOVER"}); statusOf(err) != http.StatusBadRequest {
 		t.Errorf("file URL = %v", err)
 	}
+	for range cap(discoverSlots) {
+		discoverSlots <- struct{}{}
+	}
+	_, err = discover("/ok/", "UAM_BYOM_DISCOVER")
+	for range cap(discoverSlots) {
+		<-discoverSlots
+	}
+	if statusOf(err) != http.StatusTooManyRequests {
+		t.Errorf("busy discovery = %v (status %d), want 429", err, statusOf(err))
+	}
 	if otherHits.Load() != 0 {
 		t.Errorf("the redirect target was requested %d times", otherHits.Load())
 	}
