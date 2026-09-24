@@ -192,6 +192,36 @@ off, run `uam web stop`, then `uam web` without the flag.
   > asked first. Turn it on only for a project where you would click "Allow"
   > on everything anyway. With `--no-auth` behind a public reverse proxy,
   > anyone who can reach the page can start a yolo Task.
+- **Commands**: type `/` as the first character of a message to list the
+  Task's commands: Copilot's `/init` and `/review`, and the skills your account
+  and the project provide. The list filters as you type; Up and Down move,
+  Enter or Tab picks, Esc closes. Sending `/name arguments` runs the command
+  with the rest of the text as its arguments and shows `/name arguments` in
+  the conversation. A command runs only between turns; it is not queued or
+  steered. A `/word` that is not on the list is sent as plain text, and so is
+  anything that starts with `$`, `!`, `#` or `@agent`.
+- **File references**: type `@` anywhere in a message to search the project's
+  files: what `git ls-files` sees, including untracked files that are not
+  ignored, and their directories. Picking one inserts `@path` and adds a chip;
+  removing the chip removes the token, and deleting the token drops the chip.
+  A message references at most 20 paths, each a regular file or a directory
+  inside the project (no symbolic links, nothing binary). Copilot receives the
+  reference and reads the file with its tools, which asks for a read
+  permission in safe mode. A directory that is not a Git working tree offers
+  no list. A steer takes text only.
+- **Attachments**: the paper-clip button, pasting, and dropping files onto the
+  composer upload them at once. A chip shows the upload's progress, then its
+  size and type, or why it was refused. Allowed: png, jpeg, gif and webp
+  images up to 3 MiB, PDF up to 10 MiB, and UTF-8 text up to 256 KiB, at most
+  5 per message; the type is taken from the file's bytes, not its name. SVG,
+  HEIC, audio, video, archives and everything else are refused. Images and
+  PDFs need a model that accepts them: Copilot reports this per model, `auto`
+  is not checked, and the button says so when the Task's model takes text
+  only. Attachments go with the message; a queued message keeps them, and a
+  steer takes none. In the conversation, images show as thumbnails that open
+  larger on click and other files as chips that open the stored copy, also
+  after a reload. UAM keeps the files outside the project (see Settle,
+  archive, and delete).
 - **Messages while a turn runs**: you can queue a message or steer the turn
   with it.
   - **Queue** holds the message until the turn completes, then sends it as
