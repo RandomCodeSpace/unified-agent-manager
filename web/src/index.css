@@ -294,10 +294,45 @@
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
-    *::after {
+    *::after,
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
       animation: none !important;
       transition: none !important;
       scroll-behavior: auto !important;
+    }
+  }
+
+  /* View transitions (React <ViewTransition>): only the parts React names take part; the page itself
+     never snapshots, so streamed text keeps painting live during one. The classes are React's
+     `view-transition-class` values; the keyframes are the theme's. */
+  :root {
+    view-transition-name: none;
+  }
+  ::view-transition-group(.vt-row) {
+    animation-duration: 240ms;
+    animation-timing-function: var(--ease-app);
+  }
+  ::view-transition-old(.vt-row),
+  ::view-transition-new(.vt-row) {
+    animation-duration: 100ms;
+  }
+  ::view-transition-new(.vt-row-enter) {
+    animation: rise 240ms var(--ease-app);
+  }
+  ::view-transition-old(.vt-row-exit) {
+    animation: fade-out 160ms var(--ease-app);
+  }
+  ::view-transition-group(.vt-pane),
+  ::view-transition-old(.vt-pane),
+  ::view-transition-new(.vt-pane) {
+    animation-duration: 160ms;
+    animation-timing-function: var(--ease-app);
+  }
+  @keyframes fade-out {
+    to {
+      opacity: 0;
     }
   }
 }

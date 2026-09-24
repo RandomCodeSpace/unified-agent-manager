@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, useLate, useMedia } from './components/common';
@@ -196,7 +196,11 @@ export default function App() {
     es.addEventListener('snapshot', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as SnapshotData;
       flush();
-      dispatch({ type: 'snapshot', data });
+      // A snapshot lands the opened Task: the pane cross-fades to it (ViewTransition, type "switch").
+      startTransition(() => {
+        addTransitionType('switch');
+        dispatch({ type: 'snapshot', data });
+      });
       setFilter((current) => {
         if (!current || data.projects.some((p) => p.id === current)) return current;
         localStorage.removeItem(FILTER_KEY);
@@ -214,7 +218,13 @@ export default function App() {
           return;
         }
         flush();
-        dispatch({ type: 'update', data });
+        if (data.name === 'session' || data.name === 'session_removed') {
+          // Task rows enter, leave and reorder with a view transition (type "sessions"); everything else commits at once.
+          startTransition(() => {
+            addTransitionType('sessions');
+            dispatch({ type: 'update', data });
+          });
+        } else dispatch({ type: 'update', data });
         if (data.name === 'project_removed') {
           setFilter((current) => {
             if (current !== data.project_id) return current;
@@ -277,7 +287,10 @@ export default function App() {
   }, []);
 
   const select = useCallback((id: string | null) => {
-    dispatch({ type: 'select', id });
+    startTransition(() => {
+      addTransitionType('switch');
+      dispatch({ type: 'select', id });
+    });
     setNotice(null);
     setSheetOpen(false);
     setDrawerOpen(false);
@@ -300,7 +313,10 @@ export default function App() {
         const s = await api.createSession({ project_id: projectId, ...settings, model: settings.model || undefined, request_id: entry.id });
         creating.current.delete(projectId);
         focusTask.current = s.id;
-        dispatch({ type: 'upsert_session', session: s });
+        startTransition(() => {
+          addTransitionType('sessions');
+          dispatch({ type: 'upsert_session', session: s });
+        });
         select(s.id);
       } catch (e) {
         creating.current.set(projectId, { ...entry, busy: false });
@@ -399,7 +415,10 @@ export default function App() {
       else if (kind === 'close') await runTask(id, () => api.close(id), 'close the conversation');
       else {
         await runTask(id, () => api.deleteSession(id), 'delete the task');
-        dispatch({ type: 'remove_session', id });
+        startTransition(() => {
+          addTransitionType('sessions');
+          dispatch({ type: 'remove_session', id });
+        });
       }
     } catch {
       // Reported on the notice line.
@@ -499,10 +518,12 @@ export default function App() {
                   </Button>
                 </p>
               )}
-              {/* One wrapper for every pane, so the Task on screen stays mounted while it turns stale. */}
-              <div className="contents" inert={stale}>
-                {pane}
-              </div>
+              {/* One wrapper for every pane, so the Task on screen stays mounted while it turns stale; a switch cross-fades it. */}
+              <ViewTransition name="pane" default="none" update={{ switch: 'vt-pane', default: 'none' }}>
+                <div className="flex min-h-0 flex-1 flex-col" inert={stale}>
+                  {pane}
+                </div>
+              </ViewTransition>
             </main>
 
             {dialog?.kind === 'add' && (

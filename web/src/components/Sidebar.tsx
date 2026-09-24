@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, Ellipsis, FolderMinus, FolderPlus, GitBranch, ListFilter, LogOut, Settings as SettingsIcon, Settings2, Search, SquarePen, X } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { filteredProject, groupTasks, mostRecentProject, sidebarTasks, visibleProjects } from '../lib/tasks';
@@ -125,6 +125,11 @@ function rowMeta(s: SessionSummary, unread: boolean): { text: string; tone: stri
   return { text: relTime(s.updated_at), tone: 'text-muted' };
 }
 
+/** Rows enter, leave and move with a view transition when the Task list changes (type "sessions"); every other render, the selection included, leaves them to their CSS transitions. */
+const ROW_TRANSITION = { sessions: 'vt-row', default: 'none' } as const;
+const ROW_ENTER = { sessions: 'vt-row-enter', default: 'none' } as const;
+const ROW_EXIT = { sessions: 'vt-row-exit', default: 'none' } as const;
+
 function TaskRow({ session: s, project, selected }: { session: SessionSummary; project: Project; selected: boolean }) {
   const { hasNews } = useApp();
   const a = useTaskActions();
@@ -194,14 +199,16 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
   );
 
   return (
-    <li>
-      <ContextMenu.Root onOpenChange={(open) => { contextOpen.current = open; }}>
-        <ContextMenu.Trigger render={<div />}>{row}</ContextMenu.Trigger>
-        <ContextMenu.Content>
-          <ContextMenu.Actions items={items} />
-        </ContextMenu.Content>
-      </ContextMenu.Root>
-    </li>
+    <ViewTransition name={`task-${s.id}`} update={ROW_TRANSITION} enter={ROW_ENTER} exit={ROW_EXIT} share="none" default="none">
+      <li>
+        <ContextMenu.Root onOpenChange={(open) => { contextOpen.current = open; }}>
+          <ContextMenu.Trigger render={<div />}>{row}</ContextMenu.Trigger>
+          <ContextMenu.Content>
+            <ContextMenu.Actions items={items} />
+          </ContextMenu.Content>
+        </ContextMenu.Root>
+      </li>
+    </ViewTransition>
   );
 }
 
