@@ -606,6 +606,34 @@ dialog.dialog {
   margin-bottom: 12px;
 }
 
+/* A second group of fields in a dialog (defaults for new tasks), set off by a hairline. */
+.dialog-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.dialog-section .eyebrow {
+  margin-bottom: 10px;
+}
+
+.dialog-section .generation-settings {
+  margin-bottom: 8px;
+}
+
+/* A failed action started from the rail or the deck, shown above whatever view is open. */
+.page-alert {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+}
+
 dialog::backdrop {
   background: var(--backdrop);
 }
@@ -2150,6 +2178,7 @@ dialog::backdrop {
   height: 52px;
 }
 
+.narrow .deck-actions .btn,
 .narrow .deck-history-nav .btn {
   min-height: 44px;
 }
@@ -2259,7 +2288,7 @@ dialog::backdrop {
 .panel .sheet-head { flex-wrap: wrap; }
 .pane-foot { max-height: 65%; overflow-y: auto; }
 @media (max-width: 480px) {
-  .composer .input, .composer-bar .btn, .subagent-stop .btn, .prompt-queue .btn { min-height: 44px; }
+  .composer .input, .composer-bar .btn, .subagent-stop .btn, .prompt-queue .btn, .dialog .input, .dialog .btn { min-height: 44px; }
   .composer .generation-control { flex-basis: 100px; }
   .panel-foot { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
 

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
-import { api, describeError, isStatus, type Project, type SessionSummary } from '../api';
-import { ConfirmDialog, Dialog, NameDialog, useApp } from './common';
+import { api, describeError, isStatus, resolveTaskDefaults, type Project, type SessionSummary, type TaskDefaults } from '../api';
+import { ConfirmDialog, Dialog, useApp } from './common';
+import { TaskDefaultsFields } from './TaskDefaults';
 
 /** Add a project by directory. A 409 means the directory already has one: that project is selected instead. */
 export function AddProjectDialog({
@@ -16,6 +17,7 @@ export function AddProjectDialog({
   const recent = meta?.recent_workdirs ?? [];
   const [dir, setDir] = useState('');
   const [name, setName] = useState('');
+  const [defaults, setDefaults] = useState(() => resolveTaskDefaults(meta));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,7 +26,7 @@ export function AddProjectDialog({
     setBusy(true);
     setError(null);
     try {
-      onAdded(await api.createProject({ dir: dir.trim(), name: name.trim() || undefined }));
+      onAdded(await api.createProject({ dir: dir.trim(), name: name.trim() || undefined, defaults: defaults ?? undefined }));
       onClose();
     } catch (err) {
       const existing = isStatus(err, 409) ? err.body.project_id : undefined;
@@ -65,6 +67,7 @@ export function AddProjectDialog({
           <span className="control-label">Name</span>
           <input className="input" type="text" placeholder="Defaults to the folder name" value={name} onChange={(e) => setName(e.target.value)} />
         </label>
+        <DefaultsSection prefix="add" value={defaults} disabled={busy} onChange={setDefaults} />
         {error && (
           <p className="error" role="alert">
             {error}
@@ -83,15 +86,62 @@ export function AddProjectDialog({
   );
 }
 
-export function RenameProjectDialog({ project, onRenamed, onClose }: { project: Project; onRenamed: (p: Project) => void; onClose: () => void }) {
+/** Name and defaults for new Tasks; the defaults start from what New task would use today. */
+export function EditProjectDialog({ project, onUpdated, onClose }: { project: Project; onUpdated: (p: Project) => void; onClose: () => void }) {
+  const { meta } = useApp();
+  const [name, setName] = useState(project.name);
+  const [defaults, setDefaults] = useState(() => resolveTaskDefaults(meta, project.defaults));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      onUpdated(await api.updateProject(project.id, { name: name.trim(), defaults: defaults ?? undefined }));
+      onClose();
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <NameDialog
-      title="Rename project"
-      label="Name"
-      initial={project.name}
-      onSubmit={async (name) => onRenamed(await api.renameProject(project.id, name))}
-      onClose={onClose}
-    />
+    <Dialog title="Edit project" onClose={onClose}>
+      <form className="form" onSubmit={submit}>
+        <label className="field">
+          <span className="control-label">Name</span>
+          <input className="input" type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <DefaultsSection prefix="edit" value={defaults} disabled={busy} onChange={setDefaults} />
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="actions">
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>
+            Save
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/** Hidden until the provider list has loaded; the dialog then submits without defaults. */
+function DefaultsSection({ prefix, value, disabled, onChange }: { prefix: string; value: TaskDefaults | null; disabled: boolean; onChange: (next: TaskDefaults) => void }) {
+  if (!value) return null;
+  return (
+    <div className="dialog-section">
+      <h3 className="eyebrow">Defaults for new tasks</h3>
+      <TaskDefaultsFields prefix={prefix} value={value} disabled={disabled} onChange={onChange} />
+    </div>
   );
 }
 

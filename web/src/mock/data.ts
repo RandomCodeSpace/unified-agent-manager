@@ -26,7 +26,11 @@ export interface MockState {
 const NOW = Date.now();
 const ago = (min: number) => new Date(NOW - min * 60000).toISOString();
 
-const CAPS = { cancel: true, permissions: true, questions: true, session_diff: false, history: true };
+const CAPS = { cancel: true, permissions: true, questions: true, session_diff: false, history: true, context_size: true };
+const SIZES = [
+  { id: 'default', tokens: 200_000 },
+  { id: 'long_context', tokens: 1_000_000 },
+];
 
 const EDIT_DIFF = `--- a/internal/vterm/redraw.go
 +++ b/internal/vterm/redraw.go
@@ -91,9 +95,9 @@ export function seed(): MockState {
         capabilities: CAPS,
         models: [
           { id: 'auto', name: 'Auto' },
-          { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5' },
-          { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' },
-          { id: 'gpt-5-mini', name: 'GPT-5 mini' },
+          { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', efforts: ['low', 'medium', 'high'], context_sizes: SIZES },
+          { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', efforts: ['low', 'medium', 'high', 'xhigh'], context_sizes: SIZES },
+          { id: 'gpt-5-mini', name: 'GPT-5 mini', efforts: ['low', 'medium', 'high'] },
           { id: 'mai-code-1.1-flash', name: 'MAI-Code-1.1-Flash' },
           { id: 'kimi-k3', name: 'Kimi K3' },
         ],
@@ -101,10 +105,23 @@ export function seed(): MockState {
     ],
   };
 
+  // p1 has defaults, p2 none, p3 a default model the provider no longer offers.
   const projects: Project[] = [
-    { id: 'p1', name: 'unified-agent-manager', dir: '/home/user/projects/unified-agent-manager', created_at: ago(60 * 24 * 9) },
+    {
+      id: 'p1',
+      name: 'unified-agent-manager',
+      dir: '/home/user/projects/unified-agent-manager',
+      created_at: ago(60 * 24 * 9),
+      defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
+    },
     { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4) },
-    { id: 'p3', name: 'notes-site', dir: '/home/user/projects/notes-site', created_at: ago(60 * 24 * 2) },
+    {
+      id: 'p3',
+      name: 'notes-site',
+      dir: '/home/user/projects/notes-site',
+      created_at: ago(60 * 24 * 2),
+      defaults: { provider: 'copilot', model: 'gpt-5.5-nova', effort: 'high', context_size: 'long_context', mode: 'yolo' },
+    },
   ];
 
   const p = (id: string) => projects.find((x) => x.id === id)!.dir;

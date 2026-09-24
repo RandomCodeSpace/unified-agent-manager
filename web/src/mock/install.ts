@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { LIVE, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission } from '../api';
+import { LIVE, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
@@ -95,6 +95,22 @@ export function install(): void {
   };
   const find = (id: string) => st.tasks.find((t) => t.id === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
+  /** The service's selection checks, for a Project's defaults and a new Task alike: a string is the 400 message. */
+  const checkSelection = (raw: unknown): TaskDefaults | string => {
+    const d = (raw && typeof raw === 'object' ? raw : {}) as Json;
+    const prov = st.meta.providers.find((p) => p.name === d.provider);
+    if (!prov) return `unknown provider ${JSON.stringify(d.provider ?? '')}`;
+    const model = String(d.model ?? '');
+    const mo = prov.models.find((x) => x.id === model);
+    if (model && !mo) return `model ${model} is not in the catalog`;
+    const effort = String(d.effort ?? '');
+    if (effort && !mo?.efforts?.includes(effort)) return `effort ${effort} is not offered by ${model || 'the default model'}`;
+    const size = String(d.context_size || 'default');
+    if (size !== 'default' && !(prov.capabilities.context_size && mo?.context_sizes?.some((s) => s.id === size))) return `context size ${size} is not offered by ${model || 'the default model'}`;
+    const mode = d.mode ?? 'safe';
+    if (mode !== 'safe' && mode !== 'yolo') return 'mode must be safe or yolo';
+    return { provider: prov.name, model, effort, context_size: size, mode };
+  };
 
   function broadcast(name: string, payload: Json, sessionId?: string) {
     seq++;
@@ -264,7 +280,9 @@ export function install(): void {
       if (!dir.startsWith('/')) return fail(400, 'dir must be an absolute path to a directory');
       const existing = st.projects.find((p) => p.dir === dir.replace(/\/+$/, ''));
       if (existing) return fail(409, 'that directory already has a project', { project_id: existing.id });
-      const p: Project = { id: nextId('p'), name: String(body.name ?? '').trim() || dir.split('/').filter(Boolean).pop() || dir, dir, created_at: now() };
+      const defaults = body.defaults === undefined ? undefined : checkSelection(body.defaults);
+      if (typeof defaults === 'string') return fail(400, defaults);
+      const p: Project = { id: nextId('p'), name: String(body.name ?? '').trim() || dir.split('/').filter(Boolean).pop() || dir, dir, created_at: now(), ...(defaults ? { defaults } : {}) };
       st.projects.push(p);
       st.changes[p.id] = [];
       broadcast('project', { project: p });
@@ -274,7 +292,11 @@ export function install(): void {
       const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
       if (!p) return fail(404, 'project not found');
       if (method === 'PATCH') {
-        p.name = String(body.name ?? '').trim() || p.dir.split('/').filter(Boolean).pop() || p.dir;
+        if (body.name === undefined && body.defaults === undefined) return fail(400, 'name or defaults required');
+        const defaults = body.defaults === undefined ? undefined : checkSelection(body.defaults);
+        if (typeof defaults === 'string') return fail(400, defaults);
+        if (body.name !== undefined) p.name = String(body.name).trim() || p.dir.split('/').filter(Boolean).pop() || p.dir;
+        if (defaults) p.defaults = defaults;
         broadcast('project', { project: p });
         return json(200, p);
       }
@@ -293,19 +315,23 @@ export function install(): void {
     if (path === '/api/sessions' && method === 'POST') {
       const p = st.projects.find((x) => x.id === body.project_id);
       if (!p) return fail(400, 'unknown project_id');
-      const model = String(body.model ?? '');
-      if (model && !st.meta.providers[0].models.some((x) => x.id === model)) return fail(400, 'model is not in the catalog');
+      const sel = checkSelection(body);
+      if (typeof sel === 'string') return fail(400, sel);
+      const { provider, model, effort, context_size, mode } = sel;
       const prompt = String(body.prompt ?? '').trim();
       const t: MockTask = {
         id: nextId('t'),
         project_id: p.id,
-        provider: 'copilot',
+        provider,
         name: String(body.name ?? '').trim(),
         title: '',
         workdir: p.dir,
         conversation_id: nextId('conv'),
         model,
         last_model: '',
+        effort,
+        context_size,
+        mode,
         subagents_running: 0,
         state: prompt ? 'working' : 'idle',
         open: true,

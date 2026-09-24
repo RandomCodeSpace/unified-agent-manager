@@ -240,6 +240,9 @@ export function Task({
               </p>
             )}
             {session.history_truncated && <p className="notice-line">Earlier history was truncated; only the most recent part is shown.</p>}
+            {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && (
+              <p className="notice-line">Your first message gives this task its title.</p>
+            )}
             <Transcript
               items={session.items}
               subagents={session.subagents}

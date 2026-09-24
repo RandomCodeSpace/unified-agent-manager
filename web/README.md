@@ -50,7 +50,7 @@ contain it. `#task=<id>` in the URL opens a task directly.
   (user bubbles, flat assistant turns, markdown everywhere, Thinking
   disclosures, ledger-folded tool calls, one compact row per subagent),
   Subagents (the side panel: grouped list and one subagent's transcript),
-  Interactions, Composer, Changes (sheet), NewTask, Projects (dialogs),
+  Interactions, Composer, Changes (sheet), TaskDefaults (defaults fields), Projects (dialogs),
   Login, and shared atoms in `common.tsx`.
 - `src/styles.css` — the DESIGN.md tokens (one mid-light theme) and all
   styling; every colour is a token.

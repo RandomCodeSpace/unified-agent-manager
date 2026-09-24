@@ -118,8 +118,8 @@ function ProjectSection({
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => actions.onNewTask(p.id)}>
             New task
           </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => actions.onRenameProject(p)}>
-            Rename
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => actions.onEditProject(p)}>
+            Edit
           </button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => actions.onRemoveProject(p)}>
             Remove

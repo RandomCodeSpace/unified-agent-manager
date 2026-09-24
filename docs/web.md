@@ -95,14 +95,23 @@ off, run `uam web stop`, then `uam web` without the flag.
 ## Use it
 
 - **Projects**: add a directory on the Linux host as a Project. A directory
-  has one Project; adding it again points you to the existing one. Renaming a
-  Project changes only its name in UAM. Web sessions from before Projects
-  existed are placed in a Project for their directory, named after it, when
-  the service starts.
-- **Tasks**: start a Task (a web session) in a Project. Choose the provider
-  (only Copilot for now), optionally a model, effort, context size, a name,
-  and a first prompt. A provider that is not installed or not compatible is
-  shown as unavailable with the reason. The Task runs in the Project's directory.
+  has one Project; adding it again points you to the existing one. A Project
+  can carry defaults for new Tasks: model, effort, context size (where the
+  provider allows it) and mode. Set them when you add the Project, or later
+  with "Edit project", which also renames it. Editing a Project changes only
+  its record in UAM. Web sessions from before Projects existed are placed in
+  a Project for their directory, named after it, when the service starts.
+- **Tasks**: "New task" in a Project opens an empty conversation at once,
+  with the Project's defaults applied, and puts the cursor in the composer.
+  There is no form and no required first prompt: type the first message when
+  you are ready. The controls under the composer still change the model,
+  effort, context size and mode for that Task alone. A Project without
+  defaults starts a Task with `auto`, default effort, default context size and
+  safe mode. A default model the provider no longer offers is replaced by
+  `auto` (or the first model), with default effort and context size, so New
+  task does not fail on a stale default. A provider that is not installed or
+  not compatible is reported with the reason. The Task runs in the Project's
+  directory.
 - **Names and titles**: the name is optional. Without one, the Task shows the
   title the provider gives the conversation (Copilot uses the first prompt),
   or "New task" until there is one. Clearing a name shows the title again.

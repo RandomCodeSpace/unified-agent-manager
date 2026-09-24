@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, onUnauthorized, type Meta, type Project, type SessionSummary } from './api';
+import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Meta, type Project, type SessionSummary } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, useMedia } from './components/common';
 import { Deck } from './components/Deck';
 import { Login } from './components/Login';
-import { NewTask } from './components/NewTask';
-import { AddProjectDialog, RemoveProjectDialog, RenameProjectDialog } from './components/Projects';
+import { AddProjectDialog, EditProjectDialog, RemoveProjectDialog } from './components/Projects';
 import { CONNECTION_TEXT, Rail, tasksOf, type WorkspaceActions } from './components/Rail';
 import { Task } from './components/Task';
 
 type Auth = 'checking' | 'in' | 'out';
-type ProjectDialog = { kind: 'add' } | { kind: 'rename'; project: Project } | { kind: 'remove'; project: Project } | null;
+type ProjectDialog = { kind: 'add' } | { kind: 'edit'; project: Project } | { kind: 'remove'; project: Project } | null;
 
 /** Below this the rail is a drawer (DESIGN.md breakpoints). */
 const NARROW = '(max-width: 959px)';
@@ -45,7 +44,7 @@ export default function App() {
   const [streamKey, setStreamKey] = useState(0);
   const narrow = useMedia(NARROW);
   const sheetInline = useMedia(SHEET_INLINE);
-  const [newTaskIn, setNewTaskIn] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [dialog, setDialog] = useState<ProjectDialog>(null);
@@ -54,6 +53,10 @@ export default function App() {
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
   const loadedAt = useRef(new Date().toISOString());
   const drawerButton = useRef<HTMLButtonElement>(null);
+  // One create per project at a time; the request ID survives a failure so a retry is idempotent.
+  const creating = useRef(new Map<string, { id: string; busy: boolean }>());
+  // Task whose composer takes focus once its detail arrives (a Task just created).
+  const focusTask = useRef<string | null>(null);
 
   useEffect(() => {
     onUnauthorized(() => {
@@ -159,30 +162,62 @@ export default function App() {
 
   const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews }), [meta, narrow, hasNews]);
 
+  // Focus the composer of a Task that was just created, once its detail is on screen.
+  const detailId = state.detail?.id;
+  useEffect(() => {
+    if (!detailId || detailId !== focusTask.current) return;
+    focusTask.current = null;
+    document.getElementById('composer-text')?.focus();
+  }, [detailId]);
+
+  /** New task: create it at once with the Project's defaults, no prompt or name, and open its chat. */
+  const startTask = useCallback(
+    async (projectId: string) => {
+      const entry = creating.current.get(projectId) ?? { id: newRequestId(), busy: false };
+      if (entry.busy) return;
+      creating.current.set(projectId, { ...entry, busy: true });
+      setCreateError(null);
+      try {
+        const project = state.projects.find((p) => p.id === projectId);
+        const settings = project && resolveTaskDefaults(meta, project.defaults);
+        if (!project || !settings) throw new Error(meta ? 'No provider is available.' : 'The provider list has not loaded yet.');
+        const info = provider(meta, settings.provider);
+        if (info && !info.available) throw new Error(`${info.display_name} is unavailable: ${info.reason || 'not installed'}`);
+        const s = await api.createSession({ project_id: projectId, ...settings, model: settings.model || undefined, request_id: entry.id });
+        creating.current.delete(projectId);
+        focusTask.current = s.id;
+        dispatch({ type: 'upsert_session', session: s });
+        dispatch({ type: 'select', id: s.id });
+        setSheetOpen(false);
+        setDrawerOpen(false);
+        setHighlightId(null);
+      } catch (e) {
+        creating.current.set(projectId, { ...entry, busy: false });
+        setCreateError(describeError(e));
+      }
+    },
+    [state.projects, meta],
+  );
+
   const actions: WorkspaceActions = useMemo(
     () => ({
       onSelect: (id) => {
         dispatch({ type: 'select', id });
-        setNewTaskIn(null);
+        setCreateError(null);
         setSheetOpen(false);
         setDrawerOpen(false);
         setHighlightId(null);
       },
       onHome: () => {
         dispatch({ type: 'select', id: null });
-        setNewTaskIn(null);
+        setCreateError(null);
         setSheetOpen(false);
         setDrawerOpen(false);
       },
       onProject: (id) => showProject(id),
-      onNewTask: (projectId) => {
-        dispatch({ type: 'select', id: null });
-        setNewTaskIn(projectId);
-        setSheetOpen(false);
-        setDrawerOpen(false);
-      },
+      onNewTask: (projectId) => void startTask(projectId),
       onAddProject: () => setDialog({ kind: 'add' }),
-      onRenameProject: (project) => setDialog({ kind: 'rename', project }),
+      onEditProject: (project) => setDialog({ kind: 'edit', project }),
       onRemoveProject: (project) => setDialog({ kind: 'remove', project }),
       collapsed: hidden,
       onToggleProject: (id) =>
@@ -194,7 +229,7 @@ export default function App() {
           return next;
         }),
     }),
-    [hidden],
+    [hidden, startTask],
   );
 
   if (auth === 'checking') return <main className="login caption">Loading…</main>;
@@ -202,7 +237,6 @@ export default function App() {
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
   const project = selected ? state.projects.find((p) => p.id === selected.project_id) : undefined;
-  const newTaskProject = newTaskIn ? state.projects.find((p) => p.id === newTaskIn) : undefined;
   const showRail = narrow ? drawerOpen : true;
 
   function upsertSession(s: SessionSummary) {
@@ -246,18 +280,7 @@ export default function App() {
   // The task pane manages its own scrolling; every other view scrolls inside `.page`.
   let page: React.ReactNode;
   let pane: React.ReactNode = null;
-  if (newTaskProject) {
-    page = (
-      <NewTask
-        project={newTaskProject}
-        onCreated={(s) => {
-          upsertSession(s);
-          actions.onSelect(s.id);
-        }}
-        onCancel={actions.onHome}
-      />
-    );
-  } else if (state.detail && selected) {
+  if (state.detail && selected) {
     pane = (
       <Task
         key={state.detail.id}
@@ -316,7 +339,7 @@ export default function App() {
           {narrow && !pane && (
             <header className="main-header">
               {menuButton}
-              <h1 className="task-title">{newTaskProject ? 'New task' : 'uam'}</h1>
+              <h1 className="task-title">uam</h1>
               <span className="spacer" />
               {state.connection !== 'connected' && (
                 <span className={`conn conn-${state.connection}`} role="status" title={CONNECTION_TEXT[state.connection]}>
@@ -325,6 +348,14 @@ export default function App() {
                 </span>
               )}
             </header>
+          )}
+          {createError && (
+            <p className="error page-alert" role="alert">
+              Could not start a task: {createError}
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setCreateError(null)}>
+                Dismiss
+              </button>
+            </p>
           )}
           {pane ?? <div className="page">{page}</div>}
         </main>
@@ -351,10 +382,10 @@ export default function App() {
             onClose={() => setDialog(null)}
           />
         )}
-        {dialog?.kind === 'rename' && (
-          <RenameProjectDialog
+        {dialog?.kind === 'edit' && (
+          <EditProjectDialog
             project={dialog.project}
-            onRenamed={(p) => dispatch({ type: 'upsert_project', project: p })}
+            onUpdated={(p) => dispatch({ type: 'upsert_project', project: p })}
             onClose={() => setDialog(null)}
           />
         )}
@@ -362,10 +393,7 @@ export default function App() {
           <RemoveProjectDialog
             project={dialog.project}
             tasks={tasksOf(state.sessions, dialog.project.id)}
-            onRemoved={(id) => {
-              dispatch({ type: 'remove_project', id });
-              if (newTaskIn === id) setNewTaskIn(null);
-            }}
+            onRemoved={(id) => dispatch({ type: 'remove_project', id })}
             onClose={() => setDialog(null)}
           />
         )}

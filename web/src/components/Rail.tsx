@@ -9,7 +9,7 @@ export interface WorkspaceActions {
   onProject: (projectId: string) => void;
   onNewTask: (projectId: string) => void;
   onAddProject: () => void;
-  onRenameProject: (p: Project) => void;
+  onEditProject: (p: Project) => void;
   onRemoveProject: (p: Project) => void;
   /** UI-local "Hide" of a project's task list. */
   collapsed: ReadonlySet<string>;
