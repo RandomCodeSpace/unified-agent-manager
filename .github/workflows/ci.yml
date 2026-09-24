@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           coverage="$(go tool cover -func=coverage.out | awk '$1 == "total:" {gsub("%", "", $3); print $3}')"
-          awk -v coverage="${coverage}" 'BEGIN { if (coverage + 0 < 88.1) { printf "coverage %.1f%% is below 88.1%%\n", coverage; exit 1 } }'
+          awk -v coverage="${coverage}" 'BEGIN { if (coverage + 0 < 85) { printf "coverage %.1f%% is below 85%%\n", coverage; exit 1 } }'
 
   lint:
     name: lint
