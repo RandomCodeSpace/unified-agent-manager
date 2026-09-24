@@ -87,6 +87,7 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam web [--listen 127.0.0.1:8260] [--public-origin <url>]...  start the web interface service")
 	fmt.Fprintln(os.Stderr, "  uam web status [--json]")
 	fmt.Fprintln(os.Stderr, "  uam web stop                      stop the web interface service")
+	fmt.Fprintln(os.Stderr, "  uam web token set                 set the web access token, read from stdin")
 	fmt.Fprintln(os.Stderr, "  uam profile ls [--json]")
 	fmt.Fprintln(os.Stderr, "  uam profile show <name> [--json]")
 	fmt.Fprintln(os.Stderr, "  uam profile set <name> [profile flags]")

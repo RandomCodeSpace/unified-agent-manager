@@ -673,6 +673,57 @@ every two seconds), when a Task in the Project ends a turn, and when a Task's
 Changes load. Nothing polls. When the branch changes, the `project` frame
 carries the Project again.
 
+## Listening beyond loopback
+
+- Date: 2026-09-24 (decided in #174)
+
+The owner asked for `uam web` to listen on `0.0.0.0` and to run without an
+access token. This replaces the loopback-only rule in [Access](#access);
+`--no-auth` already existed. The owner accepts that `--listen 0.0.0.0:PORT
+--no-auth` lets anyone who can reach the port run agents with the owner's
+Copilot credential in the owner's directories, and shell commands in yolo
+mode. Nothing else is relaxed. The owner also asked to see the headers the
+web UI sends, for debugging, and to set a static token.
+
+- **Listen.** `--listen` takes any IP literal: loopback, the unspecified
+  address (`0.0.0.0` or `::`), or an interface address. `localhost` means
+  `127.0.0.1`; other host names are refused. The default stays
+  `127.0.0.1:8260`. The service binds exactly the literal's address family,
+  so `0.0.0.0` does not become a dual-stack `[::]` listener.
+- **Rebinding rule.** With a loopback bind the accepted `Host`s do not
+  change: `localhost`, loopback IPs and the configured public origins. With a
+  non-loopback bind, a `Host` that is an IP literal, such as the LAN address,
+  is accepted as well. A domain name that is not a configured public origin
+  gets 403 on every bind, so a website whose name resolves to the host cannot
+  drive the service. The cross-origin, JSON, CSP and cookie rules do not
+  change; the cookie is `Secure` only behind TLS or an HTTPS proxy.
+- **Local URL.** `uam web` and `uam web status` show the listen address and a
+  URL this host can use: a wildcard bind maps to loopback on the same port
+  (`0.0.0.0` to `127.0.0.1`, `::` to `::1`), and any other address is used
+  as is. `status --json` keeps `listen` and `url`. `status` and `stop` read
+  `web.json` and signal the verified PID; they never connect to the service.
+- **Warning.** Whenever the listen address is not loopback, `uam web` and
+  `uam web status` print `Warning: listening on <addr>, so other machines can
+  reach this service`, ending in `; sign-in is required (--no-auth is not in
+  use)` while sign-in is on. With `--no-auth`, one more line follows:
+  `Warning: --no-auth is in use: anyone who can reach <addr> can run agents on
+  this host with your credentials`.
+- **Header logging.** `--log-headers`, off by default, logs one JSON record
+  per request where the checks decide: method, path, remote address, `Host`,
+  every header and the outcome. Headers that can carry a credential are
+  redacted (`Cookie`, `Authorization`, `Proxy-Authorization`, and any whose
+  name contains `auth`, `cookie`, `token`, `key`, `secret`, `session`, `jwt`,
+  `signature`, `password` or `credential`), values are capped at 512 bytes, and
+  bodies are never read, since `/api/login` carries the token in its body.
+- **Owner-set token.** `uam web token set` reads a token of 24 to 256
+  printable ASCII characters without whitespace from stdin, without echo at
+  a terminal, and atomically replaces `web-token`. It takes no argument, flag
+  or environment variable, which `ps`, shell history or the agents' inherited
+  environment would expose. It refuses while the service runs, so the running
+  service never holds a token the file no longer has. Cookies are HMACs keyed
+  by the token, so a service restarted with a new token rejects every earlier
+  cookie.
+
 ## Slash commands and file references
 
 - Date: 2026-09-24 (decided in #176, from the research for #172)

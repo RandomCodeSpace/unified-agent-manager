@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -33,6 +34,7 @@ const (
 	loginReadWait     = 10 * time.Second
 	heartbeatInterval = 15 * time.Second
 	streamWriteWait   = 15 * time.Second
+	maxLoggedValue    = 512
 	contentSecurity   = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 )
 
@@ -41,6 +43,9 @@ type ServerConfig struct {
 	Manager *Manager
 	// Token is the access token browsers present at /api/login.
 	Token string
+	// Listen is the address the service binds. Beyond loopback, a Host that
+	// is an IP literal (such as the LAN address) is also accepted.
+	Listen string
 	// PublicOrigins are origins (scheme://host[:port]) of same-host reverse
 	// proxies whose Host header is accepted besides loopback.
 	PublicOrigins []string
@@ -50,6 +55,9 @@ type ServerConfig struct {
 	Version string
 	// Assets overrides the embedded frontend (tests).
 	Assets fs.FS
+	// LogHeaders logs one record per request with its headers (credentials
+	// redacted) and the outcome of the checks in ServeHTTP.
+	LogHeaders bool
 }
 
 // Server is the HTTP handler for the web interface.
@@ -57,6 +65,8 @@ type Server struct {
 	m         *Manager
 	token     string
 	noAuth    bool
+	headerLog bool
+	ipHosts   bool
 	hosts     map[string]bool
 	csrf      *http.CrossOriginProtection
 	assets    fs.FS
@@ -71,7 +81,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, errors.New("web server needs a manager and an access token")
 	}
 	s := &Server{
-		m: cfg.Manager, token: cfg.Token, noAuth: cfg.NoAuth, hosts: map[string]bool{},
+		m: cfg.Manager, token: cfg.Token, noAuth: cfg.NoAuth, headerLog: cfg.LogHeaders, ipHosts: BeyondLoopback(cfg.Listen), hosts: map[string]bool{},
 		csrf: http.NewCrossOriginProtection(), assets: cfg.Assets, version: cfg.Version, heartbeat: heartbeatInterval,
 	}
 	for _, origin := range cfg.PublicOrigins {
@@ -168,14 +178,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Set("Cache-Control", "no-store")
 	}
 	// A foreign Host means DNS rebinding or a misrouted request; the
-	// service only answers for loopback and configured public origins.
+	// service only answers for loopback, configured public origins and,
+	// beyond loopback, IP literals.
 	if !s.allowedHost(r.Host) {
-		writeError(w, http.StatusForbidden, "host not allowed")
+		s.refuse(w, r, http.StatusForbidden, "host not allowed")
 		return
 	}
 	if !safeMethod(r.Method) {
 		if err := s.csrf.Check(r); err != nil {
-			writeError(w, http.StatusForbidden, "cross-origin request rejected")
+			s.refuse(w, r, http.StatusForbidden, "cross-origin request rejected")
 			return
 		}
 		// A DELETE without a body has no content to type; every other
@@ -187,21 +198,76 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && uploadPath(r.URL.Path):
 			if !hasMediaType(r.Header.Get("Content-Type"), "application/octet-stream") {
-				writeError(w, http.StatusUnsupportedMediaType, "attachment uploads must use Content-Type: application/octet-stream")
+				s.refuse(w, r, http.StatusUnsupportedMediaType, "attachment uploads must use Content-Type: application/octet-stream")
 				return
 			}
 			limit = maxUploadBytes
 		case !bodyless && !jsonContentType(r.Header.Get("Content-Type")):
-			writeError(w, http.StatusUnsupportedMediaType, "requests must use Content-Type: application/json")
+			s.refuse(w, r, http.StatusUnsupportedMediaType, "requests must use Content-Type: application/json")
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 	if api && r.URL.Path != "/api/auth" && r.URL.Path != "/api/login" && !s.authenticated(r) {
-		writeError(w, http.StatusUnauthorized, "authentication required")
+		s.refuse(w, r, http.StatusUnauthorized, "authentication required")
 		return
 	}
+	s.logRequest(r, "allowed", 0)
 	s.mux.ServeHTTP(w, r)
+}
+
+// refuse answers a request the checks turn away.
+func (s *Server) refuse(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	s.logRequest(r, msg, status)
+	writeError(w, status, msg)
+}
+
+// logRequest is --log-headers: one record per request, written where the
+// checks decide. Credential headers are redacted, values are capped, and
+// bodies are never read (/api/login carries the token in its body). The JSON
+// logger escapes CR and LF, so a header value cannot forge a record.
+func (s *Server) logRequest(r *http.Request, outcome string, status int) {
+	if !s.headerLog {
+		return
+	}
+	headers := make(map[string][]string, len(r.Header))
+	for name, values := range r.Header {
+		logged := make([]string, len(values))
+		for i, v := range values {
+			logged[i] = redactHeaderValue(name, v)
+		}
+		headers[name] = logged
+	}
+	args := []any{"method", r.Method, "path", capLogValue(r.URL.RequestURI()), "remote", r.RemoteAddr,
+		"host", capLogValue(r.Host), "headers", headers, "outcome", outcome}
+	if status != 0 {
+		args = append(args, "status", status)
+	}
+	log.Info("web request", args...)
+}
+
+// credentialHints are name fragments of headers that can carry a credential:
+// Cookie, Authorization and Proxy-Authorization, and custom ones such as
+// X-Api-Key, X-Auth-Token or a proxy's JWT assertion.
+var credentialHints = []string{"auth", "cookie", "token", "key", "secret", "session", "jwt", "signature", "password", "credential"}
+
+// redactHeaderValue is the logged form of one header value: a placeholder
+// when the header can carry a credential, otherwise the value, capped.
+func redactHeaderValue(name, value string) string {
+	lower := strings.ToLower(name)
+	for _, hint := range credentialHints {
+		if strings.Contains(lower, hint) {
+			return "[redacted]"
+		}
+	}
+	return capLogValue(value)
+}
+
+func capLogValue(v string) string {
+	if len(v) > maxLoggedValue {
+		return v[:maxLoggedValue] + "…"
+	}
+	return v
 }
 
 func (s *Server) allowedHost(hostport string) bool {
@@ -216,8 +282,10 @@ func (s *Server) allowedHost(hostport string) bool {
 	if host == "localhost" {
 		return true
 	}
+	// A domain name stays refused on any bind: that is what a rebound
+	// website sends.
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return ip != nil && (ip.IsLoopback() || s.ipHosts)
 }
 
 func jsonContentType(value string) bool { return hasMediaType(value, "application/json") }
@@ -291,7 +359,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(body.Token)), []byte(s.token)) != 1 {
+	// Compare digests: ConstantTimeCompare returns early on a length
+	// mismatch, and an owner-set token's length is part of the secret.
+	given, want := sha256.Sum256([]byte(strings.TrimSpace(body.Token))), sha256.Sum256([]byte(s.token))
+	if subtle.ConstantTimeCompare(given[:], want[:]) != 1 {
 		log.Warn("web login rejected", "remote", r.RemoteAddr)
 		writeError(w, http.StatusUnauthorized, "invalid access token")
 		return
