@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, 
 import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type FileEntry, type Model, type PromptMode, type SessionDetail, type SessionSummary, type Submission } from '../api';
 import { LIMITS, acceptFor, checkUpload, fileKind, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
-import { applyPick, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
+import { applyPick, commandPending, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Note, Spinner, useApp } from './common';
 import { InlinePicker, type PickerItem } from './InlinePicker';
@@ -180,9 +180,11 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
   const rawTrigger = useMemo(() => triggerAt(text, caret), [text, caret]);
   const triggerKey = rawTrigger ? `${rawTrigger.kind}${rawTrigger.start}` : null;
   const trigger = rawTrigger && dismissed !== triggerKey && !locked && !busy ? rawTrigger : null;
-  const wantCommands = trigger?.kind === '/' && session.open;
+  // A `/name…` text holds the send until the list says whether it is a command; a closed conversation has no list and sends as typed.
+  const pendingCommand = session.open && commandPending(text, commands, commandsError);
+  const wantCommands = session.open && (trigger?.kind === '/' || pendingCommand);
 
-  // The command list is fetched when the picker first opens and kept; a failure is retried on the next open.
+  // The command list is fetched when the picker first opens (or a `/name…` text waits for it) and kept; a failure is retried on the next open.
   useEffect(() => {
     if (!wantCommands || commands || commandsError || fetchingCommands.current) return;
     fetchingCommands.current = true;
@@ -320,7 +322,7 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
   }
 
   const uploadsFull = activeKinds.length >= LIMITS.count;
-  const attachReason = locked ? 'This task is read-only.' : uploadsFull ? `A message carries at most ${LIMITS.count} attachments.` : '';
+  const attachReason = uploadsFull ? `A message carries at most ${LIMITS.count} attachments.` : '';
   const uploading = uploads.some((u) => u.status === 'uploading');
   const refused = uploads.some((u) => u.status === 'error');
   const attachmentIds = uploads.flatMap((u) => (u.status === 'done' && u.id ? [u.id] : []));
@@ -330,7 +332,15 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
   /* ---------- Sending ---------- */
 
   const cmd = commands ? parseCommand(text, commands) : null;
-  const blocked = uploading ? 'Wait for the upload to finish' : refused ? 'Remove the attachment that was refused' : live && cmd ? `/${cmd.name} runs between turns; wait for this turn to finish` : '';
+  const blocked = uploading
+    ? 'Wait for the upload to finish'
+    : refused
+      ? 'Remove the attachment that was refused'
+      : pendingCommand
+        ? 'Wait for the command list to load'
+        : live && cmd
+          ? `/${cmd.name} runs between turns; wait for this turn to finish`
+          : '';
   const steerBlocked = hasExtras ? 'A steer takes text only; queue the message instead' : '';
   const cannotSubmit = !!busy || locked || session.state === 'starting' || !text.trim() || !!blocked;
 

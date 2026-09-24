@@ -8,11 +8,14 @@ const txt = (size = 1000) => ({ name: 'notes.md', type: 'text/markdown', size })
 const vision = { images: true, pdf: true, max_images: 2 };
 const textOnly = { images: false, pdf: false };
 
-test('kinds come from the browser type, then the name; unknown types are left to the sniffer', () => {
+test('kinds come from the name, then the browser type; unknown types are left to the sniffer', () => {
   assert.equal(fileKind({ name: 'a.png', type: 'image/png' }), 'image');
   assert.equal(fileKind({ name: 'a.PDF', type: '' }), 'pdf');
   assert.equal(fileKind({ name: 'main.go', type: '' }), 'text');
   assert.equal(fileKind({ name: 'data.json', type: 'application/json' }), 'text');
+  assert.equal(fileKind({ name: 'main.ts', type: 'video/mp2t' }), 'text');
+  assert.equal(fileKind({ name: 'notes.md', type: 'application/octet-stream' }), 'text');
+  assert.equal(fileKind({ name: 'clip', type: 'video/mp2t' }), 'unknown');
   assert.equal(fileKind({ name: 'blob', type: 'application/octet-stream' }), 'text');
   assert.equal(fileKind({ name: 'logo.svg', type: 'image/svg+xml' }), 'svg');
   assert.equal(fileKind({ name: 'logo.svg', type: '' }), 'svg');

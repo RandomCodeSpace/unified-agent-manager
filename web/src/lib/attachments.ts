@@ -24,15 +24,22 @@ const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const TEXT_APP_TYPES = /^application\/(json|xml|javascript|ecmascript|x-sh|x-shellscript|x-yaml|yaml|toml|x-httpd-php|sql|x-python|x-perl|x-ruby|x-tex|typescript|x-typescript)$/;
 const TEXT_EXT = /\.(txt|md|markdown|rst|adoc|csv|tsv|log|json|jsonc|ya?ml|toml|ini|cfg|conf|env|xml|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|go|rs|py|rb|php|java|kt|swift|c|h|cc|cpp|hpp|cs|sh|bash|zsh|fish|ps1|sql|proto|graphql|gql|tf|dockerfile|makefile|mod|sum|lock|diff|patch|vue|svelte|astro)$/i;
 
-/** The kind UAM would store this file as, or why it cannot: `svg` (refused by name) or `unknown` (audio, video, archives, other images). */
+/**
+ * The kind UAM would store this file as, or why it cannot: `svg` (refused by name) or
+ * `unknown` (audio, video, archives, other images). The name decides first; the browser's
+ * type counts only when the extension says nothing, since browsers report `.ts` as
+ * `video/mp2t` and the server sniffs the bytes anyway.
+ */
 export function fileKind(f: Pick<FileLike, 'name' | 'type'>): Kind | 'svg' | 'unknown' {
   const type = f.type.toLowerCase();
   const name = f.name.toLowerCase();
   if (type === 'image/svg+xml' || name.endsWith('.svg') || name.endsWith('.svgz')) return 'svg';
+  if (name.endsWith('.pdf')) return 'pdf';
+  if (TEXT_EXT.test(name)) return 'text';
   if (IMAGE_TYPES.includes(type)) return 'image';
-  if (type === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
+  if (type === 'application/pdf') return 'pdf';
   if (type.startsWith('image/') || type.startsWith('audio/') || type.startsWith('video/') || type.startsWith('font/')) return 'unknown';
-  if (type.startsWith('text/') || TEXT_APP_TYPES.test(type) || TEXT_EXT.test(name)) return 'text';
+  if (type.startsWith('text/') || TEXT_APP_TYPES.test(type)) return 'text';
   // No type, or one the OS made up: let the server sniff it.
   if (!type || type === 'application/octet-stream') return 'text';
   return 'unknown';

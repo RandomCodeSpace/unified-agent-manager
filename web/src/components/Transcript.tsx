@@ -3,7 +3,6 @@ import { memo, useState, type ReactNode } from 'react';
 import { modelName, type Item, type Subagent, type SubagentStatus, type ToolStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { markFileRefs } from '../lib/composer';
 import { ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, Sep, Spinner, SubagentIdleIcon, useApp } from './common';
 import { Button } from './ui/button';
@@ -174,7 +173,7 @@ function Copyable({ text, label, className, children, extra = [] }: { text: stri
   );
 }
 
-/** The user's turn: a bubble with the text (`@path` references read as chips), then its uploads. */
+/** The user's turn: a bubble with the text as typed, then its uploads. The item carries no list of its `@path` references, so those stay plain text. */
 function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
   const attachments = item.attachments ?? [];
   return (
@@ -183,7 +182,7 @@ function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: st
         <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-[0_1px_2px_rgba(28,27,24,0.05)] max-sm:text-chat-lg">
           <span className="sr-only">You: </span>
           {item.delivery === 'steer' && <span className="block text-caption text-accent">Steer</span>}
-          {item.text && <Markdown text={markFileRefs(item.text)} />}
+          {item.text && <Markdown text={item.text} />}
           {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
         </div>
       </Copyable>

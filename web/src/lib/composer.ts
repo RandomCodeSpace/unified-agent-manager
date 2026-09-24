@@ -43,6 +43,15 @@ export function parseCommand(text: string, commands: readonly Pick<Command, 'nam
   return { name: m[1], args: (m[2] ?? '').trim() };
 }
 
+/**
+ * True while `text` is shaped like `/name…` and the command list is still on its way
+ * (`commands` null, no `error`): sending then would hand an unresolved command to the
+ * model as plain text. A loaded list, even an empty one, or a failed fetch never waits.
+ */
+export function commandPending(text: string, commands: readonly Pick<Command, 'name'>[] | null, error: string | null): boolean {
+  return commands === null && !error && /^\/\S/.test(text.trim());
+}
+
 /** Commands matching `query`: a name starting with it first, then a name or description containing it. Case-insensitive; empty query keeps all. */
 export function filterCommands<T extends Pick<Command, 'name' | 'description'>>(commands: readonly T[], query: string): T[] {
   const q = query.toLowerCase();
@@ -74,18 +83,4 @@ export function pruneFiles(text: string, files: readonly string[]): string[] {
 /** Removes the first `@path` token and one space after it, so removing a chip also cleans the text. */
 export function removeToken(text: string, path: string): string {
   return text.replace(new RegExp(`(^|\\s)@${escapeRe(path)}(?=\\s|$) ?`), '$1');
-}
-
-/** A path-like `@token` in prose: letters, digits, `_ - . /`, not ending in a dot. */
-const REF_RE = /(^|\s)@([\w.][\w\-/.]*[\w\-/]|\w)(?=[\s.,;:!?)]|$)/g;
-
-/**
- * Marks `@path` references in a user's text as inline code so they read as chips, leaving
- * fenced blocks and code spans alone. Emails (`a@b`) have no whitespace before the `@`.
- */
-export function markFileRefs(text: string): string {
-  return text
-    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
-    .map((part, i) => (i % 2 ? part : part.replace(REF_RE, '$1`@$2`')))
-    .join('');
 }

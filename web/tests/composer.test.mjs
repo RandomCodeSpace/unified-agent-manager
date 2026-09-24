@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyPick, filterCommands, markFileRefs, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
+import { applyPick, commandPending, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
 
 const commands = [
   { name: 'review', description: 'Review the changes', kind: 'command', input_hint: '' },
@@ -46,6 +46,17 @@ test('only a listed command runs as one; the rest of the text is its arguments',
   assert.equal(parseCommand('/', commands), null);
 });
 
+test('a /name text waits for the command list, never for a loaded or failed one', () => {
+  assert.equal(commandPending('/review', null, null), true);
+  assert.equal(commandPending('/review the last commit', null, null), true);
+  assert.equal(commandPending(' /nope ', null, null), true);
+  assert.equal(commandPending('/', null, null), false);
+  assert.equal(commandPending('run /review', null, null), false);
+  assert.equal(commandPending('/review', commands, null), false);
+  assert.equal(commandPending('/review', [], null), false);
+  assert.equal(commandPending('/review', null, 'the provider conversation is not open'), false);
+});
+
 test('filtering ranks a name prefix first, then a name or description match', () => {
   assert.deepEqual(filterCommands(commands, '').map((c) => c.name), ['review', 'init', 'release-notes']);
   assert.deepEqual(filterCommands(commands, 're').map((c) => c.name), ['review', 'release-notes', 'init']);
@@ -65,11 +76,4 @@ test('a file chip lives as long as its @token; removing the chip removes the tok
   assert.equal(removeToken('@docs/web.md', 'docs/web.md'), '');
   assert.equal(removeToken('a\n@docs/web.md', 'docs/web.md'), 'a\n');
   assert.equal(removeToken('@docs/web.md.bak', 'docs/web.md'), '@docs/web.md.bak');
-});
-
-test('@path references in a user message become inline code, outside code only', () => {
-  assert.equal(markFileRefs('read @docs/web.md.'), 'read `@docs/web.md`.');
-  assert.equal(markFileRefs('@Makefile and @.github/ci.yml, ok'), '`@Makefile` and `@.github/ci.yml`, ok');
-  assert.equal(markFileRefs('mail a@b.com'), 'mail a@b.com');
-  assert.equal(markFileRefs('`@keep` and ```\n@block\n``` @x'), '`@keep` and ```\n@block\n``` `@x`');
 });
