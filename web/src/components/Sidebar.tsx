@@ -126,25 +126,12 @@ function Collapsible({ open, children, className }: { open: boolean; children: R
 
 /* ---------- Task row ---------- */
 
-/** Short status words for the row's right slot (T3 Code's vocabulary); the header chip carries the full label. */
-const ROW_WORD: Partial<Record<SessionSummary['state'], string>> = {
-  awaiting_permission: 'Approval',
-  awaiting_answer: 'Input',
-  working: 'Working',
-  starting: 'Starting',
-  failed: 'Failed',
-  interrupted: 'Paused',
-  completed: 'Done',
-  cancelled: 'Stopped',
-  closed: 'Closed',
-};
-
-/** Right-slot text: a status word for act-now, in-motion, broken and unread rows; the relative time otherwise. */
+/** Right-slot text: the header's status word for act-now, in-motion, broken and unread rows; the relative time otherwise. */
 function rowMeta(s: SessionSummary, unread: boolean): { text: string; tone: string } {
   if (readOnly(s)) return { text: relTime(s.updated_at), tone: 'text-muted' };
   const tone = STATE_TONE[s.state];
   if (needsYou(s) || LIVE.includes(s.state) || s.state === 'failed' || s.state === 'interrupted' || unread) {
-    return { text: ROW_WORD[s.state] ?? STATE_LABELS[s.state], tone: TONE_TEXT[tone] };
+    return { text: STATE_LABELS[s.state], tone: TONE_TEXT[tone] };
   }
   return { text: relTime(s.updated_at), tone: 'text-muted' };
 }
