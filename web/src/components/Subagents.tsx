@@ -167,7 +167,7 @@ export function SubagentPanel({
               </div>
               <ul className="flex flex-col gap-px">
                 {rows.map((s) => (
-                  <SubagentRow key={s.id} session={s === undefined ? session : session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} />
+                  <SubagentRow key={s.id} session={session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} />
                 ))}
               </ul>
             </section>

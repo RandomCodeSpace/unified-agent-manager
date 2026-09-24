@@ -142,7 +142,7 @@ test('a failed frame load and a stalled renderer reject their whole batch and al
   await Promise.resolve();
   const { frame, request } = messages.at(-1);
   const reply = { id: request.id, svg: '<svg/>', width: 100, height: 50 };
-  page.dispatchEvent(Object.assign(new Event('message'), { source: frame.contentWindow, data: reply }));
+  page.dispatchEvent(Object.assign(new Event('message'), { source: frame.contentWindow, origin: 'null', data: reply }));
   assert.deepEqual(await retry, { svg: '<svg/>', width: 100, height: 50 });
   assert.equal(renderDiagram('queued behind stall'), retry, 'successful results stay cached');
 });
