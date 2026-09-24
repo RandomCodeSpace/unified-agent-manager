@@ -26,6 +26,8 @@ type fakeClient struct {
 	started   int
 	stopped   int
 	forced    int
+	startErr  error
+	createErr error
 	pingErr   error
 	resumeErr error
 	models    []rpc.Model
@@ -43,9 +45,9 @@ func (f *fakeClient) ListModels(context.Context) ([]rpc.Model, error) {
 
 func (f *fakeClient) Start(context.Context) error {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.started++
-	f.mu.Unlock()
-	return nil
+	return f.startErr
 }
 func (f *fakeClient) Stop() error { f.mu.Lock(); f.stopped++; f.mu.Unlock(); return nil }
 func (f *fakeClient) ForceStop()  { f.mu.Lock(); f.forced++; f.mu.Unlock() }
@@ -59,6 +61,9 @@ func (f *fakeClient) Ping(context.Context) error {
 func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig) (sdkSession, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
 	s := &fakeSession{id: cfg.SessionID, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
@@ -109,6 +114,11 @@ type fakeSession struct {
 	subCancels        []string
 	subCancelErr      error
 	subCancelRejected bool
+	abortErr          error
+	aborts            int
+	respondHook       func(context.Context, string, rpc.PermissionDecision) (bool, error)
+	eventsErr         error
+	disconnectHook    func() error
 }
 
 func (s *fakeSession) CancelSubagent(_ context.Context, id string) (bool, error) {
@@ -118,8 +128,13 @@ func (s *fakeSession) CancelSubagent(_ context.Context, id string) (bool, error)
 	return !s.subCancelRejected, s.subCancelErr
 }
 
-func (s *fakeSession) ID() string                  { return s.id }
-func (s *fakeSession) Abort(context.Context) error { return nil }
+func (s *fakeSession) ID() string { return s.id }
+func (s *fakeSession) Abort(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.aborts++
+	return s.abortErr
+}
 
 func (s *fakeSession) Send(_ context.Context, prompt, mode string) (string, error) {
 	s.mu.Lock()
@@ -163,22 +178,32 @@ func (s *fakeSession) SetEffort(_ context.Context, effort string) error {
 	return s.effortErr
 }
 
-func (s *fakeSession) Events(context.Context) ([]copilot.SessionEvent, error) { return s.events, nil }
+func (s *fakeSession) Events(context.Context) ([]copilot.SessionEvent, error) {
+	return s.events, s.eventsErr
+}
 
-func (s *fakeSession) RespondPermission(_ context.Context, id string, d rpc.PermissionDecision) (bool, error) {
+func (s *fakeSession) RespondPermission(ctx context.Context, id string, d rpc.PermissionDecision) (bool, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.answers == nil {
 		s.answers = map[string]rpc.PermissionDecision{}
 	}
 	s.answers[id] = d
-	return !s.notPending[id], nil
+	hook, applied := s.respondHook, !s.notPending[id]
+	s.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, id, d)
+	}
+	return applied, nil
 }
 
 func (s *fakeSession) Disconnect() error {
 	s.mu.Lock()
 	s.disconnected = true
+	hook := s.disconnectHook
 	s.mu.Unlock()
+	if hook != nil {
+		return hook()
+	}
 	return nil
 }
 
