@@ -25,6 +25,10 @@ const (
 	tokenBytes    = 32
 	cookieName    = "uam_web"
 	cookieMaxAge  = 30 * 24 * 60 * 60
+
+	// An owner-set token (uam web token set) must fall within these bounds.
+	minTokenLen = 24
+	maxTokenLen = 256
 )
 
 // TokenPath is the access token file, next to sessions.json.
@@ -93,13 +97,61 @@ func readToken(path string) (string, error) {
 		return "", err
 	}
 	token := strings.TrimSpace(string(data))
-	if len(token) != 2*tokenBytes {
-		return "", fmt.Errorf("access token %s is malformed; delete it to create a new one", path)
-	}
-	if _, err := hex.DecodeString(token); err != nil {
+	if ValidateToken(token) != nil {
 		return "", fmt.Errorf("access token %s is malformed; delete it to create a new one", path)
 	}
 	return token, nil
+}
+
+// ValidateToken accepts 24 to 256 printable ASCII characters without
+// whitespace. The generated token (64 hex characters) always qualifies. The
+// error never contains the token.
+func ValidateToken(token string) error {
+	if len(token) < minTokenLen {
+		return fmt.Errorf("the access token is too short: use at least %d characters", minTokenLen)
+	}
+	if len(token) > maxTokenLen {
+		return fmt.Errorf("the access token is too long: use at most %d characters", maxTokenLen)
+	}
+	for i := 0; i < len(token); i++ {
+		if token[i] <= ' ' || token[i] > '~' {
+			return errors.New("the access token must be printable ASCII without whitespace")
+		}
+	}
+	return nil
+}
+
+// SetToken validates token and atomically replaces the access token file at
+// path with it: a private temp file, renamed over any existing file. A
+// running service keeps its old token until it restarts; the new one then
+// invalidates every session cookie, since cookies are derived from it.
+func SetToken(path, token string) error {
+	if err := ValidateToken(token); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create token directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), tokenFileName+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("create access token: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.WriteString(token + "\n"); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write access token: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write access token: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("write access token: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("replace access token: %w", err)
+	}
+	return nil
 }
 
 // sessionCookie derives a session cookie bound to the request host and valid

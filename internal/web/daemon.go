@@ -45,12 +45,28 @@ type DaemonState struct {
 	Listen        string    `json:"listen"`
 	PublicOrigins []string  `json:"public_origins,omitempty"`
 	NoAuth        bool      `json:"no_auth,omitempty"`
+	LogHeaders    bool      `json:"log_headers,omitempty"`
 	Version       string    `json:"version"`
 	StartedAt     time.Time `json:"started_at"`
 }
 
-// URL is the loopback address browsers use.
-func (st DaemonState) URL() string { return "http://" + st.Listen + "/" }
+// URL is the address browsers on this host use (see LocalAddr).
+func (st DaemonState) URL() string { return "http://" + st.LocalAddr() + "/" }
+
+// LocalAddr is the host:port clients on this host connect to: the listen
+// address, with an unspecified host replaced by loopback on the same port
+// (0.0.0.0 by 127.0.0.1, :: by ::1).
+func (st DaemonState) LocalAddr() string {
+	host, port, err := net.SplitHostPort(st.Listen)
+	ip := net.ParseIP(host)
+	if err != nil || ip == nil || !ip.IsUnspecified() {
+		return st.Listen
+	}
+	if ip.To4() != nil {
+		return net.JoinHostPort("127.0.0.1", port)
+	}
+	return net.JoinHostPort("::1", port)
+}
 
 // DaemonConfig configures `uam __web`.
 type DaemonConfig struct {
@@ -60,10 +76,13 @@ type DaemonConfig struct {
 	NoAuth    bool
 	Providers []agentapi.Provider
 	Version   string
+	// LogHeaders logs every request's headers (see ServerConfig).
+	LogHeaders bool
 }
 
-// ValidateListen accepts only loopback addresses and returns host:port with
-// an IP literal.
+// ValidateListen accepts an IP literal (loopback, unspecified or an interface
+// address) or localhost, and returns host:port with an IP literal. Other host
+// names are refused.
 func ValidateListen(addr string) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -76,10 +95,28 @@ func ValidateListen(addr string) (string, error) {
 		host = "127.0.0.1"
 	}
 	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return "", fmt.Errorf("--listen %q is not a loopback address; uam web only binds loopback (use SSH forwarding or a same-host reverse proxy)", addr)
+	if ip == nil {
+		return "", fmt.Errorf("--listen %q is not an IP address; use an IP literal such as 127.0.0.1 or 0.0.0.0 (host names other than localhost are refused)", addr)
 	}
 	return net.JoinHostPort(ip.String(), port), nil
+}
+
+// BeyondLoopback reports whether listen (host:port) binds a non-loopback IP,
+// which other machines may reach.
+func BeyondLoopback(listen string) bool {
+	host, _, err := net.SplitHostPort(listen)
+	ip := net.ParseIP(host)
+	return err == nil && ip != nil && !ip.IsLoopback()
+}
+
+// listenNetwork binds exactly the listen address's family: plain "tcp" would
+// turn 0.0.0.0 into a dual-stack [::] listener.
+func listenNetwork(listen string) string {
+	host, _, _ := net.SplitHostPort(listen)
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return "tcp6"
+	}
+	return "tcp4"
 }
 
 func statePath(dir string) string { return filepath.Join(dir, stateFileName) }
@@ -316,19 +353,19 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 	if err := mgr.Start(context.Background()); err != nil {
 		return err
 	}
-	srv, err := NewServer(ServerConfig{Manager: mgr, Token: token, PublicOrigins: origins, NoAuth: cfg.NoAuth, Version: cfg.Version})
+	srv, err := NewServer(ServerConfig{Manager: mgr, Token: token, Listen: listen, PublicOrigins: origins, NoAuth: cfg.NoAuth, LogHeaders: cfg.LogHeaders, Version: cfg.Version})
 	if err != nil {
 		_ = mgr.Shutdown(context.Background())
 		return err
 	}
-	ln, err := net.Listen("tcp", listen)
+	ln, err := net.Listen(listenNetwork(listen), listen)
 	if err != nil {
 		_ = mgr.Shutdown(context.Background())
 		return fmt.Errorf("listen on %s: %w", listen, err)
 	}
 	state := DaemonState{
 		PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: ln.Addr().String(),
-		PublicOrigins: origins, NoAuth: cfg.NoAuth, Version: cfg.Version, StartedAt: time.Now().UTC(),
+		PublicOrigins: origins, NoAuth: cfg.NoAuth, LogHeaders: cfg.LogHeaders, Version: cfg.Version, StartedAt: time.Now().UTC(),
 	}
 	if err := writeStateFile(dir, state); err != nil {
 		_ = ln.Close()

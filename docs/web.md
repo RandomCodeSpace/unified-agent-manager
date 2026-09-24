@@ -50,14 +50,15 @@ then open http://127.0.0.1:8260/ and sign in with the access token.
 The service detaches from the shell: it has its own session, no controlling
 terminal, and `/dev/null` for its standard streams. Running `uam web` again
 while it is running prints the same details, including the token. Use
-`--listen 127.0.0.1:<port>` for another port. Only loopback addresses are
-accepted.
+`--listen 127.0.0.1:<port>` for another port. To let other machines connect
+directly, see [Listen beyond loopback](#listen-beyond-loopback).
 
 | Command | Effect |
 |---|---|
 | `uam web` | Start the service, or show how to reach the running one |
 | `uam web status [--json]` | Show whether it is running, its PID, address, and version (not the token) |
 | `uam web stop` | Stop the service and the provider processes it started |
+| `uam web token set` | Replace the access token with one read from stdin (see [Sign in](#sign-in)) |
 
 ## Connect from Windows
 
@@ -81,16 +82,35 @@ The token lives in `~/.config/uam/web-token` (mode 0600, or
 `$UAM_CONFIG_DIR/web-token`). To revoke every browser session, stop the
 service, delete that file, and run `uam web` again; it creates a new token.
 
+To choose the token yourself, pipe it in or type it at the prompt, which does
+not echo it:
+
+```sh
+uam web token set < my-token-file
+```
+
+It reads stdin up to the first newline and trims surrounding whitespace. The
+token must be 24 to 256 printable ASCII characters with no whitespace;
+anything else is refused and the file is left alone. The command never
+prints the token. There is no argument, flag or environment variable for it:
+arguments show up in `ps` and shell history, and the service's environment is
+inherited by the agents it starts. The file is replaced atomically (mode
+0600). A running service keeps the old token until `uam web stop` and a new
+`uam web`. Session cookies are derived from the token, so the restart signs
+out every browser.
+
 Every API request needs the cookie. The service also rejects requests whose
-`Host` is not loopback (or a configured public origin), rejects cross-origin
-state changes, and sends no CORS headers.
+`Host` is not loopback, a configured public origin or, when it listens beyond
+loopback, an IP address; it rejects cross-origin state changes and sends no
+CORS headers.
 
 `uam web --no-auth` turns sign-in off: every request is treated as signed in,
 and `uam web` and `uam web status` print `Authentication: disabled` instead of
 the token. The `Host`, cross-origin, and JSON checks still apply. It is off by
 default. Behind a public reverse proxy, it lets anyone on the internet run
-agents and shell commands on this host with your credentials. To turn it back
-off, run `uam web stop`, then `uam web` without the flag.
+agents and shell commands on this host with your credentials; on an address
+beyond loopback, anyone who can reach that address. To turn it back off, run
+`uam web stop`, then `uam web` without the flag.
 
 ## Use it
 
@@ -174,8 +194,9 @@ off, run `uam web stop`, then `uam web` without the flag.
   > **Warning:** in yolo mode the agent can run any command and change any
   > file your Linux account can reach, with your credentials, and nobody is
   > asked first. Turn it on only for a project where you would click "Allow"
-  > on everything anyway. With `--no-auth` behind a public reverse proxy,
-  > anyone who can reach the page can start a yolo Task.
+  > on everything anyway. With `--no-auth` behind a public reverse proxy or
+  > on an address beyond loopback, anyone who can reach the page can start a
+  > yolo Task.
 - **Messages while a turn runs**: you can queue a message or steer the turn
   with it.
   - **Queue** holds the message until the turn completes, then sends it as
@@ -266,6 +287,73 @@ provider conversation IDs are kept. After `uam web` starts again, sending a prom
 session reopens the same provider conversation. The Task's selected model,
 effort and context size are restored before the prompt is sent. If Copilot
 cannot apply them, UAM reports the failure without sending the prompt.
+
+## Listen beyond loopback
+
+By default the service listens on `127.0.0.1` only. `--listen` takes any IP
+address: `0.0.0.0` for every IPv4 interface, `::` for every IPv6 interface, or
+one interface's address such as `192.168.1.20`. Host names other than
+`localhost` are refused.
+
+```sh
+uam web --listen 0.0.0.0:8260
+```
+
+```text
+uam web started (pid 258199)
+  URL:           http://127.0.0.1:8260/
+  Listen:        0.0.0.0:8260
+  Access token:  <64 hex characters>
+  Warning: listening on 0.0.0.0:8260, so other machines can reach this service; sign-in is required (--no-auth is not in use)
+```
+
+Other machines that can reach the port open `http://<host IP>:8260/` and sign
+in with the access token. The URL printed for this host uses loopback on the
+same port (`0.0.0.0` becomes `127.0.0.1`, `::` becomes `::1`); `uam web
+status` shows the same URL, the listen address and the warning.
+
+The connection is plain HTTP, so the token and the session cookie cross the
+network unencrypted. Use it only on a network you trust; otherwise use SSH
+forwarding or an HTTPS reverse proxy.
+
+The `Host` check still blocks DNS rebinding. Beyond loopback the service also
+accepts a `Host` that is an IP address, such as the LAN address. Any domain
+name that is not a configured public origin gets 403, so a website whose name
+resolves to this host cannot use the service. To reach it by name, add that
+name with `--public-origin`. The cross-origin and JSON checks do not change.
+
+With `--no-auth` as well, nothing stands between the network and your agents:
+
+```text
+  Authentication: disabled — anyone who can reach this service can use it
+  Warning: listening on 0.0.0.0:8260, so other machines can reach this service
+  Warning: --no-auth is in use: anyone who can reach 0.0.0.0:8260 can run agents on this host with your credentials
+```
+
+Anyone who can reach the port can then start Tasks in your directories with
+your Copilot credentials, including yolo Tasks that run shell commands
+without asking.
+
+## Log request headers
+
+For debugging, `uam web --log-headers` logs one line per HTTP request: the
+method, the path with its query, the remote address, the `Host`, every request
+header, and whether the request was allowed or refused (`host not allowed`,
+`cross-origin request rejected`, the JSON content-type refusal, or
+`authentication required`, with the status code). It is off by default, and
+`uam web status` shows `Header logging: on` while it is on. The values of
+`Cookie`, `Authorization` and `Proxy-Authorization` are logged as
+`[redacted]`, other values are cut at 512 bytes, and bodies are never logged.
+Other headers are logged as sent, so turn it off again (`uam web stop`, then
+`uam web` without the flag) once you have what you need.
+
+The lines go to the uam log, `~/.cache/uam/uam.log` (or
+`$UAM_CACHE_DIR/uam.log`, or `$XDG_CACHE_HOME/uam/uam.log`), mode 0600,
+rotated at 5 MiB with three backups. Each line is a JSON record:
+
+```sh
+grep '"msg":"web request"' ~/.cache/uam/uam.log
+```
 
 ## Same-host HTTPS reverse proxy
 

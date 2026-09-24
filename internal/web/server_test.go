@@ -2,9 +2,11 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 const testToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -183,6 +186,136 @@ func TestHostOriginAndContentTypeChecks(t *testing.T) {
 	}
 	if _, err := NewServer(ServerConfig{Manager: ts.m, Token: testToken, PublicOrigins: []string{"https://host/path"}}); err == nil {
 		t.Fatal("a public origin with a path must be rejected")
+	}
+}
+
+// Beyond loopback the service also answers IP-literal Hosts (the LAN
+// address); a name stays refused on every bind, and the cross-origin and JSON
+// checks do not change.
+func TestHostRuleFollowsTheBind(t *testing.T) {
+	for _, tc := range []struct {
+		listen  string
+		ipHosts bool
+	}{{"", false}, {"127.0.0.1:8260", false}, {"[::1]:8260", false}, {"0.0.0.0:8260", true}, {"[::]:8260", true}, {"192.0.2.10:8260", true}} {
+		ts := newTestServer(t, ServerConfig{Listen: tc.listen, PublicOrigins: []string{"https://uam.example.com"}})
+		for _, host := range []string{"localhost:8260", "127.0.0.1:8260", "[::1]:8260", "uam.example.com"} {
+			if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK {
+				t.Fatalf("listen %q: Host %q = %d, want 200", tc.listen, host, w.Code)
+			}
+		}
+		for _, host := range []string{"evil.example", "evil.example:8260", "127.0.0.1.evil.example", "192.0.2.10.nip.io:8260", "[fe80::1%25eth0]:8260"} {
+			if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusForbidden {
+				t.Fatalf("listen %q: Host %q = %d, want 403", tc.listen, host, w.Code)
+			}
+		}
+		for _, host := range []string{"192.0.2.10:8260", "192.0.2.10", "10.1.2.3:9999", "[2001:db8::1]:8260", "0.0.0.0:8260"} {
+			want := http.StatusForbidden
+			if tc.ipHosts {
+				want = http.StatusOK
+			}
+			if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != want {
+				t.Fatalf("listen %q: Host %q = %d, want %d", tc.listen, host, w.Code, want)
+			}
+		}
+		if !tc.ipHosts {
+			continue
+		}
+		login := `{"token":"` + testToken + `"}`
+		lan := []reqOpt{withHost("192.0.2.10:8260")}
+		if w := ts.do(http.MethodPost, "/api/login", login, append(lan, withHeader("Origin", "https://evil.example"))...); w.Code != http.StatusForbidden {
+			t.Fatalf("listen %q: foreign Origin POST at the LAN address = %d, want 403", tc.listen, w.Code)
+		}
+		if w := ts.do(http.MethodPost, "/api/login", login, append(lan, withHeader("Content-Type", "text/plain"))...); w.Code != http.StatusUnsupportedMediaType {
+			t.Fatalf("listen %q: text/plain POST at the LAN address = %d, want 415", tc.listen, w.Code)
+		}
+		if w := ts.do(http.MethodPost, "/api/login", login, append(lan, withHeader("Origin", "http://192.0.2.10:8260"))...); w.Code != http.StatusNoContent || w.Result().Cookies()[0].Secure {
+			t.Fatalf("listen %q: same-origin login at the LAN address = %d %v", tc.listen, w.Code, w.Result().Cookies())
+		}
+	}
+}
+
+// --log-headers writes one JSON record per request where the checks decide,
+// refused requests included, with credentials redacted and bodies never read.
+func TestLogHeaders(t *testing.T) {
+	var buf bytes.Buffer
+	previous := uamlog.SetLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { uamlog.SetLogger(previous) })
+	records := func() []map[string]any {
+		var out []map[string]any
+		for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+			var rec map[string]any
+			if line != "" && json.Unmarshal([]byte(line), &rec) == nil && rec["msg"] == "web request" {
+				out = append(out, rec)
+			}
+		}
+		buf.Reset()
+		return out
+	}
+	login := `{"token":"` + testToken + `"}`
+
+	off := newTestServer(t, ServerConfig{})
+	off.do(http.MethodGet, "/api/auth", "")
+	off.do(http.MethodGet, "/api/auth", "", withHost("evil.example"))
+	if got := records(); len(got) != 0 {
+		t.Fatalf("header logging is off by default, got %v", got)
+	}
+
+	ts := newTestServer(t, ServerConfig{LogHeaders: true})
+	forged := "v\r\n{\"level\":\"ERROR\",\"msg\":\"web request\",\"outcome\":\"forged\"}\n"
+	buf.Reset()
+	ts.do(http.MethodGet, "/api/auth?probe=1", "", func(r *http.Request) {
+		r.Header["cookie"] = []string{"uam_web=secret-1"}
+		r.Header["AUTHORIZATION"] = []string{"Bearer secret-2"}
+		r.Header.Set("Proxy-Authorization", "Basic secret-3")
+		r.Header.Set("X-Long", strings.Repeat("a", 4000))
+		r.Header.Set("X-Evil", forged)
+	})
+	raw := buf.String()
+	got := records()
+	if len(got) != 1 || strings.Count(strings.TrimSpace(raw), "\n") != 0 || strings.Contains(raw, "secret-") {
+		t.Fatalf("one record without credentials expected, got %q", raw)
+	}
+	rec := got[0]
+	if rec["method"] != "GET" || rec["path"] != "/api/auth?probe=1" || rec["remote"] != "192.0.2.1:1234" || rec["host"] != "127.0.0.1:8260" ||
+		rec["outcome"] != "allowed" || rec["status"] != nil {
+		t.Fatalf("allowed record = %v", rec)
+	}
+	headers, _ := rec["headers"].(map[string]any)
+	for _, name := range []string{"cookie", "AUTHORIZATION", "Proxy-Authorization"} {
+		if v, _ := headers[name].([]any); len(v) != 1 || v[0] != "[redacted]" {
+			t.Fatalf("header %s = %v, want [redacted]", name, headers[name])
+		}
+	}
+	if v, _ := headers["X-Long"].([]any); len(v) != 1 || len(v[0].(string)) > maxLoggedValue+len("…") {
+		t.Fatalf("long header not capped: %d bytes", len(v[0].(string)))
+	}
+	if v, _ := headers["X-Evil"].([]any); len(v) != 1 || v[0] != forged {
+		t.Fatalf("CR/LF header = %v, want it kept inside the one record", headers["X-Evil"])
+	}
+
+	for _, tc := range []struct {
+		name, method, target, body, outcome string
+		status                              int
+		opts                                []reqOpt
+	}{
+		{"foreign Host", http.MethodGet, "/api/auth", "", "host not allowed", http.StatusForbidden, []reqOpt{withHost("evil.example")}},
+		{"foreign Origin", http.MethodPost, "/api/login", login, "cross-origin request rejected", http.StatusForbidden, []reqOpt{withHeader("Origin", "https://evil.example")}},
+		{"text/plain", http.MethodPost, "/api/login", login, "requests must use Content-Type: application/json", http.StatusUnsupportedMediaType, []reqOpt{withHeader("Content-Type", "text/plain")}},
+		{"no cookie", http.MethodGet, "/api/sessions", "", "authentication required", http.StatusUnauthorized, nil},
+		{"login", http.MethodPost, "/api/login", login, "allowed", 0, nil},
+	} {
+		w := ts.do(tc.method, tc.target, tc.body, tc.opts...)
+		raw := buf.String()
+		got := records()
+		if len(got) != 1 || got[0]["outcome"] != tc.outcome || got[0]["method"] != tc.method || got[0]["path"] != tc.target {
+			t.Fatalf("%s: records = %v", tc.name, got)
+		}
+		if status, _ := got[0]["status"].(float64); int(status) != tc.status || (tc.status != 0 && w.Code != tc.status) {
+			t.Fatalf("%s: logged status %v, response %d, want %d", tc.name, got[0]["status"], w.Code, tc.status)
+		}
+		if strings.Contains(raw, testToken) {
+			t.Fatalf("%s: a request body reached the log: %q", tc.name, raw)
+		}
 	}
 }
 
