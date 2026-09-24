@@ -1,5 +1,5 @@
 import { Bot, Check, ChevronRight, Copy, Ellipsis, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
-import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -30,10 +30,10 @@ interface Props {
   onOpenAgent: (agentId: string, opener: HTMLElement) => void;
 }
 
-/** Rows that arrive after mount rise in; rows present at mount appear at once. */
+/** Rows that arrive after mount rise in; rows present at mount appear at once. Stable, so memoised rows hold. */
 function useArrivals(ids: string[]) {
   const [initial] = useState(() => new Set(ids));
-  return (id: string) => (initial.has(id) ? '' : 'animate-rise');
+  return useCallback((id: string) => (initial.has(id) ? '' : 'animate-rise'), [initial]);
 }
 
 /**
@@ -55,6 +55,8 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
   let group: Entry[] = [];
   let showedWorking = false;
   let userItemId: string | undefined;
+  // A turn is keyed by the user message before it, so it keeps its rows when its first entry changes.
+  let after = 'start';
   const flush = (last = false, boundary = true) => {
     const timing = timingForTurn(turnTimings, userItemId);
     const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live });
@@ -67,10 +69,9 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       const agent = byParent.get(item.id);
       return agent ? <SubagentRow key={item.id} item={item} subagent={agent} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
     });
-    const key = (group[0].item ?? group[0].interaction)!.id;
     if (last && working) showedWorking = true;
     out.push(
-      <div key={`turn-${key}`} className="flex flex-col gap-3">
+      <div key={`turn-${after}`} className="flex flex-col gap-3">
         {last && working && <WorkingIndicator start={foregroundStart(turnTimings)} />}
         {nodes}
         {showEnd && <WorkedIndicator timing={timing} />}
@@ -84,6 +85,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       return;
     }
     flush(false, !entry.item.delivery);
+    after = entry.item.id;
     if (!entry.item.delivery) userItemId = entry.item.id;
     out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} />);
   });
@@ -122,8 +124,10 @@ function thoughtEnds(items: Item[]): Map<string, string> {
 function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: Item) => ReactNode | null): ReactNode[] {
   const out: ReactNode[] = [];
   let run: Item[] = [];
+  // Runs are keyed by their order: a call taken out of a run (a subagent row) must not remount the rest.
+  let runs = 0;
   const flush = () => {
-    if (run.length) out.push(<ToolRun key={`run-${run[0].id}`} items={run} ctx={ctx} />);
+    if (run.length) out.push(<ToolRun key={`run-${runs++}`} items={run} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals} arrival={ctx.arrival} />);
     run = [];
   };
   for (const entry of entries) {
@@ -221,23 +225,31 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className }: { it
   );
 });
 
-/** Consecutive tools share a compact disclosure; prose and questions stay in time order. */
-function ToolRun({ items, ctx }: { items: Item[]; ctx: RenderContext }) {
+interface ToolRunProps {
+  items: Item[];
+  live: boolean;
+  sessionId?: string;
+  approvals: Map<string, Interaction[]>;
+  arrival: (id: string) => string;
+}
+
+/** Consecutive tools share a compact disclosure; prose and questions stay in time order. Memoised on its calls, which a streamed delta elsewhere leaves alone. */
+const ToolRun = memo(function ToolRun({ items, live, sessionId, approvals, arrival }: ToolRunProps) {
   const failed = items.some((item) => item.tool?.status === 'failed');
-  const active = ctx.live && items.some((item) => isActive(item.tool?.status));
+  const active = live && items.some((item) => isActive(item.tool?.status));
   return (
     <details className="group/run" data-tool-run="">
       <summary className={cn('flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-sm text-ui text-muted hover:text-body pointer-coarse:min-h-11 [&::-webkit-details-marker]:hidden', failed && 'text-error')}>
         {active ? <WorkingMark /> : <Terminal aria-hidden="true" className="size-4 shrink-0" />}
-        <span>{summarizeTools(items, ctx.live)}</span>
+        <span>{summarizeTools(items, live)}</span>
         <ChevronRight aria-hidden="true" className="size-3 shrink-0 transition-transform group-open/run:rotate-90" />
       </summary>
       <div className="mt-1 flex flex-col gap-1 border-l border-hairline pl-3">
-        {items.map((item) => <ToolRow key={item.id} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} className={ctx.arrival(item.id)} />)}
+        {items.map((item) => <ToolRow key={item.id} item={item} live={live} sessionId={sessionId} approvals={approvals.get(item.id)} className={arrival(item.id)} />)}
       </div>
     </details>
   );
-}
+}, (a, b) => a.live === b.live && a.sessionId === b.sessionId && a.approvals === b.approvals && a.arrival === b.arrival && a.items.length === b.items.length && a.items.every((item, i) => item === b.items[i]));
 
 const isActive = (s?: ToolStatus) => s === 'pending' || s === 'running';
 

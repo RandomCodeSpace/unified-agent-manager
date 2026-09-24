@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, foldWindow, linkInteractions, mainArgument, mergeByTime, questionOf, toolLabel } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, foldWindow, linkInteractions, mainArgument, mergeByTime, questionOf, summarizeTools, toolLabel } from '../src/lib/transcript.ts';
 
 const tool = (name, input, extra = {}) => ({ name, status: 'completed', input, ...extra });
 
@@ -236,4 +236,40 @@ test('an empty response keeps its recorded duration after the next ordinary prom
   assert.equal(showTurnEnd(cancelled, { ...latestEmpty, last: false, boundary: false }), false);
   assert.equal(showTurnEnd(undefined, latestEmpty), false);
   assert.equal(showTurnEnd({ ...cancelled, ended_at: undefined, state: 'working' }, { ...latestEmpty, live: true }), false);
+});
+
+test('links are the same objects while only text streams, and change when a tool call arrives', () => {
+  const call = { id: 'c1', kind: 'tool', time: '2026-09-24T12:00:01Z', tool: tool('bash', '{"command":"ls"}') };
+  const ask = { id: 'c2', kind: 'tool', time: '2026-09-24T12:00:02Z', tool: tool('ask_user', '{"question":"Which?"}') };
+  const interactions = [
+    { id: 'p1', kind: 'permission', title: 'Run', state: 'answered', time: '2026-09-24T12:00:01Z', tool_call_id: 'c1' },
+    { id: 'q1', kind: 'question', title: 'Q', state: 'answered', time: '2026-09-24T12:00:02Z', questions: [{ text: 'Which?' }] },
+  ];
+  const reply = (text) => ({ id: 'm1', kind: 'assistant', time: '2026-09-24T12:00:03Z', text });
+  const first = linkInteractions([call, ask, reply('a')], interactions);
+  const again = linkInteractions([call, ask, reply('ab')], interactions);
+  assert.equal(again, first);
+  assert.equal(again.linked.get('c1'), first.linked.get('c1'));
+  assert.deepEqual(first.linked.get('c2').map((ix) => ix.id), ['q1']);
+  const more = linkInteractions([call, ask, reply('ab'), { id: 'c3', kind: 'tool', time: '2026-09-24T12:00:04Z', tool: tool('view', '{"path":"a"}') }], interactions);
+  assert.notEqual(more, first);
+  assert.deepEqual(more.linked.get('c1').map((ix) => ix.id), ['p1']);
+  // New requests are new inputs.
+  assert.notEqual(linkInteractions([call, ask, reply('ab')], [...interactions]), first);
+});
+
+test('a tool call input is parsed once however often its turn re-renders', () => {
+  const items = [{ id: 'c1', kind: 'tool', time: 't', tool: tool('edit', '{"path":"a.go"}') }, { id: 'c2', kind: 'tool', time: 't', tool: tool('view', '{"path":"b.go"}') }];
+  const parse = JSON.parse;
+  let calls = 0;
+  JSON.parse = (...args) => (calls++, parse(...args));
+  try {
+    const first = summarizeTools(items, false);
+    const before = calls;
+    for (let i = 0; i < 50; i++) assert.equal(summarizeTools(items, false), first);
+    assert.equal(calls, before);
+    assert.equal(first, 'Changed 1 file and read 1 file');
+  } finally {
+    JSON.parse = parse;
+  }
 });
