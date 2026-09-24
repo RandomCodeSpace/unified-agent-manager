@@ -834,6 +834,12 @@ func (c *webConversation) Send(ctx context.Context, prompt string) error {
 	return fmt.Errorf("%w: %s", agentapi.ErrSubmissionUncertain, client.safeText(postErr.Error()))
 }
 
+// Steer is not offered: this unregistered adapter refuses prompts while a
+// turn runs, so nothing is folded into a running turn.
+func (c *webConversation) Steer(context.Context, string) error {
+	return agentapi.ErrUnsupported
+}
+
 func (c *webConversation) Cancel(ctx context.Context) error {
 	client, err := c.client()
 	if err != nil {

@@ -55,7 +55,9 @@ type sdkClient interface {
 // sdkSession is the part of a Copilot SDK session the web provider drives.
 type sdkSession interface {
 	ID() string
-	Send(ctx context.Context, prompt string) error
+	// Send submits prompt with the given delivery mode and returns the
+	// message ID the CLI assigned to it.
+	Send(ctx context.Context, prompt, mode string) (string, error)
 	SetModel(ctx context.Context, model string) error
 	Abort(ctx context.Context) error
 	Events(ctx context.Context) ([]copilot.SessionEvent, error)
@@ -123,12 +125,12 @@ func (a sdkSessionAdapter) SetModel(ctx context.Context, model string) error {
 	return a.s.SetModel(ctx, model, nil)
 }
 
-func (a sdkSessionAdapter) Send(ctx context.Context, prompt string) error {
-	_, err := a.s.Send(ctx, copilot.MessageOptions{Prompt: prompt})
+func (a sdkSessionAdapter) Send(ctx context.Context, prompt, mode string) (string, error) {
+	id, err := a.s.Send(ctx, copilot.MessageOptions{Prompt: prompt, Mode: mode})
 	if err != nil && isRPCError(err) {
-		return rejectedError{err}
+		return "", rejectedError{err}
 	}
-	return err
+	return id, err
 }
 
 func (a sdkSessionAdapter) RespondPermission(ctx context.Context, requestID string, decision rpc.PermissionDecision) (bool, error) {
@@ -270,7 +272,10 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	if err != nil {
 		return nil, err
 	}
-	c := &conversation{p: p, client: client, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog()}
+	c := &conversation{
+		p: p, client: client, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
+		seen: map[string]bool{},
+	}
 	// Permission requests are answered through the pending-permission RPC
 	// with the request id from the permission.requested event; the SDK
 	// callback only registers this client as the one that decides.
@@ -479,7 +484,17 @@ type conversation struct {
 	idles   int
 	// turnModel is the model of the turn's latest main-agent model call.
 	turnModel string
+	// steers are the accepted steers the CLI has not used yet, oldest first.
+	// The turn's idle reports those left as not delivered.
+	steers []steer
+	// steering counts Steer calls in flight. While one is, seen records the
+	// main-agent user messages the CLI used, because a steer can be used
+	// before the Send that carried it returns its message ID.
+	steering int
+	seen     map[string]bool
 }
+
+type steer struct{ id, prompt string }
 
 type interaction struct {
 	agentapi.Interaction
@@ -537,10 +552,8 @@ func (c *conversation) SetModel(ctx context.Context, model string) error {
 	return nil
 }
 
-// Send reports a JSON-RPC error answer as a plain rejection: the CLI received
-// the prompt and refused it. Any other failure after the call started may
-// have happened after the request was written (timeout, CLI exit, closed
-// pipe), so it is reported as uncertain.
+// Send uses the "enqueue" mode explicitly: a prompt that reaches a CLI still
+// busy with a turn runs after that turn instead of joining it.
 func (c *conversation) Send(ctx context.Context, prompt string) error {
 	c.mu.Lock()
 	closed, idles := c.closed, c.idles
@@ -551,13 +564,8 @@ func (c *conversation) Send(ctx context.Context, prompt string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := c.sess.Send(ctx, prompt); err != nil {
-		var rej rejectedError
-		if errors.As(err, &rej) {
-			return fmt.Errorf("copilot rejected the prompt: %s", errText(rej.err))
-		}
-		c.p.poke()
-		return fmt.Errorf("%w: %s", agentapi.ErrSubmissionUncertain, errText(err))
+	if _, err := c.sess.Send(ctx, prompt, string(rpc.SendModeEnqueue)); err != nil {
+		return c.sendError(err)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -566,6 +574,52 @@ func (c *conversation) Send(ctx context.Context, prompt string) error {
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 	}
 	return nil
+}
+
+// sendError reports a JSON-RPC error answer as a plain rejection: the CLI
+// received the prompt and refused it. Any other failure after the call
+// started may have happened after the request was written (timeout, CLI exit,
+// closed pipe), so it is reported as uncertain.
+func (c *conversation) sendError(err error) error {
+	var rej rejectedError
+	if errors.As(err, &rej) {
+		return fmt.Errorf("copilot rejected the prompt: %s", errText(rej.err))
+	}
+	c.p.poke()
+	return fmt.Errorf("%w: %s", agentapi.ErrSubmissionUncertain, errText(err))
+}
+
+// Steer sends prompt in the "immediate" mode: the CLI folds it into the
+// running turn before its next model call, and moves a running foreground
+// shell command to the background. It reports no turn transition. The
+// message ID the CLI returns links the steer to its user message: that
+// message is marked as a steer, and a steer the turn ends without is
+// reported as not delivered (the CLI drops unused steers on abort).
+func (c *conversation) Steer(ctx context.Context, prompt string) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return agentapi.ErrClosed
+	}
+	c.steering++
+	c.mu.Unlock()
+	id, err := "", ctx.Err()
+	if err == nil {
+		if id, err = c.sess.Send(ctx, prompt, string(rpc.SendModeImmediate)); err != nil {
+			err = c.sendError(err)
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.steering--
+	used := c.seen[id]
+	if c.steering == 0 {
+		clear(c.seen)
+	}
+	if err == nil && id != "" && !used && !c.closed {
+		c.steers = append(c.steers, steer{id, prompt})
+	}
+	return err
 }
 
 func (c *conversation) Cancel(ctx context.Context) error {
@@ -794,6 +848,13 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		if agentID == "" {
 			c.turnErr = clip(displaytext.Sanitize(d.Message), maxErrorText)
 		}
+	case *rpc.UserMessageData:
+		if agentID == "" && d.MessageID != nil {
+			c.steers = slices.DeleteFunc(c.steers, func(st steer) bool { return st.id == *d.MessageID })
+			if c.steering > 0 {
+				c.seen[*d.MessageID] = true
+			}
+		}
 	case *rpc.SessionIdleData:
 		if agentID != "" {
 			return
@@ -809,6 +870,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			turn.State, turn.Error = agentapi.TurnFailed, c.turnErr
 		}
 		c.turnErr, c.turnModel = "", ""
+		c.undeliveredLocked(turn.State, ev.Timestamp)
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &turn})
 		return
 	case *rpc.PermissionRequestedData:
@@ -831,6 +893,30 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	if it, ok := c.tr.item(ev); ok {
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &it})
 	}
+}
+
+// undeliveredLocked reports each steer the ending turn did not use as a
+// notice. The CLI folds a steer it accepted during a turn into that turn
+// before going idle, and drops it when the turn is aborted, so a steer still
+// pending at the idle was not delivered.
+func (c *conversation) undeliveredLocked(state agentapi.TurnState, at time.Time) {
+	reason := "the turn was stopped"
+	switch state {
+	case agentapi.TurnCompleted:
+		reason = "the turn ended first"
+	case agentapi.TurnFailed:
+		reason = "the turn failed"
+	}
+	for _, st := range c.steers {
+		it := agentapi.Item{ID: "steer-undelivered:" + st.id, Kind: agentapi.ItemNotice, Time: at, Text: "Steer not delivered: " + reason + "\n\n" + quote(st.prompt)}
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &it})
+	}
+	c.steers = nil
+}
+
+// quote renders text as a markdown block quote.
+func quote(text string) string {
+	return "> " + strings.ReplaceAll(clip(text, maxToolText), "\n", "\n> ")
 }
 
 func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData, at time.Time, agentID string) {
@@ -959,9 +1045,21 @@ func sandboxBypass(requested *bool, reason *string) string {
 
 // transcript maps session events to transcript items. It keeps running tool
 // calls by id so start, partial and final results upsert one item.
-type transcript struct{ tools map[string]*agentapi.ToolCall }
+type transcript struct {
+	tools map[string]*agentapi.ToolCall
+	// ended holds the IDs of recently completed tool calls. A shell command
+	// a steer moved to the background completes its call at once, then keeps
+	// streaming partial output under the same ID; that must not reopen it.
+	ended map[string]struct{}
+}
 
-func newTranscript() *transcript { return &transcript{tools: map[string]*agentapi.ToolCall{}} }
+// maxEndedTools bounds transcript.ended. Forgetting older IDs only lets a
+// partial result that arrives very late reopen its tool call.
+const maxEndedTools = 1024
+
+func newTranscript() *transcript {
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}}
+}
 
 func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	it := agentapi.Item{Time: ev.Timestamp, AgentID: agentOf(ev)}
@@ -970,6 +1068,9 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemUser, d.Content
 		if d.MessageID != nil && *d.MessageID != "" {
 			it.ID = *d.MessageID
+		}
+		if d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliverySteering {
+			it.Delivery = agentapi.DeliverySteer
 		}
 	case *rpc.AssistantMessageData:
 		if d.Content == "" { // tool-call-only message
@@ -985,12 +1086,19 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		t.tools[d.ToolCallID] = tc
 		it.ID, it.Kind, it.Tool = d.ToolCallID, agentapi.ItemTool, cloneTool(tc)
 	case *rpc.ToolExecutionPartialResultData:
+		if _, ended := t.ended[d.ToolCallID]; ended {
+			return it, false
+		}
 		tc := t.tool(d.ToolCallID)
 		tc.Output = clip(tc.Output+d.PartialOutput, maxToolText)
 		it.ID, it.Kind, it.Tool = d.ToolCallID, agentapi.ItemTool, cloneTool(tc)
 	case *rpc.ToolExecutionCompleteData:
 		tc := t.tool(d.ToolCallID)
 		delete(t.tools, d.ToolCallID)
+		if len(t.ended) >= maxEndedTools {
+			clear(t.ended)
+		}
+		t.ended[d.ToolCallID] = struct{}{}
 		tc.Status = agentapi.ToolCompleted
 		if d.Result != nil {
 			tc.Output = clip(d.Result.Content, maxToolText)

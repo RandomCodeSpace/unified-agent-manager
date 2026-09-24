@@ -903,8 +903,11 @@ func TestWebSend(t *testing.T) {
 	if err := conversation.Send(t.Context(), "hello"); !errors.Is(err, agentapi.ErrBusy) {
 		t.Fatalf("busy Send = %v", err)
 	}
+	if err := conversation.Steer(t.Context(), "hello"); !errors.Is(err, agentapi.ErrUnsupported) {
+		t.Fatalf("Steer = %v, want unsupported", err)
+	}
 	if len(h.fake.requestsFor(http.MethodPost, promptPath)) != before {
-		t.Fatal("busy Send posted a prompt")
+		t.Fatal("busy Send or Steer posted a prompt")
 	}
 
 	h.fake.mu.Lock()

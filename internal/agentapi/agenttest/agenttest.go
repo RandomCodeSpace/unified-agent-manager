@@ -1,8 +1,8 @@
 // Package agenttest provides a scriptable agentapi.Provider for tests of the
 // web service. Tests drive events explicitly and decide how the model catalog
-// and each Send, Respond, Cancel, SetModel or Diff call behave; every call is
-// recorded so a test can prove what the service did (and did not) ask the
-// provider to do.
+// and each Send, Steer, Respond, Cancel, SetModel or Diff call behave; every
+// call is recorded so a test can prove what the service did (and did not) ask
+// the provider to do.
 package agenttest
 
 import (
@@ -215,12 +215,14 @@ type Conversation struct {
 
 	mu          sync.Mutex
 	sendHook    func(ctx context.Context, prompt string) error
+	steerHook   func(ctx context.Context, prompt string) error
 	respondHook func(ctx context.Context, id string, answer agentapi.Answer) error
 	cancelErr   error
 	setModelErr error
 	diff        []agentapi.FileDiff
 	diffErr     error
 	sends       []string
+	steers      []string
 	modelSets   []string
 	cancels     int
 	closes      int
@@ -272,6 +274,13 @@ func (c *Conversation) SetSendHook(hook func(ctx context.Context, prompt string)
 	c.sendHook = hook
 }
 
+// SetSteerHook decides how Steer behaves, as SetSendHook does for Send.
+func (c *Conversation) SetSteerHook(hook func(ctx context.Context, prompt string) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.steerHook = hook
+}
+
 // SetRespondHook decides how Respond behaves.
 func (c *Conversation) SetRespondHook(hook func(ctx context.Context, id string, answer agentapi.Answer) error) {
 	c.mu.Lock()
@@ -301,6 +310,21 @@ func (c *Conversation) Send(ctx context.Context, prompt string) error {
 	}
 	c.sends = append(c.sends, prompt)
 	hook := c.sendHook
+	c.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, prompt)
+	}
+	return nil
+}
+
+func (c *Conversation) Steer(ctx context.Context, prompt string) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return agentapi.ErrClosed
+	}
+	c.steers = append(c.steers, prompt)
+	hook := c.steerHook
 	c.mu.Unlock()
 	if hook != nil {
 		return hook(ctx, prompt)
@@ -401,6 +425,13 @@ func (c *Conversation) Sends() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.sends...)
+}
+
+// Steers returns every prompt passed to Steer, oldest first.
+func (c *Conversation) Steers() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.steers...)
 }
 
 // Cancels reports how often Cancel ran.

@@ -89,9 +89,13 @@ type fakeSession struct {
 	askUser copilot.UserInputHandler
 	perm    copilot.PermissionHandlerFunc
 
-	mu           sync.Mutex
-	sent         []string
-	sendErr      error
+	mu      sync.Mutex
+	sent    []string
+	modes   []string
+	sendErr error
+	// beforeReturn runs with the assigned message ID before Send returns it,
+	// as CLI events can be handled before the send response.
+	beforeReturn func(id string)
 	models       []string
 	modelErr     error
 	events       []copilot.SessionEvent
@@ -103,14 +107,21 @@ type fakeSession struct {
 func (s *fakeSession) ID() string                  { return s.id }
 func (s *fakeSession) Abort(context.Context) error { return nil }
 
-func (s *fakeSession) Send(_ context.Context, prompt string) error {
+func (s *fakeSession) Send(_ context.Context, prompt, mode string) (string, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.sendErr != nil {
-		return s.sendErr
+		defer s.mu.Unlock()
+		return "", s.sendErr
 	}
 	s.sent = append(s.sent, prompt)
-	return nil
+	s.modes = append(s.modes, mode)
+	id := fmt.Sprintf("msg-%d", len(s.sent))
+	hook := s.beforeReturn
+	s.mu.Unlock()
+	if hook != nil {
+		hook(id)
+	}
+	return id, nil
 }
 
 func (s *fakeSession) SetModel(_ context.Context, model string) error {
@@ -649,6 +660,144 @@ func TestWebHistory(t *testing.T) {
 	}
 	if len(h.sink.all()) != 0 {
 		t.Fatal("History emitted events")
+	}
+}
+
+func userMessage(id string, delivery rpc.UserMessageDelivery, text string) *rpc.UserMessageData {
+	return &rpc.UserMessageData{Content: text, MessageID: &id, Delivery: &delivery}
+}
+
+// notices returns the texts of the notice items in evs.
+func notices(evs []agentapi.Event) []string {
+	var out []string
+	for _, e := range evs {
+		if e.Kind == agentapi.EventItem && e.Item.Kind == agentapi.ItemNotice {
+			out = append(out, e.Item.ID+"|"+e.Item.Text)
+		}
+	}
+	return out
+}
+
+func TestWebSendEnqueuesAndSteerInterjects(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	if err := h.conv.Send(ctx, "start"); err != nil {
+		t.Fatal(err)
+	}
+	before := len(h.sink.all())
+	if err := h.conv.Steer(ctx, "also this"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(h.fs.modes, ","); got != "enqueue,immediate" || strings.Join(h.fs.sent, ",") != "start,also this" {
+		t.Fatalf("modes = %s, sent = %v", got, h.fs.sent)
+	}
+	if evs := h.sink.all()[before:]; len(evs) != 0 {
+		t.Fatalf("a steer reported %+v; the running turn reports its own end", evs)
+	}
+	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}
+	if err := h.conv.Steer(ctx, "p"); err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		t.Fatalf("rejected steer err = %v, want definite", err)
+	}
+	h.fs.sendErr = errors.New("CLI process exited: signal: killed")
+	if err := h.conv.Steer(ctx, "p"); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		t.Fatalf("steer after CLI exit err = %v, want uncertain", err)
+	}
+}
+
+func TestWebSteerDeliveredIsMarked(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	_ = h.conv.Send(ctx, "start") // msg-1
+	h.fs.onEvent(ev("u1", userMessage("msg-1", rpc.UserMessageDeliveryIdle, "start")))
+	if it := h.sink.last().Item; it == nil || it.ID != "msg-1" || it.Delivery != "" {
+		t.Fatalf("prompt item = %+v", it)
+	}
+	if err := h.conv.Steer(ctx, "use tabs"); err != nil { // msg-2
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("u2", userMessage("msg-2", rpc.UserMessageDeliverySteering, "use tabs")))
+	if it := h.sink.last().Item; it == nil || it.ID != "msg-2" || it.Kind != agentapi.ItemUser || it.Delivery != agentapi.DeliverySteer {
+		t.Fatalf("steer item = %+v", it)
+	}
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
+	if got := notices(h.sink.all()); len(got) != 0 {
+		t.Fatalf("a delivered steer was reported as not delivered: %q", got)
+	}
+}
+
+func TestWebSteerTheTurnDidNotUseIsReportedOnce(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	_ = h.conv.Send(ctx, "start")
+	_ = h.conv.Steer(ctx, "too late")      // msg-2
+	_ = h.conv.Steer(ctx, "line one\ntwo") // msg-3
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
+	evs := h.sink.all()
+	want := []string{
+		"steer-undelivered:msg-2|Steer not delivered: the turn was stopped\n\n> too late",
+		"steer-undelivered:msg-3|Steer not delivered: the turn was stopped\n\n> line one\n> two",
+	}
+	if got := notices(evs); strings.Join(got, "#") != strings.Join(want, "#") {
+		t.Fatalf("notices = %q\nwant %q", got, want)
+	}
+	if last := evs[len(evs)-1]; last.Kind != agentapi.EventTurn || last.Turn.State != agentapi.TurnCancelled {
+		t.Fatalf("the notices must come before the turn ends: last event %+v", last)
+	}
+	_ = h.conv.Send(ctx, "again")
+	h.fs.onEvent(ev("i2", &rpc.SessionIdleData{}))
+	if got := notices(h.sink.all()); len(got) != 2 {
+		t.Fatalf("notices after the next turn = %q", got)
+	}
+}
+
+// A steer moves a running shell to the background: the call completes, and
+// the shell's later output arrives as partial results under the same ID.
+func TestWebBackgroundedShellOutputKeepsTheCallCompleted(t *testing.T) {
+	h := openWeb(t)
+	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
+	h.fs.onEvent(ev("e2", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "moved to background"}}))
+	h.fs.onEvent(ev("e3", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "first-done\n"}))
+	evs := h.sink.all()
+	if last := evs[len(evs)-1].Item; len(evs) != 2 || last.Tool.Name != "bash" || last.Tool.Status != agentapi.ToolCompleted {
+		t.Fatalf("events = %d, last tool %+v", len(evs), last.Tool)
+	}
+}
+
+// The CLI can use a steer before the Send that carried it returns its ID.
+func TestWebSteerUsedBeforeSendReturns(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	_ = h.conv.Send(ctx, "start")
+	h.fs.beforeReturn = func(id string) {
+		h.fs.onEvent(ev("u2", userMessage(id, rpc.UserMessageDeliverySteering, "quick")))
+	}
+	if err := h.conv.Steer(ctx, "quick"); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.beforeReturn = nil
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
+	if got := notices(h.sink.all()); len(got) != 0 {
+		t.Fatalf("a used steer was reported as not delivered: %q", got)
+	}
+}
+
+func TestWebHistoryMarksSteers(t *testing.T) {
+	h := openWeb(t)
+	h.fs.events = []copilot.SessionEvent{
+		ev("e1", userMessage("u1", rpc.UserMessageDeliveryIdle, "start")),
+		ev("e2", userMessage("u2", rpc.UserMessageDeliverySteering, "steer")),
+		ev("e3", userMessage("u3", rpc.UserMessageDeliveryQueued, "queued")),
+	}
+	recorded, err := h.conv.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, it := range recorded.Items {
+		got = append(got, it.ID+":"+it.Delivery)
+	}
+	if strings.Join(got, ",") != "u1:,u2:steer,u3:" {
+		t.Fatalf("history deliveries = %v", got)
 	}
 }
 

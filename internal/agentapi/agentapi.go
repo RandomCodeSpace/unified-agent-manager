@@ -118,10 +118,21 @@ type Conversation interface {
 	// History returns the provider-recorded transcript and subagents of a
 	// reopened conversation.
 	History(ctx context.Context) (History, error)
-	// Send submits one user prompt and returns once the provider accepted or
-	// rejected it. The turn continues asynchronously and is reported through
-	// events. Ambiguous failures wrap ErrSubmissionUncertain.
+	// Send submits one user prompt that starts a turn and returns once the
+	// provider accepted or rejected it. The turn continues asynchronously and
+	// is reported through events. Ambiguous failures wrap
+	// ErrSubmissionUncertain. A provider that would otherwise fold a prompt
+	// sent during a turn into that turn must run it after the turn instead.
 	Send(ctx context.Context, prompt string) error
+	// Steer adds prompt to the turn that is running, before the provider's
+	// next model call, and returns once the provider accepted or rejected
+	// it. The caller steers only while a turn runs; it never starts a turn.
+	// An accepted steer cannot be withdrawn. When the provider uses it, its
+	// user item carries Delivery DeliverySteer; when the turn ends without
+	// the provider using it, the adapter emits an ItemNotice saying so.
+	// Ambiguous failures wrap ErrSubmissionUncertain and are never resent.
+	// ErrUnsupported means the provider cannot steer.
+	Steer(ctx context.Context, prompt string) error
 	// Cancel aborts the current turn. The conversation stays open.
 	Cancel(ctx context.Context) error
 	// Respond answers a pending interaction. It returns ErrInteractionGone
@@ -207,7 +218,13 @@ type Item struct {
 	// AgentID is empty for the main agent, otherwise the exact subagent
 	// instance ID from the provider.
 	AgentID string `json:"agent_id,omitempty"`
+	// Delivery is DeliverySteer on a user item that joined a running turn
+	// as a steer, and empty otherwise.
+	Delivery string `json:"delivery,omitempty"`
 }
+
+// DeliverySteer marks a user item that arrived as a steer.
+const DeliverySteer = "steer"
 
 // ToolStatus is the lifecycle of one tool call.
 type ToolStatus string
