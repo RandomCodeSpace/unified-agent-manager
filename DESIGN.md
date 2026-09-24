@@ -192,7 +192,7 @@ components:
     backgroundColor: "{colors.raised}"
     textColor: "{colors.ink}"
     typography: "{typography.ui}"
-    shadow: "0 1px 2px rgba(28, 27, 24, 0.06)"
+    shadow: "0 1px 2px rgba(28, 27, 24, 0.05)"
   task-row-meta:
     typography: "{typography.caption}"
     textColor: "{colors.muted}"
@@ -517,7 +517,7 @@ From 1280px a panel sits inline to the right of the column and is **resizable**:
 | Level | Treatment | Shadow | Use |
 |---|---|---|---|
 | 0 Flat | Surface step only | none | Sidebar on `rail`, everything else on `canvas` |
-| 1 Raised | `raised` fill + 1px `hairline` | `0 1px 2px rgba(28,27,24,.05)` | Composer, interaction cards, user bubble, selected sidebar row |
+| 1 Raised | `raised` fill + 1px `hairline` | `raised`: `0 1px 2px .05` | Composer, interaction cards, user bubble, selected sidebar row |
 | 2 Floating | `raised` + 1px `hairline-strong` | `float`: `0 4px 16px .12, 0 1px 2px .08` | Menus, context menus, selects, tooltips (ink fill) |
 | 3 Modal | `raised` + `backdrop` | `modal`: `0 16px 48px .18, 0 2px 6px .08` | Dialogs, drawer, overlay panels |
 
@@ -551,7 +551,7 @@ With no Task open the main pane centres the mark, "Ready when you are." (`displa
 44px, `canvas`, hairline below. Left: the drawer button (narrow only), the title (`display-sm` `ink`, truncating; double-click, the hover pencil, or Rename in the menu edits it in place with the same rules as the row), then the state chip (`StateMark` with the word; `Archived`/`Settled` as an outlined chip when read-only), and a spinner while a lifecycle request is in flight. Right: **Subagents** (`Bot` + count, spinner while any run; label hidden below 481px), **Changes** (`FileDiff` + count), and the **"…"** menu with the same items as the row. A 28px **meta line** below carries the git branch (`GitBranch` + `keycap` mono, truncating to 40%), the model of the latest turn (`keycap` mono) and, at the right, the **context meter**: a 64px `sunken` track with an `accent` fill (`warning` at ≥90%) and `used / limit` in compact numerals, `role="meter"` with the full text in `aria-valuetext` and a tooltip. Nothing wraps at 420px: labels drop, the title truncates, the meta line truncates.
 
 ### Transcript
-User turns are bubbles on the right (`bubble-user`, `lg` radius, 78%/560px max, 88% on phone). Assistant prose is the page. The first assistant turn carries `provider · model` in `caption`. Every message has a hover copy button and a right-click menu (Copy message). Items that arrive after the transcript mounted rise in (`rise`, 200ms); items present at mount appear at once; streaming text appends with no animation.
+User turns are bubbles on the right (`bubble-user`, `lg` radius, 78%/560px max, 88% on phone). Assistant prose is the page. The first assistant turn carries `provider · model` in `caption`. Every message has a hover copy button and a right-click menu (Copy message). Items that arrive after the transcript mounted rise in (`rise`, 240ms); items present at mount appear at once; streaming text appends with no animation.
 
 - **Thinking row (24px):** chevron + "Thinking…" (shimmering while streaming, with the latest line as a `faint` preview) or "Thought for 12s"; the body is a `sunken` well at `ui` `muted`, max 320px, with Copy thinking.
 - **Ledger (24px rows):** "3 tool calls · 1 running" folds the run; each tool row shows a drawn mark (spinner, check, cross, dash), the tool name at 500 and its argument in `code-sm`. Hover shows "…"; right-click and the menu offer Expand/Collapse, Copy command, Copy output. Expanded, input and output are code blocks labelled `input` and `output`.
@@ -589,7 +589,7 @@ Only the attention chip has a fill. Icons are lucide, 12–16px, one stroke weig
 
 ## Motion
 
-One set of tokens, in `index.css` and repeated here:
+One set of values. The easing is the `--ease-app` token in `index.css`; the durations are the bare `duration-100`, `duration-160` and `duration-240` utilities and nothing else (named here as fast, base and slow):
 
 | Token | Value | Use |
 |---|---|---|
@@ -604,7 +604,7 @@ Authored moments:
 - **Sidebar groups and shelves** open and close by animating `grid-template-rows` 0fr ↔ 1fr (`slow`); collapsed content is `inert`. Chevrons rotate (`base`).
 - **Rows** step surfaces in `fast`; the meta text and the "…" button cross-fade in place; inline rename swaps without layout shift.
 - **Menus, context menus, pickers, selects** scale from 0.97 at their transform origin and fade (`fast`); **tooltips** rise 2px and fade; **dialogs** rise 8px and fade with the backdrop (`slow`); the **drawer** slides from the left (`slow`); overlay panels slide in from the right; inline panels fade in.
-- **Task switching:** the pane rises in (200ms) while the header keeps its height, so nothing jumps; loading shows pulsing placeholders.
+- **Task switching:** the pane rises in (`rise`, 240ms) while the header keeps its height, so nothing jumps; loading shows pulsing placeholders.
 - **Transcript:** new items rise in; streaming text appends without animation; "Thinking…" shimmers `muted` → `body`; the working dot pulses; the locate action flashes `accent-wash` for 1.4s.
 - **Composer:** Stop and Steer rise in when a turn starts; the send button scales to 0.95 on press.
 - **Reduced motion:** `@media (prefers-reduced-motion: reduce)` disables every transition and animation; the working dot becomes a static ring, placeholders are static, groups snap.
@@ -654,7 +654,7 @@ The server sends `default-src 'self'; script-src 'self'; style-src 'self'; img-s
 
 ## Iteration guide
 
-1. Add a token before you add a value: colours, sizes, radii, shadows and durations live in `web/src/index.css` under `@theme`, mirrored here.
+1. Add a token before you add a value: colours, sizes, radii, shadows and the easing live in `web/src/index.css` under `@theme`, mirrored here; durations are the bare `duration-100/160/240` utilities.
 2. Add a component here before adding one there; use the Base UI wrapper in `components/ui/` rather than a raw primitive.
 3. A new state extends the State marks table; do not invent a fifth semantic colour.
 4. Check contrast for every new text/surface pair before merging.

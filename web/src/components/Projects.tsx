@@ -97,12 +97,17 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
   );
 }
 
-/** Name and defaults for new Tasks; the defaults start from what New task would use today. */
+/**
+ * Name and defaults for new Tasks. The fields show what New task would use today, but the
+ * defaults are sent only once edited: a rename alone must not rewrite the stored defaults
+ * against the live catalog (a stale model falls back to `auto` at New task time, not in the store).
+ */
 export function EditProjectDialog({ open, onClose, onClosed, project, onUpdated }: DialogLifecycle & { project: Project; onUpdated: (p: Project) => void }) {
   const { meta } = useApp();
   const first = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(project.name);
-  const [defaults, setDefaults] = useState(() => resolveTaskDefaults(meta, project.defaults));
+  const shown = resolveTaskDefaults(meta, project.defaults);
+  const [defaults, setDefaults] = useState<TaskDefaults | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,12 +131,12 @@ export function EditProjectDialog({ open, onClose, onClosed, project, onUpdated 
         <Field id="edit-name" label="Name">
           <input id="edit-name" className={inputClass} type="text" ref={first} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        {defaults && (
+        {shown && (
           <section aria-labelledby="edit-defaults-title" className="mt-1 border-t border-hairline pt-4">
             <h3 id="edit-defaults-title" className="mb-3 text-title text-ink">
               Defaults for new tasks
             </h3>
-            <TaskDefaultsFields prefix="edit" value={defaults} disabled={busy} onChange={setDefaults} />
+            <TaskDefaultsFields prefix="edit" value={defaults ?? shown} disabled={busy} onChange={setDefaults} />
           </section>
         )}
         {error && (

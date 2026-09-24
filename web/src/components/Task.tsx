@@ -9,7 +9,7 @@ import { INTERRUPTED_TEXT, InlineName, Note, Spinner, StateMark, TaskTitle, useA
 import { Composer } from './Composer';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
-import { taskMenuItems, useTaskActions } from './taskActions';
+import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript } from './Transcript';
 import { Button } from './ui/button';
 import { Menu } from './ui/menu';
@@ -46,8 +46,8 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
   return (
     <Tip label={text}>
       <span role="meter" aria-valuemin={0} aria-valuemax={limit || 1} aria-valuenow={used} aria-valuetext={text} aria-label="Context" className="flex items-center gap-2 text-caption tabular-nums text-muted">
-        <span className="relative h-1 w-16 overflow-hidden rounded-full bg-sunken">
-          <span ref={fill} className={cn('absolute inset-y-0 left-0 w-(--fill) rounded-full transition-[width] duration-240 ease-app', pct >= 90 ? 'bg-warning' : 'bg-accent')} />
+        <span className="relative h-1 w-16 overflow-hidden rounded-xs bg-sunken">
+          <span ref={fill} className={cn('absolute inset-y-0 left-0 w-(--fill) rounded-xs transition-[width] duration-240 ease-app', pct >= 90 ? 'bg-warning' : 'bg-accent')} />
         </span>
         <span aria-hidden="true">
           {compact(used)} / {compact(limit)}
@@ -148,7 +148,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
   const model = modelName(meta, session.provider, session.last_model || session.model);
   const items = taskMenuItems(session, actions, 'header');
-  const canRename = session.stage !== 'archived' && !busy;
+  const renamable = canRename(session, actions);
 
   return (
     <div className="flex min-h-0 flex-1 animate-rise">
@@ -163,11 +163,11 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
                 <h1
                   className="min-w-0 truncate text-display-sm text-ink"
                   title={name || undefined}
-                  onDoubleClick={() => canRename && actions.startRename(session.id, 'header')}
+                  onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
                 >
                   <TaskTitle session={session} />
                 </h1>
-                {canRename && (
+                {renamable && (
                   <Tip label="Rename">
                     <Button size="icon" aria-label="Rename task" className="text-muted opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
                       <Pencil />
@@ -225,12 +225,12 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
             {project?.branch && (
               <span className="flex min-w-0 max-w-[40%] items-center gap-1" title={project.branch}>
                 <GitBranch aria-hidden="true" className="size-3 shrink-0 text-faint" />
-                <span className="truncate font-mono text-[11px]">{project.branch}</span>
+                <span className="truncate font-mono text-keycap">{project.branch}</span>
               </span>
             )}
             {model && (
               <span className="flex min-w-0 items-center gap-1 truncate" title={session.last_model && session.last_model !== session.model ? `Latest turn ran on ${model}` : undefined}>
-                <span className="truncate font-mono text-[11px]">{model}</span>
+                <span className="truncate font-mono text-keycap">{model}</span>
               </span>
             )}
             <span className="flex-1" />

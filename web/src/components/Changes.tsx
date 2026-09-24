@@ -97,7 +97,7 @@ export function ChangesSheet({
               <button
                 key={s}
                 type="button"
-                className={cn('h-6 rounded-xs px-2 text-caption transition-colors', scope === s ? 'bg-raised text-ink shadow-[0_1px_2px_rgba(28,27,24,0.08)]' : 'text-muted hover:text-ink')}
+                className={cn('h-6 rounded-xs px-2 text-caption transition-colors', scope === s ? 'bg-raised text-ink shadow-raised' : 'text-muted hover:text-ink')}
                 aria-pressed={scope === s}
                 onClick={() => changeScope(s)}
               >

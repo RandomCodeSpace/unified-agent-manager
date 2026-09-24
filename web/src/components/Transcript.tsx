@@ -155,7 +155,7 @@ function Copyable({ text, label, className, children, extra = [] }: { text: stri
             size="icon"
             variant="ghost"
             aria-label={copied ? 'Copied' : label}
-            className={cn('absolute top-0 -right-1 size-6 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100', copied && 'opacity-100 text-success')}
+            className={cn('absolute top-0 -right-1 size-6 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
             onClick={() => copy(text)}
           >
             {copied ? <Check /> : <Copy />}
@@ -173,7 +173,7 @@ function UserBubble({ item, className }: { item: Item; className?: string }) {
   return (
     <div className={cn('flex justify-end', className)}>
       <Copyable text={item.text ?? ''} label="Copy message" className="max-w-[min(78%,560px)] max-sm:max-w-[88%]">
-        <div className="rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-[0_1px_2px_rgba(28,27,24,0.05)] max-sm:text-chat-lg">
+        <div className="rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised max-sm:text-chat-lg">
           <span className="sr-only">You: </span>
           {item.delivery === 'steer' && <span className="mb-1 block text-caption text-accent">Steer</span>}
           <Markdown text={item.text ?? ''} />

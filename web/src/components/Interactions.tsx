@@ -63,7 +63,7 @@ export function InteractionCard({ session, interaction, onUpdate }: { session: S
   }
 
   return (
-    <section className="rounded-md border border-hairline bg-raised px-4 py-3 shadow-[0_1px_2px_rgba(28,27,24,0.05)] animate-rise" role="group" aria-labelledby={titleId}>
+    <section className="rounded-md border border-hairline bg-raised px-4 py-3 shadow-raised animate-rise" role="group" aria-labelledby={titleId}>
       <div className="mb-1.5 flex items-center gap-2">
         <span className="inline-flex h-5 items-center gap-1.5 rounded-xs bg-attention-wash px-1.5 text-caption text-attention">
           <Icon aria-hidden="true" className="size-3.5" />
