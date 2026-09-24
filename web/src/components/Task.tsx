@@ -1,8 +1,9 @@
-import { ArrowDown, Bot, Ellipsis, Pencil } from 'lucide-react';
+import { ArrowDown, Bot, ChevronRight, Ellipsis, Pencil } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { LIVE, api, describeError, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Project, type SessionDetail, type SessionSummary } from '../api';
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
+import { cn } from '../lib/cn';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
 import { Chip } from './ui/chip';
@@ -40,8 +41,9 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
   const [requests, setRequests] = useState<Record<string, { pending?: boolean; requested?: boolean; error?: string }>>({});
   // A newer SSE observation wins over a cancellation response started from an older snapshot.
   const shown = response && response.source === snapshot ? response.snapshot : snapshot;
+  const running = shown?.tasks.filter((task) => task.status === 'running').length ?? 0;
+  const [open, setOpen] = useState(running > 0);
   if (!shown?.tasks.length) return null;
-  const running = shown.tasks.filter((task) => task.status === 'running').length;
   async function stop(id: string) {
     if (requests[id]?.pending || locked || !shown?.known) return;
     setRequests((r) => ({ ...r, [id]: { pending: true } }));
@@ -54,10 +56,12 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
     }
   }
   return (
-    <details className="mb-2 text-caption text-muted" open={running > 0 || undefined}>
-      <summary className="cursor-pointer py-2">
+    <div className="mb-2 text-caption text-muted">
+      <button type="button" aria-expanded={open} className="flex h-8 items-center gap-1.5 rounded-sm text-left transition-colors duration-100 hover:text-body" onClick={() => setOpen((o) => !o)}>
+        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
         Background tasks · {shown.known ? `${running} running` : 'Status unavailable'}
-      </summary>
+      </button>
+      <Collapse open={open}>
       {!shown.known && <p className="pb-2">Last reported tasks. Their current status is unavailable.</p>}
       <ul className="max-h-40 space-y-2 overflow-y-auto overscroll-contain pb-2">
         {shown.tasks.map((task) => (
@@ -76,7 +80,8 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
           </li>
         ))}
       </ul>
-    </details>
+      </Collapse>
+    </div>
   );
 }
 

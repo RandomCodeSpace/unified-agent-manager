@@ -1,5 +1,5 @@
 import { Bot, Check, ChevronRight, Copy, Ellipsis, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -9,6 +9,7 @@ import { CodeBlock, Markdown, Spinner, SubagentIdleIcon, WorkingMark, useApp } f
 import { DecidedRow } from './Interactions';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
+import { Collapse } from './ui/collapse';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -237,19 +238,22 @@ interface ToolRunProps {
 
 /** Consecutive tools share a compact disclosure; prose and questions stay in time order. Memoised on its calls, which a streamed delta elsewhere leaves alone. */
 const ToolRun = memo(function ToolRun({ items, live, sessionId, approvals, arrival }: ToolRunProps) {
+  const [open, setOpen] = useState(false);
   const failed = items.some((item) => item.tool?.status === 'failed');
   const active = live && items.some((item) => isActive(item.tool?.status));
   return (
-    <details className="group/run" data-tool-run="">
-      <summary className={cn('flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-sm text-ui text-muted hover:text-body pointer-coarse:min-h-11 [&::-webkit-details-marker]:hidden', failed && 'text-error')}>
+    <div data-tool-run="">
+      <button type="button" aria-expanded={open} className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm text-left text-ui text-muted transition-colors duration-100 hover:text-body pointer-coarse:min-h-11', failed && 'text-error')} onClick={() => setOpen((o) => !o)}>
         {active ? <WorkingMark /> : <Terminal aria-hidden="true" className="size-4 shrink-0" />}
         <span>{summarizeTools(items, live)}</span>
-        <ChevronRight aria-hidden="true" className="size-3 shrink-0 transition-transform group-open/run:rotate-90" />
-      </summary>
-      <div className="mt-1 flex flex-col gap-1 border-l border-hairline pl-3">
-        {items.map((item) => <ToolRow key={item.id} item={item} live={live} sessionId={sessionId} approvals={approvals.get(item.id)} className={arrival(item.id)} />)}
-      </div>
-    </details>
+        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 transition-transform duration-160 ease-app', open && 'rotate-90')} />
+      </button>
+      <Collapse open={open}>
+        <div className="mt-1 flex flex-col gap-1 border-l border-hairline pl-3">
+          {items.map((item) => <ToolRow key={item.id} item={item} live={live} sessionId={sessionId} approvals={approvals.get(item.id)} className={arrival(item.id)} />)}
+        </div>
+      </Collapse>
+    </div>
   );
 }, (a, b) => a.live === b.live && a.sessionId === b.sessionId && a.approvals === b.approvals && a.arrival === b.arrival && a.items.length === b.items.length && a.items.every((item, i) => item === b.items[i]));
 
@@ -320,10 +324,13 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger render={<div className={cn('group/tool relative', className)} />}>
-        <details id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')} open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-          <summary
-            className={cn('flex h-6 list-none items-center gap-2 rounded-sm pr-8 pl-1 font-mono text-code-sm text-muted select-none transition-colors hover:bg-tint-hover pointer-coarse:min-h-11 pointer-coarse:pr-11 [&::-webkit-details-marker]:hidden', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
+        <div id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')}>
+          <button
+            type="button"
+            aria-expanded={open}
+            className={cn('flex h-6 w-full items-center gap-2 rounded-sm pr-8 pl-1 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-hover pointer-coarse:min-h-11 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
             title={ended ? 'The turn ended before this tool reported a result' : undefined}
+            onClick={() => setOpen((o) => !o)}
           >
             <span className="flex size-4 shrink-0 items-center justify-center">
               <ToolMark tone={tone} />
@@ -332,14 +339,16 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
             {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
             <span className="sr-only">, {word}</span>
             {approvals && approvals.filter((ix) => ix.state !== 'pending').length > 0 && <ApprovalMark interactions={approvals.filter((ix) => ix.state !== 'pending')} />}
-          </summary>
-          <div className="my-1 ml-6 flex flex-col gap-1 text-ui">
-            {item.text && <Markdown text={item.text} />}
-            {t?.input && <CodeBlock language="input">{t.input}</CodeBlock>}
-            {t?.output && <CodeBlock language="output">{t.output}</CodeBlock>}
-            {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
-          </div>
-        </details>
+          </button>
+          <Collapse open={open}>
+            <div className="my-1 ml-6 flex flex-col gap-1 text-ui">
+              {item.text && <Markdown text={item.text} />}
+              {t?.input && <CodeBlock language="input">{t.input}</CodeBlock>}
+              {t?.output && <CodeBlock language="output">{t.output}</CodeBlock>}
+              {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
+            </div>
+          </Collapse>
+        </div>
         {(images.length > 0 || item.images_note) && (
           <div className="mt-1 mb-1.5 ml-7 flex flex-col gap-1">
             {sessionId && <ImageThumbs sessionId={sessionId} images={images} />}
@@ -459,15 +468,6 @@ export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, cl
 });
 
 const THINKING_KEY = 'uam.thinking:';
-const CLAMP_LINES = 3;
-
-/** The text's non-empty lines with leading markdown marks stripped. */
-function plainLines(text: string): string[] {
-  return text
-    .split('\n')
-    .map((l) => l.trim().replace(/^[#>*\-\s`]+/, '').replace(/`/g, ''))
-    .filter(Boolean);
-}
 
 /** "12s", "1m 4s" or "<1s" between two ISO timestamps; null when they are not in order. */
 export function duration(from: string, to: string): string | null {
@@ -480,56 +480,33 @@ export function duration(from: string, to: string): string | null {
 }
 
 /**
- * A reasoning item: its text inline in `muted` behind a hairline rule, clamped to three
- * lines with Show more / Show less. While it streams the latest lines show under a
- * shimmering "Thinking…"; done, "Thought for 12s" when the next item's timestamp is
- * known. The choice is remembered per item for the browser session.
+ * A reasoning item: one 24px row, "Thinking…" shimmering while it streams and "Thought for
+ * 12s" once the next item's timestamp is known, which opens the text (`muted`, behind a
+ * hairline rule) on click with a height collapse. Nothing of the text shows while it is
+ * closed, so streaming never resizes the row. The choice is remembered per item for the
+ * browser session.
  */
 export function Thinking({ item, streaming, endedAt, className }: { item: Item; streaming: boolean; endedAt?: string; className?: string }) {
   const key = THINKING_KEY + item.id;
   const [expanded, setExpanded] = useState(() => sessionStorage.getItem(key) === '1');
-  const [clamped, setClamped] = useState(false);
-  const body = useRef<HTMLDivElement>(null);
   const text = item.text ?? '';
   const took = !streaming && endedAt ? duration(item.time, endedAt) : null;
-  const lines = plainLines(text);
-  // The clamp is measured, so a long paragraph counts as much as many short lines.
-  useLayoutEffect(() => {
-    const el = body.current;
-    if (el && !expanded) setClamped(el.scrollHeight > el.clientHeight + 1);
-  }, [text, expanded, streaming]);
-  const more = expanded || clamped || (streaming && lines.length > CLAMP_LINES);
   const toggle = () => {
     const next = !expanded;
     setExpanded(next);
     sessionStorage.setItem(key, next ? '1' : '0');
   };
   return (
-    <div className={cn('flex flex-col gap-1 border-l-2 border-hairline pl-3 text-ui text-muted', className)}>
-      {streaming && <span className="text-caption animate-shimmer motion-reduce:animate-none">Thinking…</span>}
-      {expanded ? (
-        <Copyable text={text} label="Copy thinking" className="pr-6">
+    <div className={cn('flex flex-col text-ui text-muted', className)}>
+      <button type="button" aria-expanded={expanded} className="flex h-6 w-fit items-center gap-1.5 rounded-sm pr-1 text-left transition-colors duration-100 hover:text-body pointer-coarse:min-h-11" onClick={toggle}>
+        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />
+        <span className={cn('tabular-nums', streaming && 'animate-shimmer motion-reduce:animate-none')}>{streaming ? 'Thinking…' : took ? `Thought for ${took}` : 'Thought'}</span>
+      </button>
+      <Collapse open={expanded}>
+        <Copyable text={text} label="Copy thinking" className="mt-1 border-l-2 border-hairline pr-6 pl-3">
           <Markdown text={text} className="md-quiet" streaming={streaming} />
         </Copyable>
-      ) : streaming ? (
-        <div ref={body} className="line-clamp-3 whitespace-pre-line">
-          {lines.slice(-CLAMP_LINES).join('\n')}
-        </div>
-      ) : (
-        <div ref={body} className="line-clamp-3">
-          <Markdown text={text} className="md-quiet" streaming={streaming} />
-        </div>
-      )}
-      {(more || took) && (
-        <div className="flex items-center gap-2 text-caption">
-          {more && (
-            <button type="button" aria-expanded={expanded} className="rounded-xs text-muted transition-colors duration-100 hover:text-body pointer-coarse:min-h-11 pointer-coarse:min-w-11" onClick={toggle}>
-              {expanded ? 'Show less' : 'Show more'}
-            </button>
-          )}
-          {took && <span className="text-muted tabular-nums">Thought for {took}</span>}
-        </div>
-      )}
+      </Collapse>
     </div>
   );
 }
