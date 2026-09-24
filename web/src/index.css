@@ -106,6 +106,7 @@
   --spacing-drawer: 300px;
   --spacing-header: 44px;
   --spacing-sheet: 440px;
+  --spacing-sheet-wide: 560px;
   --spacing-panel: 440px;
 
   --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;

@@ -127,7 +127,17 @@ are logged only at debug level (`UAM_DEBUG=1`).
 
 ## Use it
 
-- **Projects**: add a directory on the Linux host as a Project. A directory
+- **Projects**: add a directory on the Linux host as a Project. Type its
+  path, or press **Browse** next to the field to pick it: the picker opens in
+  the dialog at the folder in the field (your home when the field is empty
+  or not a folder) and lists the folders there, with git repositories and
+  symbolic links marked. Click a segment of the path at the top or **Up** to
+  go back, double-click a folder or its arrow to open it, and turn on **Show
+  hidden** for dot-folders. **New folder** adds a row where you type a name;
+  Enter creates the folder and selects it. **Use this folder** puts the
+  selected folder, or the one being shown, into the field. With the
+  keyboard: arrows move, Enter opens, Backspace goes up, typing jumps to a
+  name, and Ctrl+Enter (Cmd+Enter on a Mac) uses the folder. A directory
   has one Project; adding it again points you to the existing one. A Project
   can carry defaults for new Tasks: model, effort, context size (where the
   provider allows it) and mode. Set them when you add the Project, or later
