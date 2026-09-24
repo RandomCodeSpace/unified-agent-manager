@@ -90,7 +90,7 @@ func TestAcceptanceDaemonStartupFailureLeavesNoRunningState(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer ln.Close()
+				defer func() { _ = ln.Close() }()
 				cfg.Listen = ln.Addr().String()
 			case "state publication":
 				want = "write web.json"
