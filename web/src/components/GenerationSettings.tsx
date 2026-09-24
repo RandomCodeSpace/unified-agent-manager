@@ -10,15 +10,18 @@ export function GenerationSettings({ prefix, model, effort, contextSize, context
   disabled: boolean;
   onChange: (value: { effort?: string; context_size?: string }) => void;
 }) {
+  const efforts = model?.efforts ?? [];
+  const effortReason = efforts.length === 0 ? 'This model uses its default effort.' : '';
   const sizes = model?.context_sizes ?? [];
   const contextReason = !contextSupported ? 'Context size selection is unavailable for this provider.'
-    : sizes.length === 0 ? 'This model uses its default context size.' : '';
+    : !sizes.some((size) => size.id !== 'default') ? 'This model uses its default context size.' : '';
   return <>
     <label className="control generation-control" htmlFor={`${prefix}-effort`}>
       <span className="control-label">Effort</span>
-      <select id={`${prefix}-effort`} className="input mono" disabled={disabled} value={effort} onChange={(e) => onChange({ effort: e.target.value })}>
+      <select id={`${prefix}-effort`} className="input mono" disabled={disabled || !!effortReason} title={effortReason || undefined}
+        aria-describedby={effortReason ? `${prefix}-effort-reason` : undefined} value={effort} onChange={(e) => onChange({ effort: e.target.value })}>
         <option value="">Default</option>
-        {(model?.efforts ?? []).map((value) => <option key={value} value={value}>{value}</option>)}
+        {efforts.map((value) => <option key={value} value={value}>{value}</option>)}
       </select>
     </label>
     <label className="control generation-control" htmlFor={`${prefix}-context-size`}>
@@ -30,6 +33,7 @@ export function GenerationSettings({ prefix, model, effort, contextSize, context
         {sizes.map((size) => <option key={size.id} value={size.id}>{size.id === 'long_context' ? 'Long context' : 'Default'} · {size.tokens.toLocaleString()} tokens</option>)}
       </select>
     </label>
+    {effortReason && <span id={`${prefix}-effort-reason`} className="caption settings-note">{effortReason}</span>}
     {contextReason && <span id={`${prefix}-context-reason`} className="caption settings-note">{contextReason}</span>}
     {contextSize === 'long_context' && <span className="caption settings-note">Long context may cost more.</span>}
   </>;

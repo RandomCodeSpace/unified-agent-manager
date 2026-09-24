@@ -71,7 +71,7 @@ export function SubagentPanel({
           </span>
           <AgentChip status={current.status} />
           {setupOf(meta, session.provider, current) && <span className="caption mono panel-setup">{setupOf(meta, session.provider, current)}</span>}
-          <StopSubagent session={session} subagent={current} />
+          <StopSubagent key={current.id} session={session} subagent={current} />
           <button type="button" className="btn btn-icon" aria-label="Close subagents" onClick={onClose}>
             <span aria-hidden="true">×</span>
           </button>

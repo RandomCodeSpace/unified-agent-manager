@@ -96,7 +96,6 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
         title={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop turn and pause queued follow-ups'}
         onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>Stop turn</button>}
       {live && <button type="button" className="btn btn-secondary" disabled={cannotSubmit} title="Steer this turn (Ctrl+Enter)" onClick={() => void send('steer')}>{busy === 'steer' ? 'Steering…' : 'Steer'}</button>}
-      {!live && queue.length > 0 && <button type="button" className="btn btn-secondary" disabled={cannotSubmit} onClick={() => void send('queue')}>Queue</button>}
       <button type="submit" className="btn btn-primary" disabled={cannotSubmit}>{busy === 'send' || busy === 'queue' ? 'Submitting…' : live ? 'Queue' : 'Send'}</button>
     </div>
     <p className="caption settings-note">{session.mode === 'yolo' ? 'Yolo allows permission requests automatically. Questions and managed-policy requests still need you.' : 'Safe asks before allowing permission requests.'}</p>
