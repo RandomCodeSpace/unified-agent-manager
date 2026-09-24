@@ -27,7 +27,8 @@ On the Linux host:
 On Windows: the built-in OpenSSH client (PowerShell) and a browser. Nothing is
 installed on Windows.
 
-Tested with Copilot CLI 1.0.88 and Go 1.26.5 on Linux 6.8.
+The beta build is pinned to Go 1.25.14. Browser and provider validation used
+Copilot CLI 1.0.88 and Go 1.26.5 on Linux 6.8.
 
 ## Start the service
 
