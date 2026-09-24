@@ -93,7 +93,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
-  const busy = actions.busy === session.id;
+  const busy = !!actions.busy[session.id];
 
   // The "n files changed" count: fetched on open, again when a turn starts or ends, and on Refresh.
   useEffect(() => {

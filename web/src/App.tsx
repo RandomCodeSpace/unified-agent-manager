@@ -65,7 +65,7 @@ export default function App() {
   const [taskDialog, setTaskDialog] = useState<TaskDialog>(null);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [renaming, setRenaming] = useState<Renaming | null>(null);
-  const [busyTask, setBusyTask] = useState<string | null>(null);
+  const [busyTasks, setBusyTasks] = useState<Readonly<Record<string, boolean>>>({});
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
   const [sidebarOpen, setSidebarOpen] = useState(() => readJSON<boolean>(SIDEBAR_KEY, true));
   const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
@@ -273,7 +273,7 @@ export default function App() {
 
   /** Runs one lifecycle request; the result is dispatched, a failure becomes the notice line. */
   const runTask = useCallback(async (id: string, op: () => Promise<SessionSummary | void>, verb: string) => {
-    setBusyTask(id);
+    setBusyTasks((b) => ({ ...b, [id]: true }));
     setNotice(null);
     try {
       const s = await op();
@@ -282,7 +282,7 @@ export default function App() {
       setNotice(`Could not ${verb}: ${describeError(e)}`);
       throw e;
     } finally {
-      setBusyTask(null);
+      setBusyTasks(({ [id]: _, ...rest }) => rest);
     }
   }, []);
 
@@ -303,9 +303,9 @@ export default function App() {
       archive: (id) => openTaskDialog({ kind: 'archive', id }),
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
-      busy: busyTask,
+      busy: busyTasks,
     }),
-    [renaming, busyTask, select, runTask, state.sessions, openTaskDialog],
+    [renaming, busyTasks, select, runTask, state.sessions, openTaskDialog],
   );
 
   const actions: WorkspaceActions = useMemo(
@@ -514,7 +514,7 @@ export default function App() {
               description="Archiving makes the task permanently read-only. It stays in the sidebar's Archived shelf with its full conversation. It cannot be reopened."
               confirmLabel="Archive task"
               danger={false}
-              busy={!!busyTask}
+              busy={!!taskDialog && !!busyTasks[taskDialog.id]}
               onConfirm={() => void confirmTaskDialog()}
             />
             <AlertDialog
@@ -524,7 +524,7 @@ export default function App() {
               title={`Delete ${dialogTask ? `“${dialogTask.name || dialogTask.title || 'this task'}”` : 'this task'}?`}
               description="This removes the task record from UAM. The provider conversation on the host is untouched."
               confirmLabel="Delete task"
-              busy={!!busyTask}
+              busy={!!taskDialog && !!busyTasks[taskDialog.id]}
               onConfirm={() => void confirmTaskDialog()}
             />
             <AlertDialog
@@ -535,7 +535,7 @@ export default function App() {
               description="Closing disconnects the provider conversation. The task and its conversation ID are kept, so nothing is deleted; sending another prompt reopens the same conversation. To interrupt the current turn without closing, use Stop instead."
               confirmLabel="Close conversation"
               danger={false}
-              busy={!!busyTask}
+              busy={!!taskDialog && !!busyTasks[taskDialog.id]}
               onConfirm={() => void confirmTaskDialog()}
             />
           </div>
