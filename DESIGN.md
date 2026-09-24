@@ -1,79 +1,44 @@
 ---
-version: 1
+version: 2
 name: uam-web-workbench
-description: Design system for `uam web`, the browser workbench for running coding agents. A dense, calm, borderless tool used for hours at a time, on a laptop over SSH and at 420px on a phone. Warm near-neutral canvas in both schemes, one ink ladder for every piece of chrome, hairlines instead of boxes, a single restrained accent (blue) for focus and links, and one warm "needs you" colour (orange) that is the only thing allowed to shout. Inter for UI and chat, JetBrains Mono for code, ledger and diffs. No serif, no pills, no gradients, no marketing bands. Everything is a row or a column of text; surfaces step by one shade, never by borders inside borders.
+description: Design system for `uam web`, the browser workbench for running coding agents. A dense, calm, borderless tool used for hours at a time, on a laptop over SSH and at 420px on a phone. One warm, mid-light canvas (a single theme, no dark scheme), one ink ladder for every piece of chrome, hairlines instead of boxes, a single restrained accent (blue) for focus and links, and one warm "needs you" colour (orange) that is the only thing allowed to shout. Inter for UI and chat, JetBrains Mono for code, ledger and diffs. No serif, no pills, no gradients, no marketing bands. Everything is a row or a column of text; surfaces step by one shade, never by borders inside borders.
 
 colors:
-  canvas: "#f4f3ef"
-  surface: "#fbfaf8"
-  raised: "#ffffff"
-  sunken: "#edece7"
-  bubble-user: "#ebe9e3"
+  rail: "#dedcd6"
+  canvas: "#e8e6e1"
+  surface: "#eeece7"
+  raised: "#f3f2ee"
+  sunken: "#dedcd6"
+  bubble-user: "#f3f2ee"
   ink: "#1c1b18"
   body: "#3d3b36"
-  muted: "#6b6862"
-  faint: "#8f8b83"
-  hairline: "#e5e3dd"
-  hairline-strong: "#d3d0c8"
+  muted: "#5c5953"
+  faint: "#7d7a72"
+  hairline: "#d3d1ca"
+  hairline-strong: "#bfbdb5"
   primary: "#1c1b18"
-  on-primary: "#ffffff"
-  accent: "#2f5fcf"
-  on-accent: "#ffffff"
-  accent-wash: "#e8eefb"
-  focus: "#2f5fcf"
-  selection: "#dfe7fa"
-  attention: "#a8470a"
-  attention-wash: "#fbf0e4"
-  success: "#1e7a4c"
-  success-wash: "#e6f4ea"
-  warning: "#8a6100"
-  warning-wash: "#faf1d8"
+  on-primary: "#f3f2ee"
+  accent: "#2a55bd"
+  on-accent: "#f3f2ee"
+  accent-wash: "#dbe3f5"
+  focus: "#2a55bd"
+  selection: "#cfdaf3"
+  attention: "#9a400a"
+  attention-wash: "#f4e1cf"
+  success: "#196a41"
+  success-wash: "#d8e8dd"
+  warning: "#7a5500"
+  warning-wash: "#efe3c3"
   error: "#b3261e"
-  error-wash: "#fce8e6"
-  info: "#2f5fcf"
-  info-wash: "#e8eefb"
-  code-bg: "#edece7"
-  diff-add-bg: "#e3f3e8"
+  error-wash: "#f4d9d5"
+  info: "#2a55bd"
+  info-wash: "#dbe3f5"
+  code-bg: "#dedcd6"
+  diff-add-bg: "#d3e6da"
   diff-add-text: "#14532d"
-  diff-del-bg: "#fbe7e4"
+  diff-del-bg: "#efd6d2"
   diff-del-text: "#7f1d1d"
-  backdrop: "rgba(20, 18, 14, 0.32)"
-
-colors-dark:
-  canvas: "#151412"
-  surface: "#1c1b18"
-  raised: "#25231f"
-  sunken: "#121110"
-  bubble-user: "#2a2824"
-  ink: "#f2f0ea"
-  body: "#cbc7be"
-  muted: "#9c978c"
-  faint: "#6c675e"
-  hairline: "#2d2b27"
-  hairline-strong: "#3d3a34"
-  primary: "#f2f0ea"
-  on-primary: "#151412"
-  accent: "#86abf5"
-  on-accent: "#0e1a33"
-  accent-wash: "#1c2740"
-  focus: "#86abf5"
-  selection: "#27385c"
-  attention: "#f0a35c"
-  attention-wash: "#3a2712"
-  success: "#6fcd95"
-  success-wash: "#14301f"
-  warning: "#e2bc64"
-  warning-wash: "#33290f"
-  error: "#f28b82"
-  error-wash: "#3b1b18"
-  info: "#86abf5"
-  info-wash: "#1c2740"
-  code-bg: "#121110"
-  diff-add-bg: "#14301f"
-  diff-add-text: "#9be6b5"
-  diff-del-bg: "#3b1b18"
-  diff-del-text: "#f4a9a3"
-  backdrop: "rgba(0, 0, 0, 0.55)"
+  backdrop: "rgba(28, 27, 24, 0.35)"
 
 typography:
   display-md:
@@ -419,12 +384,12 @@ components:
 
 `uam web` is a workbench, not a magazine. The previous system (an ElevenLabs marketing analysis) gave the app an off-white canvas, a light serif display face, pill CTAs and gradient orbs. Those are page furniture; a person who sits in this screen for six hours needs a launcher: one ink ladder, one surface ladder, rows instead of cards, and colour that only appears when the agent needs a human.
 
-What survives from the old file: restraint, hairlines, calm, warm near-black ink on a warm off-white floor. What changes: the serif and the marketing scale go; type is one sans (Inter) plus one mono (JetBrains Mono); radii tighten to a 6px app dialect; depth comes from stepping the surface one shade, never from stacking borders; a proper dark scheme is a first-class citizen; and every token is specified for both schemes with contrast measured.
+What survives from the old file: restraint, hairlines, calm, warm near-black ink on a warm off-white floor. What changes: the serif and the marketing scale go; type is one sans (Inter) plus one mono (JetBrains Mono); radii tighten to a 6px app dialect; depth comes from stepping the surface one shade, never from stacking borders; there is one mid-light scheme (see Theme under Colors); and every token has its contrast measured on every ground it sits on.
 
 **Key characteristics**
-- Two ladders carry the whole UI: surfaces (`canvas` → `surface` → `raised`, plus `sunken` for wells) and text (`ink` → `body` → `muted` → `faint`). Chrome never uses a colour outside these ladders except the four semantic tones, the accent and the attention colour.
-- Borderless by default. A component gets a hairline only when it is interactive and floats above its parent (composer, cards, popovers). Nothing inside a card gets another border; nested structure is shown with a 2px left rule or an indent.
-- One accent (`accent`, blue) for focus, links, the working indicator and selection. One attention colour (`attention`, orange) reserved for "the agent needs you". Success/warning/error are marks and text, never fills, except their `-wash` on a chip or a card rule.
+- Two ladders carry the whole UI: surfaces (`rail` → `canvas` → `surface` → `raised`, plus `sunken` for wells) and text (`ink` → `body` → `muted` → `faint`). Chrome never uses a colour outside these ladders except the four semantic tones, the accent and the attention colour.
+- Borderless by default. A component gets a hairline only when it is interactive and floats above its parent (composer, cards, popovers). Nothing inside a card gets another border; nested structure is shown with a `sunken` well or an indent, never a side stripe.
+- One accent (`accent`, blue) for focus, links, the working indicator and selection. One attention colour (`attention`, orange) reserved for "the agent needs you". Success/warning/error are marks and text, never fills, except their `-wash` on a chip.
 - The assistant does not get a bubble. The user does. Assistant output is the page; the user's turns are the interruptions.
 - Density is a row: 30–32px rail rows, 24px ledger rows, 44px deck rows, 28px composer controls. Mobile gets 44px targets by padding, not by scaling type.
 - Motion is functional and short (100–240ms) and fully disabled under `prefers-reduced-motion`.
@@ -434,104 +399,114 @@ What survives from the old file: restraint, hairlines, calm, warm near-black ink
 1. **Stable data only.** Rows show state the server knows (task state, model, tool counts), never heuristics or previews. No skeleton shimmer on rows; empty is empty.
 2. **Typographic hierarchy before boxes.** If two things need to be told apart, first try weight (400/500/600), then colour step (`ink`/`body`/`muted`), then indent, then a hairline. A bordered box is the last resort.
 3. **One accent, one alarm.** `accent` is the only chromatic chrome colour. `attention` is the only warm one and the only one that may fill (a chip wash) in the rail or deck.
-4. **Surfaces step, they do not stack.** Depth = one shade lighter (light scheme) or one shade lighter (dark scheme). Shadows are for things that float over content (popover, dialog, drawer) only.
+4. **Surfaces step, they do not stack.** Depth = one shade lighter. Shadows are for things that float over content (popover, dialog, drawer) only.
 5. **Code is code.** Anything the agent typed, ran, edited or diffed is set in JetBrains Mono at 12–13px on `code-bg`. Prose is Inter.
 6. **Same layout everywhere.** Phone, laptop and 1920px see the same components; only the rail's presence and the column's gutters change.
 7. **CSP-clean.** No inline styles, no inline scripts, fonts from `'self'`. Anything dynamic is a class or a `data-` attribute.
 
 ## Colors
 
-Both schemes are warm near-neutrals (a hint of yellow in every grey), so light and dark feel like the same room with the lights on or off. Light uses pure white only for `raised` (composer, cards, popovers). Dark never reaches pure black; `sunken` (#121110) is the floor.
+### Theme
+One theme. The owner decided on 2026-09-24 that `uam web` ships a single mid-light scheme instead of a light/dark pair: a dimmed-paper canvas (L* ≈ 91), clearly lighter than a dark theme and clearly softer than a stark white one, so the screen reads the same on every machine and nothing flips with the OS setting. There is no theme toggle, no stored preference and no `prefers-color-scheme` switch; `color-scheme: light` keeps native controls in step.
+
+All greys are warm near-neutrals (a hint of yellow in every grey). Nothing reaches pure white: `raised` (#f3f2ee) is the lightest surface. The ladder steps around the canvas: the rail one shade darker, raised surfaces one shade lighter, wells one shade darker.
+
+**Adjustments.** This repository does not draw side-stripe accent borders (`border-left` rules). Where a design would reach for a 2px left rule (the thinking disclosure, the subagent block, the approval card's attention edge) the implementation uses a `sunken` well with a small radius for grouping and the `chip-attention` in the card header for attention. The intent (grouping, "needs you") is kept; the stripe is not.
 
 ### Surfaces
-| Role | Light | Dark | Use |
-|---|---|---|---|
-| `canvas` | #f4f3ef | #151412 | App floor: rail, drawer, shell background |
-| `surface` | #fbfaf8 | #1c1b18 | Main pane: header, transcript, Changes sheet |
-| `raised` | #ffffff | #25231f | Composer, approval/question cards, popovers, dialogs, inputs |
-| `sunken` | #edece7 | #121110 | Wells: code blocks, keycaps, inline code, inset lists |
-| `bubble-user` | #ebe9e3 | #2a2824 | User message bubble |
-| `code-bg` | #edece7 | #121110 | Alias of `sunken`, kept separate so code can be retuned alone |
-| `selection` | #dfe7fa | #27385c | `::selection`, highlighted search hit |
-| `backdrop` | rgba(20,18,14,.32) | rgba(0,0,0,.55) | Behind dialogs and the phone drawer |
+| Role | Value | Use |
+|---|---|---|
+| `rail` | #dedcd6 | Rail and drawer floor, one step darker than the canvas |
+| `canvas` | #e8e6e1 | Main pane: header, transcript, deck, Changes sheet, login |
+| `surface` | #eeece7 | Hover step on raised controls (secondary button hover) |
+| `raised` | #f3f2ee | Composer, approval/question cards, popovers, dialogs, inputs, active rail row, deck row hover |
+| `sunken` | #dedcd6 | Wells: code blocks, thinking body, subagent block, keycaps, inline code |
+| `bubble-user` | #f3f2ee | User message bubble (a raised surface) |
+| `code-bg` | #dedcd6 | Alias of `sunken`, kept separate so code can be retuned alone |
+| `selection` | #cfdaf3 | `::selection` |
+| `backdrop` | rgba(28,27,24,.35) | Behind dialogs, the phone drawer and the Changes overlay |
 
 ### Text
-| Role | Light | Dark | Use |
-|---|---|---|---|
-| `ink` | #1c1b18 | #f2f0ea | Titles, active rail item, user bubble text, code |
-| `body` | #3d3b36 | #cbc7be | Assistant prose, default UI text |
-| `muted` | #6b6862 | #9c978c | Meta, captions, ledger rows, group labels, placeholders |
-| `faint` | #8f8b83 | #6c675e | Non-text only: disabled glyphs, closed-task marks, decorative icons (≥3:1) |
+| Role | Value | Use |
+|---|---|---|
+| `ink` | #1c1b18 | Titles, active rail item, user bubble text, code |
+| `body` | #3d3b36 | Assistant prose, default UI text |
+| `muted` | #5c5953 | Meta, captions, ledger rows, group labels, placeholders, thinking text |
+| `faint` | #7d7a72 | Non-text only: chevrons, closed-task marks, diff line numbers (≥3:1) |
 
 ### Lines
-| Role | Light | Dark | Use |
-|---|---|---|---|
-| `hairline` | #e5e3dd | #2d2b27 | Separators, header rule, card edge, code block edge |
-| `hairline-strong` | #d3d0c8 | #3d3a34 | Input edge at rest, popover edge, left rules on thinking/subagent blocks |
+| Role | Value | Use |
+|---|---|---|
+| `hairline` | #d3d1ca | Separators, header rule, card edge, code block edge, diff hunk header fill |
+| `hairline-strong` | #bfbdb5 | Input edge at rest, secondary button edge, popover edge |
 
 Hairlines are decorative and exempt from contrast rules. Inputs and cards are identified by their `raised` fill and their content, not by the hairline, so WCAG 1.4.11 does not depend on it. The focus ring does the 3:1 job.
 
 ### Action and signal
-| Role | Light | Dark | Use |
-|---|---|---|---|
-| `primary` / `on-primary` | #1c1b18 / #ffffff | #f2f0ea / #151412 | Primary button (ink fill). There is no coloured primary button. |
-| `accent` / `on-accent` | #2f5fcf / #ffffff | #86abf5 / #0e1a33 | Links, focus ring, working dot, active model, selected row check |
-| `accent-wash` | #e8eefb | #1c2740 | Selected popover row, `info` chip |
-| `focus` | #2f5fcf | #86abf5 | `:focus-visible` outline; same as `accent` |
-| `attention` / `attention-wash` | #a8470a / #fbf0e4 | #f0a35c / #3a2712 | "Needs you": permission and question states, deck heading count, card left rule |
-| `success` / `success-wash` | #1e7a4c / #e6f4ea | #6fcd95 / #14301f | Completed mark, allowed chip |
-| `warning` / `warning-wash` | #8a6100 / #faf1d8 | #e2bc64 / #33290f | Interrupted state, non-blocking notices |
-| `error` / `error-wash` | #b3261e / #fce8e6 | #f28b82 / #3b1b18 | Failed state, Deny button text, error banner |
-| `info` / `info-wash` | #2f5fcf / #e8eefb | #86abf5 / #1c2740 | Informational notice line (aliases accent) |
+| Role | Value | Use |
+|---|---|---|
+| `primary` / `on-primary` | #1c1b18 / #f3f2ee | Primary button (ink fill). There is no coloured primary button. |
+| `accent` / `on-accent` | #2a55bd / #f3f2ee | Links, focus ring, working dot, new-activity dot, selected row check |
+| `accent-wash` | #dbe3f5 | Selected popover row, `info` chip |
+| `focus` | #2a55bd | `:focus-visible` outline; same as `accent` |
+| `attention` / `attention-wash` | #9a400a / #f4e1cf | "Needs you": permission and question states, rail and deck counts, the chip on a pending card |
+| `success` / `success-wash` | #196a41 / #d8e8dd | Completed mark, allowed chip, diff `+` counts |
+| `warning` / `warning-wash` | #7a5500 / #efe3c3 | Interrupted state, non-blocking notices |
+| `error` / `error-wash` | #b3261e / #f4d9d5 | Failed state, Deny button text, error lines, diff `−` counts |
+| `info` / `info-wash` | #2a55bd / #dbe3f5 | Informational notice line (aliases accent) |
 
 ### Diff
-| Role | Light | Dark |
-|---|---|---|
-| `diff-add-bg` / `diff-add-text` | #e3f3e8 / #14532d | #14301f / #9be6b5 |
-| `diff-del-bg` / `diff-del-text` | #fbe7e4 / #7f1d1d | #3b1b18 / #f4a9a3 |
+| Role | Value |
+|---|---|
+| `diff-add-bg` / `diff-add-text` | #d3e6da / #14532d |
+| `diff-del-bg` / `diff-del-text` | #efd6d2 / #7f1d1d |
 
-Hunk headers are `muted` on `sunken`. Unchanged lines are `body` on `code-bg`. Add/del backgrounds are full-row; the `+`/`-` gutter glyph is the text colour at weight 500.
+Hunk headers are `muted` on `hairline`. Unchanged lines are `body` on `code-bg`. Add/del backgrounds are full-row; the `+`/`-` gutter glyph is the text colour at weight 500.
 
 ### Contrast (WCAG 2.x, computed)
-All text pairs meet AA (≥4.5:1); most meet AAA. `faint` is not a text colour and is held at ≥3:1 for glyphs.
+Every text colour clears AA (≥4.5:1) on every ground it can sit on; `faint` is glyph-only and held at ≥3:1. Computed from the tokens above; `web/src/styles.css` is the source of truth.
 
-| Pair | Light | Dark |
-|---|---|---|
-| ink on canvas | 15.51 | 16.15 |
-| ink on surface | 16.51 | 15.11 |
-| ink on raised | 17.22 | 13.76 |
-| ink on bubble-user | 14.19 | 12.91 |
-| ink on code-bg | 14.56 | 16.55 |
-| ink on selection | 13.90 | 10.20 |
-| body on surface | 10.72 | 10.21 |
-| body on canvas | 10.07 | 10.92 |
-| body on raised | 11.19 | 9.30 |
-| body on bubble-user | 9.21 | 8.72 |
-| body on code-bg | 9.46 | 11.18 |
-| muted on surface | 5.32 | 5.92 |
-| muted on canvas | 5.00 | 6.33 |
-| muted on raised | 5.55 | 5.39 |
-| muted on bubble-user | 4.57 | 5.06 |
-| faint on surface (glyphs only) | 3.25 | 3.07 |
-| accent on surface | 5.50 | 7.51 |
-| accent on canvas | 5.17 | 8.03 |
-| accent on raised | 5.74 | 6.84 |
-| on-accent on accent | 5.74 | 7.54 |
-| on-primary on primary | 17.22 | 16.15 |
-| attention on surface | 5.64 | 8.28 |
-| attention on canvas | 5.30 | 8.85 |
-| attention on attention-wash | 5.23 | 6.83 |
-| success on surface | 5.11 | 8.89 |
-| success on success-wash | 4.69 | 7.36 |
-| warning on surface | 5.31 | 9.52 |
-| warning on warning-wash | 4.92 | 7.93 |
-| error on surface | 6.27 | 7.21 |
-| error on error-wash | 5.55 | 6.48 |
-| info on surface | 5.50 | 7.51 |
-| diff-add-text on diff-add-bg | 7.92 | 9.77 |
-| diff-del-text on diff-del-bg | 8.42 | 8.15 |
+| Pair | Ratio |
+|---|---|
+| ink on canvas | 13.81 |
+| ink on rail | 12.56 |
+| ink on raised / bubble-user | 15.37 |
+| ink on sunken | 12.56 |
+| body on canvas | 8.97 |
+| body on rail / sunken / code-bg | 8.16 |
+| body on raised | 9.99 |
+| muted on canvas | 5.60 |
+| muted on rail / sunken | 5.09 |
+| muted on raised | 6.23 |
+| muted on hairline (hunk header) | 4.57 |
+| faint on canvas (glyphs only) | 3.44 |
+| faint on rail / code-bg (glyphs only) | 3.13 |
+| faint on raised (glyphs only) | 3.83 |
+| on-primary on primary | 15.37 |
+| accent on canvas | 5.37 |
+| accent on rail / sunken | 4.89 |
+| accent on raised | 5.98 |
+| accent on accent-wash | 5.21 |
+| attention on canvas | 5.41 |
+| attention on rail | 4.92 |
+| attention on raised | 6.02 |
+| attention on attention-wash | 5.31 |
+| success on canvas | 5.30 |
+| success on rail / sunken | 4.82 |
+| success on raised | 5.90 |
+| success on success-wash | 5.19 |
+| warning on canvas | 5.38 |
+| warning on rail | 4.90 |
+| warning on raised | 6.00 |
+| warning on warning-wash | 5.26 |
+| error on canvas | 5.24 |
+| error on rail / sunken | 4.77 |
+| error on raised | 5.84 |
+| error on error-wash | 4.90 |
+| diff-add-text on diff-add-bg | 6.99 |
+| diff-del-text on diff-del-bg | 7.26 |
 
-Rule for new pairs: any text colour must clear 4.5:1 on every surface it can land on (`canvas`, `surface`, `raised`, `bubble-user`, `code-bg`). `muted` on `bubble-user` (4.57 light) is the tightest pair in the system; do not lighten `muted`.
+Rule for new pairs: any text colour must clear 4.5:1 on `canvas`, `rail`, `raised` and `sunken`. `muted` on `hairline` (4.57) and the semantic tones on `rail`/`sunken` (4.8–4.9) are the tightest pairs in the system; do not lighten them and do not darken the grounds.
 
 ## Typography
 
@@ -572,7 +547,7 @@ Rule for new pairs: any text colour must clear 4.5:1 on every surface it can lan
 Full viewport, no page scroll: `height: 100dvh; display: grid; grid-template-columns: 264px 1fr`. The rail and the main pane scroll independently. The main pane is itself a column: header (44px, hairline below) → transcript (flex 1, `overflow-y: auto`, `overscroll-behavior: contain`) → composer (pinned).
 
 ### Rail (264px)
-Sits on `canvas`. Top row: wordmark `uam` at `ui` 600 + a search/switcher affordance showing the `⌘K` keycap. Then the **Needs you** group (only rendered when count > 0) and the **Projects** group. Each project is a row; its tasks are nested rows indented 16px with a 1px `hairline` vertical rule at x = 15px running the height of the list (the indent line, not a box). Bottom: connection line (`host · connected`) at `caption` in `muted`. Rail padding 8px; no border between rail and main, the `canvas`→`surface` step is the seam.
+Sits on `rail`, one step darker than the canvas. Top row: wordmark `uam` at `ui` 600 + a search/switcher affordance showing the `⌘K` keycap. Then the **Needs you** group (only rendered when count > 0) and the **Projects** group. Each project is a row; its tasks are nested rows indented 16px with a 1px `hairline` vertical rule at x = 15px running the height of the list (the indent line, not a box). Bottom: connection line (`host · connected`) at `caption` in `muted`. Rail padding 8px; no border between rail and main, the `rail`→`canvas` step is the seam.
 
 ### Breakpoints
 | Width | Rail | Chat column | Composer | Changes sheet |
@@ -581,7 +556,7 @@ Sits on `canvas`. Top row: wordmark `uam` at `ui` 600 + a search/switcher afford
 | 481–959 | Drawer as above | `max-width: 760px`, 16px gutters | Inside column | Overlay panel 100% |
 | 960–1279 | Fixed 264px | `max-width: 760px`, 24px gutters, centred in main | Inside column | Overlay panel 440px from right |
 | 1280–1799 (1440 target) | Fixed 264px | `max-width: 760px` centred | Inside column | Inline 440px panel, pushes column (column re-centres in the remaining width) |
-| ≥1800 (1920 target) | Fixed 264px | `max-width: 800px` centred; surplus is `surface` margin, not content | Inside column | Inline 440px |
+| ≥1800 (1920 target) | Fixed 264px | `max-width: 800px` centred; surplus is `canvas` margin, not content | Inside column | Inline 440px |
 
 At 1920 the main pane is 1656px wide; the column takes 800px and sits centred. Do not fill the margins with side panels or widgets.
 
@@ -599,14 +574,14 @@ At 1920 the main pane is 1656px wide; the column takes 800px and sits centred. D
 
 ## Elevation & Depth
 
-| Level | Treatment | Light | Dark | Use |
-|---|---|---|---|---|
-| 0 Flat | Surface step only | `canvas` / `surface` | same | Rail on canvas, messages on surface |
-| 1 Raised | `raised` fill + 1px `hairline` | no shadow | no shadow | Composer, approval/question cards, inputs, code blocks (code uses `sunken` + hairline) |
-| 2 Floating | `raised` + 1px `hairline-strong` + shadow | `0 4px 16px rgba(20,18,14,.10)` | `0 8px 24px rgba(0,0,0,.5)` | Popovers (model select, menus), tooltips |
-| 3 Modal | `raised` + shadow + `backdrop` | `0 16px 48px rgba(20,18,14,.16)` | `0 24px 64px rgba(0,0,0,.6)` | Dialogs, phone drawer, phone Changes sheet |
+| Level | Treatment | Shadow | Use |
+|---|---|---|---|
+| 0 Flat | Surface step only | none | Rail on `rail`, everything else on `canvas` |
+| 1 Raised | `raised` fill + 1px `hairline` | none | Composer, approval/question cards, inputs, code blocks (code uses `sunken` + hairline) |
+| 2 Floating | `raised` + 1px `hairline-strong` + shadow | `0 4px 16px rgba(28,27,24,.12)` | Popovers (task menu, model select), tooltips |
+| 3 Modal | `raised` + shadow + `backdrop` | `0 16px 48px rgba(28,27,24,.18)` | Dialogs, phone drawer, Changes overlay and bottom sheet |
 
-Nothing inside a Level 1 surface gets its own border. Nested structure inside cards uses a 2px left rule (`attention` for cards needing a decision, `hairline-strong` for thinking and subagent blocks) or an indent.
+Nothing inside a Level 1 surface gets its own border. Nested structure inside cards uses an indent or a `sunken` well with a small radius; never a side stripe (see Adjustments under Theme).
 
 ## Shapes
 
@@ -623,17 +598,17 @@ No pills. Buttons are 6px rectangles at every size. The 14px bubble radius is th
 
 ## Components
 
-Every component is a class in `web/src/styles.css`; no inline style. States are modifier classes or `data-state` attributes. Hover is a one-step surface change (`surface` → `raised` on light, `surface` → `raised` on dark) unless noted; press is the same step plus `ink` text.
+Every component is a class in `web/src/styles.css`; no inline style. States are modifier classes or `data-state` attributes. Hover is a one-step surface change (`canvas` → `raised`; on the rail, `rail` → `canvas`; inside a raised surface, `raised` → `canvas`) unless noted; press is the same step plus `ink` text.
 
 ### Rail
 
 **`rail-group-label`** — `eyebrow` in `muted`, padding 12px 8px 4px. "NEEDS YOU · 2" renders the count in `attention`; "PROJECTS" is plain.
 
-**`rail-project`** — 32px row, `ui` (500) in `ink`, chevron glyph (`faint`) at left, project name, task count in `caption` `muted` at right. Click toggles; keyboard: Enter toggles, Right/Left expand/collapse. Hover: `surface` fill, radius `sm`.
+**`rail-project`** — 32px row, `ui` (500) in `ink`, chevron glyph (`faint`) at left, project name, task count in `caption` `muted` at right. Click toggles; keyboard: Enter toggles, Right/Left expand/collapse. Hover: `canvas` fill, radius `sm`.
 
-**`rail-task`** — 30px row, `ui-regular` in `body`, indented 24px with the indent line. Left: 8px state mark (see State marks). Text truncates with an ellipsis; no wrapping. Right (on hover/focus only): `button-icon` "…" menu. Active: `rail-task-active` (`surface` fill, `ink` text, weight 500). Tasks needing you also show a 6px `attention` dot at the far right regardless of hover.
+**`rail-task`** — 30px row, `ui-regular` in `body`, indented 24px with the indent line. Left: 8px state mark (see State marks). Text truncates with an ellipsis; no wrapping. Right (on hover/focus only): `button-icon` "…" menu. Active: `rail-task-active` (`raised` fill, `ink` text, weight 500). Tasks needing you also show a 6px `attention` dot at the far right regardless of hover.
 
-**`rail-footer`** — `caption` in `muted`: `dev@lab · connected`; a `success` dot when the event stream is live, `error` dot with "reconnecting…" when not.
+**`rail-footer`** — `caption` in `muted`: `host · connected`; a `success` dot when the event stream is live, `error` dot with "reconnecting…" when not.
 
 Drawer variant (≤959px): same rows at 40px height; opens from the header menu button and from a left-edge swipe; closes on selection, on `Esc`, on backdrop tap.
 
@@ -643,23 +618,23 @@ Shown in the main pane when no task is open, or when the rail group is clicked. 
 **`deck-row`** — 44px row: state mark (8px) → task title `ui-regular` `ink` (truncate) → project name `caption` `muted` → right: relative time `caption` `muted` and, for needs-permission rows, the requested action in `code-sm` (`npm run build`). Hover: `raised` fill. Enter/click opens the task; for permission rows, the row exposes inline `Allow once` / `Deny` ghost buttons on hover/focus so the deck can be cleared without opening every task.
 
 ### Main header
-44px, `surface`, hairline below. Left: menu button (phone only), task title `display-sm` `ink` truncated, then a `chip` with the state. Right: `Changes` `button-ghost` with count in `.num` (shows `attention` dot when there are uncommitted changes the user has not viewed), `button-icon` "…". The model is not shown here; it lives in the composer.
+44px, `canvas`, hairline below. Left: menu button (phone only), task title `display-sm` `ink` truncated, then a `chip` with the state. Right: `Changes` `button-ghost` with count in `.num` (shows `attention` dot when there are uncommitted changes the user has not viewed), `button-icon` "…". The model is not shown here; it lives in the composer.
 
 ### User bubble
 **`bubble-user`** — `bubble-user` fill, `ink` text, `chat-body`, radius `lg`, padding 10px 14px, right-aligned, `max-width: min(78%, 560px)`. No border, no avatar, no name. Timestamp on hover as `caption` `muted` below the bubble, right-aligned. Markdown inside user turns renders (code spans, lists) but without headings. Attachments (future) sit above the bubble as `chip`s, right-aligned.
 
 ### Assistant message
-**`message-assistant`** — no bubble, no avatar, no name. Full column width, `body` colour, `chat-body`. Optional provider line above the first assistant turn of a task only: `caption` `muted` "copilot · gpt-5". Markdown: paragraphs 10px apart; lists indent 20px; blockquote = 2px `hairline-strong` left rule, `muted`; tables use hairline row rules only; links `accent` underlined on hover only.
+**`message-assistant`** — no bubble, no avatar, no name. Full column width, `body` colour, `chat-body`. Optional provider line above the first assistant turn of a task only: `caption` `muted` "copilot · gpt-5". Markdown: paragraphs 10px apart; lists indent 20px; blockquote = a `sunken` well (radius `sm`), `muted`; tables use hairline row rules only; links `accent` underlined on hover only.
 
 **`code-block`** — `code-bg` fill, 1px `hairline`, radius `md`, padding 10px 12px, `code`. Header row (24px) inside the block when a language or filename is known: `code-sm` `muted` label at left, `button-icon` copy at right. Streams line by line; while streaming the last line ends with the caret (see Motion). Max height 480px with internal scroll; a "Show all" ghost button expands. Horizontal overflow scrolls; never wrap code.
 
 **`code-inline`** — `sunken` fill, radius `xs`, padding 1px 4px, `0.92em`.
 
 ### Thinking block
-**`thinking-block`** — a disclosure, not a card. 2px `hairline-strong` left rule, padding-left 12px.
+**`thinking-block`** — a disclosure, not a card. No rule: the expanded text sits in a `sunken` well (radius `sm`, padding 8px 12px) indented under the row.
 - **Collapsed:** one 24px row: chevron glyph (`faint`) + "Thought for 12s" in `ui-regular` `muted`. Click/Enter toggles. `aria-expanded` on the row button.
 - **Streaming:** same row reads "Thinking…"; the label carries the text shimmer (Motion); no content shown until the user opens it. Opening while streaming shows the tokens as they arrive.
-- **Expanded:** the row stays; below it the reasoning text at `ui-regular` (13px) in `muted`, max-height 320px with internal scroll, still inside the left rule. Reasoning is never set in `chat-body` and never in `body` colour; it must read as quieter than the answer.
+- **Expanded:** the row stays; below it the reasoning text at `ui-regular` (13px) in `muted`, max-height 320px with internal scroll, inside the well. Reasoning is never set in `chat-body` and never in `body` colour; it must read as quieter than the answer.
 - Reduced motion: no shimmer; "Thinking…" static.
 
 ### Tool ledger
@@ -673,10 +648,10 @@ Shown in the main pane when no task is open, or when the rail group is clicked. 
 Tool name is the first word at weight 500 (`Read`, `Grep`, `Edit`, `Bash`); the argument follows in 400. Long arguments truncate from the middle so file names survive. Rows are keyboard-focusable; Enter expands the call's input/output as a `code-block` beneath it.
 
 ### Subagent block
-**`subagent-block`** — 2px `hairline-strong` left rule, padding 8px 0 8px 12px, full width. Header row (24px): "Subagent" `eyebrow` `muted` + its task in `ui` (500) `body` + state mark at right. Body: its own thinking row, ledger and prose at the same specs as the parent, all at `ui-regular` (13px) rather than 15px so the nesting reads as subordinate. Collapsed by default once completed, showing the final line of its summary in `muted`. Never nest more than one level visually; deeper subagents flatten into the parent subagent's ledger.
+**`subagent-block`** — a `sunken` block, radius `md`, padding 0 12px, full width (no left rule); wells inside it step up to `canvas`, its user bubble to `raised`. Header row (24px): "Subagent" `eyebrow` `muted` + its task in `ui` (500) `body` + state mark at right. Body: its own thinking row, ledger and prose at the same specs as the parent, all at `ui-regular` (13px) rather than 15px so the nesting reads as subordinate. Collapsed by default once completed, showing the final line of its summary in `muted`. Never nest more than one level visually; deeper subagents flatten into the parent subagent's ledger.
 
 ### Approval card
-**`approval-card`** — `raised` fill, 1px `hairline`, radius `md`, 2px `attention` left rule (drawn as an inset box-shadow so it follows the radius), padding 12px 14px. Content: title `title` `ink` ("Copilot wants to run"), the requested action in a `code-block`-styled well (`sunken`, `code-sm`, no header), optional one-line reason `ui-regular` `muted`. Footer row: `Allow once` (`button-primary`), `Allow for task` (`button-secondary`), `Deny` (`button-danger`), right-aligned; on phone they stack full-width in that order. Keyboard: the card receives focus when it appears; `Enter` = Allow once, `Shift+Enter` = Allow for task, `Esc` = Deny (all announced in a `caption` hint row for keyboard users). After a decision the card collapses to one `ledger-row` ("Allowed once · npm run build") and the transcript continues.
+**`approval-card`** — `raised` fill, 1px `hairline`, radius `md`, padding 12px 14px; while pending, a `chip-attention` ("Needs permission") heads the card and is its only orange. Content: title `title` `ink` ("Copilot wants to run"), the requested action in a `code-block`-styled well (`sunken`, `code-sm`, no header), optional one-line reason `ui-regular` `muted`. Footer row: `Allow once` (`button-primary`), `Allow for task` (`button-secondary`), `Deny` (`button-danger`), right-aligned; on phone they stack full-width in that order. Keyboard: the card receives focus when it appears; `Enter` = Allow once, `Shift+Enter` = Allow for task, `Esc` = Deny (all announced in a `caption` hint row for keyboard users). After a decision the card collapses to one `ledger-row` ("Allowed once · npm run build") and the transcript continues.
 
 ### Question card
 **`question-card`** — same chrome as the approval card. Title = the agent's question in `ui` (500) `ink`; choices as a vertical list of `button-secondary` rows (full width, left-aligned, radio semantics) or a `text-input` when free-form; "Send" as `button-primary`. Selected choice shows a check glyph in `accent`. After answering, collapses to a `ledger-row` ("Answered · Use pnpm").
@@ -707,14 +682,14 @@ State marks are 8px glyphs at the left of rail/deck rows; chips carry the word.
 Only the attention chip has a fill. Every other chip is text plus glyph on the parent surface. Chips never appear inside prose.
 
 ### Changes sheet
-**`changes-sheet`** — `surface`, 1px `hairline` on its content edge, 440px inline at ≥1280px, overlay at 960–1279, full-screen bottom sheet on phone. Header (44px): "Changes" `title`, counts `caption` `.num` ("3 files · +48 −12" with `success`/`error` numerals), close `button-icon`. Section one: file list, 30px rows: status letter in `code-sm` (`M` `muted`, `A` `success`, `D` `error`), path `code-sm` `body` (truncate middle), `+n −n` `.num` at right. Selecting a file loads its unified diff below (or replaces the list on phone, with a back button). Diff: `code-sm` on `code-bg`, hunk header `muted` on `sunken`, add/del rows per Diff tokens, line numbers `faint` `.num` in a 2-column gutter, no wrap, horizontal scroll. No syntax highlighting in v1; add/del colour is the only colour.
+**`changes-sheet`** — `canvas`, 1px `hairline` on its content edge, 440px inline at ≥1280px, overlay at 960–1279, full-screen bottom sheet on phone. Header (44px): "Changes" `title`, counts `caption` `.num` ("3 files · +48 −12" with `success`/`error` numerals), close `button-icon`. Section one: file list, 30px rows: status letter in `code-sm` (`M` `muted`, `A` `success`, `D` `error`), path `code-sm` `body` (truncate middle), `+n −n` `.num` at right. Selecting a file loads its unified diff below (or replaces the list on phone, with a back button). Diff: `code-sm` on `code-bg`, hunk header `muted` on `sunken`, add/del rows per Diff tokens, line numbers `faint` `.num` in a 2-column gutter, no wrap, horizontal scroll. No syntax highlighting in v1; add/del colour is the only colour.
 
 ### Buttons
 | Variant | Fill | Text | Edge | Use |
 |---|---|---|---|---|
 | `button-primary` | `primary` | `on-primary` | none | One per view: Send, Allow once, dialog confirm |
 | `button-secondary` | `raised` | `ink` | 1px `hairline-strong` | Allow for task, Stop, dialog cancel, choice rows |
-| `button-ghost` | none | `body` | none | Header actions, selects, "Show all"; hover `surface`/`raised` step |
+| `button-ghost` | none | `body` | none | Header actions, selects, "Show all"; hover is one surface step |
 | `button-danger` | none | `error` | none | Deny, Delete task; hover `error-wash` |
 | `button-icon` | none | `muted` | none | 28px square; hover `ink` text + surface step |
 All: `ui` 13/500, radius `sm`, height 32 (28 small, 36 large; 40 on phone). Disabled: 45% opacity, no pointer. Loading: label stays, a 12px spinner replaces the leading glyph; never change width while loading.
@@ -767,7 +742,7 @@ All: `ui` 13/500, radius `sm`, height 32 (28 small, 36 large; 40 on phone). Disa
 - Specify hover as a surface step, press as surface step + `ink`.
 
 ### Don't
-- Don't draw a border inside a border. A card's children use indents and left rules.
+- Don't draw a border inside a border. A card's children use indents and sunken wells; never a side stripe.
 - Don't add a coloured primary button; the primary is ink.
 - Don't use pills for buttons; the only 14px radius is the user bubble.
 - Don't use a serif, a display weight below 400 or above 600, or scaled markdown headings in chat.
@@ -797,7 +772,7 @@ The server sends `default-src 'self'; script-src 'self'; style-src 'self'; img-s
 | Narrow | 481–959px | Drawer; column ≤760 with 16px gutters; Changes overlay |
 | Laptop | 960–1279px | Fixed rail; column ≤760 centred; Changes overlay 440px |
 | Desktop | 1280–1799px | Fixed rail; Changes inline 440px pushes column |
-| Wide | ≥1800px | Column ≤800; surplus stays empty `surface` |
+| Wide | ≥1800px | Column ≤800; surplus stays empty `canvas` |
 
 ## Iteration guide
 
@@ -805,4 +780,4 @@ The server sends `default-src 'self'; script-src 'self'; style-src 'self'; img-s
 2. Add a component here before adding a class there; keep the class name equal to the component key.
 3. When a new state or chip is needed, extend the State marks table; do not invent a fifth semantic colour.
 4. Run the contrast script (`refs/contrast.py` in the design bundle, or any WCAG calculator) for every new text/surface pair before merging.
-5. Screenshot at 420×860, 1440×900 and 1920×1080 in both schemes for any change to layout tokens.
+5. Screenshot at 420×860, 1440×900 and 1920×1080 for any change to layout tokens.
