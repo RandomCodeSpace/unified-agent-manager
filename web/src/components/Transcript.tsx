@@ -313,6 +313,12 @@ export function AgentChip({ status }: { status: SubagentStatus }) {
           Running
         </span>
       );
+    case 'idle':
+      return (
+        <span className="chip">
+          <span aria-hidden="true">○</span>Idle
+        </span>
+      );
     case 'completed':
       return (
         <span className="chip chip-success">

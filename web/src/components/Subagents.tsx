@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { api, describeError, modelName, readOnly, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
 import type { AgentTranscript } from '../state';
 import { Markdown, Spinner, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
@@ -13,6 +13,7 @@ export type PanelView = { view: 'list' } | { view: 'agent'; id: string };
 
 const GROUPS: { status: SubagentStatus; label: string }[] = [
   { status: 'running', label: 'Running' },
+  { status: 'idle', label: 'Idle' },
   { status: 'failed', label: 'Failed' },
   { status: 'completed', label: 'Completed' },
   { status: 'cancelled', label: 'Cancelled' },
@@ -82,8 +83,9 @@ export function SubagentPanel({
           subagent={current}
           transcript={agents[current.id]}
           snapshotSeq={snapshotSeq}
-          result={current.status === 'completed' ? session.items.find((i) => i.id === current.parent_tool_call_id)?.tool?.output : undefined}
+          result={current.status === 'completed' || current.status === 'idle' ? session.items.find((i) => i.id === current.parent_tool_call_id)?.tool?.output : undefined}
         />
+        <SubagentComposer key={`composer-${current.id}`} session={session} subagent={current} />
       </aside>
     );
   }
@@ -253,12 +255,71 @@ function AgentTranscriptView({
       {subagent.status === 'cancelled' && <p className="caption">Stopped before it finished.</p>}
       {result && (
         <div className="agent-result">
-          <div className="label">Result</div>
+          <div className="label">Result sent to the main agent</div>
           <Markdown text={result} />
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * A follow-up to one idle subagent, which the main agent never sees. Shown only while the
+ * subagent is idle; enabled only while the task itself is active and between turns. The
+ * status change and the user item both arrive over SSE, so nothing is added optimistically.
+ */
+function SubagentComposer({ session, subagent }: { session: SessionDetail; subagent: Subagent }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<Submission | null>(null);
+  const pending = useRef<{ text: string; id: string } | null>(null);
+  if (subagent.status !== 'idle') return null;
+  const blocked = readOnly(session)
+    ? session.stage === 'settled' ? 'Settled. Reopen this task to continue.' : 'Archived. This task is read-only.'
+    : LIVE.includes(session.state) ? 'Unavailable while the task is running a turn.' : null;
+  const cannotSubmit = busy || !!blocked || !text.trim();
+
+  async function send() {
+    const t = text.trim();
+    if (cannotSubmit) return;
+    if (!pending.current || pending.current.text !== t) pending.current = { text: t, id: newRequestId() };
+    const id = pending.current.id;
+    setBusy(true);
+    setError(null);
+    try {
+      const sub = await api.promptSubagent(session.id, subagent.id, t, id);
+      setOutcome(sub);
+      pending.current = null;
+      if (sub.status === 'accepted') setText('');
+    } catch (e) {
+      // Only a transport failure leaves the outcome unknown; a server answer stands on its own.
+      setError(isStatus(e, 0) ? `${describeError(e)}. Nothing will be retried automatically. Repeating this action with unchanged text uses the same request (${id.slice(0, 8)}).` : describeError(e));
+    } finally { setBusy(false); }
+  }
+  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      void send();
+    }
+  }
+
+  const textId = `subagent-text-${subagent.id}`;
+  return <div className="panel-foot">
+    <form className="composer" aria-label={`Follow up with subagent ${subagent.name}`} onSubmit={(e) => { e.preventDefault(); void send(); }}>
+      <p className="caption">Follow up with this subagent only. The main agent does not see this conversation.</p>
+      {blocked && <p className="caption" role="status">{blocked}</p>}
+      {outcome?.status === 'uncertain' && <p className="warn" role="alert">The subagent may or may not have received your message. Check its transcript before sending again; it will not be resent automatically.</p>}
+      {outcome?.status === 'rejected' && <p className="error" role="alert">Rejected{outcome.error ? `: ${outcome.error}` : '.'}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
+      <label className="sr-only" htmlFor={textId}>Follow-up for subagent {subagent.name}</label>
+      <textarea id={textId} className="composer-text" rows={2} value={text} placeholder="Follow up with this subagent…"
+        onChange={(e) => setText(e.target.value)} onKeyDown={onKeyDown} disabled={busy || !!blocked} />
+      <div className="composer-bar">
+        <button type="submit" className="btn btn-primary" disabled={cannotSubmit}>{busy ? 'Sending…' : 'Send'}</button>
+      </div>
+    </form>
+  </div>;
 }
 
 /** Cancellation requests never invent a terminal status; the provider's SSE owns it. */

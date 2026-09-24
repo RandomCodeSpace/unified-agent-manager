@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { LIVE, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus } from '../api';
+import { LIVE, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission } from '../api';
 import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
@@ -122,24 +122,27 @@ export function install(): void {
     else list.push({ id: itemId, kind, text, time: now(), ...(agentId ? { agent_id: agentId } : {}) });
     broadcast('delta', { session_id: t.id, item_id: itemId, kind, text, ...(agentId ? { agent_id: agentId } : {}) }, t.id);
   };
-  /** Streams `text` as deltas onto a new item, a word at a time, until the task is no longer busy. */
-  const stream = async (t: MockTask, text: string, kind: 'assistant' | 'reasoning', msPerWord: number, agentId?: string) => {
+  /** Streams `text` as deltas onto a new item, a word at a time, while `alive` holds (by default: the task is busy). */
+  const stream = async (t: MockTask, text: string, kind: 'assistant' | 'reasoning', msPerWord: number, agentId?: string, alive = () => busy(t)) => {
     const id = nextId(kind === 'reasoning' ? 'r' : 'm');
     for (const word of text.split(' ')) {
-      if (!busy(t)) return false;
+      if (!alive()) return false;
       delta(t, id, `${word} `, kind, agentId);
       await wait(msPerWord);
     }
     return true;
   };
+  /** Running may end any way; idle may go running (a follow-up) or completed (conversation closed). The rest are final. */
   const setSubagent = (t: MockTask, id: string, status: SubagentStatus, error?: string) => {
     const s = t.subagents.find((x) => x.id === id);
-    if (!s || s.status !== 'running') return;
-    const next: Subagent = { ...s, status, ended_at: now(), ...(error ? { error } : {}) };
+    if (!s || !(s.status === 'running' || (s.status === 'idle' && (status === 'running' || status === 'completed')))) return;
+    const { ended_at: _e, ...rest } = s;
+    const next: Subagent = status === 'running' ? { ...rest, status } : { ...s, status, ended_at: now(), ...(error ? { error } : {}) };
     t.subagents = t.subagents.map((x) => (x.id === id ? next : x));
     broadcast('subagent', { session_id: t.id, subagent: next }, t.id);
     const parent = t.items.find((i) => i.id === s.parent_tool_call_id);
-    if (parent?.tool) pushItem(t, { ...parent, tool: { ...parent.tool, status: status === 'completed' ? 'completed' : 'failed', output: status === 'completed' ? 'Finished. One file changed.' : error } });
+    const done = status === 'completed' || status === 'idle';
+    if (parent?.tool && s.status === 'running') pushItem(t, { ...parent, tool: { ...parent.tool, status: done ? 'completed' : 'failed', output: done ? 'Finished. One file changed.' : error } });
     touch(t, { subagents_running: t.subagents.filter((x) => x.status === 'running').length });
   };
   const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
@@ -177,7 +180,7 @@ export function install(): void {
     await wait(2000);
     if (!busy(t)) return;
     await stream(t, 'Cover images now carry `alt` text. Two templates changed:\n\n- `templates/post.html`\n- `templates/list.html`', 'assistant', 60, 'a1');
-    setSubagent(t, 'a1', 'completed');
+    setSubagent(t, 'a1', 'idle');
     await wait(2500);
     if (!busy(t)) return;
     pushItem(t, { id: nextId('a2-x'), kind: 'assistant', time: now(), agent_id: 'a2', text: '`--muted: #6b6560` measures 5.0:1 on white.' });
@@ -196,6 +199,16 @@ export function install(): void {
     if (!(await stream(t, ALIAS_ANSWER, 'assistant', 60))) return;
     touch(t, { state: 'completed', last_model: 'mai-code-1.1-flash' });
   }
+  /** A follow-up turn on one idle subagent: the reply streams into its transcript, then it is idle again. The task's own state never moves. */
+  async function followUp(t: MockTask, agentId: string) {
+    const alive = () => t.subagents.find((x) => x.id === agentId)?.status === 'running';
+    await wait(500);
+    const reply = 'Looked again with that in mind. The `alt` text now comes from the post\'s `cover_alt` front-matter field and falls back to the title, so no template needs an empty `alt`. One file changed: `templates/post.html`.';
+    if (!(await stream(t, reply, 'assistant', 60, agentId, alive))) return;
+    setSubagent(t, agentId, 'idle');
+  }
+  /** Outcome per request_id for subagent follow-ups; a repeat returns it without sending again. */
+  const followUps = new Map<string, Submission>();
   const started = new Set<string>();
 
   const hooks = {
@@ -365,7 +378,7 @@ export function install(): void {
           return json(202, summary(t));
         }
         case 'close':
-          for (const s of t.subagents) setSubagent(t, s.id, 'cancelled');
+          for (const s of t.subagents) setSubagent(t, s.id, s.status === 'idle' ? 'completed' : 'cancelled');
           touch(t, { state: 'closed', open: false, pending: 0 });
           return json(200, summary(t));
       }
@@ -412,6 +425,22 @@ export function install(): void {
       const s = t?.subagents.find((x) => x.id === decodeURIComponent(r![2]));
       if (!t || !s) return fail(404, 'subagent not found');
       return json(200, { seq, subagent: s, items: t.agentItems[s.id] ?? [] });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)\/prompt$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      const s = t?.subagents.find((x) => x.id === decodeURIComponent(r![2]));
+      if (!t || !s) return fail(404, 'subagent not found');
+      const requestId = String(body.request_id ?? '');
+      const recorded = followUps.get(requestId);
+      if (recorded) return json(202, recorded);
+      if (busy(t)) return fail(409, 'the task is running a turn; wait for it to finish');
+      if (s.status !== 'idle') return fail(409, `the subagent is ${s.status}; only an idle subagent takes a follow-up`);
+      const sub: Submission = { request_id: requestId, status: 'accepted', time: now() };
+      followUps.set(requestId, sub);
+      setSubagent(t, s.id, 'running');
+      pushItem(t, { id: nextId('u'), kind: 'user', text: String(body.text ?? ''), time: now(), agent_id: s.id });
+      void followUp(t, s.id);
+      return json(202, sub);
     }
     return fail(404, `mock: no route for ${method} ${path}`);
   }
