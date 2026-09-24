@@ -34,19 +34,19 @@ func TestDiscoverModels(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/ok/models":
-			fmt.Fprint(w, `{"object":"list","data":[{"id":"qwen3.5:397b"},{"id":"gpt-oss:20b"},{"id":"gpt-oss:20b"},{"id":"bad id"},{"id":""}]}`)
+			_, _ = fmt.Fprint(w, `{"object":"list","data":[{"id":"qwen3.5:397b"},{"id":"gpt-oss:20b"},{"id":"gpt-oss:20b"},{"id":"bad id"},{"id":""}]}`)
 		case "/denied/models":
 			http.Error(w, "SECRET-UPSTREAM-BODY "+discoverKey, http.StatusUnauthorized)
 		case "/html/models":
-			fmt.Fprint(w, "<html>hi</html>")
+			_, _ = fmt.Fprint(w, "<html>hi</html>")
 		case "/big/models":
-			fmt.Fprint(w, `{"data":[`+strings.Repeat(" ", maxDiscoverBytes)+`]}`)
+			_, _ = fmt.Fprint(w, `{"data":[`+strings.Repeat(" ", maxDiscoverBytes)+`]}`)
 		case "/many/models":
 			ids := make([]string, maxDiscoverIDs+3)
 			for i := range ids {
 				ids[i] = fmt.Sprintf(`{"id":"m%04d"}`, i)
 			}
-			fmt.Fprint(w, `{"data":[`+strings.Join(ids, ",")+`]}`)
+			_, _ = fmt.Fprint(w, `{"data":[`+strings.Join(ids, ",")+`]}`)
 		case "/slow/models":
 			select {
 			case <-release:
@@ -117,7 +117,7 @@ func TestDiscoverModels(t *testing.T) {
 func TestDiscoverModelsRoute(t *testing.T) {
 	t.Setenv("UAM_BYOM_DISCOVER", discoverKey)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"data":[{"id":"b"},{"id":"a"}]}`)
+		_, _ = fmt.Fprint(w, `{"data":[{"id":"b"},{"id":"a"}]}`)
 	}))
 	t.Cleanup(upstream.Close)
 	ts := newTestServer(t, ServerConfig{})
