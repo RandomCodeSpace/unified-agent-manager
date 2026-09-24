@@ -906,8 +906,11 @@ func TestWebSend(t *testing.T) {
 	if err := conversation.Steer(t.Context(), "hello"); !errors.Is(err, agentapi.ErrUnsupported) {
 		t.Fatalf("Steer = %v, want unsupported", err)
 	}
+	if err := conversation.PromptSubagent(t.Context(), "child", "hello"); !errors.Is(err, agentapi.ErrUnsupported) {
+		t.Fatalf("PromptSubagent = %v, want unsupported", err)
+	}
 	if len(h.fake.requestsFor(http.MethodPost, promptPath)) != before {
-		t.Fatal("busy Send or Steer posted a prompt")
+		t.Fatal("busy Send, Steer or PromptSubagent posted a prompt")
 	}
 
 	h.fake.mu.Lock()

@@ -311,14 +311,16 @@ func (m *Manager) expireSubagentLocked(s *webSession, agentID string) {
 	}
 }
 
-// upsertSubagentLocked records a subagent update. A terminal subagent never
-// changes again: providers may report the end more than once (Copilot sends
-// a second, cancelled completion when a client disconnects).
+// upsertSubagentLocked records a subagent update. A failed or cancelled
+// subagent never changes again, and a completed one only becomes idle when
+// the provider reports that it takes a follow-up: providers may report the
+// end more than once (Copilot sends a second, cancelled completion when a
+// client disconnects).
 func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent) {
 	if in.Status == "" {
 		in.Status = agentapi.SubagentRunning
 	}
-	if in.Status != agentapi.SubagentRunning && !in.Status.Terminal() {
+	if in.Status != agentapi.SubagentRunning && in.Status != agentapi.SubagentIdle && !in.Status.Terminal() {
 		return
 	}
 	in.Name = clampText(displaytext.Sanitize(in.Name), maxLabelText)
@@ -332,7 +334,7 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent) {
 		cur = &agentapi.Subagent{}
 		s.subagents = append(s.subagents, cur)
 		s.subIdx[in.ID] = cur
-	} else if cur.Status.Terminal() {
+	} else if cur.Status.Terminal() && (cur.Status != agentapi.SubagentCompleted || in.Status != agentapi.SubagentIdle) {
 		return
 	} else {
 		// An end event may omit what the start event said.
@@ -359,14 +361,20 @@ func (m *Manager) publishSubagentLocked(s *webSession, sa *agentapi.Subagent) {
 	})
 }
 
-// endSubagentsLocked marks every running subagent cancelled when its
-// conversation ends: nothing of it runs once the conversation is closed.
+// endSubagentsLocked marks every running subagent cancelled and every idle
+// one completed when its conversation ends: nothing of it runs once the
+// conversation is closed, and only a live provider says one takes follow-ups.
 func (m *Manager) endSubagentsLocked(s *webSession) {
 	for _, sa := range s.subagents {
-		if sa.Status == agentapi.SubagentRunning {
+		switch sa.Status {
+		case agentapi.SubagentRunning:
 			sa.Status, sa.EndedAt = agentapi.SubagentCancelled, m.now()
-			m.publishSubagentLocked(s, sa)
+		case agentapi.SubagentIdle:
+			sa.Status = agentapi.SubagentCompleted
+		default:
+			continue
 		}
+		m.publishSubagentLocked(s, sa)
 	}
 }
 

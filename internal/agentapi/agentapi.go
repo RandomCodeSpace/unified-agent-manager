@@ -158,6 +158,13 @@ type Conversation interface {
 	// CancelSubagent stops only the exact agent instance. Its final status
 	// arrives through EventSubagent; the parent and siblings stay running.
 	CancelSubagent(ctx context.Context, agentID string) error
+	// PromptSubagent sends text to the exact agent instance while it is
+	// SubagentIdle, and returns once the provider accepted or refused it. It
+	// is not a turn: the main agent does not see it. An accepted prompt moves
+	// the subagent back to SubagentRunning through EventSubagent. Ambiguous
+	// failures wrap ErrSubmissionUncertain and are never resent.
+	// ErrUnsupported means the provider cannot chat with a subagent.
+	PromptSubagent(ctx context.Context, agentID, text string) error
 	// Respond answers a pending interaction. It returns ErrInteractionGone
 	// when the provider no longer considers the interaction pending.
 	Respond(ctx context.Context, interactionID string, answer Answer) error
@@ -382,14 +389,19 @@ type Answer struct {
 type SubagentStatus string
 
 const (
-	SubagentRunning   SubagentStatus = "running"
+	SubagentRunning SubagentStatus = "running"
+	// SubagentIdle means the live provider reports the subagent finished and
+	// ready for a follow-up. It is not terminal.
+	SubagentIdle      SubagentStatus = "idle"
 	SubagentCompleted SubagentStatus = "completed"
 	SubagentFailed    SubagentStatus = "failed"
 	SubagentCancelled SubagentStatus = "cancelled"
 )
 
-// Terminal reports whether s is final. Once a subagent is terminal, later
-// updates for it are ignored: a provider may report the end more than once.
+// Terminal reports whether s is an end status. Failed and cancelled are final;
+// completed only becomes SubagentIdle when the live provider reports that the
+// subagent takes a follow-up. Other later updates are ignored: a provider may
+// report the end more than once.
 func (s SubagentStatus) Terminal() bool {
 	return s == SubagentCompleted || s == SubagentFailed || s == SubagentCancelled
 }

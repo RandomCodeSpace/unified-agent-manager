@@ -677,6 +677,7 @@ State marks are 8px glyphs at the left of rail/deck rows; chips carry the word.
 | failed | cross glyph `error` | "Failed" `chip` `error` text |
 | interrupted | pause glyph `warning` | "Interrupted" `chip` `warning` text |
 | closed | hollow dot `faint` | "Closed" `chip` `faint`-glyph, `muted` text |
+| idle (subagent) | reply arrow `muted` | "Idle" `chip` `muted`: finished, takes a follow-up |
 
 Only the attention chip has a fill. Every other chip is text plus glyph on the parent surface. Chips never appear inside prose.
 

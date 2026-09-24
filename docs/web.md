@@ -142,13 +142,18 @@ off, run `uam web stop`, then `uam web` without the flag.
   one compact row under the tool call that started it (name, status, and
   the duration once it ended) and a "Subagents" button in the header with
   the total and how many are running. The button opens a panel beside the
-  conversation that lists the subagents grouped by status (running, failed,
-  completed, cancelled) with their start time and duration; "Spawned by"
-  jumps to the tool call in the conversation. Opening a row, or "Open" on
+  conversation that lists the subagents grouped by status (running, idle,
+  failed, completed, cancelled) with their start time and duration; "Spawned
+  by" jumps to the tool call in the conversation. Opening a row, or "Open" on
   its row in the conversation, shows that subagent's own prompt, replies,
   and tool calls in the panel, live while it runs. Subagent output never
   appears in the Task's own conversation. Its model and effort are shown
   when Copilot reports them; they are not guessed from the parent Task.
+  A subagent is "Idle" when it has finished and Copilot still accepts a
+  follow-up for it. While the Task is between turns, the panel then offers a
+  composer that sends a message to that subagent only. The main agent does
+  not see that conversation, and a follow-up whose delivery is uncertain is
+  never resent.
 - **Approvals and questions**: when the provider asks for permission or asks a
   question, a card appears in the conversation and a "Needs you" mark on the
   Task in the project list and on the home screen. Nothing is approved

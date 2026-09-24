@@ -220,6 +220,8 @@ type Conversation struct {
 	cancelHook    func(ctx context.Context) error
 	subCancelHook func(ctx context.Context, agentID string) error
 	subCancels    []string
+	subPromptHook func(ctx context.Context, agentID, text string) error
+	subPrompts    []SubagentPrompt
 	cancelErr     error
 	setModelErr   error
 	diff          []agentapi.FileDiff
@@ -314,6 +316,27 @@ func (c *Conversation) SubagentCancels() []string {
 	return append([]string(nil), c.subCancels...)
 }
 
+// SubagentPrompt is one recorded PromptSubagent call.
+type SubagentPrompt struct {
+	AgentID string
+	Text    string
+}
+
+// SetPromptSubagentHook decides how PromptSubagent behaves, as SetSendHook
+// does for Send. The fake reports no subagent status on its own.
+func (c *Conversation) SetPromptSubagentHook(hook func(ctx context.Context, agentID, text string) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.subPromptHook = hook
+}
+
+// SubagentPrompts returns every PromptSubagent call, oldest first.
+func (c *Conversation) SubagentPrompts() []SubagentPrompt {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]SubagentPrompt(nil), c.subPrompts...)
+}
+
 // SetCancelError makes Cancel return err.
 func (c *Conversation) SetCancelError(err error) {
 	c.mu.Lock()
@@ -384,6 +407,21 @@ func (c *Conversation) CancelSubagent(ctx context.Context, agentID string) error
 	c.mu.Unlock()
 	if hook != nil {
 		return hook(ctx, agentID)
+	}
+	return nil
+}
+
+func (c *Conversation) PromptSubagent(ctx context.Context, agentID, text string) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return agentapi.ErrClosed
+	}
+	c.subPrompts = append(c.subPrompts, SubagentPrompt{AgentID: agentID, Text: text})
+	hook := c.subPromptHook
+	c.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, agentID, text)
 	}
 	return nil
 }

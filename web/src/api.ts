@@ -112,7 +112,8 @@ export interface Item {
   agent_id?: string;
 }
 
-export type SubagentStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+/** `idle` is not terminal: the subagent finished and accepts a follow-up (see promptSubagent). */
+export type SubagentStatus = 'running' | 'idle' | 'completed' | 'failed' | 'cancelled';
 
 export interface Subagent {
   id: string;
@@ -120,7 +121,7 @@ export interface Subagent {
   parent_tool_call_id?: string;
   name: string;
   description?: string;
-  /** Terminal statuses are final; close, runtime exit and service stop mark running ones cancelled. */
+  /** Failed and cancelled are final; completed turns idle only on the provider's report. Close, runtime exit and service stop mark running ones cancelled and idle ones completed. */
   status: SubagentStatus;
   error?: string;
   started_at?: string;
@@ -358,6 +359,9 @@ export const api = {
   queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
   cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),
   cancelSubagent: (id: string, agentId: string) => call<Subagent>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/cancel`, undefined, true),
+  /** Follow-up to an idle subagent; the main agent never sees it. A repeated request_id returns the recorded outcome without resending. */
+  promptSubagent: (id: string, agentId: string, text: string, request_id: string) =>
+    call<Submission>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/prompt`, { text, request_id }),
   deleteSession: (id: string) => call<void>('DELETE', `/api/sessions/${enc(id)}`),
   prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send') =>
     call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id, mode }),

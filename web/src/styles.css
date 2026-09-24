@@ -1548,6 +1548,16 @@ dialog::backdrop {
   padding-top: 4px;
 }
 
+/* Follow-up composer pinned under a subagent's transcript, in the same raised box as the task's. */
+.panel-foot {
+  flex: none;
+  padding: 0 16px 12px;
+}
+
+.panel-foot .composer-bar {
+  justify-content: flex-end;
+}
+
 /* Cards: raised, hairline, 10px radius. Attention lives in the header chip, not a rule. */
 
 .card {
@@ -2251,6 +2261,7 @@ dialog::backdrop {
 @media (max-width: 480px) {
   .composer .input, .composer-bar .btn, .subagent-stop .btn, .prompt-queue .btn { min-height: 44px; }
   .composer .generation-control { flex-basis: 100px; }
+  .panel-foot { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
 
   .composer-bar .spacer { display: none; }
   .composer-bar { gap: 4px; }
