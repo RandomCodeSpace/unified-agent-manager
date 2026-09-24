@@ -24,6 +24,8 @@ const (
 	sessionLabel   = "File changes the provider recorded for this conversation."
 
 	gitTimeout       = 10 * time.Second
+	branchTimeout    = 2 * time.Second
+	branchTTL        = 2 * time.Second
 	maxStatusBytes   = 4 << 20
 	maxDiffBytes     = 1 << 20
 	maxChangedFiles  = 1000
@@ -35,8 +37,15 @@ const (
 // hooks, and no external diff or textconv programs.
 var gitBase = []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"}
 
-// Changes lists changed files for a session in the requested scope.
+// Changes lists changed files for a session in the requested scope. It
+// also re-reads the branch of the session's Project.
 func (m *Manager) Changes(ctx context.Context, id, scope string) (Changes, error) {
+	if s, err := m.lookup(id); err == nil {
+		m.mu.Lock()
+		project := s.projectID
+		m.mu.Unlock()
+		m.refreshBranches(ctx, true, project)
+	}
 	switch scope {
 	case ScopeWorkspace:
 		s, err := m.lookup(id)
@@ -374,6 +383,74 @@ func countPatch(patch string) (additions, deletions int) {
 		}
 	}
 	return additions, deletions
+}
+
+// readBranch returns the branch checked out in the git work tree containing
+// dir, made safe to show. It is empty when dir is not in a work tree, HEAD is
+// detached, or git cannot tell within branchTimeout.
+func readBranch(ctx context.Context, dir string) string {
+	git, err := execpath.Resolve("git")
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, branchTimeout)
+	defer cancel()
+	out, code, _, err := runGit(ctx, git, dir, 4096, "symbolic-ref", "--quiet", "HEAD")
+	if err != nil || code != 0 {
+		return ""
+	}
+	branch, ok := strings.CutPrefix(strings.TrimSpace(string(out)), "refs/heads/")
+	if !ok {
+		return ""
+	}
+	return clipRunes(displaytext.Sanitize(branch), maxNameRunes)
+}
+
+// refreshBranches re-reads the branch of each Project in ids, or of every
+// Project when there are none, and publishes each Project whose branch
+// changed. Unless force, a branch read within branchTTL is kept. Git runs
+// outside mu.
+func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string) {
+	m.branchMu.Lock()
+	defer m.branchMu.Unlock()
+	m.mu.Lock()
+	if len(ids) == 0 {
+		for id := range m.projects {
+			ids = append(ids, id)
+		}
+	}
+	dirs := map[string]string{}
+	for _, id := range ids {
+		if p := m.projects[id]; p != nil && (force || time.Since(m.branchAt[id]) >= branchTTL) {
+			dirs[id] = p.Dir
+		}
+	}
+	m.mu.Unlock()
+	for id, dir := range dirs {
+		branch := readBranch(ctx, dir)
+		if ctx.Err() != nil {
+			return // the caller is gone; this says nothing about the branch
+		}
+		m.mu.Lock()
+		m.branchAt[id] = time.Now()
+		if p := m.projects[id]; p != nil && p.Branch != branch {
+			p.Branch = branch
+			m.publishProjectLocked(*p)
+		}
+		m.mu.Unlock()
+	}
+}
+
+// kickBranchLocked re-reads a Project's branch in the background.
+func (m *Manager) kickBranchLocked(projectID string) {
+	if m.closed {
+		return
+	}
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.refreshBranches(m.ctx, true, projectID)
+	}()
 }
 
 // runGit runs one read-only git command in dir with structured arguments

@@ -653,3 +653,20 @@ before. This replaces the New Task form.
 `Project` gains `defaults: {provider, model, effort, context_size, mode}`,
 omitted when the Project has none; `context_size` is `default` unless a tier is
 chosen. A change sends a `project` frame, as a rename does.
+
+## Project branch
+
+- Date: 2026-09-24 (decided in #175)
+
+`Project` gains `branch`: the branch checked out in the git work tree that
+holds `dir`, linked worktrees included. It is omitted when `dir` is not in a
+work tree, HEAD is detached, or git cannot tell within two seconds. UAM runs
+`git symbolic-ref --quiet HEAD` through the Changes view's git runner and
+cleans the name like other labels. The branch lives only in memory; it is
+never written to `sessions.json`.
+
+UAM reads it when the Project is added and re-reads it when Projects are
+listed (`GET /api/projects` and the `snapshot` frame, at most once per Project
+every two seconds), when a Task in the Project ends a turn, and when a Task's
+Changes load. Nothing polls. When the branch changes, the `project` frame
+carries the Project again.

@@ -76,6 +76,9 @@ type Manager struct {
 	// Project removal, each of which checks and then writes the store. It is
 	// taken before any session.op and never while holding mu.
 	projectMu sync.Mutex
+	// branchMu orders Project branch reads, so an older read never replaces
+	// a newer one. It is never taken while holding mu.
+	branchMu sync.Mutex
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo
@@ -89,6 +92,8 @@ type Manager struct {
 	subs     map[*Subscriber]struct{}
 	closed   bool
 	now      func() time.Time
+	// branchAt is when each Project's branch was last read.
+	branchAt map[string]time.Time
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -109,6 +114,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		creating:  map[string]chan struct{}{},
 		subs:      map[*Subscriber]struct{}{},
 		now:       time.Now,
+		branchAt:  map[string]time.Time{},
 	}
 	for _, p := range providers {
 		if p == nil {
@@ -728,6 +734,7 @@ func (m *Manager) projectsLocked() []Project {
 
 // Projects returns every Project, oldest first.
 func (m *Manager) Projects() []Project {
+	m.refreshBranches(m.ctx, false)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.projectsLocked()
@@ -759,6 +766,7 @@ func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project,
 	if err != nil {
 		return Project{}, fmt.Errorf("generate project id: %w", err)
 	}
+	branch := readBranch(m.ctx, canonical)
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -776,7 +784,7 @@ func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project,
 	if existing != "" {
 		return Project{}, projectExists(existing)
 	}
-	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Defaults: d}
+	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Defaults: d, Branch: branch}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		for _, other := range cfg.WebProjects {
 			if other.Dir == canonical {
@@ -797,6 +805,7 @@ func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project,
 	}
 	m.mu.Lock()
 	m.projects[id] = &p
+	m.branchAt[id] = time.Now()
 	m.publishProjectLocked(p)
 	m.mu.Unlock()
 	log.Info("web project added", "project", id)
@@ -937,6 +946,7 @@ func (m *Manager) RemoveProject(id string) error {
 		}
 	}
 	delete(m.projects, id)
+	delete(m.branchAt, id)
 	m.broadcastLocked("project_removed", "", func(seq uint64) any { return projectRemovedEvent{Seq: seq, ProjectID: id} })
 	m.mu.Unlock()
 	for _, conv := range convs {
@@ -1219,6 +1229,10 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		}
 		s.setBase(StateFailed, detail)
 		m.pauseQueueLocked(s)
+	}
+	if turn.State != agentapi.TurnWorking {
+		// The agent may have switched branches during the turn.
+		m.kickBranchLocked(s.projectID)
 	}
 }
 

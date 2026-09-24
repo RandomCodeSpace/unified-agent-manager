@@ -82,6 +82,10 @@ type Project struct {
 	CreatedAt time.Time `json:"created_at"`
 	// Defaults are omitted when the Project has none.
 	Defaults TaskDefaults `json:"defaults,omitzero"`
+	// Branch is the branch checked out in Dir's git work tree, read from git
+	// and never stored. It is empty when Dir is not in a work tree, HEAD is
+	// detached, or git cannot tell.
+	Branch string `json:"branch,omitempty"`
 }
 
 // TaskDefaults are the settings a Project's new Tasks start with. The
