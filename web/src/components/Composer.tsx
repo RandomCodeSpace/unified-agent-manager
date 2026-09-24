@@ -446,7 +446,7 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
   return (
     <form
       className={cn(
-        'relative flex flex-col rounded-md border border-hairline bg-raised shadow-[0_1px_2px_rgba(28,27,24,0.05)] transition-[border-color,box-shadow] duration-160 focus-within:border-hairline-strong focus-within:shadow-[0_2px_8px_rgba(28,27,24,0.08)]',
+        'relative flex flex-col rounded-md border border-hairline bg-raised shadow-raised transition-[border-color,box-shadow] duration-160 focus-within:border-hairline-strong focus-within:shadow-float',
         locked && 'bg-surface',
         dragging > 0 && 'border-accent',
       )}

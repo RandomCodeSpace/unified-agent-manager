@@ -41,7 +41,7 @@ export function SidePanel({ id, inline, label, children, className, defaultWidth
   const { panelRef, handleProps } = useResizable(id, defaultWidth);
   if (!inline) {
     return (
-      <aside role="dialog" aria-modal="true" aria-label={label} className={cn('fixed inset-y-0 right-0 z-40 flex w-full flex-col bg-canvas shadow-modal animate-slide-in', !narrow && 'w-[min(440px,100vw)] border-l border-hairline', className)}>
+      <aside role="dialog" aria-modal="true" aria-label={label} className={cn('fixed inset-y-0 right-0 z-40 flex w-full flex-col bg-canvas shadow-modal animate-slide-in', !narrow && 'w-[min(var(--spacing-panel),100vw)] border-l border-hairline', className)}>
         {children}
       </aside>
     );
@@ -101,7 +101,7 @@ export function SubagentPanel({
   if (view.view === 'agent' && current) {
     const setup = setupOf(meta, session.provider, current);
     return (
-      <SidePanel id="subagents" inline={inline} label={`Subagent ${current.name}`} defaultWidth={460}>
+      <SidePanel id="subagents" inline={inline} label={`Subagent ${current.name}`}>
         <PanelHeader>
           <Button ref={lead} size="icon-md" aria-label="Back to the subagent list" className="-ml-1 text-muted" onClick={() => onView({ view: 'list' })}>
             <ArrowLeft />
@@ -110,7 +110,7 @@ export function SubagentPanel({
             <span className="truncate text-title text-ink" title={current.name}>
               {current.name}
             </span>
-            {setup && <span className="truncate font-mono text-[11px] text-muted">{setup}</span>}
+            {setup && <span className="truncate font-mono text-keycap text-muted">{setup}</span>}
           </div>
           <AgentChip status={current.status} />
           <StopSubagent key={current.id} session={session} subagent={current} />
@@ -133,7 +133,7 @@ export function SubagentPanel({
 
   const running = session.subagents.filter((s) => s.status === 'running').length;
   return (
-    <SidePanel id="subagents" inline={inline} label="Subagents" defaultWidth={460}>
+    <SidePanel id="subagents" inline={inline} label="Subagents">
       <PanelHeader>
         {narrow && (
           <Button ref={lead} size="icon-md" aria-label="Back to the task" className="-ml-1 text-muted" onClick={onClose}>
@@ -226,7 +226,7 @@ function SubagentRow({
             </span>
             {s.description && <span className="line-clamp-2 text-caption text-muted">{s.description}</span>}
             <span className="flex flex-wrap items-center gap-x-2 text-caption text-muted">
-              {setup && <span className="font-mono text-[11px]">{setup}</span>}
+              {setup && <span className="font-mono text-keycap">{setup}</span>}
               {meta.length > 0 && <span className="tabular-nums">{meta.join(' · ')}</span>}
             </span>
             {stopping.error && <span className="text-caption text-error">{stopping.error}</span>}

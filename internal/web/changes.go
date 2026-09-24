@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -409,7 +410,8 @@ func readBranch(ctx context.Context, dir string) string {
 // refreshBranches re-reads the branch of each Project in ids, or of every
 // Project when there are none, and publishes each Project whose branch
 // changed. Unless force, a branch read within branchTTL is kept. Git runs
-// outside mu.
+// outside mu, for all Projects at once, so a listing waits at most about
+// branchTimeout however many Projects there are.
 func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string) {
 	m.branchMu.Lock()
 	defer m.branchMu.Unlock()
@@ -426,18 +428,35 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 		}
 	}
 	m.mu.Unlock()
+	branches := make(map[string]string, len(dirs))
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
 	for id, dir := range dirs {
-		branch := readBranch(ctx, dir)
-		if ctx.Err() != nil {
-			return // the caller is gone; this says nothing about the branch
+		wg.Go(func() {
+			branch := readBranch(ctx, dir)
+			mu.Lock()
+			branches[id] = branch
+			mu.Unlock()
+		})
+	}
+	wg.Wait()
+	if ctx.Err() != nil {
+		return // the caller is gone; this says nothing about the branches
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, branch := range branches {
+		p := m.projects[id]
+		if p == nil {
+			continue // removed while git ran
 		}
-		m.mu.Lock()
 		m.branchAt[id] = time.Now()
-		if p := m.projects[id]; p != nil && p.Branch != branch {
+		if p.Branch != branch {
 			p.Branch = branch
 			m.publishProjectLocked(*p)
 		}
-		m.mu.Unlock()
 	}
 }
 

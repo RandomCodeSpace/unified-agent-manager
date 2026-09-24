@@ -5,7 +5,7 @@ import { cn } from '../lib/cn';
 import { groupTasks, mostRecentProject, tasksOf } from '../lib/tasks';
 import type { Connection } from '../state';
 import { Dot, InlineName, STATE_LABELS, STATE_TONE, Sep, StateMark, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
-import { taskMenuItems, useTaskActions } from './taskActions';
+import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
@@ -51,7 +51,7 @@ export function Brand({ className, markOnly = false }: { className?: string; mar
         <rect x="11" y="5" width="4.5" height="6" rx="1.2" className="fill-raised" />
         <rect x="11" y="12.5" width="4.5" height="2.5" rx="1" className="fill-raised opacity-60" />
       </svg>
-      {!markOnly && <span className="text-title font-semibold tracking-[-0.01em] text-ink">uam</span>}
+      {!markOnly && <span className="text-title font-semibold text-ink">uam</span>}
     </span>
   );
 }
@@ -139,48 +139,53 @@ function TaskRow({ session: s, selected }: { session: SessionSummary; selected: 
   const items = taskMenuItems(s, a, 'row');
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
   const meta = rowMeta(s, unread);
+  // One class string for the button and for the plain grid that replaces it while renaming, so the swap never shifts layout.
+  const rowClass = cn(
+    'grid h-8 w-full grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-2 pl-2 text-left text-ui transition-[background-color,color,box-shadow] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11 pointer-coarse:pr-10',
+    selected ? 'bg-raised text-ink shadow-raised' : 'hover:bg-canvas',
+    menuOpen && !selected && 'bg-canvas',
+    readOnly(s) && !selected && 'text-muted',
+    strong ? 'font-medium text-ink' : 'text-body',
+  );
 
   const row = (
     <div className={cn('group relative', menuOpen && 'is-open')} data-task-row={s.id}>
-      <button
-        type="button"
-        data-nav=""
-        aria-current={selected ? 'true' : undefined}
-        className={cn(
-          'grid h-8 w-full grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-2 pl-2 text-left text-ui transition-[background-color,color,box-shadow] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11 pointer-coarse:pr-10',
-          selected ? 'bg-raised text-ink shadow-[0_1px_2px_rgba(28,27,24,0.06)]' : 'hover:bg-canvas',
-          menuOpen && !selected && 'bg-canvas',
-          readOnly(s) && !selected && 'text-muted',
-          strong ? 'font-medium text-ink' : 'text-body',
-        )}
-        onClick={() => a.select(s.id)}
-        onDoubleClick={() => s.stage !== 'archived' && a.startRename(s.id, 'row')}
-        onKeyDown={(e) => {
-          if (e.key === 'F2' && s.stage !== 'archived') {
-            e.preventDefault();
-            a.startRename(s.id, 'row');
-          }
-        }}
-      >
-        <StateMark state={s.state} />
-        <Sep />
-        {renaming ? (
+      {renaming ? (
+        // Not a button while the input is inside: interactive content cannot nest in one.
+        <div className={rowClass}>
+          <StateMark state={s.state} />
+          <Sep />
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="col-span-2 h-6" label="Task name" />
-        ) : (
-          <>
-            <TaskTitle session={s} className="truncate" />
-            <Sep />
-            <span
-              className={cn(
-                'text-caption tabular-nums whitespace-nowrap transition-opacity duration-100 group-hover:opacity-0 group-focus-within:opacity-0 group-[.is-open]:opacity-0 pointer-coarse:group-hover:opacity-100 pointer-coarse:group-focus-within:opacity-100',
-                meta.tone,
-              )}
-            >
-              {meta.text}
-            </span>
-          </>
-        )}
-      </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          data-nav=""
+          aria-current={selected ? 'true' : undefined}
+          className={rowClass}
+          onClick={() => a.select(s.id)}
+          onDoubleClick={() => canRename(s, a) && a.startRename(s.id, 'row')}
+          onKeyDown={(e) => {
+            if (e.key === 'F2' && canRename(s, a)) {
+              e.preventDefault();
+              a.startRename(s.id, 'row');
+            }
+          }}
+        >
+          <StateMark state={s.state} />
+          <Sep />
+          <TaskTitle session={s} className="truncate" />
+          <Sep />
+          <span
+            className={cn(
+              'text-caption tabular-nums whitespace-nowrap transition-opacity duration-100 group-hover:opacity-0 group-focus-within:opacity-0 group-[.is-open]:opacity-0 pointer-coarse:group-hover:opacity-100 pointer-coarse:group-focus-within:opacity-100',
+              meta.tone,
+            )}
+          >
+            {meta.text}
+          </span>
+        </button>
+      )}
       {!renaming && (
         <Menu.Root open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
           <Menu.Trigger
@@ -310,7 +315,7 @@ function ProjectGroup({
                 {p.branch && (
                   <span className="flex min-w-0 items-center gap-1 text-caption text-muted" title={p.branch}>
                     <GitBranch aria-hidden="true" className="size-3 shrink-0 text-faint" />
-                    <span className="truncate font-mono text-[11px]">{p.branch}</span>
+                    <span className="truncate font-mono text-keycap">{p.branch}</span>
                   </span>
                 )}
               </span>
@@ -474,7 +479,7 @@ export function Sidebar({
         </p>
       )}
       <footer className="flex h-9 shrink-0 items-center gap-2 px-3 text-caption text-faint">
-        {version && <span className="truncate font-mono text-[11px]">{version}</span>}
+        {version && <span className="truncate font-mono text-keycap">{version}</span>}
         <span className="flex-1" />
         {authRequired && (
           <Button size="sm" className="-mr-2 text-muted" onClick={onLogout}>

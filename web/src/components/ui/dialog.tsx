@@ -16,7 +16,7 @@ const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity duratio
 const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4 max-sm:items-end max-sm:p-0';
 
 const popupClass =
-  'relative w-full max-w-[440px] rounded-md bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,transform] duration-240 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
+  'relative w-full max-w-sheet rounded-md bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,transform] duration-240 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
 
 export interface DialogProps {
   open: boolean;

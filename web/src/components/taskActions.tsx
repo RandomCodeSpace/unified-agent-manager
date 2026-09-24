@@ -57,6 +57,11 @@ export function stageBlocked(s: SessionSummary): boolean {
   return LIVE.includes(s.state) || needsYou(s) || (s.queued ?? 0) > 0;
 }
 
+/** True when a rename may start: not archived and no lifecycle request in flight. Every entry point (menu, double-click, F2, the header pencil) asks this. */
+export function canRename(s: SessionSummary, a: TaskActions): boolean {
+  return s.stage !== 'archived' && a.busy !== s.id;
+}
+
 /**
  * The same items everywhere (T3 Code): Rename, Settle or Reopen, Archive, Delete; Close
  * for an open conversation. Delete appears only for archived Tasks. Rules unchanged:
@@ -67,7 +72,7 @@ export function taskMenuItems(s: SessionSummary, a: TaskActions, place: Renaming
   const blocked = stageBlocked(s);
   const busy = a.busy === s.id;
   const items: ActionItem[] = [
-    { key: 'rename', label: 'Rename', icon: <Pencil />, disabled: busy || stage === 'archived', takesFocus: true, onSelect: () => a.startRename(s.id, place) },
+    { key: 'rename', label: 'Rename', icon: <Pencil />, disabled: !canRename(s, a), takesFocus: true, onSelect: () => a.startRename(s.id, place) },
   ];
   if (stage === 'active' && s.open) items.push({ key: 'close', label: 'Close conversation', icon: <PowerOff />, disabled: busy, onSelect: () => a.close(s.id) });
   if (stage === 'active') items.push({ key: 'settle', label: 'Settle', icon: <Check />, disabled: busy || blocked, reason: blocked ? STAGE_REASON : undefined, onSelect: () => a.settle(s.id), separator: true });
