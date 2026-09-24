@@ -127,6 +127,8 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
 	mux.HandleFunc("PATCH /api/projects/{id}", s.handleUpdateProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
+	mux.HandleFunc("GET /api/fs/dirs", s.handleListDirs)
+	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
 	mux.HandleFunc("GET /api/sessions", s.handleList)
 	mux.HandleFunc("POST /api/sessions", s.handleCreate)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleDetail)
@@ -428,6 +430,31 @@ func (s *Server) handleRemoveProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListDirs(w http.ResponseWriter, r *http.Request) {
+	list, err := listDirs(r.URL.Query().Get("path"), maxDirEntries)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleMakeDir(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Parent string `json:"parent"`
+		Name   string `json:"name"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	p, err := makeDir(body.Parent, body.Name)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"path": p})
 }
 
 func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {

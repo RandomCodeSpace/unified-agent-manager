@@ -910,3 +910,55 @@ No request carries base64 in JSON.
 
 `QueuedPrompt` gains `attachments: [{"id", "name", "mime", "size"}]`, omitted
 when empty.
+
+## Browsing folders for a Project
+
+- Date: 2026-09-24 (decided in #190)
+
+The Add project dialog keeps its path field and gains a folder picker that
+browses the host's directories and creates one. The server lists and creates;
+the Project is still added through `POST /api/projects`, which resolves
+symbolic links as before.
+
+- **Paths.** A path must be absolute and in clean form (`filepath.Clean(p) ==
+  p`), valid UTF-8 and without NUL; anything else is 400, before the file
+  system is asked. A missing path is 404 (also when a component is a file),
+  permission denied is 403 (`fs.ErrPermission`), and a path that is not a
+  directory is 400. An empty `path` lists the service user's home.
+- **Listing.** `os.ReadDir` reads the directory. Only directories are listed,
+  and symbolic links that `os.Stat` resolves to a directory, marked `link`;
+  files, other links and entries whose names are not valid UTF-8 are left out.
+  Nothing inside an entry is read except whether it holds `.git`, a directory
+  or, in a linked worktree, a file (`git`). `hidden` means the name starts
+  with `.`; hidden entries are always listed and the browser filters them.
+  Entries are sorted by name without regard to case, then by exact name, and
+  capped at 1,000 with `truncated: true`. `name` is cleaned for display like
+  other labels; `path` is exact. `parent` is `filepath.Dir(path)`, omitted at
+  `/`. Paths are not resolved, so a link's entries sit under the link's path.
+- **Creating.** `name` must be one path element: not empty, `.` or `..`, no
+  `/`, NUL or other control character, no leading or trailing whitespace, at
+  most 255 bytes, valid UTF-8. `parent` must be an existing directory under
+  the path rules above. UAM calls `os.Mkdir(filepath.Join(parent, name),
+  0755)`, never `MkdirAll`, so the umask applies and nothing else is created.
+  An existing file, folder or link with that name is 409.
+- **Logging.** A created folder is logged at info level with its path. A
+  listing is logged at debug level only, so the default log does not record
+  what was browsed.
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `GET /api/fs/dirs?path=` | – | `{"path", "parent"?, "entries": [{"name", "path", "git", "hidden", "link"}], "truncated"}`; 400 relative, unclean or not a directory; 403 permission denied; 404 missing |
+| `POST /api/fs/dirs` | `{"parent", "name"}` | 201 `{"path"}`; 400 invalid name or parent, or parent not a directory; 403 permission denied; 404 missing parent; 409 the name exists |
+
+Both routes need sign-in and pass the `Host` check; the POST also passes the
+cross-origin and JSON checks.
+
+### Security
+
+The routes show the service user's directory tree and create folders in it,
+as the service user. That is no more than a signed-in browser can already do
+through a Task. With `--no-auth` on an address others can reach, including
+behind a public reverse proxy, anyone who can reach the service can browse
+the tree and create folders, the same exposure as the rest of the service.
