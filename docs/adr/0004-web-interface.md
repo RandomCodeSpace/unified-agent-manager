@@ -24,6 +24,7 @@ structured APIs:
 
 Only Copilot is registered for now. Web features are built against Copilot
 first, and a provider is offered only when it supports them the same way.
+Per-Task context size is the sole capability-gated exception to this rule.
 The OpenCode integration stays in the code base, unregistered.
 
 ### Ownership
@@ -151,8 +152,8 @@ a subscriber.
 - Date: 2026-09-24 (decided in issues #140 and #142)
 
 This section extends the contract above and replaces it where they differ.
-Only Copilot is registered. The provider contract names no provider-specific
-concept, so another provider can be added the same way later.
+Only Copilot is registered. Providers share the contracts below, except for
+the explicitly advertised context-size capability.
 
 ### Projects and Tasks
 
@@ -168,6 +169,9 @@ sessions (the routes keep the `sessions` name) whose `web.project_id` names it.
   `web.project_id`, `web.model` (empty means the provider default) and
   `web.title` (the provider's title, sanitized and bounded). `name` may be
   empty; browsers show `name || title || "New task"`.
+- `web.effort` stores the chosen effort; empty means Default.
+  `web.context_size` stores the chosen tier; absent or empty means `default`.
+  Context usage is live state and is never written to this record.
 - On start, each web record without `web.project_id` is assigned to the
   Project for its `workdir`, which is created (named after the directory)
   when missing, in one store update. Only such records are touched, so the
@@ -181,35 +185,86 @@ sessions (the routes keep the `sessions` name) whose `web.project_id` names it.
 
 | Addition | Meaning |
 |---|---|
-| `Provider.Models` → `[]Model{ID, Name}` | The selectable models. Empty or `ErrUnsupported` means the provider default only. A provider that lists models must support `SetModel`, so a model can only be chosen where it can also be switched. |
-| `OpenRequest.Model` | Used only when creating a conversation, never on reopen. |
-| `Conversation.SetModel` | Switches the model from the next turn on. |
+| `Provider.Models` → `[]Model{ID, Name, Efforts, ContextSizes}` | The selectable models, their effort levels, and available context tiers with token budgets. Empty or `ErrUnsupported` means the provider default only. A provider that lists models must support `SetModel`. |
+| `OpenRequest.Model`, `Effort`, `ContextSize` | Used only when creating a conversation, never as resume overrides. |
+| `Conversation.SetModel(ctx context.Context, model, effort, contextSize string) error` | Applies the complete, validated selection from the next turn on. The caller never changes it during a turn. |
 | `Item.AgentID`, `Delta.AgentID`, `Interaction.AgentID` | Empty for the main agent, otherwise the provider's subagent instance ID. |
 | `Turn.Model` | The model the provider reported for the turn. Not persisted. |
 | `EventTitle` (`Event.Title`) | The provider-generated conversation title. |
-| `EventSubagent` (`Event.Subagent`) | Upserts `Subagent{ID, ParentToolCallID, Name, Description, Status, Error, StartedAt, EndedAt}`. Status is `running`, `completed`, `failed` or `cancelled`; once terminal, later updates are ignored. |
+| `EventSubagent` (`Event.Subagent`) | Upserts `Subagent{ID, ParentToolCallID, Name, Description, Model, Effort, Status, Error, StartedAt, EndedAt}`. Model and effort are optional provider reports. Status is `running`, `completed`, `failed` or `cancelled`; once terminal, later updates are ignored. |
+| `EventContext` (`Event.Context`) | Reports main-agent `Context{Used, Limit}` in tokens. Kept in memory only. |
 | `History` → `{Items, Subagents}` | Subagent items carry `AgentID`; subagent records are rebuilt from recorded events. |
 
 Copilot mapping: `AgentID` is the event envelope's `agentId`, so a subagent's
 prompt, replies and tool calls never enter the main transcript, live or in
-history. `subagent.started/completed/failed` map to `EventSubagent`, with
+history. `subagent.started/configured/completed/failed` map to `EventSubagent`, with
 `ParentToolCallID` from `toolCallId`; the second, cancelled completion Copilot
-sends on disconnect is ignored. `session.title_changed` maps to `EventTitle`,
+sends on disconnect is ignored. Started events can report the model;
+configured events report the resolved model and effort. UAM does not infer
+either from the parent Task. `session.title_changed` maps to `EventTitle`,
 the last main-agent `assistant.usage.model` of a turn to `Turn.Model`,
 `models.list` entries with no policy or an `enabled` policy to `Models`,
-`SessionConfig.Model` to the model at creation and `Session.SetModel` to
-`SetModel`.
+and `SessionConfig` to the selection at creation. Switching uses the SDK's
+generated `session.model.switchTo` RPC so its result can be checked.
 
 ### Models
 
 The catalog is loaded when the service starts and reloaded by `GET /api/meta`
 once it is older than five minutes, because entitlements change. A failed
 reload keeps the previous catalog. A model outside the catalog is refused
-with 400. A model change is refused with 409 while a turn is running; with
-the conversation open, the stored model changes only once the provider
-accepted the switch. With the conversation closed, the model is stored and
-applied by the next open before anything is sent; a conversation that cannot
-take it is not used with another model.
+with 400.
+
+### Effort and context
+
+Effort levels come from the selected model's catalog entry, in provider
+order. An empty `efforts` list means there is no effort control. A nonempty
+effort requires an explicit model other than `auto` and must match a listed
+level. Default is stored as an empty string and selected with
+`{"effort": ""}`; it does not promise a particular runtime effort.
+
+Context sizes are `{id, tokens}` entries. Copilot advertises `default` and,
+when available, `long_context`, using the corresponding billing prompt
+budgets. These are not the model's total context window. No known budget
+means no size option; `auto` has none. The `context_size` capability enables
+per-Task selection and is the only provider-parity exception. A provider
+without it accepts only Default. The browser warns that long context may
+cost more; the API does not expose prices. Creation defaults to `default`;
+an explicit empty `context_size` also selects `default`.
+
+Model, effort and context size are validated together under the Task's
+operation lock. On PATCH, an omitted field keeps its current value. A model
+change preserves omitted effort and context size only if the new model
+supports them; otherwise they reset to Default. Explicit incompatible
+choices return 400 without contacting the provider. Creation may leave the
+model empty, but an explicit PATCH `{"model": ""}` is 400. Actual changes
+during a turn return 409. Settled and archived Tasks also refuse these changes.
+
+With an open conversation, UAM records the selection only after the provider
+confirms success. Closed conversations keep the selected values for the
+next open, which reapplies all three before sending a prompt. Resume itself
+does not override the provider's settings. If reapplication fails, the
+prompt is not sent.
+
+Copilot always receives the selected effort and context tier on a switch.
+Default effort requires a separate experimental
+`session.model.setReasoningEffort("")` call because `switchTo` rejects an
+empty effort and omitting it can preserve the previous one. This reset is
+not atomic with the switch. A cancelled switch or one requiring compaction
+consent returns 502 and leaves the recorded selection unchanged. UAM runs
+the provider's compaction preflight without supplying consent. Deferred,
+unknown, inconsistent or partially applied results also return 502, mark
+the Task failed, and close the conversation so another prompt cannot use
+unconfirmed settings. UAM does not attempt a rollback; the next explicit
+open must successfully reapply the stored selection.
+
+The optional summary field `context: {used, limit}` contains the latest
+main-agent usage report. For Copilot, `limit` is the active prompt budget.
+UAM preserves the reported counts, including usage above the limit. The
+field is absent before a valid live report and after restart, reopening or
+a selection change until another report arrives. It is not reconstructed
+from history. Updates use the existing `session` event. Compaction success,
+compaction failure and truncation produce transcript notices, including on
+history replay; the meter changes only when a fresh usage report arrives.
 
 ### HTTP additions and changes
 
@@ -219,8 +274,8 @@ take it is not used with another model.
 | `POST /api/projects` | `{"dir", "name"?}` | 201 `Project`; 400 not an absolute, existing directory; 409 `{"error", "project_id"}` when the directory has a Project |
 | `PATCH /api/projects/{id}` | `{"name"}` | `Project` (empty name resets to the directory's base name); 404 |
 | `DELETE /api/projects/{id}` | – | 204; 404; 409 while any of its Tasks is busy |
-| `POST /api/sessions` | `{"project_id", "provider", "model"?, "name"?, "prompt"?, "request_id"?}` | 201 `SessionSummary`; 400 unknown `project_id` or model outside the catalog; 409 when the directory no longer exists. `workdir` is no longer accepted. |
-| `PATCH /api/sessions/{id}` | `{"name"?, "model"?}` | `SessionSummary`; empty `name` shows the title again; 400 nothing to change or model outside the catalog; 409 model change while a turn runs; 502 provider refused the switch |
+| `POST /api/sessions` | `{"project_id", "provider", "model"?, "effort"?, "context_size"?, "name"?, "prompt"?, "request_id"?}` | 201 `SessionSummary`; 400 unknown project or invalid selection; 409 when the directory no longer exists. `workdir` is no longer accepted. |
+| `PATCH /api/sessions/{id}` | `{"name"?, "model"?, "effort"?, "context_size"?}` | `SessionSummary`; empty `name` shows the title again; 400 nothing to change or invalid selection; 409 selection change while a turn runs; 502 provider refused or did not confirm the selection |
 | `DELETE /api/sessions/{id}` | – | 204; 404; 409 while busy |
 | `GET /api/sessions/{id}/subagents/{agent_id}` | – | `{"subagent": Subagent, "items": [Item]}`; 404 |
 
@@ -229,16 +284,17 @@ A `DELETE` without a body needs no `Content-Type`; it still passes the
 
 Shape changes:
 
-- `ProviderInfo` gains `models: [{id, name}]`.
+- `ProviderInfo` gains `models: [{id, name, efforts: [string], context_sizes: [{id, tokens}]}]` and `capabilities.context_size`.
 - `Project`: `id`, `name`, `dir`, `created_at`.
 - `SessionSummary` gains `project_id`, `model`, `title`, `last_model` (from the
   latest turn that reported one; live only) and `subagents_running`. `name`
-  may be empty.
+  may be empty. It also gains `effort`, `context_size` (always `default` or
+  the selected tier), and optional `context: {used, limit}`.
 - `SessionDetail.items` holds only the main agent's items; it gains
   `subagents: [Subagent]`.
 - `Item` and `Interaction` gain `agent_id` (omitted for the main agent).
 - `Subagent`: `id`, `parent_tool_call_id`, `name`, `description`, `status`,
-  `error`, `started_at`, `ended_at` (empty fields omitted).
+  `model`, `effort`, `error`, `started_at`, `ended_at` (empty fields omitted).
 
 ### Event stream additions
 
@@ -420,7 +476,7 @@ that behaves the same.
 | Method and path | Body | Result |
 |---|---|---|
 | `POST /api/sessions` | gains `"mode"?` | `safe` when absent; 400 for anything but `safe` or `yolo` |
-| `PATCH /api/sessions/{id}` | gains `"mode"?`, alone or with `name` and `model` | `SessionSummary`; 400 for an invalid mode, checked before anything changes |
+| `PATCH /api/sessions/{id}` | gains `"mode"?`, alone or with the other Task settings | `SessionSummary`; 400 for an invalid mode, checked before anything changes |
 
 `SessionSummary` gains `mode`. A mode change moves `updated_at`, is written to
 `sessions.json`, and sends a `session` frame. `Interaction.options[]` gains
@@ -449,9 +505,9 @@ This replaces the delete and remove rules in the Projects section above.
   without a stage, and one with a stage this version does not know, loads as
   active, so nothing migrates.
 - **Read-only.** A settled or archived Task refuses with 409 every prompt
-  mode, the queue routes, and model and mode changes. The Task can be renamed
-  while settled, but not once archived. Viewing it never opens its
-  conversation. Settling needs no pending interaction and closes the
+  mode, the queue routes, and model, effort, context-size and mode changes.
+  The Task can be renamed while settled, but not once archived. Viewing it
+  never opens its conversation. Settling needs no pending interaction and closes the
   conversation, so a settled Task has nothing to answer.
 - **Pending.** Besides the requests that make a Task wait for the user, a
   yolo approval still on its way to the provider counts as pending. Settling
@@ -476,7 +532,7 @@ The same is true of a closed Task today.
 | `DELETE /api/sessions/{id}` | – | 204; 404; 409 unless archived |
 | `DELETE /api/projects/{id}` | – | 204; 404; 409 unless every Task in it is archived |
 | `POST /api/sessions/{id}/prompt`, the queue routes | unchanged | 409 while settled or archived |
-| `PATCH /api/sessions/{id}` | unchanged | 409 for `model` or `mode` while settled or archived, and for `name` while archived |
+| `PATCH /api/sessions/{id}` | unchanged | 409 for `model`, `effort`, `context_size` or `mode` while settled or archived, and for `name` while archived |
 
 `SessionSummary` gains `stage` (omitted while active), `settled_at` and
 `archived_at` (omitted while unset). A stage change moves `updated_at`, is

@@ -98,10 +98,10 @@ off, run `uam web stop`, then `uam web` without the flag.
   Project changes only its name in UAM. Web sessions from before Projects
   existed are placed in a Project for their directory, named after it, when
   the service starts.
-- **Tasks**: start a Task (a web session) in a Project. Choose the provider (only Copilot for
-  now), optionally a model, a name, and a first prompt. A provider that is not
-  installed or not compatible is shown as unavailable with the reason. The
-  Task runs in the Project's directory.
+- **Tasks**: start a Task (a web session) in a Project. Choose the provider
+  (only Copilot for now), optionally a model, effort, context size, a name,
+  and a first prompt. A provider that is not installed or not compatible is
+  shown as unavailable with the reason. The Task runs in the Project's directory.
 - **Names and titles**: the name is optional. Without one, the Task shows the
   title the provider gives the conversation (Copilot uses the first prompt),
   or "New task" until there is one. Clearing a name shows the title again.
@@ -111,6 +111,24 @@ off, run `uam web stop`, then `uam web` without the flag.
   between turns, not while a turn runs; the new model applies from the next
   turn. The list is refreshed at most every five minutes, so a changed
   subscription shows up without restarting the service.
+- **Effort**: choose Default or one of the selected model's reported levels.
+  Default leaves the choice to Copilot; it does not mean a known level such
+  as medium. Effort requires an explicit model with listed levels, so it is
+  unavailable for `auto` or a model without them. Change it between turns.
+  Switching models keeps a supported effort and otherwise resets it to
+  Default.
+- **Context size**: choose a size offered by the model, where available.
+  The sizes are Copilot's prompt budgets. Long context may cost more. A
+  change applies between turns; switching to a model without the selected
+  size resets it to Default. Per-Task context size is the sole exception to
+  the shared provider feature rules and requires the provider's capability.
+  Copilot is still the only registered provider.
+- **Context meter**: the Task header shows used tokens and the active prompt
+  budget once Copilot reports them. Missing usage stays hidden, not zero.
+  The meter is live only: reopening a conversation, restarting the service
+  or changing its selection clears it until a fresh report. Compaction or
+  truncation appears as a notice in the conversation; the next usage report
+  updates the meter.
 - **Conversation**: your messages sit on the right, the agent's on the left,
   both rendered as markdown (never as HTML) while they stream. The agent's
   reasoning, when the provider reports it, is a collapsed "Thinking…" row
@@ -128,7 +146,8 @@ off, run `uam web stop`, then `uam web` without the flag.
   jumps to the tool call in the conversation. Opening a row, or "Open" on
   its row in the conversation, shows that subagent's own prompt, replies,
   and tool calls in the panel, live while it runs. Subagent output never
-  appears in the Task's own conversation.
+  appears in the Task's own conversation. Its model and effort are shown
+  when Copilot reports them; they are not guessed from the parent Task.
 - **Approvals and questions**: when the provider asks for permission or asks a
   question, a card appears in the conversation and a "Needs you" mark on the
   Task in the project list and on the home screen. Nothing is approved
@@ -190,10 +209,10 @@ off, run `uam web stop`, then `uam web` without the flag.
   | Delete Task | an archived Task | – | The Task is removed from UAM |
   | Remove Project | any Project | every Task in it archived, or no Tasks | The Project and its archived Tasks are removed from UAM |
 
-  A settled or archived Task takes no messages, queue actions, model or mode
-  changes. You can still rename a settled Task. Stop a running turn, answer
-  what waits for you, and send or clear the queue before you settle or
-  archive. After the service restarts, a settled or archived Task shows no
+  A settled or archived Task takes no messages, queue actions, model, effort,
+  context-size or mode changes. You can still rename a settled Task. Stop a
+  running turn, answer what waits for you, and send or clear the queue before
+  you settle or archive. After the service restarts, a settled or archived Task shows no
   conversation, the same as a closed one.
 - **Changes**: the Task's meta line shows how many files differ from `HEAD`
   in the project directory and opens them as a sheet with the diff. That
@@ -238,7 +257,9 @@ This ends running turns, stops the provider processes the service started,
 and marks those sessions interrupted. Queued messages are dropped without
 being sent; queues are kept in memory only. Session records and the exact
 provider conversation IDs are kept. After `uam web` starts again, sending a prompt to a
-session reopens the same provider conversation.
+session reopens the same provider conversation. The Task's selected model,
+effort and context size are restored before the prompt is sent. If Copilot
+cannot apply them, UAM reports the failure without sending the prompt.
 
 ## Same-host HTTPS reverse proxy
 
@@ -291,6 +312,15 @@ private and rotate it if it leaks. With `--no-auth` it is not protected at all
   last reply of a turn is answered right after that reply, in the same turn,
   and shows as an ordinary message without the steer mark. One that arrives
   just after the turn ended starts a new turn.
+- **Selection changes (Copilot).** UAM does not force compaction to make a
+  smaller context size fit. If Copilot requires consent or cancels a switch,
+  the change fails and the Task keeps its recorded selection. Returning
+  effort to Default uses an experimental Copilot SDK operation, separate
+  from the model switch. If that reset fails after the switch, or Copilot
+  cannot confirm which settings applied, UAM marks the Task failed and closes
+  the conversation. The provider may have partly changed; UAM does not claim
+  the selection succeeded or try to roll it back. The next explicit send
+  must first restore the recorded settings successfully.
 - **Copilot session diffs.** Copilot does not report per-conversation file
   changes; use the Workspace view.
 - **Opening a web conversation elsewhere at the same time.** Do not
