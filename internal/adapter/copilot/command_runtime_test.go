@@ -256,3 +256,19 @@ func TestWebLeavingAutopilotRestoresAssistantIdleCompletion(t *testing.T) {
 		t.Fatalf("interactive idle=%+v", last)
 	}
 }
+
+func TestWebAutopilotContinuationItemRetainsStructuredDelivery(t *testing.T) {
+	h := openWeb(t)
+	message := userMessage("continuation", rpc.UserMessageDeliveryIdle, "continue")
+	message.IsAutopilotContinuation = copilot.Bool(true)
+	event := ev("auto-user", message)
+	h.fs.onEvent(event)
+	if item := h.sink.last().Item; item == nil || item.Delivery != agentapi.DeliveryAutopilot {
+		t.Fatalf("live continuation=%+v", item)
+	}
+	h.fs.events = []copilot.SessionEvent{event}
+	recorded, err := h.conv.History(context.Background())
+	if err != nil || len(recorded.Items) != 1 || recorded.Items[0].Delivery != agentapi.DeliveryAutopilot {
+		t.Fatalf("recorded continuation=%+v err=%v", recorded.Items, err)
+	}
+}

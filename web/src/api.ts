@@ -295,7 +295,7 @@ export interface ToolImage {
 export interface Item {
   id: string;
   kind: ItemKind;
-  delivery?: 'steer';
+  delivery?: 'steer' | 'autopilot';
   text?: string;
   tool?: ToolCall;
   time: string;
@@ -414,7 +414,16 @@ export interface PreviousSession {
   in_use: boolean;
 }
 
+export interface TurnTiming {
+  id: string;
+  user_item_id?: string;
+  started_at: string;
+  ended_at?: string;
+  state: 'working' | 'completed' | 'cancelled' | 'failed' | 'unknown';
+}
+
 export interface SessionDetail extends SessionSummary {
+  turn_timings?: TurnTiming[];
   seq?: number;
   history?: 'loaded' | 'loading' | 'unavailable';
   history_reason?: string;
@@ -490,6 +499,7 @@ export type UpdateData =
   | { name: 'interaction'; seq: number; session_id: string; interaction: Interaction }
   | { name: 'submission'; seq: number; session_id: string; submission: Submission }
   | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent }
+  | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
   | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks };
 
 export const UPDATE_EVENTS = [
@@ -507,6 +517,7 @@ export const UPDATE_EVENTS = [
   'queue',
   'subagent',
   'background_tasks',
+  'turn_timing',
 ] as const;
 
 export class ApiError extends Error {

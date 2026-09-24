@@ -244,6 +244,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
             <Transcript
               sessionId={session.id}
               items={session.items}
+              turnTimings={session.turn_timings}
               interactions={session.interactions}
               subagents={session.subagents}
               live={live}

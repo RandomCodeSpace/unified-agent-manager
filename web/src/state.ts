@@ -73,7 +73,7 @@ export function reducer(state: State, action: Action): State {
     case 'connection': {
       if (state.connection === action.status) return state;
       const detail = action.status !== 'connected' && state.detail
-        ? { ...state.detail, ...(state.detail.background_tasks ? { background_tasks: { ...state.detail.background_tasks, known: false } } : {}), ...(state.detail.execution ? { execution: { ...state.detail.execution, known: false } } : {}) }
+        ? { ...state.detail, ...(state.detail.turn_timings ? { turn_timings: state.detail.turn_timings.map((timing) => timing.state === 'working' ? { ...timing, state: 'unknown' as const } : timing) } : {}), ...(state.detail.background_tasks ? { background_tasks: { ...state.detail.background_tasks, known: false } } : {}), ...(state.detail.execution ? { execution: { ...state.detail.execution, known: false } } : {}) }
         : state.detail;
       return { ...state, connection: action.status, detail };
     }
@@ -171,6 +171,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, detail: { ...detail, last_submission: d.submission } };
         case 'subagent':
           return withAgentFrame(state, d.subagent.id, d);
+        case 'turn_timing':
+          return { ...state, detail: { ...detail, turn_timings: upsert(detail.turn_timings ?? [], d.turn_timing) } };
         case 'background_tasks':
           return { ...state, detail: { ...detail, background_tasks: d.background_tasks } };
       }

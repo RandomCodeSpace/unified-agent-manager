@@ -424,11 +424,17 @@ func TestQueueFramesFollowEveryChangeAndMoveUpdatedAt(t *testing.T) {
 		t.Fatalf("updated_at = %s, want %s", d.UpdatedAt, later)
 	}
 
-	// Stop turn: the pause and the state arrive together, in order.
+	// Stop turn: timing ends before the pause and state arrive together, in order.
 	conv.EmitTurn(agentapi.TurnCancelled, "")
+	tf := next("turn_timing")
+	var timing TurnTiming
+	decodeField(t, tf, "turn_timing", &timing)
+	if timing.State != StateCancelled || !timing.EndedAt.Equal(later) || tf.seq != sf.seq+1 {
+		t.Fatalf("stop timing frame seq %d after session %d: %+v", tf.seq, sf.seq, timing)
+	}
 	qf = next("queue")
 	sf = next("session")
-	if q, s := queueOf(qf), summaryOf(sf); !q.Paused || len(q.Queue) != 1 || s.State != StateCancelled || sf.seq != qf.seq+1 {
+	if q, s := queueOf(qf), summaryOf(sf); !q.Paused || len(q.Queue) != 1 || s.State != StateCancelled || qf.seq != tf.seq+1 || sf.seq != qf.seq+1 {
 		t.Fatalf("stop frames: queue %+v, session %+v", q, s)
 	}
 	// Resuming is a queue change too, and drains at once.

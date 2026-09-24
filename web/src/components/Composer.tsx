@@ -142,22 +142,34 @@ function FileRow({ f }: { f: FileEntry }) {
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
 
 export function Composer({ session, project, fileCount, onChanges, onRename, onSessionUpdate }: { session: SessionDetail; project?: Project; fileCount: number | null; onChanges: () => void; onRename: () => void; onSessionUpdate: (s: SessionSummary) => void }) {
-  const { meta, settings: appSettings } = useApp();
+  const { meta, settings: appSettings, dispatch } = useApp();
   const [text, setText] = useState('');
   const [caret, setCaret] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [steerUnavailable, setSteerUnavailable] = useState('');
   const [outcome, setOutcome] = useState<Submission | null>(null);
-  const [dismissedResultId, setDismissedResultId] = useState<string | null>(null);
+  const resultStorageKey = `uam:command-result-dismissed:${session.id}`;
+  const [dismissedResultIds, setDismissedResultIds] = useState<string[]>(() => {
+    try {
+      const saved: unknown = JSON.parse(sessionStorage.getItem(resultStorageKey) ?? '[]');
+      return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string').slice(-64) : [];
+    } catch { return []; }
+  });
   const [commandAction, setCommandAction] = useState<Extract<CommandResult, { kind: 'action' }>['action'] | null>(null);
   const pending = useRef<{ key: string; id: string } | null>(null);
   const refocus = useRef(false);
   const live = LIVE.includes(session.state);
   const locked = readOnly(session);
   const last = outcome && (!session.last_submission || outcome.time >= session.last_submission.time) ? outcome : session.last_submission;
-  const commandResult = last?.status === 'accepted' && last.request_id !== dismissedResultId ? last.command_result : null;
-  const dismissResult = () => setDismissedResultId(last?.request_id ?? null);
+  const commandResult = last?.status === 'accepted' && !dismissedResultIds.includes(last.request_id) ? last.command_result : null;
+  const dismissResult = (id = last?.request_id ?? null) => {
+    if (!id) return;
+    const ids = [...dismissedResultIds.filter((previous) => previous !== id), id].slice(-64);
+    setDismissedResultIds(ids);
+    try { sessionStorage.setItem(resultStorageKey, JSON.stringify(ids)); }
+    catch { /* Dismissal still works when browser storage is unavailable. */ }
+  };
   const catalog = modelCatalog(meta, session.provider);
   const models = visibleModels(catalog, appSettings.hidden_models?.[session.provider]);
   const hiddenModel = appSettings.hidden_models?.[session.provider]?.includes(session.model);
@@ -185,6 +197,8 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
   const [highlight, setHighlight] = useState(0);
   const [files, setFiles] = useState<string[]>([]);
   const [commandVersion, setCommandVersion] = useState(0);
+  const [executionOpen, setExecutionOpen] = useState(false);
+  const pendingExecution = useRef<{ mode: 'interactive' | 'autopilot'; id: string } | null>(null);
   const commandKey = `${session.id}:${session.open}:${live}:${session.mode}:${session.execution?.mode}:${commandVersion}`;
   const [commandList, setCommandList] = useState<{ key: string; commands: Command[] | null; error: string | null } | null>(null);
   const commands = commandList?.key === commandKey ? commandList.commands : null;
@@ -198,7 +212,9 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
   const trigger = rawTrigger && dismissed !== triggerKey && !locked && !busy ? rawTrigger : null;
   const shapedCommand = /^[/$]\S/.test(text.trim());
   const pendingCommand = commandPending(text, commands, commandsError);
-  const wantCommands = !locked && (trigger?.kind === '/' || trigger?.kind === '$' || pendingCommand);
+  const wantCommands = !locked && (executionOpen || trigger?.kind === '/' || trigger?.kind === '$' || pendingCommand);
+  const autopilotCommand = commands?.find((c) => c.kind === 'command' && (c.name === 'autopilot' || c.aliases?.includes('autopilot')));
+  const executionReason = locked ? 'This task is read-only.' : session.state === 'starting' ? 'Wait for this task to start.' : commandsError || (!commands ? 'Loading execution controls…' : !autopilotCommand ? 'Autopilot is unavailable for this provider.' : commandReason(autopilotCommand, LIVE.includes(session.state)));
 
   // Fetching can reopen an exact closed conversation, but never submits a prompt.
   // Catalogue failures hold slash-shaped input instead of falling through to a prompt.
@@ -447,6 +463,24 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
     }
   }
   const settings = (body: Parameters<typeof api.settings>[1]) => action('settings', async () => onSessionUpdate(await api.settings(session.id, body)));
+
+  async function changeExecution(next: 'interactive' | 'autopilot') {
+    if (busy || executionReason || !autopilotCommand || (session.execution?.known && session.execution.mode === next)) return;
+    if (pendingExecution.current?.mode !== next) pendingExecution.current = { mode: next, id: newRequestId() };
+    const { id } = pendingExecution.current;
+    // A toolbar setting has no success banner, including after SSE or a page reload.
+    // Errors and uncertain outcomes still use the existing submission feedback.
+    dismissResult(id);
+    await action('execution', async () => {
+      const sub = await api.command(session.id, autopilotCommand.name, next === 'autopilot' ? 'on' : 'off', id);
+      setOutcome(sub);
+      if (sub.status === 'accepted' || sub.status === 'rejected') pendingExecution.current = null;
+      if (sub.status === 'accepted') {
+        setCommandVersion((v) => v + 1);
+        dispatch({ type: 'detail_loaded', detail: await api.session(session.id) });
+      }
+    });
+  }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.nativeEvent.isComposing) return;
@@ -724,7 +758,10 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
           reason={locked ? 'This task is read-only.' : undefined}
           onChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}
         />
-        <ExecutionStatus execution={session.execution} supported={!!session.capabilities.execution_modes} />
+        <ExecutionStatus execution={session.execution} supported={!!session.capabilities.execution_modes}
+          reason={executionReason} busy={!!busy} onOpenChange={setExecutionOpen}
+          onChange={(next) => void changeExecution(next)}
+          onRetry={commandsError && !locked ? () => setCommandVersion((v) => v + 1) : undefined} />
         {/* The actions wrap onto the next row as one right-aligned group when the toolbar is too narrow. */}
         <span className="ml-auto flex items-center gap-0.5">
         {!locked && (

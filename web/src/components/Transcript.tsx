@@ -1,9 +1,9 @@
 import { Bot, Check, ChevronRight, Copy, Ellipsis, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus } from '../api';
+import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { approvalMark, elapsedSince, foregroundItems, foregroundStart, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
+import { approvalMark, elapsedSince, foregroundItems, foregroundStart, completedDuration, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, Spinner, SubagentIdleIcon, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
@@ -15,6 +15,7 @@ interface Props {
   /** The Task, for the attachment routes. */
   sessionId: string;
   items: Item[];
+  turnTimings?: TurnTiming[];
   /** The Task's requests; the decided ones join the turns, the pending ones stay cards. */
   interactions: Interaction[];
   subagents: Subagent[];
@@ -41,7 +42,7 @@ function useArrivals(ids: string[]) {
  * spawned a subagent (its output lives in the panel, never here), and the prose. A decided
  * request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, items, interactions, subagents, live, working, provider, onOpenAgent }: Props) {
+export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, live, working, provider, onOpenAgent }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)]);
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
@@ -52,8 +53,14 @@ export function Transcript({ sessionId, items, interactions, subagents, live, wo
   const out: ReactNode[] = [];
   let group: Entry[] = [];
   let showedWorking = false;
+  let userItemId: string | undefined;
   const flush = (last = false, boundary = true) => {
-    if (!group.length) return;
+    const timing = timingForTurn(turnTimings, userItemId);
+    const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live });
+    if (!group.length) {
+      if (showEnd) out.push(<WorkedIndicator key={`end-${timing!.id}`} timing={timing} />);
+      return;
+    }
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
     const nodes = renderEntries(group, { ...ctx, live: groupLive }, (item) => {
       const agent = byParent.get(item.id);
@@ -63,9 +70,9 @@ export function Transcript({ sessionId, items, interactions, subagents, live, wo
     if (last && working) showedWorking = true;
     out.push(
       <div key={`turn-${key}`} className="flex flex-col gap-3">
-        {last && working && <WorkingIndicator start={foregroundStart(items)} />}
+        {last && working && <WorkingIndicator start={foregroundStart(turnTimings)} />}
         {nodes}
-        {boundary && (!last || !live) && <div className="border-b border-hairline py-2 text-caption text-muted" title="The provider does not supply a turn completion timestamp.">Worked</div>}
+        {showEnd && <WorkedIndicator timing={timing} />}
       </div>,
     );
     group = [];
@@ -75,14 +82,15 @@ export function Transcript({ sessionId, items, interactions, subagents, live, wo
       group.push(entry);
       return;
     }
-    flush(false, entry.item.delivery !== 'steer');
+    flush(false, !entry.item.delivery);
+    if (!entry.item.delivery) userItemId = entry.item.id;
     out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} />);
   });
   flush(true);
   return (
     <>
       {out}
-      {working && !showedWorking && <WorkingIndicator start={foregroundStart(items)} />}
+      {working && !showedWorking && <WorkingIndicator start={foregroundStart(turnTimings)} />}
     </>
   );
 }
@@ -147,6 +155,11 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
   return out;
 }
 
+function WorkedIndicator({ timing }: { timing?: TurnTiming }) {
+  const elapsed = completedDuration(timing);
+  return <div className="border-b border-hairline py-2 text-caption text-muted" title={elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>{elapsed ? `Worked for ${elapsed}` : 'Worked'}</div>;
+}
+
 function WorkingIndicator({ start }: { start?: string }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -198,7 +211,7 @@ function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: st
       <Copyable text={item.text ?? ''} label="Copy message" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
         <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink">
           <span className="sr-only">You: </span>
-          {item.delivery === 'steer' && <span className="block text-caption text-accent">Steer</span>}
+          {item.delivery && <span className="block text-caption text-accent">{item.delivery === 'steer' ? 'Steer' : 'Autopilot'}</span>}
           {item.text && <Markdown text={item.text} />}
           {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
         </div>

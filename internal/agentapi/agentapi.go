@@ -574,6 +574,9 @@ type Image struct {
 // DeliverySteer marks a user item that arrived as a steer.
 const DeliverySteer = "steer"
 
+// DeliveryAutopilot marks a provider-generated continuation of the same turn.
+const DeliveryAutopilot = "autopilot"
+
 // ToolStatus is the lifecycle of one tool call.
 type ToolStatus string
 

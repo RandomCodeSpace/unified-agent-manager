@@ -2481,6 +2481,8 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		it.Attachments = blobAttachments(d.Attachments)
 		if d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliverySteering {
 			it.Delivery = agentapi.DeliverySteer
+		} else if d.IsAutopilotContinuation != nil && *d.IsAutopilotContinuation {
+			it.Delivery = agentapi.DeliveryAutopilot
 		}
 	case *rpc.AssistantMessageData:
 		if d.Content == "" { // tool-call-only message

@@ -38,12 +38,25 @@ through an unsupported command to bypass Task model settings.
 
 ## Autopilot and Stop
 
+Choose Interactive or Autopilot from the execution dropdown beside the model and
+permission controls. Selecting a mode preserves the draft and attachments and
+does not send a message or change Safe/Yolo permissions. Selecting Interactive
+disables future continuation; use Stop to abort current work as well. Objective
+details appear inside the dropdown, without a separate execution banner.
+
 Execution mode (`interactive`, `plan`, or `autopilot`) is separate from the
 Task's permission policy (`safe` or `yolo`). Runtime mode and objective state come
 from `session.mode.get` and `session.autopilotObjective.getState`, refreshed on
 provider events and exact reopen. Objective state is `active`, `paused`, or
 `completed`; credits are the provider's current credit-window usage and limit.
 A reported zero is preserved. Missing values are not inferred.
+
+The transcript shows elapsed foreground time while working and the recorded
+duration after completion, cancellation, or failure. It includes permission
+waits and autopilot continuations, but excludes time waiting in the queue and
+independent background work. Completed durations survive reloads and service
+restarts. Imported history without timing evidence and unfinished turns after a
+lost runtime connection have no claimed duration.
 
 An assistant idle or explicit autopilot session-idle boundary does not complete
 an autopilot foreground turn. A final session-idle event, with no autopilot mode

@@ -3,7 +3,7 @@
 // sits on which tool row, and what a question asked and got. No DOM, so the unit tests
 // run in node.
 
-import type { Interaction, InteractionState, Item, ToolCall } from '../api';
+import type { Interaction, InteractionState, Item, ToolCall, TurnTiming } from '../api';
 
 /** Argument keys per tool name, most telling first; `GENERIC` serves every other tool. */
 const KEYS: Record<string, string[]> = {
@@ -294,14 +294,33 @@ export function summarizeTools(items: Item[], live: boolean): string {
 /** The current turn includes every segment across steer messages. */
 export function foregroundItems(items: Item[]): Item[] {
   for (let i = items.length - 1; i >= 0; i--) {
-    if (items[i].kind === 'user' && items[i].delivery !== 'steer') return items.slice(i);
+    if (items[i].kind === 'user' && !items[i].delivery) return items.slice(i);
   }
   return items;
 }
 
-/** A steer belongs to its existing turn and must not restart elapsed time. */
-export function foregroundStart(items: Item[]): string | undefined {
-  return foregroundItems(items).find((item) => item.kind === 'user' && item.delivery !== 'steer')?.time;
+/** The live clock uses recorded foreground evidence, never message timestamps. */
+export function foregroundStart(timings: TurnTiming[]): string | undefined {
+  const current = timings.at(-1);
+  return current?.state === 'working' ? current.started_at : undefined;
+}
+
+/** Link the recorded interval to the ordinary user message that began its turn. */
+export function timingForTurn(timings: TurnTiming[], userItemId: string | undefined): TurnTiming | undefined {
+  if (!userItemId) return undefined;
+  for (let i = timings.length - 1; i >= 0; i--) if (timings[i].user_item_id === userItemId) return timings[i];
+  return undefined;
+}
+
+/** A stopped clock requires both observed boundaries and a terminal outcome. */
+export function completedDuration(timing: TurnTiming | undefined): string | null {
+  if (!timing?.ended_at || !['completed', 'cancelled', 'failed'].includes(timing.state)) return null;
+  return elapsedSince(timing.started_at, Date.parse(timing.ended_at));
+}
+
+/** A recorded empty reply still has a duration when the next ordinary prompt arrives. */
+export function showTurnEnd(timing: TurnTiming | undefined, { hasContent, boundary, last, live }: { hasContent: boolean; boundary: boolean; last: boolean; live: boolean }): boolean {
+  return boundary && (!last || !live) && (hasContent || completedDuration(timing) !== null);
 }
 
 /** Never use session.updated_at as turn time: it also changes for unrelated updates. */

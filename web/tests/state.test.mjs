@@ -160,3 +160,20 @@ test('execution snapshots clear on null and become unknown on disconnect', () =>
   state = reducer(state, { type: 'upsert_session', session: { id: 'task', execution: null } });
   assert.equal(state.detail.execution, null);
 });
+
+test('foreground timing follows ordered live evidence and survives snapshots while disconnect becomes unknown', () => {
+  const started = { id: 'turn', user_item_id: 'user', started_at: '2026-09-24T12:00:00Z', state: 'working' };
+  const ended = { ...started, ended_at: '2026-09-24T12:00:42Z', state: 'completed' };
+  let state = { ...initialState, selectedId: 'task', connection: 'connected', detailSeq: 10, detail: { id: 'task', items: [], interactions: [], subagents: [], turn_timings: [] } };
+  state = update(state, { name: 'turn_timing', seq: 11, session_id: 'task', turn_timing: started });
+  assert.deepEqual(state.detail.turn_timings, [started]);
+  state = reducer(state, { type: 'connection', status: 'reconnecting' });
+  assert.deepEqual(state.detail.turn_timings, [{ ...started, state: 'unknown' }]);
+  state = update(state, { name: 'turn_timing', seq: 12, session_id: 'task', turn_timing: ended });
+  state = update(state, { name: 'turn_timing', seq: 11, session_id: 'task', turn_timing: started });
+  assert.deepEqual(state.detail.turn_timings, [ended]);
+  state = reducer(state, { type: 'snapshot', data: { seq: 14, projects: [], sessions: [], session: { ...state.detail, turn_timings: [ended] } } });
+  assert.deepEqual(state.detail.turn_timings, [ended]);
+  state = reducer(state, { type: 'connection', status: 'offline' });
+  assert.deepEqual(state.detail.turn_timings, [ended]);
+});
