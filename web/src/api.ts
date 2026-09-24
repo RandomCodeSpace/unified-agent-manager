@@ -53,11 +53,24 @@ export interface Meta {
   recent_workdirs: string[];
 }
 
+/** Settings a new Task starts with. `context_size` is `default` when unset; `effort` may be empty. */
+export interface TaskDefaults {
+  provider: string;
+  model: string;
+  effort: string;
+  context_size: string;
+  mode: 'safe' | 'yolo';
+}
+
 export interface Project {
   id: string;
   name: string;
   dir: string;
   created_at: string;
+  /** Defaults for new Tasks; absent when the Project has none. */
+  defaults?: TaskDefaults;
+  /** Current git branch of the directory; absent unless it is a checkout on a named branch. May change between `project` frames. */
+  branch?: string;
 }
 
 export interface SessionSummary {
@@ -336,8 +349,8 @@ export const api = {
   meta: () => call<Meta>('GET', '/api/meta'),
 
   projects: async () => (await call<{ projects: Project[] }>('GET', '/api/projects')).projects,
-  createProject: (body: { dir: string; name?: string }) => call<Project>('POST', '/api/projects', body),
-  renameProject: (id: string, name: string) => call<Project>('PATCH', `/api/projects/${enc(id)}`, { name }),
+  createProject: (body: { dir: string; name?: string; defaults?: TaskDefaults }) => call<Project>('POST', '/api/projects', body),
+  updateProject: (id: string, body: { name?: string; defaults?: TaskDefaults }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
   deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
 
   createSession: (body: {
@@ -416,6 +429,35 @@ export function providerLabel(meta: Meta | null, name: string): string {
 export function modelCatalog(meta: Meta | null, providerName: string): Model[] {
   // `?? []` tolerates a server older than the catalog.
   return provider(meta, providerName)?.models ?? [];
+}
+
+/**
+ * What a new Task starts with, from a Project's defaults checked against the live catalog:
+ * the default provider if listed and available, else the first available one; the default
+ * model if offered, keeping its effort and context size only where still offered; a model
+ * no longer offered falls back to `auto` (else the first model) with effort cleared and
+ * context size `default`. Without defaults: `auto`, no effort, `default`, safe. Null until
+ * the provider list has loaded.
+ */
+export function resolveTaskDefaults(meta: Meta | null, defaults?: TaskDefaults): TaskDefaults | null {
+  const providers = meta?.providers ?? [];
+  const chosen =
+    (defaults && providers.find((p) => p.name === defaults.provider && p.available)) ?? providers.find((p) => p.available) ?? providers[0];
+  if (!chosen) return null;
+  const mode = defaults?.mode ?? 'safe';
+  const model = defaults && chosen.models.find((m) => m.id === defaults.model);
+  if (!defaults || !model) {
+    const first = chosen.models.some((m) => m.id === 'auto') ? 'auto' : (chosen.models[0]?.id ?? '');
+    return { provider: chosen.name, model: first, effort: '', context_size: 'default', mode };
+  }
+  const contextOffered = !!chosen.capabilities.context_size && !!model.context_sizes?.some((s) => s.id === defaults.context_size);
+  return {
+    provider: chosen.name,
+    model: model.id,
+    effort: model.efforts?.includes(defaults.effort) ? defaults.effort : '',
+    context_size: contextOffered ? defaults.context_size : 'default',
+    mode,
+  };
 }
 
 export function modelName(meta: Meta | null, providerName: string, id: string): string {

@@ -80,6 +80,23 @@ type Project struct {
 	Name      string    `json:"name"`
 	Dir       string    `json:"dir"`
 	CreatedAt time.Time `json:"created_at"`
+	// Defaults are omitted when the Project has none.
+	Defaults TaskDefaults `json:"defaults,omitzero"`
+	// Branch is the branch checked out in Dir's git work tree, read from git
+	// and never stored. It is empty when Dir is not in a work tree, HEAD is
+	// detached, or git cannot tell.
+	Branch string `json:"branch,omitempty"`
+}
+
+// TaskDefaults are the settings a Project's new Tasks start with. The
+// browser resolves them against the live models when it creates a Task.
+// ContextSize is "default" unless a tier is chosen; Mode is safe or yolo.
+type TaskDefaults struct {
+	Provider    string `json:"provider"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	ContextSize string `json:"context_size"`
+	Mode        string `json:"mode"`
 }
 
 // Meta is the /api/meta response.

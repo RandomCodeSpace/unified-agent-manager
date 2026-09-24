@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { LIVE, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission } from '../api';
+import { LIVE, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
@@ -95,6 +95,22 @@ export function install(): void {
   };
   const find = (id: string) => st.tasks.find((t) => t.id === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
+  /** The service's selection checks, for a Project's defaults and a new Task alike: a string is the 400 message. */
+  const checkSelection = (raw: unknown): TaskDefaults | string => {
+    const d = (raw && typeof raw === 'object' ? raw : {}) as Json;
+    const prov = st.meta.providers.find((p) => p.name === d.provider);
+    if (!prov) return `unknown provider ${JSON.stringify(d.provider ?? '')}`;
+    const model = String(d.model ?? '');
+    const mo = prov.models.find((x) => x.id === model);
+    if (model && !mo) return `model ${model} is not in the catalog`;
+    const effort = String(d.effort ?? '');
+    if (effort && !mo?.efforts?.includes(effort)) return `effort ${effort} is not offered by ${model || 'the default model'}`;
+    const size = String(d.context_size || 'default');
+    if (size !== 'default' && !(prov.capabilities.context_size && mo?.context_sizes?.some((s) => s.id === size))) return `context size ${size} is not offered by ${model || 'the default model'}`;
+    const mode = d.mode ?? 'safe';
+    if (mode !== 'safe' && mode !== 'yolo') return 'mode must be safe or yolo';
+    return { provider: prov.name, model, effort, context_size: size, mode };
+  };
 
   function broadcast(name: string, payload: Json, sessionId?: string) {
     seq++;
@@ -165,6 +181,18 @@ export function install(): void {
     if (!busy(t)) return;
     pushItem(t, { id: nextId('m'), kind: 'assistant', time: now(), text: 'Tests pass. Anything else?' });
     touch(t, { state: 'completed', last_model: model });
+    drain(t);
+  }
+
+  /** Sends the oldest queued prompt when no turn is running and the queue is not paused. */
+  function drain(t: MockTask) {
+    if (busy(t) || t.queue_paused || !(t.queue?.length)) return;
+    const [next, ...rest] = t.queue;
+    t.queue = rest;
+    broadcast('queue', { session_id: t.id, queue: rest, paused: false }, t.id);
+    pushItem(t, { id: nextId('u'), kind: 'user', text: next.text, time: now() });
+    touch(t, { state: 'working', state_detail: undefined, open: true });
+    void reply(t, `Picking up the queued message about "${next.text.slice(0, 40)}". Done; nothing else changed.`);
   }
 
   /** Keeps t8's two subagents alive: each thinks and adds a step every few seconds, then finishes. */
@@ -264,7 +292,9 @@ export function install(): void {
       if (!dir.startsWith('/')) return fail(400, 'dir must be an absolute path to a directory');
       const existing = st.projects.find((p) => p.dir === dir.replace(/\/+$/, ''));
       if (existing) return fail(409, 'that directory already has a project', { project_id: existing.id });
-      const p: Project = { id: nextId('p'), name: String(body.name ?? '').trim() || dir.split('/').filter(Boolean).pop() || dir, dir, created_at: now() };
+      const defaults = body.defaults === undefined ? undefined : checkSelection(body.defaults);
+      if (typeof defaults === 'string') return fail(400, defaults);
+      const p: Project = { id: nextId('p'), name: String(body.name ?? '').trim() || dir.split('/').filter(Boolean).pop() || dir, dir, created_at: now(), ...(defaults ? { defaults } : {}) };
       st.projects.push(p);
       st.changes[p.id] = [];
       broadcast('project', { project: p });
@@ -274,7 +304,11 @@ export function install(): void {
       const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
       if (!p) return fail(404, 'project not found');
       if (method === 'PATCH') {
-        p.name = String(body.name ?? '').trim() || p.dir.split('/').filter(Boolean).pop() || p.dir;
+        if (body.name === undefined && body.defaults === undefined) return fail(400, 'name or defaults required');
+        const defaults = body.defaults === undefined ? undefined : checkSelection(body.defaults);
+        if (typeof defaults === 'string') return fail(400, defaults);
+        if (body.name !== undefined) p.name = String(body.name).trim() || p.dir.split('/').filter(Boolean).pop() || p.dir;
+        if (defaults) p.defaults = defaults;
         broadcast('project', { project: p });
         return json(200, p);
       }
@@ -293,19 +327,23 @@ export function install(): void {
     if (path === '/api/sessions' && method === 'POST') {
       const p = st.projects.find((x) => x.id === body.project_id);
       if (!p) return fail(400, 'unknown project_id');
-      const model = String(body.model ?? '');
-      if (model && !st.meta.providers[0].models.some((x) => x.id === model)) return fail(400, 'model is not in the catalog');
+      const sel = checkSelection(body);
+      if (typeof sel === 'string') return fail(400, sel);
+      const { provider, model, effort, context_size, mode } = sel;
       const prompt = String(body.prompt ?? '').trim();
       const t: MockTask = {
         id: nextId('t'),
         project_id: p.id,
-        provider: 'copilot',
+        provider,
         name: String(body.name ?? '').trim(),
         title: '',
         workdir: p.dir,
         conversation_id: nextId('conv'),
         model,
         last_model: '',
+        effort,
+        context_size,
+        mode,
         subagents_running: 0,
         state: prompt ? 'working' : 'idle',
         open: true,
@@ -331,23 +369,77 @@ export function install(): void {
       if (!t) return fail(404, 'session not found');
       if (method === 'GET') return json(200, detail(t));
       if (method === 'PATCH') {
-        if (typeof body.model === 'string') {
-          if (!body.model) return fail(400, 'model cannot be reset to the default');
-          if (!st.meta.providers[0].models.some((x) => x.id === body.model)) return fail(400, 'model is not in the catalog');
-          if (body.model !== t.model && busy(t)) return fail(409, 'a turn is running');
-          t.model = body.model;
-        } else if (typeof body.name === 'string') {
-          t.name = body.name.trim();
-        } else return fail(400, 'name or model required');
+        const keys = ['name', 'model', 'effort', 'context_size', 'mode'].filter((k) => body[k] !== undefined);
+        if (keys.length === 0) return fail(400, 'name, model, effort, context_size or mode required');
+        if (t.stage === 'archived' && keys.some((k) => k !== 'name')) return fail(409, 'an archived task is read-only');
+        if (t.stage === 'settled' && keys.some((k) => k !== 'name')) return fail(409, 'a settled task takes no changes; reopen it first');
+        if (typeof body.name === 'string') t.name = body.name.trim();
+        if (body.mode !== undefined) {
+          if (body.mode !== 'safe' && body.mode !== 'yolo') return fail(400, 'mode must be safe or yolo');
+          t.mode = body.mode;
+        }
+        const selection = keys.some((k) => k === 'model' || k === 'effort' || k === 'context_size');
+        if (selection) {
+          if (busy(t)) return fail(409, 'a turn is running; model, effort and context size change between turns');
+          const model = body.model === undefined ? t.model : String(body.model);
+          if (!model) return fail(400, 'model cannot be reset to the default');
+          const checked = checkSelection({ provider: t.provider, model, effort: body.effort ?? (body.model !== undefined ? '' : t.effort), context_size: body.context_size ?? (body.model !== undefined ? 'default' : t.context_size), mode: t.mode });
+          if (typeof checked === 'string') return fail(400, checked);
+          t.model = checked.model;
+          t.effort = checked.effort;
+          t.context_size = checked.context_size;
+        }
         touch(t);
         return json(200, summary(t));
       }
       if (method === 'DELETE') {
-        if (busy(t)) return fail(409, 'the task is busy');
+        if (t.stage !== 'archived') return fail(409, 'only an archived task can be deleted');
         st.tasks = st.tasks.filter((x) => x.id !== t.id);
         broadcast('session_removed', { session_id: t.id });
         return json(204);
       }
+    }
+
+    // Lifecycle: settle -> archive (from any stage, final) -> delete; a busy Task refuses a stage change.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/(settle|reopen|archive)$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const stage = t.stage ?? 'active';
+      const blocked = busy(t) || t.interactions.some((i) => i.state === 'pending') || (t.queue?.length ?? 0) > 0;
+      switch (r[2]) {
+        case 'settle':
+          if (stage !== 'active') return fail(409, `a ${stage} task cannot be settled`);
+          if (blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
+          touch(t, { stage: 'settled', state: 'closed', open: false });
+          return json(200, summary(t));
+        case 'reopen':
+          if (stage !== 'settled') return fail(409, `a ${stage} task cannot be reopened`);
+          touch(t, { stage: 'active' });
+          return json(200, summary(t));
+        case 'archive':
+          if (stage === 'archived') return fail(409, 'the task is already archived');
+          if (stage === 'active' && blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
+          touch(t, { stage: 'archived', state: 'closed', open: false });
+          return json(200, summary(t));
+      }
+    }
+
+    // Queue control: resume, clear, cancel one.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/queue\/(resume|clear)$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      if (r[2] === 'clear') t.queue = [];
+      t.queue_paused = false;
+      broadcast('queue', { session_id: t.id, queue: t.queue ?? [], paused: false }, t.id);
+      if (r[2] === 'resume') drain(t);
+      return json(204);
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/queue\/([^/]+)$/)) && method === 'DELETE') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      t.queue = (t.queue ?? []).filter((q) => q.request_id !== decodeURIComponent(r![2]));
+      broadcast('queue', { session_id: t.id, queue: t.queue, paused: !!t.queue_paused }, t.id);
+      return json(204);
     }
 
     if ((r = m(/^\/api\/sessions\/([^/]+)\/(prompt|cancel|close)$/)) && method === 'POST') {
@@ -355,9 +447,23 @@ export function install(): void {
       if (!t) return fail(404, 'session not found');
       switch (r[2]) {
         case 'prompt': {
-          if (busy(t)) return fail(409, 'a turn is running');
+          if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
           const text = String(body.text ?? '');
           const sub = { request_id: String(body.request_id ?? ''), status: 'accepted' as const, time: now() };
+          if (busy(t)) {
+            if (body.mode === 'queue') {
+              t.queue = [...(t.queue ?? []), { request_id: sub.request_id, text, queued_at: now() }];
+              broadcast('queue', { session_id: t.id, queue: t.queue, paused: !!t.queue_paused }, t.id);
+              return json(202, { ...sub, status: 'queued' });
+            }
+            if (body.mode === 'steer') {
+              pushItem(t, { id: nextId('u'), kind: 'user', delivery: 'steer', text, time: now() });
+              t.last_submission = sub;
+              broadcast('submission', { session_id: t.id, submission: sub }, t.id);
+              return json(202, sub);
+            }
+            return fail(409, 'a turn is running');
+          }
           pushItem(t, { id: nextId('u'), kind: 'user', text, time: now() });
           t.last_submission = sub;
           touch(t, { state: 'working', state_detail: undefined, open: true });
@@ -374,6 +480,10 @@ export function install(): void {
           for (const s of t.subagents) setSubagent(t, s.id, 'cancelled');
           for (const i of t.interactions) if (i.state === 'pending') resolve(t, i, 'expired', 'Turn stopped');
           pushItem(t, { id: nextId('n'), kind: 'notice', text: 'Turn stopped.', time: now() });
+          if (t.queue?.length) {
+            t.queue_paused = true;
+            broadcast('queue', { session_id: t.id, queue: t.queue, paused: true }, t.id);
+          }
           touch(t, { state: 'cancelled', pending: 0 });
           return json(202, summary(t));
         }

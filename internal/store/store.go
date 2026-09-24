@@ -409,8 +409,21 @@ type WebProject struct {
 	Name      string    `json:"name"`
 	Dir       string    `json:"dir"`
 	CreatedAt time.Time `json:"created_at"`
+	// Defaults are the settings a new Task in the Project starts with; zero
+	// when the Project has none.
+	Defaults WebTaskDefaults `json:"defaults,omitzero"`
 
 	unknown map[string]json.RawMessage
+}
+
+// WebTaskDefaults are a Project's settings for new Tasks. ContextSize is
+// "default" unless a tier is chosen; Mode is safe or yolo.
+type WebTaskDefaults struct {
+	Provider    string `json:"provider"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	ContextSize string `json:"context_size"`
+	Mode        string `json:"mode"`
 }
 
 type webProjectAlias WebProject
@@ -420,6 +433,7 @@ var knownWebProjectFields = map[string]struct{}{
 	"name":       {},
 	"dir":        {},
 	"created_at": {},
+	"defaults":   {},
 }
 
 func (p WebProject) MarshalJSON() ([]byte, error) {
@@ -789,6 +803,20 @@ func dropInvalidProjects(cfg *Config) {
 		if reason != "" {
 			log.Warn("dropping invalid web project", "key", key, "reason", reason)
 			delete(cfg.WebProjects, key)
+			continue
+		}
+		// Defaults are lookups, never argv; bad ones cost the Project its
+		// defaults, not the Project itself.
+		if d := p.Defaults; d != (WebTaskDefaults{}) {
+			if d.ContextSize == "" {
+				d.ContextSize = "default"
+			}
+			if d.Provider == "" || hasControlChar(d.Provider) || len(d.Provider) > maxWebModelBytes || hasControlChar(d.Model) || len(d.Model) > maxWebModelBytes || hasControlChar(d.Effort) || len(d.Effort) > maxWebModelBytes || (d.ContextSize != "default" && d.ContextSize != "long_context") || (Mode(d.Mode) != ModeSafe && Mode(d.Mode) != ModeYolo) {
+				log.Warn("clearing invalid task defaults on web project", "key", key)
+				d = WebTaskDefaults{}
+			}
+			p.Defaults = d
+			cfg.WebProjects[key] = p
 		}
 	}
 }

@@ -1,5 +1,9 @@
+import { MessageCircleQuestion, ShieldQuestion } from 'lucide-react';
 import { useId, useState, type FormEvent } from 'react';
 import { api, describeError, isStatus, type Answer, type Interaction, type Question, type SessionDetail } from '../api';
+import { cn } from '../lib/cn';
+import { Note } from './common';
+import { Button } from './ui/button';
 
 const STATE_TEXT: Record<Interaction['state'], string> = {
   pending: 'Pending',
@@ -13,21 +17,14 @@ const STATE_TEXT: Record<Interaction['state'], string> = {
  * else answered, a 410 means the provider withdrew the request. While pending the header
  * carries the attention chip; that is the only orange on the card.
  */
-export function InteractionCard({
-  session,
-  interaction,
-  onUpdate,
-}: {
-  session: SessionDetail;
-  interaction: Interaction;
-  onUpdate: (i: Interaction) => void;
-}) {
+export function InteractionCard({ session, interaction, onUpdate }: { session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const titleId = useId();
   const pending = interaction.state === 'pending';
   const permission = interaction.kind === 'permission';
   const permitted = permission ? session.capabilities.permissions : session.capabilities.questions;
+  const Icon = permission ? ShieldQuestion : MessageCircleQuestion;
 
   async function respond(answer: Answer) {
     setBusy(true);
@@ -48,67 +45,60 @@ export function InteractionCard({
   const primary = options.find((o) => !o.reject);
   const ordered = [...options.filter((o) => o.reject), ...options.filter((o) => !o.reject && o !== primary), ...(primary ? [primary] : [])];
 
+  if (!pending) {
+    // Decided: one quiet ledger-style line, so the transcript reads on.
+    return (
+      <section role="group" aria-labelledby={titleId} className="flex min-h-7 flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted">
+        <Icon aria-hidden="true" className="size-3.5 text-faint" />
+        <span id={titleId} className="text-body">
+          {interaction.title}
+        </span>
+        <span aria-hidden="true">·</span>
+        <span>
+          {STATE_TEXT[interaction.state]}
+          {interaction.resolution ? ` · ${interaction.resolution}` : ''}
+        </span>
+      </section>
+    );
+  }
+
   return (
-    <section className={`card interaction ${pending ? 'interaction-pending' : 'interaction-done'}`} role="group" aria-labelledby={titleId}>
-      <div className="card-head">
-        {pending ? (
-          <span className="chip chip-attention">
-            <span className="mark-dot mark-dot-attention" aria-hidden="true" />
-            {permission ? 'Needs permission' : 'Needs answer'}
-          </span>
-        ) : (
-          <span className="chip">
-            {permission ? 'Permission' : 'Question'} · {STATE_TEXT[interaction.state]}
-          </span>
-        )}
+    <section className="rounded-md border border-hairline bg-raised px-4 py-3 shadow-raised animate-rise" role="group" aria-labelledby={titleId}>
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="inline-flex h-5 items-center gap-1.5 rounded-xs bg-attention-wash px-1.5 text-caption text-attention">
+          <Icon aria-hidden="true" className="size-3.5" />
+          {permission ? 'Needs permission' : 'Needs answer'}
+        </span>
       </div>
-      <h3 id={titleId} className="card-title">
+      <h3 id={titleId} className="text-title text-ink">
         {interaction.title}
       </h3>
       {interaction.detail && (
-        <pre className="well" translate="no">
+        <pre translate="no" className="mt-2 overflow-x-auto rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink">
           {interaction.detail}
         </pre>
       )}
       {permission ? (
         <>
-          {pending && !permitted && <p className="caption">This provider does not accept decisions from UAM.</p>}
-          {pending && permitted && ordered.length > 0 && (
-            <div className="card-foot">
+          {!permitted && <Note className="mt-2">This provider does not accept decisions from UAM.</Note>}
+          {permitted && ordered.length > 0 && (
+            <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
               {ordered.map((o) => (
-                <button
-                  key={o.id}
-                  type="button"
-                  className={o.reject ? 'btn btn-danger' : o === primary ? 'btn btn-primary' : 'btn btn-secondary'}
-                  disabled={busy}
-                  onClick={() => respond({ decision: o.id })}
-                >
+                <Button key={o.id} variant={o.reject ? 'danger' : o === primary ? 'primary' : 'secondary'} disabled={busy} onClick={() => respond({ decision: o.id })}>
                   {o.label}
-                </button>
+                </Button>
               ))}
             </div>
           )}
         </>
       ) : (
-        <QuestionForm
-          interactionId={interaction.id}
-          questions={interaction.questions ?? []}
-          disabled={!pending || !permitted || busy}
-          onSubmit={(answers) => respond({ answers })}
-          onDecline={() => respond({ reject: true })}
-        />
+        <QuestionForm interactionId={interaction.id} questions={interaction.questions ?? []} disabled={!permitted || busy} onSubmit={(answers) => respond({ answers })} onDecline={() => respond({ reject: true })} />
       )}
-      {pending && !permission && !permitted && <p className="caption">This provider does not accept answers from UAM.</p>}
-      {!pending && (
-        <p className="caption">
-          {STATE_TEXT[interaction.state]}
-          {interaction.resolution ? ` · ${interaction.resolution}` : ''}
-        </p>
-      )}
+      {!permission && !permitted && <Note className="mt-2">This provider does not accept answers from UAM.</Note>}
       {note && (
-        <p className="warn" role="alert">
+        <Note tone="warn" role="alert" className="mt-2">
           {note}
-        </p>
+        </Note>
       )}
     </section>
   );
@@ -156,46 +146,46 @@ function QuestionForm({
   if (disabled && questions.length === 0) return null;
 
   return (
-    <form onSubmit={submit}>
+    <form onSubmit={submit} className="mt-2">
       {questions.map((q, qi) => (
-        <fieldset key={qi} className="question" disabled={disabled}>
-          <legend>
-            {q.header && <span className="q-header">{q.header}</span>}
+        <fieldset key={qi} className="mb-3 min-w-0" disabled={disabled}>
+          <legend className="mb-1.5 text-ui text-ink">
+            {q.header && <span className="mr-1.5 text-caption text-muted">{q.header}</span>}
             {q.text}
           </legend>
-          {(q.choices ?? []).map((c) => (
-            <label key={c} className="choice">
-              <input
-                type={q.multiple ? 'checkbox' : 'radio'}
-                name={`q-${interactionId}-${qi}`}
-                checked={(chosen[qi] ?? []).includes(c)}
-                onChange={() => toggle(qi, c, !!q.multiple)}
-              />
-              {c}
-            </label>
-          ))}
-          {q.custom && (
-            <label className="choice choice-custom">
-              <span className="sr-only">Your answer</span>
-              <input
-                className="input"
-                type="text"
-                placeholder="Your answer"
-                value={custom[qi] ?? ''}
-                onChange={(e) => setCustom((prev) => prev.map((v, i) => (i === qi ? e.target.value : v)))}
-              />
-            </label>
-          )}
+          <div className="flex flex-col gap-0.5">
+            {(q.choices ?? []).map((c) => {
+              const on = (chosen[qi] ?? []).includes(c);
+              return (
+                <label key={c} className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-canvas pointer-coarse:min-h-11', on && 'bg-canvas text-ink')}>
+                  <input type={q.multiple ? 'checkbox' : 'radio'} name={`q-${interactionId}-${qi}`} checked={on} onChange={() => toggle(qi, c, !!q.multiple)} className="size-3.5 accent-accent" />
+                  {c}
+                </label>
+              );
+            })}
+            {q.custom && (
+              <label className="mt-1 flex items-center">
+                <span className="sr-only">Your answer</span>
+                <input
+                  type="text"
+                  placeholder="Your answer"
+                  value={custom[qi] ?? ''}
+                  onChange={(e) => setCustom((prev) => prev.map((v, i) => (i === qi ? e.target.value : v)))}
+                  className="h-9 w-full rounded-sm border border-hairline-strong bg-raised px-2.5 text-ui text-ink outline-hidden transition-colors focus:border-accent pointer-coarse:h-11"
+                />
+              </label>
+            )}
+          </div>
         </fieldset>
       ))}
       {!disabled && (
-        <div className="card-foot">
-          <button type="button" className="btn btn-danger" onClick={onDecline}>
+        <div className="flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
+          <Button variant="danger" onClick={onDecline}>
             Decline
-          </button>
-          <button type="submit" className="btn btn-primary" disabled={!complete}>
+          </Button>
+          <Button type="submit" variant="primary" disabled={!complete}>
             Answer
-          </button>
+          </Button>
         </div>
       )}
     </form>

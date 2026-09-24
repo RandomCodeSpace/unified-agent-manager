@@ -200,6 +200,95 @@ func TestNestedWebUnknownFieldsRoundTrip(t *testing.T) {
 	}
 }
 
+// Task defaults are additive: a Project written before them loads with none,
+// a Project without them writes no key, and unknown Project fields survive.
+func TestWebProjectDefaultsRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},
+		"web_projects":{
+			"p1":{"id":"p1","name":"repo","dir":"/tmp/repo","created_at":"2026-09-01T00:00:00Z","archived":true},
+			"p2":{"id":"p2","name":"other","dir":"/tmp/other","created_at":"2026-09-01T00:00:00Z"}}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebProjects["p1"].Defaults != (WebTaskDefaults{}) {
+		t.Fatalf("old project loaded defaults: %+v", cfg.WebProjects["p1"])
+	}
+	want := WebTaskDefaults{Provider: "copilot", Model: "gpt-5", Effort: "high", ContextSize: "long_context", Mode: "yolo"}
+	if err := s.Update(func(cfg *Config) error {
+		p := cfg.WebProjects["p1"]
+		p.Defaults = want
+		cfg.WebProjects["p1"] = p
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		WebProjects map[string]map[string]json.RawMessage `json:"web_projects"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]string
+	if p1 := decoded.WebProjects["p1"]; string(p1["archived"]) != "true" || json.Unmarshal(p1["defaults"], &saved) != nil || len(saved) != 5 ||
+		saved["provider"] != "copilot" || saved["model"] != "gpt-5" || saved["effort"] != "high" || saved["context_size"] != "long_context" || saved["mode"] != "yolo" {
+		t.Fatalf("p1 after save: %s", data)
+	}
+	if _, ok := decoded.WebProjects["p2"]["defaults"]; ok {
+		t.Fatalf("project without defaults wrote them: %s", data)
+	}
+	if cfg, err = s.Load(); err != nil || cfg.WebProjects["p1"].Defaults != want {
+		t.Fatalf("defaults after reload = %+v, %v", cfg.WebProjects["p1"].Defaults, err)
+	}
+}
+
+func TestInvalidWebProjectDefaultsAreClearedOnLoad(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := func(id, defaults string) string {
+		return `"` + id + `":{"id":"` + id + `","name":"x","dir":"/tmp/` + id + `","created_at":"2026-09-01T00:00:00Z","defaults":` + defaults + `}`
+	}
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_projects":{` + strings.Join([]string{
+		project("unset", `{"provider":"copilot","model":"","effort":"","context_size":"","mode":"safe"}`),
+		project("noprovider", `{"provider":"","model":"a","effort":"","context_size":"default","mode":"safe"}`),
+		project("badmodel", `{"provider":"copilot","model":"a\u001b","effort":"","context_size":"default","mode":"safe"}`),
+		project("badsize", `{"provider":"copilot","model":"a","effort":"","context_size":"huge","mode":"safe"}`),
+		project("badmode", `{"provider":"copilot","model":"a","effort":"","context_size":"default","mode":"auto"}`),
+		project("nomode", `{"provider":"copilot","model":"a","effort":"","context_size":"default"}`),
+	}, ",") + `}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.WebProjects) != 6 {
+		t.Fatalf("projects after load = %+v", cfg.WebProjects)
+	}
+	if got := cfg.WebProjects["unset"].Defaults; got != (WebTaskDefaults{Provider: "copilot", ContextSize: "default", Mode: "safe"}) {
+		t.Fatalf("valid defaults after load = %+v", got)
+	}
+	for _, id := range []string{"noprovider", "badmodel", "badsize", "badmode", "nomode"} {
+		if got := cfg.WebProjects[id].Defaults; got != (WebTaskDefaults{}) {
+			t.Fatalf("%s defaults after load = %+v, want none", id, got)
+		}
+	}
+}
+
 func TestInvalidWebProjectsAndReferencesAreDroppedOnLoad(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {

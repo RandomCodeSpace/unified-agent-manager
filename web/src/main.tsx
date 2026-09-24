@@ -1,14 +1,18 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { CSPProvider } from '@base-ui/react/csp-provider';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
-import './styles.css';
+import './index.css';
 import App from './App';
 
 function render() {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <App />
+      {/* The server's CSP is `style-src 'self'`: Base UI must never render an inline <style>. */}
+      <CSPProvider disableStyleElements>
+        <App />
+      </CSPProvider>
     </StrictMode>,
   );
 }
