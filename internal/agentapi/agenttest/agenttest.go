@@ -1,7 +1,8 @@
 // Package agenttest provides a scriptable agentapi.Provider for tests of the
-// web service. Tests drive events explicitly and decide how each Send,
-// Respond, Cancel or Diff call behaves; every call is recorded so a test can
-// prove what the service did (and did not) ask the provider to do.
+// web service. Tests drive events explicitly and decide how the model catalog
+// and each Send, Respond, Cancel, SetModel or Diff call behave; every call is
+// recorded so a test can prove what the service did (and did not) ask the
+// provider to do.
 package agenttest
 
 import (
@@ -20,24 +21,57 @@ type Provider struct {
 	display string
 	caps    agentapi.Capabilities
 
-	mu        sync.Mutex
-	checkErr  error
-	openErr   error
-	known     map[string][]agentapi.Item
-	convs     []*Conversation
-	opens     []agentapi.OpenRequest
-	shutdowns int
-	nextID    int
-	opened    chan *Conversation
+	mu          sync.Mutex
+	checkErr    error
+	openErr     error
+	setModelErr error
+	models      []agentapi.Model
+	modelsErr   error
+	modelsCalls int
+	known       map[string]agentapi.History
+	convs       []*Conversation
+	opens       []agentapi.OpenRequest
+	shutdowns   int
+	nextID      int
+	opened      chan *Conversation
 }
 
 // NewProvider returns a fake provider with the given name and capabilities.
 func NewProvider(name string, caps agentapi.Capabilities) *Provider {
 	return &Provider{
 		name: name, display: "Fake " + name, caps: caps,
-		known:  map[string][]agentapi.Item{},
+		known:  map[string]agentapi.History{},
 		opened: make(chan *Conversation, 64),
 	}
+}
+
+// SetOpenSetModelError makes SetModel fail with err on conversations opened
+// afterwards (nil restores success).
+func (p *Provider) SetOpenSetModelError(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.setModelErr = err
+}
+
+// SetModels decides what Models returns.
+func (p *Provider) SetModels(models []agentapi.Model, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.models, p.modelsErr = append([]agentapi.Model(nil), models...), err
+}
+
+func (p *Provider) Models(context.Context) ([]agentapi.Model, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.modelsCalls++
+	return append([]agentapi.Model(nil), p.models...), p.modelsErr
+}
+
+// ModelsCalls reports how often Models ran.
+func (p *Provider) ModelsCalls() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.modelsCalls
 }
 
 func (p *Provider) Name() string                        { return p.name }
@@ -59,11 +93,11 @@ func (p *Provider) SetOpenError(err error) {
 }
 
 // AddConversation registers an existing provider conversation that Open may
-// reopen by exact ID; History returns history.
-func (p *Provider) AddConversation(id string, history []agentapi.Item) {
+// reopen by exact ID; History returns items and subagents.
+func (p *Provider) AddConversation(id string, items []agentapi.Item, subagents ...agentapi.Subagent) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.known[id] = append([]agentapi.Item(nil), history...)
+	p.known[id] = agentapi.History{Items: append([]agentapi.Item(nil), items...), Subagents: append([]agentapi.Subagent(nil), subagents...)}
 }
 
 // ForgetConversation removes a conversation so reopening it reports
@@ -89,20 +123,20 @@ func (p *Provider) Open(_ context.Context, req agentapi.OpenRequest) (agentapi.C
 		return nil, err
 	}
 	id := req.ConversationID
-	var history []agentapi.Item
+	var history agentapi.History
 	if id == "" {
 		p.nextID++
 		id = fmt.Sprintf("conv_%s_%d", p.name, p.nextID)
-		p.known[id] = nil
+		p.known[id] = agentapi.History{}
 	} else {
-		items, ok := p.known[id]
+		known, ok := p.known[id]
 		if !ok {
 			p.mu.Unlock()
 			return nil, fmt.Errorf("open %s: %w", id, agentapi.ErrConversationNotFound)
 		}
-		history = items
+		history = known
 	}
-	c := &Conversation{id: id, req: req, sink: req.Events, history: history, provider: p}
+	c := &Conversation{id: id, req: req, sink: req.Events, history: history, provider: p, setModelErr: p.setModelErr}
 	p.convs = append(p.convs, c)
 	p.mu.Unlock()
 	select {
@@ -176,16 +210,18 @@ type Conversation struct {
 	id       string
 	req      agentapi.OpenRequest
 	sink     agentapi.EventSink
-	history  []agentapi.Item
+	history  agentapi.History
 	provider *Provider
 
 	mu          sync.Mutex
 	sendHook    func(ctx context.Context, prompt string) error
 	respondHook func(ctx context.Context, id string, answer agentapi.Answer) error
 	cancelErr   error
+	setModelErr error
 	diff        []agentapi.FileDiff
 	diffErr     error
 	sends       []string
+	modelSets   []string
 	cancels     int
 	closes      int
 	responds    []Response
@@ -197,8 +233,35 @@ func (c *Conversation) ID() string { return c.id }
 // Request returns the OpenRequest that produced the conversation.
 func (c *Conversation) Request() agentapi.OpenRequest { return c.req }
 
-func (c *Conversation) History(context.Context) ([]agentapi.Item, error) {
-	return append([]agentapi.Item(nil), c.history...), nil
+func (c *Conversation) History(context.Context) (agentapi.History, error) {
+	return agentapi.History{
+		Items:     append([]agentapi.Item(nil), c.history.Items...),
+		Subagents: append([]agentapi.Subagent(nil), c.history.Subagents...),
+	}, nil
+}
+
+// SetModelError makes SetModel fail with err (nil restores success).
+func (c *Conversation) SetModelError(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setModelErr = err
+}
+
+func (c *Conversation) SetModel(_ context.Context, model string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return agentapi.ErrClosed
+	}
+	c.modelSets = append(c.modelSets, model)
+	return c.setModelErr
+}
+
+// ModelSets returns every model passed to SetModel, oldest first.
+func (c *Conversation) ModelSets() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.modelSets...)
 }
 
 // SetSendHook decides how Send behaves: return nil to accept, an error to
@@ -314,6 +377,16 @@ func (c *Conversation) EmitDelta(itemID string, kind agentapi.ItemKind, text str
 // EmitInteraction upserts a permission request or question.
 func (c *Conversation) EmitInteraction(ix agentapi.Interaction) {
 	c.Emit(agentapi.Event{Kind: agentapi.EventInteraction, Interaction: &ix})
+}
+
+// EmitTitle reports a provider-generated title.
+func (c *Conversation) EmitTitle(title string) {
+	c.Emit(agentapi.Event{Kind: agentapi.EventTitle, Title: title})
+}
+
+// EmitSubagent upserts a subagent record.
+func (c *Conversation) EmitSubagent(sa agentapi.Subagent) {
+	c.Emit(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
 }
 
 // Exit simulates the provider runtime exiting: the conversation becomes

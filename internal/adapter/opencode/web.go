@@ -124,6 +124,12 @@ func (p *webProvider) Check(ctx context.Context) error {
 	return err
 }
 
+// Models is not offered by this unregistered adapter; the provider default
+// applies.
+func (p *webProvider) Models(context.Context) ([]agentapi.Model, error) {
+	return nil, agentapi.ErrUnsupported
+}
+
 func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agentapi.Conversation, error) {
 	if req.Events == nil {
 		return nil, fmt.Errorf("OpenCode conversation requires an event sink")
@@ -724,7 +730,20 @@ func (c *webConversation) client() (*apiClient, error) {
 	return c.server.runtime.client, nil
 }
 
-func (c *webConversation) History(ctx context.Context) ([]agentapi.Item, error) {
+// History returns the main transcript only; this unregistered adapter does
+// not read subagent sessions.
+func (c *webConversation) History(ctx context.Context) (agentapi.History, error) {
+	items, err := c.historyItems(ctx)
+	return agentapi.History{Items: items}, err
+}
+
+// SetModel is not offered: the model would have to travel with the next
+// prompt, which this unregistered adapter does not do.
+func (c *webConversation) SetModel(context.Context, string) error {
+	return agentapi.ErrUnsupported
+}
+
+func (c *webConversation) historyItems(ctx context.Context) ([]agentapi.Item, error) {
 	client, err := c.client()
 	if err != nil {
 		return nil, err

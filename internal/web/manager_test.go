@@ -46,9 +46,19 @@ func newTestManager(t *testing.T) (*Manager, *agenttest.Provider, *store.Store) 
 	return startManager(t, st, prov), prov, st
 }
 
+// addProject adds dir as a Project and returns its ID.
+func addProject(t *testing.T, m *Manager, dir string) string {
+	t.Helper()
+	p, err := m.AddProject(dir, "")
+	if err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	return p.ID
+}
+
 func createSession(t *testing.T, m *Manager, prov *agenttest.Provider) (SessionSummary, *agenttest.Conversation) {
 	t.Helper()
-	sum, err := m.Create(CreateRequest{Provider: prov.Name(), Workdir: t.TempDir(), Name: "task"})
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: addProject(t, m, t.TempDir()), Name: "task"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -648,15 +658,11 @@ func TestItemAndTextBounds(t *testing.T) {
 	}
 }
 
-func TestCreateValidatesWorkdirAndProvider(t *testing.T) {
+func TestCreateValidatesProjectModelAndProvider(t *testing.T) {
 	m, prov, _ := newTestManager(t)
-	for _, req := range []CreateRequest{
-		{Provider: "fake", Workdir: "relative/path"},
-		{Provider: "fake", Workdir: "/definitely/not/here"},
-		{Provider: "nope", Workdir: t.TempDir()},
-	} {
-		if _, err := m.Create(req); statusOf(err) != http.StatusBadRequest {
-			t.Fatalf("Create(%+v) = %v, want 400", req, err)
+	for _, dir := range []string{"", "relative/path", "/definitely/not/here"} {
+		if _, err := m.AddProject(dir, ""); statusOf(err) != http.StatusBadRequest {
+			t.Fatalf("AddProject(%q) = %v, want 400", dir, err)
 		}
 	}
 	real := t.TempDir()
@@ -664,13 +670,28 @@ func TestCreateValidatesWorkdirAndProvider(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	sum, err := m.Create(CreateRequest{Provider: "fake", Workdir: link, Prompt: "start", RequestID: mustUUID(t)})
+	project := addProject(t, m, link)
+	for _, req := range []CreateRequest{
+		{Provider: "fake"},
+		{Provider: "fake", ProjectID: "nope"},
+		{Provider: "nope", ProjectID: project},
+		{Provider: "fake", ProjectID: project, Model: "not-offered"},
+		{Provider: "fake", ProjectID: project, Name: strings.Repeat("n", maxNameRunes+1)},
+	} {
+		if _, err := m.Create(req); statusOf(err) != http.StatusBadRequest {
+			t.Fatalf("Create(%+v) = %v, want 400", req, err)
+		}
+	}
+	if len(prov.Opens()) != 0 {
+		t.Fatal("an invalid create reached the provider")
+	}
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Prompt: "start", RequestID: mustUUID(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	canonical, _ := filepath.EvalSymlinks(real)
-	if sum.Workdir != canonical || sum.Name != filepath.Base(canonical) || prov.Last().Request().Workdir != canonical {
-		t.Fatalf("workdir not canonical: %+v", sum)
+	if sum.Workdir != canonical || sum.ProjectID != project || sum.Name != "" || sum.Model != "" || prov.Last().Request().Workdir != canonical || prov.Last().Request().Model != "" {
+		t.Fatalf("created task = %+v, open %+v", sum, prov.Last().Request())
 	}
 	if sends := prov.Last().Sends(); len(sends) != 1 || sends[0] != "start" {
 		t.Fatalf("create prompt sends = %q", sends)
@@ -678,23 +699,31 @@ func TestCreateValidatesWorkdirAndProvider(t *testing.T) {
 	unavailable := agenttest.NewProvider("down", allCaps)
 	unavailable.SetCheckError(errors.New("not installed"))
 	m2 := startManager(t, openTestStore(t), unavailable)
-	if _, err := m2.Create(CreateRequest{Provider: "down", Workdir: t.TempDir()}); statusOf(err) != http.StatusConflict {
+	if _, err := m2.Create(CreateRequest{Provider: "down", ProjectID: addProject(t, m2, t.TempDir())}); statusOf(err) != http.StatusConflict {
 		t.Fatalf("unavailable provider = %v, want 409", err)
 	}
 	if info := m2.Providers()[0]; info.Available || info.Reason != "not installed" {
 		t.Fatalf("provider info = %+v", info)
+	}
+	gone := t.TempDir()
+	goneProject := addProject(t, m, gone)
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Create(CreateRequest{Provider: "fake", ProjectID: goneProject}); statusOf(err) != http.StatusConflict {
+		t.Fatalf("project directory removed = %v, want 409", err)
 	}
 }
 
 func TestCreateWithRepeatedRequestIDReturnsSameSession(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	rid := mustUUID(t)
-	dir := t.TempDir()
-	first, err := m.Create(CreateRequest{Provider: "fake", Workdir: dir, Prompt: "go", RequestID: rid})
+	project := addProject(t, m, t.TempDir())
+	first, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Prompt: "go", RequestID: rid})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := m.Create(CreateRequest{Provider: "fake", Workdir: dir, Prompt: "go", RequestID: rid})
+	second, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Prompt: "go", RequestID: rid})
 	if err != nil || second.ID != first.ID {
 		t.Fatalf("repeat create = %+v, %v", second, err)
 	}

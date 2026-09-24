@@ -106,10 +106,16 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
+	mux.HandleFunc("GET /api/projects", s.handleProjects)
+	mux.HandleFunc("POST /api/projects", s.handleAddProject)
+	mux.HandleFunc("PATCH /api/projects/{id}", s.handleRenameProject)
+	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
 	mux.HandleFunc("GET /api/sessions", s.handleList)
 	mux.HandleFunc("POST /api/sessions", s.handleCreate)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleDetail)
-	mux.HandleFunc("PATCH /api/sessions/{id}", s.handleRename)
+	mux.HandleFunc("PATCH /api/sessions/{id}", s.handlePatch)
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDelete)
+	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}", s.handleSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/close", s.handleClose)
@@ -152,7 +158,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "cross-origin request rejected")
 			return
 		}
-		if !jsonContentType(r.Header.Get("Content-Type")) {
+		// A DELETE without a body has no content to type; every other
+		// state change must be JSON.
+		bodyless := r.Method == http.MethodDelete && r.ContentLength == 0
+		if !bodyless && !jsonContentType(r.Header.Get("Content-Type")) {
 			writeError(w, http.StatusUnsupportedMediaType, "requests must use Content-Type: application/json")
 			return
 		}
@@ -202,6 +211,11 @@ func writeFailure(w http.ResponseWriter, err error) {
 	status, msg := errorStatus(err)
 	if status == http.StatusInternalServerError {
 		log.Error("web request failed", "error", err)
+	}
+	var webErr *Error
+	if errors.As(err, &webErr) && webErr.ProjectID != "" {
+		writeJSON(w, status, map[string]string{"error": msg, "project_id": webErr.ProjectID})
+		return
 	}
 	writeError(w, status, msg)
 }
@@ -254,7 +268,51 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
+	s.m.RefreshModels()
 	writeJSON(w, http.StatusOK, Meta{Version: s.version, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs()})
+}
+
+func (s *Server) handleProjects(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string][]Project{"projects": s.m.Projects()})
+}
+
+func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Dir  string `json:"dir"`
+		Name string `json:"name"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	p, err := s.m.AddProject(body.Dir, body.Name)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	p, err := s.m.RenameProject(r.PathValue("id"), body.Name)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) handleRemoveProject(w http.ResponseWriter, r *http.Request) {
+	if err := s.m.RemoveProject(r.PathValue("id")); err != nil {
+		writeFailure(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
@@ -288,19 +346,64 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
-func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
+// handlePatch applies {name?, model?}. The model changes first: it is the
+// part that can be refused, and a refused request should change nothing.
+func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name  *string `json:"name"`
+		Model *string `json:"model"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	summary, err := s.m.Rename(r.PathValue("id"), body.Name)
+	if body.Name == nil && body.Model == nil {
+		writeError(w, http.StatusBadRequest, "name or model is required")
+		return
+	}
+	if body.Name != nil {
+		if _, err := cleanTaskName(*body.Name); err != nil {
+			writeFailure(w, err)
+			return
+		}
+	}
+	id := r.PathValue("id")
+	var summary SessionSummary
+	var err error
+	if body.Model != nil {
+		if summary, err = s.m.SetModel(id, *body.Model); err != nil {
+			writeFailure(w, err)
+			return
+		}
+	}
+	if body.Name != nil {
+		if summary, err = s.m.Rename(id, *body.Name); err != nil {
+			writeFailure(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if err := s.m.Delete(r.PathValue("id")); err != nil {
+		writeFailure(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSubagent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.m.View(r.Context(), id); err != nil {
+		writeFailure(w, err)
+		return
+	}
+	detail, err := s.m.Subagent(id, r.PathValue("agent_id"))
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, summary)
+	writeJSON(w, http.StatusOK, detail)
 }
 
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {

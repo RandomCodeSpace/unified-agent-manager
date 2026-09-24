@@ -57,7 +57,7 @@ func TestWorkspaceChangesListAndDiffOnlyStatusPaths(t *testing.T) {
 	repo := gitRepoFixture(t)
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)
-	sum, err := ts.m.Create(CreateRequest{Provider: "fake", Workdir: filepath.Join(repo, "sub")})
+	sum, err := ts.m.Create(CreateRequest{Provider: "fake", ProjectID: addProject(t, ts.m, filepath.Join(repo, "sub"))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestWorkspaceChangesOutsideGit(t *testing.T) {
 		t.Skip("git is not installed")
 	}
 	ts := newTestServer(t, ServerConfig{})
-	sum, err := ts.m.Create(CreateRequest{Provider: "fake", Workdir: t.TempDir()})
+	sum, err := ts.m.Create(CreateRequest{Provider: "fake", ProjectID: addProject(t, ts.m, t.TempDir())})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestSessionScopeChanges(t *testing.T) {
 
 	noDiff := agenttest.NewProvider("nodiff", agentapi.Capabilities{History: true})
 	m := startManager(t, openTestStore(t), noDiff)
-	created, err := m.Create(CreateRequest{Provider: "nodiff", Workdir: t.TempDir()})
+	created, err := m.Create(CreateRequest{Provider: "nodiff", ProjectID: addProject(t, m, t.TempDir())})
 	if err != nil {
 		t.Fatal(err)
 	}

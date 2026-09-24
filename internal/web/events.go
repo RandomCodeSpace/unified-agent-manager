@@ -39,6 +39,7 @@ func (s *Subscriber) Sent(frame []byte) { s.queued.Add(-int64(len(frame))) }
 
 type snapshotEvent struct {
 	Seq      uint64           `json:"seq"`
+	Projects []Project        `json:"projects"`
 	Sessions []SessionSummary `json:"sessions"`
 	Session  *SessionDetail   `json:"session"`
 }
@@ -48,18 +49,43 @@ type sessionEvent struct {
 	Session SessionSummary `json:"session"`
 }
 
+type sessionRemovedEvent struct {
+	Seq       uint64 `json:"seq"`
+	SessionID string `json:"session_id"`
+}
+
+type projectEvent struct {
+	Seq     uint64  `json:"seq"`
+	Project Project `json:"project"`
+}
+
+type projectRemovedEvent struct {
+	Seq       uint64 `json:"seq"`
+	ProjectID string `json:"project_id"`
+}
+
+// itemEvent and deltaEvent carry agent_id for subagent items so a browser
+// can route them without looking inside the item.
 type itemEvent struct {
 	Seq       uint64        `json:"seq"`
 	SessionID string        `json:"session_id"`
+	AgentID   string        `json:"agent_id,omitempty"`
 	Item      agentapi.Item `json:"item"`
 }
 
 type deltaEvent struct {
 	Seq       uint64            `json:"seq"`
 	SessionID string            `json:"session_id"`
+	AgentID   string            `json:"agent_id,omitempty"`
 	ItemID    string            `json:"item_id"`
 	Kind      agentapi.ItemKind `json:"kind"`
 	Text      string            `json:"text"`
+}
+
+type subagentEvent struct {
+	Seq       uint64            `json:"seq"`
+	SessionID string            `json:"session_id"`
+	Subagent  agentapi.Subagent `json:"subagent"`
 }
 
 type interactionEvent struct {
@@ -106,7 +132,7 @@ func (m *Manager) Subscribe(sessionID string) (*Subscriber, []byte, error) {
 		d := m.detailLocked(s)
 		detail = &d
 	}
-	frame, err := encodeFrame("snapshot", snapshotEvent{Seq: m.seq, Sessions: m.summariesLocked(), Session: detail})
+	frame, err := encodeFrame("snapshot", snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Sessions: m.summariesLocked(), Session: detail})
 	if err != nil {
 		return nil, nil, err
 	}

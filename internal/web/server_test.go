@@ -221,7 +221,12 @@ func TestSessionRoutes(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)
 	dir := t.TempDir()
-	w := ts.do(http.MethodPost, "/api/sessions", `{"provider":"fake","workdir":"`+dir+`","name":"api task"}`, auth)
+	w := ts.do(http.MethodPost, "/api/projects", `{"dir":"`+dir+`"}`, auth)
+	var project Project
+	if err := json.Unmarshal(w.Body.Bytes(), &project); err != nil || w.Code != http.StatusCreated {
+		t.Fatalf("add project = %d %s", w.Code, w.Body)
+	}
+	w = ts.do(http.MethodPost, "/api/sessions", `{"provider":"fake","project_id":"`+project.ID+`","name":"api task"}`, auth)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", w.Code, w.Body)
 	}

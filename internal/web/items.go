@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"net/http"
 	"slices"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 )
 
 // Per-session memory bounds. Provider output is untrusted and unbounded; the
@@ -21,6 +23,7 @@ const (
 	maxInteractions    = 200
 	maxInteractionText = 256 << 10
 	maxAnswerBytes     = 64 << 10
+	maxSubagents       = 200
 )
 
 const truncatedMarker = "\n[truncated by uam]"
@@ -62,27 +65,55 @@ func itemSize(it agentapi.Item) int {
 	return n
 }
 
-// upsertItemLocked replaces the item with the same ID or appends it.
+// itemKey indexes an item: item IDs are unique per agent only. The main
+// agent and every subagent share one retained list and its bounds.
+func itemKey(agentID, id string) string {
+	if agentID == "" {
+		return id
+	}
+	return agentID + "\x00" + id
+}
+
+func (m *Manager) publishItemLocked(s *webSession, it agentapi.Item) {
+	m.broadcastLocked("item", s.id, func(seq uint64) any {
+		return itemEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, Item: it}
+	})
+}
+
+// upsertItemLocked replaces the item with the same agent and ID or appends
+// it.
 func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool) {
-	if i, ok := s.itemIdx[it.ID]; ok {
+	if i, ok := s.itemIdx[itemKey(it.AgentID, it.ID)]; ok {
 		s.itemBytes -= itemSize(s.items[i])
 		s.items[i] = it
 	} else {
-		s.itemIdx[it.ID] = len(s.items)
+		s.itemIdx[itemKey(it.AgentID, it.ID)] = len(s.items)
 		s.items = append(s.items, it)
 	}
 	s.itemBytes += itemSize(it)
 	s.trimItems()
 	if publish {
-		m.broadcastLocked("item", s.id, func(seq uint64) any { return itemEvent{Seq: seq, SessionID: s.id, Item: it} })
+		m.publishItemLocked(s, it)
 	}
+}
+
+// agentItems returns the retained items of one agent ("" for the main
+// agent), oldest first.
+func (s *webSession) agentItems(agentID string) []agentapi.Item {
+	out := []agentapi.Item{}
+	for _, it := range s.items {
+		if it.AgentID == agentID {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // applyDeltaLocked appends streamed text, creating the item when absent.
 func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
-	i, ok := s.itemIdx[d.ItemID]
+	i, ok := s.itemIdx[itemKey(d.AgentID, d.ItemID)]
 	if !ok {
-		m.upsertItemLocked(s, clampItem(agentapi.Item{ID: d.ItemID, Kind: d.Kind, Text: d.Text}, m.now()), true)
+		m.upsertItemLocked(s, clampItem(agentapi.Item{ID: d.ItemID, Kind: d.Kind, Text: d.Text, AgentID: d.AgentID}, m.now()), true)
 		return
 	}
 	it := s.items[i]
@@ -99,30 +130,36 @@ func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
 	s.itemBytes += len(add)
 	s.trimItems()
 	m.broadcastLocked("delta", s.id, func(seq uint64) any {
-		return deltaEvent{Seq: seq, SessionID: s.id, ItemID: d.ItemID, Kind: it.Kind, Text: add}
+		return deltaEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, ItemID: d.ItemID, Kind: it.Kind, Text: add}
 	})
 }
 
-// applyHistoryLocked installs the provider's transcript of a reopened
+// applyHistoryLocked installs the provider's record of a reopened
 // conversation. History defines order; items already known but absent from
 // it (for example streamed while it was read) are kept after it.
-func (m *Manager) applyHistoryLocked(s *webSession, history []agentapi.Item) {
-	if len(history) == 0 {
+func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History) {
+	for _, sa := range history.Subagents {
+		if sa.ID != "" {
+			m.upsertSubagentLocked(s, sa)
+		}
+	}
+	if len(history.Items) == 0 {
 		return
 	}
 	now := m.now()
-	items := make([]agentapi.Item, 0, len(history)+len(s.items))
-	seen := make(map[string]bool, len(history))
-	for _, it := range history {
-		if it.ID == "" || seen[it.ID] {
+	items := make([]agentapi.Item, 0, len(history.Items)+len(s.items))
+	seen := make(map[string]bool, len(history.Items))
+	for _, it := range history.Items {
+		key := itemKey(it.AgentID, it.ID)
+		if it.ID == "" || seen[key] {
 			continue
 		}
-		seen[it.ID] = true
+		seen[key] = true
 		items = append(items, clampItem(it, now))
 	}
 	fromHistory := len(items)
 	for _, it := range s.items {
-		if !seen[it.ID] {
+		if !seen[itemKey(it.AgentID, it.ID)] {
 			items = append(items, it)
 		}
 	}
@@ -134,17 +171,17 @@ func (m *Manager) applyHistoryLocked(s *webSession, history []agentapi.Item) {
 	s.rebuildIndex()
 	s.trimItems()
 	for _, it := range items[:fromHistory] {
-		if _, kept := s.itemIdx[it.ID]; !kept {
+		if _, kept := s.itemIdx[itemKey(it.AgentID, it.ID)]; !kept {
 			continue
 		}
-		m.broadcastLocked("item", s.id, func(seq uint64) any { return itemEvent{Seq: seq, SessionID: s.id, Item: it} })
+		m.publishItemLocked(s, it)
 	}
 }
 
 func (s *webSession) rebuildIndex() {
 	s.itemIdx = make(map[string]int, len(s.items))
 	for i, it := range s.items {
-		s.itemIdx[it.ID] = i
+		s.itemIdx[itemKey(it.AgentID, it.ID)] = i
 	}
 }
 
@@ -255,6 +292,87 @@ func (m *Manager) expirePendingLocked(s *webSession, reason string) {
 			m.expireLocked(s, ix, reason)
 		}
 	}
+}
+
+// upsertSubagentLocked records a subagent update. A terminal subagent never
+// changes again: providers may report the end more than once (Copilot sends
+// a second, cancelled completion when a client disconnects).
+func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent) {
+	if in.Status == "" {
+		in.Status = agentapi.SubagentRunning
+	}
+	if in.Status != agentapi.SubagentRunning && !in.Status.Terminal() {
+		return
+	}
+	in.Name = clampText(displaytext.Sanitize(in.Name), maxLabelText)
+	in.Description = clampText(displaytext.Sanitize(in.Description), maxLabelText)
+	in.Error = clipRunes(displaytext.Sanitize(in.Error), maxDetailRunes)
+	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
+	cur := s.subIdx[in.ID]
+	if cur == nil {
+		cur = &agentapi.Subagent{}
+		s.subagents = append(s.subagents, cur)
+		s.subIdx[in.ID] = cur
+	} else if cur.Status.Terminal() {
+		return
+	} else {
+		// An end event may omit what the start event said.
+		in.ParentToolCallID = cmp.Or(in.ParentToolCallID, cur.ParentToolCallID)
+		in.Name = cmp.Or(in.Name, cur.Name)
+		in.Description = cmp.Or(in.Description, cur.Description)
+		if in.StartedAt.IsZero() {
+			in.StartedAt = cur.StartedAt
+		}
+	}
+	*cur = in
+	s.trimSubagents()
+	m.publishSubagentLocked(s, cur)
+}
+
+func (m *Manager) publishSubagentLocked(s *webSession, sa *agentapi.Subagent) {
+	snapshot := *sa
+	m.broadcastLocked("subagent", s.id, func(seq uint64) any {
+		return subagentEvent{Seq: seq, SessionID: s.id, Subagent: snapshot}
+	})
+}
+
+// endSubagentsLocked marks every running subagent cancelled when its
+// conversation ends: nothing of it runs once the conversation is closed.
+func (m *Manager) endSubagentsLocked(s *webSession) {
+	for _, sa := range s.subagents {
+		if sa.Status == agentapi.SubagentRunning {
+			sa.Status, sa.EndedAt = agentapi.SubagentCancelled, m.now()
+			m.publishSubagentLocked(s, sa)
+		}
+	}
+}
+
+func (s *webSession) runningSubagents() int {
+	n := 0
+	for _, sa := range s.subagents {
+		if sa.Status == agentapi.SubagentRunning {
+			n++
+		}
+	}
+	return n
+}
+
+// trimSubagents forgets the oldest finished subagents beyond the cap.
+func (s *webSession) trimSubagents() {
+	excess := len(s.subagents) - maxSubagents
+	if excess <= 0 {
+		return
+	}
+	kept := s.subagents[:0]
+	for _, sa := range s.subagents {
+		if excess > 0 && sa.Status.Terminal() {
+			delete(s.subIdx, sa.ID)
+			excess--
+			continue
+		}
+		kept = append(kept, sa)
+	}
+	s.subagents = kept
 }
 
 // validateAnswer checks an answer against what the provider offered, so an

@@ -49,6 +49,17 @@ type ProviderInfo struct {
 	Available    bool                  `json:"available"`
 	Reason       string                `json:"reason"`
 	Capabilities agentapi.Capabilities `json:"capabilities"`
+	// Models are the selectable models; empty means the provider default only.
+	Models []agentapi.Model `json:"models"`
+}
+
+// Project is a directory the user added; its Tasks are web sessions whose
+// project_id is ID.
+type Project struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Dir       string    `json:"dir"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Meta is the /api/meta response.
@@ -58,7 +69,7 @@ type Meta struct {
 	RecentWorkdirs []string       `json:"recent_workdirs"`
 }
 
-// SessionSummary is one web session as listed.
+// SessionSummary is one web session (a Task) as listed.
 type SessionSummary struct {
 	ID             string    `json:"id"`
 	Provider       string    `json:"provider"`
@@ -74,15 +85,34 @@ type SessionSummary struct {
 	// Capabilities come from the provider so the browser can hide controls
 	// the provider does not really support.
 	Capabilities agentapi.Capabilities `json:"capabilities"`
+	ProjectID    string                `json:"project_id"`
+	// Model is the selected model; empty means the provider default.
+	Model string `json:"model"`
+	// Title is the provider-generated title. Name may be empty; browsers
+	// display name || title || "New task".
+	Title string `json:"title"`
+	// LastModel is the model the provider reported for the latest turn that
+	// reported one. It is not persisted.
+	LastModel string `json:"last_model"`
+	// SubagentsRunning counts subagents that have not ended.
+	SubagentsRunning int `json:"subagents_running"`
 }
 
-// SessionDetail is a summary plus the retained transcript and interactions.
+// SessionDetail is a summary plus the retained main-agent transcript,
+// interactions and subagents.
 type SessionDetail struct {
 	SessionSummary
 	Items            []agentapi.Item        `json:"items"`
 	Interactions     []agentapi.Interaction `json:"interactions"`
+	Subagents        []agentapi.Subagent    `json:"subagents"`
 	HistoryTruncated bool                   `json:"history_truncated"`
 	LastSubmission   *Submission            `json:"last_submission"`
+}
+
+// SubagentDetail is one subagent and its retained transcript.
+type SubagentDetail struct {
+	Subagent agentapi.Subagent `json:"subagent"`
+	Items    []agentapi.Item   `json:"items"`
 }
 
 // Submission is the recorded outcome of one prompt request.
@@ -115,6 +145,9 @@ type Changes struct {
 type Error struct {
 	Status  int
 	Message string
+	// ProjectID names the existing Project when adding a directory that
+	// already has one.
+	ProjectID string
 }
 
 func (e *Error) Error() string { return e.Message }

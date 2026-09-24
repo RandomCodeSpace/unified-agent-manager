@@ -47,6 +47,7 @@ type sdkClient interface {
 	Stop() error
 	ForceStop()
 	Ping(ctx context.Context) error
+	ListModels(ctx context.Context) ([]rpc.Model, error)
 	CreateSession(ctx context.Context, cfg *copilot.SessionConfig) (sdkSession, error)
 	ResumeSession(ctx context.Context, id string, cfg *copilot.ResumeSessionConfig) (sdkSession, error)
 }
@@ -55,6 +56,7 @@ type sdkClient interface {
 type sdkSession interface {
 	ID() string
 	Send(ctx context.Context, prompt string) error
+	SetModel(ctx context.Context, model string) error
 	Abort(ctx context.Context) error
 	Events(ctx context.Context) ([]copilot.SessionEvent, error)
 	// RespondPermission answers a pending permission request. It reports false
@@ -81,6 +83,17 @@ func (a sdkClientAdapter) Ping(ctx context.Context) error {
 	return err
 }
 
+// ListModels sends the same models.list request as Client.ListModels, which
+// caches its answer until the CLI stops; an entitlement change must show up
+// while the service runs.
+func (a sdkClientAdapter) ListModels(ctx context.Context) ([]rpc.Model, error) {
+	res, err := a.c.RPC.Models.List(ctx, &rpc.ModelsListRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return res.Models, nil
+}
+
 func (a sdkClientAdapter) CreateSession(ctx context.Context, cfg *copilot.SessionConfig) (sdkSession, error) {
 	s, err := a.c.CreateSession(ctx, cfg)
 	if err != nil {
@@ -104,6 +117,10 @@ func (a sdkSessionAdapter) Abort(ctx context.Context) error { return a.s.Abort(c
 func (a sdkSessionAdapter) Disconnect() error               { return a.s.Disconnect() }
 func (a sdkSessionAdapter) Events(ctx context.Context) ([]copilot.SessionEvent, error) {
 	return a.s.GetEvents(ctx)
+}
+
+func (a sdkSessionAdapter) SetModel(ctx context.Context, model string) error {
+	return a.s.SetModel(ctx, model, nil)
 }
 
 func (a sdkSessionAdapter) Send(ctx context.Context, prompt string) error {
@@ -223,6 +240,28 @@ func (p *webProvider) Check(ctx context.Context) error {
 	return nil
 }
 
+// Models lists the models the signed-in account can select: entries with no
+// policy or an enabled one. Others are listed by the CLI but not selectable.
+func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
+	client, err := p.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models, err := client.ListModels(ctx)
+	if err != nil {
+		p.poke()
+		return nil, fmt.Errorf("list copilot models: %s", errText(err))
+	}
+	out := []agentapi.Model{}
+	for _, m := range models {
+		if m.ID == "" || (m.Policy != nil && m.Policy.State != rpc.ModelPolicyStateEnabled) {
+			continue
+		}
+		out = append(out, agentapi.Model{ID: m.ID, Name: m.Name})
+	}
+	return out, nil
+}
+
 func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agentapi.Conversation, error) {
 	if req.Events == nil {
 		return nil, errors.New("copilot: OpenRequest.Events is required")
@@ -231,7 +270,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	if err != nil {
 		return nil, err
 	}
-	c := &conversation{p: p, client: client, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript()}
+	c := &conversation{p: p, client: client, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog()}
 	// Permission requests are answered through the pending-permission RPC
 	// with the request id from the permission.requested event; the SDK
 	// callback only registers this client as the one that decides.
@@ -243,6 +282,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{
 			SessionID:           req.SessionID,
 			WorkingDirectory:    req.Workdir,
+			Model:               req.Model,
 			Streaming:           copilot.Bool(true),
 			OnPermissionRequest: deferPermission,
 			OnUserInputRequest:  c.askUser,
@@ -434,8 +474,11 @@ type conversation struct {
 	closed  bool
 	pending map[string]*interaction
 	tr      *transcript
+	subs    *subagentLog
 	turnErr string
 	idles   int
+	// turnModel is the model of the turn's latest main-agent model call.
+	turnModel string
 }
 
 type interaction struct {
@@ -469,16 +512,29 @@ func (c *conversation) emitInteractionLocked(in *interaction) {
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventInteraction, Interaction: &v})
 }
 
-func (c *conversation) History(ctx context.Context) ([]agentapi.Item, error) {
+func (c *conversation) History(ctx context.Context) (agentapi.History, error) {
 	if c.isClosed() {
-		return nil, agentapi.ErrClosed
+		return agentapi.History{}, agentapi.ErrClosed
 	}
 	evs, err := c.sess.Events(ctx)
 	if err != nil {
 		c.p.poke()
-		return nil, fmt.Errorf("copilot history: %s", errText(err))
+		return agentapi.History{}, fmt.Errorf("copilot history: %s", errText(err))
 	}
-	return historyItems(evs), nil
+	return history(evs), nil
+}
+
+// SetModel switches the session's model from the next message on. The web
+// service never calls it while a turn runs, so the CLI does not defer it.
+func (c *conversation) SetModel(ctx context.Context, model string) error {
+	if c.isClosed() {
+		return agentapi.ErrClosed
+	}
+	if err := c.sess.SetModel(ctx, model); err != nil {
+		c.p.poke()
+		return fmt.Errorf("copilot model switch: %s", errText(err))
+	}
+	return nil
 }
 
 // Send reports a JSON-RPC error answer as a plain rejection: the CLI received
@@ -704,38 +760,59 @@ func (c *conversation) askUser(req copilot.UserInputRequest, _ copilot.UserInput
 }
 
 // onEvent runs on the SDK's event goroutine, which stalls the whole CLI
-// connection while it runs; it only updates state and emits.
+// connection while it runs; it only updates state and emits. Subagent events
+// arrive on the same stream with the envelope agentId; they are tagged with
+// it so they never enter the main transcript or end the main turn.
 func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return
 	}
+	agentID := agentOf(ev)
 	switch d := ev.Data.(type) {
 	case *rpc.AssistantMessageDeltaData:
-		c.emitLocked(deltaEvent(d.MessageID, agentapi.ItemAssistant, d.DeltaContent))
+		c.emitLocked(deltaEvent(agentID, d.MessageID, agentapi.ItemAssistant, d.DeltaContent))
 		return
 	case *rpc.AssistantReasoningDeltaData:
-		c.emitLocked(deltaEvent(reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.DeltaContent))
+		c.emitLocked(deltaEvent(agentID, reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.DeltaContent))
+		return
+	case *rpc.AssistantUsageData:
+		if agentID == "" && d.Model != "" {
+			c.turnModel = d.Model
+		}
+		return
+	case *rpc.SessionTitleChangedData:
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventTitle, Title: d.Title})
+		return
+	case *rpc.SubagentStartedData, *rpc.SubagentCompletedData, *rpc.SubagentFailedData:
+		if sa, ok := c.subs.apply(ev); ok {
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
+		}
 		return
 	case *rpc.SessionErrorData:
-		c.turnErr = clip(displaytext.Sanitize(d.Message), maxErrorText)
+		if agentID == "" {
+			c.turnErr = clip(displaytext.Sanitize(d.Message), maxErrorText)
+		}
 	case *rpc.SessionIdleData:
+		if agentID != "" {
+			return
+		}
 		c.idles++
-		turn := agentapi.Turn{State: agentapi.TurnCompleted}
+		turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel}
 		switch {
 		case d.Aborted != nil && *d.Aborted:
 			turn.State = agentapi.TurnCancelled
 			// An abort withdraws the turn's prompts; the CLI stops waiting.
 			c.expireLocked()
 		case c.turnErr != "":
-			turn = agentapi.Turn{State: agentapi.TurnFailed, Error: c.turnErr}
+			turn.State, turn.Error = agentapi.TurnFailed, c.turnErr
 		}
-		c.turnErr = ""
+		c.turnErr, c.turnModel = "", ""
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &turn})
 		return
 	case *rpc.PermissionRequestedData:
-		c.permissionRequestedLocked(d, ev.Timestamp)
+		c.permissionRequestedLocked(d, ev.Timestamp, agentID)
 		return
 	case *rpc.PermissionCompletedData:
 		c.permissionCompletedLocked(d)
@@ -756,7 +833,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	}
 }
 
-func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData, at time.Time) {
+func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData, at time.Time, agentID string) {
 	if d.ResolvedByHook != nil && *d.ResolvedByHook {
 		return
 	}
@@ -765,7 +842,7 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	}
 	title, detail := describePermission(d)
 	in := &interaction{
-		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at},
+		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID},
 		decisions:   map[string]rpc.PermissionDecision{},
 	}
 	add := func(id, label string, reject bool, dec rpc.PermissionDecision) {
@@ -887,7 +964,7 @@ type transcript struct{ tools map[string]*agentapi.ToolCall }
 func newTranscript() *transcript { return &transcript{tools: map[string]*agentapi.ToolCall{}} }
 
 func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
-	it := agentapi.Item{Time: ev.Timestamp}
+	it := agentapi.Item{Time: ev.Timestamp, AgentID: agentOf(ev)}
 	switch d := ev.Data.(type) {
 	case *rpc.UserMessageData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemUser, d.Content
@@ -940,29 +1017,129 @@ func (t *transcript) tool(id string) *agentapi.ToolCall {
 	return tc
 }
 
-// historyItems maps a recorded event log to transcript items, oldest first,
-// with one item per id. Ephemeral events (streaming deltas) are skipped.
-func historyItems(evs []copilot.SessionEvent) []agentapi.Item {
-	t := newTranscript()
+// history maps a recorded event log to transcript items, oldest first, with
+// one item per agent and id, and to the subagents it records. Ephemeral
+// events (streaming deltas) are skipped.
+func history(evs []copilot.SessionEvent) agentapi.History {
+	t, subs := newTranscript(), newSubagentLog()
 	var items []agentapi.Item
-	index := map[string]int{}
+	index := map[[2]string]int{}
 	for _, ev := range evs {
 		if ev.Ephemeral != nil && *ev.Ephemeral {
 			continue
 		}
+		subs.apply(ev)
 		it, ok := t.item(ev)
 		if !ok {
 			continue
 		}
-		if i, seen := index[it.ID]; seen {
+		key := [2]string{it.AgentID, it.ID}
+		if i, seen := index[key]; seen {
 			it.Time = items[i].Time
 			items[i] = it
 			continue
 		}
-		index[it.ID] = len(items)
+		index[key] = len(items)
 		items = append(items, it)
 	}
-	return items
+	return agentapi.History{Items: items, Subagents: subs.list()}
+}
+
+// agentOf returns the envelope's subagent instance ID, or "" for the main
+// agent and session-level events.
+func agentOf(ev copilot.SessionEvent) string {
+	if ev.AgentID == nil {
+		return ""
+	}
+	return *ev.AgentID
+}
+
+// subagentLog keeps each subagent's record by its agent ID. The first
+// terminal event wins: Copilot reports a second, cancelled completion for an
+// idle subagent when the client disconnects.
+type subagentLog struct {
+	byID   map[string]*agentapi.Subagent
+	byCall map[string]string // spawning tool call ID -> agent ID
+	order  []string
+}
+
+func newSubagentLog() *subagentLog {
+	return &subagentLog{byID: map[string]*agentapi.Subagent{}, byCall: map[string]string{}}
+}
+
+// apply folds a subagent.* event into the log and returns the changed record,
+// or false when nothing changed.
+func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
+	agentID := agentOf(ev)
+	var callID, name, errMsg string
+	var status agentapi.SubagentStatus
+	switch d := ev.Data.(type) {
+	case *rpc.SubagentStartedData:
+		if agentID == "" {
+			return agentapi.Subagent{}, false
+		}
+		sa := l.get(agentID)
+		if sa.Status.Terminal() {
+			return agentapi.Subagent{}, false
+		}
+		sa.ParentToolCallID, sa.Name, sa.Description = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), d.AgentDescription
+		sa.Status, sa.StartedAt = agentapi.SubagentRunning, ev.Timestamp
+		l.byCall[d.ToolCallID] = agentID
+		return *sa, true
+	case *rpc.SubagentCompletedData:
+		callID, name, status = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), agentapi.SubagentCompleted
+		if d.Cancelled != nil && *d.Cancelled {
+			status = agentapi.SubagentCancelled
+		}
+	case *rpc.SubagentFailedData:
+		callID, name, status = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), agentapi.SubagentFailed
+		errMsg = clip(displaytext.Sanitize(d.Error), maxErrorText)
+	default:
+		return agentapi.Subagent{}, false
+	}
+	if agentID == "" {
+		agentID = l.byCall[callID]
+	}
+	if agentID == "" {
+		return agentapi.Subagent{}, false
+	}
+	sa := l.get(agentID)
+	if sa.Status.Terminal() {
+		return agentapi.Subagent{}, false
+	}
+	if sa.ParentToolCallID == "" {
+		sa.ParentToolCallID = callID
+	}
+	if sa.Name == "" {
+		sa.Name = name
+	}
+	sa.Status, sa.Error, sa.EndedAt = status, errMsg, ev.Timestamp
+	return *sa, true
+}
+
+func (l *subagentLog) get(agentID string) *agentapi.Subagent {
+	sa := l.byID[agentID]
+	if sa == nil {
+		sa = &agentapi.Subagent{ID: agentID}
+		l.byID[agentID] = sa
+		l.order = append(l.order, agentID)
+	}
+	return sa
+}
+
+func (l *subagentLog) list() []agentapi.Subagent {
+	out := make([]agentapi.Subagent, 0, len(l.order))
+	for _, id := range l.order {
+		out = append(out, *l.byID[id])
+	}
+	return out
+}
+
+func subagentName(display, name string) string {
+	if display != "" {
+		return display
+	}
+	return name
 }
 
 func cloneTool(tc *agentapi.ToolCall) *agentapi.ToolCall {
@@ -970,8 +1147,8 @@ func cloneTool(tc *agentapi.ToolCall) *agentapi.ToolCall {
 	return &v
 }
 
-func deltaEvent(id string, kind agentapi.ItemKind, text string) agentapi.Event {
-	return agentapi.Event{Kind: agentapi.EventDelta, Delta: &agentapi.Delta{ItemID: id, Kind: kind, Text: text}}
+func deltaEvent(agentID, id string, kind agentapi.ItemKind, text string) agentapi.Event {
+	return agentapi.Event{Kind: agentapi.EventDelta, Delta: &agentapi.Delta{ItemID: id, Kind: kind, Text: text, AgentID: agentID}}
 }
 
 // reasoningItemID keeps reasoning items apart from the message they precede.

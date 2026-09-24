@@ -28,9 +28,17 @@ type fakeClient struct {
 	forced    int
 	pingErr   error
 	resumeErr error
+	models    []rpc.Model
+	modelsErr error
 	sessions  []*fakeSession
 	create    []*copilot.SessionConfig
 	resume    []*copilot.ResumeSessionConfig
+}
+
+func (f *fakeClient) ListModels(context.Context) ([]rpc.Model, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.models, f.modelsErr
 }
 
 func (f *fakeClient) Start(context.Context) error {
@@ -84,6 +92,8 @@ type fakeSession struct {
 	mu           sync.Mutex
 	sent         []string
 	sendErr      error
+	models       []string
+	modelErr     error
 	events       []copilot.SessionEvent
 	answers      map[string]rpc.PermissionDecision
 	notPending   map[string]bool
@@ -100,6 +110,16 @@ func (s *fakeSession) Send(_ context.Context, prompt string) error {
 		return s.sendErr
 	}
 	s.sent = append(s.sent, prompt)
+	return nil
+}
+
+func (s *fakeSession) SetModel(_ context.Context, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.modelErr != nil {
+		return s.modelErr
+	}
+	s.models = append(s.models, model)
 	return nil
 }
 
@@ -611,12 +631,12 @@ func TestWebHistory(t *testing.T) {
 		ev("e9", &rpc.SessionErrorData{Message: "quota"}),
 		ev("e10", &rpc.SessionIdleData{}),
 	}
-	items, err := h.conv.History(context.Background())
+	recorded, err := h.conv.History(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got []string
-	for _, it := range items {
+	for _, it := range recorded.Items {
 		s := string(it.Kind) + ":" + it.ID + ":" + it.Text
 		if it.Tool != nil {
 			s += string(it.Tool.Status) + "/" + it.Tool.Output
@@ -629,6 +649,193 @@ func TestWebHistory(t *testing.T) {
 	}
 	if len(h.sink.all()) != 0 {
 		t.Fatal("History emitted events")
+	}
+}
+
+func TestWebModelsKeepOnlySelectableEntries(t *testing.T) {
+	fc := &fakeClient{models: []rpc.Model{
+		{ID: "auto", Name: "Auto"},
+		{ID: "claude-haiku-4.5", Name: "Claude Haiku 4.5", Policy: &rpc.ModelPolicy{State: rpc.ModelPolicyStateEnabled}},
+		{ID: "gpt-locked", Name: "Locked", Policy: &rpc.ModelPolicy{State: rpc.ModelPolicyStateDisabled}},
+		{ID: "gpt-unset", Name: "Unconfigured", Policy: &rpc.ModelPolicy{State: rpc.ModelPolicyStateUnconfigured}},
+	}}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	models, err := p.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []agentapi.Model{{ID: "auto", Name: "Auto"}, {ID: "claude-haiku-4.5", Name: "Claude Haiku 4.5"}}
+	if fmt.Sprint(models) != fmt.Sprint(want) {
+		t.Fatalf("models = %+v, want %+v", models, want)
+	}
+	fc.mu.Lock()
+	fc.models, fc.modelsErr = nil, errors.New("not signed in")
+	fc.mu.Unlock()
+	if _, err := p.Models(context.Background()); err == nil || !strings.Contains(err.Error(), "not signed in") {
+		t.Fatalf("models error = %v", err)
+	}
+}
+
+func TestWebModelOnCreateOnlyAndSetModel(t *testing.T) {
+	fc := &fakeClient{}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	ctx := context.Background()
+	conv, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "s-1", Workdir: "/w", Model: "gpt-5-mini", Events: &recSink{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fc.create[0].Model != "gpt-5-mini" {
+		t.Fatalf("create model = %q", fc.create[0].Model)
+	}
+	if _, err := p.Open(ctx, agentapi.OpenRequest{ConversationID: "c-1", Model: "ignored", Events: &recSink{}}); err != nil || fc.resume[0].Model != "" {
+		t.Fatalf("resume model = %q, %v", fc.resume[0].Model, err)
+	}
+	if err := conv.SetModel(ctx, "claude-haiku-4.5"); err != nil {
+		t.Fatal(err)
+	}
+	fs := fc.sessions[0]
+	if strings.Join(fs.models, ",") != "claude-haiku-4.5" {
+		t.Fatalf("switched models = %q", fs.models)
+	}
+	fs.modelErr = errors.New("JSON-RPC Error: bad")
+	if err := conv.SetModel(ctx, "x"); err == nil || !strings.Contains(err.Error(), "bad") {
+		t.Fatalf("refused switch err = %v", err)
+	}
+	if err := conv.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := conv.SetModel(ctx, "x"); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("SetModel after Close err = %v", err)
+	}
+}
+
+func agentEv(id, agentID string, data rpc.SessionEventData) copilot.SessionEvent {
+	e := ev(id, data)
+	e.AgentID = &agentID
+	return e
+}
+
+func TestWebTitleAndTurnModel(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	h.fs.onEvent(ev("t1", &rpc.SessionTitleChangedData{Title: "Fix the build"}))
+	if e := h.sink.last(); e.Kind != agentapi.EventTitle || e.Title != "Fix the build" {
+		t.Fatalf("title event = %+v", e)
+	}
+	_ = h.conv.Send(ctx, "hi")
+	h.fs.onEvent(ev("u1", &rpc.AssistantUsageData{Model: "gpt-5-mini"}))
+	h.fs.onEvent(agentEv("u2", "agent-1", &rpc.AssistantUsageData{Model: "sub-model"}))
+	h.fs.onEvent(ev("u3", &rpc.AssistantUsageData{Model: "claude-haiku-4.5"}))
+	h.fs.onEvent(agentEv("u4", "agent-1", &rpc.AssistantUsageData{Model: "sub-model"}))
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	if e := h.sink.last(); e.Kind != agentapi.EventTurn || e.Turn.State != agentapi.TurnCompleted || e.Turn.Model != "claude-haiku-4.5" {
+		t.Fatalf("turn = %+v", e.Turn)
+	}
+	_ = h.conv.Send(ctx, "again")
+	h.fs.onEvent(ev("i2", &rpc.SessionIdleData{}))
+	if e := h.sink.last(); e.Turn.Model != "" {
+		t.Fatalf("second turn reused the first turn's model: %+v", e.Turn)
+	}
+}
+
+func TestWebSubagentEventsNeverEnterTheMainTranscript(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	_ = h.conv.Send(ctx, "delegate")
+	subPrompt := "sub-prompt"
+	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "call_1", ToolName: "task"}))
+	h.fs.onEvent(agentEv("e2", "agent-1", &rpc.SubagentStartedData{ToolCallID: "call_1", AgentName: "general-purpose", AgentDisplayName: "General purpose", AgentDescription: "Does things"}))
+	h.fs.onEvent(agentEv("e3", "agent-1", &rpc.UserMessageData{Content: "delegated prompt", MessageID: &subPrompt}))
+	h.fs.onEvent(agentEv("e4", "agent-1", &rpc.AssistantMessageDeltaData{MessageID: "m1", DeltaContent: "part"}))
+	h.fs.onEvent(agentEv("e5", "agent-1", &rpc.AssistantMessageData{MessageID: "m1", Content: "sub answer"}))
+	h.fs.onEvent(agentEv("e6", "agent-1", &rpc.SessionErrorData{Message: "sub hiccup"}))
+	h.fs.onEvent(agentEv("e7", "agent-1", &rpc.SessionIdleData{}))
+	h.fs.onEvent(agentEv("e8", "agent-1", shellRequest("p1")))
+	h.fs.onEvent(agentEv("e9", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "call_1", AgentName: "general-purpose"}))
+	// Copilot repeats the completion, cancelled, when the client disconnects.
+	h.fs.onEvent(agentEv("e10", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "call_1", Cancelled: copilot.Bool(true)}))
+	// A failure without an envelope agent is matched by its tool call.
+	h.fs.onEvent(agentEv("e11", "agent-2", &rpc.SubagentStartedData{ToolCallID: "call_2", AgentName: "explore"}))
+	h.fs.onEvent(ev("e12", &rpc.SubagentFailedData{ToolCallID: "call_2", Error: "boom\x1b[31m"}))
+	h.fs.onEvent(ev("e13", &rpc.SubagentFailedData{ToolCallID: "unknown", Error: "who"}))
+
+	var subs []agentapi.Subagent
+	for _, e := range h.sink.all() {
+		switch e.Kind {
+		case agentapi.EventItem:
+			if e.Item.ID != "call_1" && e.Item.AgentID != "agent-1" {
+				t.Fatalf("subagent item without its agent: %+v", e.Item)
+			}
+			if e.Item.ID == "call_1" && e.Item.AgentID != "" {
+				t.Fatalf("main tool item tagged: %+v", e.Item)
+			}
+		case agentapi.EventDelta:
+			if e.Delta.AgentID != "agent-1" {
+				t.Fatalf("subagent delta without its agent: %+v", e.Delta)
+			}
+		case agentapi.EventTurn:
+			if e.Turn.State != agentapi.TurnWorking {
+				t.Fatalf("a subagent event ended the main turn: %+v", e.Turn)
+			}
+		case agentapi.EventInteraction:
+			if e.Interaction.AgentID != "agent-1" {
+				t.Fatalf("subagent permission without its agent: %+v", e.Interaction)
+			}
+		case agentapi.EventSubagent:
+			subs = append(subs, *e.Subagent)
+		}
+	}
+	if len(subs) != 4 {
+		t.Fatalf("subagent events = %+v", subs)
+	}
+	if s := subs[0]; s.ID != "agent-1" || s.Status != agentapi.SubagentRunning || s.ParentToolCallID != "call_1" || s.Name != "General purpose" || s.Description != "Does things" || s.StartedAt.IsZero() {
+		t.Fatalf("started = %+v", s)
+	}
+	if s := subs[1]; s.ID != "agent-1" || s.Status != agentapi.SubagentCompleted || s.EndedAt.IsZero() {
+		t.Fatalf("completed = %+v", s)
+	}
+	if s := subs[3]; s.ID != "agent-2" || s.Status != agentapi.SubagentFailed || s.Error != "boom" {
+		t.Fatalf("failed = %+v", s)
+	}
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	if e := h.sink.last(); e.Kind != agentapi.EventTurn || e.Turn.State != agentapi.TurnCompleted {
+		t.Fatalf("main turn after a subagent error = %+v", e.Turn)
+	}
+}
+
+func TestWebHistorySeparatesSubagents(t *testing.T) {
+	h := openWeb(t)
+	msgID, subID := "u1", "u2"
+	h.fs.events = []copilot.SessionEvent{
+		ev("e1", &rpc.UserMessageData{Content: "fix it", MessageID: &msgID}),
+		ev("e2", &rpc.ToolExecutionStartData{ToolCallID: "call_1", ToolName: "task"}),
+		agentEv("e3", "agent-1", &rpc.SubagentStartedData{ToolCallID: "call_1", AgentName: "general-purpose"}),
+		agentEv("e4", "agent-1", &rpc.UserMessageData{Content: "delegated", MessageID: &subID}),
+		agentEv("e5", "agent-1", &rpc.AssistantMessageData{MessageID: "m1", Content: "sub answer"}),
+		agentEv("e6", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "call_1"}),
+		agentEv("e7", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "call_1", Cancelled: copilot.Bool(true)}),
+		ev("e8", &rpc.ToolExecutionCompleteData{ToolCallID: "call_1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "sub answer"}}),
+		ev("e9", &rpc.AssistantMessageData{MessageID: "m2", Content: "Done."}),
+	}
+	recorded, err := h.conv.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var main, sub []string
+	for _, it := range recorded.Items {
+		if it.AgentID == "" {
+			main = append(main, it.ID)
+		} else {
+			sub = append(sub, it.AgentID+"/"+it.ID)
+		}
+	}
+	if strings.Join(main, ",") != "u1,call_1,m2" || strings.Join(sub, ",") != "agent-1/u2,agent-1/m1" {
+		t.Fatalf("history main %q sub %q", main, sub)
+	}
+	if len(recorded.Subagents) != 1 || recorded.Subagents[0].Status != agentapi.SubagentCompleted || recorded.Subagents[0].ParentToolCallID != "call_1" {
+		t.Fatalf("history subagents = %+v", recorded.Subagents)
 	}
 }
 

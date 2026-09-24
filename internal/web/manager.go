@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -42,6 +44,9 @@ const (
 	maxDetailRunes  = 300
 	maxSubmissions  = 64
 	recentWorkdirsN = 10
+	// modelsMaxAge is how long a model catalog is used before /api/meta
+	// reloads it; entitlements can change while the service runs.
+	modelsMaxAge = 5 * time.Minute
 )
 
 // Manager owns every web session, its provider conversation, and the event
@@ -66,9 +71,16 @@ type Manager struct {
 	// taking it, so a later write never carries older state.
 	persistMu sync.Mutex
 	wake      chan struct{}
+	// projectMu serializes Project changes, Task creation's final write and
+	// Project removal, each of which checks and then writes the store. It is
+	// taken before any session.op and never while holding mu.
+	projectMu sync.Mutex
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo
+	modelsAt map[string]time.Time
+	fetching map[string]bool
+	projects map[string]*Project
 	sessions map[string]*webSession
 	dirty    map[string]struct{}
 	creating map[string]chan struct{}
@@ -88,6 +100,9 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		cancel:    cancel,
 		wake:      make(chan struct{}, 1),
 		infos:     map[string]ProviderInfo{},
+		modelsAt:  map[string]time.Time{},
+		fetching:  map[string]bool{},
+		projects:  map[string]*Project{},
 		sessions:  map[string]*webSession{},
 		dirty:     map[string]struct{}{},
 		creating:  map[string]chan struct{}{},
@@ -114,14 +129,21 @@ type webSession struct {
 
 	// Everything below is guarded by Manager.mu.
 	id        string
+	projectID string
 	provider  string
+	model     string
 	name      string
+	title     string
+	lastModel string
 	workdir   string
 	convID    string
 	createdAt time.Time
 	updatedAt time.Time
 	base      string
 	detail    string
+	// removed is set once the session was deleted; operations waiting on op
+	// must not act on it.
+	removed bool
 	// turnSeq increments whenever base changes, so a failed Send only
 	// restores the previous state when nothing else changed it meanwhile.
 	turnSeq uint64
@@ -140,6 +162,9 @@ type webSession struct {
 	interactions []*interaction
 	ixIdx        map[string]*interaction
 
+	subagents []*agentapi.Subagent
+	subIdx    map[string]*agentapi.Subagent
+
 	submissions []Submission
 	last        *Submission
 	createReq   string
@@ -157,14 +182,14 @@ type interaction struct {
 // persistKey is the durable part of a session; sessions.json is written only
 // when it changes, never per streamed token.
 type persistKey struct {
-	turn, detail, name, convID, reqID, reqStatus string
+	turn, detail, name, convID, reqID, reqStatus, projectID, model, title string
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
 	return &webSession{
 		id: id, provider: provider, name: name, workdir: workdir, convID: convID,
 		createdAt: created, updatedAt: created, base: StateIdle,
-		itemIdx: map[string]int{}, ixIdx: map[string]*interaction{},
+		itemIdx: map[string]int{}, ixIdx: map[string]*interaction{}, subIdx: map[string]*agentapi.Subagent{},
 	}
 }
 
@@ -214,7 +239,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID}
+	k := persistKey{turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, title: s.title}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 	}
@@ -237,16 +262,43 @@ var knownStates = map[string]bool{
 
 const interruptedDetail = "the uam web service stopped while this turn was running"
 
-// Start checks providers and loads the web records. A provider whose check
-// fails is listed as unavailable; it is not fatal.
+// Start checks providers, loads their model catalogs and the web records,
+// and assigns records from before Projects existed to a Project. A provider
+// whose check fails is listed as unavailable; it is not fatal.
 func (m *Manager) Start(ctx context.Context) error {
 	infos := m.checkProviders(ctx)
 	cfg, err := m.store.Load()
 	if err != nil {
 		return fmt.Errorf("load web sessions: %w", err)
 	}
+	if needsProject(cfg) {
+		now := m.now()
+		err := m.store.Update(func(c *store.Config) error {
+			if err := assignProjects(c, now); err != nil {
+				return err
+			}
+			cfg = *c
+			return nil
+		})
+		if err != nil {
+			// Keep serving: the assignment holds for this run and is retried
+			// on the next start.
+			log.Warn("assign web sessions to projects failed", "error", err)
+			if err := assignProjects(&cfg, now); err != nil {
+				return fmt.Errorf("assign web sessions to projects: %w", err)
+			}
+		}
+	}
 	m.mu.Lock()
 	m.infos = infos
+	for name, info := range infos {
+		if info.Available {
+			m.modelsAt[name] = m.now()
+		}
+	}
+	for id, p := range cfg.WebProjects {
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt}
+	}
 	for _, rec := range cfg.Sessions {
 		if rec.Surface != store.SurfaceWeb || rec.ID == "" {
 			continue
@@ -271,6 +323,66 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
+// needsProject reports whether a web record still lacks a Project.
+func needsProject(cfg store.Config) bool {
+	for _, rec := range cfg.Sessions {
+		if rec.Surface == store.SurfaceWeb && rec.ID != "" && rec.Workdir != "" && (rec.Web == nil || rec.Web.ProjectID == "") {
+			return true
+		}
+	}
+	return false
+}
+
+// assignProjects gives every web record without a project_id the Project for
+// its workdir, creating one named after the directory when needed. Only such
+// records are touched, so running it again changes nothing and a removed
+// Project does not come back. The directory need not exist any more.
+func assignProjects(cfg *store.Config, now time.Time) error {
+	byDir := map[string]string{}
+	for id, p := range cfg.WebProjects {
+		byDir[p.Dir] = id
+	}
+	for key, rec := range cfg.Sessions {
+		if rec.Surface != store.SurfaceWeb || rec.ID == "" || rec.Workdir == "" || (rec.Web != nil && rec.Web.ProjectID != "") {
+			continue
+		}
+		id, ok := byDir[rec.Workdir]
+		if !ok {
+			var err error
+			if id, err = newUUID(); err != nil {
+				return fmt.Errorf("generate project id: %w", err)
+			}
+			if cfg.WebProjects == nil {
+				cfg.WebProjects = map[string]store.WebProject{}
+			}
+			cfg.WebProjects[id] = store.WebProject{ID: id, Name: loadedName("", rec.Workdir), Dir: rec.Workdir, CreatedAt: now}
+			byDir[rec.Workdir] = id
+		}
+		web := store.WebState{}
+		if rec.Web != nil {
+			web = *rec.Web
+		}
+		web.ProjectID = id
+		rec.Web = &web
+		cfg.Sessions[key] = rec
+	}
+	return nil
+}
+
+// loadedName is a stored Project name made safe to show, or the directory's
+// base name when it has none.
+func loadedName(name, dir string) string {
+	if clean, err := cleanName(name, filepath.Base(dir)); err == nil {
+		return clean
+	}
+	return clipRunes(displaytext.Sanitize(dir), maxNameRunes)
+}
+
+// cleanTitle is a provider title made safe and short enough to show.
+func cleanTitle(title string) string {
+	return clipRunes(strings.TrimSpace(displaytext.Sanitize(title)), maxNameRunes)
+}
+
 func sessionFromRecord(rec store.SessionRecord) *webSession {
 	s := newSession(rec.ID, rec.Agent, rec.Name, rec.Workdir, rec.ProviderSessionID, rec.CreatedAt)
 	s.updatedAt = rec.LastSeenAt
@@ -279,6 +391,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 			s.base = web.Turn
 		}
 		s.detail = web.Detail
+		s.projectID, s.model, s.title = web.ProjectID, web.Model, cleanTitle(web.Title)
 		if !web.UpdatedAt.IsZero() {
 			s.updatedAt = web.UpdatedAt
 		}
@@ -303,7 +416,7 @@ func (m *Manager) checkProviders(ctx context.Context) map[string]ProviderInfo {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			info := ProviderInfo{Name: p.Name(), DisplayName: p.DisplayName(), Capabilities: p.Capabilities(), Available: true}
+			info := ProviderInfo{Name: p.Name(), DisplayName: p.DisplayName(), Capabilities: p.Capabilities(), Available: true, Models: []agentapi.Model{}}
 			checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
 			err := p.Check(checkCtx)
 			cancel()
@@ -311,6 +424,10 @@ func (m *Manager) checkProviders(ctx context.Context) map[string]ProviderInfo {
 				info.Available = false
 				info.Reason = shortError(err)
 				log.Warn("web provider unavailable", "provider", name, "error", err)
+			} else if models, err := loadModels(ctx, p); err != nil {
+				log.Warn("load web provider models failed", "provider", name, "error", err)
+			} else {
+				info.Models = models
 			}
 			mu.Lock()
 			infos[name] = info
@@ -319,6 +436,71 @@ func (m *Manager) checkProviders(ctx context.Context) map[string]ProviderInfo {
 	}
 	wg.Wait()
 	return infos
+}
+
+// loadModels reads p's selectable models. ErrUnsupported means only the
+// provider default is offered.
+func loadModels(ctx context.Context, p agentapi.Provider) ([]agentapi.Model, error) {
+	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
+	defer cancel()
+	models, err := p.Models(ctx)
+	if errors.Is(err, agentapi.ErrUnsupported) {
+		return []agentapi.Model{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentapi.Model, 0, len(models))
+	seen := map[string]bool{}
+	for _, mo := range models {
+		if mo.ID == "" || seen[mo.ID] {
+			continue
+		}
+		seen[mo.ID] = true
+		name := clipRunes(strings.TrimSpace(displaytext.Sanitize(mo.Name)), maxNameRunes)
+		out = append(out, agentapi.Model{ID: mo.ID, Name: cmp.Or(name, mo.ID)})
+	}
+	return out, nil
+}
+
+// RefreshModels reloads the catalog of every available provider whose copy
+// is older than modelsMaxAge. A failed load keeps the previous catalog and is
+// retried after modelsMaxAge.
+func (m *Manager) RefreshModels() {
+	m.mu.Lock()
+	var stale []agentapi.Provider
+	for _, name := range m.order {
+		if m.infos[name].Available && !m.fetching[name] && m.now().Sub(m.modelsAt[name]) >= modelsMaxAge {
+			m.fetching[name] = true
+			stale = append(stale, m.providers[name])
+		}
+	}
+	m.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, p := range stale {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			models, err := loadModels(m.ctx, p)
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			delete(m.fetching, p.Name())
+			m.modelsAt[p.Name()] = m.now()
+			if err != nil {
+				log.Warn("refresh web provider models failed", "provider", p.Name(), "error", err)
+				return
+			}
+			info := m.infos[p.Name()]
+			info.Models = models
+			m.infos[p.Name()] = info
+		}()
+	}
+	wg.Wait()
+}
+
+// selectableLocked reports whether model is in provider's catalog.
+func (m *Manager) selectableLocked(provider, model string) bool {
+	return slices.ContainsFunc(m.infos[provider].Models, func(mo agentapi.Model) bool { return mo.ID == model })
 }
 
 // Providers lists every provider with its availability.
@@ -386,7 +568,8 @@ func (m *Manager) lookup(id string) (*webSession, error) {
 func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	permissions, questions := s.pendingKinds()
 	return SessionSummary{
-		ID: s.id, Provider: s.provider, Name: s.name, Workdir: s.workdir, ConversationID: s.convID,
+		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
+		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), Workdir: s.workdir, ConversationID: s.convID,
 		State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities,
 	}
@@ -395,12 +578,16 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 func (m *Manager) detailLocked(s *webSession) SessionDetail {
 	d := SessionDetail{
 		SessionSummary:   m.summaryLocked(s),
-		Items:            append(make([]agentapi.Item, 0, len(s.items)), s.items...),
+		Items:            s.agentItems(""),
 		Interactions:     make([]agentapi.Interaction, 0, len(s.interactions)),
+		Subagents:        make([]agentapi.Subagent, 0, len(s.subagents)),
 		HistoryTruncated: s.truncated,
 	}
 	for _, ix := range s.interactions {
 		d.Interactions = append(d.Interactions, ix.Interaction)
+	}
+	for _, sa := range s.subagents {
+		d.Subagents = append(d.Subagents, *sa)
 	}
 	if s.last != nil {
 		last := *s.last
@@ -450,6 +637,270 @@ func (m *Manager) Detail(id string) (SessionDetail, error) {
 		return SessionDetail{}, newError(http.StatusNotFound, "session not found")
 	}
 	return m.detailLocked(s), nil
+}
+
+// Subagent returns one subagent of a session with its retained transcript.
+func (m *Manager) Subagent(id, agentID string) (SubagentDetail, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[id]
+	if s == nil {
+		return SubagentDetail{}, newError(http.StatusNotFound, "session not found")
+	}
+	sa := s.subIdx[agentID]
+	if sa == nil {
+		return SubagentDetail{}, newError(http.StatusNotFound, "subagent not found")
+	}
+	return SubagentDetail{Subagent: *sa, Items: s.agentItems(agentID)}, nil
+}
+
+func (m *Manager) projectsLocked() []Project {
+	out := make([]Project, 0, len(m.projects))
+	for _, p := range m.projects {
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// Projects returns every Project, oldest first.
+func (m *Manager) Projects() []Project {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.projectsLocked()
+}
+
+func (m *Manager) publishProjectLocked(p Project) {
+	m.broadcastLocked("project", "", func(seq uint64) any { return projectEvent{Seq: seq, Project: p} })
+}
+
+// AddProject adds the directory dir as a Project. A directory has at most
+// one Project; adding it again reports the existing one with 409.
+func (m *Manager) AddProject(dir, name string) (Project, error) {
+	canonical, err := canonicalWorkdir(dir)
+	if err != nil {
+		return Project{}, err
+	}
+	clean, err := cleanName(name, filepath.Base(canonical))
+	if err != nil {
+		return Project{}, err
+	}
+	id, err := newUUID()
+	if err != nil {
+		return Project{}, fmt.Errorf("generate project id: %w", err)
+	}
+	m.projectMu.Lock()
+	defer m.projectMu.Unlock()
+	m.mu.Lock()
+	closed := m.closed
+	var existing string
+	for _, p := range m.projects {
+		if p.Dir == canonical {
+			existing = p.ID
+		}
+	}
+	m.mu.Unlock()
+	if closed {
+		return Project{}, errShuttingDown
+	}
+	if existing != "" {
+		return Project{}, projectExists(existing)
+	}
+	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now()}
+	if err := m.store.Update(func(cfg *store.Config) error {
+		for _, other := range cfg.WebProjects {
+			if other.Dir == canonical {
+				existing = other.ID
+				return projectExists(other.ID)
+			}
+		}
+		if cfg.WebProjects == nil {
+			cfg.WebProjects = map[string]store.WebProject{}
+		}
+		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt}
+		return nil
+	}); err != nil {
+		if existing != "" {
+			return Project{}, err
+		}
+		return Project{}, fmt.Errorf("save web project: %w", err)
+	}
+	m.mu.Lock()
+	m.projects[id] = &p
+	m.publishProjectLocked(p)
+	m.mu.Unlock()
+	log.Info("web project added", "project", id)
+	return p, nil
+}
+
+func projectExists(id string) *Error {
+	return &Error{Status: http.StatusConflict, Message: "this directory already has a project", ProjectID: id}
+}
+
+// RenameProject renames a Project. An empty name resets it to the
+// directory's base name.
+func (m *Manager) RenameProject(id, name string) (Project, error) {
+	m.projectMu.Lock()
+	defer m.projectMu.Unlock()
+	m.mu.Lock()
+	p := m.projects[id]
+	var dir string
+	if p != nil {
+		dir = p.Dir
+	}
+	m.mu.Unlock()
+	if p == nil {
+		return Project{}, errProjectNotFound
+	}
+	clean, err := cleanName(name, filepath.Base(dir))
+	if err != nil {
+		return Project{}, err
+	}
+	if err := m.store.Update(func(cfg *store.Config) error {
+		stored, ok := cfg.WebProjects[id]
+		if !ok {
+			return errProjectNotFound
+		}
+		stored.Name = clean
+		cfg.WebProjects[id] = stored
+		return nil
+	}); err != nil {
+		if errors.Is(err, errProjectNotFound) {
+			return Project{}, err
+		}
+		return Project{}, fmt.Errorf("save web project: %w", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p.Name = clean
+	m.publishProjectLocked(*p)
+	return *p, nil
+}
+
+var errProjectNotFound = newError(http.StatusNotFound, "project not found")
+
+// RemoveProject deletes a Project and its Task records. Open conversations
+// are closed, never deleted, and the directory is not touched. It is refused
+// while any of its Tasks is starting, working or waiting for input.
+func (m *Manager) RemoveProject(id string) error {
+	m.projectMu.Lock()
+	defer m.projectMu.Unlock()
+	m.mu.Lock()
+	if m.projects[id] == nil {
+		m.mu.Unlock()
+		return errProjectNotFound
+	}
+	var tasks []*webSession
+	for _, s := range m.sessions {
+		if s.projectID == id {
+			tasks = append(tasks, s)
+		}
+	}
+	m.mu.Unlock()
+	// Holding every Task's op keeps prompts, opens and model changes out
+	// until the Tasks are gone.
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].id < tasks[j].id })
+	for _, s := range tasks {
+		s.op.Lock()
+		defer s.op.Unlock()
+	}
+	m.mu.Lock()
+	closed := m.closed
+	running := slices.ContainsFunc(tasks, func(s *webSession) bool { return !s.removed && busy(s.state()) })
+	m.mu.Unlock()
+	switch {
+	case closed:
+		return errShuttingDown
+	case running:
+		return newError(http.StatusConflict, "a task in this project is running or waiting for input; stop it first")
+	}
+	if err := m.store.Update(func(cfg *store.Config) error {
+		delete(cfg.WebProjects, id)
+		for key, rec := range cfg.Sessions {
+			if rec.Surface == store.SurfaceWeb && rec.Web != nil && rec.Web.ProjectID == id {
+				delete(cfg.Sessions, key)
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("remove web project: %w", err)
+	}
+	m.mu.Lock()
+	var convs []agentapi.Conversation
+	for _, s := range tasks {
+		if conv := m.forgetLocked(s); conv != nil {
+			convs = append(convs, conv)
+		}
+	}
+	delete(m.projects, id)
+	m.broadcastLocked("project_removed", "", func(seq uint64) any { return projectRemovedEvent{Seq: seq, ProjectID: id} })
+	m.mu.Unlock()
+	for _, conv := range convs {
+		m.closeConversation(conv)
+	}
+	log.Info("web project removed", "project", id, "tasks", len(tasks))
+	return nil
+}
+
+// Delete deletes a Task's record. Its conversation is closed, never deleted
+// at the provider. It is refused while the Task is starting, working or
+// waiting for input.
+func (m *Manager) Delete(id string) error {
+	s, err := m.lookup(id)
+	if err != nil {
+		return err
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	m.mu.Lock()
+	gone, closed, running := s.removed, m.closed, busy(s.state())
+	m.mu.Unlock()
+	switch {
+	case gone:
+		return newError(http.StatusNotFound, "session not found")
+	case closed:
+		return errShuttingDown
+	case running:
+		return newError(http.StatusConflict, "the task is running or waiting for input; stop it first")
+	}
+	if err := m.store.Update(func(cfg *store.Config) error {
+		key := store.Key(s.provider, s.id)
+		if rec, ok := cfg.Sessions[key]; ok && rec.ID == s.id && rec.Surface == store.SurfaceWeb {
+			delete(cfg.Sessions, key)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("delete web session: %w", err)
+	}
+	m.mu.Lock()
+	conv := m.forgetLocked(s)
+	m.mu.Unlock()
+	if conv != nil {
+		m.closeConversation(conv)
+	}
+	log.Info("web session deleted", "session", id)
+	return nil
+}
+
+// forgetLocked drops a session whose record was deleted and returns its open
+// conversation for the caller to close. The caller holds s.op.
+func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
+	if s.removed || m.sessions[s.id] != s {
+		return nil
+	}
+	conv := s.conv
+	s.conv = nil
+	s.gen++
+	s.removed = true
+	delete(m.sessions, s.id)
+	delete(m.dirty, s.id)
+	m.broadcastLocked("session_removed", "", func(seq uint64) any { return sessionRemovedEvent{Seq: seq, SessionID: s.id} })
+	return conv
 }
 
 // changedLocked publishes s's summary when it changed since before and
@@ -513,7 +964,10 @@ func (m *Manager) flush() error {
 		key := s.key()
 		patches = append(patches, recordPatch{
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, updated: s.updatedAt,
-			web: store.WebState{Turn: key.turn, RequestID: key.reqID, RequestStatus: key.reqStatus, UpdatedAt: s.updatedAt, Detail: s.detail},
+			web: store.WebState{
+				Turn: key.turn, RequestID: key.reqID, RequestStatus: key.reqStatus, UpdatedAt: s.updatedAt, Detail: s.detail,
+				ProjectID: key.projectID, Model: key.model, Title: key.title,
+			},
 		})
 	}
 	m.dirty = map[string]struct{}{}
@@ -588,6 +1042,14 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		if ev.Interaction != nil && ev.Interaction.ID != "" {
 			m.upsertInteractionLocked(s, *ev.Interaction)
 		}
+	case agentapi.EventSubagent:
+		if ev.Subagent != nil && ev.Subagent.ID != "" {
+			m.upsertSubagentLocked(s, *ev.Subagent)
+		}
+	case agentapi.EventTitle:
+		if title := cleanTitle(ev.Title); title != "" {
+			s.title = title
+		}
 	case agentapi.EventExit:
 		// The conversation is gone. Report it; never replay a prompt or open
 		// a replacement on the user's behalf.
@@ -598,6 +1060,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		s.conv = nil
 		s.gen++
 		m.expirePendingLocked(s, "the provider runtime exited")
+		m.endSubagentsLocked(s)
 		s.setBase(StateFailed, detail)
 		log.Warn("web provider conversation exited", "session", s.id, "provider", s.provider)
 	}
@@ -605,6 +1068,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 }
 
 func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
+	if model := clipRunes(strings.TrimSpace(displaytext.Sanitize(turn.Model)), maxNameRunes); model != "" {
+		s.lastModel = model
+	}
 	switch turn.State {
 	case agentapi.TurnWorking:
 		s.setBase(StateWorking, "")
@@ -621,29 +1087,45 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	}
 }
 
-// CreateRequest is the POST /api/sessions body.
+// CreateRequest is the POST /api/sessions body. Name may be empty; the
+// provider's title is shown until the user names the Task.
 type CreateRequest struct {
+	ProjectID string `json:"project_id"`
 	Provider  string `json:"provider"`
-	Workdir   string `json:"workdir"`
+	Model     string `json:"model"`
 	Name      string `json:"name"`
 	Prompt    string `json:"prompt"`
 	RequestID string `json:"request_id"`
 }
 
-// Create opens a new provider conversation, records the session, and, when a
-// prompt is given, submits it through the same path as Submit.
+// Create opens a new provider conversation in a Project's directory, records
+// the session (a Task), and, when a prompt is given, submits it through the
+// same path as Submit.
 func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	prov, err := m.availableProvider(req.Provider)
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	workdir, err := canonicalWorkdir(req.Workdir)
+	m.mu.Lock()
+	project := m.projects[req.ProjectID]
+	var workdir string
+	if project != nil {
+		workdir = project.Dir
+	}
+	selectable := req.Model == "" || m.selectableLocked(prov.Name(), req.Model)
+	m.mu.Unlock()
+	if project == nil {
+		return SessionSummary{}, newError(http.StatusBadRequest, "unknown project_id %q", req.ProjectID)
+	}
+	if !selectable {
+		return SessionSummary{}, newError(http.StatusBadRequest, "model %q is not offered by %s", req.Model, prov.DisplayName())
+	}
+	name, err := cleanTaskName(req.Name)
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	name, err := cleanName(req.Name, filepath.Base(workdir))
-	if err != nil {
-		return SessionSummary{}, err
+	if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
+		return SessionSummary{}, newError(http.StatusConflict, "the project directory %s no longer exists", workdir)
 	}
 	hasPrompt := strings.TrimSpace(req.Prompt) != ""
 	if hasPrompt && len(req.Prompt) > maxPromptBytes {
@@ -672,10 +1154,11 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	}
 	now := m.now()
 	s := newSession(id, prov.Name(), name, workdir, "", now)
+	s.projectID, s.model = project.ID, req.Model
 	s.createReq = reqID
 	s.gen = 1
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
-	conv, err := prov.Open(ctx, agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Events: sink{m: m, s: s, gen: 1}})
+	conv, err := prov.Open(ctx, agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Events: sink{m: m, s: s, gen: 1}})
 	cancel()
 	if err != nil {
 		log.Warn("open web conversation failed", "provider", prov.Name(), "error", err)
@@ -691,31 +1174,12 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: store.ModeSafe, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: project.ID, Model: req.Model},
 	}
-	if err := m.store.Update(func(cfg *store.Config) error {
-		if !cfg.PutSession(store.Key(rec.Agent, rec.ID), rec) {
-			return errors.New("session id collides with an existing record")
-		}
-		return nil
-	}); err != nil {
+	if err := m.register(s, conv, rec); err != nil {
 		m.closeConversation(conv)
-		return SessionSummary{}, fmt.Errorf("save web session: %w", err)
+		return SessionSummary{}, err
 	}
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		m.closeConversation(conv)
-		return SessionSummary{}, errShuttingDown
-	}
-	s.convID = convID
-	s.conv = conv
-	s.persisted = persistKey{turn: StateIdle, name: name, convID: convID}
-	m.sessions[id] = s
-	// Announce the new session. Events that arrived during Open may have
-	// changed its state before the record existed; this also persists that.
-	m.changedLocked(s, SessionSummary{})
-	m.mu.Unlock()
 	log.Info("web session created", "session", id, "provider", prov.Name())
 	if hasPrompt {
 		if _, err := m.submit(s, req.Prompt, reqID); err != nil {
@@ -723,6 +1187,41 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 		}
 	}
 	return m.Summary(id)
+}
+
+// register writes a new session's record and lists it. The Project may have
+// been removed while the conversation opened; projectMu orders this against
+// RemoveProject.
+func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.SessionRecord) error {
+	m.projectMu.Lock()
+	defer m.projectMu.Unlock()
+	m.mu.Lock()
+	projectGone := m.projects[s.projectID] == nil
+	m.mu.Unlock()
+	if projectGone {
+		return newError(http.StatusConflict, "the project was removed")
+	}
+	if err := m.store.Update(func(cfg *store.Config) error {
+		if !cfg.PutSession(store.Key(rec.Agent, rec.ID), rec) {
+			return errors.New("session id collides with an existing record")
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("save web session: %w", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return errShuttingDown
+	}
+	s.convID = rec.ProviderSessionID
+	s.conv = conv
+	s.persisted = persistKey{turn: StateIdle, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model}
+	m.sessions[s.id] = s
+	// Announce the new session. Events that arrived during Open may have
+	// changed its state before the record existed; this also persists that.
+	m.changedLocked(s, SessionSummary{})
+	return nil
 }
 
 // claimCreate makes one create per request ID proceed. A repeat of a
@@ -843,7 +1342,7 @@ func (m *Manager) viewOpen(s *webSession) <-chan struct{} {
 // conversation. Failed and closed sessions stay as they are until the user
 // acts on them, so their reported outcome is not replaced by a page load.
 func (m *Manager) autoOpenableLocked(s *webSession) bool {
-	return s.conv == nil && s.convID != "" && s.base != StateFailed && s.base != StateClosed &&
+	return !s.removed && s.conv == nil && s.convID != "" && s.base != StateFailed && s.base != StateClosed &&
 		m.providers[s.provider] != nil && m.infos[s.provider].Available
 }
 
@@ -859,6 +1358,11 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 // autoOpenableLocked allows.
 func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.mu.Lock()
+	if s.removed {
+		m.finishOpeningLocked(s)
+		m.mu.Unlock()
+		return newError(http.StatusNotFound, "session not found")
+	}
 	if s.conv != nil || m.closed || (!explicit && !m.autoOpenableLocked(s)) {
 		before := m.summaryLocked(s)
 		m.finishOpeningLocked(s)
@@ -890,6 +1394,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	gen := s.gen
 	req := agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}}
 	withHistory := m.infos[s.provider].Capabilities.History
+	model := s.model
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 
@@ -902,13 +1407,22 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 		m.closeConversation(conv)
 		err = fmt.Errorf("provider opened conversation %q instead of %q", conv.ID(), req.ConversationID)
 	}
-	var history []agentapi.Item
+	// Apply the selected model before anything is sent: it may have been
+	// changed while the conversation was closed. A conversation that cannot
+	// take it is not used with another model.
+	if err == nil && model != "" {
+		if setErr := conv.SetModel(ctx, model); setErr != nil && !errors.Is(setErr, agentapi.ErrUnsupported) {
+			m.closeConversation(conv)
+			err = fmt.Errorf("apply model %s: %w", model, setErr)
+		}
+	}
+	var history agentapi.History
 	if err == nil && withHistory {
-		items, histErr := conv.History(ctx)
+		recorded, histErr := conv.History(ctx)
 		if histErr != nil {
 			log.Warn("read web conversation history failed", "session", s.id, "error", histErr)
 		}
-		history = items
+		history = recorded
 	}
 
 	m.mu.Lock()
@@ -989,6 +1503,10 @@ func (m *Manager) submit(s *webSession, text, reqID string) (Submission, error) 
 	if sub, ok := s.findSubmission(reqID); ok {
 		m.mu.Unlock()
 		return sub, nil
+	}
+	if s.removed {
+		m.mu.Unlock()
+		return Submission{}, newError(http.StatusNotFound, "session not found")
 	}
 	if m.closed {
 		m.mu.Unlock()
@@ -1130,11 +1648,16 @@ func (m *Manager) Close(id string) (SessionSummary, error) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	m.mu.Lock()
+	if s.removed {
+		m.mu.Unlock()
+		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+	}
 	before := m.summaryLocked(s)
 	conv := s.conv
 	s.conv = nil
 	s.gen++
 	m.expirePendingLocked(s, "the session was closed")
+	m.endSubagentsLocked(s)
 	s.setBase(StateClosed, "")
 	m.changedLocked(s, before)
 	m.mu.Unlock()
@@ -1147,9 +1670,10 @@ func (m *Manager) Close(id string) (SessionSummary, error) {
 	return m.Summary(id)
 }
 
-// Rename changes the session's display name.
+// Rename sets the Task's typed name. An empty name shows the provider title
+// again; the provider's conversation is not renamed.
 func (m *Manager) Rename(id, name string) (SessionSummary, error) {
-	clean, err := cleanName(name, "")
+	clean, err := cleanTaskName(name)
 	if err != nil {
 		return SessionSummary{}, err
 	}
@@ -1163,6 +1687,56 @@ func (m *Manager) Rename(id, name string) (SessionSummary, error) {
 	s.name = clean
 	m.changedLocked(s, before)
 	return m.summaryLocked(s), nil
+}
+
+// SetModel selects the model for the Task's next turns. It is refused while
+// a turn runs. With the conversation open, the stored model changes only once
+// the provider accepted the switch; otherwise the next open applies it.
+func (m *Manager) SetModel(id, model string) (SessionSummary, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	m.mu.Lock()
+	switch {
+	case s.removed:
+		m.mu.Unlock()
+		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+	case !m.selectableLocked(s.provider, model):
+		m.mu.Unlock()
+		return SessionSummary{}, newError(http.StatusBadRequest, "model %q is not offered by this provider", model)
+	case s.model == model:
+		m.mu.Unlock()
+		return m.Summary(id)
+	case busy(s.state()):
+		m.mu.Unlock()
+		return SessionSummary{}, newError(http.StatusConflict, "the model cannot change while a turn is running")
+	}
+	conv := s.conv
+	m.mu.Unlock()
+	if conv != nil {
+		ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
+		err := conv.SetModel(ctx, model)
+		cancel()
+		switch {
+		case err == nil, errors.Is(err, agentapi.ErrClosed):
+			// A conversation that closed meanwhile takes the model when it
+			// is next opened.
+		case errors.Is(err, agentapi.ErrUnsupported):
+			return SessionSummary{}, newError(http.StatusConflict, "this provider does not support changing the model")
+		default:
+			log.Warn("web model switch failed", "session", id, "error", err)
+			return SessionSummary{}, newError(http.StatusBadGateway, "could not change the model: %s", shortError(err))
+		}
+	}
+	m.mu.Lock()
+	before := m.summaryLocked(s)
+	s.model = model
+	m.changedLocked(s, before)
+	m.mu.Unlock()
+	return m.Summary(id)
 }
 
 // Answer forwards the user's answer to a pending interaction. The first
@@ -1262,6 +1836,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		}
 		s.gen++
 		m.expirePendingLocked(s, "the uam web service stopped")
+		m.endSubagentsLocked(s)
 		m.changedLocked(s, before)
 	}
 	for sub := range m.subs {
@@ -1298,25 +1873,35 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 // canonical path.
 func canonicalWorkdir(p string) (string, error) {
 	if p == "" {
-		return "", newError(http.StatusBadRequest, "workdir is required")
+		return "", newError(http.StatusBadRequest, "dir is required")
 	}
 	if !filepath.IsAbs(p) {
-		return "", newError(http.StatusBadRequest, "workdir must be an absolute path")
+		return "", newError(http.StatusBadRequest, "dir must be an absolute path")
 	}
 	for _, r := range p {
 		if unicode.IsControl(r) {
-			return "", newError(http.StatusBadRequest, "workdir contains control characters")
+			return "", newError(http.StatusBadRequest, "dir contains control characters")
 		}
 	}
 	resolved, err := filepath.EvalSymlinks(p)
 	if err != nil {
-		return "", newError(http.StatusBadRequest, "workdir does not exist")
+		return "", newError(http.StatusBadRequest, "dir does not exist")
 	}
 	info, err := os.Stat(resolved)
 	if err != nil || !info.IsDir() {
-		return "", newError(http.StatusBadRequest, "workdir is not a directory")
+		return "", newError(http.StatusBadRequest, "dir is not a directory")
 	}
 	return filepath.Clean(resolved), nil
+}
+
+// cleanTaskName sanitizes an optional Task name; "" means the provider title
+// is shown.
+func cleanTaskName(name string) (string, error) {
+	clean := strings.TrimSpace(displaytext.Sanitize(name))
+	if utf8.RuneCountInString(clean) > maxNameRunes {
+		return "", newError(http.StatusBadRequest, "name is longer than %d characters", maxNameRunes)
+	}
+	return clean, nil
 }
 
 func cleanName(name, fallback string) (string, error) {

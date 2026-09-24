@@ -960,12 +960,12 @@ func TestWebHistoryPaginatesLargeSessions(t *testing.T) {
 		}
 		h.fake.addMessage(id, webTestMessage(messageID, role, int64(1000+index), parts...))
 	}
-	items, err := conversation.History(t.Context())
+	recorded, err := conversation.History(t.Context())
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
 	var got []string
-	for _, item := range items {
+	for _, item := range recorded.Items {
 		got = append(got, item.ID)
 		if item.ID == "prt_big" && len(item.Tool.Output) > webMaxDisplayBytes {
 			t.Fatalf("tool output not truncated: %d", len(item.Tool.Output))
@@ -974,7 +974,7 @@ func TestWebHistoryPaginatesLargeSessions(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("history order = %v", got)
 	}
-	if items[0].Kind != agentapi.ItemUser || items[1].Kind != agentapi.ItemAssistant {
+	if items := recorded.Items; items[0].Kind != agentapi.ItemUser || items[1].Kind != agentapi.ItemAssistant {
 		t.Fatalf("history roles = %s %s", items[0].Kind, items[1].Kind)
 	}
 	reads := h.fake.requestsFor(http.MethodGet, "/session/"+id+"/message")

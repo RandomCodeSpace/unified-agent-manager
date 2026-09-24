@@ -70,6 +70,9 @@ type Provider interface {
 	// Check reports whether the installed runtime is present and compatible,
 	// without starting a conversation. The error text is shown to the user.
 	Check(ctx context.Context) error
+	// Models returns the models the signed-in account can select. An empty
+	// list or ErrUnsupported means only the provider default is offered.
+	Models(ctx context.Context) ([]Model, error)
 	// Open creates a conversation when req.ConversationID is empty, otherwise
 	// reopens exactly that conversation (ErrConversationNotFound when it no
 	// longer exists). ctx bounds the open call only.
@@ -77,6 +80,12 @@ type Provider interface {
 	// Shutdown closes every conversation and stops runtimes this provider
 	// started. It never stops a runtime it did not start.
 	Shutdown(ctx context.Context) error
+}
+
+// Model is one selectable model.
+type Model struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // OpenRequest identifies the managed session and its project.
@@ -89,6 +98,9 @@ type OpenRequest struct {
 	Workdir string
 	// Title is the user-visible session name.
 	Title string
+	// Model is the model ID for a new conversation; "" means the provider
+	// default. It is ignored on reopen, so reopening never changes the model.
+	Model string
 	// Events receives every event for this conversation until Close returns.
 	Events EventSink
 }
@@ -102,9 +114,9 @@ type EventSink interface {
 type Conversation interface {
 	// ID returns the exact provider conversation ID to persist.
 	ID() string
-	// History returns the provider-recorded transcript for a reopened
-	// conversation, oldest first.
-	History(ctx context.Context) ([]Item, error)
+	// History returns the provider-recorded transcript and subagents of a
+	// reopened conversation.
+	History(ctx context.Context) (History, error)
 	// Send submits one user prompt and returns once the provider accepted or
 	// rejected it. The turn continues asynchronously and is reported through
 	// events. Ambiguous failures wrap ErrSubmissionUncertain.
@@ -117,17 +129,30 @@ type Conversation interface {
 	// Diff returns provider-recorded file changes for this conversation, or
 	// ErrUnsupported when Capabilities().SessionDiff is false.
 	Diff(ctx context.Context) ([]FileDiff, error)
+	// SetModel switches the model used from the next turn on. The caller
+	// never switches while a turn is running.
+	SetModel(ctx context.Context, model string) error
 	// Close disconnects from the conversation without deleting it. Pending
 	// interactions end without an answer being fabricated.
 	Close(ctx context.Context) error
+}
+
+// History is a reopened conversation's provider-recorded state.
+type History struct {
+	// Items is the transcript, oldest first. Subagent items carry AgentID.
+	Items []Item
+	// Subagents are the subagent records the recorded events allow to
+	// rebuild.
+	Subagents []Subagent
 }
 
 // EventKind discriminates Event payloads.
 type EventKind string
 
 const (
-	// EventItem upserts a transcript item; a later event with the same Item.ID
-	// replaces the earlier one (partial tool updates never duplicate).
+	// EventItem upserts a transcript item; a later event with the same
+	// AgentID and Item.ID replaces the earlier one (partial tool updates never
+	// duplicate).
 	EventItem EventKind = "item"
 	// EventDelta appends streamed text to Item.ID, creating it when absent.
 	EventDelta EventKind = "delta"
@@ -138,6 +163,11 @@ const (
 	// EventExit reports that the conversation or its runtime became unusable
 	// (process exit, event-stream failure). The conversation is then closed.
 	EventExit EventKind = "exit"
+	// EventTitle reports the provider-generated conversation title in
+	// Event.Title.
+	EventTitle EventKind = "title"
+	// EventSubagent upserts a subagent record by Subagent.ID.
+	EventSubagent EventKind = "subagent"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -147,8 +177,11 @@ type Event struct {
 	Delta       *Delta
 	Turn        *Turn
 	Interaction *Interaction
+	Subagent    *Subagent
 	// Error is the sanitized reason for EventExit.
 	Error string
+	// Title is the untrusted provider title for EventTitle.
+	Title string
 }
 
 // ItemKind classifies transcript entries.
@@ -170,6 +203,9 @@ type Item struct {
 	Text string    `json:"text,omitempty"`
 	Tool *ToolCall `json:"tool,omitempty"`
 	Time time.Time `json:"time"`
+	// AgentID is empty for the main agent, otherwise the exact subagent
+	// instance ID from the provider.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // ToolStatus is the lifecycle of one tool call.
@@ -197,6 +233,8 @@ type Delta struct {
 	ItemID string   `json:"item_id"`
 	Kind   ItemKind `json:"kind"`
 	Text   string   `json:"text"`
+	// AgentID is the item's agent, as in Item.AgentID.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // TurnState is the adapter-reported state of the current turn. Waiting for
@@ -216,6 +254,8 @@ type Turn struct {
 	State TurnState `json:"state"`
 	// Error is the sanitized provider error for TurnFailed.
 	Error string `json:"error,omitempty"`
+	// Model is the model the provider reported for this turn, when known.
+	Model string `json:"model,omitempty"`
 }
 
 // InteractionKind separates permission requests from questions.
@@ -254,6 +294,8 @@ type Interaction struct {
 	State      InteractionState `json:"state"`
 	Resolution string           `json:"resolution,omitempty"`
 	Time       time.Time        `json:"time"`
+	// AgentID names the subagent that asked, when the provider says so.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // Option is one permission decision.
@@ -282,6 +324,37 @@ type Answer struct {
 	Decision string     `json:"decision,omitempty"`
 	Answers  [][]string `json:"answers,omitempty"`
 	Reject   bool       `json:"reject,omitempty"`
+}
+
+// SubagentStatus is the lifecycle of one subagent.
+type SubagentStatus string
+
+const (
+	SubagentRunning   SubagentStatus = "running"
+	SubagentCompleted SubagentStatus = "completed"
+	SubagentFailed    SubagentStatus = "failed"
+	SubagentCancelled SubagentStatus = "cancelled"
+)
+
+// Terminal reports whether s is final. Once a subagent is terminal, later
+// updates for it are ignored: a provider may report the end more than once.
+func (s SubagentStatus) Terminal() bool {
+	return s == SubagentCompleted || s == SubagentFailed || s == SubagentCancelled
+}
+
+// Subagent is one agent instance the main agent delegated work to. Its
+// transcript items carry AgentID == ID.
+type Subagent struct {
+	ID string `json:"id"`
+	// ParentToolCallID is the ID of the tool call item that spawned it.
+	ParentToolCallID string         `json:"parent_tool_call_id,omitempty"`
+	Name             string         `json:"name"`
+	Description      string         `json:"description,omitempty"`
+	Status           SubagentStatus `json:"status"`
+	// Error is the provider's reason for SubagentFailed.
+	Error     string    `json:"error,omitempty"`
+	StartedAt time.Time `json:"started_at,omitzero"`
+	EndedAt   time.Time `json:"ended_at,omitzero"`
 }
 
 // FileDiff is one provider-recorded file change. Before/After hold full file
