@@ -181,7 +181,7 @@ sessions (the routes keep the `sessions` name) whose `web.project_id` names it.
 
 | Addition | Meaning |
 |---|---|
-| `Provider.Models` → `[]Model{ID, Name}` | The selectable models. Empty or `ErrUnsupported` means the provider default only. |
+| `Provider.Models` → `[]Model{ID, Name}` | The selectable models. Empty or `ErrUnsupported` means the provider default only. A provider that lists models must support `SetModel`, so a model can only be chosen where it can also be switched. |
 | `OpenRequest.Model` | Used only when creating a conversation, never on reopen. |
 | `Conversation.SetModel` | Switches the model from the next turn on. |
 | `Item.AgentID`, `Delta.AgentID`, `Interaction.AgentID` | Empty for the main agent, otherwise the provider's subagent instance ID. |

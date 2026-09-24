@@ -281,8 +281,9 @@ func (m *Manager) Start(ctx context.Context) error {
 			return nil
 		})
 		if err != nil {
-			// Keep serving: the assignment holds for this run and is retried
-			// on the next start.
+			// Keep serving: the assignment holds for this run. A record that
+			// later gets its project_id written without the Project is
+			// assigned again on the next start.
 			log.Warn("assign web sessions to projects failed", "error", err)
 			if err := assignProjects(&cfg, now); err != nil {
 				return fmt.Errorf("assign web sessions to projects: %w", err)
@@ -323,27 +324,42 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
+// lacksProject reports whether a web record has no stored Project: no
+// project_id, or one naming a Project that is not in web_projects (written
+// by a run whose migration could not be saved, or dropped as invalid).
+func lacksProject(cfg *store.Config, rec store.SessionRecord) bool {
+	if rec.Surface != store.SurfaceWeb || rec.ID == "" || rec.Workdir == "" {
+		return false
+	}
+	if rec.Web == nil || rec.Web.ProjectID == "" {
+		return true
+	}
+	_, ok := cfg.WebProjects[rec.Web.ProjectID]
+	return !ok
+}
+
 // needsProject reports whether a web record still lacks a Project.
 func needsProject(cfg store.Config) bool {
 	for _, rec := range cfg.Sessions {
-		if rec.Surface == store.SurfaceWeb && rec.ID != "" && rec.Workdir != "" && (rec.Web == nil || rec.Web.ProjectID == "") {
+		if lacksProject(&cfg, rec) {
 			return true
 		}
 	}
 	return false
 }
 
-// assignProjects gives every web record without a project_id the Project for
+// assignProjects gives every web record that lacks a Project the Project for
 // its workdir, creating one named after the directory when needed. Only such
-// records are touched, so running it again changes nothing and a removed
-// Project does not come back. The directory need not exist any more.
+// records are touched, so running it again changes nothing. A removed
+// Project does not come back: removing it deleted its Tasks in the same
+// update. The directory need not exist any more.
 func assignProjects(cfg *store.Config, now time.Time) error {
 	byDir := map[string]string{}
 	for id, p := range cfg.WebProjects {
 		byDir[p.Dir] = id
 	}
 	for key, rec := range cfg.Sessions {
-		if rec.Surface != store.SurfaceWeb || rec.ID == "" || rec.Workdir == "" || (rec.Web != nil && rec.Web.ProjectID != "") {
+		if !lacksProject(cfg, rec) {
 			continue
 		}
 		id, ok := byDir[rec.Workdir]
@@ -987,7 +1003,12 @@ func (m *Manager) flush() error {
 			rec.Name = p.name
 			rec.ProviderSessionID = p.convID
 			rec.LastSeenAt = p.updated
-			web := p.web
+			// Update in place: fields a newer uam wrote must survive.
+			web := store.WebState{}
+			if rec.Web != nil {
+				web = *rec.Web
+			}
+			web.Update(p.web)
 			rec.Web = &web
 			cfg.Sessions[key] = rec
 		}
@@ -1409,9 +1430,10 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	}
 	// Apply the selected model before anything is sent: it may have been
 	// changed while the conversation was closed. A conversation that cannot
-	// take it is not used with another model.
+	// take it, ErrUnsupported included (a provider with a catalog must
+	// switch), is not used with another model.
 	if err == nil && model != "" {
-		if setErr := conv.SetModel(ctx, model); setErr != nil && !errors.Is(setErr, agentapi.ErrUnsupported) {
+		if setErr := conv.SetModel(ctx, model); setErr != nil {
 			m.closeConversation(conv)
 			err = fmt.Errorf("apply model %s: %w", model, setErr)
 		}

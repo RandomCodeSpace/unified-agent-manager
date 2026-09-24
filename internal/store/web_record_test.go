@@ -122,7 +122,7 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.WebProjects[project.ID]; got != project {
+	if got := cfg.WebProjects[project.ID]; got.ID != project.ID || got.Name != project.Name || got.Dir != project.Dir || !got.CreatedAt.Equal(project.CreatedAt) {
 		t.Fatalf("project = %+v, want %+v", got, project)
 	}
 	web := cfg.Sessions["copilot:0f0e0d0c"].Web
@@ -139,6 +139,60 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 	}
 	if _, ok := top["web_projects"]; !ok || len(cfg.unknown) != 0 {
 		t.Fatalf("web_projects not a modeled top-level field: unknown=%v file=%s", cfg.unknown, data)
+	}
+}
+
+// A newer uam may add fields inside web state and projects; saving here must
+// keep them, also after a writer changed the modeled fields.
+func TestNestedWebUnknownFieldsRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},
+		"web_projects":{"p1":{"id":"p1","name":"repo","dir":"/tmp/repo","created_at":"2026-09-01T00:00:00Z","archived":true}},
+		"sessions":{"copilot:0f0e0d0c":{
+		"id":"0f0e0d0c-1111-4222-8333-444455556666","agent":"copilot","name":"","mode":"safe","workdir":"/tmp/repo",
+		"tmux_session":"","created_at":"2026-09-01T00:00:00Z","last_seen_at":"2026-09-01T00:00:00Z",
+		"pinned":false,"group":"","sort_index":0,"status":"active","provider_session_id":"conv_1",
+		"surface":"web","web":{"turn":"idle","updated_at":"2026-09-01T00:00:00Z","project_id":"p1","sort":{"pinned":3}}}}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Update(func(cfg *Config) error {
+		p := cfg.WebProjects["p1"]
+		p.Name = "renamed"
+		cfg.WebProjects["p1"] = p
+		rec := cfg.Sessions["copilot:0f0e0d0c"]
+		web := *rec.Web
+		web.Update(WebState{Turn: "completed", ProjectID: "p1", Title: "t"})
+		rec.Web = &web
+		cfg.Sessions["copilot:0f0e0d0c"] = rec
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		WebProjects map[string]map[string]json.RawMessage `json:"web_projects"`
+		Sessions    map[string]struct {
+			Web map[string]json.RawMessage `json:"web"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	project := decoded.WebProjects["p1"]
+	if string(project["archived"]) != "true" || string(project["name"]) != `"renamed"` {
+		t.Fatalf("project fields after save: %s", data)
+	}
+	web := decoded.Sessions["copilot:0f0e0d0c"].Web
+	var sort map[string]int
+	if err := json.Unmarshal(web["sort"], &sort); err != nil || sort["pinned"] != 3 || string(web["turn"]) != `"completed"` || string(web["title"]) != `"t"` {
+		t.Fatalf("web fields after save: %s", data)
 	}
 }
 

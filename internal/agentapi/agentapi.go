@@ -71,7 +71,8 @@ type Provider interface {
 	// without starting a conversation. The error text is shown to the user.
 	Check(ctx context.Context) error
 	// Models returns the models the signed-in account can select. An empty
-	// list or ErrUnsupported means only the provider default is offered.
+	// list or ErrUnsupported means only the provider default is offered. A
+	// provider that lists models must support Conversation.SetModel.
 	Models(ctx context.Context) ([]Model, error)
 	// Open creates a conversation when req.ConversationID is empty, otherwise
 	// reopens exactly that conversation (ErrConversationNotFound when it no

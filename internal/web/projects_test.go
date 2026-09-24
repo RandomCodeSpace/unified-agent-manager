@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -237,17 +238,21 @@ func seedLegacyWebRecord(t *testing.T, st *store.Store, id, workdir string, web 
 
 func TestStartAssignsLegacyTasksToProjectsOnce(t *testing.T) {
 	st := openTestStore(t)
-	shared, lone := t.TempDir(), t.TempDir()
+	shared, lone, kept := t.TempDir(), t.TempDir(), t.TempDir()
 	vanished := filepath.Join(t.TempDir(), "gone")
-	a, b, c, d, assigned := mustUUID(t), mustUUID(t), mustUUID(t), mustUUID(t), mustUUID(t)
+	a, b, c, d, assigned, orphan := mustUUID(t), mustUUID(t), mustUUID(t), mustUUID(t), mustUUID(t), mustUUID(t)
 	now := time.Now().UTC()
 	seedLegacyWebRecord(t, st, a, shared, &store.WebState{Turn: StateCompleted, UpdatedAt: now, RequestID: "r1", RequestStatus: SubmissionAccepted})
 	seedLegacyWebRecord(t, st, b, shared, nil)
 	seedLegacyWebRecord(t, st, c, lone, &store.WebState{Turn: StateIdle, UpdatedAt: now})
 	seedLegacyWebRecord(t, st, d, vanished, &store.WebState{Turn: StateIdle, UpdatedAt: now})
 	seedLegacyWebRecord(t, st, assigned, shared, &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: "kept-project"})
+	// A project_id without a stored Project (written after a failed
+	// migration save, or left by a dropped entry) is assigned again.
+	seedLegacyWebRecord(t, st, orphan, lone, &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: "missing-project"})
 	if err := st.Update(func(cfg *store.Config) error {
 		cfg.Sessions["claude:term0001"] = store.SessionRecord{ID: "term0001", Agent: "claude", Workdir: shared, Mode: store.ModeSafe}
+		cfg.WebProjects = map[string]store.WebProject{"kept-project": {ID: "kept-project", Name: "kept", Dir: kept, CreatedAt: now}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -258,14 +263,14 @@ func TestStartAssignsLegacyTasksToProjectsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.WebProjects) != 3 {
+	if len(cfg.WebProjects) != 4 {
 		t.Fatalf("projects = %+v, want one per directory", cfg.WebProjects)
 	}
 	byDir := map[string]store.WebProject{}
 	for _, p := range cfg.WebProjects {
 		byDir[p.Dir] = p
 	}
-	for id, dir := range map[string]string{a: shared, b: shared, c: lone, d: vanished} {
+	for id, dir := range map[string]string{a: shared, b: shared, c: lone, d: vanished, orphan: lone} {
 		rec := cfg.Sessions[store.Key("fake", id)]
 		if rec.Web == nil || rec.Web.ProjectID != byDir[dir].ID {
 			t.Fatalf("record %s web = %+v, want project for %s", id, rec.Web, dir)
@@ -286,7 +291,7 @@ func TestStartAssignsLegacyTasksToProjectsOnce(t *testing.T) {
 	if cfg.Sessions["claude:term0001"].Web != nil {
 		t.Fatal("a terminal record was touched")
 	}
-	if n := len(m.Projects()); n != 3 {
+	if n := len(m.Projects()); n != 4 {
 		t.Fatalf("manager projects = %d", n)
 	}
 
@@ -307,8 +312,91 @@ func TestStartAssignsLegacyTasksToProjectsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(before) != string(after) || len(m2.Projects()) != 2 {
+	if string(before) != string(after) || len(m2.Projects()) != 3 {
 		t.Fatalf("second start changed the store or projects (%d)", len(m2.Projects()))
+	}
+}
+
+// Fields a newer uam wrote inside a web record or a Project survive this
+// version's writes.
+func TestWritersKeepFieldsANewerUamWrote(t *testing.T) {
+	st := openTestStore(t)
+	dir := t.TempDir()
+	id, projectID := mustUUID(t), mustUUID(t)
+	key := store.Key("fake", id)
+	raw := fmt.Sprintf(`{"schema_version":%d,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},
+		"web_projects":{%q:{"id":%q,"name":"repo","dir":%q,"created_at":"2026-09-01T00:00:00Z","archived":true}},
+		"sessions":{%q:{"id":%q,"agent":"fake","name":"old","mode":"safe","workdir":%q,"created_at":"2026-09-01T00:00:00Z",
+		"last_seen_at":"2026-09-01T00:00:00Z","status":"active","provider_session_id":"conv_1","surface":"web",
+		"web":{"turn":"completed","updated_at":"2026-09-01T00:00:00Z","project_id":%q,"sort":7}}}}`,
+		store.CurrentSchemaVersion, projectID, projectID, dir, key, id, dir, projectID)
+	if err := os.WriteFile(st.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := startManager(t, st, agenttest.NewProvider("fake", allCaps))
+	if _, err := m.Rename(id, "new name"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.RenameProject(projectID, "renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Close(id); err != nil { // flushes synchronously
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		WebProjects map[string]map[string]any `json:"web_projects"`
+		Sessions    map[string]struct {
+			Name string         `json:"name"`
+			Web  map[string]any `json:"web"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if p := decoded.WebProjects[projectID]; p["archived"] != true || p["name"] != "renamed" {
+		t.Fatalf("project after rename = %v", p)
+	}
+	rec := decoded.Sessions[key]
+	if rec.Web["sort"] != float64(7) || rec.Web["turn"] != StateClosed || rec.Web["project_id"] != projectID || rec.Name != "new name" {
+		t.Fatalf("record after flush: name %q web %v", rec.Name, rec.Web)
+	}
+}
+
+// A provider that lists models must be able to switch them. One that cannot
+// never ends up running a Task on a model other than the one it reports.
+func TestProviderThatCannotSwitchNeverRunsOnAnotherModel(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	prov.SetModels([]agentapi.Model{{ID: "a", Name: "A"}, {ID: "b", Name: "B"}}, nil)
+	prov.SetOpenSetModelError(agentapi.ErrUnsupported)
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: addProject(t, m, t.TempDir()), Model: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SetModel(sum.ID, "b"); statusOf(err) != http.StatusConflict {
+		t.Fatalf("switch on an open conversation = %v, want 409", err)
+	}
+	if got := detail(t, m, sum.ID).Model; got != "a" {
+		t.Fatalf("model after a refused switch = %q", got)
+	}
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SetModel(sum.ID, "b"); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := m.Submit(sum.ID, "go", mustUUID(t))
+	if err != nil || sub.Status != SubmissionRejected {
+		t.Fatalf("prompt after the stored switch = %+v, %v", sub, err)
+	}
+	reopened := prov.Last()
+	d := detail(t, m, sum.ID)
+	if d.Open || d.State != StateFailed || !strings.Contains(d.StateDetail, "apply model b") || reopened.Closes() != 1 || len(reopened.Sends()) != 0 {
+		t.Fatalf("reopen that cannot switch: %+v closes=%d sends=%d", d.SessionSummary, reopened.Closes(), len(reopened.Sends()))
 	}
 }
 

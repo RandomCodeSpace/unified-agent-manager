@@ -340,6 +340,51 @@ type WebState struct {
 	// Title is the provider-generated conversation title, sanitized and
 	// bounded.
 	Title string `json:"title,omitempty"`
+
+	unknown map[string]json.RawMessage
+}
+
+// Update sets every field this version models to v's and keeps the fields a
+// newer uam wrote, so a writer never drops them.
+func (w *WebState) Update(v WebState) {
+	unknown := w.unknown
+	*w = v
+	w.unknown = unknown
+}
+
+type webStateAlias WebState
+
+var knownWebStateFields = map[string]struct{}{
+	"turn":           {},
+	"request_id":     {},
+	"request_status": {},
+	"updated_at":     {},
+	"detail":         {},
+	"project_id":     {},
+	"model":          {},
+	"title":          {},
+}
+
+func (w WebState) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(webStateAlias(w))
+	if err != nil {
+		return nil, err
+	}
+	return mergeUnknownJSON(base, w.unknown, knownWebStateFields)
+}
+
+func (w *WebState) UnmarshalJSON(data []byte) error {
+	var alias webStateAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*w = WebState(alias)
+	unknown, err := decodeUnknownJSON(data, knownWebStateFields)
+	if err != nil {
+		return err
+	}
+	w.unknown = unknown
+	return nil
 }
 
 // WebProject is a directory the web interface groups Tasks under. There is
@@ -349,6 +394,39 @@ type WebProject struct {
 	Name      string    `json:"name"`
 	Dir       string    `json:"dir"`
 	CreatedAt time.Time `json:"created_at"`
+
+	unknown map[string]json.RawMessage
+}
+
+type webProjectAlias WebProject
+
+var knownWebProjectFields = map[string]struct{}{
+	"id":         {},
+	"name":       {},
+	"dir":        {},
+	"created_at": {},
+}
+
+func (p WebProject) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(webProjectAlias(p))
+	if err != nil {
+		return nil, err
+	}
+	return mergeUnknownJSON(base, p.unknown, knownWebProjectFields)
+}
+
+func (p *WebProject) UnmarshalJSON(data []byte) error {
+	var alias webProjectAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*p = WebProject(alias)
+	unknown, err := decodeUnknownJSON(data, knownWebProjectFields)
+	if err != nil {
+		return err
+	}
+	p.unknown = unknown
+	return nil
 }
 
 // maxWebModelBytes bounds a persisted model ID; longer values are cleared.
