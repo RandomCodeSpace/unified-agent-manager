@@ -114,14 +114,15 @@ off, run `uam web stop`, then `uam web` without the flag.
 - **Conversation**: responses stream in; tool calls appear as expandable rows
   that update in place.
 - **Subagents**: when the agent delegates work to a subagent, the subagent
-  shows up in the Task with its status (running, completed, failed, or
-  cancelled). Its own prompt, replies, and tool calls appear in its own view,
-  not in the Task's conversation.
+  shows up in the Task under the tool call that started it, with its status
+  (running, completed, failed, or cancelled). Expanding it loads its own
+  prompt, replies, and tool calls, which never appear in the Task's own
+  conversation. Parallel subagents stack.
 - **Approvals and questions**: when the provider asks for permission or asks a
-  question, a card appears in the conversation and a badge in the session
-  list. Nothing is approved automatically. If no browser is connected, the
-  request waits; the first answer from any tab wins and later answers are
-  refused.
+  question, a card appears in the conversation and a "Needs you" mark on the
+  Task in the project list and on the home screen. Nothing is approved
+  automatically. If no browser is connected, the request waits; the first
+  answer from any tab wins and later answers are refused.
 - **Stop turn** cancels the running turn. The conversation stays open.
 - **Close session** disconnects UAM from the provider conversation and keeps
   the record. Sending another prompt reopens the same conversation.
@@ -130,9 +131,14 @@ off, run `uam web stop`, then `uam web` without the flag.
   are refused while a Task concerned is working or waiting for you. Neither
   deletes the provider's copy of the conversation, and neither touches the
   directory.
-- **Changes**: *Workspace* shows `git` changes in the project versus `HEAD`.
-  That includes edits made by anything else in the working tree, not only
-  this session.
+- **Changes**: the Task's meta line shows how many files differ from `HEAD`
+  in the project directory and opens them as a sheet with the diff. That
+  includes edits made by anything else in the working tree, not only this
+  session.
+- **Home screen**: with no Task open, the page lists Tasks that need you or
+  have new activity since you last looked, then every Project with its
+  Tasks. On a narrow window the project list opens as a drawer. The theme
+  follows the system and can be toggled from the project list.
 
 States shown for each session:
 
