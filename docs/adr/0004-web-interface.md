@@ -24,8 +24,9 @@ structured APIs:
 
 Only Copilot is registered for now. Web features are built against Copilot
 first, and a provider is offered only when it supports them the same way.
-Per-Task context size and the per-model image and PDF gate for attachments
-are the capability-gated exceptions to this rule.
+Per-Task context size is the one capability-gated exception to this rule.
+The image and PDF gate for attachments is not an exception: it follows what
+each model reports, and every provider must apply it the same way.
 The OpenCode integration stays in the code base, unregistered.
 
 ### Ownership
@@ -644,6 +645,17 @@ before. This replaces the New Task form.
   default. A Project without defaults uses `auto`, no effort, `default` and
   `safe`.
 
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `POST /api/projects` | gains `"defaults"?` | 201 `Project`; 400 invalid defaults; otherwise unchanged |
+| `PATCH /api/projects/{id}` | `{"name"?, "defaults"?}` | `Project`; the name is handled as before; 400 when neither is given or the defaults are invalid, checked before anything changes; 404 |
+
+`Project` gains `defaults: {provider, model, effort, context_size, mode}`,
+omitted when the Project has none; `context_size` is `default` unless a tier is
+chosen. A change sends a `project` frame, as a rename does.
+
 ## Project branch
 
 - Date: 2026-09-24 (decided in #175)
@@ -660,13 +672,6 @@ listed (`GET /api/projects` and the `snapshot` frame, at most once per Project
 every two seconds), when a Task in the Project ends a turn, and when a Task's
 Changes load. Nothing polls. When the branch changes, the `project` frame
 carries the Project again.
-
-| `GET /api/sessions/{id}/commands` | – | `{"commands": [{"name", "description", "kind", "input_hint"}]}`; opens the conversation as a viewer does; 409 when it is not open |
-| `GET /api/sessions/{id}/files?q=&limit=` | – | `{"files": [{"path", "type"}], "reason"}`; `type` is `file` or `directory`; `limit` 1 to 200, default 50, else 400 |
-| `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path, or for files on a steer during a turn |
-| `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, a refused file, or `` !` `` on OpenCode; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
-
-`QueuedPrompt` gains `files` (omitted when empty).
 
 ## Slash commands and file references
 
@@ -759,12 +764,12 @@ probe folder was not trusted, and this host has no user MCP configuration.
 
 | Method and path | Body | Result |
 |---|---|---|
-| `POST /api/projects` | gains `"defaults"?` | 201 `Project`; 400 invalid defaults; otherwise unchanged |
-| `PATCH /api/projects/{id}` | `{"name"?, "defaults"?}` | `Project`; the name is handled as before; 400 when neither is given or the defaults are invalid, checked before anything changes; 404 |
+| `GET /api/sessions/{id}/commands` | – | `{"commands": [{"name", "description", "kind", "input_hint"}]}`; opens the conversation as a viewer does; 409 when it is not open |
+| `GET /api/sessions/{id}/files?q=&limit=` | – | `{"files": [{"path", "type"}], "reason"}`; `type` is `file` or `directory`; `limit` 1 to 200, default 50, else 400 |
+| `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path, or for files on a steer during a turn |
+| `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, a refused file, or `` !` `` on OpenCode; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
 
-`Project` gains `defaults: {provider, model, effort, context_size, mode}`,
-omitted when the Project has none; `context_size` is `default` unless a tier is
-chosen. A change sends a `project` frame, as a rename does.
+`QueuedPrompt` gains `files` (omitted when empty).
 
 ## Browser attachments
 
@@ -797,8 +802,8 @@ No request carries base64 in JSON.
   that reports neither, such as `auto`, is not gated. Text is never gated. UAM
   checks the gate at upload and again when the prompt goes out, so a model
   change cannot slip an image past it. OpenCode reports `capabilities.input`
-  per model, but its adapter has no model catalog yet, so OpenCode Tasks are
-  not gated.
+  per model, but its adapter has no model catalog yet, so it cannot apply the
+  gate; OpenCode must gate the same way before it is registered.
 - **Storage.** Uploads live in `web-attachments/<task id>/` next to
   `sessions.json`, never in a project directory. Directories are 0700 and
   files 0600: `<upload id>` holds the bytes and `<upload id>.json` the name,

@@ -200,7 +200,7 @@ off, run `uam web stop`, then `uam web` without the flag.
   the conversation. A command runs only between turns; it is not queued or
   steered. A `/word` that is not on the list is sent as plain text, and so is
   anything that starts with `$`, `!`, `#` or `@agent`.
-- **File references**: type `@` anywhere in a message to search the project's
+- **File references**: type `@` at the start of a message or after a space to search the project's
   files: what `git ls-files` sees, including untracked files that are not
   ignored, and their directories. Picking one inserts `@path` and adds a chip;
   removing the chip removes the token, and deleting the token drops the chip.

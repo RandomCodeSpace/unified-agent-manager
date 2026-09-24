@@ -89,7 +89,9 @@ func sniff(data []byte) (string, error) {
 			return "", newError(http.StatusRequestEntityTooLarge, "PDF files can be at most 10 MiB")
 		}
 		return mimePDF, nil
-	case strings.HasPrefix(detected, "text/") && bytes.IndexByte(data, 0) < 0 && utf8.Valid(data):
+	// Any other UTF-8 without a NUL is text, whatever DetectContentType makes
+	// of its first bytes (a note starting "BM" or "ID3", or one with an escape).
+	case bytes.IndexByte(data, 0) < 0 && utf8.Valid(data):
 		if svgRoot(data) {
 			return "", newError(http.StatusUnsupportedMediaType, "SVG images cannot be attached")
 		}

@@ -97,6 +97,10 @@ func TestUploadSniffsTheBytesAndAppliesLimits(t *testing.T) {
 		{"../../notes.md", []byte("# notes\nsecond line\n"), "text/plain"},
 		{"page.html", []byte("<!doctype html><html><script>alert(1)</script></html>"), "text/plain"},
 		{"big.txt", bytes.Repeat([]byte("a"), maxTextBytes), "text/plain"},
+		{"bm.txt", []byte("BM notes: bitmap looks start like this"), "text/plain"},
+		{"tags.txt", []byte("ID3 tags are read first"), "text/plain"},
+		{"print.txt", []byte("%!PS-Adobe-3.0 is a PostScript header"), "text/plain"},
+		{"term.log", []byte("\x1b[31mred\x1b[0m\n"), "text/plain"},
 	} {
 		att, err := m.Upload(sum.ID, tc.name, tc.data)
 		if err != nil || att.MIME != tc.mime || att.Size != int64(len(tc.data)) || !validRequestID(att.ID) {
@@ -137,8 +141,8 @@ func TestUploadSniffsTheBytesAndAppliesLimits(t *testing.T) {
 		}
 	}
 	files, _ := os.ReadDir(dirs.task(sum.ID))
-	if len(files) != 16 {
-		t.Fatalf("stored %d files, want 8 uploads and 8 records", len(files))
+	if len(files) != 24 {
+		t.Fatalf("stored %d files, want 12 uploads and 12 records", len(files))
 	}
 	for _, f := range files {
 		if info, _ := f.Info(); info.Mode().Perm() != 0o600 {
