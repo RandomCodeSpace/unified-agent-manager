@@ -191,3 +191,21 @@ test('an HTTP reply older than the live session state does not roll it back', ()
   state = reducer(state, { type: 'upsert_session', session: { id: 'task', state: 'completed', name: 'Renamed', updated_at: '2026-09-24T10:00:03Z' } });
   assert.equal(state.detail.state, 'completed');
 });
+
+test('switching Tasks keeps the previous detail until the next one arrives', () => {
+  let state = loading();
+  const first = state.detail;
+  state = reducer(state, { type: 'select', id: 'next' });
+  assert.equal(state.detail, null);
+  assert.equal(state.previous, first);
+  // A second switch before anything arrived still shows the Task that was on screen.
+  state = reducer(state, { type: 'select', id: 'third' });
+  assert.equal(state.previous, first);
+  // Frames never touch the frozen Task.
+  assert.equal(update(state, { name: 'item', seq: 11, session_id: 'task', item: { ...item('late'), agent_id: undefined } }).previous, first);
+  const arrived = reducer(state, { type: 'snapshot', data: { seq: 12, projects: [], sessions: [], session: { id: 'third', items: [], interactions: [], subagents: [] } } });
+  assert.equal(arrived.detail.id, 'third');
+  assert.equal(arrived.previous, null);
+  assert.equal(reducer(state, { type: 'select', id: null }).previous, null);
+  assert.equal(reducer(state, { type: 'remove_session', id: 'task' }).previous, null);
+});

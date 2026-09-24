@@ -226,6 +226,16 @@ export function relTime(iso: string, now = Date.now()): string {
   return `${Math.round(h / 24)}d`;
 }
 
+/** True once `active` has held for `ms`; false again as soon as it ends. Keeps brief waits (a Task switch, a reconnect) from flashing. */
+export function useLate(active: boolean, ms: number): boolean {
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setLate(active), active ? ms : 0);
+    return () => window.clearTimeout(id);
+  }, [active, ms]);
+  return active && late;
+}
+
 /** Re-renders once a minute so relative times stay honest. */
 export function useMinuteTick(): number {
   const [tick, setTick] = useState(0);

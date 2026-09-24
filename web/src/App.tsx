@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
 import { initialState, reducer } from './state';
-import { AppContext, Dot, useMedia } from './components/common';
+import { AppContext, Dot, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog, RemoveProjectDialog } from './components/Projects';
 import { SettingsView } from './components/Settings';
@@ -27,6 +27,8 @@ const VIEWED_KEY = 'uam.viewed';
 const SIDEBAR_KEY = 'uam.sidebar';
 const FILTER_KEY = 'uam.projectFilter';
 const HASH_PREFIX = '#task=';
+/** A wait shorter than this shows nothing new: no "Connecting…", no loading placeholder. */
+const QUIET_MS = 600;
 const SETTINGS_HASH = '#settings';
 
 // Older servers omit `required`; treat absent as true.
@@ -218,6 +220,11 @@ export default function App() {
     [viewed, state.selectedId],
   );
 
+  // Opening a Task reopens the stream; only a disconnect that lasts is shown as one.
+  const late = useLate(state.connection !== 'connected', QUIET_MS);
+  const connection = late ? state.connection : 'connected';
+  const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen, QUIET_MS);
+
   const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage }), [meta, narrow, hasNews, state.settings, state.usage]);
 
   // Focus the composer of a Task that was just created, once its detail is on screen.
@@ -340,7 +347,10 @@ export default function App() {
   if (auth === 'out') return <Login onLoggedIn={() => setAuth('in')} />;
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
-  const project = selected ? state.projects.find((p) => p.id === selected.project_id) : undefined;
+  // The Task on screen: the selected one, or the one before it (inert) until the new detail arrives or the wait gets long.
+  const shown = state.detail && selected ? state.detail : state.selectedId && selected && !lateLoad ? state.previous : null;
+  const stale = !!shown && shown !== state.detail;
+  const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   const dialogTask = taskDialog ? state.sessions.find((s) => s.id === taskDialog.id) : undefined;
 
   function showProject(id: string) {
@@ -381,7 +391,7 @@ export default function App() {
       actions={actions}
       authRequired={authRequired}
       onLogout={() => void logout()}
-      connection={state.connection}
+      connection={connection}
       version={meta?.version}
     />
   );
@@ -396,11 +406,11 @@ export default function App() {
   let pane: React.ReactNode;
   if (settingsOpen) {
     pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} />;
-  } else if (state.detail && selected) {
+  } else if (shown) {
     pane = (
       <Task
-        key={state.detail.id}
-        session={state.detail}
+        key={shown.id}
+        session={shown}
         project={project}
         agents={state.agents}
         snapshotSeq={state.snapshotSeq}
@@ -417,7 +427,7 @@ export default function App() {
     );
   } else if (state.selectedId && state.snapshotSeq >= 0 && !selected) {
     pane = (
-      <EmptyPane leading={leading} connection={state.connection}>
+      <EmptyPane leading={leading} connection={connection}>
         <h1 className="text-display-md">This task no longer exists.</h1>
         <p className="text-ui text-muted">It was deleted, or its project was removed.</p>
         <Button variant="secondary" onClick={() => select(null)}>
@@ -426,11 +436,11 @@ export default function App() {
       </EmptyPane>
     );
   } else if (state.selectedId) {
-    pane = <LoadingPane leading={leading} />;
+    pane = <LoadingPane leading={leading} placeholder={lateLoad} />;
   } else {
     // A quiet placeholder (issue #185): New task and Add project live in the sidebar.
     pane = (
-      <EmptyPane leading={leading} connection={state.connection}>
+      <EmptyPane leading={leading} connection={connection}>
         <Brand markOnly className="[&_svg]:size-9 opacity-80" />
         <p className="text-ui text-muted">{state.projects.length > 0 ? 'Open a task from the sidebar, or start a new one there.' : 'Add a project in the sidebar to begin.'}</p>
       </EmptyPane>
@@ -468,7 +478,10 @@ export default function App() {
                   </Button>
                 </p>
               )}
-              {pane}
+              {/* One wrapper for every pane, so the Task on screen stays mounted while it turns stale. */}
+              <div className="contents" inert={stale}>
+                {pane}
+              </div>
             </main>
 
             {sheetOpen && !sheetInline && (
@@ -571,20 +584,20 @@ function EmptyPane({ leading, connection, children }: { leading: React.ReactNode
   );
 }
 
-/** Calm placeholder while the selected Task's detail is on its way: the header holds its height, three quiet lines below. */
-function LoadingPane({ leading }: { leading: React.ReactNode }) {
+/** Calm placeholder while the selected Task's detail is on its way: the header holds its height, three quiet lines below once the wait is long. */
+function LoadingPane({ leading, placeholder }: { leading: React.ReactNode; placeholder: boolean }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-label="Loading conversation">
       <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">
         {leading}
-        <span className="h-3.5 w-40 rounded-xs bg-sunken animate-pulse-dot" />
+        {placeholder && <span className="h-3.5 w-40 rounded-xs bg-sunken animate-pulse-dot" />}
       </header>
-      <div className="flex flex-col gap-3 px-6 pt-8">
+      {placeholder && <div className="flex flex-col gap-3 px-6 pt-8">
         <span className="ml-auto h-9 w-2/5 rounded-lg bg-raised animate-pulse-dot" />
         <span className="mt-4 h-3 w-3/5 rounded-xs bg-sunken animate-pulse-dot" />
         <span className="h-3 w-4/5 rounded-xs bg-sunken animate-pulse-dot" />
         <span className="h-3 w-1/2 rounded-xs bg-sunken animate-pulse-dot" />
-      </div>
+      </div>}
     </div>
   );
 }

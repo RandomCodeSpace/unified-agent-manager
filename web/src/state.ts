@@ -24,6 +24,8 @@ export interface State {
   selectedId: string | null;
   /** Detail of the selected session, from the latest snapshot; null until it arrives. */
   detail: SessionDetail | null;
+  /** The Task that was on screen before the selection changed, kept until the new detail arrives. Frozen: no frames apply to it. */
+  previous: SessionDetail | null;
   /** seq of the latest snapshot; updates with seq <= this are ignored. -1 before any snapshot. */
   snapshotSeq: number;
   /** Newest selected-task frame or detail response, used to reject stale reloads. */
@@ -41,6 +43,7 @@ export const initialState: State = {
   sessions: [],
   selectedId: null,
   detail: null,
+  previous: null,
   snapshotSeq: -1,
   detailSeq: -1,
   connection: 'connecting',
@@ -70,7 +73,7 @@ export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'select':
       if (action.id === state.selectedId) return state;
-      return { ...state, selectedId: action.id, detail: null, detailSeq: -1, agents: {} };
+      return { ...state, selectedId: action.id, detail: null, previous: action.id ? (state.detail ?? state.previous) : null, detailSeq: -1, agents: {} };
     case 'connection': {
       if (state.connection === action.status) return state;
       const detail = action.status !== 'connected' && state.detail
@@ -88,6 +91,7 @@ export function reducer(state: State, action: Action): State {
         projects: projects ?? [],
         sessions,
         detail,
+        previous: null,
         snapshotSeq: seq,
         detailSeq: seq,
         connection: 'connected',
@@ -101,7 +105,7 @@ export function reducer(state: State, action: Action): State {
     case 'detail_loaded': {
       const detail = action.detail;
       if (detail.id !== state.selectedId || detail.seq === undefined || detail.seq <= state.detailSeq) return state;
-      return { ...withSession(state, detail), detail, detailSeq: detail.seq, agents: {} };
+      return { ...withSession(state, detail), detail, previous: null, detailSeq: detail.seq, agents: {} };
     }
     case 'upsert_session': {
       // An HTTP reply can land after live frames that already carry a newer state.
@@ -233,8 +237,9 @@ function withSession(state: State, s: SessionSummary): State {
 
 function withoutSession(state: State, id: string): State {
   const sessions = state.sessions.filter((s) => s.id !== id);
-  if (state.selectedId === id) return { ...state, sessions, selectedId: null, detail: null, agents: {} };
-  return { ...state, sessions };
+  const previous = state.previous?.id === id ? null : state.previous;
+  if (state.selectedId === id) return { ...state, sessions, selectedId: null, detail: null, previous: null, agents: {} };
+  return { ...state, sessions, previous };
 }
 
 function withoutProject(state: State, id: string): State {
