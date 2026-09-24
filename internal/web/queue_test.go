@@ -241,6 +241,36 @@ func TestQueuePausesWhenADrainedPromptIsNotAccepted(t *testing.T) {
 	}
 }
 
+func TestCancelQueuedPromptBeingSentReturnsConflict(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := busySession(t, m, prov)
+	rid := mustUUID(t)
+	mustSubmit(t, m, sum.ID, "B", rid, ModeQueue, SubmissionQueued)
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	conv.SetSendHook(func(ctx context.Context, _ string) error {
+		close(started)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued prompt did not reach Send")
+	}
+	if err := m.CancelQueued(sum.ID, rid); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "already sent") {
+		t.Fatalf("cancel while sending = %v, want 409 already sent", err)
+	}
+	if d := detail(t, m, sum.ID); len(d.Queue) != 0 || d.LastSubmission.RequestID == rid || strings.Join(conv.Sends(), ",") != "first,B" || conv.Cancels() != 0 {
+		t.Fatalf("in-flight cancellation changed delivery: queue=%+v last=%+v sends=%q cancels=%d", d.Queue, d.LastSubmission, conv.Sends(), conv.Cancels())
+	}
+}
+
 func TestQueueCancelLimitAndRepeatedRequestIDs(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	sum, conv := busySession(t, m, prov)

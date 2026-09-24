@@ -173,6 +173,8 @@ type webSession struct {
 	// queue holds prompts waiting for the running turn, oldest first. It
 	// lives in memory only: stopping the service drops it.
 	queue []QueuedPrompt
+	// queueSending is the head removed for a send whose outcome is pending.
+	queueSending string
 	// queuePaused keeps the queue from draining after a turn that did not
 	// complete or a prompt that was not accepted, until the user resumes or
 	// clears it. It is never set with an empty queue.
@@ -1799,21 +1801,24 @@ func (m *Manager) drain(s *webSession) {
 	}
 	before := m.summaryLocked(s)
 	head := s.queue[0]
+	s.queueSending = head.RequestID
 	s.queue = slices.Delete(s.queue, 0, 1)
 	s.queueChanged = true
 	m.changedLocked(s, before)
 	m.mu.Unlock()
-	if _, err := m.send(s, head.Text, head.RequestID); err != nil {
+	_, err := m.send(s, head.Text, head.RequestID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s.queueSending = ""
+	if err != nil {
 		// Nothing was sent: a turn is running after all, or the service is
 		// stopping. The prompt waits at the front for the next completed turn.
-		m.mu.Lock()
 		if !m.closed && !s.removed {
 			before := m.summaryLocked(s)
 			s.queue = slices.Insert(s.queue, 0, head)
 			s.queueChanged = true
 			m.changedLocked(s, before)
 		}
-		m.mu.Unlock()
 	}
 }
 
@@ -1832,6 +1837,9 @@ func (m *Manager) CancelQueued(id, reqID string) error {
 	}
 	i := slices.IndexFunc(s.queue, func(q QueuedPrompt) bool { return q.RequestID == reqID })
 	if i < 0 {
+		if s.queueSending != "" && s.queueSending == reqID {
+			return newError(http.StatusConflict, "the prompt was already sent")
+		}
 		sub, ok := s.findSubmission(reqID)
 		switch {
 		case !ok:
