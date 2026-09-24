@@ -174,6 +174,7 @@ export default function App() {
         setSheetOpen(false);
         setDrawerOpen(false);
       },
+      onProject: (id) => showProject(id),
       onNewTask: (projectId) => {
         dispatch({ type: 'select', id: null });
         setNewTaskIn(projectId);
