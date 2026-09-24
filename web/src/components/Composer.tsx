@@ -351,6 +351,14 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
   const gateNote = mediaNote(media, modelLabel);
   const activeKinds = uploads.filter((u) => u.status !== 'error').map((u) => u.kind);
   const patch = (key: string, p: Partial<Pending>) => setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...p } : x)));
+  // Uploads still in flight; leaving the Task (this composer unmounts) cancels them.
+  const inflight = useRef(new Set<() => void>());
+  useEffect(() => {
+    const running = inflight.current;
+    return () => {
+      for (const abort of running) abort();
+    };
+  }, []);
 
   function addFiles(list: File[]) {
     if (locked || !list.length) return;
@@ -368,12 +376,14 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
       kinds.push(kind);
       const up = api.upload(session.id, file, (p) => patch(key, { progress: p }));
       next.push({ key, name: file.name, size: file.size, kind, progress: 0, status: 'uploading', abort: up.abort });
+      inflight.current.add(up.abort);
       if (kind === 'image') {
         const reader = new FileReader();
         reader.onload = () => patch(key, { preview: String(reader.result) });
         reader.readAsDataURL(file);
       }
       up.done
+        .finally(() => inflight.current.delete(up.abort))
         .then((a) => patch(key, { status: 'done', id: a.id, progress: 1, name: a.name, size: a.size ?? file.size, abort: undefined }))
         .catch((e) => {
           if (isStatus(e, 0) && e.message === 'Upload cancelled') return;
