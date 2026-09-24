@@ -43,6 +43,11 @@ type fakeWebOpenCode struct {
 	streams     []chan string
 	streamCount int
 	streamDown  bool
+	commands    []webCommand
+	// commandHold, when set, makes POST /session/{id}/command save and
+	// announce the user message, then answer only once it is closed.
+	commandHold chan struct{}
+	commandCode int
 }
 
 type fakeWebMessage struct {
@@ -100,6 +105,10 @@ func (f *fakeWebOpenCode) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		writeFakeJSON(w, append([]webPermissionRequest{}, f.permissions...))
+	case r.Method == http.MethodGet && r.URL.Path == "/command":
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		writeFakeJSON(w, f.commands)
 	case r.Method == http.MethodGet && r.URL.Path == "/question":
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -163,6 +172,8 @@ func (f *fakeWebOpenCode) serveSession(w http.ResponseWriter, r *http.Request, p
 		writeFakeNotFound(w)
 	case r.Method == http.MethodPost && len(path) == 2 && path[1] == "prompt_async":
 		f.prompt(w, info.ID, body)
+	case r.Method == http.MethodPost && len(path) == 2 && path[1] == "command":
+		f.command(w, r, info.ID, body)
 	case r.Method == http.MethodPost && len(path) == 2 && path[1] == "abort":
 		writeFakeJSON(w, true)
 	case r.Method == http.MethodGet && len(path) == 2 && path[1] == "diff":
@@ -224,6 +235,33 @@ func (f *fakeWebOpenCode) prompt(w http.ResponseWriter, sessionID string, body [
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (f *fakeWebOpenCode) command(w http.ResponseWriter, r *http.Request, sessionID string, body []byte) {
+	var payload struct {
+		MessageID string `json:"messageID"`
+		Command   string `json:"command"`
+	}
+	_ = json.Unmarshal(body, &payload)
+	f.mu.Lock()
+	hold, code := f.commandHold, f.commandCode
+	f.mu.Unlock()
+	if code != 0 {
+		w.WriteHeader(code)
+		return
+	}
+	if hold != nil {
+		part := webTestText("prt_cmd", payload.MessageID, "Expanded template for "+payload.Command)
+		f.addMessage(sessionID, webTestMessage(payload.MessageID, "user", 1000, part))
+		f.emit("message.updated", map[string]any{"sessionID": sessionID, "info": map[string]any{"id": payload.MessageID, "sessionID": sessionID, "role": "user"}})
+		f.emit("message.part.updated", map[string]any{"sessionID": sessionID, "part": part})
+		select {
+		case <-hold:
+		case <-r.Context().Done():
+			return
+		}
+	}
+	writeFakeJSON(w, map[string]any{"info": map[string]any{"id": "msg_reply", "role": "assistant"}, "parts": []any{}})
 }
 
 func (f *fakeWebOpenCode) reply(w http.ResponseWriter, id string) {
@@ -815,7 +853,7 @@ func TestWebStreamLossExitsAndLaterOpenStartsFresh(t *testing.T) {
 	if !strings.Contains(event.Error, "event stream") || strings.Contains(event.Error, fakeWebPassword) {
 		t.Fatalf("exit error = %q", event.Error)
 	}
-	if err := conversation.Send(t.Context(), "hello"); !errors.Is(err, agentapi.ErrClosed) {
+	if err := conversation.Send(t.Context(), agentapi.Prompt{Text: "hello"}); !errors.Is(err, agentapi.ErrClosed) {
 		t.Fatalf("Send after exit = %v", err)
 	}
 	h.fake.mu.Lock()
@@ -873,7 +911,7 @@ func TestWebSend(t *testing.T) {
 	}
 
 	for range 2 {
-		if err := conversation.Send(t.Context(), "hello"); err != nil {
+		if err := conversation.Send(t.Context(), agentapi.Prompt{Text: "hello"}); err != nil {
 			t.Fatalf("Send: %v", err)
 		}
 		body := lastPrompt()
@@ -890,7 +928,7 @@ func TestWebSend(t *testing.T) {
 	h.fake.mu.Lock()
 	h.fake.promptMode = "reject"
 	h.fake.mu.Unlock()
-	err := conversation.Send(t.Context(), "secret prompt")
+	err := conversation.Send(t.Context(), agentapi.Prompt{Text: "secret prompt"})
 	if err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) || !strings.Contains(err.Error(), "400") || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("rejected Send = %v", err)
 	}
@@ -900,7 +938,7 @@ func TestWebSend(t *testing.T) {
 	h.fake.statuses[id] = webSessionStatus{Type: "busy"}
 	h.fake.mu.Unlock()
 	before := len(h.fake.requestsFor(http.MethodPost, promptPath))
-	if err := conversation.Send(t.Context(), "hello"); !errors.Is(err, agentapi.ErrBusy) {
+	if err := conversation.Send(t.Context(), agentapi.Prompt{Text: "hello"}); !errors.Is(err, agentapi.ErrBusy) {
 		t.Fatalf("busy Send = %v", err)
 	}
 	if err := conversation.Steer(t.Context(), "hello"); !errors.Is(err, agentapi.ErrUnsupported) {
@@ -917,7 +955,7 @@ func TestWebSend(t *testing.T) {
 	delete(h.fake.statuses, id)
 	h.fake.promptMode = "drop"
 	h.fake.mu.Unlock()
-	if err := conversation.Send(t.Context(), "hello"); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
+	if err := conversation.Send(t.Context(), agentapi.Prompt{Text: "hello"}); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
 		t.Fatalf("dropped Send = %v", err)
 	}
 	if got := len(h.fake.requestsFor(http.MethodPost, promptPath)); got != before+1 {
@@ -927,7 +965,7 @@ func TestWebSend(t *testing.T) {
 	h.fake.mu.Lock()
 	h.fake.promptMode = "drop-after-save"
 	h.fake.mu.Unlock()
-	if err := conversation.Send(t.Context(), "hello"); err != nil {
+	if err := conversation.Send(t.Context(), agentapi.Prompt{Text: "hello"}); err != nil {
 		t.Fatalf("dropped-but-saved Send = %v", err)
 	}
 	saved := lastPrompt()["messageID"].(string)
@@ -939,7 +977,7 @@ func TestWebSend(t *testing.T) {
 	h.fake.promptMode = ""
 	delete(h.fake.sessions, id)
 	h.fake.mu.Unlock()
-	if err := conversation.Send(t.Context(), "hello"); !errors.Is(err, agentapi.ErrConversationNotFound) {
+	if err := conversation.Send(t.Context(), agentapi.Prompt{Text: "hello"}); !errors.Is(err, agentapi.ErrConversationNotFound) {
 		t.Fatalf("missing-session Send = %v", err)
 	}
 }

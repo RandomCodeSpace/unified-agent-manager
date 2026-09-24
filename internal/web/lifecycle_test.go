@@ -38,7 +38,7 @@ func wantConflict(t *testing.T, what string, err error, message string) {
 func TestSettleReopenAndArchive(t *testing.T) {
 	m, prov, st := newTestManager(t)
 	sum, conv := createSession(t, m, prov)
-	if _, err := m.Submit(sum.ID, "work", mustUUID(t), ModeSend); err != nil {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	conv.EmitTurn(agentapi.TurnCompleted, "")
@@ -83,7 +83,7 @@ func TestSettleReopenAndArchive(t *testing.T) {
 	wantConflict(t, "reopen an active task", errOf(m.Reopen(sum.ID)), "a task that is active cannot be reopened")
 
 	// The next prompt reopens the same conversation.
-	if _, err := m.Submit(sum.ID, "more", mustUUID(t), ModeSend); err != nil {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "more", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatalf("prompt after reopen: %v", err)
 	}
 	opens := prov.Opens()
@@ -160,11 +160,11 @@ func TestSettleAndArchivePreconditions(t *testing.T) {
 				}
 			}
 			sum, conv := createSession(t, m, prov)
-			if _, err := m.Submit(sum.ID, "work", mustUUID(t), ModeSend); err != nil {
+			if _, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 				t.Fatal(err)
 			}
 			refused("while working", sum.ID, "stop the turn first")
-			if _, err := m.Submit(sum.ID, "later", mustUUID(t), ModeQueue); err != nil {
+			if _, err := m.Submit(sum.ID, PromptRequest{Text: "later", RequestID: mustUUID(t), Mode: ModeQueue}); err != nil {
 				t.Fatal(err)
 			}
 			conv.EmitTurn(agentapi.TurnCancelled, "") // pauses the queue
@@ -213,7 +213,7 @@ func TestSettledAndArchivedTasksAreReadOnly(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	sum, conv := createSession(t, m, prov)
 	rid := mustUUID(t)
-	if _, err := m.Submit(sum.ID, "work", rid, ModeSend); err != nil {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: rid, Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	conv.EmitTurn(agentapi.TurnCompleted, "")
@@ -221,14 +221,14 @@ func TestSettledAndArchivedTasksAreReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A retried request keeps its recorded outcome.
-	if sub, err := m.Submit(sum.ID, "work", rid, ModeSend); err != nil || sub.Status != SubmissionAccepted {
+	if sub, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: rid, Mode: ModeSend}); err != nil || sub.Status != SubmissionAccepted {
 		t.Fatalf("retry of a recorded prompt = %+v, %v", sub, err)
 	}
 
 	checks := func(stage, message string) {
 		t.Helper()
 		for _, mode := range []string{ModeSend, ModeQueue, ModeSteer} {
-			wantConflict(t, stage+" prompt "+mode, errOf2(m.Submit(sum.ID, "x", mustUUID(t), mode)), message)
+			wantConflict(t, stage+" prompt "+mode, errOf2(m.Submit(sum.ID, PromptRequest{Text: "x", RequestID: mustUUID(t), Mode: mode})), message)
 		}
 		wantConflict(t, stage+" clear queue", m.ClearQueue(sum.ID), message)
 		wantConflict(t, stage+" resume queue", m.ResumeQueue(sum.ID), message)
@@ -320,7 +320,7 @@ func TestStagesSurviveRestart(t *testing.T) {
 	if _, err := m2.Reopen(settled.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m2.Submit(settled.ID, "again", mustUUID(t), ModeSend); err != nil {
+	if _, err := m2.Submit(settled.ID, PromptRequest{Text: "again", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	if opens := prov2.Opens(); len(opens) != 1 || opens[0].ConversationID != settled.ConversationID {

@@ -92,6 +92,21 @@ type Model struct {
 	Name         string        `json:"name"`
 	Efforts      []string      `json:"efforts"`
 	ContextSizes []ContextSize `json:"context_sizes"`
+	// Media is what the model accepts besides text. Nil means the provider
+	// reports nothing (Copilot's auto), and uploads are not gated.
+	Media *Media `json:"media,omitempty"`
+}
+
+// Media gates image and PDF uploads for one model. Text is always accepted.
+type Media struct {
+	Images bool `json:"images"`
+	PDF    bool `json:"pdf"`
+	// MaxImages is the most images one prompt may carry; 0 means no limit
+	// was reported.
+	MaxImages int `json:"max_images,omitempty"`
+	// Types lists the accepted image and document MIME types; empty means
+	// any type Images and PDF allow.
+	Types []string `json:"types,omitempty"`
 }
 
 // ContextSize is a selectable provider tier and its prompt token budget.
@@ -143,7 +158,15 @@ type Conversation interface {
 	// is reported through events. Ambiguous failures wrap
 	// ErrSubmissionUncertain. A provider that would otherwise fold a prompt
 	// sent during a turn into that turn must run it after the turn instead.
-	Send(ctx context.Context, prompt string) error
+	Send(ctx context.Context, prompt Prompt) error
+	// Commands lists the slash commands that become a prompt: skills and
+	// the provider's prompt commands. Nothing else is offered.
+	Commands(ctx context.Context) ([]Command, error)
+	// RunCommand runs one command from Commands with args.Text as its
+	// arguments. It starts a turn like Send, with Send's outcomes; the user
+	// item shows "/name arguments". A result that would not start a prompt
+	// turn is a rejection. ErrUnsupported means the provider has no commands.
+	RunCommand(ctx context.Context, name string, args Prompt) error
 	// Steer adds prompt to the turn that is running, before the provider's
 	// next model call, and returns once the provider accepted or rejected
 	// it. The caller steers only while a turn runs; it never starts a turn.
@@ -179,6 +202,60 @@ type Conversation interface {
 	// interactions end without an answer being fabricated.
 	Close(ctx context.Context) error
 }
+
+// Prompt is one user message: the text as typed, plus project files and
+// uploads the web service has already checked.
+type Prompt struct {
+	Text        string
+	Files       []File
+	Attachments []Blob
+}
+
+// Blob is uploaded content sent inline. MIME is image/png, image/jpeg,
+// image/gif, image/webp, application/pdf or text/plain.
+type Blob struct {
+	Name string
+	MIME string
+	Data []byte
+}
+
+// Attachment describes uploaded content: an upload's metadata, or content a
+// user item carried. ID names the web service's stored copy and is empty
+// when it has none.
+type Attachment struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
+	MIME string `json:"mime"`
+	Size int64  `json:"size,omitempty"`
+	// SHA256 is the hex digest of the content, when the provider's record
+	// has it; the web service matches it to its stored copy. It is never
+	// sent to browsers.
+	SHA256 string `json:"-"`
+}
+
+// File is a project file or directory the user referenced. Path is
+// absolute; Rel is the path relative to the working directory, shown to the
+// user.
+type File struct {
+	Path string
+	Rel  string
+	Dir  bool
+}
+
+// Command is one slash command. Kind is "skill" for a skill and "command"
+// for any other prompt command.
+type Command struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Kind        string `json:"kind"`
+	InputHint   string `json:"input_hint"`
+}
+
+// Command kinds.
+const (
+	CommandSkill  = "skill"
+	CommandPrompt = "command"
+)
 
 // History is a reopened conversation's provider-recorded state.
 type History struct {
@@ -255,6 +332,9 @@ type Item struct {
 	// Delivery is DeliverySteer on a user item that joined a running turn
 	// as a steer, and empty otherwise.
 	Delivery string `json:"delivery,omitempty"`
+	// Attachments are the uploads a user item carried; the adapter never
+	// includes their bytes.
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 // DeliverySteer marks a user item that arrived as a steer.

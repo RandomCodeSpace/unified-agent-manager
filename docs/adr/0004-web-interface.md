@@ -24,7 +24,9 @@ structured APIs:
 
 Only Copilot is registered for now. Web features are built against Copilot
 first, and a provider is offered only when it supports them the same way.
-Per-Task context size is the sole capability-gated exception to this rule.
+Per-Task context size is the one capability-gated exception to this rule.
+The image and PDF gate for attachments is not an exception: it follows what
+each model reports, and every provider must apply it the same way.
 The OpenCode integration stays in the code base, unregistered.
 
 ### Ownership
@@ -670,3 +672,190 @@ listed (`GET /api/projects` and the `snapshot` frame, at most once per Project
 every two seconds), when a Task in the Project ends a turn, and when a Task's
 Changes load. Nothing polls. When the branch changes, the `project` frame
 carries the Project again.
+
+## Slash commands and file references
+
+- Date: 2026-09-24 (decided in #176, from the research for #172)
+
+Neither provider parses prompt text, so UAM resolves `/` commands and `@`
+files itself and sends each provider its structured form. `$`, `!`, `#` and
+`@agent` are left out by owner decision. Text that starts with them is sent as
+plain text, and so is a `/word` that is not a listed command.
+
+- **Commands.** A Task offers only commands that become a prompt. Copilot lists
+  `session.commands.list` with built-ins and skills, keeps every `skill` and
+  the built-ins `init` and `review`, and drops the rest: they duplicate web
+  controls, change the mode, only print text, or reach outside the Task.
+  OpenCode lists everything `GET /command` returns. UAM drops names with spaces
+  or control characters and sanitizes descriptions and hints.
+- **Running a command.** The command route has the rules of a send: the same
+  `request_id` record, 409 while a turn runs, and no queue or steer. The name
+  must be on the Task's list, else 404, and nothing is recorded. Copilot runs
+  `session.commands.invoke` and sends the result only when it is an
+  `agent-prompt` without `mode`, with `displayPrompt` set to `/name arguments`.
+  Any other result, or an invoke error, is a `rejected` submission; invoke
+  starts no turn, so nothing reached the model. OpenCode posts
+  `POST /session/{id}/command` in the background because it answers only when
+  the turn ends. The command counts as accepted once its user message exists;
+  a lost answer is `uncertain` and never resent. The adapter shows
+  `/name arguments` for that message instead of the expanded template, while
+  the conversation stays open.
+- **OpenCode shell expansion.** OpenCode puts the arguments into the command
+  template and then runs every `` !`cmd` `` in it without asking. UAM refuses
+  arguments containing `` !` `` with 400 on OpenCode Tasks, and the adapter
+  refuses them too.
+- **File list.** `git ls-files --cached --others --exclude-standard -z` runs in
+  the Task's directory through the read-only git runner the Changes view uses,
+  so `.gitignore` applies and paths are relative to that directory. Output is
+  capped at 4 MiB. UAM adds parent directories, matches in Go (base-name
+  prefix, then base name, then path, case-insensitive) and checks each result
+  on disk: symbolic links, special files and paths that are gone are left out.
+  A directory outside Git gives an empty list with the Changes view's reason.
+- **File references.** A prompt names at most 20 files relative to the Task's
+  directory. UAM opens the directory with `os.Root` and refuses, with a 400
+  that names the path, anything absolute, with `..`, not in clean form, at or
+  inside a symbolic link, missing, special, or binary (a NUL in the first 8000
+  bytes, as git decides). Directories are allowed. Nothing is sent or recorded
+  when one fails. A queued prompt keeps its files, and UAM checks them again
+  when the prompt is sent; a failure then is a `rejected` submission that
+  pauses the queue. A steer takes text only and refuses files with 400. The
+  text stays as typed, `@path` tokens included. Copilot receives
+  `AttachmentFile` or `AttachmentDirectory` with the absolute path and the
+  relative path as display name; the model gets a `<tagged_files>` pointer and
+  reads the file with its tools, which asks a read permission in Safe mode.
+  OpenCode receives a `file` part with a `file://` URL after the text part,
+  and inlines the file itself.
+
+### Copilot configuration discovery
+
+The owner turned on `EnableConfigDiscovery` for created and resumed
+conversations. A probe on 2026-09-24 (CLI 1.0.88, SDK 1.0.14, `gpt-5-mini`,
+a temporary Git project with a project skill, a project agent,
+`.github/copilot-instructions.md`, `.mcp.json` and `.github/hooks/*.json`)
+compared the runtime default with discovery on:
+
+| What | Default (nil) | Discovery on |
+|---|---|---|
+| Skills | 2 built-in | 57: project `.github/skills`, `~/.agents/skills`, built-in |
+| Commands | 33 built-in | 33 built-in and 52 skills |
+| Custom agents | none | the project agent |
+| Custom instructions | loaded (`instructions.getSources` listed the file, and the model followed it) | the same |
+| Hooks in `.github/hooks/` | ran (`sessionStart`, `userPromptSubmitted`) | the same |
+| MCP servers | none | the built-in `github-mcp-server`, connected |
+| Workspace `.mcp.json` | not loaded | not loaded; the CLI loads workspace MCP only for a trusted folder |
+| Plugins | none | none |
+
+So discovery adds skills, project agents and the built-in GitHub MCP server.
+Custom instructions and file hooks load either way. Hooks therefore already
+ran shell commands in web Tasks before this change, without a permission
+request. MCP servers from a trusted folder's `.mcp.json` or
+`.github/mcp.json`, and from a user MCP configuration, were not observed: the
+probe folder was not trusted, and this host has no user MCP configuration.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Conversation.Send(ctx, Prompt)` | `Prompt{Text, Files}` replaces the prompt string. `File{Path, Rel, Dir}` is a reference the web service already checked. |
+| `Conversation.Commands(ctx)` | `[]Command{Name, Description, Kind, InputHint}`; `Kind` is `skill` or `command`. |
+| `Conversation.RunCommand(ctx, name, args Prompt)` | Runs a listed command with `args.Text` as its arguments. Same outcomes as `Send`; a result that would not start a prompt turn is a rejection. |
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `GET /api/sessions/{id}/commands` | – | `{"commands": [{"name", "description", "kind", "input_hint"}]}`; opens the conversation as a viewer does; 409 when it is not open |
+| `GET /api/sessions/{id}/files?q=&limit=` | – | `{"files": [{"path", "type"}], "reason"}`; `type` is `file` or `directory`; `limit` 1 to 200, default 50, else 400 |
+| `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path, or for files on a steer during a turn |
+| `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, a refused file, or `` !` `` on OpenCode; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
+
+`QueuedPrompt` gains `files` (omitted when empty).
+
+## Browser attachments
+
+- Date: 2026-09-24 (decided in #177, from the research for #172)
+
+The browser uploads a file to UAM first and then names it by ID in a prompt.
+No request carries base64 in JSON.
+
+- **Upload.** `POST /api/sessions/{id}/attachments?name=<file name>` takes the
+  raw file as the body with `Content-Type: application/octet-stream`. That
+  route alone has a 10 MiB body cap; every other route keeps the 1 MiB cap and
+  the JSON rule. The server makes one exception to the JSON rule, for exactly
+  that method and path. The Host, cross-origin and sign-in checks still apply,
+  and `application/octet-stream`, like JSON, is not a type a cross-site form
+  can send. The name is for display only: UAM keeps the base name, sanitized
+  and clipped to 120 characters.
+- **Types.** UAM takes the type from the bytes, never from the name or a
+  header. An image is what `http.DetectContentType` calls png, jpeg, gif or
+  webp. A PDF must be `application/pdf` there and start with `%PDF-`. Anything
+  else that is valid UTF-8 and holds no NUL byte is text, whatever
+  `http.DetectContentType` makes of its first bytes; UAM stores and sends it as
+  `text/plain`. A text file whose first element is `<svg>` is refused. HEIC,
+  audio, video, archives and executables fail the text rule (415). HTML passes
+  as text and is never served as HTML.
+- **Limits.** Images 3 MiB, PDFs 10 MiB, text 256 KiB (413). A prompt carries
+  at most 5 uploads, and no more images than the model's `max_images` (400).
+- **Model gate.** The owner chose to gate images and PDFs per model. Copilot's
+  `capabilities.supports.vision` allows images, and
+  `capabilities.limits.vision` gives `max_prompt_images` and
+  `supported_media_types`; a PDF needs `application/pdf` in that list. A model
+  that reports neither, such as `auto`, is not gated. Text is never gated. UAM
+  checks the gate at upload and again when the prompt goes out, so a model
+  change cannot slip an image past it. OpenCode reports `capabilities.input`
+  per model, but its adapter has no model catalog yet, so it cannot apply the
+  gate; OpenCode must gate the same way before it is registered.
+- **Storage.** Uploads live in `web-attachments/<task id>/` next to
+  `sessions.json`, never in a project directory. Directories are 0700 and
+  files 0600: `<upload id>` holds the bytes and `<upload id>.json` the name,
+  type, size, SHA-256 and the times it was stored and first sent. Deleting a
+  Task or removing its Project deletes its directory. At start UAM reads the
+  records and deletes the directories of Tasks it no longer has. An upload
+  that no sent or queued prompt carries expires after 24 hours; UAM checks at
+  start, after each upload and every hour. A sent upload lives as long as its
+  Task, because the transcript shows it.
+- **Sending.** A prompt, a queued prompt and a command take
+  `attachments: [id]`; a steer takes none (400). A queued prompt keeps the IDs,
+  and UAM reads the bytes when it sends; a missing file then is a `rejected`
+  submission that pauses the queue. A retried `request_id` returns the
+  recorded outcome, so nothing is uploaded or sent twice. Copilot receives each
+  upload as an `AttachmentBlob` with base64 data, the MIME type and the name as
+  display name. OpenCode receives a `file` part with a `data:` URL after the
+  text and file-reference parts.
+- **Transcript.** User items carry `attachments: [{"id"?, "name", "mime",
+  "size"?}]`. Copilot's live `user.message` holds the blob data, and its
+  recorded event holds `assetId: "sha256:<hex>"` and `byteLength` instead.
+  OpenCode's user `file` part keeps its `data:` URL. The adapters report the
+  SHA-256 of the content, and UAM gives each item attachment the ID of this
+  Task's stored upload with the same content. Matching on content works for
+  both providers after a reload or a restart, and needs no message ID from the
+  send, which Copilot does not return. An attachment without a stored copy has
+  no `id`, and the browser shows it as a chip without a preview.
+- **Serving.** `GET /api/sessions/{id}/attachments/{attachment_id}` returns a
+  stored upload to a signed-in browser with the sniffed `Content-Type`
+  (`text/plain; charset=utf-8` for text), `X-Content-Type-Options: nosniff`,
+  the service CSP and `Cache-Control: no-store`. Images are `inline`; PDFs and
+  text are `attachment`. `mime.FormatMediaType` encodes the file name. The
+  browser shows images from this route, never from `blob:` URLs, and the
+  existing `img-src 'self'` allows it.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Model.Media *Media` | `Media{Images, PDF, MaxImages, Types}`; nil means the model reports nothing and is not gated. `MaxImages` 0 means no limit; empty `Types` means any type `Images` and `PDF` allow. |
+| `Prompt.Attachments []Blob` | `Blob{Name, MIME, Data}`: checked upload bytes to send inline. |
+| `Item.Attachments []Attachment` | `Attachment{ID, Name, MIME, Size, SHA256}`. Adapters fill `Name`, `MIME`, `Size` and `SHA256`; UAM sets `ID`. `SHA256` never reaches a browser. |
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `POST /api/sessions/{id}/attachments?name=` | the raw file, `Content-Type: application/octet-stream` | 201 `{"id", "name", "mime", "size"}`; 400 empty file or refused by the model gate; 404 unknown Task; 409 settled or archived Task; 413 over a limit; 415 wrong request type or file type |
+| `GET /api/sessions/{id}/attachments/{attachment_id}` | – | the file; 404 for an unknown Task or attachment, or another Task's |
+| `POST /api/sessions/{id}/prompt` | gains `"attachments"?: [string]` | 400 for an unknown ID, more than 5, too many images, a gate refusal, or attachments on a steer |
+| `POST /api/sessions/{id}/command` | gains `"attachments"?: [string]` | the same checks |
+| `GET /api/meta` | each model gains `"media"?: {"images", "pdf", "max_images"?, "types"?}` | absent when the model reports nothing |
+
+`QueuedPrompt` gains `attachments: [{"id", "name", "mime", "size"}]`, omitted
+when empty.

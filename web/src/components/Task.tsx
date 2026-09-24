@@ -248,6 +248,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               </div>
             )}
             <Transcript
+              sessionId={session.id}
               items={session.items}
               subagents={session.subagents}
               live={live}

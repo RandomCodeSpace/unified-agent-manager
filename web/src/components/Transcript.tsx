@@ -3,12 +3,15 @@ import { memo, useState, type ReactNode } from 'react';
 import { modelName, type Item, type Subagent, type SubagentStatus, type ToolStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
+import { ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, Sep, Spinner, SubagentIdleIcon, useApp } from './common';
 import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
 interface Props {
+  /** The Task, for the attachment routes. */
+  sessionId: string;
   items: Item[];
   subagents: Subagent[];
   /** The provider still holds the turn, so pending tools may still report. */
@@ -34,12 +37,12 @@ function useArrivals(items: Item[]) {
  * for each `task` call that spawned a subagent (its output lives in the panel, never
  * here), and the prose.
  */
-export function Transcript({ items, subagents, live, working, provider, model, onOpenAgent }: Props) {
+export function Transcript({ sessionId, items, subagents, live, working, provider, model, onOpenAgent }: Props) {
   const { meta } = useApp();
   const arrival = useArrivals(items);
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
-  const ctx: RenderContext = { live, streamingId: working ? items[items.length - 1]?.id : undefined, thoughtEnd: thoughtEnds(items), arrival };
+  const ctx: RenderContext = { sessionId, live, streamingId: working ? items[items.length - 1]?.id : undefined, thoughtEnd: thoughtEnds(items), arrival };
 
   const out: ReactNode[] = [];
   let group: Item[] = [];
@@ -75,7 +78,7 @@ export function Transcript({ items, subagents, live, working, provider, model, o
       return;
     }
     flush();
-    out.push(<UserBubble key={item.id} item={item} className={arrival(item.id)} />);
+    out.push(<UserBubble key={item.id} item={item} sessionId={sessionId} className={arrival(item.id)} />);
   });
   flush();
   return (
@@ -87,6 +90,7 @@ export function Transcript({ items, subagents, live, working, provider, model, o
 }
 
 interface RenderContext {
+  sessionId?: string;
   live: boolean;
   /** The item still receiving deltas, if any. */
   streamingId: string | undefined;
@@ -127,7 +131,7 @@ function renderItems(items: Item[], ctx: RenderContext, special?: (item: Item) =
     // A reasoning item the provider closed without any text has nothing to disclose.
     if (item.kind === 'reasoning' && !item.text?.trim() && item.id !== ctx.streamingId) continue;
     flush();
-    out.push(<Turn key={item.id} item={item} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} className={ctx.arrival(item.id)} />);
+    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} className={ctx.arrival(item.id)} />);
   }
   flush();
   return out;
@@ -169,14 +173,17 @@ function Copyable({ text, label, className, children, extra = [] }: { text: stri
   );
 }
 
-function UserBubble({ item, className }: { item: Item; className?: string }) {
+/** The user's turn: a bubble with the text as typed, then its uploads. The item carries no list of its `@path` references, so those stay plain text. */
+function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
+  const attachments = item.attachments ?? [];
   return (
     <div className={cn('flex justify-end', className)}>
       <Copyable text={item.text ?? ''} label="Copy message" className="max-w-[min(78%,560px)] max-sm:max-w-[88%]">
-        <div className="rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised max-sm:text-chat-lg">
+        <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised max-sm:text-chat-lg">
           <span className="sr-only">You: </span>
-          {item.delivery === 'steer' && <span className="mb-1 block text-caption text-accent">Steer</span>}
-          <Markdown text={item.text ?? ''} />
+          {item.delivery === 'steer' && <span className="block text-caption text-accent">Steer</span>}
+          {item.text && <Markdown text={item.text} />}
+          {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
         </div>
       </Copyable>
     </div>
@@ -271,10 +278,10 @@ export const ToolRow = memo(function ToolRow({ item, live }: { item: Item; live:
 });
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, streaming, endedAt, className }: { item: Item; streaming: boolean; endedAt?: string; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, className }: { item: Item; sessionId?: string; streaming: boolean; endedAt?: string; className?: string }) {
   switch (item.kind) {
     case 'user':
-      return <UserBubble item={item} className={className} />;
+      return <UserBubble item={item} sessionId={sessionId} className={className} />;
     case 'assistant':
       return (
         <Copyable text={item.text ?? ''} label="Copy message" className={cn('pr-6', className)}>

@@ -123,6 +123,11 @@ off, run `uam web stop`, then `uam web` without the flag.
   between turns, not while a turn runs; the new model applies from the next
   turn. The list is refreshed at most every five minutes, so a changed
   subscription shows up without restarting the service.
+- **Copilot configuration**: Copilot Tasks load what the terminal CLI loads
+  for the directory: your and the project's skills, the project's custom
+  agents, custom instructions, hooks in `.github/hooks/`, and the built-in
+  GitHub MCP server. Hooks run their commands without asking, as they do in
+  the terminal.
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is
@@ -187,6 +192,36 @@ off, run `uam web stop`, then `uam web` without the flag.
   > asked first. Turn it on only for a project where you would click "Allow"
   > on everything anyway. With `--no-auth` behind a public reverse proxy,
   > anyone who can reach the page can start a yolo Task.
+- **Commands**: type `/` as the first character of a message to list the
+  Task's commands: Copilot's `/init` and `/review`, and the skills your account
+  and the project provide. The list filters as you type; Up and Down move,
+  Enter or Tab picks, Esc closes. Sending `/name arguments` runs the command
+  with the rest of the text as its arguments and shows `/name arguments` in
+  the conversation. A command runs only between turns; it is not queued or
+  steered. A `/word` that is not on the list is sent as plain text, and so is
+  anything that starts with `$`, `!`, `#` or `@agent`.
+- **File references**: type `@` at the start of a message or after a space to search the project's
+  files: what `git ls-files` sees, including untracked files that are not
+  ignored, and their directories. Picking one inserts `@path` and adds a chip;
+  removing the chip removes the token, and deleting the token drops the chip.
+  A message references at most 20 paths, each a regular file or a directory
+  inside the project (no symbolic links, nothing binary). Copilot receives the
+  reference and reads the file with its tools, which asks for a read
+  permission in safe mode. A directory that is not a Git working tree offers
+  no list. A steer takes text only.
+- **Attachments**: the paper-clip button, pasting, and dropping files onto the
+  composer upload them at once. A chip shows the upload's progress, then its
+  size and type, or why it was refused. Allowed: png, jpeg, gif and webp
+  images up to 3 MiB, PDF up to 10 MiB, and UTF-8 text up to 256 KiB, at most
+  5 per message; the type is taken from the file's bytes, not its name. SVG,
+  HEIC, audio, video, archives and everything else are refused. Images and
+  PDFs need a model that accepts them: Copilot reports this per model, `auto`
+  is not checked, and the button says so when the Task's model takes text
+  only. Attachments go with the message; a queued message keeps them, and a
+  steer takes none. In the conversation, images show as thumbnails that open
+  larger on click and other files as chips that open the stored copy, also
+  after a reload. UAM keeps the files outside the project (see Settle,
+  archive, and delete).
 - **Messages while a turn runs**: you can queue a message or steer the turn
   with it.
   - **Queue** holds the message until the turn completes, then sends it as
@@ -217,7 +252,10 @@ off, run `uam web stop`, then `uam web` without the flag.
   or not, to put it away for good; an archived Task cannot be reopened. Only
   an archived Task can be deleted, and a Project can be removed only once
   every Task in it is archived. Deleting or removing never deletes the
-  provider's copy of the conversation and never touches the directory.
+  provider's copy of the conversation and never touches the directory. It does
+  delete the files you attached to the Task's prompts, which UAM keeps in
+  `~/.config/uam/web-attachments/` (or `$UAM_CONFIG_DIR/web-attachments/`).
+  An attachment you upload but never send is deleted after 24 hours.
 
   | Action | Allowed on | Also needs | Result |
   |---|---|---|---|

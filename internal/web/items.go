@@ -24,6 +24,7 @@ const (
 	maxInteractionText = 256 << 10
 	maxAnswerBytes     = 64 << 10
 	maxSubagents       = 200
+	maxItemAttachments = 50
 )
 
 const truncatedMarker = "\n[truncated by uam]"
@@ -50,6 +51,15 @@ func clampItem(it agentapi.Item, now time.Time) agentapi.Item {
 		tool.Input = clampText(tool.Input, maxToolText)
 		tool.Output = clampText(tool.Output, maxToolText)
 		it.Tool = &tool
+	}
+	if len(it.Attachments) > maxItemAttachments {
+		it.Attachments = it.Attachments[:maxItemAttachments]
+	}
+	it.Attachments = slices.Clone(it.Attachments)
+	for i := range it.Attachments {
+		a := &it.Attachments[i]
+		a.Name = clipRunes(displaytext.Sanitize(a.Name), maxNameRunes)
+		a.MIME = clampText(displaytext.Sanitize(a.MIME), maxLabelText)
 	}
 	if it.Time.IsZero() {
 		it.Time = now
@@ -155,7 +165,9 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History) {
 			continue
 		}
 		seen[key] = true
-		items = append(items, clampItem(it, now))
+		it = clampItem(it, now)
+		s.linkUploadsLocked(&it)
+		items = append(items, it)
 	}
 	fromHistory := len(items)
 	for _, it := range s.items {

@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { LIVE, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { LIVE, type Attachment, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
@@ -95,6 +95,33 @@ export function install(): void {
   };
   const find = (id: string) => st.tasks.find((t) => t.id === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
+  /** Stored uploads by id: the bytes and the record the routes hand out. */
+  const uploads = new Map<string, Attachment & { id: string; task: string; bytes: Uint8Array }>();
+  const modelMedia = (t: MockTask) => st.meta.providers.find((p) => p.name === t.provider)?.models.find((m) => m.id === t.model)?.media;
+  const modelLabel = (t: MockTask) => st.meta.providers.find((p) => p.name === t.provider)?.models.find((m) => m.id === t.model)?.name ?? t.model;
+  const isDir = (projectId: string, path: string) => (st.files[projectId] ?? []).some((f) => f.startsWith(`${path}/`));
+  /** The service's checks on a prompt's files and attachments; a Response is the refusal. */
+  const checkExtras = (t: MockTask, body: Json): { files: string[]; attachments: (Attachment & { id: string })[] } | Response => {
+    const files = Array.isArray(body.files) ? body.files.map(String) : [];
+    if (files.length > 20) return fail(400, 'a prompt can reference at most 20 files');
+    const tree = st.files[t.project_id] ?? [];
+    for (const f of files) {
+      if (f.startsWith('/') || f.split('/').includes('..')) return fail(400, `file ${JSON.stringify(f)} must be a relative path inside the project`);
+      if (!tree.includes(f) && !isDir(t.project_id, f)) return fail(400, `file ${JSON.stringify(f)} does not exist`);
+    }
+    const ids = Array.isArray(body.attachments) ? body.attachments.map(String) : [];
+    if (ids.length > 5) return fail(400, 'a prompt can carry at most 5 attachments');
+    const attachments: (Attachment & { id: string })[] = [];
+    for (const id of ids) {
+      const u = uploads.get(id);
+      if (!u || u.task !== t.id) return fail(400, `attachment ${JSON.stringify(id)} is not an upload of this task`);
+      attachments.push({ id: u.id, name: u.name, mime: u.mime, size: u.size });
+    }
+    const media = modelMedia(t);
+    const images = attachments.filter((a) => a.mime.startsWith('image/')).length;
+    if (media?.max_images && images > media.max_images) return fail(400, `${modelLabel(t)} accepts at most ${media.max_images} images per prompt`);
+    return { files, attachments };
+  };
   /** The service's selection checks, for a Project's defaults and a new Task alike: a string is the 400 message. */
   const checkSelection = (raw: unknown): TaskDefaults | string => {
     const d = (raw && typeof raw === 'object' ? raw : {}) as Json;
@@ -190,8 +217,8 @@ export function install(): void {
     const [next, ...rest] = t.queue;
     t.queue = rest;
     broadcast('queue', { session_id: t.id, queue: rest, paused: false }, t.id);
-    pushItem(t, { id: nextId('u'), kind: 'user', text: next.text, time: now() });
-    touch(t, { state: 'working', state_detail: undefined, open: true });
+    pushItem(t, { id: nextId('u'), kind: 'user', text: next.text, time: now(), ...(next.attachments?.length ? { attachments: next.attachments } : {}) });
+    touch(t, { state: 'working', state_detail: undefined, open: true, queued: rest.length });
     void reply(t, `Picking up the queued message about "${next.text.slice(0, 40)}". Done; nothing else changed.`);
   }
 
@@ -272,12 +299,79 @@ export function install(): void {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, window.location.origin);
     if (!url.pathname.startsWith('/api/')) return realFetch(input, init);
     const method = (init?.method ?? 'GET').toUpperCase();
-    const body: Json = init?.body ? (JSON.parse(String(init.body)) as Json) : {};
+    const body: Json = typeof init?.body === 'string' ? (JSON.parse(init.body) as Json) : {};
     await wait(60);
     return route(method, url, body);
   };
 
-  function route(method: string, url: URL, body: Json): Response {
+  /**
+   * The upload goes through XMLHttpRequest for progress events, so the mock fakes the
+   * subset the client uses: `open`, `setRequestHeader`, `send`, `abort`, `upload.onprogress`,
+   * `onload`, `onerror`, `onabort`, `status`, `responseText`. Progress arrives in four steps.
+   */
+  class FakeXHR {
+    upload: { onprogress: ((e: ProgressEvent) => void) | null } = { onprogress: null };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    status = 0;
+    statusText = '';
+    responseText = '';
+    private method = 'GET';
+    private url = '';
+    private aborted = false;
+    open(method: string, url: string) {
+      this.method = method.toUpperCase();
+      this.url = url;
+    }
+    setRequestHeader() {}
+    async send(body?: Blob | null) {
+      const url = new URL(this.url, window.location.origin);
+      const bytes = body instanceof Blob ? new Uint8Array(await body.arrayBuffer()) : new Uint8Array();
+      const total = Math.max(1, bytes.length);
+      for (let step = 1; step <= 4; step++) {
+        await wait(110);
+        if (this.aborted) return;
+        this.upload.onprogress?.(new ProgressEvent('progress', { lengthComputable: true, loaded: Math.round((total * step) / 4), total }));
+      }
+      const res = route(this.method, url, {}, bytes);
+      this.status = res.status;
+      this.responseText = await res.text();
+      if (!this.aborted) this.onload?.();
+    }
+    abort() {
+      this.aborted = true;
+      this.onabort?.();
+    }
+  }
+  window.XMLHttpRequest = FakeXHR as unknown as typeof XMLHttpRequest;
+
+  /** The service's byte sniffing and size limits; a `status` means the refusal. */
+  function sniff(b: Uint8Array): { mime: string } | { status: number; error: string } {
+    if (!b.length) return { status: 400, error: 'the file is empty' };
+    const has = (sig: number[], off = 0) => sig.every((v, i) => b[off + i] === v);
+    let mime = '';
+    if (has([0x89, 0x50, 0x4e, 0x47])) mime = 'image/png';
+    else if (has([0xff, 0xd8, 0xff])) mime = 'image/jpeg';
+    else if (has([0x47, 0x49, 0x46, 0x38])) mime = 'image/gif';
+    else if (has([0x52, 0x49, 0x46, 0x46]) && has([0x57, 0x45, 0x42, 0x50], 8)) mime = 'image/webp';
+    else if (has([0x25, 0x50, 0x44, 0x46, 0x2d])) mime = 'application/pdf';
+    if (mime.startsWith('image/')) return b.length > 3 << 20 ? { status: 413, error: 'images can be at most 3 MiB' } : { mime };
+    if (mime) return b.length > 10 << 20 ? { status: 413, error: 'PDF files can be at most 10 MiB' } : { mime };
+    const refused = { status: 415, error: 'only png, jpeg, gif and webp images, PDF files and UTF-8 text files can be attached' };
+    if (b.includes(0)) return refused;
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(b);
+    } catch {
+      return refused;
+    }
+    if (svgRoot(text)) return { status: 415, error: 'SVG images cannot be attached' };
+    if (b.length > 256 << 10) return { status: 413, error: 'text files can be at most 256 KiB' };
+    return { mime: 'text/plain' };
+  }
+
+  function route(method: string, url: URL, body: Json, raw?: Uint8Array): Response {
     const path = url.pathname;
     const m = (re: RegExp) => path.match(re);
     let r: RegExpMatchArray | null;
@@ -442,6 +536,78 @@ export function install(): void {
       return json(204);
     }
 
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/commands$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      if (!t.open) return fail(409, 'the provider conversation is not open');
+      return json(200, { commands: st.commands });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/files$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const tree = st.files[t.project_id];
+      if (!tree) return json(200, { files: [], reason: 'this directory is not in a Git working tree' });
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50));
+      const q = (url.searchParams.get('q') ?? '').toLowerCase();
+      const candidates = new Set<string>();
+      for (const f of tree) {
+        candidates.add(f);
+        for (let d = f.lastIndexOf('/'); d > 0; d = f.lastIndexOf('/', d - 1)) candidates.add(f.slice(0, d));
+      }
+      const score = (path: string) => {
+        if (!q) return 0;
+        const lower = path.toLowerCase();
+        const base = lower.slice(lower.lastIndexOf('/') + 1);
+        return base.startsWith(q) ? 0 : base.includes(q) ? 1 : lower.includes(q) ? 2 : -1;
+      };
+      const files = [...candidates]
+        .map((path) => ({ path, s: score(path) }))
+        .filter((x) => x.s >= 0)
+        .sort((a, b) => a.s - b.s || a.path.length - b.path.length || (a.path < b.path ? -1 : 1))
+        .slice(0, limit)
+        .map(({ path }) => ({ path, type: isDir(t.project_id, path) ? 'directory' : 'file' }));
+      return json(200, { files, reason: '' });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/command$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
+      const name = String(body.name ?? '');
+      if (!st.commands.some((c) => c.name === name)) return fail(404, `/${name} is not one of this task's commands`);
+      if (busy(t)) return fail(409, 'the provider is still running a turn');
+      const extras = checkExtras(t, body);
+      if (extras instanceof Response) return extras;
+      const args = String(body.arguments ?? '').trim();
+      const sub: Submission = { request_id: String(body.request_id ?? ''), status: 'accepted', time: now() };
+      pushItem(t, { id: nextId('u'), kind: 'user', text: `/${name}${args ? ` ${args}` : ''}`, time: now(), ...(extras.attachments.length ? { attachments: extras.attachments } : {}) });
+      t.last_submission = sub;
+      touch(t, { state: 'working', state_detail: undefined, open: true });
+      broadcast('submission', { session_id: t.id, submission: sub }, t.id);
+      void reply(t, name === 'review' ? 'Reviewing the uncommitted changes. Two files differ from HEAD; the replay change is fine, the test could assert the order too.' : `Running /${name}${args ? ` with "${args}"` : ''}. On it.`);
+      return json(202, sub);
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/attachments$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no attachments`);
+      const bytes = raw ?? new Uint8Array();
+      const sniffed = sniff(bytes);
+      if ('status' in sniffed) return fail(sniffed.status, sniffed.error);
+      const media = modelMedia(t);
+      if (media && sniffed.mime.startsWith('image/') && !media.images) return fail(400, `${modelLabel(t)} does not accept images`);
+      if (media && sniffed.mime === 'application/pdf' && !media.pdf) return fail(400, `${modelLabel(t)} does not accept PDF files`);
+      const kind = sniffed.mime.startsWith('image/') ? 'png' : sniffed.mime === 'application/pdf' ? 'pdf' : 'txt';
+      const name = (url.searchParams.get('name') ?? '').split('/').pop()?.trim().slice(0, 120) || 'file';
+      const att = { id: nextId(`att-${kind}-`), name, mime: sniffed.mime, size: bytes.length };
+      uploads.set(att.id, { ...att, task: t.id, bytes });
+      return json(201, att);
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/attachments\/([^/]+)$/)) && method === 'GET') {
+      const u = uploads.get(decodeURIComponent(r[2]));
+      if (!u || u.task !== decodeURIComponent(r[1])) return fail(404, 'attachment not found');
+      return new Response(u.bytes.slice(), { status: 200, headers: { 'Content-Type': u.mime, 'X-Content-Type-Options': 'nosniff' } });
+    }
+
     if ((r = m(/^\/api\/sessions\/([^/]+)\/(prompt|cancel|close)$/)) && method === 'POST') {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
@@ -449,22 +615,29 @@ export function install(): void {
         case 'prompt': {
           if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
           const text = String(body.text ?? '');
+          if (!text.trim()) return fail(400, 'prompt text is required');
+          const extras = checkExtras(t, body);
+          if (extras instanceof Response) return extras;
+          const withAttachments = extras.attachments.length ? { attachments: extras.attachments } : {};
           const sub = { request_id: String(body.request_id ?? ''), status: 'accepted' as const, time: now() };
           if (busy(t)) {
             if (body.mode === 'queue') {
-              t.queue = [...(t.queue ?? []), { request_id: sub.request_id, text, queued_at: now() }];
+              const queued: QueuedPrompt = { request_id: sub.request_id, text, queued_at: now(), ...(extras.files.length ? { files: extras.files } : {}), ...withAttachments };
+              t.queue = [...(t.queue ?? []), queued];
+              touch(t, { queued: t.queue.length });
               broadcast('queue', { session_id: t.id, queue: t.queue, paused: !!t.queue_paused }, t.id);
               return json(202, { ...sub, status: 'queued' });
             }
             if (body.mode === 'steer') {
+              if (extras.files.length || extras.attachments.length) return fail(400, 'a steer takes text only; send files and attachments with a prompt');
               pushItem(t, { id: nextId('u'), kind: 'user', delivery: 'steer', text, time: now() });
               t.last_submission = sub;
               broadcast('submission', { session_id: t.id, submission: sub }, t.id);
               return json(202, sub);
             }
-            return fail(409, 'a turn is running');
+            return fail(409, 'a turn is already running in this session');
           }
-          pushItem(t, { id: nextId('u'), kind: 'user', text, time: now() });
+          pushItem(t, { id: nextId('u'), kind: 'user', text, time: now(), ...withAttachments });
           t.last_submission = sub;
           touch(t, { state: 'working', state_detail: undefined, open: true });
           broadcast('submission', { session_id: t.id, submission: sub }, t.id);
@@ -560,5 +733,18 @@ export function install(): void {
     t.interactions = t.interactions.map((x) => (x.id === i.id ? next : x));
     broadcast('interaction', { session_id: t.id, interaction: next }, t.id);
     return next;
+  }
+}
+
+/** Mirrors the server's svgRoot: after a BOM, whitespace, `<?…?>`, `<!--…-->` and `<!…>`, does the text start with `<svg`? */
+function svgRoot(text: string): boolean {
+  let rest = text.slice(0, 64 << 10).replace(/^\ufeff/, '');
+  for (;;) {
+    rest = rest.replace(/^[ \t\r\n]+/, '');
+    const end = rest.startsWith('<?') ? '?>' : rest.startsWith('<!--') ? '-->' : rest.startsWith('<!') ? '>' : '';
+    if (!end) return rest.slice(0, 4).toLowerCase() === '<svg';
+    const i = rest.indexOf(end);
+    if (i < 0) return false;
+    rest = rest.slice(i + end.length);
   }
 }
