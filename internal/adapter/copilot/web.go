@@ -515,9 +515,9 @@ type conversation struct {
 	idles            int
 	// turnModel is the model of the turn's latest main-agent model call.
 	turnModel string
-	// steers are the accepted steers the CLI has not used yet, oldest first.
-	// The turn's idle reports those left as not delivered.
-	steers []steer
+	// steers includes sends in flight so idle can record their outcome before
+	// the CLI returns the message ID. Accepted, unused steers remain here.
+	steers []*steer
 	// steering counts Steer calls in flight. While one is, seen records the
 	// main-agent user messages the CLI used, because a steer can be used
 	// before the Send that carried it returns its message ID.
@@ -525,7 +525,11 @@ type conversation struct {
 	seen     map[string]bool
 }
 
-type steer struct{ id, prompt string }
+type steer struct {
+	id, prompt string
+	state      agentapi.TurnState
+	at         time.Time
+}
 
 type interaction struct {
 	agentapi.Interaction
@@ -700,6 +704,8 @@ func (c *conversation) Steer(ctx context.Context, prompt string) error {
 		c.mu.Unlock()
 		return agentapi.ErrClosed
 	}
+	st := &steer{prompt: prompt}
+	c.steers = append(c.steers, st)
 	c.steering++
 	c.mu.Unlock()
 	id, err := "", ctx.Err()
@@ -715,8 +721,11 @@ func (c *conversation) Steer(ctx context.Context, prompt string) error {
 	if c.steering == 0 {
 		clear(c.seen)
 	}
-	if err == nil && id != "" && !used && !c.closed {
-		c.steers = append(c.steers, steer{id, prompt})
+	st.id = id
+	if err != nil || id == "" || used || c.closed {
+		c.steers = slices.DeleteFunc(c.steers, func(pending *steer) bool { return pending == st })
+	} else if st.state != "" {
+		c.undeliveredSteerLocked(st)
 	}
 	return err
 }
@@ -1008,7 +1017,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 	case *rpc.UserMessageData:
 		if agentID == "" && d.MessageID != nil {
-			c.steers = slices.DeleteFunc(c.steers, func(st steer) bool { return st.id == *d.MessageID })
+			c.steers = slices.DeleteFunc(c.steers, func(st *steer) bool { return st.id == *d.MessageID })
 			if c.steering > 0 {
 				c.seen[*d.MessageID] = true
 			}
@@ -1063,19 +1072,25 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 // pending at a completed idle is not reported: the CLI either used it in that
 // turn or, when it arrived after the idle, starts a new turn with it.
 func (c *conversation) undeliveredLocked(state agentapi.TurnState, at time.Time) {
+	for _, st := range c.steers {
+		st.state, st.at = state, at
+		if st.id != "" {
+			c.undeliveredSteerLocked(st)
+		}
+	}
+	c.steers = nil
+}
+
+func (c *conversation) undeliveredSteerLocked(st *steer) {
 	reason := "the turn was stopped"
-	switch state {
+	switch st.state {
 	case agentapi.TurnCompleted:
-		c.steers = nil
 		return
 	case agentapi.TurnFailed:
 		reason = "the turn failed"
 	}
-	for _, st := range c.steers {
-		it := agentapi.Item{ID: "steer-undelivered:" + st.id, Kind: agentapi.ItemNotice, Time: at, Text: "Steer not delivered: " + reason + "\n\n" + quote(st.prompt)}
-		c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &it})
-	}
-	c.steers = nil
+	it := agentapi.Item{ID: "steer-undelivered:" + st.id, Kind: agentapi.ItemNotice, Time: st.at, Text: "Steer not delivered: " + reason + "\n\n" + quote(st.prompt)}
+	c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &it})
 }
 
 // quote renders text as a markdown block quote.

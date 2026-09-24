@@ -928,6 +928,111 @@ func TestWebSteerUsedBeforeSendReturns(t *testing.T) {
 	}
 }
 
+func TestWebSteerIdleBeforeSendReturns(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		failed bool
+		idle   *rpc.SessionIdleData
+		reason string
+	}{
+		{name: "aborted", idle: &rpc.SessionIdleData{Aborted: copilot.Bool(true)}, reason: "the turn was stopped"},
+		{name: "failed", failed: true, idle: &rpc.SessionIdleData{}, reason: "the turn failed"},
+		{name: "completed", idle: &rpc.SessionIdleData{}},
+	} {
+		for _, used := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/used=%t", tc.name, used), func(t *testing.T) {
+				h := openWeb(t)
+				ctx := context.Background()
+				if err := h.conv.Send(ctx, "start"); err != nil {
+					t.Fatal(err)
+				}
+				if tc.name == "aborted" {
+					h.fs.onEvent(ev("permission", shellRequest("p1")))
+				}
+				h.fs.beforeReturn = func(id string) {
+					if used {
+						h.fs.onEvent(ev("u2", userMessage(id, rpc.UserMessageDeliverySteering, "line one\ntwo")))
+					}
+					if tc.failed {
+						h.fs.onEvent(ev("error", &rpc.SessionErrorData{Message: "failed"}))
+					}
+					h.fs.onEvent(ev("idle", tc.idle))
+				}
+				if err := h.conv.Steer(ctx, "line one\ntwo"); err != nil {
+					t.Fatal(err)
+				}
+				h.fs.beforeReturn = nil
+				if tc.name == "aborted" && h.sink.interaction("p1").State != agentapi.InteractionExpired {
+					t.Fatal("aborted idle did not expire the pending permission")
+				}
+				var want []string
+				if tc.failed {
+					want = append(want, "error|Error: failed")
+				}
+				if tc.reason != "" && !used {
+					want = append(want, "steer-undelivered:msg-2|Steer not delivered: "+tc.reason+"\n\n> line one\n> two")
+				}
+				if got := notices(h.sink.all()); strings.Join(got, "#") != strings.Join(want, "#") {
+					t.Fatalf("notices after Send returned = %q, want %q", got, want)
+				}
+				if err := h.conv.Send(ctx, "again"); err != nil {
+					t.Fatal(err)
+				}
+				h.fs.onEvent(ev("later-idle", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
+				if got := notices(h.sink.all()); strings.Join(got, "#") != strings.Join(want, "#") {
+					t.Fatalf("notices after a later abort = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestWebSteerConcurrentSendsBeforeAbortedIdle(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	if err := h.conv.Send(ctx, "start"); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan string, 2)
+	release := map[string]chan struct{}{
+		"msg-2": make(chan struct{}, 1),
+		"msg-3": make(chan struct{}, 1),
+	}
+	defer close(release["msg-2"])
+	defer close(release["msg-3"])
+	h.fs.beforeReturn = func(id string) {
+		started <- id
+		<-release[id]
+	}
+	done := make(chan error, 2)
+	go func() { done <- h.conv.Steer(ctx, "used") }()
+	if id := <-started; id != "msg-2" {
+		t.Fatalf("first steer ID = %q", id)
+	}
+	go func() { done <- h.conv.Steer(ctx, "unused") }()
+	if id := <-started; id != "msg-3" {
+		t.Fatalf("second steer ID = %q", id)
+	}
+	h.fs.onEvent(ev("used", userMessage("msg-2", rpc.UserMessageDeliverySteering, "used")))
+	h.fs.onEvent(ev("idle", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
+	// Return the unused call first; the used call must retain its delivery
+	// evidence until it receives its own response.
+	release["msg-3"] <- struct{}{}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("later-idle", &rpc.SessionIdleData{}))
+	release["msg-2"] <- struct{}{}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("later-abort", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
+	want := "steer-undelivered:msg-3|Steer not delivered: the turn was stopped\n\n> unused"
+	if got := notices(h.sink.all()); len(got) != 1 || got[0] != want {
+		t.Fatalf("notices = %q, want [%q]", got, want)
+	}
+}
+
 func TestWebHistoryMarksSteers(t *testing.T) {
 	h := openWeb(t)
 	h.fs.events = []copilot.SessionEvent{
