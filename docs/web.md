@@ -123,6 +123,11 @@ off, run `uam web stop`, then `uam web` without the flag.
   between turns, not while a turn runs; the new model applies from the next
   turn. The list is refreshed at most every five minutes, so a changed
   subscription shows up without restarting the service.
+- **Copilot configuration**: Copilot Tasks load what the terminal CLI loads
+  for the directory: your and the project's skills, the project's custom
+  agents, custom instructions, hooks in `.github/hooks/`, and the built-in
+  GitHub MCP server. Hooks run their commands without asking, as they do in
+  the terminal.
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is

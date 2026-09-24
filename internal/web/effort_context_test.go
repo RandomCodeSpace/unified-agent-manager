@@ -98,7 +98,7 @@ func TestTaskEffortContextValidationAndSwitch(t *testing.T) {
 	if _, err := m.Close(sum.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Submit(sum.ID, "reopen", mustUUID(t), ModeSend); err != nil {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "reopen", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	sets := p.Last().ModelSettings()
@@ -127,7 +127,7 @@ func TestTaskEffortContextValidationAndSwitch(t *testing.T) {
 	if restored.Effort != "high" || restored.ContextSize != "long_context" || restored.Context != nil {
 		t.Fatalf("restart = %+v", restored.SessionSummary)
 	}
-	if _, err := m2.Submit(sum.ID, "after restart", mustUUID(t), ModeSend); err != nil {
+	if _, err := m2.Submit(sum.ID, PromptRequest{Text: "after restart", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	sets = p2.Last().ModelSettings()
@@ -181,7 +181,7 @@ func TestTaskContextLiveOnly(t *testing.T) {
 	if _, err := m.Close(sum.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Submit(sum.ID, "reopen", mustUUID(t), ModeSend); err != nil {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "reopen", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	if got := detail(t, m, sum.ID); got.Context != nil {

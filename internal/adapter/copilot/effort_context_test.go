@@ -96,7 +96,7 @@ func TestWebEffortContextSwitchResults(t *testing.T) {
 				t.Fatalf("disconnected = %v", h.fs.disconnected)
 			}
 			if tc.wantClosed {
-				if err := h.conv.Send(context.Background(), "must not send"); !errors.Is(err, agentapi.ErrClosed) {
+				if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "must not send"}); !errors.Is(err, agentapi.ErrClosed) {
 					t.Fatalf("send after uncertain selection = %v", err)
 				}
 				found := false

@@ -143,7 +143,15 @@ type Conversation interface {
 	// is reported through events. Ambiguous failures wrap
 	// ErrSubmissionUncertain. A provider that would otherwise fold a prompt
 	// sent during a turn into that turn must run it after the turn instead.
-	Send(ctx context.Context, prompt string) error
+	Send(ctx context.Context, prompt Prompt) error
+	// Commands lists the slash commands that become a prompt: skills and
+	// the provider's prompt commands. Nothing else is offered.
+	Commands(ctx context.Context) ([]Command, error)
+	// RunCommand runs one command from Commands with args.Text as its
+	// arguments. It starts a turn like Send, with Send's outcomes; the user
+	// item shows "/name arguments". A result that would not start a prompt
+	// turn is a rejection. ErrUnsupported means the provider has no commands.
+	RunCommand(ctx context.Context, name string, args Prompt) error
 	// Steer adds prompt to the turn that is running, before the provider's
 	// next model call, and returns once the provider accepted or rejected
 	// it. The caller steers only while a turn runs; it never starts a turn.
@@ -179,6 +187,37 @@ type Conversation interface {
 	// interactions end without an answer being fabricated.
 	Close(ctx context.Context) error
 }
+
+// Prompt is one user message: the text as typed, plus project files the web
+// service has already checked.
+type Prompt struct {
+	Text  string
+	Files []File
+}
+
+// File is a project file or directory the user referenced. Path is
+// absolute; Rel is the path relative to the working directory, shown to the
+// user.
+type File struct {
+	Path string
+	Rel  string
+	Dir  bool
+}
+
+// Command is one slash command. Kind is "skill" for a skill and "command"
+// for any other prompt command.
+type Command struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Kind        string `json:"kind"`
+	InputHint   string `json:"input_hint"`
+}
+
+// Command kinds.
+const (
+	CommandSkill  = "skill"
+	CommandPrompt = "command"
+)
 
 // History is a reopened conversation's provider-recorded state.
 type History struct {

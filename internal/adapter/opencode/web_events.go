@@ -223,10 +223,21 @@ func (c *webConversation) mapPartLocked(part webPart, fallback time.Time) (*agen
 			state.dropDeltas = true
 			return nil, state
 		}
-		if part.Text == "" {
+		text := part.Text
+		if display, ok := c.commandText[part.MessageID]; ok && state.kind == agentapi.ItemUser {
+			// One text part shows the command as typed; the template's text
+			// stays with OpenCode.
+			state.dropDeltas = true
+			if shown := c.commandPart[part.MessageID]; shown != "" && shown != part.ID {
+				return nil, state
+			}
+			c.commandPart[part.MessageID] = part.ID
+			text = display
+		}
+		if text == "" {
 			return nil, state
 		}
-		return &agentapi.Item{ID: part.ID, Kind: state.kind, Text: part.Text, Time: when}, state
+		return &agentapi.Item{ID: part.ID, Kind: state.kind, Text: text, Time: when}, state
 	case "tool":
 		state := webPartState{kind: agentapi.ItemTool, dropDeltas: true}
 		if part.State == nil {

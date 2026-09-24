@@ -643,6 +643,93 @@ before. This replaces the New Task form.
   default. A Project without defaults uses `auto`, no effort, `default` and
   `safe`.
 
+## Slash commands and file references
+
+- Date: 2026-09-24 (decided in #176, from the research for #172)
+
+Neither provider parses prompt text, so UAM resolves `/` commands and `@`
+files itself and sends each provider its structured form. `$`, `!`, `#` and
+`@agent` are left out by owner decision. Text that starts with them is sent as
+plain text, and so is a `/word` that is not a listed command.
+
+- **Commands.** A Task offers only commands that become a prompt. Copilot lists
+  `session.commands.list` with built-ins and skills, keeps every `skill` and
+  the built-ins `init` and `review`, and drops the rest: they duplicate web
+  controls, change the mode, only print text, or reach outside the Task.
+  OpenCode lists everything `GET /command` returns. UAM drops names with spaces
+  or control characters and sanitizes descriptions and hints.
+- **Running a command.** The command route has the rules of a send: the same
+  `request_id` record, 409 while a turn runs, and no queue or steer. The name
+  must be on the Task's list, else 404, and nothing is recorded. Copilot runs
+  `session.commands.invoke` and sends the result only when it is an
+  `agent-prompt` without `mode`, with `displayPrompt` set to `/name arguments`.
+  Any other result, or an invoke error, is a `rejected` submission; invoke
+  starts no turn, so nothing reached the model. OpenCode posts
+  `POST /session/{id}/command` in the background because it answers only when
+  the turn ends. The command counts as accepted once its user message exists;
+  a lost answer is `uncertain` and never resent. The adapter shows
+  `/name arguments` for that message instead of the expanded template, while
+  the conversation stays open.
+- **OpenCode shell expansion.** OpenCode puts the arguments into the command
+  template and then runs every `` !`cmd` `` in it without asking. UAM refuses
+  arguments containing `` !` `` with 400 on OpenCode Tasks, and the adapter
+  refuses them too.
+- **File list.** `git ls-files --cached --others --exclude-standard -z` runs in
+  the Task's directory through the read-only git runner the Changes view uses,
+  so `.gitignore` applies and paths are relative to that directory. Output is
+  capped at 4 MiB. UAM adds parent directories, matches in Go (base-name
+  prefix, then base name, then path, case-insensitive) and checks each result
+  on disk: symbolic links, special files and paths that are gone are left out.
+  A directory outside Git gives an empty list with the Changes view's reason.
+- **File references.** A prompt names at most 20 files relative to the Task's
+  directory. UAM opens the directory with `os.Root` and refuses, with a 400
+  that names the path, anything absolute, with `..`, not in clean form, at or
+  inside a symbolic link, missing, special, or binary (a NUL in the first 8000
+  bytes, as git decides). Directories are allowed. Nothing is sent or recorded
+  when one fails. A queued prompt keeps its files, and UAM checks them again
+  when the prompt is sent; a failure then is a `rejected` submission that
+  pauses the queue. A steer takes text only and refuses files with 400. The
+  text stays as typed, `@path` tokens included. Copilot receives
+  `AttachmentFile` or `AttachmentDirectory` with the absolute path and the
+  relative path as display name; the model gets a `<tagged_files>` pointer and
+  reads the file with its tools, which asks a read permission in Safe mode.
+  OpenCode receives a `file` part with a `file://` URL after the text part,
+  and inlines the file itself.
+
+### Copilot configuration discovery
+
+The owner turned on `EnableConfigDiscovery` for created and resumed
+conversations. A probe on 2026-09-24 (CLI 1.0.88, SDK 1.0.14, `gpt-5-mini`,
+a temporary Git project with a project skill, a project agent,
+`.github/copilot-instructions.md`, `.mcp.json` and `.github/hooks/*.json`)
+compared the runtime default with discovery on:
+
+| What | Default (nil) | Discovery on |
+|---|---|---|
+| Skills | 2 built-in | 57: project `.github/skills`, `~/.agents/skills`, built-in |
+| Commands | 33 built-in | 33 built-in and 52 skills |
+| Custom agents | none | the project agent |
+| Custom instructions | loaded (`instructions.getSources` listed the file, and the model followed it) | the same |
+| Hooks in `.github/hooks/` | ran (`sessionStart`, `userPromptSubmitted`) | the same |
+| MCP servers | none | the built-in `github-mcp-server`, connected |
+| Workspace `.mcp.json` | not loaded | not loaded; the CLI loads workspace MCP only for a trusted folder |
+| Plugins | none | none |
+
+So discovery adds skills, project agents and the built-in GitHub MCP server.
+Custom instructions and file hooks load either way. Hooks therefore already
+ran shell commands in web Tasks before this change, without a permission
+request. MCP servers from a trusted folder's `.mcp.json` or
+`.github/mcp.json`, and from a user MCP configuration, were not observed: the
+probe folder was not trusted, and this host has no user MCP configuration.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Conversation.Send(ctx, Prompt)` | `Prompt{Text, Files}` replaces the prompt string. `File{Path, Rel, Dir}` is a reference the web service already checked. |
+| `Conversation.Commands(ctx)` | `[]Command{Name, Description, Kind, InputHint}`; `Kind` is `skill` or `command`. |
+| `Conversation.RunCommand(ctx, name, args Prompt)` | Runs a listed command with `args.Text` as its arguments. Same outcomes as `Send`; a result that would not start a prompt turn is a rejection. |
+
 ### HTTP additions and changes
 
 | Method and path | Body | Result |
@@ -670,3 +757,10 @@ listed (`GET /api/projects` and the `snapshot` frame, at most once per Project
 every two seconds), when a Task in the Project ends a turn, and when a Task's
 Changes load. Nothing polls. When the branch changes, the `project` frame
 carries the Project again.
+
+| `GET /api/sessions/{id}/commands` | – | `{"commands": [{"name", "description", "kind", "input_hint"}]}`; opens the conversation as a viewer does; 409 when it is not open |
+| `GET /api/sessions/{id}/files?q=&limit=` | – | `{"files": [{"path", "type"}], "reason"}`; `type` is `file` or `directory`; `limit` 1 to 200, default 50, else 400 |
+| `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path, or for files on a steer during a turn |
+| `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, a refused file, or `` !` `` on OpenCode; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
+
+`QueuedPrompt` gains `files` (omitted when empty).

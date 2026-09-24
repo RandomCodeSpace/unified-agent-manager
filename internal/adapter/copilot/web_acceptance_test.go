@@ -147,7 +147,7 @@ func TestWebPermissionReplyRacingChildCancellationDoesNotReviveRequest(t *testin
 func TestWebCancelFailureDoesNotPretendTheTurnEnded(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	if err := h.conv.Send(ctx, "work"); err != nil {
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "work"}); err != nil {
 		t.Fatal(err)
 	}
 	h.fs.abortErr = errors.New("abort unavailable")
@@ -201,7 +201,7 @@ func TestWebShutdownFailureExpiresRequestsAndKeepsOtherSessionsOpen(t *testing.T
 		if _, err := h.fs.askUser(copilot.UserInputRequest{Question: "Late?"}, copilot.UserInputInvocation{}); err == nil {
 			t.Fatal("closed conversation accepted a new question")
 		}
-		if err := other.Send(context.Background(), "continue"); err != nil {
+		if err := other.Send(context.Background(), agentapi.Prompt{Text: "continue"}); err != nil {
 			t.Fatalf("one session shutdown closed another: %v", err)
 		}
 	}
@@ -268,7 +268,7 @@ func TestWebHistoryFailureDoesNotInventOrEndConversation(t *testing.T) {
 	if len(h.sink.all()) != 0 {
 		t.Fatal("history failure changed the live conversation")
 	}
-	if err := h.conv.Send(context.Background(), "continue"); err != nil {
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "continue"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.conv.Close(context.Background()); err != nil {
@@ -285,7 +285,7 @@ func TestWebDisconnectFailureStillClosesConversation(t *testing.T) {
 	if err := h.conv.Close(context.Background()); err == nil || !strings.Contains(err.Error(), "disconnect refused") {
 		t.Fatalf("Close = %v", err)
 	}
-	if err := h.conv.Send(context.Background(), "must not send"); !errors.Is(err, agentapi.ErrClosed) || len(h.fs.sent) != 0 {
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "must not send"}); !errors.Is(err, agentapi.ErrClosed) || len(h.fs.sent) != 0 {
 		t.Fatalf("send after disconnect failure = %v, sent %v", err, h.fs.sent)
 	}
 }

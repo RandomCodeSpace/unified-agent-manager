@@ -94,10 +94,15 @@ type fakeSession struct {
 	askUser copilot.UserInputHandler
 	perm    copilot.PermissionHandlerFunc
 
-	mu      sync.Mutex
-	sent    []string
-	modes   []string
-	sendErr error
+	mu        sync.Mutex
+	sent      []string
+	modes     []string
+	msgs      []copilot.MessageOptions
+	sendErr   error
+	commands  []rpc.SlashCommandInfo
+	invoked   []string
+	invoke    rpc.SlashCommandInvocationResult
+	invokeErr error
 	// beforeReturn runs with the assigned message ID before Send returns it,
 	// as CLI events can be handled before the send response.
 	beforeReturn      func(id string)
@@ -153,6 +158,19 @@ func (s *fakeSession) MessageSubagent(_ context.Context, agentID, message string
 	return &rpc.TasksSendMessageResult{Sent: true}, nil
 }
 
+func (s *fakeSession) ListCommands(context.Context) ([]rpc.SlashCommandInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]rpc.SlashCommandInfo(nil), s.commands...), nil
+}
+
+func (s *fakeSession) InvokeCommand(_ context.Context, name, input string) (rpc.SlashCommandInvocationResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.invoked = append(s.invoked, name+" "+input)
+	return s.invoke, s.invokeErr
+}
+
 func (s *fakeSession) ID() string { return s.id }
 func (s *fakeSession) Abort(context.Context) error {
 	s.mu.Lock()
@@ -161,14 +179,15 @@ func (s *fakeSession) Abort(context.Context) error {
 	return s.abortErr
 }
 
-func (s *fakeSession) Send(_ context.Context, prompt, mode string) (string, error) {
+func (s *fakeSession) Send(_ context.Context, msg copilot.MessageOptions) (string, error) {
 	s.mu.Lock()
 	if s.sendErr != nil {
 		defer s.mu.Unlock()
 		return "", s.sendErr
 	}
-	s.sent = append(s.sent, prompt)
-	s.modes = append(s.modes, mode)
+	s.sent = append(s.sent, msg.Prompt)
+	s.modes = append(s.modes, msg.Mode)
+	s.msgs = append(s.msgs, msg)
 	id := fmt.Sprintf("msg-%d", len(s.sent))
 	hook := s.beforeReturn
 	s.mu.Unlock()
@@ -403,14 +422,14 @@ func TestWebTurnStates(t *testing.T) {
 		}
 		return *e.Turn
 	}
-	if err := h.conv.Send(ctx, "hi"); err != nil || turn().State != agentapi.TurnWorking {
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "hi"}); err != nil || turn().State != agentapi.TurnWorking {
 		t.Fatalf("Send err %v", err)
 	}
 	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
 	if turn().State != agentapi.TurnCancelled {
 		t.Fatalf("aborted idle = %+v", turn())
 	}
-	_ = h.conv.Send(ctx, "again")
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "again"})
 	h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: "rate_limit", Message: "rate\x1b[31m limited\nretry later"}))
 	notice := h.sink.last()
 	if notice.Kind != agentapi.EventItem || notice.Item.ID != "err1" || notice.Item.Kind != agentapi.ItemNotice {
@@ -420,7 +439,7 @@ func TestWebTurnStates(t *testing.T) {
 	if got := turn(); got.State != agentapi.TurnFailed || got.Error != "rate limited retry later" {
 		t.Fatalf("failed turn = %+v", got)
 	}
-	_ = h.conv.Send(ctx, "third")
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "third"})
 	h.fs.onEvent(ev("i3", &rpc.SessionIdleData{}))
 	if got := turn(); got.State != agentapi.TurnCompleted || got.Error != "" {
 		t.Fatalf("completed turn = %+v", got)
@@ -433,17 +452,17 @@ func TestWebTurnStates(t *testing.T) {
 func TestWebSendFailureClassification(t *testing.T) {
 	h := openWeb(t)
 	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}
-	err := h.conv.Send(context.Background(), "p")
+	err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "p"})
 	if err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) {
 		t.Fatalf("rejected send err = %v, want definite", err)
 	}
 	h.fs.sendErr = errors.New("CLI process exited: signal: killed")
-	if err := h.conv.Send(context.Background(), "p"); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "p"}); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
 		t.Fatalf("send after CLI exit err = %v, want uncertain", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := h.conv.Send(ctx, "p"); !errors.Is(err, context.Canceled) || errors.Is(err, agentapi.ErrSubmissionUncertain) {
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "p"}); !errors.Is(err, context.Canceled) || errors.Is(err, agentapi.ErrSubmissionUncertain) {
 		t.Fatalf("cancelled send err = %v", err)
 	}
 	for _, e := range h.sink.all() {
@@ -658,7 +677,7 @@ func TestWebCloseReleasesPendingInteractions(t *testing.T) {
 	if len(h.sink.all()) != n {
 		t.Fatal("event emitted after Close")
 	}
-	if err := h.conv.Send(ctx, "p"); !errors.Is(err, agentapi.ErrClosed) {
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "p"}); !errors.Is(err, agentapi.ErrClosed) {
 		t.Fatalf("Send after Close err = %v", err)
 	}
 	if err := h.conv.Close(ctx); err != nil {
@@ -709,7 +728,7 @@ func TestWebWatchdogFailureEndsConversationsAndResetsClient(t *testing.T) {
 		t.Fatalf("permission after failure = %+v decision %v", s1.interaction("p1"), fs1.answer("p1"))
 	}
 	waitFor(t, "force stop", func() bool { _, forced := first.counts(); return forced == 1 })
-	if err := c1.Send(ctx, "p"); !errors.Is(err, agentapi.ErrClosed) {
+	if err := c1.Send(ctx, agentapi.Prompt{Text: "p"}); !errors.Is(err, agentapi.ErrClosed) {
 		t.Fatalf("Send after failure err = %v", err)
 	}
 
@@ -808,7 +827,7 @@ func notices(evs []agentapi.Event) []string {
 func TestWebSendEnqueuesAndSteerInterjects(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	if err := h.conv.Send(ctx, "start"); err != nil {
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "start"}); err != nil {
 		t.Fatal(err)
 	}
 	before := len(h.sink.all())
@@ -834,7 +853,7 @@ func TestWebSendEnqueuesAndSteerInterjects(t *testing.T) {
 func TestWebSteerDeliveredIsMarked(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	_ = h.conv.Send(ctx, "start") // msg-1
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "start"}) // msg-1
 	h.fs.onEvent(ev("u1", userMessage("msg-1", rpc.UserMessageDeliveryIdle, "start")))
 	if it := h.sink.last().Item; it == nil || it.ID != "msg-1" || it.Delivery != "" {
 		t.Fatalf("prompt item = %+v", it)
@@ -855,7 +874,7 @@ func TestWebSteerDeliveredIsMarked(t *testing.T) {
 func TestWebSteerTheTurnDidNotUseIsReportedOnce(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	_ = h.conv.Send(ctx, "start")
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "start"})
 	_ = h.conv.Steer(ctx, "too late")      // msg-2
 	_ = h.conv.Steer(ctx, "line one\ntwo") // msg-3
 	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
@@ -870,7 +889,7 @@ func TestWebSteerTheTurnDidNotUseIsReportedOnce(t *testing.T) {
 	if last := evs[len(evs)-1]; last.Kind != agentapi.EventTurn || last.Turn.State != agentapi.TurnCancelled {
 		t.Fatalf("the notices must come before the turn ends: last event %+v", last)
 	}
-	_ = h.conv.Send(ctx, "again")
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "again"})
 	h.fs.onEvent(ev("i2", &rpc.SessionIdleData{}))
 	if got := notices(h.sink.all()); len(got) != 2 {
 		t.Fatalf("notices after the next turn = %q", got)
@@ -895,8 +914,8 @@ func TestWebBackgroundedShellOutputKeepsTheCallCompleted(t *testing.T) {
 func TestWebSteerDeliveredAfterIdleStartsATurn(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	_ = h.conv.Send(ctx, "start")                     // msg-1
-	if err := h.conv.Steer(ctx, "late"); err != nil { // msg-2
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "start"}) // msg-1
+	if err := h.conv.Steer(ctx, "late"); err != nil {    // msg-2
 		t.Fatal(err)
 	}
 	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
@@ -939,7 +958,7 @@ func TestWebToolStartReusingAnEndedIDStreamsItsOutput(t *testing.T) {
 func TestWebSteerUsedBeforeSendReturns(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	_ = h.conv.Send(ctx, "start")
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "start"})
 	h.fs.beforeReturn = func(id string) {
 		h.fs.onEvent(ev("u2", userMessage(id, rpc.UserMessageDeliverySteering, "quick")))
 	}
@@ -968,7 +987,7 @@ func TestWebSteerIdleBeforeSendReturns(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/used=%t", tc.name, used), func(t *testing.T) {
 				h := openWeb(t)
 				ctx := context.Background()
-				if err := h.conv.Send(ctx, "start"); err != nil {
+				if err := h.conv.Send(ctx, agentapi.Prompt{Text: "start"}); err != nil {
 					t.Fatal(err)
 				}
 				if tc.name == "aborted" {
@@ -1000,7 +1019,7 @@ func TestWebSteerIdleBeforeSendReturns(t *testing.T) {
 				if got := notices(h.sink.all()); strings.Join(got, "#") != strings.Join(want, "#") {
 					t.Fatalf("notices after Send returned = %q, want %q", got, want)
 				}
-				if err := h.conv.Send(ctx, "again"); err != nil {
+				if err := h.conv.Send(ctx, agentapi.Prompt{Text: "again"}); err != nil {
 					t.Fatal(err)
 				}
 				h.fs.onEvent(ev("later-idle", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
@@ -1015,7 +1034,7 @@ func TestWebSteerIdleBeforeSendReturns(t *testing.T) {
 func TestWebSteerConcurrentSendsBeforeAbortedIdle(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	if err := h.conv.Send(ctx, "start"); err != nil {
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "start"}); err != nil {
 		t.Fatal(err)
 	}
 	started := make(chan string, 2)
@@ -1150,7 +1169,7 @@ func TestWebTitleAndTurnModel(t *testing.T) {
 	if e := h.sink.last(); e.Kind != agentapi.EventTitle || e.Title != "Fix the build" {
 		t.Fatalf("title event = %+v", e)
 	}
-	_ = h.conv.Send(ctx, "hi")
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "hi"})
 	h.fs.onEvent(ev("u1", &rpc.AssistantUsageData{Model: "gpt-5-mini"}))
 	h.fs.onEvent(agentEv("u2", "agent-1", &rpc.AssistantUsageData{Model: "sub-model"}))
 	h.fs.onEvent(ev("u3", &rpc.AssistantUsageData{Model: "claude-haiku-4.5"}))
@@ -1159,7 +1178,7 @@ func TestWebTitleAndTurnModel(t *testing.T) {
 	if e := h.sink.last(); e.Kind != agentapi.EventTurn || e.Turn.State != agentapi.TurnCompleted || e.Turn.Model != "claude-haiku-4.5" {
 		t.Fatalf("turn = %+v", e.Turn)
 	}
-	_ = h.conv.Send(ctx, "again")
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "again"})
 	h.fs.onEvent(ev("i2", &rpc.SessionIdleData{}))
 	if e := h.sink.last(); e.Turn.Model != "" {
 		t.Fatalf("second turn reused the first turn's model: %+v", e.Turn)
@@ -1169,7 +1188,7 @@ func TestWebTitleAndTurnModel(t *testing.T) {
 func TestWebSubagentEventsNeverEnterTheMainTranscript(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	_ = h.conv.Send(ctx, "delegate")
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "delegate"})
 	subPrompt := "sub-prompt"
 	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "call_1", ToolName: "task"}))
 	h.fs.onEvent(agentEv("e2", "agent-1", &rpc.SubagentStartedData{ToolCallID: "call_1", AgentName: "general-purpose", AgentDisplayName: "General purpose", AgentDescription: "Does things"}))

@@ -57,7 +57,7 @@ func TestWebServerProcessOwnershipAndExit(t *testing.T) {
 	if err := syscall.Kill(serves[1].PID, 0); err != nil {
 		t.Fatalf("Shutdown stopped a server it did not start: %v", err)
 	}
-	if err := ownerConversation.Send(t.Context(), "hello"); !errors.Is(err, agentapi.ErrClosed) {
+	if err := ownerConversation.Send(t.Context(), agentapi.Prompt{Text: "hello"}); !errors.Is(err, agentapi.ErrClosed) {
 		t.Fatalf("Send after Shutdown = %v", err)
 	}
 

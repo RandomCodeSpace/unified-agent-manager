@@ -176,7 +176,7 @@ func TestFinalAcceptanceRestoredTaskCannotReplaceMissingProviderIdentity(t *test
 				providers = append(providers, prov)
 			}
 			m := startManager(t, st, providers...)
-			sub, err := m.Submit(id, "resume", mustUUID(t), ModeSend)
+			sub, err := m.Submit(id, PromptRequest{Text: "resume", RequestID: mustUUID(t), Mode: ModeSend})
 			if err != nil || sub.Status != SubmissionRejected {
 				t.Fatalf("resume = %+v, %v", sub, err)
 			}

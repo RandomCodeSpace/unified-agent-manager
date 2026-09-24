@@ -56,9 +56,13 @@ type sdkClient interface {
 // sdkSession is the part of a Copilot SDK session the web provider drives.
 type sdkSession interface {
 	ID() string
-	// Send submits prompt with the given delivery mode and returns the
-	// message ID the CLI assigned to it.
-	Send(ctx context.Context, prompt, mode string) (string, error)
+	// Send submits a message and returns the message ID the CLI assigned to
+	// it.
+	Send(ctx context.Context, msg copilot.MessageOptions) (string, error)
+	// ListCommands lists the session's built-in commands and skills.
+	ListCommands(ctx context.Context) ([]rpc.SlashCommandInfo, error)
+	// InvokeCommand resolves a command; it starts no turn.
+	InvokeCommand(ctx context.Context, name, input string) (rpc.SlashCommandInvocationResult, error)
 	SwitchModel(ctx context.Context, req *rpc.ModelSwitchToRequest) (*rpc.ModelSwitchToResult, error)
 	SetEffort(ctx context.Context, effort string) error
 	Abort(ctx context.Context) error
@@ -161,12 +165,26 @@ func (a sdkSessionAdapter) SetEffort(ctx context.Context, effort string) error {
 	return err
 }
 
-func (a sdkSessionAdapter) Send(ctx context.Context, prompt, mode string) (string, error) {
-	id, err := a.s.Send(ctx, copilot.MessageOptions{Prompt: prompt, Mode: mode})
+func (a sdkSessionAdapter) Send(ctx context.Context, msg copilot.MessageOptions) (string, error) {
+	id, err := a.s.Send(ctx, msg)
 	if err != nil && isRPCError(err) {
 		return "", rejectedError{err}
 	}
 	return id, err
+}
+
+func (a sdkSessionAdapter) ListCommands(ctx context.Context) ([]rpc.SlashCommandInfo, error) {
+	res, err := a.s.RPC.Commands.List(ctx, &rpc.SessionCommandsListRequest{
+		IncludeBuiltins: copilot.Bool(true), IncludeSkills: copilot.Bool(true), IncludeClientCommands: copilot.Bool(false),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res.Commands, nil
+}
+
+func (a sdkSessionAdapter) InvokeCommand(ctx context.Context, name, input string) (rpc.SlashCommandInvocationResult, error) {
+	return a.s.RPC.Commands.Invoke(ctx, &rpc.CommandsInvokeRequest{Name: name, Input: &input})
 }
 
 func (a sdkSessionAdapter) RespondPermission(ctx context.Context, requestID string, decision rpc.PermissionDecision) (bool, error) {
@@ -343,6 +361,10 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnPermissionRequest: deferPermission,
 			OnUserInputRequest:  c.askUser,
 			OnEvent:             c.onEvent,
+			// Discovery loads what the terminal CLI loads for this directory:
+			// skills, project agents, custom instructions, MCP servers and
+			// hooks. The owner turned it on for web Tasks (#176).
+			EnableConfigDiscovery: copilot.Bool(true),
 		})
 	} else {
 		sess, err = client.ResumeSession(ctx, req.ConversationID, &copilot.ResumeSessionConfig{
@@ -354,6 +376,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnPermissionRequest: deferPermission,
 			OnUserInputRequest:  c.askUser,
 			OnEvent:             c.onEvent,
+			// Resumed Tasks discover the same configuration as new ones.
+			EnableConfigDiscovery: copilot.Bool(true),
 		})
 	}
 	if err != nil {
@@ -715,8 +739,91 @@ func (c *conversation) selectionUncertain(ctx context.Context, err error) error 
 }
 
 // Send uses the "enqueue" mode explicitly: a prompt that reaches a CLI still
-// busy with a turn runs after that turn instead of joining it.
-func (c *conversation) Send(ctx context.Context, prompt string) error {
+// busy with a turn runs after that turn instead of joining it. Referenced
+// files go as file and directory attachments with their absolute paths.
+func (c *conversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
+	return c.send(ctx, copilot.MessageOptions{Prompt: prompt.Text, Attachments: attachments(prompt)})
+}
+
+// Commands lists skills and the built-in prompt commands init and review.
+// Other built-ins duplicate web controls, change the mode, only print text,
+// or reach outside the Task.
+func (c *conversation) Commands(ctx context.Context) ([]agentapi.Command, error) {
+	if c.isClosed() {
+		return nil, agentapi.ErrClosed
+	}
+	listed, err := c.sess.ListCommands(ctx)
+	if err != nil {
+		c.p.poke()
+		return nil, fmt.Errorf("copilot commands: %s", errText(err))
+	}
+	out := []agentapi.Command{}
+	for _, cmd := range listed {
+		kind := agentapi.CommandSkill
+		switch {
+		case cmd.Kind == rpc.SlashCommandKindSkill:
+		case cmd.Kind == rpc.SlashCommandKindBuiltin && (cmd.Name == "init" || cmd.Name == "review"):
+			kind = agentapi.CommandPrompt
+		default:
+			continue
+		}
+		hint := ""
+		if cmd.Input != nil {
+			hint = cmd.Input.Hint
+		}
+		out = append(out, agentapi.Command{Name: cmd.Name, Description: cmd.Description, Kind: kind, InputHint: hint})
+	}
+	return out, nil
+}
+
+// RunCommand resolves the command, then sends the prompt it returns, shown
+// as "/name arguments". Only a prompt that keeps the session's mode is
+// sent; any other result was not a turn and is refused.
+func (c *conversation) RunCommand(ctx context.Context, name string, args agentapi.Prompt) error {
+	if c.isClosed() {
+		return agentapi.ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	res, err := c.sess.InvokeCommand(ctx, name, args.Text)
+	if err != nil {
+		// Invoking starts no turn, so nothing was submitted.
+		c.p.poke()
+		return fmt.Errorf("copilot refused /%s: %s", name, errText(err))
+	}
+	prompt, ok := res.(*rpc.SlashCommandAgentPromptResult)
+	switch {
+	case !ok:
+		kind := "no result"
+		if res != nil {
+			kind = string(res.Kind())
+		}
+		return fmt.Errorf("copilot answered /%s with %s, not a prompt; uam sent nothing", name, kind)
+	case prompt.Mode != nil:
+		return fmt.Errorf("copilot's /%s would switch the session to %s mode; uam sent nothing", name, *prompt.Mode)
+	case prompt.Prompt == "":
+		return fmt.Errorf("copilot's /%s returned an empty prompt; uam sent nothing", name)
+	}
+	return c.send(ctx, copilot.MessageOptions{
+		Prompt: prompt.Prompt, DisplayPrompt: strings.TrimSpace("/" + name + " " + args.Text), Attachments: attachments(args),
+	})
+}
+
+// attachments maps a prompt's references to Copilot attachments.
+func attachments(p agentapi.Prompt) []copilot.Attachment {
+	var out []copilot.Attachment
+	for _, f := range p.Files {
+		if f.Dir {
+			out = append(out, &rpc.AttachmentDirectory{Path: f.Path, DisplayName: f.Rel})
+		} else {
+			out = append(out, &rpc.AttachmentFile{Path: f.Path, DisplayName: f.Rel})
+		}
+	}
+	return out
+}
+
+func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) error {
 	c.mu.Lock()
 	closed, idles := c.closed, c.idles
 	c.mu.Unlock()
@@ -726,7 +833,8 @@ func (c *conversation) Send(ctx context.Context, prompt string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := c.sess.Send(ctx, prompt, string(rpc.SendModeEnqueue)); err != nil {
+	msg.Mode = string(rpc.SendModeEnqueue)
+	if _, err := c.sess.Send(ctx, msg); err != nil {
 		return c.sendError(err)
 	}
 	c.mu.Lock()
@@ -769,7 +877,7 @@ func (c *conversation) Steer(ctx context.Context, prompt string) error {
 	c.mu.Unlock()
 	id, err := "", ctx.Err()
 	if err == nil {
-		if id, err = c.sess.Send(ctx, prompt, string(rpc.SendModeImmediate)); err != nil {
+		if id, err = c.sess.Send(ctx, copilot.MessageOptions{Prompt: prompt, Mode: string(rpc.SendModeImmediate)}); err != nil {
 			err = c.sendError(err)
 		}
 	}

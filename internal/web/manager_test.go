@@ -134,7 +134,7 @@ func TestViewerDisconnectMidTurnLeavesProviderRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Submit(sum.ID, "do it", mustUUID(t), ModeSend); err != nil {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "do it", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
@@ -237,19 +237,19 @@ func TestDuplicateRequestIDSendsOnce(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	sum, conv := createSession(t, m, prov)
 	rid := mustUUID(t)
-	first, err := m.Submit(sum.ID, "hello", rid, ModeSend)
+	first, err := m.Submit(sum.ID, PromptRequest{Text: "hello", RequestID: rid, Mode: ModeSend})
 	if err != nil || first.Status != SubmissionAccepted {
 		t.Fatalf("first submit = %+v, %v", first, err)
 	}
 	conv.EmitTurn(agentapi.TurnCompleted, "")
-	again, err := m.Submit(sum.ID, "hello", rid, ModeSend)
+	again, err := m.Submit(sum.ID, PromptRequest{Text: "hello", RequestID: rid, Mode: ModeSend})
 	if err != nil || again != first {
 		t.Fatalf("repeat = %+v, %v; want %+v", again, err, first)
 	}
 	if got := len(conv.Sends()); got != 1 {
 		t.Fatalf("Send called %d times, want 1", got)
 	}
-	if _, err := m.Submit(sum.ID, "hello", "not-a-uuid", ModeSend); statusOf(err) != http.StatusBadRequest {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "hello", RequestID: "not-a-uuid", Mode: ModeSend}); statusOf(err) != http.StatusBadRequest {
 		t.Fatalf("bad request id error = %v", err)
 	}
 }
@@ -269,7 +269,7 @@ func TestConcurrentSubmitsOneAcceptedOneConflict(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sub, err := m.Submit(sum.ID, text, mustUUID(t), ModeSend)
+			sub, err := m.Submit(sum.ID, PromptRequest{Text: text, RequestID: mustUUID(t), Mode: ModeSend})
 			results <- result{sub, err}
 		}()
 	}
@@ -301,11 +301,11 @@ func TestSubmissionOutcomes(t *testing.T) {
 		return fmt.Errorf("stream reset: %w", agentapi.ErrSubmissionUncertain)
 	})
 	rid := mustUUID(t)
-	sub, err := m.Submit(sum.ID, "maybe", rid, ModeSend)
+	sub, err := m.Submit(sum.ID, PromptRequest{Text: "maybe", RequestID: rid, Mode: ModeSend})
 	if err != nil || sub.Status != SubmissionUncertain || !strings.Contains(sub.Error, "did not resend") {
 		t.Fatalf("uncertain submission = %+v, %v", sub, err)
 	}
-	if again, _ := m.Submit(sum.ID, "maybe", rid, ModeSend); again != sub || len(conv.Sends()) != 1 {
+	if again, _ := m.Submit(sum.ID, PromptRequest{Text: "maybe", RequestID: rid, Mode: ModeSend}); again != sub || len(conv.Sends()) != 1 {
 		t.Fatalf("uncertain prompt was resubmitted: %+v sends=%d", again, len(conv.Sends()))
 	}
 	if st := detail(t, m, sum.ID).State; st != StateIdle {
@@ -313,19 +313,19 @@ func TestSubmissionOutcomes(t *testing.T) {
 	}
 
 	conv.SetSendHook(func(context.Context, string) error { return agentapi.ErrBusy })
-	if _, err := m.Submit(sum.ID, "busy", mustUUID(t), ModeSend); statusOf(err) != http.StatusConflict {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "busy", RequestID: mustUUID(t), Mode: ModeSend}); statusOf(err) != http.StatusConflict {
 		t.Fatalf("ErrBusy = %v, want 409", err)
 	}
 
 	conv.SetSendHook(func(context.Context, string) error { return errors.New("quota \x1b[31mexceeded") })
-	sub, err = m.Submit(sum.ID, "rejected", mustUUID(t), ModeSend)
+	sub, err = m.Submit(sum.ID, PromptRequest{Text: "rejected", RequestID: mustUUID(t), Mode: ModeSend})
 	if err != nil || sub.Status != SubmissionRejected || sub.Error != "quota exceeded" {
 		t.Fatalf("rejected submission = %+v, %v", sub, err)
 	}
 
 	conv.SetSendHook(nil)
 	conv.EmitTurn(agentapi.TurnWorking, "")
-	if _, err := m.Submit(sum.ID, "while working", mustUUID(t), ModeSend); statusOf(err) != http.StatusConflict {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "while working", RequestID: mustUUID(t), Mode: ModeSend}); statusOf(err) != http.StatusConflict {
 		t.Fatalf("prompt while working = %v, want 409", err)
 	}
 }
@@ -423,7 +423,7 @@ func TestCancelCallsCancelOnly(t *testing.T) {
 	if _, err := m.Cancel(sum.ID); statusOf(err) != http.StatusConflict {
 		t.Fatalf("cancel with no turn = %v, want 409", err)
 	}
-	if _, err := m.Submit(sum.ID, "work", mustUUID(t), ModeSend); err != nil {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
@@ -472,7 +472,7 @@ func TestCloseKeepsRecordAndExpiresInteractions(t *testing.T) {
 func TestRuntimeExitFailsWithoutReplayOrReplacement(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	sum, conv := createSession(t, m, prov)
-	if _, err := m.Submit(sum.ID, "work", mustUUID(t), ModeSend); err != nil {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
@@ -549,7 +549,7 @@ func TestShutdownInterruptsClosesAndShutsDownProviders(t *testing.T) {
 	}
 	sum, conv := createSession(t, m, prov)
 	rid := mustUUID(t)
-	if _, err := m.Submit(sum.ID, "work", rid, ModeSend); err != nil {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: rid, Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
@@ -572,7 +572,7 @@ func TestShutdownInterruptsClosesAndShutsDownProviders(t *testing.T) {
 	prov2 := agenttest.NewProvider("fake", allCaps)
 	prov2.AddConversation(sum.ConversationID, nil)
 	m2 := startManager(t, st, prov2)
-	again, err := m2.Submit(sum.ID, "work", rid, ModeSend)
+	again, err := m2.Submit(sum.ID, PromptRequest{Text: "work", RequestID: rid, Mode: ModeSend})
 	if err != nil || again.RequestID != rid || again.Status != SubmissionAccepted {
 		t.Fatalf("repeat after restart = %+v, %v", again, err)
 	}

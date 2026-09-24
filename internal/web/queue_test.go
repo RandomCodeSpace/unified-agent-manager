@@ -18,7 +18,7 @@ import (
 func busySession(t *testing.T, m *Manager, prov *agenttest.Provider) (SessionSummary, *agenttest.Conversation) {
 	t.Helper()
 	sum, conv := createSession(t, m, prov)
-	if sub, err := m.Submit(sum.ID, "first", mustUUID(t), ModeSend); err != nil || sub.Status != SubmissionAccepted {
+	if sub, err := m.Submit(sum.ID, PromptRequest{Text: "first", RequestID: mustUUID(t), Mode: ModeSend}); err != nil || sub.Status != SubmissionAccepted {
 		t.Fatalf("first prompt = %+v, %v", sub, err)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
@@ -27,7 +27,7 @@ func busySession(t *testing.T, m *Manager, prov *agenttest.Provider) (SessionSum
 
 func mustSubmit(t *testing.T, m *Manager, id, text, rid, mode, status string) Submission {
 	t.Helper()
-	sub, err := m.Submit(id, text, rid, mode)
+	sub, err := m.Submit(id, PromptRequest{Text: text, RequestID: rid, Mode: mode})
 	if err != nil || sub.Status != status || sub.RequestID != rid {
 		t.Fatalf("Submit(%q, %s) = %+v, %v; want %s", text, mode, sub, err, status)
 	}
@@ -66,7 +66,7 @@ func TestPromptModesWhileIdleAndBusy(t *testing.T) {
 	if sends, d := conv.Sends(), detail(t, m, sum.ID); len(sends) != 3 || len(conv.Steers()) != 0 || len(d.Queue) != 0 {
 		t.Fatalf("idle modes: sends=%q steers=%q queue=%+v", sends, conv.Steers(), d.Queue)
 	}
-	if _, err := m.Submit(sum.ID, "x", mustUUID(t), "later"); statusOf(err) != http.StatusBadRequest {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "x", RequestID: mustUUID(t), Mode: "later"}); statusOf(err) != http.StatusBadRequest {
 		t.Fatalf("unknown mode = %v, want 400", err)
 	}
 
@@ -76,7 +76,7 @@ func TestPromptModesWhileIdleAndBusy(t *testing.T) {
 		func() { conv.EmitInteraction(permissionRequest("p1")) }, // waiting for the user is a running turn too
 	} {
 		busy()
-		if _, err := m.Submit(sum.ID, "send", mustUUID(t), ModeSend); statusOf(err) != http.StatusConflict {
+		if _, err := m.Submit(sum.ID, PromptRequest{Text: "send", RequestID: mustUUID(t), Mode: ModeSend}); statusOf(err) != http.StatusConflict {
 			t.Fatalf("send while busy = %v, want 409", err)
 		}
 		mustSubmit(t, m, sum.ID, "queued", mustUUID(t), ModeQueue, SubmissionQueued)
@@ -286,10 +286,10 @@ func TestQueueCancelLimitAndRepeatedRequestIDs(t *testing.T) {
 			t.Fatalf("repeat time = %s, queued at %s", again.Time, first.QueuedAt)
 		}
 	}
-	if _, err := m.Submit(sum.ID, "one more", mustUUID(t), ModeQueue); statusOf(err) != http.StatusConflict {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "one more", RequestID: mustUUID(t), Mode: ModeQueue}); statusOf(err) != http.StatusConflict {
 		t.Fatalf("21st prompt = %v, want 409", err)
 	}
-	if _, err := m.Submit(sum.ID, strings.Repeat("x", maxPromptBytes+1), mustUUID(t), ModeQueue); statusOf(err) != http.StatusRequestEntityTooLarge {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: strings.Repeat("x", maxPromptBytes+1), RequestID: mustUUID(t), Mode: ModeQueue}); statusOf(err) != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized queued prompt = %v, want 413", err)
 	}
 
@@ -348,7 +348,7 @@ func TestSteerOutcomes(t *testing.T) {
 	conv.SetSteerHook(func(context.Context, string) error { return errors.New("refused") })
 	mustSubmit(t, m, sum.ID, "no", mustUUID(t), ModeSteer, SubmissionRejected)
 	conv.SetSteerHook(func(context.Context, string) error { return agentapi.ErrUnsupported })
-	if _, err := m.Submit(sum.ID, "x", mustUUID(t), ModeSteer); statusOf(err) != http.StatusConflict {
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "x", RequestID: mustUUID(t), Mode: ModeSteer}); statusOf(err) != http.StatusConflict {
 		t.Fatalf("unsupported steer = %v, want 409", err)
 	}
 	if n := len(conv.Steers()); n != 4 {

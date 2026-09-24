@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,6 +125,9 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/cancel", s.handleCancelSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/prompt", s.handlePromptSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
+	mux.HandleFunc("POST /api/sessions/{id}/command", s.handleCommand)
+	mux.HandleFunc("GET /api/sessions/{id}/commands", s.handleCommands)
+	mux.HandleFunc("GET /api/sessions/{id}/files", s.handleFiles)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/resume", s.handleQueueResume)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/clear", s.handleQueueClear)
 	mux.HandleFunc("DELETE /api/sessions/{id}/queue/{request_id}", s.handleQueueCancel)
@@ -441,20 +445,57 @@ func (s *Server) handleSubagent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Text      string `json:"text"`
-		RequestID string `json:"request_id"`
-		Mode      string `json:"mode"`
-	}
+	var body PromptRequest
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	sub, err := s.m.Submit(r.PathValue("id"), body.Text, body.RequestID, body.Mode)
+	sub, err := s.m.Submit(r.PathValue("id"), body)
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, sub)
+}
+
+func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
+	var body CommandRequest
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	sub, err := s.m.Command(r.PathValue("id"), body)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, sub)
+}
+
+func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
+	commands, err := s.m.Commands(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]agentapi.Command{"commands": commands})
+}
+
+func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit := defaultFileLimit
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > maxFileLimit {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", maxFileLimit))
+			return
+		}
+		limit = n
+	}
+	files, err := s.m.Files(r.Context(), r.PathValue("id"), q.Get("q"), limit)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, files)
 }
 
 func (s *Server) handleQueueResume(w http.ResponseWriter, r *http.Request) {
