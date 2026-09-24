@@ -1,0 +1,1 @@
+Source checkouts compile without the generated UI. Run make build or make install to embed it.

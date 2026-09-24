@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# A release is a generated-only child of its reviewed source commit.
+set -euo pipefail
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "usage: $0 vMAJOR.MINOR.PATCH[-beta.N] COMMIT [MAIN_REF]" >&2
+  exit 2
+fi
+version=$1
+commit=$(git rev-parse --verify "${2}^{commit}")
+main_ref=${3:-origin/main}
+if [[ ! $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.(0|[1-9][0-9]*))?$ ]]; then
+  echo "release version must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-beta.N" >&2
+  exit 1
+fi
+read -r -a parents <<< "$(git show -s --format=%P "$commit")"
+if [[ ${#parents[@]} -ne 1 ]]; then
+  echo "release commit must have exactly one source parent" >&2
+  exit 1
+fi
+source_commit=${parents[0]}
+if [[ -n $(git ls-tree -r --name-only "$source_commit" -- internal/web/dist) ]]; then
+  echo "source parent must not track generated web assets" >&2
+  exit 1
+fi
+changes=$(git diff-tree --no-commit-id --name-status -r "$commit")
+if [[ -z $changes ]] || ! awk '$1 != "A" || $2 !~ /^internal\/web\/dist\// {bad=1} END {exit bad}' <<< "$changes"; then
+  echo "release child may only add files under internal/web/dist" >&2
+  exit 1
+fi
+if ! git ls-tree -r "$commit" -- internal/web/dist | awk '$1 != "100644" {bad=1} END {exit bad}'; then
+  echo "release web assets must be regular files" >&2
+  exit 1
+fi
+git cat-file -e "$commit:internal/web/dist/index.html"
+if [[ -z $(git ls-tree -r --name-only "$commit" -- internal/web/dist/assets) ]]; then
+  echo "release commit has no bundled web assets" >&2
+  exit 1
+fi
+if [[ $version != *-beta.* ]]; then
+  git merge-base --is-ancestor "$source_commit" "$main_ref" || {
+    echo "stable release source must be an ancestor of $main_ref" >&2
+    exit 1
+  }
+fi
+printf 'Verified %s: release %s, source %s\n' "$version" "$commit" "$source_commit"

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Local preparation only: never moves the source branch or pushes a ref.
+set -euo pipefail
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "usage: $0 vMAJOR.MINOR.PATCH[-beta.N] [SOURCE_REF]" >&2
+  exit 2
+fi
+version=$1
+if [[ ! $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.(0|[1-9][0-9]*))?$ ]]; then
+  echo "release version must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-beta.N" >&2
+  exit 1
+fi
+repo=$(git rev-parse --show-toplevel)
+cd "$repo"
+source_commit=$(git rev-parse --verify "${2:-HEAD}^{commit}")
+if git show-ref --verify --quiet "refs/tags/$version"; then
+  echo "tag $version already exists; it will not be replaced" >&2
+  exit 1
+fi
+if [[ -n $(git ls-tree -r --name-only "$source_commit" -- internal/web/dist) ]]; then
+  echo "source must not track generated web assets" >&2
+  exit 1
+fi
+if [[ $version != *-beta.* ]]; then
+  git fetch --no-tags origin main
+  git merge-base --is-ancestor "$source_commit" origin/main || {
+    echo "stable release source must already be on origin/main" >&2
+    exit 1
+  }
+fi
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/uam-release.XXXXXXXX")
+worktree=$scratch/tree
+cleanup() {
+  git -C "$repo" worktree remove --force "$worktree" >/dev/null 2>&1 || true
+  rm -rf "$scratch"
+}
+trap cleanup EXIT
+git worktree add --detach "$worktree" "$source_commit"
+cd "$worktree"
+expected_node=$(cat web/.node-version)
+if [[ $(node --version) != "v$expected_node" ]]; then
+  echo "release preparation requires Node $expected_node from web/.node-version" >&2
+  exit 1
+fi
+expected_go=$(awk '$1 == "toolchain" {print $2}' go.mod)
+if [[ -z $expected_go || $(go env GOVERSION) != "$expected_go" ]]; then
+  echo "release preparation requires $expected_go from go.mod" >&2
+  exit 1
+fi
+export GOTOOLCHAIN=local
+make web
+# Do not conceal a changed lockfile or any other source change.
+git diff --exit-code -- . ':!internal/web/dist'
+UAM_EXPECT_WEB_ASSETS=built go test ./internal/web -run '^TestEmbeddedFrontendPackaging$' -count=1
+CGO_ENABLED=0 go build -trimpath -o "$scratch/uam" ./cmd/uam
+git add -f internal/web/dist
+git commit -m "build(release): embed web assets for $version"
+release_commit=$(git rev-parse HEAD)
+scripts/verify-release-source "$version" "$release_commit" origin/main
+git tag -a "$version" "$release_commit" -m "$version" -m "Source: $source_commit"
+printf '\nPrepared local annotated tag %s\nSource: %s\nRelease: %s\nReview: git show --stat %s\nNo refs were pushed; quality and security gates still apply.\n' "$version" "$source_commit" "$release_commit" "$version"

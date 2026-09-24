@@ -20,7 +20,9 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
-//go:embed all:dist
+// The placeholder keeps source-only checkouts buildable; release tags include dist.
+//
+//go:embed all:dist*
 var embedded embed.FS
 
 const (
@@ -82,6 +84,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		sub, err := fs.Sub(embedded, "dist")
 		if err != nil {
 			return nil, fmt.Errorf("embedded web assets: %w", err)
+		}
+		if _, err := fs.Stat(sub, "index.html"); err != nil {
+			return nil, errors.New("web assets are not built; run make build or make install, or install a release tag")
 		}
 		s.assets = sub
 	}

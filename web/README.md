@@ -14,7 +14,11 @@ npm run build
 
 `npm run build` type-checks (`tsc --noEmit`) and writes the production bundle
 to `../internal/web/dist`, which the Go binary embeds. Node 22.12+ is
-required (CI uses Node 24).
+required (`.node-version` pins the version used for CI and release preparation).
+The generated `internal/web/dist` directory is ignored on source branches.
+`make build` or `make install` from the repository root builds it before Go.
+Release tags include it, so versioned `go install` does not need Node.js.
+See [release preparation](../docs/releasing.md).
 
 ## Develop without the service
 

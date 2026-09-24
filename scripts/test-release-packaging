@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Exercise preparation and versioned go install in a disposable repository.
+set -euo pipefail
+repo=$(git rev-parse --show-toplevel)
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/uam-packaging-test.XXXXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+mkdir "$scratch/source"
+git -C "$repo" archive HEAD | tar -x -C "$scratch/source"
+cd "$scratch/source"
+git init -q -b main
+git config user.name 'Packaging test'
+git config user.email 'packaging-test@example.invalid'
+git add .
+git commit -qm 'test: source fixture'
+git switch -qc smoke-source
+git commit -q --allow-empty -m 'test: unmerged beta source'
+source_commit=$(git rev-parse HEAD)
+version="v0.0.0-beta.$(date +%s)${RANDOM}"
+module=github.com/RandomCodeSpace/unified-agent-manager
+
+UAM_EXPECT_WEB_ASSETS=absent go test ./internal/web -run '^TestEmbeddedFrontendPackaging$' -count=1
+scripts/prepare-release "$version"
+release_commit=$(git rev-parse "$version^{commit}")
+test "$(git cat-file -t "refs/tags/$version")" = tag
+test "$(git rev-parse "$release_commit^")" = "$source_commit"
+test "$(git rev-parse HEAD)" = "$source_commit"
+test "$(git branch --show-current)" = smoke-source
+test -z "$(git status --porcelain)"
+test -z "$(git ls-tree -r --name-only HEAD -- internal/web/dist)"
+test ! -d internal/web/dist
+if scripts/prepare-release "$version" >/dev/null 2>&1; then
+  echo 'preparation replaced an existing tag' >&2; exit 1
+fi
+if scripts/verify-release-source v0.0.0 "$release_commit" main >/dev/null 2>&1; then
+  echo 'stable release accepted unmerged source' >&2; exit 1
+fi
+git update-ref refs/heads/main "$source_commit"
+scripts/verify-release-source v0.0.0 "$release_commit" main
+if scripts/verify-release-source "$version" "$source_commit" main >/dev/null 2>&1; then
+  echo 'release verification accepted an unbuilt source commit' >&2; exit 1
+fi
+
+# Serve the exact tagged module zip locally; dependencies still use the normal
+# proxy and checksum database. Only this unpublished fixture module skips sumdb.
+# Module proxy paths escape uppercase letters with ! followed by lowercase.
+proxy=$scratch/proxy/github.com/!random!code!space/unified-agent-manager/@v
+mkdir -p "$proxy" "$scratch/bin"
+git archive --format=zip --prefix="$module@$version/" "$version" > "$proxy/$version.zip"
+git show "$version:go.mod" > "$proxy/$version.mod"
+printf '{"Version":"%s","Time":"2026-01-01T00:00:00Z"}\n' "$version" > "$proxy/$version.info"
+printf '%s\n' "$version" > "$proxy/list"
+GONOSUMDB="$module" GOPROXY="file://$scratch/proxy,https://proxy.golang.org" GOBIN="$scratch/bin" \
+  go install "$module/cmd/uam@$version"
+"$scratch/bin/uam" version | grep -F "$version"
+
+# Exact parity includes extra ignored files, missing files and changed contents.
+git worktree add -q --detach "$scratch/tag" "$version"
+make -C "$scratch/tag" check-web
+printf 'unexpected\n' > "$scratch/tag/internal/web/dist/unexpected.js"
+if make -C "$scratch/tag" check-web >/dev/null 2>&1; then
+  echo 'bundle validation accepted an extra ignored file' >&2; exit 1
+fi
+rm "$scratch/tag/internal/web/dist/unexpected.js"
+mv "$scratch/tag/internal/web/dist/index.html" "$scratch/index.html"
+if make -C "$scratch/tag" check-web >/dev/null 2>&1; then
+  echo 'bundle validation accepted a missing file' >&2; exit 1
+fi
+mv "$scratch/index.html" "$scratch/tag/internal/web/dist/index.html"
+printf '\nchanged\n' >> "$scratch/tag/internal/web/dist/index.html"
+if make -C "$scratch/tag" check-web >/dev/null 2>&1; then
+  echo 'bundle validation accepted changed contents' >&2; exit 1
+fi
+git -C "$scratch/tag" restore internal/web/dist/index.html
+make -C "$scratch/tag" check-web
+
+# A generated child cannot smuggle source edits into the release.
+git worktree add -q --detach "$scratch/tampered" "$source_commit"
+git archive "$version" internal/web/dist | tar -x -C "$scratch/tampered"
+printf '\nUnreviewed source change\n' >> "$scratch/tampered/README.md"
+git -C "$scratch/tampered" add README.md
+git -C "$scratch/tampered" add -f internal/web/dist
+git -C "$scratch/tampered" commit -qm 'test: invalid release child'
+if scripts/verify-release-source "$version" "$(git -C "$scratch/tampered" rev-parse HEAD)" main >/dev/null 2>&1; then
+  echo 'release verification accepted source edits in the generated child' >&2; exit 1
+fi
+printf 'PASS: source isolation, annotated generated child, ancestry, duplicate refusal, tagged go install, exact bundle parity, source-tampering refusal\n'

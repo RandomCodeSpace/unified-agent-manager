@@ -17,3 +17,5 @@ coverage.*
 graphify_out/
 graphify-out/
 web/node_modules/
+
+/internal/web/dist/
