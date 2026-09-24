@@ -400,6 +400,52 @@ func TestProviderThatCannotSwitchNeverRunsOnAnotherModel(t *testing.T) {
 	}
 }
 
+// updated_at is Task activity: a restart, provider checks, a catalog reload
+// and a viewer reopening the conversation leave it as stored.
+func TestRestartAndViewingKeepUpdatedAt(t *testing.T) {
+	st := openTestStore(t)
+	id := mustUUID(t)
+	seedWebRecord(t, st, id, "conv_known", StateCompleted)
+	rec, _ := loadRecord(t, st, "fake", id)
+	stored := rec.Web.UpdatedAt
+	prov := agenttest.NewProvider("fake", allCaps)
+	prov.SetModels([]agentapi.Model{{ID: "auto", Name: "Auto"}}, nil)
+	prov.AddConversation("conv_known", []agentapi.Item{{ID: "a1", Kind: agentapi.ItemAssistant, Text: "done"}})
+	m := startManager(t, st, prov)
+	later := stored.Add(time.Hour)
+	m.mu.Lock()
+	m.now = func() time.Time { return later }
+	m.modelsAt["fake"] = time.Time{}
+	m.mu.Unlock()
+	sub, _, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.RefreshModels()
+	if err := m.View(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	d := detail(t, m, id)
+	if !d.Open || len(d.Items) != 1 || !d.UpdatedAt.Equal(stored) {
+		t.Fatalf("after restart and view: open=%v items=%d updated_at=%s, stored %s", d.Open, len(d.Items), d.UpdatedAt, stored)
+	}
+	for range 2 { // starting, then open
+		var s SessionSummary
+		decodeField(t, frameOf(t, sub, "session"), "session", &s)
+		if !s.UpdatedAt.Equal(stored) {
+			t.Fatalf("session frame updated_at = %s, stored %s", s.UpdatedAt, stored)
+		}
+	}
+	if rec, _ := loadRecord(t, st, "fake", id); !rec.Web.UpdatedAt.Equal(stored) {
+		t.Fatalf("stored updated_at moved to %s", rec.Web.UpdatedAt)
+	}
+	// Activity still moves it.
+	prov.Last().EmitTurn(agentapi.TurnWorking, "")
+	if got := detail(t, m, id).UpdatedAt; !got.Equal(later) {
+		t.Fatalf("updated_at after a turn started = %s, want %s", got, later)
+	}
+}
+
 func TestModelCatalogValidationAndRefresh(t *testing.T) {
 	prov := agenttest.NewProvider("fake", allCaps)
 	prov.SetModels([]agentapi.Model{{ID: "auto", Name: "Auto"}, {ID: "fast", Name: ""}, {ID: "fast", Name: "dup"}, {ID: ""}}, nil)

@@ -929,7 +929,13 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	if after == before && !durable {
 		return
 	}
-	s.updatedAt = m.now()
+	// updated_at is Task activity, which is what the durable part records:
+	// turn state (including waiting for input), detail, name, title, model
+	// and the last submission. A viewer opening the conversation (open,
+	// starting) and provider capability or catalog changes are not.
+	if durable {
+		s.updatedAt = m.now()
+	}
 	if m.sessions[s.id] != s {
 		// Not yet (or no longer) listed; Create publishes it once registered.
 		return
