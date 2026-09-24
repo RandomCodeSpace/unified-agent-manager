@@ -95,9 +95,10 @@ anything else is refused and the file is left alone. The command never
 prints the token. There is no argument, flag or environment variable for it:
 arguments show up in `ps` and shell history, and the service's environment is
 inherited by the agents it starts. The file is replaced atomically (mode
-0600). A running service keeps the old token until `uam web stop` and a new
-`uam web`. Session cookies are derived from the token, so the restart signs
-out every browser.
+0600). It refuses while the service runs, so the service never holds a token
+the file no longer has: run `uam web stop` first, then `uam web` again.
+Session cookies are derived from the token, so the restart signs out every
+browser.
 
 Every API request needs the cookie. The service also rejects requests whose
 `Host` is not loopback, a configured public origin or, when it listens beyond

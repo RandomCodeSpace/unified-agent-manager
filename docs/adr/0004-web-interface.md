@@ -651,12 +651,16 @@ web UI sends, for debugging, and to set a static token.
   this host with your credentials`.
 - **Header logging.** `--log-headers`, off by default, logs one JSON record
   per request where the checks decide: method, path, remote address, `Host`,
-  every header and the outcome. `Cookie`, `Authorization` and
-  `Proxy-Authorization` are redacted, values are capped at 512 bytes, and
+  every header and the outcome. Headers that can carry a credential are
+  redacted (`Cookie`, `Authorization`, `Proxy-Authorization`, and any whose
+  name contains `auth`, `cookie`, `token`, `key`, `secret`, `session`, `jwt`,
+  `signature`, `password` or `credential`), values are capped at 512 bytes, and
   bodies are never read, since `/api/login` carries the token in its body.
 - **Owner-set token.** `uam web token set` reads a token of 24 to 256
   printable ASCII characters without whitespace from stdin, without echo at
   a terminal, and atomically replaces `web-token`. It takes no argument, flag
   or environment variable, which `ps`, shell history or the agents' inherited
-  environment would expose. Cookies are HMACs keyed by the token, so a service
-  restarted with a new token rejects every earlier cookie.
+  environment would expose. It refuses while the service runs, so the running
+  service never holds a token the file no longer has. Cookies are HMACs keyed
+  by the token, so a service restarted with a new token rejects every earlier
+  cookie.

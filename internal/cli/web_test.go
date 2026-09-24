@@ -425,8 +425,12 @@ func TestWebTokenSet(t *testing.T) {
 	data, err := json.Marshal(st)
 	must(t, err)
 	must(t, os.WriteFile(filepath.Join(sessionDir, "web.json"), data, 0o600))
-	if out, err := set(chosen + "\n"); err != nil || !strings.Contains(out, "applies after uam web stop and a new uam web") {
-		t.Fatalf("token set while running = %v, %q", err, out)
+	const next = "Next-Owner-Chosen_token.0123456789"
+	if out, err := set(next + "\n"); err == nil || !strings.Contains(err.Error(), "run uam web stop first") || strings.Contains(out, next) {
+		t.Fatalf("token set while running = %v, %q; want a refusal", err, out)
+	}
+	if got, err := web.LoadOrCreateToken(web.TokenPath()); err != nil || got != chosen {
+		t.Fatalf("token set while running changed the token: %v", err)
 	}
 }
 

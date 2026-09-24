@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -333,7 +334,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(body.Token)), []byte(s.token)) != 1 {
+	// Compare digests: ConstantTimeCompare returns early on a length
+	// mismatch, and an owner-set token's length is part of the secret.
+	given, want := sha256.Sum256([]byte(strings.TrimSpace(body.Token))), sha256.Sum256([]byte(s.token))
+	if subtle.ConstantTimeCompare(given[:], want[:]) != 1 {
 		log.Warn("web login rejected", "remote", r.RemoteAddr)
 		writeError(w, http.StatusUnauthorized, "invalid access token")
 		return

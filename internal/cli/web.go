@@ -42,7 +42,7 @@ const noAuthNotice = "Authentication: disabled — anyone who can reach this ser
 
 // logHeadersNotice is printed wherever the service's settings are shown while
 // --log-headers is on.
-const logHeadersNotice = "Header logging: on — every request's headers go to the uam log (Cookie and Authorization redacted)"
+const logHeadersNotice = "Header logging: on — every request's headers go to the uam log (credential headers redacted)"
 
 // webOptions are the settings shared by `uam web` and `uam __web`.
 type webOptions struct {
@@ -74,7 +74,7 @@ func webFlags(name string, args []string) (webOptions, error) {
 	var origins originList
 	fs.Var(&origins, "public-origin", "origin of a same-host reverse proxy, e.g. https://host (repeatable)")
 	noAuth := fs.Bool("no-auth", false, "disable authentication: anyone who can reach the service can use it")
-	logHeaders := fs.Bool("log-headers", false, "debug: log each request's method, path, remote address and headers (Cookie and Authorization redacted) to the uam log")
+	logHeaders := fs.Bool("log-headers", false, "debug: log each request's method, path, remote address and headers (credential headers redacted) to the uam log")
 	if err := fs.Parse(args); err != nil {
 		return webOptions{}, err
 	}
@@ -271,13 +271,18 @@ no whitespace. There is no argument, flag or environment variable for it:
 arguments show up in ps and shell history, and the environment is inherited
 by the agents the service starts.
 
-A running service keeps the old token until uam web stop and a new uam web;
-the new token then signs out every browser.`)
+It refuses while uam web is running: run uam web stop first, then uam web
+again. The new token signs out every browser.`)
 		return nil
 	}
 	if len(args) > 0 {
 		// Never echo the arguments: they may be a token.
 		return errors.New("web token set takes no arguments or flags; it reads the token from stdin")
+	}
+	// A running service keeps the token it started with; replacing the file
+	// under it would leave no copy of the token it accepts.
+	if st, running := web.ReadRunning(session.DefaultDir()); running {
+		return fmt.Errorf("uam web is running (pid %d); run uam web stop first, then set the token and start uam web again", st.PID)
 	}
 	token, err := readTokenInput(os.Stdin)
 	if err != nil {
@@ -288,9 +293,6 @@ the new token then signs out every browser.`)
 		return err
 	}
 	fmt.Printf("Access token set in %s\n", path)
-	if st, running := web.ReadRunning(session.DefaultDir()); running {
-		fmt.Printf("uam web is running (pid %d) with the previous token; the new token applies after uam web stop and a new uam web\n", st.PID)
-	}
 	return nil
 }
 
