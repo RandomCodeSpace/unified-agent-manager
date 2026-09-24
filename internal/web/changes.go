@@ -383,7 +383,7 @@ func runGit(ctx context.Context, git, dir string, limit int, args ...string) ([]
 	defer cancel()
 	argv := append([]string{"-C", dir}, gitBase...)
 	argv = append(argv, args...)
-	cmd := exec.CommandContext(ctx, git, argv...) // #nosec G204 -- fixed git binary, structured arguments, no shell.
+	cmd := exec.CommandContext(ctx, git, argv...) // #nosec G204 G702 -- resolved git binary, fixed commands, user paths after --, no shell.
 	// Optional locks off keeps `git status` from rewriting the index.
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "GIT_PAGER=cat")
 	stdout := &cappedBuffer{limit: limit}

@@ -228,3 +228,24 @@ func TestCountLinesRejectsChangedParentSymlink(t *testing.T) {
 		t.Fatalf("read outside repository: lines=%d, remaining budget=%d", n, left)
 	}
 }
+
+func TestWorkspaceDiffTreatsGitReportedNamesAsPaths(t *testing.T) {
+	repo := gitRepoFixture(t)
+	for _, name := range []string{"--output=should-not-exist", "$(touch should-not-exist)", "semi; touch should-not-exist"} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(repo, name), []byte("literal-data\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			diff, err := workspaceFileDiff(t.Context(), repo, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff.Path != name || !strings.Contains(diff.Patch, "+literal-data\n") {
+				t.Fatalf("filename was not treated literally: %+v", diff)
+			}
+			if _, err := os.Stat(filepath.Join(repo, "should-not-exist")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("filename triggered command or option processing: %v", err)
+			}
+		})
+	}
+}
