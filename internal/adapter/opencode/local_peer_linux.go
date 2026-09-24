@@ -76,8 +76,8 @@ func verifyTCPPeerOwner(table io.Reader, local, remote *net.TCPAddr, uid int) er
 		if fields[3] != "01" && fields[3] != "03" {
 			continue
 		}
-		// An established connection has UID 0 and inode 0 until accept gives
-		// it a socket inode. That UID is unpublished, even when we expect root.
+		// Until accept gives an established connection a socket inode, its
+		// UID may be zero or already set. Neither suffices, even for root.
 		// SYN_RECV instead carries the listener's UID before deferred accept.
 		inode, err := strconv.ParseUint(fields[9], 10, 64)
 		if err != nil || (fields[3] == "01" && inode == 0) {

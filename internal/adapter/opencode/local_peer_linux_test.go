@@ -27,6 +27,7 @@ func TestTCPPeerOwnerRequiresConnectedReverseTuple(t *testing.T) {
 		{"same user", "1: 0100007F:D431 0100007F:3039 01 0:0 0:0 0 1001 0 11\n", 1001, true, false},
 		{"root owner", "1: 0100007F:D431 0100007F:3039 01 0:0 0:0 0 0 0 11\n", 0, true, false},
 		{"unaccepted nonroot", "1: 0100007F:D431 0100007F:3039 01 0:0 0:0 0 0 0 0\n", 1001, false, true},
+		{"unaccepted with owner UID", "1: 0100007F:D431 0100007F:3039 01 0:0 0:0 0 1001 0 0\n", 1001, false, true},
 		{"unaccepted root", "1: 0100007F:D431 0100007F:3039 01 0:0 0:0 0 0 0 0\n", 0, false, true},
 		{"deferred accept same user", "1: 0100007F:D431 0100007F:3039 03 0:0 0:0 0 1001 0 0\n", 1001, true, false},
 		{"deferred accept root", "1: 0100007F:D431 0100007F:3039 03 0:0 0:0 0 0 0 0\n", 0, true, false},
@@ -102,7 +103,7 @@ func TestLocalHTTPClientWaitsForAcceptedOwnerBeforeSendingSecrets(t *testing.T) 
 			if len(fields) < 10 || fields[1] != address || fields[3] != "01" {
 				continue
 			}
-			if fields[7] != "0" || fields[9] != "0" || fields[4] != "00000000:00000000" {
+			if fields[9] != "0" || fields[4] != "00000000:00000000" {
 				t.Fatalf("unaccepted socket owner/queues = %v", fields[4:10])
 			}
 			return true
