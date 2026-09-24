@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -156,6 +157,38 @@ func TestInitAndLogging(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "uam.log")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoggingKeepsUntrustedFieldsInOneJSONRecord(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UAM_CACHE_DIR", dir)
+	previous := L()
+	c, err := Init()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = c.Close()
+		SetLogger(previous)
+	})
+	input := "deny\r\n{\"level\":\"INFO\",\"msg\":\"forged\"}\n"
+	providerErr := fmt.Errorf("unsupported decision: %s", input)
+	Warn("answer failed", "error", providerErr)
+	data, err := os.ReadFile(filepath.Join(dir, "uam.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSuffix(data, []byte("\n")), []byte("\n"))
+	if len(lines) != 2 { // Initialization and the warning, with no injected record.
+		t.Fatalf("got %d log records, want 2: %q", len(lines), data)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(lines[1], &entry); err != nil {
+		t.Fatalf("warning is not a JSON record: %v", err)
+	}
+	if entry["level"] != "WARN" || entry["msg"] != "answer failed" || entry["error"] != providerErr.Error() {
+		t.Fatalf("warning fields changed: %#v", entry)
 	}
 }
 

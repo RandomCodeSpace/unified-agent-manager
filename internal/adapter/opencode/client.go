@@ -57,6 +57,9 @@ type apiClient struct {
 	password  string
 	directory string
 	http      *http.Client
+	// allEvents forwards every event type from subscribe. The terminal
+	// supervisor leaves it false and receives only session.created.
+	allEvents bool
 }
 
 func newAPIClient(baseURL, username, password, directory string, client *http.Client) (*apiClient, error) {
@@ -227,7 +230,7 @@ func (c *apiClient) sendSSEEvent(ctx context.Context, data []byte, events chan<-
 	if err := decodeStrictJSON(data, &event); err != nil {
 		return c.safeError("decode OpenCode event", err)
 	}
-	if event.Type != "session.created" {
+	if !c.allEvents && event.Type != "session.created" {
 		return nil
 	}
 	select {
@@ -288,6 +291,10 @@ func (c *apiClient) doJSON(ctx context.Context, method, path, rawPath string, pa
 }
 
 func (c *apiClient) do(ctx context.Context, method, path, rawPath string, payload any, accept string) (*http.Response, error) {
+	return c.doQuery(ctx, method, path, rawPath, nil, payload, accept)
+}
+
+func (c *apiClient) doQuery(ctx context.Context, method, path, rawPath string, query url.Values, payload any, accept string) (*http.Response, error) {
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -300,6 +307,7 @@ func (c *apiClient) do(ctx context.Context, method, path, rawPath string, payloa
 	endpoint := *c.baseURL
 	endpoint.Path = path
 	endpoint.RawPath = rawPath
+	endpoint.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
 	if err != nil {
 		return nil, c.safeError("construct OpenCode API request", err)

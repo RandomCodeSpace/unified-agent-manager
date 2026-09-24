@@ -5,21 +5,38 @@ GOBIN ?= $(shell go env GOPATH)/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 
-.PHONY: all build install run test test-e2e test-e2e-real cover lint tidy clean test-e2e-dashboard
+.PHONY: all build install run test test-e2e test-e2e-real cover lint tidy clean test-e2e-dashboard web check-web
 
 all: build
 
-build:
+build: web
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w $(LDFLAGS)" -o bin/$(BINARY) $(CMD)
 
-install:
+install: web
 	mkdir -p $(GOBIN)
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w $(LDFLAGS)" -o $(GOBIN)/$(BINARY) $(CMD)
+
+# The web interface is a Vite build embedded into the binary from
+# internal/web/dist. Source builds need Node.js; release tags include the bundle.
+web:
+	npm --prefix web ci
+	npm --prefix web run build
+	$(MAKE) check-web
+
+# Tagged bundles must match the regenerated tree exactly, including extra files.
+# Source checkouts intentionally leave the generated directory ignored.
+check-web:
+	@test -s internal/web/dist/index.html
+	@set -eu; if test -n "$$(git ls-tree -r --name-only HEAD -- internal/web/dist)"; then \
+		git diff --exit-code HEAD -- internal/web/dist; \
+		extra="$$(git ls-files --others --ignored --exclude-standard -- internal/web/dist)"; \
+		test -z "$$extra" || { printf 'Unexpected generated web assets:\n%s\n' "$$extra"; exit 1; }; \
+	fi
 
 run: build
 	./bin/$(BINARY)
 
-test:
+test: web
 	go test ./...
 
 # End-to-end tests drive the built binary over real PTYs, so they need it built
@@ -38,7 +55,7 @@ test-e2e-real: build
 test-e2e-dashboard: build
 	UAM_E2E_BIN=$(CURDIR)/bin/uam go test ./internal/e2e/ -run TestE2EDashboard -count=1 -v -timeout 10m
 
-cover:
+cover: web
 	go test -coverprofile=coverage.out ./... >/dev/null
 	go tool cover -func=coverage.out | tail -1
 	@echo "per-package: go tool cover -func=coverage.out"

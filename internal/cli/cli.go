@@ -84,6 +84,9 @@ func Usage() {
 	fmt.Fprintln(os.Stderr, "  uam restart [--allow-latest] <id> stop the agent and resume it in place")
 	fmt.Fprintln(os.Stderr, "  uam rm <id>")
 	fmt.Fprintln(os.Stderr, "  uam kill-all                      stop every managed session")
+	fmt.Fprintln(os.Stderr, "  uam web [--listen 127.0.0.1:8260] [--public-origin <url>]...  start the web interface service")
+	fmt.Fprintln(os.Stderr, "  uam web status [--json]")
+	fmt.Fprintln(os.Stderr, "  uam web stop                      stop the web interface service")
 	fmt.Fprintln(os.Stderr, "  uam profile ls [--json]")
 	fmt.Fprintln(os.Stderr, "  uam profile show <name> [--json]")
 	fmt.Fprintln(os.Stderr, "  uam profile set <name> [profile flags]")
@@ -160,6 +163,11 @@ func runWithoutStore(ctx context.Context, args []string) (bool, error) {
 		return true, session.RunAttach(args[1:])
 	case "__opencode":
 		return true, opencode.RunSupervisorCommand(args[1:])
+	case "web":
+		return true, runWeb(ctx, args[1:])
+	case "__web":
+		// The web service opens sessions.json itself; its lifetime is its own.
+		return true, runWebDaemon(args[1:])
 	default:
 		return false, nil
 	}
@@ -274,10 +282,14 @@ func runLast(ctx context.Context, svc *app.Service, runTUI func(context.Context,
 
 // lastSeenID returns the id of the record with the maximum persisted LastSeenAt.
 // Ties are broken by the larger id so repeated `uam last` invocations are
-// deterministic. Returns "" when there are no records (C1-6).
+// deterministic. Returns "" when there are no records (C1-6). Records owned by
+// the web service are not terminal sessions and are never candidates.
 func lastSeenID(cfg store.Config) string {
 	var best store.SessionRecord
 	for _, rec := range cfg.Sessions {
+		if rec.Surface != "" {
+			continue
+		}
 		if best.ID == "" || rec.LastSeenAt.After(best.LastSeenAt) ||
 			(rec.LastSeenAt.Equal(best.LastSeenAt) && rec.ID > best.ID) {
 			best = rec

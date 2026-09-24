@@ -67,6 +67,8 @@ type Config struct {
 	Profiles       map[string]Profile       `json:"profiles"`
 	Sessions       map[string]SessionRecord `json:"sessions"`
 	UI             UISettings               `json:"ui"`
+	// WebProjects holds the web interface's Projects, keyed by Project ID.
+	WebProjects map[string]WebProject `json:"web_projects,omitempty"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -94,6 +96,7 @@ type configAlias struct {
 	Profiles       map[string]Profile       `json:"profiles"`
 	Sessions       map[string]SessionRecord `json:"sessions"`
 	UI             UISettings               `json:"ui"`
+	WebProjects    map[string]WebProject    `json:"web_projects,omitempty"`
 }
 
 // knownConfigFields lists modeled keys and runtime-only keys that must never
@@ -105,6 +108,7 @@ var knownConfigFields = map[string]struct{}{
 	"profiles":                    {},
 	"sessions":                    {},
 	"ui":                          {},
+	"web_projects":                {},
 	"client_id":                   {},
 	"client_ids":                  {},
 	"client_role":                 {},
@@ -137,6 +141,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		Profiles:       c.Profiles,
 		Sessions:       c.Sessions,
 		UI:             c.UI,
+		WebProjects:    c.WebProjects,
 	})
 	if err != nil {
 		return nil, err
@@ -155,6 +160,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.Profiles = alias.Profiles
 	c.Sessions = alias.Sessions
 	c.UI = alias.UI
+	c.WebProjects = alias.WebProjects
 	unknown, err := decodeUnknownJSON(data, knownConfigFields)
 	if err != nil {
 		return err
@@ -298,9 +304,148 @@ type SessionRecord struct {
 	PR               *PRRecord                `json:"pr,omitempty"`
 	Profile          string                   `json:"profile,omitempty"`
 	ProfileOverrides *SessionProfileOverrides `json:"profile_overrides,omitempty"`
+	// Surface names the owner of a record. Empty means a terminal session host;
+	// SurfaceWeb means the web service. Terminal commands never list, attach,
+	// resume or prune records with a non-empty Surface, and the web service
+	// only opens its own, so neither takes over the other's conversations.
+	Surface string `json:"surface,omitempty"`
+	// Web is the web service's durable state for a SurfaceWeb record.
+	Web *WebState `json:"web,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
+
+// SurfaceWeb marks records owned by the `uam web` service.
+const SurfaceWeb = "web"
+
+// WebState is the small durable part of a web session. Transcripts stay with
+// the provider; only the last known turn state and the last prompt request
+// outcome are kept so a restarted service can report them.
+type WebState struct {
+	// Turn is the last known session state (for example "working" or
+	// "completed").
+	Turn string `json:"turn,omitempty"`
+	// RequestID is the client-generated ID of the last prompt submission.
+	RequestID string `json:"request_id,omitempty"`
+	// RequestStatus is that submission's outcome: accepted, rejected or
+	// uncertain.
+	RequestStatus string    `json:"request_status,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	// Detail is a sanitized, short explanation of the state (usually an error).
+	Detail string `json:"detail,omitempty"`
+	// ProjectID is the WebProject the session (a Task) belongs to.
+	ProjectID string `json:"project_id,omitempty"`
+	// Model is the selected model ID; empty means the provider default.
+	Model       string `json:"model,omitempty"`
+	Effort      string `json:"effort,omitempty"`
+	ContextSize string `json:"context_size,omitempty"`
+	// Title is the provider-generated conversation title, sanitized and
+	// bounded.
+	Title string `json:"title,omitempty"`
+	// Stage is the Task's lifecycle stage: "" (active), "settled" or
+	// "archived". Records written before stages existed are active.
+	Stage string `json:"stage,omitempty"`
+	// SettledAt is when the Task was settled; zero unless it is settled, or
+	// was settled before it was archived.
+	SettledAt time.Time `json:"settled_at,omitzero"`
+	// ArchivedAt is when the Task was archived.
+	ArchivedAt time.Time `json:"archived_at,omitzero"`
+
+	unknown map[string]json.RawMessage
+}
+
+// Update sets every field this version models to v's and keeps the fields a
+// newer uam wrote, so a writer never drops them.
+func (w *WebState) Update(v WebState) {
+	unknown := w.unknown
+	*w = v
+	w.unknown = unknown
+}
+
+type webStateAlias WebState
+
+var knownWebStateFields = map[string]struct{}{
+	"turn":           {},
+	"request_id":     {},
+	"request_status": {},
+	"updated_at":     {},
+	"detail":         {},
+	"project_id":     {},
+	"model":          {},
+	"effort":         {},
+	"context_size":   {},
+	"title":          {},
+	"stage":          {},
+	"settled_at":     {},
+	"archived_at":    {},
+}
+
+func (w WebState) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(webStateAlias(w))
+	if err != nil {
+		return nil, err
+	}
+	return mergeUnknownJSON(base, w.unknown, knownWebStateFields)
+}
+
+func (w *WebState) UnmarshalJSON(data []byte) error {
+	var alias webStateAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*w = WebState(alias)
+	unknown, err := decodeUnknownJSON(data, knownWebStateFields)
+	if err != nil {
+		return err
+	}
+	w.unknown = unknown
+	return nil
+}
+
+// WebProject is a directory the web interface groups Tasks under. There is
+// at most one per Dir.
+type WebProject struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Dir       string    `json:"dir"`
+	CreatedAt time.Time `json:"created_at"`
+
+	unknown map[string]json.RawMessage
+}
+
+type webProjectAlias WebProject
+
+var knownWebProjectFields = map[string]struct{}{
+	"id":         {},
+	"name":       {},
+	"dir":        {},
+	"created_at": {},
+}
+
+func (p WebProject) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(webProjectAlias(p))
+	if err != nil {
+		return nil, err
+	}
+	return mergeUnknownJSON(base, p.unknown, knownWebProjectFields)
+}
+
+func (p *WebProject) UnmarshalJSON(data []byte) error {
+	var alias webProjectAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*p = WebProject(alias)
+	unknown, err := decodeUnknownJSON(data, knownWebProjectFields)
+	if err != nil {
+		return err
+	}
+	p.unknown = unknown
+	return nil
+}
+
+// maxWebModelBytes bounds a persisted model ID; longer values are cleared.
+const maxWebModelBytes = 256
 
 type sessionRecordAlias SessionRecord
 
@@ -324,6 +469,8 @@ var knownSessionRecordFields = map[string]struct{}{
 	"pr":                          {},
 	"profile":                     {},
 	"profile_overrides":           {},
+	"surface":                     {},
+	"web":                         {},
 	"client_id":                   {},
 	"controller_id":               {},
 	"requested_role":              {},
@@ -519,6 +666,7 @@ func (s *Store) loadNoLock() (Config, error) {
 	// Untrusted on-disk records are validated and coerced on every load path,
 	// including the read-only newer-schema one below.
 	dropInvalidRecords(&cfg)
+	dropInvalidProjects(&cfg)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
 	// erroring or clobbering it on the next save (F33).
@@ -599,6 +747,48 @@ func dropInvalidRecords(cfg *Config) {
 			log.Warn("clearing invalid pr url on session record", "key", key)
 			rec.PR = nil
 			cfg.Sessions[key] = rec
+		}
+		// The web references are lookups, never argv; a bad one costs the
+		// record that reference (the web service reassigns a Project), not
+		// the record itself.
+		if web := rec.Web; web != nil && (isUnsafeArgv(web.ProjectID) || hasControlChar(web.Model) || len(web.Model) > maxWebModelBytes || hasControlChar(web.Effort) || len(web.Effort) > maxWebModelBytes || (web.ContextSize != "" && web.ContextSize != "default" && web.ContextSize != "long_context")) {
+			log.Warn("clearing invalid web selection on session record", "key", key)
+			clean := *web
+			if isUnsafeArgv(clean.ProjectID) {
+				clean.ProjectID = ""
+			}
+			if hasControlChar(clean.Model) || len(clean.Model) > maxWebModelBytes {
+				clean.Model = ""
+			}
+			if hasControlChar(clean.Effort) || len(clean.Effort) > maxWebModelBytes {
+				clean.Effort = ""
+			}
+			if clean.ContextSize != "default" && clean.ContextSize != "long_context" {
+				clean.ContextSize = ""
+			}
+			rec.Web = &clean
+			cfg.Sessions[key] = rec
+		}
+	}
+}
+
+// dropInvalidProjects removes web projects whose ID or directory fails the
+// same checks as session records, so a bad entry cannot reach a provider as a
+// working directory.
+func dropInvalidProjects(cfg *Config) {
+	for key, p := range cfg.WebProjects {
+		reason := ""
+		switch {
+		case p.ID == "" || p.ID != key || isUnsafeArgv(p.ID):
+			reason = "invalid id"
+		case p.Dir == "" || !filepath.IsAbs(p.Dir):
+			reason = "non-absolute dir"
+		case hasControlChar(p.Dir):
+			reason = "control char in dir"
+		}
+		if reason != "" {
+			log.Warn("dropping invalid web project", "key", key, "reason", reason)
+			delete(cfg.WebProjects, key)
 		}
 	}
 }
@@ -934,9 +1124,15 @@ func (s *Store) TryRecordSessionExit(exit SessionExit) (bool, error) {
 	return matched, err
 }
 
+// PruneOld drops long-stale terminal records whose session is gone. Records
+// owned by another surface are never pruned here: their liveness is not a
+// terminal session host, so the probe cannot speak for them.
 func PruneOld(cfg *Config, maxAge time.Duration, exists func(string) bool) {
 	cutoff := time.Now().Add(-maxAge)
 	for key, rec := range cfg.Sessions {
+		if rec.Surface != "" {
+			continue
+		}
 		if rec.LastSeenAt.Before(cutoff) && !exists(rec.SessionName) {
 			delete(cfg.Sessions, key)
 		}

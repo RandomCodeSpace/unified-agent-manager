@@ -6,6 +6,9 @@ on:
   workflow_call:
   workflow_dispatch:
 
+env:
+  GOTOOLCHAIN: local
+
 permissions:
   contents: read
 
@@ -22,6 +25,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: web/.node-version
+          package-manager-cache: false
+
+      - name: Build web assets
+        run: make web
 
       - name: Verify modules
         run: go mod verify
@@ -41,6 +53,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: web/.node-version
+          package-manager-cache: false
+
+      - name: Build web assets
+        run: make web
 
       - name: Test with race detector and coverage
         run: go test -race -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...

@@ -12,6 +12,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 jobs:
   govulncheck:
     name: govulncheck
@@ -29,7 +32,7 @@ jobs:
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
-          script/qa/govulncheck-allowlist.sh
+          govulncheck ./...
 
   gosec:
     name: gosec

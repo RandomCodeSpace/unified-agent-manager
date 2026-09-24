@@ -109,6 +109,7 @@ for the exact behavior.
 | `uam ls` | List every saved session |
 | `uam last` | Attach to the most recent session |
 | `uam doctor` | Check providers, sessions, and configuration |
+| `uam web` | Start the browser interface for Copilot ([guide](docs/web.md)) |
 | `uam --help` | Show the full command reference |
 
 ## Essential controls
@@ -173,7 +174,21 @@ make test
 make test-e2e
 ```
 
-Source builds require Go 1.25.8 or newer. Read [Testing UAM](docs/testing.md)
+Source builds require Go 1.25.14 or newer and Node.js with npm (the tested
+Node version is in `web/.node-version`). `make build` and `make install`
+install the locked frontend dependencies, build the UI, then embed it in the
+Go binary. Generated bundles are ignored on source branches. A plain
+`go build` or `go install ./cmd/uam` without first running `make web` builds
+the terminal commands, but `uam web` reports that its UI has not been built.
+
+Release tags contain a generated UI commit, so
+`go install github.com/RandomCodeSpace/unified-agent-manager/cmd/uam@<version>`
+includes the web UI without Node.js. Use the exact published beta version,
+for example `@v0.8.0-beta.1`, to select a beta; `@latest` normally selects a
+stable release. See [release preparation](docs/releasing.md) for the local,
+reviewable tag workflow.
+
+Read [Testing UAM](docs/testing.md)
 before changing terminal, attach, or session-host behavior.
 
 Prebuilt binaries, checksums, SBOMs, and signing material are available on the

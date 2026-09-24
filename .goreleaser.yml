@@ -4,6 +4,7 @@ project_name: uam
 
 before:
   hooks:
+    - make web
     - go mod download
 
 builds:
