@@ -425,3 +425,59 @@ that behaves the same.
 `SessionSummary` gains `mode`. A mode change moves `updated_at`, is written to
 `sessions.json`, and sends a `session` frame. `Interaction.options[]` gains
 `allow_once`, omitted when false.
+
+## Task lifecycle
+
+- Date: 2026-09-24 (decided in #157)
+
+A Task is **active** until the user settles or archives it. A **settled**
+Task is one the user marked complete. It is read-only until reopened. An
+**archived** Task is read-only for good. Deleting is the last step, and it is
+allowed only after archiving, so a Task is never deleted by a single click.
+This replaces the delete and remove rules in the Projects section above.
+
+| Action | From | Preconditions | Effect |
+|---|---|---|---|
+| Settle | active | not busy (`starting`, `working`, awaiting the user); queue empty; no pending interaction | stage `settled`, `settled_at` set; the provider conversation is closed if open |
+| Reopen | settled | none | stage active, `settled_at` cleared; the next prompt reopens the same conversation |
+| Archive | active or settled | from active, the settle preconditions | stage `archived`, `archived_at` set; the conversation is closed if open. Final: there is no unarchive. An active Task archived this way keeps `settled_at` empty. |
+| Delete | archived | none | removes the UAM record; the provider conversation is not deleted |
+| Remove Project | any | every Task in it archived, or none | removes the Project and its archived records |
+
+- **Storage.** The record's `web` object gains `stage` (`settled` or
+  `archived`; absent means active), `settled_at` and `archived_at`. A record
+  without a stage, and one with a stage this version does not know, loads as
+  active, so nothing migrates.
+- **Read-only.** A settled or archived Task refuses with 409 every prompt
+  mode, the queue routes, and model and mode changes. The Task can be renamed
+  while settled, but not once archived. Viewing it never opens its
+  conversation. Settling needs no pending interaction and closes the
+  conversation, so a settled Task has nothing to answer.
+- **Pending.** Besides the requests that make a Task wait for the user, a
+  yolo approval still on its way to the provider counts as pending. Settling
+  or archiving waits for it.
+- **Stop first.** A Task that is running, starting or waiting for the user
+  cannot be settled or archived. The user stops the turn, and answers or
+  clears what waits, first. Settling therefore never interrupts work.
+- **Retries.** A repeated `request_id` of a prompt sent before the Task was
+  settled still returns its recorded outcome.
+
+A settled or archived Task shows no transcript after the service restarts,
+because UAM keeps no transcript and does not open the conversation to read it.
+The same is true of a closed Task today.
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `POST /api/sessions/{id}/settle` | – | 200 `SessionSummary`; 404; 409 wrong stage, busy, queued prompts or a pending interaction |
+| `POST /api/sessions/{id}/reopen` | – | 200 `SessionSummary`; 404; 409 unless settled |
+| `POST /api/sessions/{id}/archive` | – | 200 `SessionSummary`; 404; 409 when archived, or when active and a settle precondition fails |
+| `DELETE /api/sessions/{id}` | – | 204; 404; 409 unless archived |
+| `DELETE /api/projects/{id}` | – | 204; 404; 409 unless every Task in it is archived |
+| `POST /api/sessions/{id}/prompt`, the queue routes | unchanged | 409 while settled or archived |
+| `PATCH /api/sessions/{id}` | unchanged | 409 for `model` or `mode` while settled or archived, and for `name` while archived |
+
+`SessionSummary` gains `stage` (omitted while active), `settled_at` and
+`archived_at` (omitted while unset). A stage change moves `updated_at`, is
+written to `sessions.json`, and sends a `session` frame.

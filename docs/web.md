@@ -174,11 +174,27 @@ off, run `uam web stop`, then `uam web` without the flag.
   yet are dropped, each with a notice.
 - **Close session** disconnects UAM from the provider conversation and keeps
   the record. Sending another prompt reopens the same conversation.
-- **Delete Task** removes the Task from UAM and closes its conversation.
-  **Remove Project** removes the Project and all its Tasks the same way. Both
-  are refused while a Task concerned is working or waiting for you. Neither
-  deletes the provider's copy of the conversation, and neither touches the
-  directory.
+- **Settle, archive, and delete**: when a Task is done, settle it. A settled
+  Task is read-only and its conversation is closed; reopen it to continue,
+  and your next message picks up the same conversation. Archive a Task, settled
+  or not, to put it away for good; an archived Task cannot be reopened. Only
+  an archived Task can be deleted, and a Project can be removed only once
+  every Task in it is archived. Deleting or removing never deletes the
+  provider's copy of the conversation and never touches the directory.
+
+  | Action | Allowed on | Also needs | Result |
+  |---|---|---|---|
+  | Settle | an active Task | no turn running, nothing waiting for you, an empty queue | Read-only; the conversation is closed |
+  | Reopen | a settled Task | – | Active again; the next message reopens the same conversation |
+  | Archive | an active or settled Task | for an active Task, the same as Settle | Read-only for good; there is no unarchive |
+  | Delete Task | an archived Task | – | The Task is removed from UAM |
+  | Remove Project | any Project | every Task in it archived, or no Tasks | The Project and its archived Tasks are removed from UAM |
+
+  A settled or archived Task takes no messages, queue actions, model or mode
+  changes. You can still rename a settled Task. Stop a running turn, answer
+  what waits for you, and send or clear the queue before you settle or
+  archive. After the service restarts, a settled or archived Task shows no
+  conversation, the same as a closed one.
 - **Changes**: the Task's meta line shows how many files differ from `HEAD`
   in the project directory and opens them as a sheet with the diff. That
   includes edits made by anything else in the working tree, not only this
