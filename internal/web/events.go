@@ -112,8 +112,7 @@ func encodeFrame(event string, payload any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	frame := make([]byte, 0, len(event)+len(data)+16)
-	frame = append(frame, "event: "...)
+	frame := []byte("event: ")
 	frame = append(frame, event...)
 	frame = append(frame, "\ndata: "...)
 	frame = append(frame, data...)
