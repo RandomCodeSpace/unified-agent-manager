@@ -217,6 +217,7 @@ type Conversation struct {
 	sendHook    func(ctx context.Context, prompt string) error
 	steerHook   func(ctx context.Context, prompt string) error
 	respondHook func(ctx context.Context, id string, answer agentapi.Answer) error
+	cancelHook  func(ctx context.Context) error
 	cancelErr   error
 	setModelErr error
 	diff        []agentapi.FileDiff
@@ -288,6 +289,13 @@ func (c *Conversation) SetRespondHook(hook func(ctx context.Context, id string, 
 	c.respondHook = hook
 }
 
+// SetCancelHook decides how Cancel behaves, as SetSendHook does for Send.
+func (c *Conversation) SetCancelHook(hook func(ctx context.Context) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cancelHook = hook
+}
+
 // SetCancelError makes Cancel return err.
 func (c *Conversation) SetCancelError(err error) {
 	c.mu.Lock()
@@ -332,14 +340,19 @@ func (c *Conversation) Steer(ctx context.Context, prompt string) error {
 	return nil
 }
 
-func (c *Conversation) Cancel(context.Context) error {
+func (c *Conversation) Cancel(ctx context.Context) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.cancels++
 	if c.closed {
+		c.mu.Unlock()
 		return agentapi.ErrClosed
 	}
-	return c.cancelErr
+	hook, err := c.cancelHook, c.cancelErr
+	c.mu.Unlock()
+	if hook != nil {
+		return hook(ctx)
+	}
+	return err
 }
 
 func (c *Conversation) Respond(ctx context.Context, id string, answer agentapi.Answer) error {

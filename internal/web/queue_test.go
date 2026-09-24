@@ -127,6 +127,26 @@ func TestQueueDrainsInOrderAfterCompletedTurns(t *testing.T) {
 	}
 }
 
+func TestCancelPausesQueueBeforeProviderCompletesTurn(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := busySession(t, m, prov)
+	mustSubmit(t, m, sum.ID, "B", mustUUID(t), ModeQueue, SubmissionQueued)
+	conv.SetCancelHook(func(context.Context) error {
+		if d := detail(t, m, sum.ID); !d.QueuePaused || queueTexts(d) != "B" {
+			t.Fatalf("before provider cancellation: paused=%v queue=%s", d.QueuePaused, queueTexts(d))
+		}
+		// The turn finishes normally while Stop is reaching the provider.
+		conv.EmitTurn(agentapi.TurnCompleted, "")
+		return nil
+	})
+	if _, err := m.Cancel(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if d := detail(t, m, sum.ID); !d.QueuePaused || queueTexts(d) != "B" || d.State != StateCompleted || strings.Join(conv.Sends(), ",") != "first" {
+		t.Fatalf("after Stop raced completion: paused=%v queue=%s state=%s sends=%q", d.QueuePaused, queueTexts(d), d.State, conv.Sends())
+	}
+}
+
 func TestQueuePausesUntilResumedOrCleared(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	sum, conv := busySession(t, m, prov)

@@ -1917,13 +1917,18 @@ func (m *Manager) Cancel(id string) (SessionSummary, error) {
 		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
 	}
 	conv, state, caps := s.conv, s.state(), m.infos[s.provider].Capabilities
-	m.mu.Unlock()
 	if !caps.Cancel {
+		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusConflict, "this provider does not support cancelling a turn")
 	}
 	if conv == nil || state == StateStarting || !busy(state) {
+		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusConflict, "no turn is running")
 	}
+	before := m.summaryLocked(s)
+	m.pauseQueueLocked(s)
+	m.changedLocked(s, before)
+	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
 	err := conv.Cancel(ctx)
 	cancel()
