@@ -252,3 +252,110 @@ Shape changes:
 | `session_removed` | `{"seq", "session_id"}` |
 
 Sequencing, bounded queues and the snapshot rules are unchanged.
+
+## Steer and queue
+
+- Date: 2026-09-24 (decided in #149, built in #151)
+
+A message sent while a turn runs either **steers** that turn or waits in a
+**queue** until the turn ends. Steering uses the provider's own mid-turn
+delivery. UAM holds the queue itself, because that is the only queue every
+provider can offer the same way.
+
+### Queue
+
+- Each Task has its own first-in, first-out queue in memory. It holds at most
+  20 prompts, each within the usual prompt size limit. Nothing in it reaches
+  the provider while a turn runs.
+- When a turn ends `completed`, UAM sends the head through the normal submit
+  path with the head's own `request_id`. Steers do not end a turn early,
+  because one provider idle covers the prompt and every steer folded into it.
+  The head leaves the queue before UAM sends it, so it can no longer be
+  cancelled, and it gets the usual `accepted`, `rejected` or `uncertain`
+  outcome. UAM never resends it. If UAM sent nothing because a turn was
+  running after all, the head goes back to the front.
+- The queue **pauses** when a turn ends `cancelled` or `failed`, when the
+  conversation exits or is closed, and when a prompt meant to start a turn (a
+  drained head or a normal send) comes back `rejected` or `uncertain`. It
+  stays paused across later turns until the user resumes or clears it. A
+  stopped turn is never followed by queued work on its own. An empty queue is
+  never paused.
+- Cancelling a queued prompt removes it and never contacts the provider.
+  There is no editing or reordering. Cancel and queue again instead.
+- Stopping the service drops every queue. UAM does not send the prompts and
+  forgets their request IDs. Anything that waits for the service to be idle
+  before stopping it should treat a Task with `queued > 0` as busy.
+
+### Steer
+
+- UAM accepts a steer only while a turn runs (`working` or waiting for the
+  user). A steer never changes the Task's state or starts a turn. The turn it
+  joins reports its own end, and the queue drains only after that.
+- An accepted steer cannot be withdrawn. When the provider uses it, its user
+  item carries `delivery: "steer"`. When the turn ends without using it, the
+  transcript gets a notice that quotes it, "Steer not delivered: the turn was
+  stopped" ("the turn failed" or "the turn ended first" for the other
+  endings).
+- A lost response is `uncertain`. UAM resends nothing.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Conversation.Steer(ctx, prompt)` | Adds the prompt to the running turn. Same outcomes as `Send`, plus `ErrUnsupported` when the provider cannot steer. The adapter tracks delivery and reports an unused steer as an `ItemNotice`. |
+| `Item.Delivery` (`delivery`) | `"steer"` on a user item that joined a running turn as a steer. |
+
+`Steer` is its own method, not a mode on `Send`. The two have different
+callers and different turn semantics, and a separate method leaves `Send` and
+its callers unchanged.
+
+Copilot mapping: `Send` passes `Mode: "enqueue"` explicitly, so a prompt that
+reaches a CLI still busy with a turn runs after that turn instead of joining
+it. `Steer` passes `Mode: "immediate"` and keeps the returned `messageId`. A
+main-agent `user.message` with that `messageId` marks the steer as used, and
+`delivery: "steering"` sets `Item.Delivery`. A steer that arrives during the
+turn's final model call gets a follow-up call in the same turn, with
+`delivery: "queued"`. It counts as delivered but carries no mark. A steer
+still unused at the turn's `session.idle` gets the notice, and
+`session.abort` drops unused steers. When a steer arrives, Copilot also moves
+a running foreground shell command to the background. That completes the
+shell's tool call, and the adapter ignores the partial output the shell keeps
+sending under the same call ID. OpenCode, which is not registered, returns
+`ErrUnsupported`.
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `POST /api/sessions/{id}/prompt` | `{"text", "request_id", "mode"?}` | `mode` is `send` (default), `queue` or `steer`. While a turn runs, `send` is 409, `queue` is 202 `Submission` with `status: "queued"` (409 when the queue holds 20), and `steer` is 202 `Submission` `accepted`, `rejected` or `uncertain` (409 when the provider cannot steer). While no turn runs, `queue` and `steer` send like `send`, except that `queue` joins a queue that is about to drain. |
+| `DELETE /api/sessions/{id}/queue/{request_id}` | – | 204, also when already cancelled; 404 unknown; 409 already sent |
+| `POST /api/sessions/{id}/queue/resume` | – | 204; sends the head at once when no turn runs |
+| `POST /api/sessions/{id}/queue/clear` | – | 204; cancels every queued prompt and unpauses |
+
+A repeated `request_id` for a prompt still in the queue returns its `queued`
+`Submission` in any mode and never queues it twice. Once the prompt is
+cancelled, `status` is `cancelled`. Once it is sent, the repeat returns the
+send's outcome. `last_submission` changes when a prompt is sent or steered,
+not when it is queued or cancelled.
+
+Shape changes:
+
+- `Submission.status` gains `queued` and `cancelled`.
+- `SessionSummary` gains `queued` (count).
+- `SessionDetail` gains `queue: [{request_id, text, queued_at}]` and
+  `queue_paused`.
+- `Item` gains `delivery` (omitted unless `"steer"`).
+
+A queue change is Task activity and moves `updated_at`.
+
+### Event stream additions
+
+| Event | `data` |
+|---|---|
+| `queue` | `{"seq", "session_id", "queue": [QueuedPrompt], "paused"}` (selected session), after every queue change |
+
+The service sends a `queue` frame under the same lock as the change it
+describes, then the `session` frame with the new `queued` count. The frame
+therefore sits in `seq` order with the state around it. Stop turn, for
+example, sends `queue` with `paused: true` and then `session` with
+`cancelled`.

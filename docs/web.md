@@ -134,7 +134,27 @@ off, run `uam web stop`, then `uam web` without the flag.
   Task in the project list and on the home screen. Nothing is approved
   automatically. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused.
-- **Stop turn** cancels the running turn. The conversation stays open.
+- **Messages while a turn runs**: you can queue a message or steer the turn
+  with it.
+  - **Queue** holds the message until the turn completes, then sends it as
+    the next prompt. A Task queues up to 20 messages and sends them one turn
+    at a time, oldest first. You can cancel a queued message until it is
+    sent; to change one, cancel it and queue it again.
+  - **Steer** adds the message to the turn that is running. The agent reads
+    it before its next step, and it shows in the conversation, marked as a
+    steer, at the point where the agent took it in. A steer cannot be taken
+    back. If the turn ends before the agent took it in, a notice says the
+    steer was not delivered and quotes it. With Copilot, a steer also moves a
+    shell command that is running to the background.
+  - When no turn is running, both send the message at once.
+- **Paused queue**: the queue pauses when a turn is stopped or fails, when
+  the provider process ends, when you close the session, and when the
+  provider refuses a message or may not have received it. A paused queue
+  sends nothing until you act on it. Resume sends the next message, at once
+  if no turn is running. Clear drops every queued message.
+- **Stop turn** cancels the running turn. The conversation stays open. A
+  queue pauses instead of moving on, and steers the agent had not taken in
+  yet are dropped, each with a notice.
 - **Close session** disconnects UAM from the provider conversation and keeps
   the record. Sending another prompt reopens the same conversation.
 - **Delete Task** removes the Task from UAM and closes its conversation.
@@ -182,8 +202,9 @@ uam web stop
 ```
 
 This ends running turns, stops the provider processes the service started,
-and marks those sessions interrupted. Session records and the exact provider
-conversation IDs are kept. After `uam web` starts again, sending a prompt to a
+and marks those sessions interrupted. Queued messages are dropped without
+being sent; queues are kept in memory only. Session records and the exact
+provider conversation IDs are kept. After `uam web` starts again, sending a prompt to a
 session reopens the same provider conversation.
 
 ## Same-host HTTPS reverse proxy
@@ -233,6 +254,9 @@ private and rotate it if it leaks. With `--no-auth` it is not protected at all
 - **Copilot sessions without a prompt.** Copilot saves a conversation only
   after its first message. A session created without a prompt cannot be
   reopened after the service restarts.
+- **Late steers (Copilot).** A steer that arrives while Copilot writes the
+  last reply of a turn is answered right after that reply, in the same turn,
+  and shows as an ordinary message without the steer mark.
 - **Copilot session diffs.** Copilot does not report per-conversation file
   changes; use the Workspace view.
 - **Opening a web conversation elsewhere at the same time.** Do not
