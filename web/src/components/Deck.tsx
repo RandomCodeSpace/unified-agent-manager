@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { modelName, needsYou, type Project, type SessionSummary } from '../api';
+import { modelName, needsYou, readOnly, stageLabel, type Project, type SessionSummary } from '../api';
 import { STATE_LABELS, Sep, StateMark, TaskTitle, relTime, useApp } from './common';
 import { Attention, tasksOf, type WorkspaceActions } from './Rail';
 
@@ -20,7 +20,7 @@ export function Deck({
   highlightId: string | null;
 }) {
   const { hasNews } = useApp();
-  const needs = sessions.filter((s) => needsYou(s) || hasNews(s)).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  const needs = sessions.filter((s) => !readOnly(s) && (needsYou(s) || hasNews(s))).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
   const attention = needs.filter(needsYou).length;
   const byId = new Map(projects.map((p) => [p.id, p]));
 
@@ -137,7 +137,7 @@ function ProjectSection({
                   <TaskTitle session={t} className="deck-row-title" />
                   <Attention session={t} />
                 </span>
-                <span className="deck-row-sub deck-row-state">{STATE_LABELS[t.state]}</span>
+                <span className="deck-row-sub deck-row-state">{readOnly(t) ? stageLabel(t) : STATE_LABELS[t.state]}</span>
                 <span className="deck-row-sub deck-row-model mono">{modelName(meta, t.provider, t.model)}</span>
                 <span className="deck-row-time num">{relTime(t.updated_at)}</span>
               </button>

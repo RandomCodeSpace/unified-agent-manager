@@ -259,6 +259,7 @@ export default function App() {
   } else if (state.detail && selected) {
     pane = (
       <Task
+        key={state.detail.id}
         session={state.detail}
         project={project}
         agents={state.agents}

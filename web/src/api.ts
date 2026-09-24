@@ -26,12 +26,15 @@ export interface Capabilities {
   questions: boolean;
   session_diff: boolean;
   history: boolean;
+  context_size?: boolean;
 }
 
 /** One selectable model of the signed-in account. */
 export interface Model {
   id: string;
   name: string;
+  efforts?: string[];
+  context_sizes?: { id: string; tokens: number }[];
 }
 
 export interface ProviderInfo {
@@ -72,6 +75,12 @@ export interface SessionSummary {
   /** Model reported by the latest turn; live only, empty when unknown. */
   last_model: string;
   subagents_running: number;
+  effort?: string;
+  context_size?: string;
+  context?: { used: number; limit: number };
+  mode?: 'safe' | 'yolo';
+  stage?: 'active' | 'settled' | 'archived';
+  queued?: number;
   state: SessionState;
   state_detail?: string;
   open: boolean;
@@ -95,6 +104,7 @@ export interface ToolCall {
 export interface Item {
   id: string;
   kind: ItemKind;
+  delivery?: 'steer';
   text?: string;
   tool?: ToolCall;
   time: string;
@@ -161,7 +171,9 @@ export interface Answer {
   reject?: boolean;
 }
 
-export type SubmissionStatus = 'accepted' | 'rejected' | 'uncertain';
+export type PromptMode = 'send' | 'steer' | 'queue';
+export type SubmissionStatus = 'accepted' | 'rejected' | 'uncertain' | 'queued' | 'cancelled';
+export interface QueuedPrompt { request_id: string; text: string; queued_at: string }
 
 export interface Submission {
   request_id: string;
@@ -171,6 +183,8 @@ export interface Submission {
 }
 
 export interface SessionDetail extends SessionSummary {
+  queue?: QueuedPrompt[];
+  queue_paused?: boolean;
   /** Main agent items only; subagent items come from the subagent route. */
   items: Item[];
   interactions: Interaction[];
@@ -214,6 +228,7 @@ export interface SnapshotData {
 }
 
 export type UpdateData =
+  | { name: 'queue'; seq: number; session_id: string; queue: QueuedPrompt[]; paused: boolean }
   | { name: 'session'; seq: number; session: SessionSummary }
   | { name: 'session_removed'; seq: number; session_id: string }
   | { name: 'project'; seq: number; project: Project }
@@ -241,6 +256,7 @@ export const UPDATE_EVENTS = [
   'delta',
   'interaction',
   'submission',
+  'queue',
   'subagent',
 ] as const;
 
@@ -272,7 +288,7 @@ export function isStatus(e: unknown, status: number): e is ApiError {
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
-async function call<T>(method: Method, path: string, body?: unknown): Promise<T> {
+async function call<T>(method: Method, path: string, body?: unknown, omitBody = false): Promise<T> {
   // GET and DELETE carry no body; the others are JSON (the server rejects anything else).
   const bodyless = method === 'GET' || method === 'DELETE';
   let res: Response;
@@ -281,7 +297,7 @@ async function call<T>(method: Method, path: string, body?: unknown): Promise<T>
       method,
       credentials: 'same-origin',
       headers: bodyless ? undefined : { 'Content-Type': 'application/json' },
-      body: bodyless ? undefined : JSON.stringify(body ?? {}),
+      body: bodyless || omitBody ? undefined : JSON.stringify(body ?? {}),
     });
   } catch {
     throw new ApiError(0, 'Could not reach the server');
@@ -325,15 +341,24 @@ export const api = {
     project_id: string;
     provider: string;
     model?: string;
+    effort?: string;
+    context_size?: string;
+    mode?: 'safe' | 'yolo';
     name?: string;
     prompt?: string;
     request_id: string;
   }) => call<SessionSummary>('POST', '/api/sessions', body),
   rename: (id: string, name: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { name }),
   setModel: (id: string, model: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { model }),
+  settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: 'safe' | 'yolo' }) =>
+    call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, body),
+  stage: (id: string, action: 'settle' | 'reopen' | 'archive') => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`),
+  queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
+  cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),
+  cancelSubagent: (id: string, agentId: string) => call<Subagent>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/cancel`, undefined, true),
   deleteSession: (id: string) => call<void>('DELETE', `/api/sessions/${enc(id)}`),
-  prompt: (id: string, text: string, request_id: string) =>
-    call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id }),
+  prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send') =>
+    call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id, mode }),
   cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
   close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),
   respond: (id: string, iid: string, answer: Answer) =>
@@ -391,3 +416,6 @@ export function modelName(meta: Meta | null, providerName: string, id: string): 
   if (!id) return 'Default model';
   return modelCatalog(meta, providerName).find((m) => m.id === id)?.name ?? id;
 }
+
+export const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
+export const stageLabel = (s: SessionSummary): string => s.stage === 'settled' ? 'Settled' : s.stage === 'archived' ? 'Archived' : 'Active';

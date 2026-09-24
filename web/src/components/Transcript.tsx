@@ -65,6 +65,7 @@ export function Transcript({ items, subagents, live, working, provider, model, o
       <div key={item.id} className="turn turn-user">
         <div className="bubble-user">
           <span className="sr-only">You: </span>
+          {item.delivery === 'steer' && <span className="caption">Steer</span>}
           <Markdown text={item.text ?? ''} />
         </div>
       </div>,
@@ -117,7 +118,7 @@ function renderItems(items: Item[], ctx: RenderContext, special?: (item: Item) =
       continue;
     }
     // A reasoning item the provider closed without any text has nothing to disclose.
-    if (item.kind === 'reasoning' && !item.text && item.id !== ctx.streamingId) continue;
+    if (item.kind === 'reasoning' && !item.text?.trim() && item.id !== ctx.streamingId) continue;
     flush();
     out.push(<Turn key={item.id} item={item} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} />);
   }
@@ -218,6 +219,7 @@ export const Turn = memo(function Turn({ item, streaming, endedAt }: { item: Ite
       return (
         <div className="bubble-user">
           <span className="sr-only">You: </span>
+          {item.delivery === 'steer' && <span className="caption">Steer</span>}
           <Markdown text={item.text ?? ''} />
         </div>
       );

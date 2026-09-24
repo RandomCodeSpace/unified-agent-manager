@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
-import { api, describeError, modelName, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { api, describeError, modelName, readOnly, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import type { AgentTranscript } from '../state';
 import { Markdown, Spinner, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
@@ -71,7 +71,7 @@ export function SubagentPanel({
           </span>
           <AgentChip status={current.status} />
           {setupOf(meta, session.provider, current) && <span className="caption mono panel-setup">{setupOf(meta, session.provider, current)}</span>}
-          {/* Room for a Stop action once the providers can cancel one subagent. */}
+          <StopSubagent session={session} subagent={current} />
           <button type="button" className="btn btn-icon" aria-label="Close subagents" onClick={onClose}>
             <span aria-hidden="true">×</span>
           </button>
@@ -122,6 +122,7 @@ export function SubagentPanel({
                 <SubagentRow
                   key={s.id}
                   subagent={s}
+                  stop={<StopSubagent session={session} subagent={s} />}
                   setup={setupOf(meta, session.provider, s)}
                   onOpen={() => onView({ view: 'agent', id: s.id })}
                   onLocate={onLocate}
@@ -137,11 +138,13 @@ export function SubagentPanel({
 
 function SubagentRow({
   subagent: s,
+  stop,
   setup,
   onOpen,
   onLocate,
 }: {
   subagent: Subagent;
+  stop: ReactNode;
   /** "<model> · <effort>", or empty. */
   setup: string;
   onOpen: () => void;
@@ -170,6 +173,7 @@ function SubagentRow({
       </button>
       <div className="agent-item-side">
         <AgentChip status={s.status} />
+        {stop}
         {s.parent_tool_call_id && (
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => onLocate(s.parent_tool_call_id!)}>
             Spawned by
@@ -255,4 +259,24 @@ function AgentTranscriptView({
       )}
     </div>
   );
+}
+
+/** Cancellation requests never invent a terminal status; the provider's SSE owns it. */
+function StopSubagent({ session, subagent }: { session: SessionDetail; subagent: Subagent }) {
+  const [busy, setBusy] = useState(false);
+  const [requested, setRequested] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (subagent.status !== 'running') return null;
+  async function stop() {
+    setBusy(true);
+    setError(null);
+    try { await api.cancelSubagent(session.id, subagent.id); setRequested(true); }
+    catch (e) { setError(describeError(e)); }
+    finally { setBusy(false); }
+  }
+  return <div className="subagent-stop">
+    <button type="button" className="btn btn-ghost btn-sm" aria-label={`Stop subagent ${subagent.name}`} disabled={busy || requested || readOnly(session)}
+      onClick={() => void stop()}>{busy ? 'Stopping…' : requested ? 'Stop requested' : 'Stop'}</button>
+    {error && <p className="error" role="alert">{error}</p>}
+  </div>;
 }

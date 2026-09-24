@@ -121,6 +121,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, detail: { ...detail, items: appendDelta(detail.items, d.item_id, d.kind, d.text) } };
         case 'interaction':
           return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, d.interaction) } };
+        case 'queue':
+          return { ...state, detail: { ...detail, queue: d.queue, queue_paused: d.paused } };
         case 'submission':
           return { ...state, detail: { ...detail, last_submission: d.submission } };
         case 'subagent':
@@ -191,7 +193,7 @@ function withSession(state: State, s: SessionSummary): State {
   const detail = state.detail;
   // state_detail and last_model are omitempty on the wire: an absent key must clear the old value.
   const merged =
-    detail && detail.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model } : detail;
+    detail && detail.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context } : detail;
   return { ...state, sessions: upsert(state.sessions, s), detail: merged };
 }
 

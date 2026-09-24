@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { api, describeError, modelCatalog, newRequestId, type Project, type SessionSummary } from '../api';
+import { GenerationSettings } from './GenerationSettings';
 import { useApp } from './common';
 
 export function NewTask({
@@ -16,6 +17,9 @@ export function NewTask({
   const chosen = providers.find((p) => p.available) ?? providers[0];
   const catalog = chosen ? modelCatalog(meta, chosen.name) : [];
   const [model, setModel] = useState(() => (catalog.some((m) => m.id === 'auto') ? 'auto' : (catalog[0]?.id ?? '')));
+  const [effort, setEffort] = useState('');
+  const [contextSize, setContextSize] = useState('default');
+  const [mode, setMode] = useState<'safe' | 'yolo'>('safe');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
@@ -34,6 +38,9 @@ export function NewTask({
           project_id: project.id,
           provider: chosen.name,
           model: model || undefined,
+          effort,
+          context_size: contextSize,
+          mode,
           name: name.trim() || undefined,
           prompt: prompt.trim(),
           request_id: requestId.current,
@@ -64,7 +71,12 @@ export function NewTask({
           {catalog.length > 0 && (
             <label className="control">
               <span className="control-label">Model</span>
-              <select id="nt-model" className="input mono" value={model} onChange={(e) => setModel(e.target.value)}>
+              <select id="nt-model" className="input mono" value={model} disabled={busy} onChange={(e) => {
+                const next = catalog.find((m) => m.id === e.target.value);
+                setModel(e.target.value);
+                if (!next?.efforts?.includes(effort)) setEffort('');
+                if (!next?.context_sizes?.some((s) => s.id === contextSize)) setContextSize('default');
+              }}>
                 {catalog.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name}
@@ -74,6 +86,19 @@ export function NewTask({
             </label>
           )}
         </div>
+        <div className="generation-settings">
+          <GenerationSettings prefix="nt" model={catalog.find((m) => m.id === model)} effort={effort} contextSize={contextSize}
+            contextSupported={!!chosen?.capabilities.context_size} disabled={busy} onChange={(value) => {
+              if (value.effort !== undefined) setEffort(value.effort);
+              if (value.context_size !== undefined) setContextSize(value.context_size);
+            }} />
+          <label className="control"><span className="control-label">Mode</span>
+            <select id="nt-mode" className="input" disabled={busy} value={mode} onChange={(e) => setMode(e.target.value as 'safe' | 'yolo')}>
+              <option value="safe">Safe</option><option value="yolo">Yolo</option>
+            </select>
+          </label>
+        </div>
+        <p className="caption">{mode === 'yolo' ? 'Yolo allows permission requests automatically. Questions and managed-policy requests still need you.' : 'Safe asks before allowing permission requests.'}</p>
         {unavailable && (
           <p className="error" role="alert">
             {chosen?.display_name} is unavailable: {unavailable}

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { LIVE, api, describeError, isStatus, type Project, type SessionSummary } from '../api';
+import { api, describeError, isStatus, type Project, type SessionSummary } from '../api';
 import { ConfirmDialog, Dialog, NameDialog, useApp } from './common';
 
 /** Add a project by directory. A 409 means the directory already has one: that project is selected instead. */
@@ -106,17 +106,18 @@ export function RemoveProjectDialog({
   onRemoved: (id: string) => void;
   onClose: () => void;
 }) {
-  const busy = tasks.filter((t) => LIVE.includes(t.state)).length;
+  const unarchived = tasks.filter((t) => t.stage !== 'archived').length;
   return (
     <ConfirmDialog
       title={`Remove ${project.name}?`}
       confirmLabel="Remove project"
+      disabled={unarchived > 0}
       onClose={onClose}
       onConfirm={async () => {
         try {
           await api.deleteProject(project.id);
         } catch (e) {
-          if (isStatus(e, 409)) throw new Error('A task in this project is still busy. Wait for it to finish or stop its turn first.');
+          if (isStatus(e, 409)) throw new Error('Archive every task in this project before removing it.');
           throw e;
         }
         onRemoved(project.id);
@@ -126,9 +127,9 @@ export function RemoveProjectDialog({
         This removes the project and its {tasks.length === 1 ? 'one task' : `${tasks.length} tasks`} from UAM. The directory{' '}
         <code>{project.dir}</code> and the provider conversations in it are untouched.
       </p>
-      {busy > 0 && (
+      {unarchived > 0 && (
         <p className="warn">
-          {busy === 1 ? 'One task is' : `${busy} tasks are`} still busy; the server refuses the removal until they finish.
+          {unarchived === 1 ? 'One task is' : `${unarchived} tasks are`} not archived. Archive every task before removing this project.
         </p>
       )}
     </ConfirmDialog>

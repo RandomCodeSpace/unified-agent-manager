@@ -1,4 +1,4 @@
-import { needsYou, type Project, type SessionSummary } from '../api';
+import { needsYou, readOnly, stageLabel, type Project, type SessionSummary } from '../api';
 import type { Connection } from '../state';
 import { Sep, StateMark, TaskTitle, useApp } from './common';
 
@@ -53,6 +53,7 @@ function RailTask({ session, selected, onSelect }: { session: SessionSummary; se
         <StateMark state={session.state} label={false} />
         <Sep />
         <TaskTitle session={session} className="rail-item-name" />
+        {readOnly(session) && <span className="caption">{stageLabel(session)}</span>}
         <Attention session={session} />
       </button>
     </li>

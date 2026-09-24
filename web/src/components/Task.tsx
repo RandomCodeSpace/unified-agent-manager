@@ -3,7 +3,9 @@ import {
   LIVE,
   api,
   describeError,
-  isStatus,
+  needsYou,
+  readOnly,
+  stageLabel,
   taskName,
   type Changes as ChangesData,
   type Interaction,
@@ -52,7 +54,8 @@ export function Task({
   onInteractionUpdate,
   leading,
 }: Props) {
-  const [dialog, setDialog] = useState<'rename' | 'close' | 'delete' | null>(null);
+  const [dialog, setDialog] = useState<'rename' | 'close' | 'archive' | 'delete' | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesTick, setChangesTick] = useState(0);
@@ -60,6 +63,9 @@ export function Task({
   const [panel, setPanel] = useState<PanelView | null>(null);
   const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
+  const stage = session.stage || 'active';
+  const stageBlocked = live || needsYou(session) || (session.queued ?? 0) > 0;
+  const stageReason = stageBlocked ? 'Stop the turn, resolve pending requests and clear queued prompts before settling or archiving.' : '';
   const working = session.state === 'working' || session.state === 'starting';
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -143,11 +149,12 @@ export function Task({
 
   async function run(op: () => Promise<SessionSummary>) {
     setError(null);
+    setBusy(true);
     try {
       onSessionUpdate(await op());
     } catch (e) {
       setError(describeError(e));
-    }
+    } finally { setBusy(false); }
   }
 
   const name = taskName(session);
@@ -163,7 +170,7 @@ export function Task({
           <h1 className="task-title" title={name || undefined}>
             <TaskTitle session={session} />
           </h1>
-          <StateMark state={session.state} title={detail} />
+          {readOnly(session) ? <span className="chip">{stageLabel(session)}</span> : <StateMark state={session.state} title={detail} />}
           <span className="spacer" />
           {session.subagents.length > 0 && (
             <button
@@ -196,22 +203,22 @@ export function Task({
             )}
           </button>
           <Menu label="Task actions">
-            <button type="button" role="menuitem" className="menu-item" onClick={() => setDialog('rename')}>
-              Rename
-            </button>
-            {session.open && (
-              <button type="button" role="menuitem" className="menu-item" onClick={() => setDialog('close')}>
-                Close
-              </button>
-            )}
-            <button type="button" role="menuitem" className="menu-item menu-item-danger" onClick={() => setDialog('delete')}>
-              Delete
-            </button>
+            <button type="button" role="menuitem" className="menu-item" disabled={busy || stage === 'archived'} onClick={() => setDialog('rename')}>Rename</button>
+            {stage === 'active' && session.open && <button type="button" role="menuitem" className="menu-item" disabled={busy} onClick={() => setDialog('close')}>Close</button>}
+            {stage === 'active' && <button type="button" role="menuitem" className="menu-item" disabled={busy || stageBlocked} title={stageReason}
+              onClick={() => void run(() => api.stage(session.id, 'settle'))}>Settle task</button>}
+            {stage === 'settled' && <button type="button" role="menuitem" className="menu-item" disabled={busy}
+              onClick={() => void run(() => api.stage(session.id, 'reopen'))}>Reopen task</button>}
+            {stage !== 'archived' && <button type="button" role="menuitem" className="menu-item" disabled={busy || (stage === 'active' && stageBlocked)} title={stageReason}
+              onClick={() => setDialog('archive')}>Archive task</button>}
+            {stage === 'archived' && <button type="button" role="menuitem" className="menu-item menu-item-danger" onClick={() => setDialog('delete')}>Delete task</button>}
+            {stage === 'active' && stageReason && <p className="caption menu-help">{stageReason}</p>}
           </Menu>
         </header>
 
         <div className="pane-body" ref={scroller} onScroll={onScroll}>
           <div className="column" role="log">
+            {busy && <p className="caption" role="status">Updating task…</p>}
             {error && (
               <p className="notice-line notice-error" role="alert">
                 {error}
@@ -246,7 +253,7 @@ export function Task({
                 ↓ New output
               </button>
             )}
-            <Composer session={session} onSessionUpdate={onSessionUpdate} />
+            <Composer key={session.id} session={session} onSessionUpdate={onSessionUpdate} />
           </div>
         </div>
       </div>
@@ -281,7 +288,7 @@ export function Task({
           initial={session.name}
           hint="Leave it empty to show the provider's title again."
           allowEmpty
-          onSubmit={(name) => run(() => api.rename(session.id, name))}
+          onSubmit={async (name) => onSessionUpdate(await api.rename(session.id, name))}
           onClose={() => setDialog(null)}
         />
       )}
@@ -290,7 +297,7 @@ export function Task({
           title="Close this task?"
           confirmLabel="Close task"
           danger={false}
-          onConfirm={() => run(() => api.close(session.id))}
+          onConfirm={async () => onSessionUpdate(await api.close(session.id))}
           onClose={() => setDialog(null)}
         >
           <p>
@@ -300,17 +307,18 @@ export function Task({
           <p className="caption">To interrupt the current turn without closing, use Stop turn instead.</p>
         </ConfirmDialog>
       )}
+      {dialog === 'archive' && (
+        <ConfirmDialog title="Archive this task?" confirmLabel="Archive task" danger={false}
+          onConfirm={async () => onSessionUpdate(await api.stage(session.id, 'archive'))} onClose={() => setDialog(null)}>
+          <p>Archiving makes this task permanently read-only. It stays visible with its recorded conversation. It cannot be reopened.</p>
+        </ConfirmDialog>
+      )}
       {dialog === 'delete' && (
         <ConfirmDialog
           title="Delete this task?"
           confirmLabel="Delete task"
           onConfirm={async () => {
-            try {
-              await api.deleteSession(session.id);
-            } catch (e) {
-              if (isStatus(e, 409)) throw new Error('The task is still busy. Wait for it to finish or stop its turn first.');
-              throw e;
-            }
+            await api.deleteSession(session.id);
             onDeleted(session.id);
           }}
           onClose={() => setDialog(null)}

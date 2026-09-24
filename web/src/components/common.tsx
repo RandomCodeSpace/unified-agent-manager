@@ -150,6 +150,7 @@ export function ConfirmDialog({
   title,
   confirmLabel,
   danger = true,
+  disabled = false,
   onConfirm,
   onClose,
   children,
@@ -157,6 +158,7 @@ export function ConfirmDialog({
   title: string;
   confirmLabel: string;
   danger?: boolean;
+  disabled?: boolean;
   onConfirm: () => Promise<void>;
   onClose: () => void;
   children: ReactNode;
@@ -187,8 +189,8 @@ export function ConfirmDialog({
         <button type="button" className="btn btn-secondary" onClick={onClose} autoFocus>
           Cancel
         </button>
-        <button type="button" className={danger ? 'btn btn-danger' : 'btn btn-primary'} disabled={busy} onClick={() => void confirm()}>
-          {confirmLabel}
+        <button type="button" className={danger ? 'btn btn-danger' : 'btn btn-primary'} disabled={busy || disabled} onClick={() => void confirm()}>
+          {busy ? 'Updating…' : confirmLabel}
         </button>
       </div>
     </Dialog>

@@ -2204,3 +2204,40 @@ dialog::backdrop {
     max-height: 32vh;
   }
 }
+
+/* Next-turn settings use the same native fields in creation and the composer. */
+.generation-settings { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; }
+.generation-control { flex: 1 1 130px; min-width: 0; }
+.generation-control .input { width: 100%; min-width: 0; text-overflow: ellipsis; }
+.settings-note { flex-basis: 100%; margin: 0; }
+.composer .generation-settings { margin: 8px 0; }
+.composer .control-label { font-size: 11px; }
+.composer .input { height: 28px; font-size: 12px; }
+.composer-bar { height: auto; min-height: 32px; flex-wrap: wrap; }
+.mode-control .input { min-width: 76px; width: auto; }
+.mode-control { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.context-usage { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.context-usage meter { width: 96px; accent-color: var(--accent); }
+.prompt-queue { font-size: 12px; margin-bottom: 8px; }
+.prompt-queue summary { cursor: pointer; color: var(--body); }
+.prompt-queue ol { max-height: 120px; overflow: auto; padding-left: 20px; }
+.prompt-queue li { padding: 4px 0; }
+.prompt-queue li span { white-space: pre-wrap; overflow-wrap: anywhere; }
+.prompt-queue .actions { margin-top: 4px; }
+.menu-help { max-width: 240px; padding: 4px 12px; white-space: normal; }
+.subagent-stop { max-width: 220px; }
+.subagent-stop .error { font-size: 12px; overflow-wrap: anywhere; }
+.panel .sheet-head { flex-wrap: wrap; }
+.pane-foot { max-height: 65%; overflow-y: auto; }
+@media (max-width: 480px) {
+  .composer .input, .composer-bar .btn, .subagent-stop .btn, .prompt-queue .btn { min-height: 44px; }
+  .composer .generation-control { flex-basis: 100px; }
+
+  .composer-bar .spacer { display: none; }
+  .composer-bar { gap: 4px; }
+  .mode-control { margin-right: auto; }
+  .pane-foot { max-height: 70%; }
+}
+
+.context-usage meter::-webkit-meter-optimum-value { background: var(--accent); }
+.context-usage meter::-moz-meter-bar { background: var(--accent); }
