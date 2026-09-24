@@ -42,12 +42,12 @@ if [[ $(node --version) != "v$expected_node" ]]; then
   echo "release preparation requires Node $expected_node from web/.node-version" >&2
   exit 1
 fi
-expected_go=$(awk '$1 == "toolchain" {print $2}' go.mod)
+expected_go=$(awk '$1 == "go" { version = "go" $2 } $1 == "toolchain" { toolchain = $2 } END { print toolchain != "" ? toolchain : version }' go.mod)
 if [[ -z $expected_go || $(go env GOVERSION) != "$expected_go" ]]; then
   echo "release preparation requires $expected_go from go.mod" >&2
   exit 1
 fi
-export GOTOOLCHAIN=local
+export GOTOOLCHAIN="$expected_go"
 make web
 # Do not conceal a changed lockfile or any other source change.
 git diff --exit-code -- . ':!internal/web/dist'
