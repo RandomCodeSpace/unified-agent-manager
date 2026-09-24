@@ -118,48 +118,46 @@ export function QueuedExtras({ files = [], attachments = [] }: { files?: string[
   );
 }
 
+/** A stored image the serve route has: an upload with an ID, or an image a tool returned. */
+export interface StoredImage {
+  id: string;
+  mime: string;
+  name?: string;
+  size?: number;
+}
+
 /**
- * A user item's uploads in the transcript: images as thumbnails from the serve route
- * (click opens the lightbox), other files as chips that open the stored copy. Without a
- * stored copy the chip has no link.
+ * Thumbnails up to 160px high from the serve route; clicking one opens the lightbox with
+ * **Open original**. Shared by a user turn's uploads and a tool row's images.
  */
-export function ItemAttachments({ sessionId, attachments }: { sessionId: string; attachments: Attachment[] }) {
-  const [shown, setShown] = useState<Attachment | null>(null);
+export function ImageThumbs({ sessionId, images, className }: { sessionId: string; images: StoredImage[]; className?: string }) {
+  const [shown, setShown] = useState<StoredImage | null>(null);
   const [open, setOpen] = useState(false);
-  const images = attachments.filter((a) => kindOf(a.mime) === 'image' && a.id);
-  const rest = attachments.filter((a) => !images.includes(a));
+  if (!images.length) return null;
+  const nameOf = (a: StoredImage) => a.name || 'Image';
   return (
     <>
-      {images.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {images.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              className="group/thumb flex max-h-40 max-w-full overflow-hidden rounded-sm bg-sunken transition-[box-shadow] duration-100 hover:shadow-float"
-              aria-label={`Open ${a.name}`}
-              onClick={() => {
-                setShown(a);
-                setOpen(true);
-              }}
-            >
-              <img src={api.attachmentUrl(sessionId, a.id!)} alt={a.name} loading="lazy" decoding="async" className="block max-h-40 max-w-full object-contain transition-transform duration-160 ease-app group-hover/thumb:scale-[1.02]" />
-            </button>
-          ))}
-        </div>
-      )}
-      {rest.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {rest.map((a, i) => (
-            <FileChip key={a.id ?? `${a.name}-${i}`} sessionId={sessionId} attachment={a} />
-          ))}
-        </div>
-      )}
+      <div className={cn('flex flex-wrap gap-1.5', className)}>
+        {images.map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            className="group/thumb flex max-h-40 max-w-full items-center justify-center overflow-hidden rounded-sm bg-sunken transition-[box-shadow] duration-100 hover:shadow-float pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+            aria-label={`Open ${nameOf(a)}`}
+            onClick={() => {
+              setShown(a);
+              setOpen(true);
+            }}
+          >
+            <img src={api.attachmentUrl(sessionId, a.id)} alt={nameOf(a)} loading="lazy" decoding="async" className="block max-h-40 max-w-full object-contain transition-transform duration-160 ease-app group-hover/thumb:scale-[1.02]" />
+          </button>
+        ))}
+      </div>
       {shown && (
-        <Dialog open={open} onOpenChange={setOpen} onClosed={() => setShown(null)} title={shown.name} description={`${KIND_LABEL[kindOf(shown.mime)]}${shown.size ? ` · ${formatSize(shown.size)}` : ''}`} className="max-w-[min(92vw,1100px)]">
-          <img src={api.attachmentUrl(sessionId, shown.id!)} alt={shown.name} className="mx-auto block max-h-[72dvh] w-auto max-w-full rounded-sm bg-sunken" />
+        <Dialog open={open} onOpenChange={setOpen} onClosed={() => setShown(null)} title={nameOf(shown)} description={`${KIND_LABEL[kindOf(shown.mime)]}${shown.size ? ` · ${formatSize(shown.size)}` : ''}`} className="max-w-[min(92vw,1100px)]">
+          <img src={api.attachmentUrl(sessionId, shown.id)} alt={nameOf(shown)} className="mx-auto block max-h-[72dvh] w-auto max-w-full rounded-sm bg-sunken" />
           <div className="mt-4 flex justify-end">
-            <a href={api.attachmentUrl(sessionId, shown.id!)} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: 'secondary', size: 'md' })}>
+            <a href={api.attachmentUrl(sessionId, shown.id)} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: 'secondary', size: 'md' })}>
               <ExternalLink />
               Open original
             </a>
@@ -167,6 +165,38 @@ export function ItemAttachments({ sessionId, attachments }: { sessionId: string;
         </Dialog>
       )}
     </>
+  );
+}
+
+/**
+ * A user item's uploads in the transcript: images as thumbnails from the serve route
+ * (click opens the lightbox), other files as chips that open the stored copy. Without a
+ * stored copy the chip has no link.
+ */
+export function ItemAttachments({ sessionId, attachments }: { sessionId: string; attachments: Attachment[] }) {
+  const images = attachments.filter((a): a is Attachment & { id: string } => kindOf(a.mime) === 'image' && !!a.id);
+  const rest = attachments.filter((a) => !images.includes(a as Attachment & { id: string }));
+  return (
+    <>
+      <ImageThumbs sessionId={sessionId} images={images} />
+      {rest.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {rest.map((a, i) => (
+            <FileChip key={a.id ?? `${a.name}-${i}`} sessionId={sessionId} attachment={a} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** The image lightbox (DESIGN.md): a dialog up to 92vw by 1100px, the image up to 72dvh, `footer` right-aligned under it. */
+export function Lightbox({ open, onOpenChange, onClosed, title, description, src, alt, footer }: { open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; title: ReactNode; description?: ReactNode; src: string; alt: string; footer?: ReactNode }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} onClosed={onClosed} title={title} description={description} className="max-w-[min(92vw,1100px)]">
+      <img src={src} alt={alt} className="mx-auto block max-h-[72dvh] w-auto max-w-full rounded-sm bg-sunken" />
+      {footer && <div className="mt-4 flex justify-end">{footer}</div>}
+    </Dialog>
   );
 }
 

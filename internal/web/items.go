@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -25,6 +26,7 @@ const (
 	maxAnswerBytes     = 64 << 10
 	maxSubagents       = 200
 	maxItemAttachments = 50
+	maxToolCallID      = 256
 )
 
 const truncatedMarker = "\n[truncated by uam]"
@@ -60,6 +62,15 @@ func clampItem(it agentapi.Item, now time.Time) agentapi.Item {
 		a := &it.Attachments[i]
 		a.Name = clipRunes(displaytext.Sanitize(a.Name), maxNameRunes)
 		a.MIME = clampText(displaytext.Sanitize(a.MIME), maxLabelText)
+	}
+	// Only a tool item carries images, only those keepImages stored, and
+	// never their bytes.
+	if it.Kind != agentapi.ItemTool {
+		it.Images, it.ImagesNote = nil, ""
+	}
+	it.Images = slices.DeleteFunc(slices.Clone(it.Images), func(img agentapi.Image) bool { return img.ID == "" })
+	for i := range it.Images {
+		it.Images[i].Data = nil
 	}
 	if it.Time.IsZero() {
 		it.Time = now
@@ -144,13 +155,15 @@ func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
 	})
 }
 
-// applyHistoryLocked installs the provider's record of a reopened
-// conversation. History defines order; items already known but absent from
-// it (for example streamed while it was read) are kept after it.
-func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History) {
+// applyHistoryLocked installs the provider's record of a conversation.
+// History defines order; items already known but absent from it (for example
+// streamed while it was read) are kept after it. publish sends each item and
+// subagent to viewers; without it the caller publishes the result.
+func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, publish bool) {
+	m.applyUsageLocked(s, history.Usage)
 	for _, sa := range history.Subagents {
 		if sa.ID != "" {
-			m.upsertSubagentLocked(s, sa)
+			m.upsertSubagentLocked(s, sa, publish)
 		}
 	}
 	if len(history.Items) == 0 {
@@ -182,6 +195,9 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History) {
 	}
 	s.rebuildIndex()
 	s.trimItems()
+	if !publish {
+		return
+	}
 	for _, it := range items[:fromHistory] {
 		if _, kept := s.itemIdx[itemKey(it.AgentID, it.ID)]; !kept {
 			continue
@@ -230,6 +246,9 @@ func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interacti
 	ix.Title = clampText(ix.Title, maxLabelText)
 	ix.Detail = clampText(ix.Detail, maxInteractionText)
 	ix.Resolution = clampText(ix.Resolution, maxLabelText)
+	if !validToolCallID(ix.ToolCallID) {
+		ix.ToolCallID = ""
+	}
 	ix.Options = slices.Clone(ix.Options)
 	ix.Questions = slices.Clone(ix.Questions)
 	for i := range ix.Questions {
@@ -242,6 +261,14 @@ func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interacti
 		ix.Time = now
 	}
 	return ix
+}
+
+// validToolCallID reports whether a provider's tool call ID may reach a
+// browser. The browser matches it to a tool item's ID, so an unfit one is
+// dropped, not cleaned: a changed ID would name no tool call.
+func validToolCallID(id string) bool {
+	return len(id) <= maxToolCallID && utf8.ValidString(id) &&
+		!strings.ContainsFunc(id, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
 }
 
 // upsertInteractionLocked records a provider interaction. A resolved
@@ -323,12 +350,12 @@ func (m *Manager) expireSubagentLocked(s *webSession, agentID string) {
 	}
 }
 
-// upsertSubagentLocked records a subagent update. A failed or cancelled
-// subagent never changes again, and a completed one only becomes idle when
-// the provider reports that it takes a follow-up: providers may report the
-// end more than once (Copilot sends a second, cancelled completion when a
-// client disconnects).
-func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent) {
+// upsertSubagentLocked records a subagent update and, with publish, sends it
+// to viewers. A failed or cancelled subagent never changes again, and a
+// completed one only becomes idle when the provider reports that it takes a
+// follow-up: providers may report the end more than once (Copilot sends a
+// second, cancelled completion when a client disconnects).
+func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publish bool) {
 	if in.Status == "" {
 		in.Status = agentapi.SubagentRunning
 	}
@@ -363,7 +390,18 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent) {
 		m.expireSubagentLocked(s, cur.ID)
 	}
 	s.trimSubagents()
-	m.publishSubagentLocked(s, cur)
+	if publish {
+		m.publishSubagentLocked(s, cur)
+	}
+}
+
+// subagentList returns a copy of s's subagent records.
+func (s *webSession) subagentList() []agentapi.Subagent {
+	out := make([]agentapi.Subagent, 0, len(s.subagents))
+	for _, sa := range s.subagents {
+		out = append(out, *sa)
+	}
+	return out
 }
 
 func (m *Manager) publishSubagentLocked(s *webSession, sa *agentapi.Subagent) {
@@ -398,6 +436,27 @@ func (s *webSession) runningSubagents() int {
 		}
 	}
 	return n
+}
+
+func (m *Manager) backgroundTasksLocked(s *webSession, snapshot agentapi.BackgroundTasks) {
+	snapshot.Tasks = slices.Clone(snapshot.Tasks)
+	for i := range snapshot.Tasks {
+		task := &snapshot.Tasks[i]
+		task.Command = clampText(displaytext.Sanitize(task.Command), maxToolText)
+		task.Description = clampText(displaytext.Sanitize(task.Description), maxLabelText)
+	}
+	s.backgroundTasks = &snapshot
+	m.broadcastLocked("background_tasks", s.id, func(seq uint64) any {
+		return backgroundTasksEvent{Seq: seq, SessionID: s.id, BackgroundTasks: snapshot}
+	})
+}
+
+func (m *Manager) forgetBackgroundTaskStateLocked(s *webSession) {
+	if s.backgroundTasks != nil && s.backgroundTasks.Known {
+		snapshot := *s.backgroundTasks
+		snapshot.Known = false
+		m.backgroundTasksLocked(s, snapshot)
+	}
 }
 
 // trimSubagents forgets the oldest finished subagents beyond the cap.

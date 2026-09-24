@@ -2,8 +2,10 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -93,7 +95,7 @@ func TestOlderWebConfigRoundTripsWithoutProjectFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"web_projects"`, `"project_id"`, `"model"`, `"title"`, `"stage"`, `"settled_at"`, `"archived_at"`} {
+	for _, key := range []string{`"web_projects"`, `"project_id"`, `"model"`, `"title"`, `"stage"`, `"settled_at"`, `"archived_at"`, `"terminal_session"`} {
 		if strings.Contains(string(data), key) {
 			t.Fatalf("older config gained %s on save: %s", key, data)
 		}
@@ -114,7 +116,7 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 			Status: StatusActive, Surface: SurfaceWeb, ProviderSessionID: "conv_1",
 			Web: &WebState{
 				Turn: "idle", UpdatedAt: now, ProjectID: project.ID, Model: "gpt-5-mini", Effort: "high", ContextSize: "long_context", Title: "Fix the build",
-				Stage: "archived", SettledAt: now.Add(-time.Hour), ArchivedAt: now,
+				Stage: "archived", SettledAt: now.Add(-time.Hour), ArchivedAt: now, TerminalSession: "0da22111-1111-4222-8333-444455556666",
 			},
 		}
 		return nil
@@ -130,7 +132,7 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 	}
 	web := cfg.Sessions["copilot:0f0e0d0c"].Web
 	if web == nil || web.ProjectID != project.ID || web.Model != "gpt-5-mini" || web.Effort != "high" || web.ContextSize != "long_context" || web.Title != "Fix the build" ||
-		web.Stage != "archived" || !web.SettledAt.Equal(now.Add(-time.Hour)) || !web.ArchivedAt.Equal(now) {
+		web.Stage != "archived" || !web.SettledAt.Equal(now.Add(-time.Hour)) || !web.ArchivedAt.Equal(now) || web.TerminalSession != "0da22111-1111-4222-8333-444455556666" {
 		t.Fatalf("web state = %+v", web)
 	}
 	data, err := os.ReadFile(s.Path())
@@ -345,5 +347,170 @@ func TestPruneOldNeverDeletesSurfaceRecords(t *testing.T) {
 		if _, ok := cfg.Sessions[key]; !ok {
 			t.Fatalf("record %s with a surface was pruned", key)
 		}
+	}
+}
+
+// Web settings are additive: a file without them loads with none and gains
+// no key from an unrelated write, a chosen value round-trips with keys a newer
+// uam wrote, and unknown values survive unrelated writes.
+func TestWebSettingsRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(raw string) {
+		t.Helper()
+		if err := os.WriteFile(s.Path(), []byte(`{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60}`+raw+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settings := func() map[string]json.RawMessage {
+		t.Helper()
+		data, err := os.ReadFile(s.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded map[string]json.RawMessage
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]json.RawMessage
+		if raw, ok := decoded["web_settings"]; ok {
+			if err := json.Unmarshal(raw, &out); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return out
+	}
+
+	write(``)
+	if err := s.Update(func(cfg *Config) error {
+		if cfg.WebSettings.SendDefault != "" {
+			t.Fatalf("absent settings loaded as %+v", cfg.WebSettings)
+		}
+		cfg.UI.GroupByDir = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := settings(); got != nil {
+		t.Fatalf("an unrelated write added web_settings: %v", got)
+	}
+
+	write(`,"web_settings":{"send_default":"steer","later_setting":"gpt-5-mini","title_model":{"copilot":"gpt-6-luna"}}`)
+	if err := s.Update(func(cfg *Config) error {
+		if cfg.WebSettings.SendDefault != WebSendSteer || cfg.WebSettings.TitleModel["copilot"] != "gpt-6-luna" {
+			t.Fatalf("stored settings loaded as %+v", cfg.WebSettings)
+		}
+		cfg.WebSettings.SendDefault = WebSendQueue
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := settings()
+	var titles map[string]string
+	if err := json.Unmarshal(got["title_model"], &titles); err != nil || string(got["send_default"]) != `"queue"` || string(got["later_setting"]) != `"gpt-5-mini"` || titles["copilot"] != "gpt-6-luna" || len(titles) != 1 {
+		t.Fatalf("web_settings after save = %s, %v", got, err)
+	}
+	if cfg, err := s.Load(); err != nil || cfg.WebSettings.SendDefault != WebSendQueue {
+		t.Fatalf("send default after reload = %+v, %v", cfg.WebSettings, err)
+	}
+
+	for _, value := range []string{`"interrupt"`, `""`, `"Steer"`} {
+		write(`,"web_settings":{"send_default":` + value + `}`)
+		cfg, err := s.Load()
+		var want string
+		if err := json.Unmarshal([]byte(value), &want); err != nil {
+			t.Fatal(err)
+		}
+		if err != nil || cfg.WebSettings.SendDefault != want {
+			t.Fatalf("send default %s loaded as %+v, %v", value, cfg.WebSettings, err)
+		}
+		if err := s.Update(func(cfg *Config) error {
+			cfg.UI.GroupByDir = true
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got := settings(); want != "" && string(got["send_default"]) != value {
+			t.Fatalf("unrelated write changed unknown send default %s: %v", value, got)
+		}
+	}
+}
+
+// Hidden models load sorted, without duplicates or invalid IDs and within
+// the caps, and round-trip with keys a newer uam wrote.
+func TestWebHiddenModelsLoadClean(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	many := make([]string, MaxHiddenModels+5)
+	for i := range many {
+		many[i] = strconv.Quote(fmt.Sprintf("m%03d", i))
+	}
+	long := strconv.Quote(strings.Repeat("x", MaxHiddenModelBytes+1))
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":{"later_setting":"t","hidden_models":{` +
+		`"copilot":["b","a","b","","bad\u0007",` + long + `],"empty":[""],"":["a"],"many":[` + strings.Join(many, ",") + `]}}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden := cfg.WebSettings.HiddenModels
+	if len(hidden) != 2 || strings.Join(hidden["copilot"], ",") != "a,b" || len(hidden["many"]) != MaxHiddenModels || hidden["many"][0] != "m000" {
+		t.Fatalf("loaded hidden models = %v", hidden)
+	}
+	if err := s.Update(func(cfg *Config) error {
+		cfg.WebSettings.HiddenModels["copilot"] = []string{"c"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		WebSettings struct {
+			LaterSetting string              `json:"later_setting"`
+			HiddenModels map[string][]string `json:"hidden_models"`
+		} `json:"web_settings"`
+	}
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if w := saved.WebSettings; w.LaterSetting != "t" || len(w.HiddenModels) != 2 || strings.Join(w.HiddenModels["copilot"], ",") != "c" || len(w.HiddenModels["many"]) != MaxHiddenModels {
+		t.Fatalf("saved web_settings = %s", data)
+	}
+}
+
+// Title models load without entries whose provider or model ID is empty,
+// too long or holds a control character.
+func TestWebTitleModelsLoadClean(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strconv.Quote(strings.Repeat("x", maxWebModelBytes+1))
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":{"title_model":{` +
+		`"copilot":"gpt-6-luna","empty":"","":"m","bell":"a\u0007","long":` + long + `}}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.WebSettings.TitleModel; len(got) != 1 || got["copilot"] != "gpt-6-luna" {
+		t.Fatalf("loaded title models = %v", got)
+	}
+	if err := os.WriteFile(s.Path(), []byte(strings.Replace(raw, `"copilot":"gpt-6-luna",`, "", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := s.Load(); err != nil || cfg.WebSettings.TitleModel != nil {
+		t.Fatalf("only invalid title models loaded as %v, %v", cfg.WebSettings.TitleModel, err)
 	}
 }

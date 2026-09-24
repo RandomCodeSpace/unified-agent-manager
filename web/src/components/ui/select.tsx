@@ -8,6 +8,8 @@ export interface SelectOption {
   label: ReactNode;
   description?: ReactNode;
   disabled?: boolean;
+  /** Retain the current label without offering it in the menu. */
+  hidden?: boolean;
 }
 
 /**
@@ -66,10 +68,12 @@ export function Select({
                 <BaseSelect.Item
                   key={it.value}
                   value={it.value}
-                  disabled={it.disabled}
+                  disabled={it.disabled || it.hidden}
+                  hidden={it.hidden}
                   className={cn(
                     'relative flex min-h-[30px] cursor-default select-none items-start gap-2 rounded-sm py-1 pr-3 pl-7 text-ui text-body outline-hidden data-highlighted:bg-canvas data-highlighted:text-ink data-disabled:opacity-45 pointer-coarse:min-h-11',
                     mono && 'font-mono text-code-sm',
+                    it.hidden && 'hidden',
                   )}
                 >
                   <BaseSelect.ItemIndicator className="absolute top-2 left-2 flex text-accent">

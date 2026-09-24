@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { LIVE, type Attachment, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { BADGE_COLORS, LIVE, type Attachment, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
@@ -97,6 +97,18 @@ export function install(): void {
   const busy = (t: MockTask) => LIVE.includes(t.state);
   /** Stored uploads by id: the bytes and the record the routes hand out. */
   const uploads = new Map<string, Attachment & { id: string; task: string; bytes: Uint8Array }>();
+  /** The service's badge rule, roughly: first letter or digit plus one from the rest, unique text, an unused tone. */
+  const newBadge = (name: string): Badge => {
+    const chars = name.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const taken = new Set(st.projects.map((p) => p.badge.text));
+    let text = '';
+    for (const second of [...chars.slice(1), ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ']) {
+      text = `${chars[0] ?? 'P'}${second}`;
+      if (!taken.has(text)) break;
+    }
+    const used = new Set(st.projects.map((p) => p.badge.color));
+    return { text, color: BADGE_COLORS.find((c) => !used.has(c)) ?? BADGE_COLORS[st.projects.length % BADGE_COLORS.length] };
+  };
   const modelMedia = (t: MockTask) => st.meta.providers.find((p) => p.name === t.provider)?.models.find((m) => m.id === t.model)?.media;
   const modelLabel = (t: MockTask) => st.meta.providers.find((p) => p.name === t.provider)?.models.find((m) => m.id === t.model)?.name ?? t.model;
   const isDir = (projectId: string, path: string) => (st.files[projectId] ?? []).some((f) => f.startsWith(`${path}/`));
@@ -274,7 +286,7 @@ export function install(): void {
         src.onerror?.(new Event('error'));
         return () => sources.delete(src);
       }
-      src.emit('snapshot', { seq, projects: st.projects, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
+      src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
       if (t && !started.has(t.id)) {
         if (t.id === 't8') {
           started.add(t.id);
@@ -429,6 +441,16 @@ export function install(): void {
     if (path === '/api/logout') return json(204);
     if (path === '/api/meta') return json(200, st.meta);
 
+    if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
+    if (path === '/api/settings' && method === 'PATCH') {
+      for (const key of Object.keys(body)) if (key !== 'send_default') return fail(400, `unknown setting "${key}"`);
+      if (body.send_default !== undefined) {
+        if (body.send_default !== 'steer' && body.send_default !== 'queue') return fail(400, 'send_default must be steer or queue');
+        st.settings = { ...st.settings, send_default: body.send_default };
+        broadcast('settings', { settings: st.settings });
+      }
+      return json(200, st.settings);
+    }
     if (path === '/api/fs/dirs') return method === 'POST' ? makeDir(body) : listDirs(url);
 
     if (path === '/api/projects' && method === 'GET') return json(200, { projects: st.projects });
@@ -439,7 +461,8 @@ export function install(): void {
       if (existing) return fail(409, 'that directory already has a project', { project_id: existing.id });
       const defaults = body.defaults === undefined ? undefined : checkSelection(body.defaults);
       if (typeof defaults === 'string') return fail(400, defaults);
-      const p: Project = { id: nextId('p'), name: String(body.name ?? '').trim() || dir.split('/').filter(Boolean).pop() || dir, dir, created_at: now(), ...(defaults ? { defaults } : {}) };
+      const name = String(body.name ?? '').trim() || dir.split('/').filter(Boolean).pop() || dir;
+      const p: Project = { id: nextId('p'), name, dir, created_at: now(), badge: newBadge(name), ...(defaults ? { defaults } : {}) };
       st.projects.push(p);
       st.changes[p.id] = [];
       broadcast('project', { project: p });

@@ -61,6 +61,16 @@ type Capabilities struct {
 	History     bool `json:"history"`
 	// ContextSize is the per-Task context-tier exception to provider parity.
 	ContextSize bool `json:"context_size"`
+	// Usage is the second exception: the provider implements QuotaReporter
+	// and reports each conversation's AI units through EventUsage.
+	Usage bool `json:"usage"`
+	// Titles is true when the provider implements Titler and its
+	// conversations implement SetTitle, so a chosen model can title a Task.
+	Titles bool `json:"titles"`
+	// Import is a capability-gated exception to provider parity: the provider lists
+	// the conversations recorded for a folder and tells when another client
+	// holds one open (Importer).
+	Import bool `json:"import"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
@@ -86,6 +96,93 @@ type Provider interface {
 	Shutdown(ctx context.Context) error
 }
 
+// QuotaReporter is implemented by a provider whose Capabilities.Usage is
+// true. Quota reads the signed-in account's quotas, sorted by Type; ctx
+// bounds the call.
+type QuotaReporter interface {
+	Quota(ctx context.Context) ([]Quota, error)
+}
+
+// Titler is implemented by a provider whose Capabilities.Titles is true.
+type Titler interface {
+	// Title asks req.Model for a title of a Task's first message and returns
+	// the model's reply as it came; the caller cleans it. The call runs in a
+	// throwaway conversation without tools that it deletes whatever the
+	// outcome. ctx bounds the whole call.
+	Title(ctx context.Context, req TitleRequest) (string, error)
+}
+
+// TitleRequest is one Titler call.
+type TitleRequest struct {
+	// Model is a model ID from Provider.Models.
+	Model string
+	// Workdir is the Task's project directory.
+	Workdir string
+	// Text is the Task's first message, already sanitized and clipped.
+	Text string
+}
+
+// Quota is one account quota as the provider reported it.
+type Quota struct {
+	// Type is the provider's quota key, e.g. Copilot's premium_interactions.
+	Type string
+	// Used is what the current period used; Entitlement is what it includes,
+	// 0 when Unlimited.
+	Used        int64
+	Entitlement int64
+	Unlimited   bool
+	// RemainingPercent is the provider's percentage of the entitlement left.
+	RemainingPercent float64
+	// Overage is what was used beyond the entitlement this period.
+	Overage float64
+	// ResetAt is when the provider says the quota resets; zero when it does
+	// not say. It is not checked here.
+	ResetAt time.Time
+}
+
+// Relative model cost tiers, cheapest first.
+const (
+	CostLow      = "low"
+	CostMedium   = "medium"
+	CostHigh     = "high"
+	CostVeryHigh = "very_high"
+)
+
+// HistoryReader is implemented by a provider that can read a conversation's
+// recorded transcript without opening it: nothing is sent, no other client is
+// shut out, and the provider's record does not change. ctx bounds the read.
+// ErrConversationNotFound means the exact ID has no record.
+type HistoryReader interface {
+	ReadHistory(ctx context.Context, req ReadRequest) (History, error)
+}
+
+// ReadRequest names the conversation to read and its project directory.
+type ReadRequest struct {
+	ConversationID string
+	Workdir        string
+}
+
+// Importer is implemented by a provider whose Capabilities.Import is set.
+type Importer interface {
+	// Previous lists the conversations recorded with exactly workdir as
+	// their working directory. An empty workdir lists all local conversations.
+	Previous(ctx context.Context, workdir string) ([]PreviousConversation, error)
+	// InUse returns the IDs among ids that another process holds open. It is
+	// a snapshot: a client can open one right after it. The provider's own
+	// runtime is never reported.
+	InUse(ctx context.Context, ids []string) ([]string, error)
+}
+
+// PreviousConversation is one conversation Importer.Previous lists. Title is
+// untrusted provider text.
+type PreviousConversation struct {
+	ID        string
+	Title     string
+	Workdir   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // Model is one selectable model.
 type Model struct {
 	ID           string        `json:"id"`
@@ -95,6 +192,36 @@ type Model struct {
 	// Media is what the model accepts besides text. Nil means the provider
 	// reports nothing (Copilot's auto), and uploads are not gated.
 	Media *Media `json:"media,omitempty"`
+	// CostTier is one of the Cost constants, the provider's relative cost of
+	// the model; empty when it reports none.
+	CostTier string `json:"cost_tier,omitempty"`
+	// DiscountPercent is the whole-number discount (1-100) the provider
+	// applies to usage billed through this model, such as Copilot's auto; 0
+	// when it reports none.
+	DiscountPercent int `json:"discount_percent,omitempty"`
+	// Prices are the model's token prices; nil when the provider reports
+	// none.
+	Prices *Prices `json:"prices,omitempty"`
+}
+
+// Prices are a model's token prices in AI Credits, the unit of
+// Usage.AIUnits, per BatchSize tokens. A nil price or a zero size was not
+// reported.
+type Prices struct {
+	BatchSize int64 `json:"batch_size,omitempty"`
+	TierPrices
+	// LongContext holds the long-context tier's prices, which apply past the
+	// default MaxPromptTokens or when that tier is selected.
+	LongContext *TierPrices `json:"long_context,omitempty"`
+}
+
+// TierPrices are one context tier's prices per batch and its prompt budget.
+type TierPrices struct {
+	Input           *float64 `json:"input,omitempty"`
+	Output          *float64 `json:"output,omitempty"`
+	CacheRead       *float64 `json:"cache_read,omitempty"`
+	CacheWrite      *float64 `json:"cache_write,omitempty"`
+	MaxPromptTokens int64    `json:"max_prompt_tokens,omitempty"`
 }
 
 // Media gates image and PDF uploads for one model. Text is always accepted.
@@ -116,9 +243,21 @@ type ContextSize struct {
 }
 
 // Context is the provider's latest live usage report, not a token estimate.
+// Prompt is the input tokens of the latest main-agent model call and Cached
+// how many of them the provider read from its cache; both are 0 until a
+// call reports them.
 type Context struct {
-	Used  int64 `json:"used"`
-	Limit int64 `json:"limit"`
+	Used   int64 `json:"used"`
+	Limit  int64 `json:"limit"`
+	Prompt int64 `json:"prompt,omitempty"`
+	Cached int64 `json:"cached,omitempty"`
+}
+
+// Usage is what a conversation consumed. AIUnits is its total so far, main
+// agent and subagents together, never an increment: a later report replaces
+// an earlier one.
+type Usage struct {
+	AIUnits float64 `json:"ai_units"`
 }
 
 // OpenRequest identifies the managed session and its project.
@@ -198,6 +337,10 @@ type Conversation interface {
 	// effort means Default; contextSize is default or a catalog tier ID.
 	// The caller validates the selection and never switches during a turn.
 	SetModel(ctx context.Context, model, effort, contextSize string) error
+	// SetTitle names the conversation in the provider's own store, so the
+	// provider's clients show title and the provider no longer titles it.
+	// ErrUnsupported means the provider cannot.
+	SetTitle(ctx context.Context, title string) error
 	// Close disconnects from the conversation without deleting it. Pending
 	// interactions end without an answer being fabricated.
 	Close(ctx context.Context) error
@@ -264,6 +407,15 @@ type History struct {
 	// Subagents are the subagent records the recorded events allow to
 	// rebuild.
 	Subagents []Subagent
+	// Usage is the conversation's AI units as recorded, or nil when the
+	// record has none.
+	Usage *Usage
+	// Model is the main agent's model as the record last states it, or ""
+	// when the record does not say.
+	Model string
+	// Truncated is set when only the newest part of a record too large to
+	// read whole was returned.
+	Truncated bool
 }
 
 // EventKind discriminates Event payloads.
@@ -288,19 +440,25 @@ const (
 	EventTitle EventKind = "title"
 	// EventSubagent upserts a subagent record by Subagent.ID.
 	EventSubagent EventKind = "subagent"
+	// EventBackgroundTasks replaces the live background shell task snapshot.
+	EventBackgroundTasks EventKind = "background_tasks"
 	// EventContext reports main-agent context usage; it is never persisted.
 	EventContext EventKind = "context"
+	// EventUsage reports the conversation's AI units so far in Event.Usage.
+	EventUsage EventKind = "usage"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
 type Event struct {
-	Kind        EventKind
-	Item        *Item
-	Delta       *Delta
-	Turn        *Turn
-	Interaction *Interaction
-	Subagent    *Subagent
-	Context     *Context
+	Kind            EventKind
+	Item            *Item
+	Delta           *Delta
+	Turn            *Turn
+	Interaction     *Interaction
+	Subagent        *Subagent
+	BackgroundTasks *BackgroundTasks
+	Context         *Context
+	Usage           *Usage
 	// Error is the sanitized reason for EventExit.
 	Error string
 	// Title is the untrusted provider title for EventTitle.
@@ -335,6 +493,31 @@ type Item struct {
 	// Attachments are the uploads a user item carried; the adapter never
 	// includes their bytes.
 	Attachments []Attachment `json:"attachments,omitempty"`
+	// Images are the images a tool item's result returned, in the
+	// provider's order. The adapter includes their bytes; the web service
+	// stores them and passes on only the stored copies' metadata.
+	Images []Image `json:"images,omitempty"`
+	// ImagesNote is set by the web service when it did not keep some of a
+	// tool item's images, and says why. Adapters leave it empty.
+	ImagesNote string `json:"images_note,omitempty"`
+}
+
+// Image is one image a tool's result returned. Adapters fill Data, MIME and
+// Name when the provider gives one; when the provider's record keeps only
+// the digest, they fill SHA256 without Data. The web service digests Data
+// itself, stores it with the Task, sets ID and Size, and clears Data, so
+// image bytes never reach a browser inline.
+type Image struct {
+	// ID names the web service's stored copy.
+	ID   string `json:"id"`
+	MIME string `json:"mime"`
+	Size int64  `json:"size"`
+	Name string `json:"name,omitempty"`
+	// SHA256 is the hex digest of the bytes. The web service matches it to
+	// a stored copy when Data is empty. It is never sent to browsers.
+	SHA256 string `json:"-"`
+	// Data is the image's bytes, from the adapter to the web service only.
+	Data []byte `json:"-"`
 }
 
 // DeliverySteer marks a user item that arrived as a steer.
@@ -428,6 +611,11 @@ type Interaction struct {
 	Time       time.Time        `json:"time"`
 	// AgentID names the subagent that asked, when the provider says so.
 	AgentID string `json:"agent_id,omitempty"`
+	// ToolCallID names the provider tool call a request is for: the ID of
+	// that call's ItemTool item with the same AgentID. For a permission it
+	// is the call that needs it; for a question, the tool call that asked
+	// (Copilot's ask_user). It is empty when unknown.
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
 // Option is one permission decision.
@@ -501,6 +689,23 @@ type Subagent struct {
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"started_at,omitzero"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
+}
+
+// BackgroundTasks describes provider-owned shell processes independently of
+// the foreground turn. Known is false when their current state cannot be read;
+// Tasks then retains the last known snapshot, not a claim of process liveness.
+type BackgroundTasks struct {
+	Known bool             `json:"known"`
+	Tasks []BackgroundTask `json:"tasks"`
+}
+
+type BackgroundTask struct {
+	ID          string    `json:"id"`
+	Description string    `json:"description,omitempty"`
+	Command     string    `json:"command"`
+	Status      string    `json:"status"`
+	StartedAt   time.Time `json:"started_at,omitzero"`
+	EndedAt     time.Time `json:"ended_at,omitzero"`
 }
 
 // FileDiff is one provider-recorded file change. Before/After hold full file

@@ -127,7 +127,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
 
   async function create() {
     const name = newName.trim();
-    if (!name || !listing || createBusy) return;
+    if (!name || !listing || loading || createBusy) return;
     const at = want;
     setCreateBusy(true);
     setCreateError(null);
@@ -271,7 +271,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
                   }
                 }}
               />
-              <Button size="icon" variant="subtle" aria-label="Create folder" className="hover:bg-surface" disabled={createBusy || !newName.trim()} onClick={() => void create()}>
+              <Button size="icon" variant="subtle" aria-label="Create folder" className="hover:bg-surface" disabled={loading || createBusy || !newName.trim()} onClick={() => void create()}>
                 <Check />
               </Button>
               <Button size="icon" variant="subtle" aria-label="Cancel new folder" className="hover:bg-surface" disabled={createBusy} onClick={cancelCreate}>
@@ -362,7 +362,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
           <FolderUp />
           Up
         </Button>
-        <Button variant="subtle" disabled={!listing || !!listing.error || creating} onClick={startCreate}>
+        <Button variant="subtle" disabled={loading || !listing || !!listing.error || creating} onClick={startCreate}>
           <FolderPlus />
           New folder
         </Button>

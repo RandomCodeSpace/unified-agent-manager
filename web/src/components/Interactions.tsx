@@ -1,16 +1,35 @@
-import { MessageCircleQuestion, ShieldQuestion } from 'lucide-react';
+import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX } from 'lucide-react';
 import { useId, useState, type FormEvent } from 'react';
 import { api, describeError, isStatus, type Answer, type Interaction, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
+import { approvalMark } from '../lib/transcript';
 import { Note } from './common';
 import { Button } from './ui/button';
 
-const STATE_TEXT: Record<Interaction['state'], string> = {
-  pending: 'Pending',
-  answered: 'Answered',
-  rejected: 'Declined',
-  expired: 'Expired',
-};
+/**
+ * A decided request that no tool row claims: one quiet row of the tool rows' kind, in its
+ * turn at its time. The title, the first line of the request, and the outcome word; the
+ * full resolution in the tooltip and the accessible name.
+ */
+export function DecidedRow({ interaction, className }: { interaction: Interaction; className?: string }) {
+  const { word, full, tone } = approvalMark(interaction);
+  const Icon = interaction.kind === 'question' ? MessageCircleQuestion : tone === 'denied' ? ShieldX : tone === 'gone' ? Shield : ShieldCheck;
+  const detail = interaction.detail
+    ?.split('\n')
+    .map((l) => l.trim())
+    .find(Boolean);
+  return (
+    <div className={cn('flex h-6 items-center gap-2 rounded-sm pl-1 text-code-sm text-muted', className)} title={full}>
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        <Icon aria-hidden="true" className="size-3.5 text-faint" strokeWidth={2} />
+      </span>
+      <span className="shrink-0 text-ui text-body">{interaction.title}</span>
+      {detail && <span className="min-w-0 truncate font-mono">{detail}</span>}
+      <span className="ml-auto shrink-0 pr-1 text-caption">{word}</span>
+      <span className="sr-only">: {full}</span>
+    </div>
+  );
+}
 
 /**
  * Permission or question card. The first answer from any tab wins: a 409 means someone
@@ -45,22 +64,8 @@ export function InteractionCard({ session, interaction, onUpdate }: { session: S
   const primary = options.find((o) => !o.reject);
   const ordered = [...options.filter((o) => o.reject), ...options.filter((o) => !o.reject && o !== primary), ...(primary ? [primary] : [])];
 
-  if (!pending) {
-    // Decided: one quiet ledger-style line, so the transcript reads on.
-    return (
-      <section role="group" aria-labelledby={titleId} className="flex min-h-7 flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted">
-        <Icon aria-hidden="true" className="size-3.5 text-faint" />
-        <span id={titleId} className="text-body">
-          {interaction.title}
-        </span>
-        <span aria-hidden="true">·</span>
-        <span>
-          {STATE_TEXT[interaction.state]}
-          {interaction.resolution ? ` · ${interaction.resolution}` : ''}
-        </span>
-      </section>
-    );
-  }
+  // Decided requests live in the transcript, on their tool row or as a quiet row of their own.
+  if (!pending) return <DecidedRow interaction={interaction} />;
 
   return (
     <section className="rounded-md border border-hairline bg-raised px-4 py-3 shadow-raised animate-rise" role="group" aria-labelledby={titleId}>

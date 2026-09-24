@@ -243,6 +243,9 @@ func (c *webConversation) mapPartLocked(part webPart, fallback time.Time) (*agen
 		return &agentapi.Item{ID: part.ID, Kind: state.kind, Text: text, Time: when}, state
 	case "tool":
 		state := webPartState{kind: agentapi.ItemTool, dropDeltas: true}
+		if part.CallID != "" {
+			c.toolParts[part.CallID] = part.ID
+		}
 		if part.State == nil {
 			return nil, state
 		}
@@ -255,13 +258,18 @@ func (c *webConversation) mapPartLocked(part webPart, fallback time.Time) (*agen
 			Status: webToolStatus(part.State.Status),
 			Input:  webCompactJSON(part.State.Input),
 		}
+		it := &agentapi.Item{ID: part.ID, Kind: agentapi.ItemTool, Tool: call, Time: when}
 		switch call.Status {
 		case agentapi.ToolCompleted:
 			call.Output = webTruncate(part.State.Output)
+			it.Images = webToolImages(part.State.Attachments)
 		case agentapi.ToolFailed:
 			call.Output = webTruncate(part.State.Error)
 		}
-		return &agentapi.Item{ID: part.ID, Kind: agentapi.ItemTool, Tool: call, Time: when}, state
+		if call.Status == agentapi.ToolCompleted || call.Status == agentapi.ToolFailed {
+			delete(c.toolParts, part.CallID) // no request can arrive for a finished call
+		}
+		return it, state
 	case "file":
 		// An upload a user message carried shows as its own user item,
 		// described without the data: URL's bytes. Project file references
@@ -279,20 +287,43 @@ func (c *webConversation) mapPartLocked(part webPart, fallback time.Time) (*agen
 
 // webDataAttachment describes a base64 data: URL file part.
 func webDataAttachment(part webPart) (agentapi.Attachment, bool) {
-	rest, ok := strings.CutPrefix(part.URL, "data:")
+	data, ok := webDataURL(part.URL)
 	if !ok {
-		return agentapi.Attachment{}, false
-	}
-	header, payload, ok := strings.Cut(rest, ",")
-	if !ok || !strings.HasSuffix(header, ";base64") {
-		return agentapi.Attachment{}, false
-	}
-	data, err := base64.StdEncoding.DecodeString(payload)
-	if err != nil {
 		return agentapi.Attachment{}, false
 	}
 	sum := sha256.Sum256(data)
 	return agentapi.Attachment{Name: part.Filename, MIME: part.Mime, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}, true
+}
+
+// webToolImages returns the images among a completed tool's file parts.
+// The part keeps its data: URL, so they come back with the history too.
+func webToolImages(parts []webPart) []agentapi.Image {
+	var out []agentapi.Image
+	for _, part := range parts {
+		if part.Type != "file" || !strings.HasPrefix(part.Mime, "image/") {
+			continue
+		}
+		data, ok := webDataURL(part.URL)
+		if !ok || len(data) == 0 {
+			continue
+		}
+		out = append(out, agentapi.Image{Name: part.Filename, MIME: part.Mime, Data: data})
+	}
+	return out
+}
+
+// webDataURL decodes a base64 data: URL.
+func webDataURL(url string) ([]byte, bool) {
+	rest, ok := strings.CutPrefix(url, "data:")
+	if !ok {
+		return nil, false
+	}
+	header, payload, ok := strings.Cut(rest, ",")
+	if !ok || !strings.HasSuffix(header, ";base64") {
+		return nil, false
+	}
+	data, err := base64.StdEncoding.DecodeString(payload)
+	return data, err == nil
 }
 
 func webToolStatus(status string) agentapi.ToolStatus {
@@ -392,8 +423,7 @@ func (c *webConversation) askLocked(interaction agentapi.Interaction) {
 		interaction.Time = existing.Time
 	}
 	c.pending[interaction.ID] = interaction
-	copied := interaction
-	c.emitLocked(agentapi.Event{Kind: agentapi.EventInteraction, Interaction: &copied})
+	c.emitInteractionLocked(interaction)
 }
 
 func (c *webConversation) resolveLocked(id string, state agentapi.InteractionState, resolution string) {
@@ -408,6 +438,21 @@ func (c *webConversation) resolveLocked(id string, state agentapi.InteractionSta
 	delete(c.pending, id)
 	interaction.State = state
 	interaction.Resolution = resolution
+	c.emitInteractionLocked(interaction)
+	delete(c.partOf, id)
+}
+
+// emitInteractionLocked reports an interaction. A pending request holds
+// OpenCode's tool call ID in ToolCallID; the call's tool item uses its part
+// ID, so the report carries that part ID, or nothing while the part is
+// unknown. Translating here rather than when asked also links a request
+// replayed on reopen before the history was read. Once found, the part is
+// remembered for the request, since the call is forgotten when it completes.
+func (c *webConversation) emitInteractionLocked(interaction agentapi.Interaction) {
+	if part, ok := c.toolParts[interaction.ToolCallID]; ok {
+		c.partOf[interaction.ID] = part
+	}
+	interaction.ToolCallID = c.partOf[interaction.ID]
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventInteraction, Interaction: &interaction})
 }
 
@@ -544,6 +589,8 @@ func webPermissionInteraction(request webPermissionRequest, now time.Time) agent
 		},
 		State: agentapi.InteractionPending,
 		Time:  now,
+		// OpenCode's call ID; emitInteractionLocked reports the part ID.
+		ToolCallID: request.Tool.CallID,
 	}
 }
 
@@ -564,12 +611,13 @@ func webQuestionInteraction(request webQuestionRequest, now time.Time) agentapi.
 		})
 	}
 	return agentapi.Interaction{
-		ID:        request.ID,
-		Kind:      agentapi.InteractionQuestion,
-		Title:     "Question",
-		Questions: questions,
-		State:     agentapi.InteractionPending,
-		Time:      now,
+		ID:         request.ID,
+		Kind:       agentapi.InteractionQuestion,
+		Title:      "Question",
+		Questions:  questions,
+		State:      agentapi.InteractionPending,
+		Time:       now,
+		ToolCallID: request.Tool.CallID,
 	}
 }
 

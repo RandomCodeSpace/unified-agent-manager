@@ -115,7 +115,8 @@ func TestWebSubagentIdleOnlyFromTheExactSyncTaskListEntry(t *testing.T) {
 		h.fs.setTasks(agentTaskInfo("agent-1", rpc.TaskStatusIdle, rpc.TaskExecutionModeSync))
 		h.fs.onEvent(agentEv("done", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "call_1", Cancelled: copilot.Bool(true)}))
 		h.fs.onEvent(ev("bg", &rpc.SessionBackgroundTasksChangedData{}))
-		if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentCancelled || h.fs.lists() != 0 {
+		settleTasks(t, h, 1) // Shell tasks are refreshed even without watched agents.
+		if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentCancelled {
 			t.Fatalf("status = %+v after %d reads", sa, h.fs.lists())
 		}
 	})

@@ -159,6 +159,26 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	return conversation, nil
 }
 
+// ReadHistory reads a conversation's recorded transcript through the GET
+// requests a reopen uses: nothing is posted, and #138 found OpenCode keeps no
+// per-session lock another client would notice. Events of the brief open are
+// dropped.
+func (p *webProvider) ReadHistory(ctx context.Context, req agentapi.ReadRequest) (agentapi.History, error) {
+	if req.ConversationID == "" {
+		return agentapi.History{}, errors.New("OpenCode history requires a conversation ID")
+	}
+	conversation, err := p.Open(ctx, agentapi.OpenRequest{ConversationID: req.ConversationID, Workdir: req.Workdir, Events: discardEvents{}})
+	if err != nil {
+		return agentapi.History{}, err
+	}
+	defer func() { _ = conversation.Close(context.WithoutCancel(ctx)) }()
+	return conversation.History(ctx)
+}
+
+type discardEvents struct{}
+
+func (discardEvents) Emit(agentapi.Event) {}
+
 func (p *webProvider) Shutdown(ctx context.Context) error {
 	p.mu.Lock()
 	p.closed = true
@@ -698,6 +718,8 @@ func newWebConversation(server *webServer, id string, sink agentapi.EventSink) *
 
 		commandText: map[string]string{},
 		commandPart: map[string]string{},
+		toolParts:   map[string]string{},
+		partOf:      map[string]string{},
 	}
 }
 
@@ -729,6 +751,12 @@ type webConversation struct {
 	// conversation is open.
 	commandText map[string]string
 	commandPart map[string]string
+	// toolParts maps a running tool call's ID to the ID of the part that
+	// shows the call, which is the call's tool item ID; a call is forgotten
+	// once it completes. partOf keeps the part each pending request was
+	// linked to, so its resolution carries the same link after that.
+	toolParts map[string]string
+	partOf    map[string]string
 }
 
 func (c *webConversation) ID() string { return c.id }
@@ -1008,6 +1036,11 @@ func (c *webConversation) CancelSubagent(context.Context, string) error {
 }
 
 func (c *webConversation) PromptSubagent(context.Context, string, string) error {
+	return agentapi.ErrUnsupported
+}
+
+// SetTitle is unsupported: the adapter does not title Tasks with a model yet.
+func (c *webConversation) SetTitle(context.Context, string) error {
 	return agentapi.ErrUnsupported
 }
 

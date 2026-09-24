@@ -1,6 +1,6 @@
 import { ArrowLeft, Bot, Copy, Crosshair, Ellipsis, Square, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
+import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
@@ -122,6 +122,7 @@ export function SubagentPanel({
           key={current.id}
           sessionId={session.id}
           subagent={current}
+          interactions={session.interactions}
           transcript={agents[current.id]}
           snapshotSeq={snapshotSeq}
           result={current.status === 'completed' || current.status === 'idle' ? session.items.find((i) => i.id === current.parent_tool_call_id)?.tool?.output : undefined}
@@ -259,12 +260,15 @@ function SubagentRow({
 function AgentTranscriptView({
   sessionId,
   subagent,
+  interactions,
   transcript,
   snapshotSeq,
   result,
 }: {
   sessionId: string;
   subagent: Subagent;
+  /** The Task's requests; this subagent's are those with its agent_id. */
+  interactions: Interaction[];
   transcript: AgentTranscript | undefined;
   snapshotSeq: number;
   /** The `task` tool's output on the parent item, which is the subagent's result. */
@@ -315,7 +319,7 @@ function AgentTranscriptView({
         </Note>
       ) : (
         <>
-          <AgentItems items={items} live={live} />
+          <AgentItems sessionId={sessionId} agentId={subagent.id} items={items} interactions={interactions} live={live} />
           {items.length === 0 && <Note>Nothing recorded yet.</Note>}
         </>
       )}

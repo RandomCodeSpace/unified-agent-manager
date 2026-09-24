@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -14,6 +15,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -485,5 +488,337 @@ func TestAttachmentRoutes(t *testing.T) {
 	}
 	if w := ts.do(http.MethodGet, "/api/sessions/"+other.ID+"/attachments/"+att.ID, "", auth); w.Code != http.StatusNotFound {
 		t.Fatalf("another task's attachment = %d", w.Code)
+	}
+}
+
+// toolItem is a completed tool call that returned images.
+func toolItem(id, agentID string, images ...agentapi.Image) agentapi.Item {
+	return agentapi.Item{ID: id, Kind: agentapi.ItemTool, AgentID: agentID, Tool: &agentapi.ToolCall{Name: "view", Status: agentapi.ToolCompleted}, Images: images}
+}
+
+func toolImage(name string, data []byte) agentapi.Image {
+	return agentapi.Image{Name: name, MIME: "image/png", SHA256: sha(data), Data: data}
+}
+
+func TestToolImagesAreSniffedDedupedAndKeptWithTheTask(t *testing.T) {
+	m, prov, sum, conv, dirs := uploadTask(t, "docs")
+	img := pngBytes(t)
+	gifData := encoded(t, func(b *bytes.Buffer, img image.Image) error { return gif.Encode(b, img, nil) })
+	conv.EmitItem(toolItem("t1", "",
+		toolImage("../shots/shot.png", img),
+		toolImage("again.png", img),
+		agentapi.Image{MIME: "image/jpeg", Data: gifData}, // the type comes from the bytes
+		agentapi.Image{MIME: "image/webp", Data: webpBytes},
+		toolImage("logo.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`)),
+		toolImage("doc.png", pdfBytes),
+		toolImage("huge.png", append(append([]byte{}, img...), make([]byte, maxToolImageBytes)...)),
+		agentapi.Image{MIME: "image/png", SHA256: sha([]byte("never stored"))},
+	))
+	m.imageWG.Wait()
+	items := detail(t, m, sum.ID).Items
+	if len(items) != 1 || len(items[0].Images) != 3 {
+		t.Fatalf("items = %+v", items)
+	}
+	got := items[0].Images
+	for i, want := range []struct{ name, mime string }{{"shot.png", "image/png"}, {"", "image/gif"}, {"", "image/webp"}} {
+		if !validRequestID(got[i].ID) || got[i].Name != want.name || got[i].MIME != want.mime || got[i].Data != nil {
+			t.Fatalf("image %d = %+v, want %+v", i, got[i], want)
+		}
+	}
+	if got[0].Size != int64(len(img)) {
+		t.Fatalf("size = %d", got[0].Size)
+	}
+	wantNote := "4 images not kept: not a png, jpeg, gif or webp image; over 5 MiB; the provider did not record its bytes"
+	if items[0].ImagesNote != wantNote {
+		t.Fatalf("note = %q, want %q", items[0].ImagesNote, wantNote)
+	}
+	raw, _ := json.Marshal(items[0])
+	if !strings.Contains(string(raw), `"images":[{"id":"`+got[0].ID+`","mime":"image/png","size":`+strconv.Itoa(len(img))+`,"name":"shot.png"},{"id":"`+got[1].ID+`","mime":"image/gif","size":`) ||
+		!strings.Contains(string(raw), `"images_note":"`+wantNote+`"`) || strings.Contains(string(raw), sha(img)) || strings.Contains(string(raw), "data") {
+		t.Fatalf("item JSON = %s", raw)
+	}
+
+	// The same bytes from another call, or from a subagent, name the same
+	// stored copy.
+	prov.Last().EmitSubagent(agentapi.Subagent{ID: "agent-1", Name: "helper", Status: agentapi.SubagentRunning})
+	conv.EmitItem(toolItem("t2", "", toolImage("other.png", img)))
+	conv.EmitItem(toolItem("t1", "agent-1", toolImage("sub.png", img)))
+	m.imageWG.Wait()
+	if items := detail(t, m, sum.ID).Items; len(items) != 2 || len(items[1].Images) != 1 || items[1].Images[0].ID != got[0].ID || items[1].ImagesNote != "" {
+		t.Fatalf("items after a repeat = %+v", items)
+	}
+	sub, err := m.Subagent(sum.ID, "agent-1")
+	if err != nil || len(sub.Items) != 1 || len(sub.Items[0].Images) != 1 || sub.Items[0].Images[0].ID != got[0].ID {
+		t.Fatalf("subagent detail = %+v, %v", sub, err)
+	}
+
+	// Stored beside the uploads, owner-only, with a record marked tool.
+	files, _ := os.ReadDir(dirs.task(sum.ID))
+	if len(files) != 6 {
+		t.Fatalf("stored %d files, want 3 images and 3 records", len(files))
+	}
+	for _, f := range files {
+		if info, _ := f.Info(); info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode = %v", f.Name(), info.Mode())
+		}
+	}
+	var record upload
+	data, _ := os.ReadFile(filepath.Join(dirs.task(sum.ID), got[0].ID+".json"))
+	if json.Unmarshal(data, &record) != nil || !record.Tool || record.SHA256 != sha(img) || record.Name != "shot.png" {
+		t.Fatalf("record = %s", data)
+	}
+	if att, stored, _, err := m.Attachment(sum.ID, got[1].ID); err != nil || att.MIME != "image/gif" || !bytes.Equal(stored, gifData) {
+		t.Fatalf("stored gif = %+v, %v", att, err)
+	}
+
+	// A tool image never expires and is not a prompt attachment.
+	later := time.Now().Add(uploadExpiry + time.Hour)
+	m.now = func() time.Time { return later }
+	m.sweepUploads()
+	if _, _, _, err := m.Attachment(sum.ID, got[0].ID); err != nil {
+		t.Fatalf("tool image expired: %v", err)
+	}
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "x", RequestID: mustUUID(t), Attachments: []string{got[0].ID}}); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("tool image as an attachment = %v", err)
+	}
+
+	if _, err := m.Archive(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dirs.task(sum.ID)); !os.IsNotExist(err) {
+		t.Fatalf("tool images survived deleting the task: %v", err)
+	}
+}
+
+// Emit must not block: images are stored on their own goroutine, the item
+// is published at once without them and again once they are stored.
+func TestEmitReturnsWhileToolImagesStore(t *testing.T) {
+	m, _, sum, conv, _ := uploadTask(t, "docs")
+	img := pngBytes(t)
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	m.storeImageHook = func() {
+		entered <- struct{}{}
+		<-release
+	}
+	returned := make(chan struct{})
+	go func() {
+		conv.EmitItem(toolItem("t1", "", toolImage("shot.png", img)))
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Emit waited for image storage")
+	}
+	<-entered // storage is under way and held
+	items := detail(t, m, sum.ID).Items
+	if len(items) != 1 || items[0].Tool == nil || len(items[0].Images) != 0 || items[0].ImagesNote != "" {
+		t.Fatalf("item while its images store = %+v", items)
+	}
+	// Nothing else waits on it either.
+	conv.EmitItem(toolItem("t2", ""))
+	if items := detail(t, m, sum.ID).Items; len(items) != 2 {
+		t.Fatalf("items while images store = %+v", items)
+	}
+	close(release)
+	m.imageWG.Wait()
+	items = detail(t, m, sum.ID).Items
+	if len(items[0].Images) != 1 || !validRequestID(items[0].Images[0].ID) || items[0].Images[0].Name != "shot.png" {
+		t.Fatalf("item after its images stored = %+v", items[0])
+	}
+	if _, data, _, err := m.Attachment(sum.ID, items[0].Images[0].ID); err != nil || !bytes.Equal(data, img) {
+		t.Fatalf("stored image = %v", err)
+	}
+	// Images on anything but a tool item are dropped.
+	conv.EmitItem(agentapi.Item{ID: "u1", Kind: agentapi.ItemAssistant, Text: "hi", Images: []agentapi.Image{toolImage("x.png", img)}, ImagesNote: "n"})
+	if it := detail(t, m, sum.ID).Items[2]; it.Images != nil || it.ImagesNote != "" {
+		t.Fatalf("non-tool item kept images: %+v", it)
+	}
+}
+
+func TestToolImagesStopAtTheTaskCap(t *testing.T) {
+	m, _, sum, conv, dirs := uploadTask(t, "docs")
+	img := pngBytes(t)
+	var first []agentapi.Image
+	for i := range maxToolImages {
+		first = append(first, toolImage("", append(append([]byte{}, img...), byte(i))))
+	}
+	conv.EmitItem(toolItem("t1", "", first...))
+	extra := append(append([]byte{}, img...), 0xff, 0xff)
+	conv.EmitItem(toolItem("t2", "", toolImage("", extra), first[7]))
+	m.imageWG.Wait()
+	items := detail(t, m, sum.ID).Items
+	if len(items[0].Images) != maxToolImages || items[0].ImagesNote != "" {
+		t.Fatalf("first item kept %d images, note %q", len(items[0].Images), items[0].ImagesNote)
+	}
+	if got := items[1]; len(got.Images) != 1 || got.Images[0].ID != items[0].Images[7].ID || got.ImagesNote != "1 image not kept: a task keeps at most 50 images" {
+		t.Fatalf("item past the cap = %+v", got)
+	}
+	if files, _ := os.ReadDir(dirs.task(sum.ID)); len(files) != 2*maxToolImages {
+		t.Fatalf("stored %d files, want %d", len(files), 2*maxToolImages)
+	}
+	// Uploads do not count against the cap, and the cap does not stop them.
+	mustUpload(t, m, sum.ID, "note.txt", []byte("note"))
+}
+
+func TestToolImagesFromStaleConversationAreNotStored(t *testing.T) {
+	m, _, sum, conv, dirs := uploadTask(t, "docs")
+	s, err := m.lookup(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The old provider may deliver an event after UAM has replaced its
+	// conversation. It must not create either a row or an image file.
+	m.mu.Lock()
+	s.gen++
+	m.mu.Unlock()
+	conv.EmitItem(toolItem("stale", "", toolImage("shot.png", pngBytes(t))))
+	m.imageWG.Wait()
+	if items := detail(t, m, sum.ID).Items; len(items) != 0 {
+		t.Fatalf("stale conversation added items: %+v", items)
+	}
+	if files, err := os.ReadDir(dirs.task(sum.ID)); !os.IsNotExist(err) && (err != nil || len(files) != 0) {
+		t.Fatalf("stale conversation stored files: %v, %v", files, err)
+	}
+}
+
+func TestToolImagesSurviveARestart(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	st := openTestStore(t)
+	m := startManager(t, st, prov)
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: addProject(t, m, t.TempDir())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, later := pngBytes(t), append(pngBytes(t), 1)
+	prov.Last().EmitItem(toolItem("t1", "", toolImage("shot.png", img)))
+	m.imageWG.Wait()
+	stored := detail(t, m, sum.ID).Items[0].Images[0]
+
+	// A directory whose Task is gone is removed at start.
+	orphan := filepath.Join(filepath.Dir(st.Path()), uploadsDir, mustUUID(t))
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, mustUUID(t)+".json"), []byte(`{"tool":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The provider's record keeps the first image by digest only, and the
+	// second with its bytes, which UAM had not stored.
+	prov2 := agenttest.NewProvider("fake", allCaps)
+	prov2.AddConversation(sum.ConversationID, []agentapi.Item{
+		toolItem("t1", "", agentapi.Image{MIME: "image/png", SHA256: strings.ToUpper(sha(img))}),
+		toolItem("t2", "", toolImage("", later)),
+	})
+	m2 := startManager(t, st, prov2)
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("an unknown task's image directory survived a start: %v", err)
+	}
+	if err := m2.View(context.Background(), sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	items := detail(t, m2, sum.ID).Items
+	if len(items) != 2 || len(items[0].Images) != 1 || !reflect.DeepEqual(items[0].Images[0], stored) || len(items[1].Images) != 1 || !validRequestID(items[1].Images[0].ID) {
+		t.Fatalf("history items = %+v, want %+v first", items, stored)
+	}
+	if _, data, _, err := m2.Attachment(sum.ID, items[1].Images[0].ID); err != nil || !bytes.Equal(data, later) {
+		t.Fatalf("image stored from history = %v", err)
+	}
+}
+
+func TestToolImageRoutes(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	sum, conv := createSession(t, ts.m, ts.prov)
+	sub, _, err := ts.m.Subscribe(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ts.m.Unsubscribe(sub)
+	img := pngBytes(t)
+	conv.EmitSubagent(agentapi.Subagent{ID: "agent-1", Name: "helper", Status: agentapi.SubagentRunning})
+	conv.EmitItem(toolItem("t1", "", toolImage("", img)))
+	conv.EmitItem(toolItem("t1", "agent-1", toolImage("shot.png", img)))
+
+	// The item frame comes at once without its images, then again with them.
+	var f frame
+	var it agentapi.Item
+	for it.Images == nil {
+		f = frameOf(t, sub, "item")
+		decodeField(t, f, "item", &it)
+	}
+	if len(it.Images) != 1 || !validRequestID(it.Images[0].ID) || !strings.Contains(string(f.data["item"]), `"images":[{"id":"`+it.Images[0].ID+`","mime":"image/png","size":`+strconv.Itoa(len(img))+`}]`) {
+		t.Fatalf("item frame = %s", f.data["item"])
+	}
+	id := it.Images[0].ID
+	for _, path := range []string{"/api/sessions/" + sum.ID, "/api/sessions/" + sum.ID + "/subagents/agent-1"} {
+		w := ts.do(http.MethodGet, path, "", auth)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"images":[{"id":"`+id+`"`) {
+			t.Fatalf("%s = %d %s", path, w.Code, w.Body)
+		}
+	}
+
+	w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/attachments/"+id, "", auth)
+	h := w.Header()
+	if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), img) || h.Get("Content-Type") != "image/png" || h.Get("X-Content-Type-Options") != "nosniff" ||
+		h.Get("Content-Disposition") != "inline" || h.Get("Content-Security-Policy") != contentSecurity || h.Get("Cache-Control") != "no-store" {
+		t.Fatalf("serve tool image = %d %v", w.Code, h)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/attachments/"+id, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("serve without cookie = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/attachments/"+id, "", auth, withHost("evil.example")); w.Code != http.StatusForbidden {
+		t.Fatalf("serve to a foreign host = %d", w.Code)
+	}
+	other, _ := createSession(t, ts.m, ts.prov)
+	if w := ts.do(http.MethodGet, "/api/sessions/"+other.ID+"/attachments/"+id, "", auth); w.Code != http.StatusNotFound {
+		t.Fatalf("another task's image = %d", w.Code)
+	}
+}
+
+// History loading and importing bypass conversation.Open, but must still keep tool images.
+func TestToolImagesInReadOnlyHistoryAndImport(t *testing.T) {
+	for _, imported := range []bool{false, true} {
+		t.Run(fmt.Sprint("import=", imported), func(t *testing.T) {
+			img := pngBytes(t)
+			h := agentapi.History{Items: []agentapi.Item{toolItem("image", "", toolImage("shot.png", img))}}
+			var m *Manager
+			var id string
+			if imported {
+				manager, prov, _, project := importManager(t)
+				m = manager
+				prov.SetPrevious([]agentapi.PreviousConversation{{ID: prevA}}, nil)
+				prov.SetHistory(prevA, h)
+				sum, err := m.Import(context.Background(), project.ID, prevA)
+				if err != nil {
+					t.Fatal(err)
+				}
+				id = sum.ID
+			} else {
+				manager, prov, _, tasks := closedTasks(t, StageSettled)
+				m, id = manager, tasks[0].ID
+				prov.SetHistory(tasks[0].ConversationID, h)
+				if err := m.View(context.Background(), id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			d := waitHistory(t, m, id, HistoryLoaded)
+			if len(d.Items) != 1 || len(d.Items[0].Images) != 1 {
+				t.Fatalf("images lost from history: %+v", d.Items)
+			}
+			stored := d.Items[0].Images[0]
+			if stored.ID == "" || len(stored.Data) != 0 {
+				t.Fatalf("image is not a stored reference: %+v", stored)
+			}
+			if _, data, _, err := m.Attachment(id, stored.ID); err != nil || !bytes.Equal(data, img) {
+				t.Fatalf("stored image = %v", err)
+			}
+		})
 	}
 }

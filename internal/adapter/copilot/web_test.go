@@ -1,13 +1,19 @@
 package copilot
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,15 +38,84 @@ type fakeClient struct {
 	resumeErr error
 	models    []rpc.Model
 	modelsErr error
+	quota     map[string]rpc.AccountQuotaSnapshot
+	quotaErr  error
 	sessions  []*fakeSession
 	create    []*copilot.SessionConfig
 	resume    []*copilot.ResumeSessionConfig
+	// reply answers SendAndWait on the sessions created afterwards.
+	reply     func(context.Context, copilot.MessageOptions) (string, error)
+	deleted   []string
+	deleteCtx []error // each DeleteSession context's error when it was called
+	deleteErr error
+	// journal is served by ReadEvents, backward in pages of pageSize (all
+	// at once when 0); reads records every request.
+	journal       []copilot.SessionEvent
+	pageSize      int
+	readErr       error
+	reads         []rpc.SessionsReadPersistedEventsRequest
+	listed        []copilot.SessionMetadata
+	listErr       error
+	listDirs      []string
+	inUse         []string
+	inUseErr      error
+	checked       [][]string
+	importSupport *bool
+	importProbes  int
+}
+
+func (f *fakeClient) ImportSupported(context.Context) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.importProbes++
+	return f.importSupport == nil || *f.importSupport
+}
+
+// ReadEvents serves journal newest page first, as the CLI does for a
+// backward read. The cursor is the index older events end at.
+func (f *fakeClient) ReadEvents(_ context.Context, req *rpc.SessionsReadPersistedEventsRequest) (*rpc.EventsReadResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads = append(f.reads, *req)
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
+	end := len(f.journal)
+	if req.Cursor != nil {
+		end, _ = strconv.Atoi(*req.Cursor)
+	}
+	start := 0
+	if f.pageSize > 0 && end > f.pageSize {
+		start = end - f.pageSize
+	}
+	return &rpc.EventsReadResult{Events: append([]copilot.SessionEvent(nil), f.journal[start:end]...), Cursor: strconv.Itoa(start),
+		CursorStatus: rpc.EventsCursorStatusOk, HasMore: start > 0}, nil
+}
+
+func (f *fakeClient) ListSessions(_ context.Context, workdir string) ([]copilot.SessionMetadata, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listDirs = append(f.listDirs, workdir)
+	return append([]copilot.SessionMetadata(nil), f.listed...), f.listErr
+}
+
+func (f *fakeClient) CheckInUse(_ context.Context, ids []string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checked = append(f.checked, append([]string(nil), ids...))
+	return append([]string(nil), f.inUse...), f.inUseErr
 }
 
 func (f *fakeClient) ListModels(context.Context) ([]rpc.Model, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.models, f.modelsErr
+}
+
+func (f *fakeClient) Quota(context.Context) (map[string]rpc.AccountQuotaSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.quota, f.quotaErr
 }
 
 func (f *fakeClient) Start(context.Context) error {
@@ -64,7 +139,11 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
-	s := &fakeSession{id: cfg.SessionID, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest}
+	id := cfg.SessionID
+	if id == "" {
+		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
+	}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -80,6 +159,14 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
+}
+
+func (f *fakeClient) DeleteSession(ctx context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, id)
+	f.deleteCtx = append(f.deleteCtx, ctx.Err())
+	return f.deleteErr
 }
 
 func (f *fakeClient) counts() (started, forced int) {
@@ -121,6 +208,7 @@ type fakeSession struct {
 	subCancelRejected bool
 	tasks             []rpc.TaskInfo
 	taskLists         int
+	tasksErr          error
 	subMessages       []string
 	subMessageResult  *rpc.TasksSendMessageResult
 	subMessageErr     error
@@ -129,6 +217,9 @@ type fakeSession struct {
 	respondHook       func(context.Context, string, rpc.PermissionDecision) (bool, error)
 	eventsErr         error
 	disconnectHook    func() error
+	reply             func(context.Context, copilot.MessageOptions) (string, error)
+	names             []string
+	nameErr           error
 }
 
 func (s *fakeSession) CancelSubagent(_ context.Context, id string) (bool, error) {
@@ -142,7 +233,7 @@ func (s *fakeSession) ListTasks(context.Context) ([]rpc.TaskInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.taskLists++
-	return append([]rpc.TaskInfo(nil), s.tasks...), nil
+	return append([]rpc.TaskInfo(nil), s.tasks...), s.tasksErr
 }
 
 func (s *fakeSession) MessageSubagent(_ context.Context, agentID, message string) (*rpc.TasksSendMessageResult, error) {
@@ -195,6 +286,24 @@ func (s *fakeSession) Send(_ context.Context, msg copilot.MessageOptions) (strin
 		hook(id)
 	}
 	return id, nil
+}
+
+func (s *fakeSession) SendAndWait(ctx context.Context, msg copilot.MessageOptions) (string, error) {
+	s.mu.Lock()
+	s.sent = append(s.sent, msg.Prompt)
+	reply := s.reply
+	s.mu.Unlock()
+	if reply == nil {
+		return "", errors.New("fake session has no reply")
+	}
+	return reply(ctx, msg)
+}
+
+func (s *fakeSession) SetName(_ context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.names = append(s.names, name)
+	return s.nameErr
 }
 
 func (s *fakeSession) SwitchModel(_ context.Context, req *rpc.ModelSwitchToRequest) (*rpc.ModelSwitchToResult, error) {
@@ -507,6 +616,51 @@ func TestWebAllowOnceMarkerFollowsManagedPolicy(t *testing.T) {
 	}
 }
 
+// A permission request names the tool call it is for, whatever its kind, and
+// that name is the ID of the call's tool item.
+func TestWebPermissionNamesItsToolCall(t *testing.T) {
+	h := openWeb(t)
+	h.fs.onEvent(ev("e0", &rpc.ToolExecutionStartData{ToolCallID: "call_shell", ToolName: "bash"}))
+	id := func(s string) *string { return &s }
+	cases := []struct {
+		name string
+		pr   rpc.PermissionRequest
+		want string
+	}{
+		{"shell", &rpc.PermissionRequestShell{FullCommandText: "ls", ToolCallID: id("call_shell")}, "call_shell"},
+		{"url", &rpc.PermissionRequestURL{URL: "https://example.com", ToolCallID: id(" call_url\n")}, "call_url"},
+		{"write", &rpc.PermissionRequestWrite{FileName: "a.go", ToolCallID: id("call_write")}, "call_write"},
+		{"read", &rpc.PermissionRequestRead{Path: "/x", ToolCallID: id("call_read")}, "call_read"},
+		{"mcp", &rpc.PermissionRequestMCP{ServerName: "s", ToolName: "t", ToolCallID: id("call_mcp")}, "call_mcp"},
+		{"custom", &rpc.PermissionRequestCustomTool{ToolName: "t", ToolCallID: id("call_custom")}, "call_custom"},
+		{"memory", &rpc.PermissionRequestMemory{ToolCallID: id("call_memory")}, "call_memory"},
+		{"hook", &rpc.PermissionRequestHook{ToolName: "t", ToolCallID: id("call_hook")}, "call_hook"},
+		{"factory", &rpc.PermissionRequestFactory{ToolCallID: id("call_factory")}, "call_factory"},
+		{"env", &rpc.PermissionRequestExtensionEnvAccess{ToolCallID: id("call_env")}, "call_env"},
+		{"extension", &rpc.PermissionRequestExtensionManagement{ToolCallID: id("call_ext")}, "call_ext"},
+		{"extension-permission", &rpc.PermissionRequestExtensionPermissionAccess{ToolCallID: id("call_extp")}, "call_extp"},
+		{"raw", &rpc.RawPermissionRequest{Discriminator: "future-kind", Raw: []byte(`{"kind":"future-kind","toolCallId":" call_raw "}`)}, "call_raw"},
+		{"shell-without", &rpc.PermissionRequestShell{FullCommandText: "ls"}, ""},
+		{"url-blank", &rpc.PermissionRequestURL{URL: "https://example.com", ToolCallID: id("  ")}, ""},
+		{"read-without", &rpc.PermissionRequestRead{Path: "/x"}, ""},
+		{"raw-without", &rpc.RawPermissionRequest{Discriminator: "future-kind", Raw: []byte(`{"kind":"future-kind"}`)}, ""},
+		{"raw-not-a-string", &rpc.RawPermissionRequest{Discriminator: "future-kind", Raw: []byte(`{"kind":"future-kind","toolCallId":7}`)}, ""},
+		{"unreadable", nil, ""},
+	}
+	for i, c := range cases {
+		d := shellRequest(c.name)
+		d.PermissionRequest = c.pr
+		h.fs.onEvent(ev(fmt.Sprintf("p%d", i), d))
+		if got := h.sink.interaction(c.name).ToolCallID; got != c.want {
+			t.Errorf("%s: ToolCallID = %q, want %q", c.name, got, c.want)
+		}
+	}
+	tool := h.sink.all()[0].Item
+	if tool == nil || tool.Kind != agentapi.ItemTool || tool.ID != h.sink.interaction("shell").ToolCallID {
+		t.Fatalf("tool item %+v does not match the shell request's tool call", tool)
+	}
+}
+
 // Only a person's approve_once is reported as approved interactively; an
 // automatic (yolo) approval leaves the flag off.
 func TestWebApproveOnceReportsWhetherAPersonApproved(t *testing.T) {
@@ -601,6 +755,203 @@ func askAsync(fs *fakeSession, req copilot.UserInputRequest) <-chan userReply {
 		done <- userReply{resp: resp, err: err}
 	}()
 	return done
+}
+
+// Recorded history keeps a message's thinking in reasoningText; the CLI does
+// not record assistant.reasoning events. The transcript rebuilds a reasoning
+// item from it, before the message, and never beside a live one.
+func TestWebHistoryRebuildsReasoningFromMessages(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "reasoning_history.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evs []copilot.SessionEvent
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		var ev copilot.SessionEvent
+		if err := json.Unmarshal(line, &ev); err != nil {
+			t.Fatalf("decode fixture: %v", err)
+		}
+		evs = append(evs, ev)
+	}
+	var withReasoning, without *rpc.AssistantMessageData
+	var agent string
+	for _, ev := range evs {
+		if d, ok := ev.Data.(*rpc.AssistantMessageData); ok {
+			if reasoningText(d) != "" {
+				withReasoning, agent = d, agentOf(ev)
+			} else {
+				without = d
+			}
+		}
+	}
+	if withReasoning == nil || without == nil {
+		t.Fatal("fixture needs one message with reasoningText and one without")
+	}
+	items := history(evs).Items
+	var reasoning []agentapi.Item
+	for _, it := range items {
+		if it.Kind == agentapi.ItemReasoning {
+			reasoning = append(reasoning, it)
+		}
+	}
+	if len(reasoning) != 1 || reasoning[0].ID != reasoningItemID(withReasoning.MessageID) || reasoning[0].Text != reasoningText(withReasoning) || reasoning[0].AgentID != agent {
+		t.Fatalf("reasoning items = %+v, want one for message %s of agent %q", reasoning, withReasoning.MessageID, agent)
+	}
+	// The thinking precedes what the message did: its tool call, since the
+	// recorded message itself has no text.
+	at := slices.IndexFunc(items, func(it agentapi.Item) bool { return it.ID == reasoning[0].ID })
+	if at+1 >= len(items) || items[at+1].Kind != agentapi.ItemTool || items[at+1].AgentID != agent {
+		t.Fatalf("item after the thinking = %+v", items[at+1:])
+	}
+
+	// Live, the same message follows a streamed assistant.reasoning event,
+	// which already holds the text: no second reasoning item.
+	h := openWeb(t)
+	text := "Plan first."
+	h.fs.onEvent(ev("l1", &rpc.AssistantReasoningDeltaData{ReasoningID: "r1", DeltaContent: "Plan"}))
+	h.fs.onEvent(ev("l2", &rpc.AssistantReasoningData{ReasoningID: "r1", Content: text}))
+	h.fs.onEvent(ev("l3", &rpc.AssistantMessageData{MessageID: "m1", Content: "Done.", ReasoningText: &text}))
+	// A message whose thinking never streamed (another agent, or a model
+	// the CLI does not stream reasoning for) still shows it.
+	h.fs.onEvent(ev("l4", &rpc.AssistantMessageData{MessageID: "m2", Content: "", ReasoningText: &text}))
+	sub := "agent-1"
+	h.fs.onEvent(copilot.SessionEvent{ID: "l5", AgentID: &sub, Data: &rpc.AssistantMessageData{MessageID: "m3", Content: "Sub.", ReasoningText: &text}})
+	var got []string
+	for _, e := range h.sink.all() {
+		if e.Kind == agentapi.EventItem && e.Item.Kind == agentapi.ItemReasoning {
+			got = append(got, e.Item.AgentID+"/"+e.Item.ID)
+		}
+	}
+	if want := []string{"/reasoning:r1", "/reasoning:m2", "agent-1/reasoning:m3"}; !slices.Equal(got, want) {
+		t.Fatalf("live reasoning items = %v, want %v", got, want)
+	}
+}
+
+// Two questions with the same text pair with their events in arrival order,
+// and a late event for an answered question links nothing.
+func TestWebQuestionLinksPairInOrder(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	id := func(s string) *string { return &s }
+	sub := "agent-1"
+	questions := func() []*agentapi.Interaction {
+		var out []*agentapi.Interaction
+		seen := map[string]bool{}
+		for _, e := range slices.Backward(h.sink.all()) {
+			if e.Kind == agentapi.EventInteraction && e.Interaction.Kind == agentapi.InteractionQuestion && !seen[e.Interaction.ID] {
+				seen[e.Interaction.ID] = true
+				out = append([]*agentapi.Interaction{e.Interaction}, out...)
+			}
+		}
+		return out
+	}
+
+	// Callbacks first: main agent, then a subagent, same text. The events
+	// come in the same order and link the first waiting question each.
+	d1 := askAsync(h.fs, copilot.UserInputRequest{Question: "Colour?", Choices: []string{"a"}})
+	waitFor(t, "first question", func() bool { return len(questions()) == 1 })
+	d2 := askAsync(h.fs, copilot.UserInputRequest{Question: "Colour?", Choices: []string{"a"}})
+	waitFor(t, "second question", func() bool { return len(questions()) == 2 })
+	h.fs.onEvent(ev("e1", &rpc.UserInputRequestedData{RequestID: "r1", Question: "Colour?", ToolCallID: id("call_main")}))
+	h.fs.onEvent(copilot.SessionEvent{ID: "e2", AgentID: &sub, Data: &rpc.UserInputRequestedData{RequestID: "r2", Question: "Colour?", ToolCallID: id("call_sub")}})
+	qs := questions()
+	if len(qs) != 2 || qs[0].ToolCallID != "call_main" || qs[0].AgentID != "" || qs[1].ToolCallID != "call_sub" || qs[1].AgentID != sub {
+		t.Fatalf("paired questions = %+v %+v", qs[0], qs[1])
+	}
+	for i, d := range []<-chan userReply{d1, d2} {
+		if err := h.conv.Respond(ctx, qs[i].ID, agentapi.Answer{Answers: [][]string{{"a"}}}); err != nil {
+			t.Fatalf("Respond %d: %v", i, err)
+		}
+		<-d
+	}
+
+	// Events first, two of them: the callbacks take them oldest first.
+	h.fs.onEvent(ev("e3", &rpc.UserInputRequestedData{RequestID: "r3", Question: "Size?", ToolCallID: id("call_s1")}))
+	h.fs.onEvent(ev("e4", &rpc.UserInputRequestedData{RequestID: "r4", Question: "Size?", ToolCallID: id("call_s2")}))
+	d3 := askAsync(h.fs, copilot.UserInputRequest{Question: "Size?", Choices: []string{"a"}})
+	waitFor(t, "third question", func() bool { return len(questions()) == 3 })
+	d4 := askAsync(h.fs, copilot.UserInputRequest{Question: "Size?", Choices: []string{"a"}})
+	waitFor(t, "fourth question", func() bool { return len(questions()) == 4 })
+	qs = questions()
+	if qs[2].ToolCallID != "call_s1" || qs[3].ToolCallID != "call_s2" {
+		t.Fatalf("event-first questions = %+v %+v", qs[2], qs[3])
+	}
+	for i, d := range []<-chan userReply{d3, d4} {
+		if err := h.conv.Respond(ctx, qs[2+i].ID, agentapi.Answer{Answers: [][]string{{"a"}}}); err != nil {
+			t.Fatalf("Respond %d: %v", i, err)
+		}
+		<-d
+	}
+
+	// A question answered before its event: the late event is dropped, and
+	// the next question with that text waits for its own.
+	d5 := askAsync(h.fs, copilot.UserInputRequest{Question: "Shape?", Choices: []string{"a"}})
+	waitFor(t, "fifth question", func() bool { return len(questions()) == 5 })
+	if err := h.conv.Respond(ctx, questions()[4].ID, agentapi.Answer{Reject: true}); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	<-d5
+	d6 := askAsync(h.fs, copilot.UserInputRequest{Question: "Shape?", Choices: []string{"a"}})
+	waitFor(t, "sixth question", func() bool { return len(questions()) == 6 })
+	h.fs.onEvent(ev("e5", &rpc.UserInputRequestedData{RequestID: "r5", Question: "Shape?", ToolCallID: id("call_late")}))
+	if q := questions()[5]; q.ToolCallID != "" {
+		t.Fatalf("question after a late event = %+v, want no tool call", q)
+	}
+	h.fs.onEvent(ev("e6", &rpc.UserInputRequestedData{RequestID: "r6", Question: "Shape?", ToolCallID: id("call_own")}))
+	if q := questions()[5]; q.ToolCallID != "call_own" || q.State != agentapi.InteractionPending {
+		t.Fatalf("question with its own event = %+v", q)
+	}
+	if err := h.conv.Respond(ctx, questions()[5].ID, agentapi.Answer{Answers: [][]string{{"a"}}}); err != nil {
+		t.Fatal(err)
+	}
+	<-d6
+}
+
+// The ask_user callback carries no tool call or agent; the user_input.requested
+// event does, and links the question whichever of the two arrives first.
+func TestWebQuestionNamesItsToolCall(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	id := func(s string) *string { return &s }
+	answer := func(q *agentapi.Interaction, done <-chan userReply) {
+		t.Helper()
+		if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"a"}}}); err != nil {
+			t.Fatalf("Respond: %v", err)
+		}
+		<-done
+	}
+
+	// Event first: the callback picks the link up.
+	h.fs.onEvent(ev("q0", &rpc.UserInputRequestedData{RequestID: "r0", Question: "Colour?", Choices: []string{"a", "b"}, ToolCallID: id(" call_ask0 ")}))
+	done := askAsync(h.fs, copilot.UserInputRequest{Question: "Colour?", Choices: []string{"a", "b"}})
+	waitFor(t, "question", func() bool { return h.sink.question() != nil })
+	if q := h.sink.question(); q.ToolCallID != "call_ask0" || q.AgentID != "" {
+		t.Fatalf("event-first question = %+v, want tool call call_ask0", q)
+	}
+	answer(h.sink.question(), done)
+
+	// Callback first: the event re-emits the pending question with the link and the agent.
+	done = askAsync(h.fs, copilot.UserInputRequest{Question: "Size?", Choices: []string{"a"}})
+	waitFor(t, "second question", func() bool { q := h.sink.question(); return q != nil && q.Questions[0].Text == "Size?" })
+	if q := h.sink.question(); q.ToolCallID != "" {
+		t.Fatalf("question before its event = %+v", q)
+	}
+	agent := "agent-1"
+	h.fs.onEvent(copilot.SessionEvent{ID: "q1", AgentID: &agent, Data: &rpc.UserInputRequestedData{RequestID: "r1", Question: "Size?", Choices: []string{"a"}, ToolCallID: id("call_ask1")}})
+	q := h.sink.question()
+	if q.ToolCallID != "call_ask1" || q.AgentID != agent || q.State != agentapi.InteractionPending {
+		t.Fatalf("callback-first question = %+v, want tool call call_ask1 for %s", q, agent)
+	}
+	answer(q, done)
+
+	// No tool call on the event: nothing to link.
+	h.fs.onEvent(ev("q2", &rpc.UserInputRequestedData{RequestID: "r2", Question: "Shape?", Choices: []string{"a"}}))
+	done = askAsync(h.fs, copilot.UserInputRequest{Question: "Shape?", Choices: []string{"a"}})
+	waitFor(t, "third question", func() bool { q := h.sink.question(); return q != nil && q.Questions[0].Text == "Shape?" })
+	if q := h.sink.question(); q.ToolCallID != "" || q.AgentID != "" {
+		t.Fatalf("unlinked question = %+v", q)
+	}
+	answer(h.sink.question(), done)
 }
 
 func TestWebQuestionAnswers(t *testing.T) {
@@ -1281,6 +1632,98 @@ func TestWebHistorySeparatesSubagents(t *testing.T) {
 	}
 	if len(recorded.Subagents) != 1 || recorded.Subagents[0].Status != agentapi.SubagentCompleted || recorded.Subagents[0].ParentToolCallID != "call_1" {
 		t.Fatalf("history subagents = %+v", recorded.Subagents)
+	}
+}
+
+func digest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func b64(data []byte) string { return base64.StdEncoding.EncodeToString(data) }
+
+func TestWebToolImagesFromALiveResult(t *testing.T) {
+	h := openWeb(t)
+	shot, view, sub := []byte("\x89PNG shot"), []byte("\x89PNG view"), []byte("GIF89a sub")
+	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "screenshot"}))
+	h.fs.onEvent(ev("e2", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{
+		Content: "captured",
+		Contents: []rpc.ToolExecutionCompleteContent{
+			&rpc.ToolExecutionCompleteContentText{Text: "captured"},
+			&rpc.ToolExecutionCompleteContentImage{Data: b64(shot), MIMEType: "image/png"},
+			&rpc.ToolExecutionCompleteContentAudio{Data: b64([]byte("RIFF")), MIMEType: "audio/wav"},
+			&rpc.ToolExecutionCompleteContentImage{Data: "not base64!", MIMEType: "image/png"},
+		},
+		BinaryResultsForLlm: []rpc.PersistedBinaryResult{
+			&rpc.PersistedBinaryImage{Data: b64(view), MIMEType: "image/png"},
+			&rpc.PersistedBinaryImage{Data: b64([]byte("%PDF-")), MIMEType: "application/pdf", Discriminator: rpc.PersistedBinaryImageTypeResource},
+			&rpc.OmittedBinaryResult{ByteLength: 9 << 20, MIMEType: "image/png", OmittedReason: "size-limit"},
+		},
+	}}))
+	// A subagent's tool call carries its images the same way.
+	h.fs.onEvent(agentEv("e3", "agent-1", &rpc.ToolExecutionCompleteData{ToolCallID: "t2", Success: true, Result: &rpc.ToolExecutionCompleteResult{
+		BinaryResultsForLlm: []rpc.PersistedBinaryResult{&rpc.PersistedBinaryImage{Data: b64(sub), MIMEType: "image/gif"}},
+	}}))
+	// A failed call has no result and no images.
+	h.fs.onEvent(ev("e4", &rpc.ToolExecutionCompleteData{ToolCallID: "t3", Error: &rpc.ToolExecutionCompleteError{Message: "no display"}}))
+	evs := h.sink.all()
+	if len(evs) != 4 {
+		t.Fatalf("events = %d", len(evs))
+	}
+	if evs[0].Item.Images != nil {
+		t.Fatalf("a started call has images: %+v", evs[0].Item.Images)
+	}
+	got := evs[1].Item.Images
+	if len(got) != 2 || !bytes.Equal(got[0].Data, shot) || got[0].MIME != "image/png" || got[0].SHA256 != "" ||
+		!bytes.Equal(got[1].Data, view) || got[1].SHA256 != "" || got[0].ID != "" || got[0].Size != 0 {
+		t.Fatalf("live images = %+v", got)
+	}
+	if it := evs[2].Item; it.AgentID != "agent-1" || len(it.Images) != 1 || !bytes.Equal(it.Images[0].Data, sub) || it.Images[0].MIME != "image/gif" {
+		t.Fatalf("subagent tool item = %+v", it)
+	}
+	if it := evs[3].Item; it.Tool.Status != agentapi.ToolFailed || it.Images != nil {
+		t.Fatalf("failed tool item = %+v", it)
+	}
+}
+
+// TestWebToolImagesFromHistory decodes the recorded shape a real CLI 1.0.88
+// wrote for a view of a png (2026-09-24): the bytes sit in a
+// session.binary_asset event, and the completion names them by asset ID.
+func TestWebToolImagesFromHistory(t *testing.T) {
+	h := openWeb(t)
+	img, gone := []byte("\x89PNG recorded"), []byte("\x89PNG forgotten")
+	asset := "sha256:" + digest(img)
+	lines := []string{
+		`{"id":"e1","timestamp":"2026-09-24T17:14:30.127Z","type":"tool.execution_start","data":{"toolCallId":"t1","toolName":"view","arguments":{"path":"/w/image.png"}}}`,
+		`{"id":"e2","timestamp":"2026-09-24T17:14:30.133Z","type":"session.binary_asset","data":{"assetId":"` + asset + `","byteLength":15,"data":"` + b64(img) + `","description":"Image file at path /w/image.png","mimeType":"image/png","type":"image"}}`,
+		`{"id":"e3","timestamp":"2026-09-24T17:14:30.133Z","type":"tool.execution_complete","data":{"toolCallId":"t1","success":true,"result":{"content":"Viewed image file successfully.","binaryResultsForLlm":[{"type":"image","assetId":"` + asset + `","byteLength":15,"mimeType":"image/png"}]}}}`,
+		`{"id":"e4","agentId":"agent-1","timestamp":"2026-09-24T17:14:54.937Z","type":"session.binary_asset","data":{"assetId":"` + asset + `","byteLength":15,"data":"` + b64(img) + `","mimeType":"image/png","type":"image"}}`,
+		`{"id":"e5","agentId":"agent-1","timestamp":"2026-09-24T17:14:54.940Z","type":"tool.execution_complete","data":{"toolCallId":"t2","success":true,"result":{"content":"Viewed image file successfully.","binaryResultsForLlm":[{"type":"image","assetId":"` + asset + `","byteLength":15,"mimeType":"image/png"}]}}}`,
+		`{"id":"e6","timestamp":"2026-09-24T17:15:00.000Z","type":"tool.execution_complete","data":{"toolCallId":"t3","success":true,"result":{"content":"ok","binaryResultsForLlm":[{"type":"image","assetId":"sha256:` + strings.ToUpper(digest(gone)) + `","byteLength":16,"mimeType":"image/png"}]}}}`,
+	}
+	for _, line := range lines {
+		var e copilot.SessionEvent
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("decode %s: %v", line, err)
+		}
+		h.fs.events = append(h.fs.events, e)
+	}
+	recorded, err := h.conv.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorded.Items) != 3 {
+		t.Fatalf("history items = %+v", recorded.Items)
+	}
+	for i, agentID := range []string{"", "agent-1"} {
+		it := recorded.Items[i]
+		if it.AgentID != agentID || len(it.Images) != 1 || !bytes.Equal(it.Images[0].Data, img) || it.Images[0].SHA256 != "" || it.Images[0].MIME != "image/png" {
+			t.Fatalf("recorded item %d = %+v", i, it)
+		}
+	}
+	// Without its asset event only the digest is known.
+	if got := recorded.Items[2].Images; len(got) != 1 || got[0].Data != nil || got[0].SHA256 != digest(gone) {
+		t.Fatalf("image without its asset = %+v", got)
 	}
 }
 

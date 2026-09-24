@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyPick, commandPending, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
+import { applyPick, commandPending, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
 
 const commands = [
   { name: 'review', description: 'Review the changes', kind: 'command', input_hint: '' },
@@ -66,6 +66,18 @@ test('filtering ranks a name prefix first, then a name or description match', ()
   assert.deepEqual(filterCommands(commands, 'zzz'), []);
 });
 
+test('Enter follows the send default while a turn runs; the modifier does the other action', () => {
+  assert.deepEqual(enterActions(true, 'steer', false), { enter: 'steer', modified: 'queue' });
+  assert.deepEqual(enterActions(true, 'queue', false), { enter: 'queue', modified: 'steer' });
+});
+
+test('with no turn running both send; when a steer is impossible both queue', () => {
+  assert.deepEqual(enterActions(false, 'steer', false), { enter: 'send', modified: 'send' });
+  assert.deepEqual(enterActions(false, 'queue', true), { enter: 'send', modified: 'send' });
+  assert.deepEqual(enterActions(true, 'steer', true), { enter: 'queue', modified: 'queue' });
+  assert.deepEqual(enterActions(true, 'queue', true), { enter: 'queue', modified: 'queue' });
+});
+
 test('a file chip lives as long as its @token; removing the chip removes the token', () => {
   const files = ['docs/web.md', 'internal/vterm/redraw.go'];
   assert.deepEqual(pruneFiles('read @docs/web.md and @internal/vterm/redraw.go', files), files);
@@ -76,4 +88,14 @@ test('a file chip lives as long as its @token; removing the chip removes the tok
   assert.equal(removeToken('@docs/web.md', 'docs/web.md'), '');
   assert.equal(removeToken('a\n@docs/web.md', 'docs/web.md'), 'a\n');
   assert.equal(removeToken('@docs/web.md.bak', 'docs/web.md'), '@docs/web.md.bak');
+});
+
+test('dollar opens the skills picker and resolves only listed skills', () => {
+  const commands = [{ name: 'review', kind: 'command' }, { name: 'explain', kind: 'skill' }];
+  assert.deepEqual(triggerAt('$exp', 4), { kind: '$', start: 0, end: 4, query: 'exp' });
+  assert.deepEqual(parseCommand('$explain this file', commands), { name: 'explain', args: 'this file' });
+  assert.equal(parseCommand('$review', commands), null);
+  assert.equal(parseCommand('$unknown', commands), null);
+  assert.equal(commandPending('$explain this', null, null), true);
+  assert.equal(commandPending('$explain this', commands, null), false);
 });

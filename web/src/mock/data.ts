@@ -1,7 +1,7 @@
 // Development-only seed for the in-browser mock service (see install.ts).
 // Shapes are the wire shapes from src/api.ts. Paths and names are fictional.
 
-import type { Command, Interaction, Item, Meta, Project, SessionDetail, Subagent } from '../api';
+import type { Command, Interaction, Item, Meta, Project, SessionDetail, Settings, Subagent } from '../api';
 
 export interface MockTask extends SessionDetail {
   /** Subagent transcripts keyed by agent id (served by the subagent route). */
@@ -19,6 +19,7 @@ export interface MockChange {
 export interface MockState {
   meta: Meta;
   projects: Project[];
+  settings: Settings;
   tasks: MockTask[];
   changes: Record<string, MockChange[]>;
   /** What every open Task lists for `/`. */
@@ -117,15 +118,17 @@ export function seed(): MockState {
       name: 'unified-agent-manager',
       dir: '/home/user/projects/unified-agent-manager',
       created_at: ago(60 * 24 * 9),
+      badge: { text: 'UM', color: 'blue' },
       defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
       branch: 'feat/web-project-defaults-and-sidebar-revamp',
     },
-    { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4) },
+    { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4), badge: { text: 'DF', color: 'teal' } },
     {
       id: 'p3',
       name: 'notes-site',
       dir: '/home/user/projects/notes-site',
       created_at: ago(60 * 24 * 2),
+      badge: { text: 'NS', color: 'pink' },
       defaults: { provider: 'copilot', model: 'gpt-5.5-nova', effort: 'high', context_size: 'long_context', mode: 'yolo' },
       branch: 'main',
     },
@@ -239,6 +242,7 @@ export function seed(): MockState {
           text: 'I will look at what `Redraw` replays on attach. The pattern from the earlier private-mode fix suggests the focus-event mode (`?1004`) is tracked but never re-emitted.',
         },
         tool('i3', 8, { name: 'view', title: 'Read internal/vterm/redraw.go', status: 'completed', input: '{"path":"internal/vterm/redraw.go"}', output: '112 lines' }),
+        { ...tool('i3b', 8, { name: 'view', status: 'completed', input: '{"path":"docs/assets/attach-flow.png"}', output: 'Image: docs/assets/attach-flow.png' }), images: [{ id: 'img-png-seed3', mime: 'image/png', size: 20480, name: 'attach-flow.png' }] },
         tool('i4', 6, {
           name: 'grep',
           title: 'Search "1004" in internal/vterm',
@@ -254,6 +258,10 @@ export function seed(): MockState {
         },
         tool('i6', 4, { name: 'edit', title: 'Edit internal/vterm/redraw.go', status: 'completed', input: '{"path":"internal/vterm/redraw.go"}', output: EDIT_DIFF }),
         tool('i7', 1, { name: 'bash', title: 'go test ./internal/vterm/...', status: 'running', input: 'go test ./internal/vterm/... -run Redraw -count=1' }),
+      ],
+      interactions: [
+        { id: 'perm-i6', kind: 'permission', title: 'Write file', detail: 'internal/vterm/redraw.go', state: 'answered', resolution: 'allowed (yolo)', time: ago(4), tool_call_id: 'i6' },
+        { id: 'perm-i7', kind: 'permission', title: 'Run shell command', detail: 'go test ./internal/vterm/... -run Redraw -count=1', state: 'answered', resolution: 'Allow once', time: ago(1), tool_call_id: 'i7' },
       ],
     }),
     task({
@@ -628,5 +636,5 @@ export function seed(): MockState {
     p3: ['templates/post.html', 'templates/list.html', 'templates/feed.xml', 'assets/theme.css', 'content/posts/hello.md', 'scripts/contrast.mjs'],
   };
 
-  return { meta, projects, tasks, changes, commands, files };
+  return { meta, projects, settings: { send_default: 'steer' }, tasks, changes, commands, files };
 }

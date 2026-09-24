@@ -1,8 +1,8 @@
 // Package agenttest provides a scriptable agentapi.Provider for tests of the
 // web service. Tests drive events explicitly and decide how the model catalog,
-// the command list and each Send, RunCommand, Steer, Respond, Cancel, SetModel
-// or Diff call behave; every call is recorded so a test can prove what the
-// service did (and did not) ask the provider to do.
+// the command list and each Send, RunCommand, Steer, Respond, Cancel,
+// SetModel, Title, SetTitle or Diff call behave; every call is recorded so a
+// test can prove what the service did (and did not) ask the provider to do.
 package agenttest
 
 import (
@@ -31,12 +31,26 @@ type Provider struct {
 	modelsCalls int
 	commands    []agentapi.Command
 	commandsErr error
+	quotas      []agentapi.Quota
+	quotaErr    error
+	quotaCalls  int
+	titleHook   func(ctx context.Context, req agentapi.TitleRequest) (string, error)
+	titles      []agentapi.TitleRequest
 	known       map[string]agentapi.History
 	convs       []*Conversation
 	opens       []agentapi.OpenRequest
 	shutdowns   int
 	nextID      int
 	opened      chan *Conversation
+	readHook    func(ctx context.Context, req agentapi.ReadRequest) (agentapi.History, error)
+	reads       []agentapi.ReadRequest
+	previous    []agentapi.PreviousConversation
+	previousErr error
+	listDirs    []string
+	inUse       []string
+	inUseErr    error
+	inUseChecks [][]string
+	inUseHook   func(context.Context, []string) ([]string, error)
 }
 
 // NewProvider returns a fake provider with the given name and capabilities.
@@ -68,6 +82,55 @@ func (p *Provider) Models(context.Context) ([]agentapi.Model, error) {
 	defer p.mu.Unlock()
 	p.modelsCalls++
 	return append([]agentapi.Model(nil), p.models...), p.modelsErr
+}
+
+// SetQuota decides what Quota returns. The service reads quotas only from a
+// provider created with the usage capability.
+func (p *Provider) SetQuota(quotas []agentapi.Quota, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.quotas, p.quotaErr = append([]agentapi.Quota(nil), quotas...), err
+}
+
+func (p *Provider) Quota(context.Context) ([]agentapi.Quota, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.quotaCalls++
+	return append([]agentapi.Quota(nil), p.quotas...), p.quotaErr
+}
+
+// QuotaCalls reports how often Quota ran.
+func (p *Provider) QuotaCalls() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.quotaCalls
+}
+
+// SetTitleHook decides how Title behaves. Without a hook Title fails. The
+// service asks for titles only from a provider created with the titles
+// capability.
+func (p *Provider) SetTitleHook(hook func(ctx context.Context, req agentapi.TitleRequest) (string, error)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.titleHook = hook
+}
+
+func (p *Provider) Title(ctx context.Context, req agentapi.TitleRequest) (string, error) {
+	p.mu.Lock()
+	p.titles = append(p.titles, req)
+	hook := p.titleHook
+	p.mu.Unlock()
+	if hook == nil {
+		return "", fmt.Errorf("fake %s has no title hook", p.name)
+	}
+	return hook(ctx, req)
+}
+
+// TitleRequests returns every Title call, oldest first.
+func (p *Provider) TitleRequests() []agentapi.TitleRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]agentapi.TitleRequest(nil), p.titles...)
 }
 
 // SetCommands decides what every conversation's Commands returns.
@@ -108,6 +171,129 @@ func (p *Provider) AddConversation(id string, items []agentapi.Item, subagents .
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.known[id] = agentapi.History{Items: append([]agentapi.Item(nil), items...), Subagents: append([]agentapi.Subagent(nil), subagents...)}
+}
+
+// SetHistoryUsage makes History of the registered conversation id report
+// usage.
+func (p *Provider) SetHistoryUsage(id string, usage agentapi.Usage) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	h := p.known[id]
+	h.Usage = &usage
+	p.known[id] = h
+}
+
+// SetHistory registers an existing provider conversation with its complete
+// record, Model and Truncated included.
+func (p *Provider) SetHistory(id string, h agentapi.History) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.known[id] = h
+}
+
+// ReadHistory returns the record of a known conversation, or
+// agentapi.ErrConversationNotFound; SetReadHook replaces that. Every call is
+// recorded.
+func (p *Provider) ReadHistory(ctx context.Context, req agentapi.ReadRequest) (agentapi.History, error) {
+	p.mu.Lock()
+	p.reads = append(p.reads, req)
+	hook := p.readHook
+	h, ok := p.known[req.ConversationID]
+	p.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, req)
+	}
+	if !ok {
+		return agentapi.History{}, fmt.Errorf("read %s: %w", req.ConversationID, agentapi.ErrConversationNotFound)
+	}
+	h.Items = append([]agentapi.Item(nil), h.Items...)
+	h.Subagents = append([]agentapi.Subagent(nil), h.Subagents...)
+	return h, nil
+}
+
+// SetReadHook decides how ReadHistory behaves: return a record or an error,
+// or block until the test releases it.
+func (p *Provider) SetReadHook(hook func(ctx context.Context, req agentapi.ReadRequest) (agentapi.History, error)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.readHook = hook
+}
+
+// Reads returns every ReadHistory request, oldest first.
+func (p *Provider) Reads() []agentapi.ReadRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]agentapi.ReadRequest(nil), p.reads...)
+}
+
+// SetPrevious decides what Previous returns for any directory.
+func (p *Provider) SetPrevious(list []agentapi.PreviousConversation, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.previous, p.previousErr = append([]agentapi.PreviousConversation(nil), list...), err
+}
+
+func (p *Provider) Previous(_ context.Context, workdir string) ([]agentapi.PreviousConversation, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.listDirs = append(p.listDirs, workdir)
+	out := []agentapi.PreviousConversation{}
+	for _, c := range p.previous {
+		if workdir == "" || c.Workdir == "" || c.Workdir == workdir {
+			out = append(out, c)
+		}
+	}
+	return out, p.previousErr
+}
+
+// PreviousDirs returns the directory of every Previous call, oldest first.
+func (p *Provider) PreviousDirs() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.listDirs...)
+}
+
+// SetInUse decides which conversations InUse reports as held by another
+// client (those among the asked IDs), or the error it fails with.
+func (p *Provider) SetInUse(ids []string, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inUse, p.inUseErr = append([]string(nil), ids...), err
+}
+
+func (p *Provider) SetInUseHook(hook func(context.Context, []string) ([]string, error)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.inUseHook = hook
+}
+
+func (p *Provider) InUse(ctx context.Context, ids []string) ([]string, error) {
+	p.mu.Lock()
+	p.inUseChecks = append(p.inUseChecks, append([]string(nil), ids...))
+	if hook := p.inUseHook; hook != nil {
+		p.mu.Unlock()
+		return hook(ctx, ids)
+	}
+	defer p.mu.Unlock()
+	if p.inUseErr != nil {
+		return nil, p.inUseErr
+	}
+	var held []string
+	for _, id := range ids {
+		for _, h := range p.inUse {
+			if h == id {
+				held = append(held, id)
+			}
+		}
+	}
+	return held, nil
+}
+
+// InUseChecks returns the IDs of every InUse call, oldest first.
+func (p *Provider) InUseChecks() [][]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([][]string(nil), p.inUseChecks...)
 }
 
 // ForgetConversation removes a conversation so reopening it reports
@@ -234,6 +420,8 @@ type Conversation struct {
 	subPrompts    []SubagentPrompt
 	cancelErr     error
 	setModelErr   error
+	setTitleErr   error
+	titles        []string
 	diff          []agentapi.FileDiff
 	diffErr       error
 	sends         []string
@@ -254,10 +442,15 @@ func (c *Conversation) ID() string { return c.id }
 func (c *Conversation) Request() agentapi.OpenRequest { return c.req }
 
 func (c *Conversation) History(context.Context) (agentapi.History, error) {
-	return agentapi.History{
+	h := agentapi.History{
 		Items:     append([]agentapi.Item(nil), c.history.Items...),
 		Subagents: append([]agentapi.Subagent(nil), c.history.Subagents...),
-	}, nil
+	}
+	if c.history.Usage != nil {
+		usage := *c.history.Usage
+		h.Usage = &usage
+	}
+	return h, nil
 }
 
 // SetModelError makes SetModel fail with err (nil restores success).
@@ -283,6 +476,30 @@ func (c *Conversation) ModelSets() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.modelSets...)
+}
+
+// SetTitleError makes SetTitle fail with err (nil restores success).
+func (c *Conversation) SetTitleError(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setTitleErr = err
+}
+
+func (c *Conversation) SetTitle(_ context.Context, title string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return agentapi.ErrClosed
+	}
+	c.titles = append(c.titles, title)
+	return c.setTitleErr
+}
+
+// Titles returns every title passed to SetTitle, oldest first.
+func (c *Conversation) Titles() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.titles...)
 }
 
 // SetSendHook decides how Send behaves: return nil to accept, an error to

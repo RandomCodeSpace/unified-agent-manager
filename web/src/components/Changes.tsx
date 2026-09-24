@@ -19,7 +19,7 @@ const STATUS_TONE: Record<string, string> = { A: 'text-success', D: 'text-error'
 
 /**
  * The Changes sheet: file list plus one unified diff. `changes` for the default scope is
- * owned by the Task view (it feeds the header count); other scopes load here. Inline beside
+ * owned by the Task view (it feeds the composer footer count); other scopes load here. Inline beside
  * the column on wide screens (resizable), an overlay panel otherwise.
  */
 export function ChangesSheet({
@@ -115,8 +115,8 @@ export function ChangesSheet({
           <X />
         </Button>
       </PanelHeader>
-      <p className="truncate border-b border-hairline/60 px-3 py-1 text-caption text-muted" title={label}>
-        {label}
+      <p className="shrink-0 border-b border-hairline/60 px-3 py-1.5 text-caption leading-relaxed text-muted" title={label}>
+        {scope === 'workspace' ? 'All uncommitted project changes vs HEAD.' : label}
       </p>
       <ul className="max-h-[40%] shrink-0 overflow-y-auto border-b border-hairline p-1">
         {error && (
@@ -165,7 +165,7 @@ function FileRow({ file: f, selected, onOpen }: { file: ChangeFile; selected: bo
             type="button"
             aria-pressed={selected}
             title={f.path}
-            className={cn('grid h-8 w-full grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-9 pl-2 text-left font-mono text-code-sm transition-colors focus-visible:-outline-offset-2', selected ? 'bg-raised text-ink' : 'text-body hover:bg-raised/60')}
+            className={cn('grid h-8 w-full grid-cols-[max-content_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-9 pl-2 text-left font-mono text-code-sm transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-11 pointer-coarse:pr-12', selected ? 'bg-raised text-ink' : 'text-body hover:bg-raised/60')}
             onClick={onOpen}
           >
             <span className={cn('text-center', STATUS_TONE[f.status] ?? 'text-muted')}>{f.status}</span>

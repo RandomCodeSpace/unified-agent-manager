@@ -40,8 +40,20 @@ func (s *Subscriber) Sent(frame []byte) { s.queued.Add(-int64(len(frame))) }
 type snapshotEvent struct {
 	Seq      uint64           `json:"seq"`
 	Projects []Project        `json:"projects"`
+	Settings Settings         `json:"settings"`
+	Usage    AccountUsage     `json:"usage"`
 	Sessions []SessionSummary `json:"sessions"`
 	Session  *SessionDetail   `json:"session"`
+}
+
+type usageEvent struct {
+	Seq   uint64       `json:"seq"`
+	Usage AccountUsage `json:"usage"`
+}
+
+type settingsEvent struct {
+	Seq      uint64   `json:"seq"`
+	Settings Settings `json:"settings"`
 }
 
 type sessionEvent struct {
@@ -88,6 +100,12 @@ type subagentEvent struct {
 	Subagent  agentapi.Subagent `json:"subagent"`
 }
 
+type backgroundTasksEvent struct {
+	Seq             uint64                   `json:"seq"`
+	SessionID       string                   `json:"session_id"`
+	BackgroundTasks agentapi.BackgroundTasks `json:"background_tasks"`
+}
+
 type interactionEvent struct {
 	Seq         uint64               `json:"seq"`
 	SessionID   string               `json:"session_id"`
@@ -98,6 +116,19 @@ type submissionEvent struct {
 	Seq        uint64     `json:"seq"`
 	SessionID  string     `json:"session_id"`
 	Submission Submission `json:"submission"`
+}
+
+// historyEvent reports a Task's transcript state. Items (main agent) and
+// Subagents replace what the browser shows; subagent items are fetched per
+// subagent as usual.
+type historyEvent struct {
+	Seq           uint64              `json:"seq"`
+	SessionID     string              `json:"session_id"`
+	History       string              `json:"history"`
+	HistoryReason string              `json:"history_reason,omitempty"`
+	Truncated     bool                `json:"history_truncated"`
+	Items         []agentapi.Item     `json:"items"`
+	Subagents     []agentapi.Subagent `json:"subagents"`
 }
 
 type queueEvent struct {
@@ -122,9 +153,16 @@ func encodeFrame(event string, payload any) ([]byte, error) {
 
 // Subscribe registers a subscriber and returns it with its snapshot frame.
 // Registration and snapshot happen under one lock, so the subscriber sees
-// every later event exactly once and nothing between the two.
+// every later event exactly once and nothing between the two. Subscribing to
+// a session views it, as Detail does.
 func (m *Manager) Subscribe(sessionID string) (*Subscriber, []byte, error) {
 	m.refreshBranches(m.ctx, false)
+	terminal := false
+	if sessionID != "" {
+		if s, err := m.lookup(sessionID); err == nil {
+			terminal = m.terminalLive(s)
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -136,10 +174,11 @@ func (m *Manager) Subscribe(sessionID string) (*Subscriber, []byte, error) {
 		if s == nil {
 			return nil, nil, newError(http.StatusNotFound, "session not found")
 		}
-		d := m.detailLocked(s)
+		m.viewHistoryLocked(s)
+		d := m.detailLocked(s, terminal)
 		detail = &d
 	}
-	frame, err := encodeFrame("snapshot", snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Sessions: m.summariesLocked(), Session: detail})
+	frame, err := encodeFrame("snapshot", snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: m.settings, Usage: m.accountUsageLocked(), Sessions: m.summariesLocked(), Session: detail})
 	if err != nil {
 		return nil, nil, err
 	}

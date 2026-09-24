@@ -43,35 +43,40 @@ contain it. `#task=<id>` in the URL opens a task directly.
   projects, model catalog, title and subagent additions).
 - `src/state.ts` — one reducer for server state: projects, sessions, the
   selected session's detail, subagent transcripts (routed by `agent_id`),
-  snapshot `seq` gating, connection status.
-- `src/App.tsx` — auth check, the single `EventSource`, the fixed sidebar
-  or narrow drawer, navigation (empty pane / task), the task lifecycle
+  snapshot `seq` gating, service settings, connection status.
+- `src/App.tsx` — auth check, the single `EventSource`, the collapsible sidebar
+  or narrow drawer, Project filter, navigation (empty pane / task / Settings), the task lifecycle
   actions and confirmations, the project dialogs.
-- `src/components/` — Sidebar (brand header, project groups, task rows with
+- `src/components/` — Sidebar (search and brand header, flat task list, project filter, task rows with
   hover "…" and context menus, inline rename, Settled/Archived shelves,
   keyboard navigation), Task (the conversation pane: 44px header with
   inline rename, state chip, Subagents and Changes toggles and the actions
   menu; branch/model/context meter line; scrolling transcript with a "New
   output" button; pinned composer; a resizable Changes or Subagents panel
   beside it), Transcript (user bubbles, flat assistant turns, markdown
-  everywhere, Thinking disclosures, ledger-folded tool calls with copy
+  everywhere, Thinking disclosures, compact expandable tool summaries with copy
   menus, one compact row per subagent), Subagents (the side panel and the
   shared `SidePanel` with its drag handle), Interactions, Composer (the
   toolbar of model/effort/context/mode pickers plus send, stop, steer and
   queue), Changes (file list and diff), TaskDefaults, Projects (dialogs),
   FolderPicker (the Add project dialog's inline folder browser: breadcrumb,
-  listbox, New folder, Use this folder), Login, `taskActions.tsx` (the
+  listbox, New folder, Use this folder), Settings (service-wide preferences), Login, `taskActions.tsx` (the
   shared Rename/Settle/Reopen/Archive/Delete menu items and their rules)
-  and shared atoms in `common.tsx`.
+  Diagram (the `mermaid` card: Diagram / Code toggle, lightbox, fallback note)
+  and shared atoms in `common.tsx` (markdown with lazy code highlighting).
 - `src/components/ui/` — the Base UI wrappers (button, menu and context
-  menu, dialog, alert dialog, sheet, tooltip, select) styled with the
+  menu, dialog, alert dialog, sheet, tooltip, select, segmented control) styled with the
   tokens.
 - `src/lib/` — `cn` (clsx + tailwind-merge), clipboard helpers, the
-  `useResizable` hook, sidebar grouping helpers, and the folder picker's
-  path and breadcrumb logic (`folders.ts`).
+  `useResizable` hook, flat sidebar filtering and lifecycle helpers, folder path and breadcrumb logic (`folders.ts`), `diagram.ts` (the frame
+  protocol, queue and theme; see ADR 0004) and `highlight.ts` (lowlight
+  with the grammars, loaded on demand).
+- `src/diagram-frame/` — the entry of the second bundle: the classic script
+  that runs Mermaid inside `/diagram-frame.html`, built by the
+  `diagramFrame` plugin in `vite.config.ts` after the app.
 - `src/index.css` — Tailwind v4 entry: the DESIGN.md tokens as `@theme`
   (colours, type scale, radii, shadows, motion), base styles, and the
-  markdown and diff component styles. There is one mid-light theme.
+  markdown and diff component styles. There is one cool light theme, matching the owner's screenshot references.
 - `src/mock/` — development-only fake service (see above).
 
 Fonts are self-hosted from `@fontsource-variable/inter` and
@@ -81,4 +86,12 @@ style-src 'self'; font-src 'self'`): no inline scripts, no `<style>`
 elements (the app wraps itself in Base UI's `CSPProvider
 disableStyleElements`), no inline `style` markup, no external fonts.
 Measured values such as the panel width go through CSSOM custom
-properties.
+properties. Mermaid, which needs inline styles, runs only in the sandboxed
+frame document, which the service serves with its own policy; the page shows
+the result as a `data:` image.
+
+The sidebar lists Tasks without project group headings. Select a Project in the
+filter to manage it or open Previous sessions. Task titles use 12px, metadata 11px.
+The Copilot provider mark is the official Primer Octicon, vendored as
+`src/assets/copilot.svg` with its pinned source and MIT notice. No icon package
+or provider lookup is added.

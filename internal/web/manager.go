@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -48,6 +49,14 @@ const (
 	// modelsMaxAge is how long a model catalog is used before /api/meta
 	// reloads it; entitlements can change while the service runs.
 	modelsMaxAge = 5 * time.Minute
+	// maxHistoryReads bounds the read-only transcript loads running at once.
+	maxHistoryReads = 2
+	// historyIdle is how long a transcript read without opening the
+	// conversation stays in memory after a viewer last asked for it;
+	// historyRetry is how soon a failed read is tried again.
+	historyIdle  = 10 * time.Minute
+	historyRetry = time.Minute
+	historySweep = time.Minute
 )
 
 // Manager owns every web session, its provider conversation, and the event
@@ -79,12 +88,23 @@ type Manager struct {
 	// branchMu orders Project branch reads, so an older read never replaces
 	// a newer one. It is never taken while holding mu.
 	branchMu sync.Mutex
+	// settingsMu orders settings changes, so the stored and published
+	// settings match. It is never taken while holding mu.
+	settingsMu sync.Mutex
+
+	// imageJobs feeds the one goroutine that stores tool images, so Emit
+	// never writes a file. imageWG counts the jobs not yet finished; tests
+	// wait on it. storeImageHook, when set, runs before each job is stored.
+	imageJobs      chan imageJob
+	imageWG        sync.WaitGroup
+	storeImageHook func()
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo
 	modelsAt map[string]time.Time
 	fetching map[string]bool
 	projects map[string]*Project
+	settings Settings
 	sessions map[string]*webSession
 	dirty    map[string]struct{}
 	creating map[string]chan struct{}
@@ -92,8 +112,28 @@ type Manager struct {
 	subs     map[*Subscriber]struct{}
 	closed   bool
 	now      func() time.Time
+	// pick returns a random int in [0, n) for badge choices; tests replace
+	// it before Start.
+	pick func(n int) int
 	// branchAt is when each Project's branch was last read.
 	branchAt map[string]time.Time
+	// quota is each usage provider's quota cache; quotaPolled is when the
+	// latest read began.
+	quota       map[string]*quotaCache
+	quotaPolled time.Time
+	// quotaKick asks the usage loop for a read; quotaTick is how often the
+	// loop checks for a due one (tests set it before Start).
+	quotaKick chan struct{}
+	quotaTick time.Duration
+	// titles counts title jobs, which Shutdown waits for before providers
+	// stop: a job deletes its throwaway conversation on the way out.
+	// titleSlots holds one token per job calling its provider.
+	titles     sync.WaitGroup
+	titleSlots chan struct{}
+	// reads holds a slot for each read-only transcript load in progress.
+	reads chan struct{}
+	// hostLive reports whether a terminal session host runs; nil means none.
+	hostLive func(sessionName string) bool
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -114,7 +154,15 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		creating:  map[string]chan struct{}{},
 		subs:      map[*Subscriber]struct{}{},
 		now:       time.Now,
+		pick:      randomPick,
 		branchAt:  map[string]time.Time{},
+		quota:     map[string]*quotaCache{},
+		quotaKick: make(chan struct{}, 1),
+		quotaTick: quotaCheck,
+
+		titleSlots: make(chan struct{}, maxTitleJobs),
+		imageJobs:  make(chan imageJob, maxImageJobs),
+		reads:      make(chan struct{}, maxHistoryReads),
 	}
 	for _, p := range providers {
 		if p == nil {
@@ -142,9 +190,13 @@ type webSession struct {
 	effort      string
 	contextSize string
 	context     *agentapi.Context
+	usage       *agentapi.Usage
 	name        string
 	title       string
 	lastModel   string
+	// renames counts Rename calls, so a title job knows when a rename came
+	// while it ran.
+	renames uint64
 	// mode is safe or yolo: a yolo Task's permission requests are allowed
 	// once without asking.
 	mode      store.Mode
@@ -181,6 +233,7 @@ type webSession struct {
 	subagents        []*agentapi.Subagent
 	subIdx           map[string]*agentapi.Subagent
 	stoppedSubagents map[string]bool // accepted stops awaiting the provider event
+	backgroundTasks  *agentapi.BackgroundTasks
 
 	submissions []Submission
 	last        *Submission
@@ -201,8 +254,30 @@ type webSession struct {
 	// queueChanged tells changedLocked to publish the queue.
 	queueChanged bool
 
-	// uploads are the Task's stored attachments by ID.
+	// uploads are the Task's stored attachments and tool images by ID.
 	uploads map[string]*upload
+	// imageMu serializes storing tool images, so an image the live stream
+	// and the history both carry is stored once. It is taken before
+	// Manager.mu, never while holding it.
+	imageMu sync.Mutex
+
+	// history is HistoryLoaded once items and subagents hold the
+	// conversation's record, HistoryLoading while it is read, and
+	// HistoryUnavailable, with historyReason, when it could not be; "" until
+	// a viewer asks. historyRead marks a record read without opening the
+	// conversation: only such a record is dropped when idle. historyUsed is
+	// when a viewer last asked for it, historyFailed when a read last failed.
+	history, historyReason     string
+	historyRead                bool
+	historyCancel              context.CancelFunc
+	historyGen                 uint64
+	historyBytes               int
+	historyUsed, historyFailed time.Time
+	// terminalID is the terminal session record tied to the same
+	// conversation; terminalHost and terminalName are its host session and
+	// name, when that record was found.
+	terminalID, terminalHost, terminalName string
+	imported                               bool
 
 	persisted persistKey
 }
@@ -304,31 +379,34 @@ var knownStates = map[string]bool{
 const interruptedDetail = "the uam web service stopped while this turn was running"
 
 // Start checks providers, loads their model catalogs and the web records,
-// and assigns records from before Projects existed to a Project. A provider
-// whose check fails is listed as unavailable; it is not fatal.
+// assigns records from before Projects existed to a Project, and gives each
+// Project without a valid badge one. A provider whose check fails is listed
+// as unavailable; it is not fatal.
 func (m *Manager) Start(ctx context.Context) error {
 	infos := m.checkProviders(ctx)
 	cfg, err := m.store.Load()
 	if err != nil {
 		return fmt.Errorf("load web sessions: %w", err)
 	}
-	if needsProject(cfg) {
+	if needsProject(cfg) || len(badgeless(cfg.WebProjects)) > 0 {
 		now := m.now()
 		err := m.store.Update(func(c *store.Config) error {
 			if err := assignProjects(c, now); err != nil {
 				return err
 			}
+			assignBadges(c, m.pick)
 			cfg = *c
 			return nil
 		})
 		if err != nil {
 			// Keep serving: the assignment holds for this run. A record that
-			// later gets its project_id written without the Project is
-			// assigned again on the next start.
+			// later gets its project_id written without the Project, or a
+			// Project without its badge, is assigned again on the next start.
 			log.Warn("assign web sessions to projects failed", "error", err)
 			if err := assignProjects(&cfg, now); err != nil {
 				return fmt.Errorf("assign web sessions to projects: %w", err)
 			}
+			assignBadges(&cfg, nil)
 		}
 	}
 	m.mu.Lock()
@@ -339,13 +417,26 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	for id, p := range cfg.WebProjects {
-		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Defaults: TaskDefaults(p.Defaults)}
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Defaults: TaskDefaults(p.Defaults), Badge: Badge(p.Badge)}
+	}
+	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel}
+	if m.settings.SendDefault != store.WebSendQueue {
+		m.settings.SendDefault = store.WebSendSteer
+	}
+	terminals := map[string]store.SessionRecord{}
+	for _, rec := range cfg.Sessions {
+		if rec.Surface == "" && rec.ID != "" {
+			terminals[rec.ID] = rec
+		}
 	}
 	for _, rec := range cfg.Sessions {
 		if rec.Surface != store.SurfaceWeb || rec.ID == "" {
 			continue
 		}
 		s := sessionFromRecord(rec)
+		if t, ok := terminals[s.terminalID]; ok && s.terminalID != "" {
+			s.terminalHost, s.terminalName = t.SessionName, t.Name
+		}
 		// A turn cannot survive the service that drove it: report it as
 		// interrupted, never resume or replay it.
 		if busy(s.base) {
@@ -356,12 +447,18 @@ func (m *Manager) Start(ctx context.Context) error {
 		s.persisted = s.key()
 		m.sessions[s.id] = s
 	}
+	usage := m.usageProviderLocked()
 	m.mu.Unlock()
 	m.loadUploads()
 	m.sweepUploads()
-	m.wg.Add(2)
+	m.wg.Add(3)
 	go m.persistLoop()
 	go m.sweepLoop()
+	if usage {
+		m.wg.Add(1)
+		go m.usageLoop()
+	}
+	go m.imageLoop()
 	if err := m.flush(); err != nil {
 		log.Warn("persist interrupted web sessions failed", "error", err)
 	}
@@ -455,6 +552,8 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		}
 		s.detail = web.Detail
 		s.projectID, s.model, s.title = web.ProjectID, web.Model, cleanTitle(web.Title)
+		s.terminalID = web.TerminalSession
+		s.imported = web.Imported
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
@@ -497,6 +596,7 @@ func (m *Manager) checkProviders(ctx context.Context) map[string]ProviderInfo {
 			} else {
 				info.Models = models
 			}
+			info.Capabilities = p.Capabilities()
 			mu.Lock()
 			infos[name] = info
 			mu.Unlock()
@@ -529,6 +629,13 @@ func loadModels(ctx context.Context, p agentapi.Provider) ([]agentapi.Model, err
 		mo.Name = cmp.Or(name, mo.ID)
 		mo.Efforts = append([]string{}, mo.Efforts...)
 		mo.ContextSizes = append([]agentapi.ContextSize{}, mo.ContextSizes...)
+		if !validCostTier(mo.CostTier) {
+			mo.CostTier = ""
+		}
+		if mo.DiscountPercent < 0 || mo.DiscountPercent > 100 {
+			mo.DiscountPercent = 0
+		}
+		mo.Prices = cleanPrices(mo.Prices)
 		if mo.Media != nil {
 			media := *mo.Media
 			media.Types = slices.Clone(media.Types)
@@ -640,7 +747,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	permissions, questions := s.pendingKinds()
 	return SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
-		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context,
+		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context, Usage: s.usage,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), Workdir: s.workdir, ConversationID: s.convID,
 		State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
@@ -648,21 +755,31 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	}
 }
 
-func (m *Manager) detailLocked(s *webSession) SessionDetail {
+// detailLocked builds s's detail; terminal says whether the host of its
+// terminal session runs.
+func (m *Manager) detailLocked(s *webSession, terminal bool) SessionDetail {
 	d := SessionDetail{
 		SessionSummary:   m.summaryLocked(s),
+		Seq:              m.seq,
 		Items:            s.agentItems(""),
 		Interactions:     make([]agentapi.Interaction, 0, len(s.interactions)),
-		Subagents:        make([]agentapi.Subagent, 0, len(s.subagents)),
+		Subagents:        s.subagentList(),
 		HistoryTruncated: s.truncated,
 		Queue:            s.queueSnapshot(),
 		QueuePaused:      s.queuePaused,
+		History:          s.historyState(),
+		HistoryReason:    s.historyReason,
+	}
+	if terminal {
+		d.TerminalSession = &TerminalSession{ID: s.terminalID, Name: cleanTitle(s.terminalName)}
 	}
 	for _, ix := range s.interactions {
 		d.Interactions = append(d.Interactions, ix.Interaction)
 	}
-	for _, sa := range s.subagents {
-		d.Subagents = append(d.Subagents, *sa)
+	if s.backgroundTasks != nil {
+		snapshot := *s.backgroundTasks
+		snapshot.Tasks = slices.Clone(snapshot.Tasks)
+		d.BackgroundTasks = &snapshot
 	}
 	if s.last != nil {
 		last := *s.last
@@ -703,15 +820,22 @@ func (m *Manager) Summary(id string) (SessionSummary, error) {
 	return m.summaryLocked(s), nil
 }
 
-// Detail returns one session with its retained transcript.
+// Detail returns one session with its retained transcript. Asking for it
+// starts a read-only load of the recorded transcript when the conversation
+// is not open and the transcript is not in memory.
 func (m *Manager) Detail(id string) (SessionDetail, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return SessionDetail{}, err
+	}
+	terminal := m.terminalLive(s)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := m.sessions[id]
-	if s == nil {
+	if s.removed {
 		return SessionDetail{}, newError(http.StatusNotFound, "session not found")
 	}
-	return m.detailLocked(s), nil
+	m.viewHistoryLocked(s)
+	return m.detailLocked(s, terminal), nil
 }
 
 // Subagent returns one subagent of a session with its retained transcript.
@@ -722,6 +846,7 @@ func (m *Manager) Subagent(id, agentID string) (SubagentDetail, error) {
 	if s == nil {
 		return SubagentDetail{}, newError(http.StatusNotFound, "session not found")
 	}
+	m.viewHistoryLocked(s)
 	sa := s.subIdx[agentID]
 	if sa == nil {
 		return SubagentDetail{}, newError(http.StatusNotFound, "subagent not found")
@@ -756,8 +881,8 @@ func (m *Manager) publishProjectLocked(p Project) {
 }
 
 // AddProject adds the directory dir as a Project, with defaults for its new
-// Tasks unless defaults is nil. A directory has at most one Project; adding
-// it again reports the existing one with 409.
+// Tasks unless defaults is nil, and gives it a badge. A directory has at most
+// one Project; adding it again reports the existing one with 409.
 func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project, error) {
 	canonical, err := canonicalWorkdir(dir)
 	if err != nil {
@@ -806,7 +931,9 @@ func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project,
 		if cfg.WebProjects == nil {
 			cfg.WebProjects = map[string]store.WebProject{}
 		}
-		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt, Defaults: store.WebTaskDefaults(d)}
+		badge := newBadge(clean, cfg.WebProjects, m.pick)
+		p.Badge = Badge(badge)
+		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt, Defaults: store.WebTaskDefaults(d), Badge: badge}
 		return nil
 	}); err != nil {
 		if existing != "" {
@@ -970,6 +1097,125 @@ func (m *Manager) RemoveProject(id string) error {
 	return nil
 }
 
+// Settings returns the web interface's settings.
+func (m *Manager) Settings() Settings {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.settings
+}
+
+// SettingsPatch is a settings change; a nil field changes nothing.
+// HiddenModels replaces the hidden model IDs of each provider it names, and
+// only those; an empty list hides none of that provider's models. TitleModel
+// sets the title model of each provider it names; an empty ID gives that
+// provider its own title back.
+type SettingsPatch struct {
+	SendDefault  *string
+	HiddenModels map[string][]string
+	TitleModel   map[string]string
+}
+
+// UpdateSettings applies p. An invalid value is refused with 400 and changes
+// nothing. A change is stored and sent as a settings frame; no change writes
+// nothing. Hidden models are a display preference: nothing else checks them.
+// A title model must be one the provider lists now, and the provider must
+// have the titles capability.
+func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
+	if p.SendDefault != nil && *p.SendDefault != store.WebSendSteer && *p.SendDefault != store.WebSendQueue {
+		return Settings{}, newError(http.StatusBadRequest, "send_default must be %q or %q", store.WebSendSteer, store.WebSendQueue)
+	}
+	hidden := make(map[string][]string, len(p.HiddenModels))
+	for provider, ids := range p.HiddenModels {
+		if m.providers[provider] == nil {
+			return Settings{}, newError(http.StatusBadRequest, "unknown provider %q", clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
+		}
+		if slices.ContainsFunc(ids, func(id string) bool { return !store.ValidHiddenModel(id) }) {
+			return Settings{}, newError(http.StatusBadRequest, "a hidden model ID must be 1 to %d bytes without control characters", store.MaxHiddenModelBytes)
+		}
+		ids = slices.Clone(ids)
+		slices.Sort(ids)
+		if ids = slices.Compact(ids); len(ids) > store.MaxHiddenModels {
+			return Settings{}, newError(http.StatusBadRequest, "at most %d models of a provider can be hidden", store.MaxHiddenModels)
+		}
+		hidden[provider] = ids
+	}
+	for provider := range p.TitleModel {
+		if m.providers[provider] == nil {
+			return Settings{}, newError(http.StatusBadRequest, "unknown provider %q", clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
+		}
+	}
+	m.settingsMu.Lock()
+	defer m.settingsMu.Unlock()
+	m.mu.Lock()
+	current := m.settings
+	for provider, ids := range hidden {
+		info := m.infos[provider]
+		if listed := info.Models; len(listed) > 0 && !slices.ContainsFunc(listed, func(mo agentapi.Model) bool { _, found := slices.BinarySearch(ids, mo.ID); return !found }) {
+			m.mu.Unlock()
+			return Settings{}, newError(http.StatusBadRequest, "at least one %s model must stay visible", info.DisplayName)
+		}
+	}
+	for provider, model := range p.TitleModel {
+		info := m.infos[provider]
+		switch {
+		case model == "":
+		case m.titlerLocked(provider) == nil:
+			m.mu.Unlock()
+			return Settings{}, newError(http.StatusBadRequest, "%s cannot title tasks with a model", m.providers[provider].DisplayName())
+		case !slices.ContainsFunc(info.Models, func(mo agentapi.Model) bool { return mo.ID == model }):
+			m.mu.Unlock()
+			return Settings{}, newError(http.StatusBadRequest, "%s does not offer model %q", info.DisplayName, clipRunes(displaytext.Sanitize(model), maxDetailRunes))
+		}
+	}
+	m.mu.Unlock()
+	next := current
+	if p.SendDefault != nil {
+		next.SendDefault = *p.SendDefault
+	}
+	if len(hidden) > 0 {
+		next.HiddenModels = withProviders(current.HiddenModels, hidden)
+	}
+	if len(p.TitleModel) > 0 {
+		next.TitleModel = withProviders(current.TitleModel, p.TitleModel)
+	}
+	if next.SendDefault == current.SendDefault && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) {
+		return current, nil
+	}
+	if err := m.store.Update(func(cfg *store.Config) error {
+		cfg.WebSettings.SendDefault = next.SendDefault
+		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
+		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, p.TitleModel)
+		return nil
+	}); err != nil {
+		return Settings{}, fmt.Errorf("save web settings: %w", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.settings = next
+	m.broadcastLocked("settings", "", func(seq uint64) any { return settingsEvent{Seq: seq, Settings: next} })
+	return next, nil
+}
+
+// withProviders returns a copy of current with each provider in change set
+// to its value, or removed for an empty one; nil when none is left.
+func withProviders[V string | []string](current, change map[string]V) map[string]V {
+	out := maps.Clone(current)
+	if out == nil {
+		out = map[string]V{}
+	}
+	for provider, ids := range change {
+		if len(ids) == 0 {
+			delete(out, provider)
+		} else {
+			out[provider] = ids
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // Delete deletes an archived Task's record and its stored attachments. It
 // is refused for any other stage. The conversation is never deleted at the
 // provider.
@@ -1021,6 +1267,7 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 	s.conv = nil
 	s.gen++
 	s.removed = true
+	m.cancelHistoryLocked(s)
 	delete(m.sessions, s.id)
 	delete(m.dirty, s.id)
 	m.broadcastLocked("session_removed", "", func(seq uint64) any { return sessionRemovedEvent{Seq: seq, SessionID: s.id} })
@@ -1109,7 +1356,7 @@ func (m *Manager) flush() error {
 			web: store.WebState{
 				Turn: key.turn, RequestID: key.reqID, RequestStatus: key.reqStatus, UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
-				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt,
+				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 			},
 		})
 	}
@@ -1163,7 +1410,101 @@ type sink struct {
 	gen uint64
 }
 
-func (k sink) Emit(ev agentapi.Event) { k.m.handleEvent(k.s, k.gen, ev) }
+// Emit applies the event at once. A tool item's images are stored by the
+// image goroutine, since storing writes files and Emit must not wait: the
+// item goes out without them now and again with them once they are stored.
+func (k sink) Emit(ev agentapi.Event) {
+	if ev.Kind == agentapi.EventItem && ev.Item != nil && ev.Item.Kind == agentapi.ItemTool && len(ev.Item.Images) > 0 {
+		it := *ev.Item
+		images := it.Images
+		it.Images, it.ImagesNote = nil, ""
+		ev.Item = &it
+		k.m.handleEvent(k.s, k.gen, ev)
+		k.m.queueImages(imageJob{s: k.s, gen: k.gen, agentID: it.AgentID, itemID: it.ID, images: images})
+		return
+	}
+	k.m.handleEvent(k.s, k.gen, ev)
+}
+
+// imageJob is one tool item's images waiting to be stored.
+type imageJob struct {
+	s               *webSession
+	gen             uint64
+	agentID, itemID string
+	images          []agentapi.Image
+}
+
+// maxImageJobs bounds the images waiting to be stored. Past it, a tool
+// item's images are left out with a note, as an over-cap image would be.
+const maxImageJobs = 256
+
+func (m *Manager) queueImages(job imageJob) {
+	m.imageWG.Add(1)
+	select {
+	case m.imageJobs <- job:
+	default:
+		m.imageWG.Done()
+		log.Warn("tool images dropped: too many waiting to be stored", "session", job.s.id, "count", len(job.images))
+		m.applyImages(job, nil, imagesNote(len(job.images), "too many images arrived at once"))
+	}
+}
+
+// imageLoop stores queued tool images one job at a time until the manager
+// stops; jobs still queued then are released unstored.
+func (m *Manager) imageLoop() {
+	defer m.wg.Done()
+	for {
+		select {
+		case <-m.ctx.Done():
+			for {
+				select {
+				case <-m.imageJobs:
+					m.imageWG.Done()
+				default:
+					return
+				}
+			}
+		case job := <-m.imageJobs:
+			m.storeImages(job)
+			m.imageWG.Done()
+		}
+	}
+}
+
+// storeImages stores one job's images and puts them on their item, unless
+// the conversation they came from is gone.
+func (m *Manager) storeImages(job imageJob) {
+	m.mu.Lock()
+	stale := job.s.gen != job.gen || m.closed
+	m.mu.Unlock()
+	if stale {
+		return
+	}
+	if m.storeImageHook != nil {
+		m.storeImageHook()
+	}
+	it := agentapi.Item{Images: job.images}
+	m.keepImages(job.s, &it)
+	m.applyImages(job, it.Images, it.ImagesNote)
+}
+
+// applyImages puts stored images on the item they belong to and publishes
+// it again, when that item and its conversation are still current.
+func (m *Manager) applyImages(job imageJob, images []agentapi.Image, note string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := job.s
+	if s.gen != job.gen || m.closed {
+		return
+	}
+	i, ok := s.itemIdx[itemKey(job.agentID, job.itemID)]
+	if !ok {
+		return
+	}
+	it := s.items[i]
+	it.Images, it.ImagesNote = images, note
+	m.upsertItemLocked(s, clampItem(it, m.now()), true)
+}
 
 // handleEvent applies one provider event. It only takes Manager.mu and never
 // waits on browsers: subscriber queues are fed without blocking.
@@ -1195,15 +1536,24 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		}
 	case agentapi.EventSubagent:
 		if ev.Subagent != nil && ev.Subagent.ID != "" {
-			m.upsertSubagentLocked(s, *ev.Subagent)
+			m.upsertSubagentLocked(s, *ev.Subagent, true)
+		}
+	case agentapi.EventBackgroundTasks:
+		if ev.BackgroundTasks != nil {
+			m.backgroundTasksLocked(s, *ev.BackgroundTasks)
 		}
 	case agentapi.EventContext:
 		if ev.Context != nil && ev.Context.Used >= 0 && ev.Context.Limit > 0 {
-			if s.context == nil || *s.context != *ev.Context {
-				usage := *ev.Context
+			usage := *ev.Context
+			if usage.Cached < 0 || usage.Cached > usage.Prompt {
+				usage.Prompt, usage.Cached = 0, 0
+			}
+			if s.context == nil || *s.context != usage {
 				s.context = &usage
 			}
 		}
+	case agentapi.EventUsage:
+		m.applyUsageLocked(s, ev.Usage)
 	case agentapi.EventTitle:
 		if title := cleanTitle(ev.Title); title != "" {
 			s.title = title
@@ -1219,6 +1569,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		s.gen++
 		m.expirePendingLocked(s, "the provider runtime exited")
 		m.endSubagentsLocked(s)
+		m.forgetBackgroundTaskStateLocked(s)
 		m.pauseQueueLocked(s)
 		s.setBase(StateFailed, detail)
 		log.Warn("web provider conversation exited", "session", s.id, "provider", s.provider)
@@ -1251,6 +1602,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	if turn.State != agentapi.TurnWorking {
 		// The agent may have switched branches during the turn.
 		m.kickBranchLocked(s.projectID)
+		m.kickQuotaLocked(s.provider)
 	}
 }
 
@@ -1335,6 +1687,8 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	s.projectID, s.model, s.mode = project.ID, req.Model, mode
 	s.effort, s.contextSize = req.Effort, req.ContextSize
 	s.createReq = reqID
+	// A new conversation has no earlier record: everything streams in.
+	s.history = HistoryLoaded
 	s.gen = 1
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	conv, err := prov.Open(ctx, agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}})
@@ -1355,7 +1709,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
 		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: project.ID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize},
 	}
-	if err := m.register(s, conv, rec); err != nil {
+	if err := m.register(s, conv, rec, nil); err != nil {
 		m.closeConversation(conv)
 		return SessionSummary{}, err
 	}
@@ -1370,8 +1724,9 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 
 // register writes a new session's record and lists it. The Project may have
 // been removed while the conversation opened; projectMu orders this against
-// RemoveProject.
-func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.SessionRecord) error {
+// RemoveProject. check, when set, may refuse the write from the stored
+// records. conv is nil for a Task whose conversation is not open.
+func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.SessionRecord, check func(*store.Config) error) error {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -1381,6 +1736,11 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 		return newError(http.StatusConflict, "the project was removed")
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
+		if check != nil {
+			if err := check(cfg); err != nil {
+				return err
+			}
+		}
 		if !cfg.PutSession(store.Key(rec.Agent, rec.ID), rec) {
 			return errors.New("session id collides with an existing record")
 		}
@@ -1395,8 +1755,11 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 	}
 	s.convID = rec.ProviderSessionID
 	s.conv = conv
-	s.persisted = persistKey{turn: StateIdle, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, mode: s.mode}
+	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: rec.Web.Title, mode: s.mode}
 	m.sessions[s.id] = s
+	if s.historyRead {
+		m.enforceHistoryBudgetLocked(s)
+	}
 	m.autoAllowPendingLocked(s)
 	// Announce the new session. Events that arrived during Open may have
 	// changed its state before the record existed; this also persists that.
@@ -1547,6 +1910,8 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	if s.conv != nil || m.closed || (!explicit && !m.autoOpenableLocked(s)) {
 		before := m.summaryLocked(s)
 		m.finishOpeningLocked(s)
+		// A viewer told the transcript was loading gets it read instead.
+		m.viewHistoryLocked(s)
 		m.changedLocked(s, before)
 		open, closed := s.conv != nil, m.closed
 		m.mu.Unlock()
@@ -1571,6 +1936,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	if s.opening == nil {
 		s.opening = make(chan struct{})
 	}
+	m.cancelHistoryLocked(s)
 	s.gen++
 	gen := s.gen
 	req := agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}}
@@ -1608,12 +1974,20 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 		}
 	}
 	var history agentapi.History
+	var histErr error
 	if err == nil && withHistory {
-		recorded, histErr := conv.History(ctx)
-		if histErr != nil {
+		if history, histErr = conv.History(ctx); histErr != nil {
 			log.Warn("read web conversation history failed", "session", s.id, "error", histErr)
 		}
-		history = recorded
+		// Only a conversation that is still the current one stores images.
+		m.mu.Lock()
+		current := s.gen == gen && !m.closed
+		m.mu.Unlock()
+		for i := range history.Items {
+			if current && history.Items[i].Kind == agentapi.ItemTool {
+				m.keepImages(s, &history.Items[i])
+			}
+		}
 	}
 
 	m.mu.Lock()
@@ -1625,12 +1999,17 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 		if s.base == StateClosed || s.base == StateFailed {
 			s.setBase(StateIdle, "")
 		}
-		m.applyHistoryLocked(s, history)
+		m.applyHistoryLocked(s, history, false)
+		m.openedHistoryLocked(s, withHistory, histErr)
 		m.autoAllowPendingLocked(s)
 	case err != nil && s.gen == gen:
 		s.setBase(StateFailed, openFailureDetail(err, s.convID))
 	}
 	m.finishOpeningLocked(s)
+	if err != nil && s.history == "" {
+		// A viewer may be waiting for the transcript this open was to read.
+		m.viewHistoryLocked(s)
+	}
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 
@@ -1849,7 +2228,7 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 	switch {
 	// Behind queued prompts that are about to be sent, a queued prompt waits
 	// its turn even when no turn is running.
-	case mode == ModeQueue && (turnRunning(state) || (len(s.queue) > 0 && !s.queuePaused)):
+	case mode == ModeQueue && (turnRunning(state) || s.queueSending != "" || (len(s.queue) > 0 && !s.queuePaused)):
 		defer m.mu.Unlock()
 		return m.enqueueLocked(s, in, uploads, reqID)
 	case mode == ModeSteer && turnRunning(state):
@@ -1858,7 +2237,7 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 			return Submission{}, newError(http.StatusBadRequest, "a steer takes text only; send files and attachments with a prompt")
 		}
 		return m.steer(s, conv, in.text, reqID)
-	case busy(state):
+	case busy(state) || s.queueSending != "":
 		m.mu.Unlock()
 		return Submission{}, errTurnRunning
 	}
@@ -1870,6 +2249,9 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 // was sent and nothing was recorded; otherwise the outcome is recorded, and a
 // prompt that was not accepted pauses the queue.
 func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, error) {
+	if sub, found, err := m.checkedPrompt(s, reqID); found || err != nil {
+		return sub, err
+	}
 	if err := m.openLocked(s, true); err != nil {
 		if errors.Is(err, errShuttingDown) {
 			return Submission{}, err
@@ -1915,6 +2297,7 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	}
 	before := m.summaryLocked(s)
 	prevBase, prevDetail := s.base, s.detail
+	titleModel := m.titleModelLocked(s, in)
 	s.setBase(StateWorking, "")
 	mark := s.turnSeq
 	m.changedLocked(s, before)
@@ -1932,6 +2315,9 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 		m.markUsed(s, uploads)
 	}
 	if err == nil {
+		if titleModel != "" {
+			m.startTitle(s, titleModel, in.text)
+		}
 		return m.recordSubmission(s, reqID, SubmissionAccepted, "", false), nil
 	}
 	m.mu.Lock()
@@ -1961,6 +2347,9 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 func (m *Manager) steer(s *webSession, conv agentapi.Conversation, text, reqID string) (Submission, error) {
 	if conv == nil {
 		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open", false), nil
+	}
+	if sub, found, err := m.checkedPrompt(s, reqID); found || err != nil {
+		return sub, err
 	}
 	ctx, cancel := context.WithTimeout(m.ctx, sendTimeout)
 	err := conv.Steer(ctx, text)
@@ -2092,7 +2481,7 @@ func (m *Manager) drain(s *webSession) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	m.mu.Lock()
-	if m.closed || s.removed || len(s.queue) == 0 || s.queuePaused || busy(s.state()) {
+	if m.closed || s.removed || len(s.queue) == 0 || s.queuePaused || s.queueSending != "" || busy(s.state()) {
 		m.mu.Unlock()
 		return
 	}
@@ -2112,12 +2501,17 @@ func (m *Manager) drain(s *webSession) {
 	defer m.mu.Unlock()
 	s.queueSending = ""
 	if err != nil {
-		// Nothing was sent: a turn is running after all, or the service is
-		// stopping. The prompt waits at the front for the next completed turn.
+		// Nothing was sent: a turn is running after all, the service is
+		// stopping, or another client holds the conversation. The prompt waits
+		// at the front for the next completed turn.
 		if !m.closed && !s.removed {
 			before := m.summaryLocked(s)
 			s.queue = slices.Insert(s.queue, 0, head)
 			s.queueChanged = true
+			// The in-use check refused it: the queue waits for the user.
+			if errors.Is(err, errHeldElsewhere) || errors.Is(err, errHolderUnknown) || s.base == StateClosed {
+				m.pauseQueueLocked(s)
+			}
 			m.changedLocked(s, before)
 		}
 	}
@@ -2343,6 +2737,19 @@ func (m *Manager) PromptSubagent(id, agentID, text, requestID string) (Submissio
 		m.mu.Unlock()
 		return sub, nil
 	}
+	m.mu.Unlock()
+	holderErr := m.checkHolder(s)
+	m.mu.Lock()
+	// Another request may have finished while the holder RPC released s.op.
+	if i := slices.IndexFunc(s.subagentPrompts, func(p Submission) bool { return p.RequestID == requestID }); i >= 0 {
+		sub := s.subagentPrompts[i]
+		m.mu.Unlock()
+		return sub, nil
+	}
+	if holderErr != nil {
+		m.mu.Unlock()
+		return Submission{}, holderErr
+	}
 	sa := s.subIdx[agentID]
 	switch {
 	case s.removed:
@@ -2434,6 +2841,7 @@ func (m *Manager) disconnectLocked(s *webSession) agentapi.Conversation {
 	s.gen++
 	m.expirePendingLocked(s, "the session was closed")
 	m.endSubagentsLocked(s)
+	m.forgetBackgroundTaskStateLocked(s)
 	m.pauseQueueLocked(s)
 	s.setBase(StateClosed, "")
 	return conv
@@ -2521,7 +2929,7 @@ func (s *webSession) settleableLocked() error {
 		return newError(http.StatusConflict, "the task is running or waiting for input; stop the turn first")
 	case slices.ContainsFunc(s.interactions, func(ix *interaction) bool { return ix.State == agentapi.InteractionPending }):
 		return newError(http.StatusConflict, "a permission request is still being answered; try again")
-	case len(s.queue) > 0:
+	case len(s.queue) > 0 || s.queueSending != "":
 		return newError(http.StatusConflict, "the task has queued prompts; send or clear them first")
 	}
 	return nil
@@ -2555,8 +2963,9 @@ func stageVerb(stage string) string {
 	return "reopened"
 }
 
-// Rename sets the Task's typed name. An empty name shows the provider title
-// again; the provider's conversation is not renamed.
+// Rename sets the Task's typed name. An empty name shows the Task's title
+// again; the provider's conversation is not renamed. A title job running
+// meanwhile leaves the Task alone.
 func (m *Manager) Rename(id, name string) (SessionSummary, error) {
 	clean, err := cleanTaskName(name)
 	if err != nil {
@@ -2573,6 +2982,7 @@ func (m *Manager) Rename(id, name string) (SessionSummary, error) {
 	}
 	before := m.summaryLocked(s)
 	s.name = clean
+	s.renames++
 	m.changedLocked(s, before)
 	return m.summaryLocked(s), nil
 }
@@ -2863,6 +3273,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		s.gen++
 		m.expirePendingLocked(s, "the uam web service stopped")
 		m.endSubagentsLocked(s)
+		m.forgetBackgroundTaskStateLocked(s)
 		// The queue lives in memory only; the prompts in it are not sent.
 		s.queue, s.queuePaused = nil, false
 		m.changedLocked(s, before)
@@ -2871,8 +3282,11 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		m.dropLocked(sub)
 	}
 	m.mu.Unlock()
-	// Abort in-flight opens and sends; their outcome is recorded as usual.
+	// Abort in-flight opens, sends and title jobs; their outcome is
+	// recorded as usual. Title jobs delete their throwaway conversations
+	// before the providers stop.
 	m.cancel()
+	wait(ctx, &m.titles)
 	for _, conv := range convs {
 		m.closeConversation(conv)
 	}
@@ -2885,16 +3299,21 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 			}
 		}
 	}
-	done := make(chan struct{})
-	go func() { m.wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
+	wait(ctx, &m.wg)
 	if err := m.flush(); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("persist web sessions: %w", err)
 	}
 	return firstErr
+}
+
+// wait waits for wg until ctx ends.
+func wait(ctx context.Context, wg *sync.WaitGroup) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 // canonicalWorkdir validates a requested project directory and returns its

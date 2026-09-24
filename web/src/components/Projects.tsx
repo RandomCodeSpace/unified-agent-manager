@@ -1,8 +1,8 @@
 import { FolderOpen } from 'lucide-react';
 import { useRef, useState, type FormEvent } from 'react';
 import { api, describeError, isStatus, resolveTaskDefaults, type Project, type SessionSummary, type TaskDefaults } from '../api';
+import { Note, ProjectBadge, useApp } from './common';
 import { cn } from '../lib/cn';
-import { Note, useApp } from './common';
 import { FolderPicker } from './FolderPicker';
 import { Field, TaskDefaultsFields, inputClass } from './TaskDefaults';
 import { Button } from './ui/button';
@@ -101,9 +101,10 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
             }}
           />
         )}
-        <Field id="add-name" label="Name">
-          <input id="add-name" className={inputClass} type="text" placeholder="Defaults to the folder name" value={name} onChange={(e) => setName(e.target.value)} />
+        <Field id="add-name" label="Name" hint="The project gets a two-letter badge from this name, on a colour of its own.">
+          <input id="add-name" className={inputClass} type="text" placeholder="Defaults to the folder name" aria-describedby="add-name-hint" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
+        {(name.trim() || dir.trim()) && <Note>Badge assigned when added. Its letters and colour are chosen from those still available.</Note>}
         {defaults && (
           <section aria-labelledby="add-defaults-title" className="mt-1 border-t border-hairline pt-4">
             <h3 id="add-defaults-title" className="mb-3 text-title text-ink">
@@ -159,7 +160,19 @@ export function EditProjectDialog({ open, onClose, onClosed, project, onUpdated 
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()} onClosed={onClosed} initialFocus={first} title="Edit project" description={<span className="font-mono text-code-sm">{project.dir}</span>}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => !o && onClose()}
+      onClosed={onClosed}
+      initialFocus={first}
+      title={
+        <span className="flex items-center gap-2">
+          <ProjectBadge badge={project.badge} />
+          Edit project
+        </span>
+      }
+      description={<span className="font-mono text-code-sm">{project.dir}</span>}
+    >
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field id="edit-name" label="Name">
           <input id="edit-name" className={inputClass} type="text" ref={first} value={name} onChange={(e) => setName(e.target.value)} />
@@ -231,6 +244,10 @@ export function RemoveProjectDialog({ open, onClose, onClosed, project, tasks, o
       disabled={unarchived > 0}
       onConfirm={() => void confirm()}
     >
+      <div className="mt-3 flex min-w-0 items-center gap-2 text-ui font-medium text-ink">
+        <ProjectBadge badge={project.badge} />
+        <span className="truncate">{project.name}</span>
+      </div>
       {unarchived > 0 && (
         <Note tone="warn" className="mt-3">
           {unarchived === 1 ? 'One task is' : `${unarchived} tasks are`} not archived. Archive every task before removing this project.

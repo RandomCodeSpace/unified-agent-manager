@@ -1,8 +1,20 @@
 // Pure text rules for the composer's `/` and `@` pickers. No DOM, so the unit tests run in node.
 
-import type { Command } from '../api';
+import type { Command, PromptMode, SendDefault } from '../api';
 
-export type TriggerKind = '/' | '@';
+/**
+ * What Enter and Ctrl/Cmd+Enter submit. With no turn running both send. While a turn runs,
+ * Enter does the setting's action and the modifier the other; when a steer is impossible
+ * (the message carries files or attachments) both queue, and the composer says why.
+ */
+export function enterActions(live: boolean, sendDefault: SendDefault, steerBlocked: boolean): { enter: PromptMode; modified: PromptMode } {
+  if (!live) return { enter: 'send', modified: 'send' };
+  if (steerBlocked) return { enter: 'queue', modified: 'queue' };
+  return sendDefault === 'queue' ? { enter: 'queue', modified: 'steer' } : { enter: 'steer', modified: 'queue' };
+}
+
+/** `/` commands, `@` files, and `$` skills: a second way into the `/` list, filtered to skills (issue #186). */
+export type TriggerKind = '/' | '@' | '$';
 
 /** The token the caret is in: `[start, end)` of the text, `query` without its sigil. */
 export interface Trigger {
@@ -13,17 +25,18 @@ export interface Trigger {
 }
 
 /**
- * Which picker the caret sits in, if any. `/` opens only as the first character of the
- * text, `@` at the start or after whitespace. The token runs from its sigil to the caret and
- * holds no whitespace: a space after `/review` closes the picker and starts the arguments.
+ * Which picker the caret sits in, if any. `/` and `$` open only as the first character of
+ * the text, `@` at the start or after whitespace. The token runs from its sigil to the caret
+ * and holds no whitespace: a space after `/review` closes the picker and starts the arguments.
  */
 export function triggerAt(text: string, caret: number): Trigger | null {
   const before = text.slice(0, caret);
   let start = before.length;
   while (start > 0 && !/\s/.test(before[start - 1])) start--;
   const token = before.slice(start);
-  if (token.startsWith('/')) return start === 0 ? { kind: '/', start, end: caret, query: token.slice(1) } : null;
-  if (token.startsWith('@')) return { kind: '@', start, end: caret, query: token.slice(1) };
+  const sigil = token.charAt(0);
+  if (sigil === '/' || sigil === '$') return start === 0 ? { kind: sigil, start, end: caret, query: token.slice(1) } : null;
+  if (sigil === '@') return { kind: '@', start, end: caret, query: token.slice(1) };
   return null;
 }
 
@@ -37,10 +50,10 @@ export function applyPick(text: string, trigger: Trigger, value: string): { text
 }
 
 /** `/name arguments` when `name` is a listed command; null means the text is plain. */
-export function parseCommand(text: string, commands: readonly Pick<Command, 'name'>[]): { name: string; args: string } | null {
-  const m = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
-  if (!m || !commands.some((c) => c.name === m[1])) return null;
-  return { name: m[1], args: (m[2] ?? '').trim() };
+export function parseCommand(text: string, commands: readonly (Pick<Command, 'name'> & Partial<Pick<Command, 'kind'>>)[]): { name: string; args: string } | null {
+  const m = /^([/$])(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  if (!m || !commands.some((c) => c.name === m[2] && (m[1] !== '$' || c.kind === 'skill'))) return null;
+  return { name: m[2], args: (m[3] ?? '').trim() };
 }
 
 /**
@@ -49,7 +62,7 @@ export function parseCommand(text: string, commands: readonly Pick<Command, 'nam
  * model as plain text. A loaded list, even an empty one, or a failed fetch never waits.
  */
 export function commandPending(text: string, commands: readonly Pick<Command, 'name'>[] | null, error: string | null): boolean {
-  return commands === null && !error && /^\/\S/.test(text.trim());
+  return commands === null && !error && /^[/$]\S/.test(text.trim());
 }
 
 /** Commands matching `query`: a name starting with it first, then a name or description containing it. Case-insensitive; empty query keeps all. */

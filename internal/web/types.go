@@ -47,6 +47,15 @@ const (
 	StageArchived = "archived"
 )
 
+// Transcript states of SessionDetail.History. A Task whose conversation is
+// not open has its recorded transcript read without opening it: loading
+// until a "history" event carries it, unavailable when it could not be read.
+const (
+	HistoryLoaded      = "loaded"
+	HistoryLoading     = "loading"
+	HistoryUnavailable = "unavailable"
+)
+
 // Prompt modes. While a turn runs, send is refused, queue holds the prompt
 // until the turn completes, and steer adds it to the running turn. While the
 // Task is idle, all three send it.
@@ -82,6 +91,7 @@ type Project struct {
 	CreatedAt time.Time `json:"created_at"`
 	// Defaults are omitted when the Project has none.
 	Defaults TaskDefaults `json:"defaults,omitzero"`
+	Badge    Badge        `json:"badge"`
 	// Branch is the branch checked out in Dir's git work tree, read from git
 	// and never stored. It is empty when Dir is not in a work tree, HEAD is
 	// detached, or git cannot tell.
@@ -97,6 +107,49 @@ type TaskDefaults struct {
 	Effort      string `json:"effort"`
 	ContextSize string `json:"context_size"`
 	Mode        string `json:"mode"`
+}
+
+// Badge is a Project's badge: Text is two uppercase ASCII letters or digits,
+// unique among Projects; Color is one of badgeColors.
+type Badge struct {
+	Text  string `json:"text"`
+	Color string `json:"color"`
+}
+
+// Settings are the web interface's settings, shared by every browser.
+type Settings struct {
+	// SendDefault is what Enter does while a turn runs: steer or queue.
+	SendDefault string `json:"send_default"`
+	// HiddenModels lists, by provider, the model IDs the browser does not
+	// offer, sorted; omitted when none is hidden. IDs the provider no longer
+	// lists are kept. The service never refuses a hidden model.
+	HiddenModels map[string][]string `json:"hidden_models,omitempty"`
+	// TitleModel maps a provider to the model that titles its new Tasks from
+	// their first message; omitted when every provider keeps its own title.
+	TitleModel map[string]string `json:"title_model,omitempty"`
+}
+
+// AccountUsage is the GET /api/usage response: the account quotas of every
+// provider with the usage capability, from the last read that succeeded.
+// Stale is set while the latest read failed; UpdatedAt is when the oldest of
+// the shown quotas was read, omitted before any read succeeded.
+type AccountUsage struct {
+	Quotas    []Quota   `json:"quotas"`
+	Stale     bool      `json:"stale"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
+}
+
+// Quota is one account quota. Entitlement is 0 when Unlimited; ResetAt is
+// omitted unless the provider reported a time still in the future.
+type Quota struct {
+	Provider         string    `json:"provider"`
+	Type             string    `json:"type"`
+	Used             int64     `json:"used"`
+	Entitlement      int64     `json:"entitlement"`
+	Unlimited        bool      `json:"unlimited"`
+	RemainingPercent float64   `json:"remaining_percent"`
+	Overage          float64   `json:"overage"`
+	ResetAt          time.Time `json:"reset_at,omitzero"`
 }
 
 // Meta is the /api/meta response.
@@ -128,6 +181,10 @@ type SessionSummary struct {
 	Effort      string            `json:"effort"`
 	ContextSize string            `json:"context_size"`
 	Context     *agentapi.Context `json:"context,omitempty"`
+	// Usage is the AI units the Task's conversation used, main agent and
+	// subagents together, once the provider reports them; it is not
+	// persisted and after a restart comes back only from provider history.
+	Usage *agentapi.Usage `json:"usage,omitempty"`
 	// Title is the provider-generated title. Name may be empty; browsers
 	// display name || title || "New task".
 	Title string `json:"title"`
@@ -152,16 +209,46 @@ type SessionSummary struct {
 // interactions and subagents.
 type SessionDetail struct {
 	SessionSummary
-	Items            []agentapi.Item        `json:"items"`
-	Interactions     []agentapi.Interaction `json:"interactions"`
-	Subagents        []agentapi.Subagent    `json:"subagents"`
-	HistoryTruncated bool                   `json:"history_truncated"`
-	LastSubmission   *Submission            `json:"last_submission"`
+	// Seq orders this snapshot against events on the same service.
+	Seq              uint64                    `json:"seq"`
+	Items            []agentapi.Item           `json:"items"`
+	Interactions     []agentapi.Interaction    `json:"interactions"`
+	Subagents        []agentapi.Subagent       `json:"subagents"`
+	HistoryTruncated bool                      `json:"history_truncated"`
+	LastSubmission   *Submission               `json:"last_submission"`
+	BackgroundTasks  *agentapi.BackgroundTasks `json:"background_tasks,omitempty"`
 	// Queue holds the prompts waiting for the running turn, oldest first.
 	Queue []QueuedPrompt `json:"queue"`
 	// QueuePaused is set while the queue waits for the user to resume or
 	// clear it; it is never set with an empty queue.
 	QueuePaused bool `json:"queue_paused"`
+	// History says whether Items and Subagents hold the conversation's
+	// recorded transcript (HistoryLoaded, HistoryLoading or
+	// HistoryUnavailable); HistoryReason says why it is unavailable.
+	History       string `json:"history"`
+	HistoryReason string `json:"history_reason,omitempty"`
+	// TerminalSession is the uam terminal session tied to the same
+	// conversation, present while its host runs.
+	TerminalSession *TerminalSession `json:"terminal_session,omitempty"`
+}
+
+// TerminalSession is a uam terminal session tied to a Task's conversation.
+// It stays the terminal's: the Task only records the link.
+type TerminalSession struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// PreviousConversation is a provider conversation recorded for a Project's
+// directory that no Task is linked to. InUse is set while another client
+// holds it open.
+type PreviousConversation struct {
+	Provider       string    `json:"provider"`
+	ConversationID string    `json:"conversation_id"`
+	Title          string    `json:"title"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	InUse          bool      `json:"in_use"`
 }
 
 // QueuedPrompt is one prompt in a Task's queue.
