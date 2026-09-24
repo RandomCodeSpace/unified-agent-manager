@@ -660,7 +660,7 @@ func TestWebPermissionRespond(t *testing.T) {
 	if got.Kind != agentapi.InteractionPermission || got.Title != "Run a shell command" || !strings.Contains(got.Detail, "command: git status") || !strings.Contains(got.Detail, "patterns: git status") {
 		t.Fatalf("permission interaction = %#v", got)
 	}
-	if fmt.Sprint(got.Options) != "[{once Allow once false} {always Always allow false} {reject Deny true}]" {
+	if fmt.Sprint(got.Options) != "[{once Allow once false true} {always Always allow false false} {reject Deny true false}]" {
 		t.Fatalf("options = %v", got.Options)
 	}
 	if err := conversation.Respond(t.Context(), "per_one", agentapi.Answer{Decision: "maybe"}); err == nil || errors.Is(err, agentapi.ErrInteractionGone) {

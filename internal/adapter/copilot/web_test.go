@@ -382,6 +382,30 @@ func shellRequest(id string) *rpc.PermissionRequestedData {
 	}
 }
 
+// Only approve_once is marked for yolo, and only when no managed policy says
+// a person must decide.
+func TestWebAllowOnceMarkerFollowsManagedPolicy(t *testing.T) {
+	h := openWeb(t)
+	h.fs.onEvent(ev("e1", shellRequest("plain")))
+	managed := shellRequest("managed")
+	managed.PermissionRequest = &rpc.PermissionRequestShell{FullCommandText: "rm -rf build", ManagedApprovalRequired: copilot.Bool(true)}
+	h.fs.onEvent(ev("e2", managed))
+	unreadable := shellRequest("unreadable")
+	unreadable.PermissionRequest = nil
+	h.fs.onEvent(ev("e3", unreadable))
+	for id, want := range map[string]string{"plain": "approve_once", "managed": "", "unreadable": ""} {
+		var marked []string
+		for _, o := range h.sink.interaction(id).Options {
+			if o.AllowOnce {
+				marked = append(marked, o.ID)
+			}
+		}
+		if strings.Join(marked, ",") != want {
+			t.Fatalf("%s: options marked allow-once = %v, want %q", id, marked, want)
+		}
+	}
+}
+
 func TestWebPermissionWaitsForRespond(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()

@@ -937,15 +937,18 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID},
 		decisions:   map[string]rpc.PermissionDecision{},
 	}
-	add := func(id, label string, reject bool, dec rpc.PermissionDecision) {
-		in.Options = append(in.Options, agentapi.Option{ID: id, Label: label, Reject: reject})
-		in.decisions[id] = dec
+	add := func(opt agentapi.Option, dec rpc.PermissionDecision) {
+		in.Options = append(in.Options, opt)
+		in.decisions[opt.ID] = dec
 	}
-	add("approve_once", "Allow once", false, &rpc.PermissionDecisionApproveOnce{ApprovedInteractively: copilot.Bool(true)})
+	// A request the managed policy says a person must approve, or one this
+	// SDK cannot read, is never marked for automatic approval.
+	managed := d.PermissionRequest == nil || d.PermissionRequest.RequiresManagedApproval()
+	add(agentapi.Option{ID: "approve_once", Label: "Allow once", AllowOnce: !managed}, &rpc.PermissionDecisionApproveOnce{ApprovedInteractively: copilot.Bool(true)})
 	if dec := sessionApproval(d.PromptRequest); dec != nil {
-		add("approve_session", "Allow for this session", false, dec)
+		add(agentapi.Option{ID: "approve_session", Label: "Allow for this session"}, dec)
 	}
-	add("reject", "Deny", true, &rpc.PermissionDecisionReject{})
+	add(agentapi.Option{ID: "reject", Label: "Deny", Reject: true}, &rpc.PermissionDecisionReject{})
 	c.pending[d.RequestID] = in
 	c.emitInteractionLocked(in)
 }

@@ -496,7 +496,7 @@ func webPermissionInteraction(request webPermissionRequest, now time.Time) agent
 		Title:  title,
 		Detail: webTruncate(strings.Join(lines, "\n")),
 		Options: []agentapi.Option{
-			{ID: "once", Label: "Allow once"},
+			{ID: "once", Label: "Allow once", AllowOnce: true},
 			{ID: "always", Label: "Always allow"},
 			{ID: "reject", Label: "Deny", Reject: true},
 		},

@@ -12,7 +12,8 @@
 //     returns. Emit never blocks on browsers, so adapters may call it from
 //     their event goroutines.
 //   - Adapters never replay a prompt, never pick "the latest" conversation,
-//     and never answer a pending interaction on the user's behalf.
+//     and never answer a pending interaction on the user's behalf. Only the
+//     web service may, for permission requests of a Task in yolo mode.
 package agentapi
 
 import (
@@ -322,6 +323,10 @@ type Option struct {
 	Label string `json:"label"`
 	// Reject marks decisions that deny the request.
 	Reject bool `json:"reject,omitempty"`
+	// AllowOnce marks the decision that allows this one request and nothing
+	// more. A provider leaves it off when its policy says a person must
+	// decide: the web service's yolo mode answers only with this option.
+	AllowOnce bool `json:"allow_once,omitempty"`
 }
 
 // Question is one prompt inside a question interaction.
