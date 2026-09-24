@@ -41,6 +41,14 @@ jobs:
       - name: Run tests with coverage
         run: go test -covermode=atomic -coverprofile=coverage.out -coverpkg=./... ./...
 
+      - name: Run web tests with coverage
+        run: |
+          mkdir -p web/coverage
+          node --experimental-strip-types --test --experimental-test-coverage \
+            --test-reporter=lcov --test-reporter-destination=web/coverage/lcov.info \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            web/tests/*.test.mjs
+
       - name: Run SonarCloud scan
         if: env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0

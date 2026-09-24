@@ -260,7 +260,8 @@ function ensureFrame(): { queue: DiagramQueue; loaded: Promise<void> } {
   el.src = FRAME_PATH;
   const q = new DiagramQueue((req) => el.contentWindow?.postMessage(req, '*'), RENDER_TIMEOUT, dropFrame);
   const onMessage = (e: MessageEvent) => {
-    if (e.source !== el.contentWindow) return;
+    // The sandboxed frame has an opaque origin, so its messages carry "null".
+    if (e.source !== el.contentWindow || e.origin !== 'null') return;
     q.receive(e.data);
   };
   window.addEventListener('message', onMessage);

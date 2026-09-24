@@ -9,8 +9,8 @@ import { Dialog } from './ui/dialog';
 export function usePreviousCounts(projects: Project[], sessions: SessionSummary[]) {
   const { meta } = useApp();
   const enabled = !!meta?.providers.some((p) => p.available && p.capabilities.import);
-  const projectKey = projects.map((p) => `${p.id}:${p.dir}`).sort().join("\n");
-  const linkedKey = sessions.map((s) => `${s.provider}:${s.conversation_id}`).sort().join("\n");
+  const projectKey = projects.map((p) => `${p.id}:${p.dir}`).sort((a, b) => a.localeCompare(b)).join("\n");
+  const linkedKey = sessions.map((s) => `${s.provider}:${s.conversation_id}`).sort((a, b) => a.localeCompare(b)).join("\n");
   const [counts, setCounts] = useState<Record<string, number>>({});
   useEffect(() => {
     if (!enabled) return;
