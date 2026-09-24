@@ -26,6 +26,32 @@ const GROUPS: { status: SubagentStatus; label: string }[] = [
   { status: 'cancelled', label: 'Cancelled' },
 ];
 
+/** A stop request for one subagent; the provider's SSE still owns its terminal status. */
+interface StopState {
+  busy: boolean;
+  requested: boolean;
+  error: string | null;
+}
+const NOT_STOPPING: StopState = { busy: false, requested: false, error: null };
+
+/** One record of stop requests per panel, so the list row and the transcript header agree. */
+function useStops(sessionId: string): [Record<string, StopState>, (agentId: string) => void] {
+  const [stops, setStops] = useState<Record<string, StopState>>({});
+  const set = (agentId: string, v: StopState) => setStops((all) => ({ ...all, [agentId]: v }));
+  async function stop(agentId: string) {
+    const current = stops[agentId];
+    if (current?.busy || current?.requested) return;
+    set(agentId, { busy: true, requested: false, error: null });
+    try {
+      await api.cancelSubagent(sessionId, agentId);
+      set(agentId, { busy: false, requested: true, error: null });
+    } catch (e) {
+      set(agentId, { busy: false, requested: false, error: describeError(e) });
+    }
+  }
+  return [stops, (agentId) => void stop(agentId)];
+}
+
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
@@ -91,6 +117,7 @@ export function SubagentPanel({
 }) {
   const { meta, narrow } = useApp();
   const lead = useRef<HTMLButtonElement>(null);
+  const [stops, stop] = useStops(session.id);
   const current = view.view === 'agent' ? session.subagents.find((s) => s.id === view.id) : undefined;
 
   // Focus the leading control whenever the view changes (open, back, open transcript).
@@ -113,7 +140,7 @@ export function SubagentPanel({
             {setup && <span className="truncate font-mono text-meta text-muted" title={setup}>{setup}</span>}
           </div>
           <AgentChip status={current.status} />
-          <StopSubagent key={current.id} session={session} subagent={current} />
+          <StopSubagent session={session} subagent={current} stopping={stops[current.id] ?? NOT_STOPPING} onStop={() => stop(current.id)} />
           <Button size="icon-md" aria-label="Close subagents" className="text-muted" onClick={onClose}>
             <X />
           </Button>
@@ -167,7 +194,7 @@ export function SubagentPanel({
               </div>
               <ul className="flex flex-col gap-px">
                 {rows.map((s) => (
-                  <SubagentRow key={s.id} session={session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} />
+                  <SubagentRow key={s.id} session={session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} stopping={stops[s.id] ?? NOT_STOPPING} onStop={() => stop(s.id)} />
                 ))}
               </ul>
             </section>
@@ -184,6 +211,8 @@ function SubagentRow({
   setup,
   onOpen,
   onLocate,
+  stopping,
+  onStop,
 }: {
   session: SessionDetail;
   subagent: Subagent;
@@ -191,28 +220,19 @@ function SubagentRow({
   setup: string;
   onOpen: () => void;
   onLocate: (toolCallId: string) => void;
+  stopping: StopState;
+  onStop: () => void;
 }) {
   const [, copy] = useCopied();
-  const [stopping, setStopping] = useState<{ busy: boolean; requested: boolean; error: string | null }>({ busy: false, requested: false, error: null });
   const meta: string[] = [];
   if (s.started_at) meta.push(`Started ${clock(s.started_at)}`);
   const took = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
   if (took) meta.push(took);
   const canStop = s.status === 'running' && !readOnly(session);
 
-  async function stop() {
-    setStopping({ busy: true, requested: false, error: null });
-    try {
-      await api.cancelSubagent(session.id, s.id);
-      setStopping({ busy: false, requested: true, error: null });
-    } catch (e) {
-      setStopping({ busy: false, requested: false, error: describeError(e) });
-    }
-  }
-
   const items: ActionItem[] = [
     { key: 'open', label: 'Open', icon: <Bot />, onSelect: onOpen },
-    ...(s.status === 'running' ? [{ key: 'stop', label: stopping.requested ? 'Stop requested' : 'Stop', icon: <Square />, disabled: !canStop || stopping.busy || stopping.requested, onSelect: () => void stop() }] : []),
+    ...(s.status === 'running' ? [{ key: 'stop', label: stopping.requested ? 'Stop requested' : 'Stop', icon: <Square />, disabled: !canStop || stopping.busy || stopping.requested, onSelect: onStop }] : []),
     ...(s.parent_tool_call_id ? [{ key: 'locate', label: 'Show where it was spawned', icon: <Crosshair />, onSelect: () => onLocate(s.parent_tool_call_id!) }] : []),
     { key: 'copy', label: 'Copy agent ID', icon: <Copy />, onSelect: () => copy(s.id), separator: true },
   ];
@@ -447,26 +467,12 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
 }
 
 /** Cancellation requests never invent a terminal status; the provider's SSE owns it. */
-function StopSubagent({ session, subagent }: { session: SessionDetail; subagent: Subagent }) {
-  const [busy, setBusy] = useState(false);
-  const [requested, setRequested] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+function StopSubagent({ session, subagent, stopping, onStop }: { session: SessionDetail; subagent: Subagent; stopping: StopState; onStop: () => void }) {
+  const { busy, requested, error } = stopping;
   if (subagent.status !== 'running') return null;
-  async function stop() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.cancelSubagent(session.id, subagent.id);
-      setRequested(true);
-    } catch (e) {
-      setError(describeError(e));
-    } finally {
-      setBusy(false);
-    }
-  }
   return (
     <Tip label={error ?? (requested ? 'Stop requested' : 'Stop this subagent')}>
-      <Button size="sm" variant="secondary" aria-label={`Stop subagent ${subagent.name}`} loading={busy} disabled={requested || readOnly(session)} onClick={() => void stop()}>
+      <Button size="sm" variant="secondary" aria-label={`Stop subagent ${subagent.name}`} loading={busy} disabled={requested || readOnly(session)} onClick={onStop}>
         <Square className="!size-3" fill="currentColor" />
         {requested ? 'Requested' : 'Stop'}
       </Button>
