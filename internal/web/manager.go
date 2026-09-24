@@ -136,6 +136,9 @@ type webSession struct {
 	name      string
 	title     string
 	lastModel string
+	// mode is safe or yolo: a yolo Task's permission requests are allowed
+	// once without asking.
+	mode      store.Mode
 	workdir   string
 	convID    string
 	createdAt time.Time
@@ -190,18 +193,22 @@ type interaction struct {
 	// answering is set while this service's answer is with the provider, so
 	// a concurrent second answer is refused instead of racing it.
 	answering bool
+	// yolo is set once yolo mode claimed the interaction; it no longer waits
+	// for the user.
+	yolo bool
 }
 
 // persistKey is the durable part of a session; sessions.json is written only
 // when it changes, never per streamed token.
 type persistKey struct {
 	turn, detail, name, convID, reqID, reqStatus, projectID, model, title string
+	mode                                                                  store.Mode
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
 	return &webSession{
 		id: id, provider: provider, name: name, workdir: workdir, convID: convID,
-		createdAt: created, updatedAt: created, base: StateIdle,
+		createdAt: created, updatedAt: created, base: StateIdle, mode: store.ModeSafe,
 		itemIdx: map[string]int{}, ixIdx: map[string]*interaction{}, subIdx: map[string]*agentapi.Subagent{},
 	}
 }
@@ -214,7 +221,7 @@ func (s *webSession) setBase(state, detail string) {
 
 func (s *webSession) pendingKinds() (permissions, questions int) {
 	for _, ix := range s.interactions {
-		if ix.State != agentapi.InteractionPending {
+		if ix.State != agentapi.InteractionPending || ix.yolo {
 			continue
 		}
 		if ix.Kind == agentapi.InteractionPermission {
@@ -252,7 +259,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, title: s.title}
+	k := persistKey{turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, title: s.title, mode: s.mode}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 	}
@@ -415,6 +422,9 @@ func cleanTitle(title string) string {
 func sessionFromRecord(rec store.SessionRecord) *webSession {
 	s := newSession(rec.ID, rec.Agent, rec.Name, rec.Workdir, rec.ProviderSessionID, rec.CreatedAt)
 	s.updatedAt = rec.LastSeenAt
+	if rec.Mode == store.ModeYolo {
+		s.mode = store.ModeYolo
+	}
 	if web := rec.Web; web != nil {
 		if knownStates[web.Turn] {
 			s.base = web.Turn
@@ -601,6 +611,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), Workdir: s.workdir, ConversationID: s.convID,
 		State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
+		Mode: string(s.mode),
 	}
 }
 
@@ -994,6 +1005,7 @@ func (m *Manager) persistLoop() {
 
 type recordPatch struct {
 	id, provider, name, convID string
+	mode                       store.Mode
 	updated                    time.Time
 	web                        store.WebState
 }
@@ -1011,7 +1023,7 @@ func (m *Manager) flush() error {
 		}
 		key := s.key()
 		patches = append(patches, recordPatch{
-			id: s.id, provider: s.provider, name: s.name, convID: s.convID, updated: s.updatedAt,
+			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
 				Turn: key.turn, RequestID: key.reqID, RequestStatus: key.reqStatus, UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Title: key.title,
@@ -1033,6 +1045,7 @@ func (m *Manager) flush() error {
 				continue
 			}
 			rec.Name = p.name
+			rec.Mode = p.mode
 			rec.ProviderSessionID = p.convID
 			rec.LastSeenAt = p.updated
 			// Update in place: fields a newer uam wrote must survive.
@@ -1154,6 +1167,8 @@ type CreateRequest struct {
 	Name      string `json:"name"`
 	Prompt    string `json:"prompt"`
 	RequestID string `json:"request_id"`
+	// Mode is safe (also when empty) or yolo.
+	Mode string `json:"mode"`
 }
 
 // Create opens a new provider conversation in a Project's directory, records
@@ -1181,6 +1196,12 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	name, err := cleanTaskName(req.Name)
 	if err != nil {
 		return SessionSummary{}, err
+	}
+	mode := store.ModeSafe
+	if req.Mode != "" {
+		if mode, err = parseMode(req.Mode); err != nil {
+			return SessionSummary{}, err
+		}
 	}
 	if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
 		return SessionSummary{}, newError(http.StatusConflict, "the project directory %s no longer exists", workdir)
@@ -1212,7 +1233,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	}
 	now := m.now()
 	s := newSession(id, prov.Name(), name, workdir, "", now)
-	s.projectID, s.model = project.ID, req.Model
+	s.projectID, s.model, s.mode = project.ID, req.Model, mode
 	s.createReq = reqID
 	s.gen = 1
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
@@ -1230,7 +1251,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 		return SessionSummary{}, newError(http.StatusBadGateway, "the provider returned an unusable conversation id")
 	}
 	rec := store.SessionRecord{
-		ID: id, Agent: prov.Name(), Name: name, Mode: store.ModeSafe, Workdir: workdir,
+		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
 		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: project.ID, Model: req.Model},
 	}
@@ -1274,8 +1295,9 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 	}
 	s.convID = rec.ProviderSessionID
 	s.conv = conv
-	s.persisted = persistKey{turn: StateIdle, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model}
+	s.persisted = persistKey{turn: StateIdle, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, mode: s.mode}
 	m.sessions[s.id] = s
+	m.autoAllowPendingLocked(s)
 	// Announce the new session. Events that arrived during Open may have
 	// changed its state before the record existed; this also persists that.
 	m.changedLocked(s, SessionSummary{})
@@ -1494,6 +1516,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 			s.setBase(StateIdle, "")
 		}
 		m.applyHistoryLocked(s, history)
+		m.autoAllowPendingLocked(s)
 	case err != nil && s.gen == gen:
 		s.setBase(StateFailed, openFailureDetail(err, s.convID))
 	}
@@ -2054,7 +2077,8 @@ func (m *Manager) SetModel(id, model string) (SessionSummary, error) {
 }
 
 // Answer forwards the user's answer to a pending interaction. The first
-// answer wins; the service never answers on the user's behalf.
+// answer wins. The service answers on the user's behalf only for permission
+// requests of a yolo Task, and never for questions.
 func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agentapi.Interaction, error) {
 	m.mu.Lock()
 	s := m.sessions[id]
@@ -2085,19 +2109,32 @@ func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agen
 	}
 	ix.answering = true
 	m.mu.Unlock()
+	return m.respond(s, ix, conv, interactionID, answer)
+}
 
+// respond sends answer to an interaction the caller claimed by setting
+// ix.answering, and records the outcome. While it is claimed, every other
+// answer is refused, so the first answer wins.
+func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversation, interactionID string, answer agentapi.Answer) (agentapi.Interaction, error) {
 	ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
 	err := conv.Respond(ctx, interactionID, answer)
 	cancel()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	ix.answering = false
 	before := m.summaryLocked(s)
+	ix.answering = false
+	if err != nil {
+		// Not answered: the request is the user's again.
+		ix.yolo = false
+	}
 	switch {
 	case err == nil:
 		if ix.State == agentapi.InteractionPending {
 			ix.State, ix.Resolution = resolution(ix.Interaction, answer)
+			if ix.yolo {
+				ix.Resolution = yoloResolution
+			}
 			m.publishInteractionLocked(s, ix)
 		}
 		m.changedLocked(s, before)
@@ -2109,9 +2146,76 @@ func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agen
 		m.changedLocked(s, before)
 		return agentapi.Interaction{}, newError(http.StatusGone, "the interaction expired")
 	default:
-		log.Warn("web interaction answer failed", "session", id, "error", err)
+		m.changedLocked(s, before)
+		log.Warn("web interaction answer failed", "session", s.id, "error", err)
 		return agentapi.Interaction{}, newError(http.StatusBadGateway, "answer failed: %s", shortError(err))
 	}
+}
+
+// yoloResolution is the recorded resolution of a permission request that
+// yolo mode allowed.
+const yoloResolution = "allowed (yolo)"
+
+// autoAllowLocked answers a pending permission request of a yolo Task with
+// the provider's single-use allow option, through the same claim as a
+// browser's answer. Questions, and requests without that option (the
+// provider's policy says a person must decide), stay with the user.
+func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) {
+	if s.mode != store.ModeYolo || m.closed || s.removed || s.conv == nil ||
+		ix.Kind != agentapi.InteractionPermission || ix.State != agentapi.InteractionPending || ix.answering {
+		return
+	}
+	i := slices.IndexFunc(ix.Options, func(o agentapi.Option) bool { return o.AllowOnce && !o.Reject })
+	if i < 0 {
+		return
+	}
+	conv, id, answer := s.conv, ix.ID, agentapi.Answer{Decision: ix.Options[i].ID}
+	ix.answering, ix.yolo = true, true
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		if _, err := m.respond(s, ix, conv, id, answer); err != nil {
+			log.Warn("web yolo approval failed", "session", s.id, "interaction", id, "error", err)
+		}
+	}()
+}
+
+// autoAllowPendingLocked applies yolo mode to every pending permission
+// request of s.
+func (m *Manager) autoAllowPendingLocked(s *webSession) {
+	for _, ix := range s.interactions {
+		m.autoAllowLocked(s, ix)
+	}
+}
+
+// parseMode validates a Task mode.
+func parseMode(mode string) (store.Mode, error) {
+	switch store.Mode(mode) {
+	case store.ModeSafe, store.ModeYolo:
+		return store.Mode(mode), nil
+	}
+	return "", newError(http.StatusBadRequest, "mode must be safe or yolo")
+}
+
+// SetMode sets the Task's permission mode at any time, even while a turn
+// runs. It applies to permission requests raised afterwards; switching to yolo
+// also answers the ones already pending.
+func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
+	md, err := parseMode(mode)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[id]
+	if s == nil {
+		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+	}
+	before := m.summaryLocked(s)
+	s.mode = md
+	m.autoAllowPendingLocked(s)
+	m.changedLocked(s, before)
+	return m.summaryLocked(s), nil
 }
 
 func interactionOpen(ix *interaction) error {

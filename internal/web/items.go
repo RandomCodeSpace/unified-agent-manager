@@ -241,6 +241,9 @@ func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction
 		if cur.State != agentapi.InteractionPending && ix.State == agentapi.InteractionPending {
 			return
 		}
+		if cur.yolo && ix.State == agentapi.InteractionAnswered {
+			ix.Resolution = yoloResolution
+		}
 		cur.Interaction = ix
 	} else {
 		cur = &interaction{Interaction: ix}
@@ -249,6 +252,7 @@ func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction
 		s.trimInteractions()
 	}
 	m.publishInteractionLocked(s, cur)
+	m.autoAllowLocked(s, cur)
 }
 
 // trimInteractions forgets the oldest resolved interactions beyond the cap.

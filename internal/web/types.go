@@ -110,6 +110,9 @@ type SessionSummary struct {
 	SubagentsRunning int `json:"subagents_running"`
 	// Queued counts prompts waiting in the Task's queue.
 	Queued int `json:"queued"`
+	// Mode is safe or yolo. A yolo Task's permission requests are allowed
+	// once without asking; questions still wait for the user.
+	Mode string `json:"mode"`
 }
 
 // SessionDetail is a summary plus the retained main-agent transcript,

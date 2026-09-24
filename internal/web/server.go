@@ -349,22 +349,29 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
-// handlePatch applies {name?, model?}. The model changes first: it is the
-// part that can be refused, and a refused request should change nothing.
+// handlePatch applies {name?, model?, mode?}. The model changes first: it is
+// the part that can be refused, and a refused request should change nothing.
 func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name  *string `json:"name"`
 		Model *string `json:"model"`
+		Mode  *string `json:"mode"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.Name == nil && body.Model == nil {
-		writeError(w, http.StatusBadRequest, "name or model is required")
+	if body.Name == nil && body.Model == nil && body.Mode == nil {
+		writeError(w, http.StatusBadRequest, "name, model or mode is required")
 		return
 	}
 	if body.Name != nil {
 		if _, err := cleanTaskName(*body.Name); err != nil {
+			writeFailure(w, err)
+			return
+		}
+	}
+	if body.Mode != nil {
+		if _, err := parseMode(*body.Mode); err != nil {
 			writeFailure(w, err)
 			return
 		}
@@ -374,6 +381,12 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if body.Model != nil {
 		if summary, err = s.m.SetModel(id, *body.Model); err != nil {
+			writeFailure(w, err)
+			return
+		}
+	}
+	if body.Mode != nil {
+		if summary, err = s.m.SetMode(id, *body.Mode); err != nil {
 			writeFailure(w, err)
 			return
 		}
