@@ -4,6 +4,7 @@ import { api, type Attachment } from '../api';
 import { formatSize, kindOf, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { Button, buttonVariants } from './ui/button';
+import { Chip } from './ui/chip';
 import { Dialog } from './ui/dialog';
 
 /** One upload in the composer, from the moment it is chosen until it is sent or removed. */
@@ -53,17 +54,17 @@ export function UploadChip({ item, onRemove }: { item: Pending; onRemove: () => 
   const state = failed ? item.error : item.status === 'uploading' ? `Uploading… ${Math.round(item.progress * 100)}%` : `${formatSize(item.size)} · ${KIND_LABEL[item.kind]}`;
   return (
     <div
-      className={cn('relative flex h-11 max-w-72 min-w-0 items-center gap-2 overflow-hidden rounded-sm bg-sunken/60 pr-0.5 pl-1 animate-rise', failed && 'bg-error-wash')}
+      className={cn('relative flex h-11 max-w-72 min-w-0 items-center gap-2 overflow-hidden rounded-sm bg-tint-well pr-0.5 pl-1 animate-rise', failed && 'bg-error-wash')}
       role={failed ? 'alert' : undefined}
     >
       <Thumb kind={item.kind} src={item.preview} name={item.name} className={cn(failed && 'opacity-60')} />
       <span className="flex min-w-0 flex-1 flex-col leading-tight">
-        <span className="truncate text-ui text-ink">{item.name}</span>
+        <span className="truncate text-ui text-ink" title={item.name}>{item.name}</span>
         <span className={cn('truncate text-caption tabular-nums text-muted', failed && 'text-error')} title={failed ? item.error : undefined}>
           {state}
         </span>
       </span>
-      <Button size="icon" variant="subtle" className="size-7 text-muted pointer-coarse:size-9" aria-label={`Remove ${item.name}`} onClick={onRemove}>
+      <Button size="icon" variant="subtle" className="text-muted" aria-label={`Remove ${item.name}`} onClick={onRemove}>
         <X />
       </Button>
       {item.status === 'uploading' && <span ref={bar} aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 w-(--fill) bg-accent transition-[width] duration-160 ease-app" />}
@@ -74,10 +75,10 @@ export function UploadChip({ item, onRemove }: { item: Pending; onRemove: () => 
 /** A referenced project path in the composer. */
 export function FileRefChip({ path, onRemove }: { path: string; onRemove: () => void }) {
   return (
-    <span className="inline-flex h-7 max-w-full min-w-0 items-center gap-1 rounded-sm bg-sunken/60 pl-1.5 font-mono text-code-sm text-ink animate-rise">
+    <span className="inline-flex h-7 max-w-full min-w-0 items-center gap-1 rounded-sm bg-tint-well pl-1.5 font-mono text-code-sm text-ink animate-rise">
       <AtSign aria-hidden="true" className="size-3 shrink-0 text-faint" />
-      <span className="truncate">{path}</span>
-      <Button size="icon" variant="subtle" className="size-6 text-muted pointer-coarse:size-9" aria-label={`Remove file reference ${path}`} onClick={onRemove}>
+      <span className="truncate" title={path}>{path}</span>
+      <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Remove file reference ${path}`} onClick={onRemove}>
         <X className="!size-3.5" />
       </Button>
     </span>
@@ -87,7 +88,7 @@ export function FileRefChip({ path, onRemove }: { path: string; onRemove: () => 
 /** Covers the composer while files are dragged over it. */
 export function DropOverlay({ note }: { note: string }) {
   return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md bg-raised/92 outline-2 -outline-offset-4 outline-dashed outline-accent animate-fade-in">
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md bg-raised outline-2 -outline-offset-4 outline-dashed outline-accent animate-fade-in">
       <div className="flex flex-col items-center gap-1 text-accent">
         <Paperclip aria-hidden="true" className="size-5" />
         <span className="text-ui font-medium">Drop to attach</span>
@@ -103,16 +104,16 @@ export function QueuedExtras({ files = [], attachments = [] }: { files?: string[
   return (
     <span className="flex flex-wrap gap-1">
       {files.map((f) => (
-        <span key={`f-${f}`} className="inline-flex h-5 items-center gap-1 rounded-xs bg-sunken/60 px-1.5 font-mono text-keycap text-muted">
+        <Chip key={`f-${f}`} fill="well" className="gap-1 font-mono text-meta">
           <AtSign aria-hidden="true" className="size-2.5" />
           {f}
-        </span>
+        </Chip>
       ))}
       {attachments.map((a, i) => (
-        <span key={`a-${a.id ?? i}`} className="inline-flex h-5 items-center gap-1 rounded-xs bg-sunken/60 px-1.5 text-caption text-muted">
+        <Chip key={`a-${a.id ?? i}`} fill="well" className="gap-1">
           <KindIcon kind={kindOf(a.mime)} className="size-3" />
-          <span className="max-w-40 truncate">{a.name}</span>
-        </span>
+          <span className="max-w-40 truncate" title={a.name}>{a.name}</span>
+        </Chip>
       ))}
     </span>
   );
@@ -205,11 +206,11 @@ function FileChip({ sessionId, attachment: a }: { sessionId: string; attachment:
   const body: ReactNode = (
     <>
       <KindIcon kind={kind} className="size-4 shrink-0 text-muted" />
-      <span className="min-w-0 truncate">{a.name}</span>
+      <span className="min-w-0 truncate" title={a.name}>{a.name}</span>
       <span className="shrink-0 text-caption tabular-nums text-muted">{a.size ? formatSize(a.size) : KIND_LABEL[kind]}</span>
     </>
   );
-  const cls = 'inline-flex h-8 max-w-full items-center gap-1.5 rounded-sm bg-sunken/70 px-2 text-ui text-ink';
+  const cls = 'inline-flex h-8 max-w-full items-center gap-1.5 rounded-sm bg-tint-well px-2 text-ui text-ink';
   if (!a.id) {
     return (
       <span className={cn(cls, 'opacity-80')} title="No stored copy of this file">

@@ -8,6 +8,7 @@ import { Note } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
+import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
 
 /** Scope the meta line counts: the provider's own diff when it has one, else the working tree. */
@@ -92,19 +93,16 @@ export function ChangesSheet({
         )}
         <span className="flex-1" />
         {canSession && (
-          <div className="flex rounded-sm bg-sunken p-0.5" role="group" aria-label="Scope">
-            {(['session', 'workspace'] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={cn('h-6 rounded-xs px-2 text-caption transition-colors', scope === s ? 'bg-raised text-ink shadow-raised' : 'text-muted hover:text-ink')}
-                aria-pressed={scope === s}
-                onClick={() => changeScope(s)}
-              >
-                {s === 'session' ? 'This task' : 'Workspace'}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            size="sm"
+            aria-label="Scope"
+            value={scope}
+            onValueChange={(s) => changeScope(s as Scope)}
+            items={[
+              { value: 'session', label: 'This task' },
+              { value: 'workspace', label: 'Workspace' },
+            ]}
+          />
         )}
         <Tip label="Refresh">
           <Button size="icon-md" aria-label="Refresh" className="text-muted" onClick={refresh}>
@@ -115,7 +113,7 @@ export function ChangesSheet({
           <X />
         </Button>
       </PanelHeader>
-      <p className="shrink-0 border-b border-hairline/60 px-3 py-1.5 text-caption leading-relaxed text-muted" title={label}>
+      <p className="shrink-0 border-b border-hairline px-3 py-1.5 text-caption leading-relaxed text-muted" title={label}>
         {scope === 'workspace' ? 'All uncommitted project changes vs HEAD.' : label}
       </p>
       <ul className="max-h-[40%] shrink-0 overflow-y-auto border-b border-hairline p-1">
@@ -165,7 +163,7 @@ function FileRow({ file: f, selected, onOpen }: { file: ChangeFile; selected: bo
             type="button"
             aria-pressed={selected}
             title={f.path}
-            className={cn('grid h-8 w-full grid-cols-[max-content_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-9 pl-2 text-left font-mono text-code-sm transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-11 pointer-coarse:pr-12', selected ? 'bg-raised text-ink' : 'text-body hover:bg-raised/60')}
+            className={cn('grid h-8 w-full grid-cols-[max-content_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-9 pl-2 text-left font-mono text-code-sm transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-11 pointer-coarse:pr-12', selected ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-tint-hover')}
             onClick={onOpen}
           >
             <span className={cn('text-center', STATUS_TONE[f.status] ?? 'text-muted')}>{f.status}</span>
@@ -175,7 +173,7 @@ function FileRow({ file: f, selected, onOpen }: { file: ChangeFile; selected: bo
             </span>
           </button>
           <Menu.Root modal={false}>
-            <Menu.Trigger render={<Button size="icon" aria-label={`Actions for ${f.path}`} className="absolute top-1/2 right-1 size-6 -translate-y-1/2 text-muted opacity-0 transition-opacity group-hover/file:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
+            <Menu.Trigger render={<Button size="icon-sm" aria-label={`Actions for ${f.path}`} className="absolute top-1/2 right-1 -translate-y-1/2 text-muted opacity-0 transition-opacity group-hover/file:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
               <Ellipsis />
             </Menu.Trigger>
             <Menu.Content align="end">

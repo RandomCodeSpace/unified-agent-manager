@@ -92,7 +92,7 @@ function Picker({
   if (disabled) {
     return (
       <Tip label={reason ?? `${label} cannot change now`}>
-        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}`} className="cursor-not-allowed text-muted opacity-60 hover:bg-transparent hover:text-muted">
+        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}`} className="text-muted">
           {face}
         </Button>
       </Tip>
@@ -124,9 +124,9 @@ function CommandRow({ c }: { c: Command }) {
   return (
     <>
       <span className="shrink-0 font-mono text-code-sm font-medium text-ink">/{c.name}</span>
-      {c.aliases?.length ? <span className="truncate font-mono text-code-sm text-faint">{c.aliases.map((name) => `/${name}`).join(', ')}</span> : null}
-      {c.input_hint && <span className="min-w-0 truncate font-mono text-code-sm text-faint">{c.input_hint}</span>}
-      {c.description && <span className="min-w-0 flex-1 truncate text-caption text-muted">{c.description}</span>}
+      {c.aliases?.length ? <span className="truncate font-mono text-code-sm text-muted" title={c.aliases.map((name) => `/${name}`).join(', ')}>{c.aliases.map((name) => `/${name}`).join(', ')}</span> : null}
+      {c.input_hint && <span className="min-w-0 truncate font-mono text-code-sm text-muted" title={c.input_hint}>{c.input_hint}</span>}
+      {c.description && <span className="min-w-0 flex-1 truncate text-caption text-muted" title={c.description}>{c.description}</span>}
     </>
   );
 }
@@ -139,7 +139,7 @@ function FileRow({ f }: { f: FileEntry }) {
     <>
       {f.type === 'directory' ? <Folder aria-hidden="true" className="text-faint" /> : <File aria-hidden="true" className="text-faint" />}
       <span className="flex min-w-0 font-mono text-code-sm">
-        {dir && <span className="min-w-0 truncate text-muted">{dir}</span>}
+        {dir && <span className="min-w-0 truncate text-muted" title={f.path}>{dir}</span>}
         <span className="shrink-0 text-ink">
           {base}
           {f.type === 'directory' && '/'}
@@ -551,7 +551,7 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
   return (
     <form
       className={cn(
-        'relative flex flex-col rounded-md border border-hairline bg-raised shadow-raised transition-[border-color,box-shadow] duration-160 focus-within:border-hairline-strong focus-within:shadow-float',
+        'relative flex flex-col rounded-md border border-hairline bg-raised shadow-raised transition-[border-color,box-shadow] duration-160 focus-within:border-hairline-strong focus-within:shadow-float has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-1 has-[textarea:focus-visible]:outline-focus',
         locked && 'bg-surface',
         dragging > 0 && 'border-accent',
       )}
@@ -623,7 +623,7 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
       )}
       {commandResult && commandResult.kind !== 'action' && (
         <div className="border-b border-hairline px-3.5 py-2 text-ui text-body">
-          <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon" variant="subtle" aria-label="Dismiss command result" className="size-6" onClick={() => dismissResult()}><X /></Button></div>
+          <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon-sm" variant="subtle" aria-label="Dismiss command result" onClick={() => dismissResult()}><X /></Button></div>
           {commandResult.kind === 'select' ? <>
             <p className="text-caption text-muted">{commandResult.title}</p>
             <div className="max-h-40 overflow-y-auto">
@@ -655,12 +655,12 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
           <ol className="flex flex-col gap-0.5 pb-1">
             {queue.map((q, i) => (
               <li key={q.request_id} className="flex items-start gap-2 text-ui text-body">
-                <span className="mt-0.5 w-4 shrink-0 text-right text-caption tabular-nums text-faint">{i + 1}</span>
+                <span className="mt-0.5 w-4 shrink-0 text-right text-caption tabular-nums text-muted">{i + 1}</span>
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="truncate">{q.text}</span>
+                  <span className="truncate" title={q.text}>{q.text}</span>
                   <QueuedExtras files={q.files} attachments={q.attachments} />
                 </span>
-                <Button size="icon" variant="subtle" className="size-6 text-muted" aria-label={`Cancel queued prompt: ${q.text}`} disabled={!!busy || locked} onClick={() => void action('queue', () => api.cancelQueued(session.id, q.request_id))}>
+                <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel queued prompt: ${q.text}`} disabled={!!busy || locked} onClick={() => void action('queue', () => api.cancelQueued(session.id, q.request_id))}>
                   <X />
                 </Button>
               </li>
@@ -804,7 +804,7 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
                 variant="subtle"
                 aria-label={`Attach files. ${attachReason || gateNote}`.trim()}
                 aria-disabled={attachReason ? 'true' : undefined}
-                className={cn('text-muted', attachReason && 'cursor-not-allowed opacity-60 hover:bg-transparent hover:text-muted')}
+                className="text-muted"
                 onClick={() => !attachReason && fileInput.current?.click()}
               >
                 <Paperclip />
@@ -816,23 +816,23 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
         {busy === 'settings' && <Spinner className="mr-1" />}
         {(live || session.execution?.objective?.status === 'active') && (
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop execution and pause queued follow-ups'}>
-            <Button size="icon-md" variant="danger" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="animate-rise rounded-full bg-error text-on-primary hover:bg-error/90" disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
-              {busy === 'stop' ? <Spinner /> : <Square className="!size-3.5" fill="currentColor" />}
+            <Button size="icon-md" variant="danger" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="animate-rise rounded-full bg-error text-on-primary hover:bg-error/90" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
+              <Square className="!size-3.5" fill="currentColor" />
             </Button>
           </Tip>
         )}
         {live && !cmd && other === 'steer' && (
           <Tip label={steerBlocked || 'Steer this turn (Ctrl+Enter)'}>
-            <Button size="md" variant="secondary" className="animate-rise" disabled={cannotSubmit || !!steerBlocked} onClick={() => void send('steer')}>
-              {busy === 'steer' ? <Spinner /> : <Zap />}
+            <Button size="md" variant="secondary" className="animate-rise" loading={busy === 'steer'} disabled={cannotSubmit || !!steerBlocked} onClick={() => void send('steer')}>
+              <Zap />
               Steer
             </Button>
           </Tip>
         )}
         {live && !cmd && other === 'queue' && (
           <Tip label="Queue for the next turn (Ctrl+Enter)">
-            <Button size="md" variant="secondary" className="animate-rise" disabled={cannotSubmit} onClick={() => void send('queue')}>
-              {busy === 'queue' ? <Spinner /> : <ListPlus />}
+            <Button size="md" variant="secondary" className="animate-rise" loading={busy === 'queue'} disabled={cannotSubmit} onClick={() => void send('queue')}>
+              <ListPlus />
               Queue
             </Button>
           </Tip>
@@ -855,8 +855,8 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
               )
             }
           >
-            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full transition-transform duration-100 active:scale-95" disabled={cannotSubmit}>
-              {busy === enter ? <Spinner className="border-on-primary border-r-transparent" /> : !live ? <ArrowUp strokeWidth={2.25} /> : enter === 'steer' ? <Zap /> : <ListPlus />}
+            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full transition-transform duration-100 active:scale-95" loading={busy === enter} disabled={cannotSubmit}>
+              {!live ? <ArrowUp strokeWidth={2.25} /> : enter === 'steer' ? <Zap /> : <ListPlus />}
             </Button>
           </Tip>
         )}
@@ -865,7 +865,7 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
       <div className="flex min-h-8 items-center gap-2 rounded-b-md border-t border-hairline bg-sunken px-3 text-caption text-muted">
         <span className="flex min-w-0 items-center gap-2 max-sm:hidden">
           {project && <ProjectBadge badge={project.badge} />}
-          <span className="max-w-52 truncate">{project?.name ?? 'Project'}</span>
+          <span className="max-w-52 truncate" title={project?.name}>{project?.name ?? 'Project'}</span>
           <span aria-hidden="true">·</span><span title={session.workdir}>Project folder</span>
         </span>
         <span className="flex-1" />
@@ -875,7 +875,7 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
         {project?.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1 font-mono" title={project.branch}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
       </div>
       {routed && (
-        <p className="border-t border-hairline/60 px-3.5 py-1 text-caption text-muted">
+        <p className="border-t border-hairline px-3.5 py-1 text-caption text-muted">
           Latest turn ran on <span className="font-mono">{routed}</span>
         </p>
       )}

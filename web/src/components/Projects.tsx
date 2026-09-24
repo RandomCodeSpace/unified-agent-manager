@@ -4,9 +4,10 @@ import { api, describeError, isStatus, resolveTaskDefaults, type Project, type S
 import { Note, ProjectBadge, useApp } from './common';
 import { cn } from '../lib/cn';
 import { FolderPicker } from './FolderPicker';
-import { Field, TaskDefaultsFields, inputClass } from './TaskDefaults';
+import { Field, TaskDefaultsFields } from './TaskDefaults';
 import { Button } from './ui/button';
 import { AlertDialog, Dialog } from './ui/dialog';
+import { Input } from './ui/input';
 
 /** Add a project by directory. A 409 means the directory already has one: that project is selected instead. */
 /** Shared by the three dialogs: `open` drives the transition, `onClosed` fires after it, then the owner unmounts. */
@@ -63,10 +64,9 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
       <form id="add-project" className="flex flex-col gap-4" onSubmit={submit}>
         <Field id="add-dir" label="Directory on the host">
           <div className="flex gap-2">
-            <input
+            <Input
               id="add-dir"
-              className={`${inputClass} font-mono text-code-sm`}
-              type="text"
+              className="font-mono text-code-sm"
               list="recent-workdirs"
               required
               ref={first}
@@ -102,7 +102,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
           />
         )}
         <Field id="add-name" label="Name" hint="The project gets a two-letter badge from this name, on a colour of its own.">
-          <input id="add-name" className={inputClass} type="text" placeholder="Defaults to the folder name" aria-describedby="add-name-hint" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input id="add-name" placeholder="Defaults to the folder name" aria-describedby="add-name-hint" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         {(name.trim() || dir.trim()) && <Note>Badge assigned when added. Its letters and colour are chosen from those still available.</Note>}
         {defaults && (
@@ -122,8 +122,8 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy || !dir.trim()}>
-            {busy ? 'Adding…' : 'Add project'}
+          <Button type="submit" variant="primary" loading={busy} disabled={!dir.trim()}>
+            Add project
           </Button>
         </div>
       </form>
@@ -175,7 +175,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, onUpdated 
     >
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field id="edit-name" label="Name">
-          <input id="edit-name" className={inputClass} type="text" ref={first} value={name} onChange={(e) => setName(e.target.value)} />
+          <Input id="edit-name" ref={first} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         {shown && (
           <section aria-labelledby="edit-defaults-title" className="mt-1 border-t border-hairline pt-4">
@@ -194,8 +194,8 @@ export function EditProjectDialog({ open, onClose, onClosed, project, onUpdated 
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
-            {busy ? 'Saving…' : 'Save'}
+          <Button type="submit" variant="primary" loading={busy} disabled={!name.trim()}>
+            Save
           </Button>
         </div>
       </form>
@@ -246,7 +246,7 @@ export function RemoveProjectDialog({ open, onClose, onClosed, project, tasks, o
     >
       <div className="mt-3 flex min-w-0 items-center gap-2 text-ui font-medium text-ink">
         <ProjectBadge badge={project.badge} />
-        <span className="truncate">{project.name}</span>
+        <span className="truncate" title={project.name}>{project.name}</span>
       </div>
       {unarchived > 0 && (
         <Note tone="warn" className="mt-3">

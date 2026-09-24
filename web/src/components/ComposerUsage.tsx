@@ -17,7 +17,7 @@ function Value({ id, label, title, face, children, className }: { id?: string; l
           {face}
         </Popover.Trigger>
       </Tip>
-      <Popover.Content>
+      <Popover.Content className="tabular-nums">
         <Popover.Title>{title}</Popover.Title>
         {children}
       </Popover.Content>

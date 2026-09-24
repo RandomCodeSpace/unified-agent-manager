@@ -141,7 +141,7 @@ const ROW_WORD: Partial<Record<SessionSummary['state'], string>> = {
 
 /** Right-slot text: a status word for act-now, in-motion, broken and unread rows; the relative time otherwise. */
 function rowMeta(s: SessionSummary, unread: boolean): { text: string; tone: string } {
-  if (readOnly(s)) return { text: relTime(s.updated_at), tone: 'text-faint' };
+  if (readOnly(s)) return { text: relTime(s.updated_at), tone: 'text-muted' };
   const tone = STATE_TONE[s.state];
   if (needsYou(s) || LIVE.includes(s.state) || s.state === 'failed' || s.state === 'interrupted' || unread) {
     return { text: ROW_WORD[s.state] ?? STATE_LABELS[s.state], tone: TONE_TEXT[tone] };
@@ -162,8 +162,8 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
   const meta = rowMeta(s, unread);
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   const rowClass = cn(
-    'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised/75 px-2.5 py-2 text-left text-caption transition-colors duration-100 focus-visible:-outline-offset-2',
-    selected ? 'bg-accent-wash/65 text-ink' : 'hover:bg-sunken',
+    'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised px-2.5 py-2 text-left text-caption transition-colors duration-100 focus-visible:-outline-offset-2',
+    selected ? 'bg-tint-selected text-ink' : 'hover:bg-tint-hover',
     readOnly(s) && !selected && 'text-muted',
     strong ? 'font-medium text-ink' : 'text-body',
   );
@@ -173,7 +173,7 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
       {renaming ? (
         // Not a button while the input is inside: interactive content cannot nest in one.
         <div className={rowClass}>
-          <span className="flex w-full min-w-0 items-center gap-1.5 text-keycap text-muted"><ProjectBadge badge={project.badge} /><span className="truncate">{project.name}</span></span>
+          <span className="flex w-full min-w-0 items-center gap-1.5 text-meta text-muted"><ProjectBadge badge={project.badge} /><span className="truncate" title={project.name}>{project.name}</span></span>
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
         </div>
       ) : (
@@ -196,16 +196,16 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
           }}
         >
           <span className="flex w-full min-w-0 items-center gap-1.5">
-            {s.provider && <span className="shrink-0 text-keycap font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
+            {s.provider && <span className="shrink-0 text-meta font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
               {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
             </span>}
             <TaskTitle session={s} className="min-w-0 flex-1 truncate text-caption" />
-            <span className={cn('flex shrink-0 items-center gap-1 text-keycap font-normal tabular-nums whitespace-nowrap', meta.tone)}>
+            <span className={cn('flex shrink-0 items-center gap-1 text-meta font-normal tabular-nums whitespace-nowrap', meta.tone)}>
               {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
               {meta.text}
             </span>
           </span>
-          <span className="flex w-full min-w-0 items-center gap-1.5 text-keycap font-normal text-muted">
+          <span className="flex w-full min-w-0 items-center gap-1.5 text-meta font-normal text-muted">
             <ProjectBadge badge={project.badge} />
             <span className="min-w-0 flex-1 truncate" title={project.dir}>{project.name}</span>
             {project.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
@@ -240,7 +240,7 @@ function Shelf({ projects, label, tasks, selectedId, open, onToggle }: { project
         type="button"
         data-nav=""
         aria-expanded={open}
-        className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-caption text-muted transition-colors hover:bg-canvas hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11"
+        className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11"
         onClick={onToggle}
       >
         <span className="whitespace-nowrap">
@@ -293,13 +293,13 @@ function ProjectFilter({ projects, filter, onFilter, actions }: { projects: Proj
               aria-label={chosen ? `Project filter: ${chosen.name}` : 'Project filter: all projects'}
               className={cn(
                 'flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-sm pr-1.5 pl-1 text-left text-ui transition-[background-color,color,box-shadow] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
-                chosen ? 'bg-raised font-medium text-ink shadow-raised' : 'text-muted hover:bg-canvas hover:text-body data-open:bg-canvas',
+                chosen ? 'bg-raised font-medium text-ink shadow-raised' : 'text-muted hover:bg-tint-hover hover:text-body data-open:bg-tint-hover',
               )}
             />
           }
         >
           {chosen ? <ProjectBadge badge={chosen.badge} /> : <ListFilter aria-hidden="true" className="mx-0.5 size-4 text-faint" />}
-          <span className="truncate">{chosen ? chosen.name : 'All projects'}</span>
+          <span className="truncate" title={chosen?.name}>{chosen ? chosen.name : 'All projects'}</span>
           <ChevronDown aria-hidden="true" className="ml-auto size-3 shrink-0 text-faint" />
         </Menu.Trigger>
         <Menu.Content align="start" side="bottom" sideOffset={4} className="min-w-56">
@@ -310,7 +310,7 @@ function ProjectFilter({ projects, filter, onFilter, actions }: { projects: Proj
               <Menu.RadioItem key={p.id} value={p.id}>
                 <span className="flex min-w-0 items-center gap-2">
                   <ProjectBadge badge={p.badge} />
-                  <span className="truncate">{p.name}</span>
+                  <span className="truncate" title={p.name}>{p.name}</span>
                 </span>
               </Menu.RadioItem>
             ))}
@@ -381,7 +381,7 @@ export function Sidebar({
   return (
     <nav aria-label="Tasks" className="flex h-full min-h-0 flex-col bg-rail text-body">
       <header className="flex h-header shrink-0 items-center gap-0.5 px-2">
-        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted focus-within:bg-raised focus-within:outline focus-within:outline-focus">
+        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted focus-within:bg-raised focus-within:outline-2 focus-within:outline-focus">
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
           <input type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
@@ -442,7 +442,7 @@ export function Sidebar({
           {CONNECTION_TEXT[connection]}
         </p>
       )}
-      <footer className="flex min-h-9 shrink-0 items-center gap-2 px-3 text-caption text-faint">
+      <footer className="flex min-h-9 shrink-0 items-center gap-2 px-3 text-caption text-muted">
         <Tip label="Settings">
           <Button size="icon" aria-label="Settings" aria-pressed={actions.settingsOpen} className="-ml-1.5 text-muted" onClick={actions.onSettings}>
             <SettingsIcon />
@@ -454,7 +454,7 @@ export function Sidebar({
             <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
           </span>
         </Tip>
-        {version && <span className="truncate font-mono text-keycap">{version}</span>}
+        {version && <span className="truncate font-mono text-meta" title={version}>{version}</span>}
         <span className="flex-1" />
         {authRequired && (
           <Button size="sm" className="-mr-2 text-muted" onClick={onLogout}>

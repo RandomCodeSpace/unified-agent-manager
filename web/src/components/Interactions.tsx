@@ -5,6 +5,8 @@ import { cn } from '../lib/cn';
 import { approvalMark } from '../lib/transcript';
 import { Note } from './common';
 import { Button } from './ui/button';
+import { Chip } from './ui/chip';
+import { Input } from './ui/input';
 
 /**
  * A decided request that no tool row claims: one quiet row of the tool rows' kind, in its
@@ -24,7 +26,7 @@ export function DecidedRow({ interaction, className }: { interaction: Interactio
         <Icon aria-hidden="true" className="size-3.5 text-faint" strokeWidth={2} />
       </span>
       <span className="shrink-0 text-ui text-body">{interaction.title}</span>
-      {detail && <span className="min-w-0 truncate font-mono">{detail}</span>}
+      {detail && <span className="min-w-0 truncate font-mono" title={detail}>{detail}</span>}
       <span className="ml-auto shrink-0 pr-1 text-caption">{word}</span>
       <span className="sr-only">: {full}</span>
     </div>
@@ -70,10 +72,10 @@ export function InteractionCard({ session, interaction, onUpdate }: { session: S
   return (
     <section className="rounded-md border border-hairline bg-raised px-4 py-3 shadow-raised animate-rise" role="group" aria-labelledby={titleId}>
       <div className="mb-1.5 flex items-center gap-2">
-        <span className="inline-flex h-5 items-center gap-1.5 rounded-xs bg-attention-wash px-1.5 text-caption text-attention">
+        <Chip tone="attention">
           <Icon aria-hidden="true" className="size-3.5" />
           {permission ? 'Needs permission' : 'Needs answer'}
-        </span>
+        </Chip>
       </div>
       <h3 id={titleId} className="text-title text-ink">
         {interaction.title}
@@ -162,22 +164,16 @@ function QuestionForm({
             {(q.choices ?? []).map((c) => {
               const on = (chosen[qi] ?? []).includes(c);
               return (
-                <label key={c} className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-canvas pointer-coarse:min-h-11', on && 'bg-canvas text-ink')}>
+                <label key={c} className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
                   <input type={q.multiple ? 'checkbox' : 'radio'} name={`q-${interactionId}-${qi}`} checked={on} onChange={() => toggle(qi, c, !!q.multiple)} className="size-3.5 accent-accent" />
                   {c}
                 </label>
               );
             })}
             {q.custom && (
-              <label className="mt-1 flex items-center">
+              <label htmlFor={`q-${interactionId}-${qi}-custom`} className="mt-1 flex items-center">
                 <span className="sr-only">Your answer</span>
-                <input
-                  type="text"
-                  placeholder="Your answer"
-                  value={custom[qi] ?? ''}
-                  onChange={(e) => setCustom((prev) => prev.map((v, i) => (i === qi ? e.target.value : v)))}
-                  className="h-9 w-full rounded-sm border border-hairline-strong bg-raised px-2.5 text-ui text-ink outline-hidden transition-colors focus:border-accent pointer-coarse:h-11"
-                />
+                <Input id={`q-${interactionId}-${qi}-custom`} placeholder="Your answer" value={custom[qi] ?? ''} onChange={(e) => setCustom((prev) => prev.map((v, i) => (i === qi ? e.target.value : v)))} />
               </label>
             )}
           </div>

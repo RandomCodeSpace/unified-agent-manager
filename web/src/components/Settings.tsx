@@ -346,12 +346,12 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                   return <div key={m.id} className="flex min-h-12 items-center gap-3 border-b border-hairline py-2">
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="text-ui font-medium text-ink">{m.name}</span>
-                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-keycap text-muted">
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-meta text-muted">
                         <span className="min-w-0 break-all font-mono">{m.id}{!offered ? ' · not offered now' : ''}</span>
-                        {p.capabilities.usage && <span>{modelCostLine(m)}</span>}
+                        {p.capabilities.usage && <span className="tabular-nums">{modelCostLine(m)}</span>}
                       </div>
                     </div>
-                    <span className="text-keycap text-muted">{shown ? 'Visible' : 'Hidden'}</span>
+                    <span className="text-meta text-muted">{shown ? 'Visible' : 'Hidden'}</span>
                     <Switch aria-label={`Show ${m.name}`} checked={shown} disabled={saving} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.name]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
                   </div>;
                 })}

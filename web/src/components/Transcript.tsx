@@ -8,6 +8,7 @@ import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, Spinner, SubagentIdleIcon, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
 import { Button } from './ui/button';
+import { Chip } from './ui/chip';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -157,7 +158,7 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
 
 function WorkedIndicator({ timing }: { timing?: TurnTiming }) {
   const elapsed = completedDuration(timing);
-  return <div className="border-b border-hairline py-2 text-caption text-muted" title={elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>{elapsed ? `Worked for ${elapsed}` : 'Worked'}</div>;
+  return <div className="border-b border-hairline py-2 text-caption tabular-nums text-muted" title={elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>{elapsed ? `Worked for ${elapsed}` : 'Worked'}</div>;
 }
 
 function WorkingIndicator({ start }: { start?: string }) {
@@ -171,7 +172,7 @@ function WorkingIndicator({ start }: { start?: string }) {
     <div className="flex items-center gap-2 border-b border-hairline py-2 text-caption text-muted">
       <WorkingMark />
       <span role="status" className="sr-only">Working</span>
-      <span role="timer" aria-live="off">{elapsed ? `Working for ${elapsed}` : 'Working'}</span>
+      <span role="timer" aria-live="off" className="tabular-nums">{elapsed ? `Working for ${elapsed}` : 'Working'}</span>
     </div>
   );
 }
@@ -186,10 +187,10 @@ function Copyable({ text, label, className, children, extra = [] }: { text: stri
         {children}
         <Tip label={copied ? 'Copied' : label}>
           <Button
-            size="icon"
+            size="icon-sm"
             variant="ghost"
             aria-label={copied ? 'Copied' : label}
-            className={cn('absolute top-0 -right-1 size-6 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
+            className={cn('absolute top-0 -right-1 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
             onClick={() => copy(text)}
           >
             {copied ? <Check /> : <Copy />}
@@ -270,12 +271,12 @@ function ApprovalMark({ interactions }: { interactions: Interaction[] }) {
   );
   return (
     <Tip label={label}>
-      <span className="ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-xs px-1 font-sans text-caption text-muted transition-colors duration-100 group-hover/tool:text-body">
+      <Chip className="ml-auto gap-1 px-1 font-sans transition-colors duration-100 group-hover/tool:text-body">
         <Icon aria-hidden="true" className="size-3 text-faint" strokeWidth={2} />
         {latest.word}
-        {earlier.length > 0 && <span className="text-faint tabular-nums">+{earlier.length}</span>}
+        {earlier.length > 0 && <span className="tabular-nums">+{earlier.length}</span>}
         <span className="sr-only">: {marks.map((m) => m.full).join('; earlier: ')}</span>
-      </span>
+      </Chip>
     </Tip>
   );
 }
@@ -307,14 +308,14 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
       <ContextMenu.Trigger render={<div className={cn('group/tool relative', className)} />}>
         <details id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')} open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
           <summary
-            className={cn('flex h-6 list-none items-center gap-2 rounded-sm pr-8 pl-1 font-mono text-code-sm text-muted select-none transition-colors hover:bg-canvas pointer-coarse:min-h-11 pointer-coarse:pr-11 [&::-webkit-details-marker]:hidden', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
+            className={cn('flex h-6 list-none items-center gap-2 rounded-sm pr-8 pl-1 font-mono text-code-sm text-muted select-none transition-colors hover:bg-tint-hover pointer-coarse:min-h-11 pointer-coarse:pr-11 [&::-webkit-details-marker]:hidden', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
             title={ended ? 'The turn ended before this tool reported a result' : undefined}
           >
             <span className="flex size-4 shrink-0 items-center justify-center">
               <ToolMark tone={tone} />
             </span>
             <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
-            {arg && <span className="min-w-0 truncate">{arg}</span>}
+            {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
             <span className="sr-only">, {word}</span>
             {approvals && approvals.filter((ix) => ix.state !== 'pending').length > 0 && <ApprovalMark interactions={approvals.filter((ix) => ix.state !== 'pending')} />}
           </summary>
@@ -332,7 +333,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
           </div>
         )}
         <Menu.Root modal={false}>
-          <Menu.Trigger render={<Button size="icon" className="absolute top-0 right-0 size-6 text-muted opacity-0 transition-opacity group-hover/tool:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" aria-label={`Actions for ${label}`} />}>
+          <Menu.Trigger render={<Button size="icon-sm" className="absolute top-0 right-0 text-muted opacity-0 transition-opacity group-hover/tool:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" aria-label={`Actions for ${label}`} />}>
             <Ellipsis />
           </Menu.Trigger>
           <Menu.Content align="end" side="bottom">
@@ -363,7 +364,7 @@ function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuest
   ];
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('flex flex-col gap-1.5 rounded-md bg-sunken/60 px-3 py-2.5 text-ui', className)} />}>
+      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('flex flex-col gap-1.5 rounded-md bg-tint-well px-3 py-2.5 text-ui', className)} />}>
         <div className="flex items-center gap-1.5 text-caption text-muted">
           <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-faint" />
           <span>Question</span>
@@ -511,7 +512,7 @@ export function Thinking({ item, streaming, endedAt, className }: { item: Item; 
               {expanded ? 'Show less' : 'Show more'}
             </button>
           )}
-          {took && <span className="text-faint tabular-nums">Thought for {took}</span>}
+          {took && <span className="text-muted tabular-nums">Thought for {took}</span>}
         </div>
       )}
     </div>
@@ -520,42 +521,41 @@ export function Thinking({ item, streaming, endedAt, className }: { item: Item; 
 
 /** Subagent state as a chip: glyph plus the word; only "running" moves. */
 export function AgentChip({ status }: { status: SubagentStatus }) {
-  const base = 'inline-flex h-5 shrink-0 items-center gap-1.5 rounded-xs px-1.5 text-caption whitespace-nowrap';
   switch (status) {
     case 'running':
       return (
-        <span className={cn(base, 'text-accent')}>
+        <Chip tone="accent">
           <WorkingMark />
           Running
-        </span>
+        </Chip>
       );
     case 'idle':
       return (
-        <span className={cn(base, 'text-muted')}>
+        <Chip>
           <SubagentIdleIcon />
           Idle
-        </span>
+        </Chip>
       );
     case 'completed':
       return (
-        <span className={cn(base, 'text-success')}>
+        <Chip tone="success">
           <Check aria-hidden="true" className="size-3.5" strokeWidth={2.5} />
           Completed
-        </span>
+        </Chip>
       );
     case 'failed':
       return (
-        <span className={cn(base, 'text-error')}>
+        <Chip tone="error">
           <X aria-hidden="true" className="size-3.5" strokeWidth={2.5} />
           Failed
-        </span>
+        </Chip>
       );
     default:
       return (
-        <span className={cn(base, 'text-muted')}>
+        <Chip>
           <Minus aria-hidden="true" className="size-3.5" strokeWidth={2.5} />
           Stopped
-        </span>
+        </Chip>
       );
   }
 }
@@ -577,7 +577,7 @@ function SubagentRow({ item, subagent, provider, onOpen }: { item: Item; subagen
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger
-        render={<div id={`item-${item.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm bg-sunken/60 py-1.5 pr-1.5 pl-3 text-ui transition-colors" />}
+        render={<div id={`item-${item.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm bg-tint-well py-1.5 pr-1.5 pl-3 text-ui transition-colors" />}
       >
         <Bot aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <span className="min-w-0 flex-1 truncate font-medium text-ink" title={subagent.description || undefined}>

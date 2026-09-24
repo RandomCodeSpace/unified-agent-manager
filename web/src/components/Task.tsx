@@ -5,6 +5,7 @@ import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
+import { Chip } from './ui/chip';
 import { Composer } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
@@ -64,8 +65,8 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
               <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
               <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
               {task.status === 'running' && <Tip label={locked ? 'This task is read-only.' : !shown.known ? 'Refresh the connection to check this task before stopping it.' : 'Stop this background shell'}>
-                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} disabled={locked || !shown.known || requests[task.id]?.pending || requests[task.id]?.requested} onClick={() => void stop(task.id)}>
-                  {requests[task.id]?.pending ? <><Spinner /> Stopping…</> : requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
+                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => void stop(task.id)}>
+                  {requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
                 </Button>
               </Tip>}
             </div>
@@ -197,7 +198,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               </>
             )}
             {readOnly(session) ? (
-              <span className="inline-flex h-5 shrink-0 items-center rounded-xs border border-hairline-strong px-1.5 text-caption text-muted">{stageLabel(session)}</span>
+              <Chip fill="outline">{stageLabel(session)}</Chip>
             ) : (
               <StateMark state={session.state} label title={detail} className="shrink-0" />
             )}

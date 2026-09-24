@@ -5,7 +5,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
-import { Markdown, Note, Spinner, useApp } from './common';
+import { Markdown, Note, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
@@ -110,7 +110,7 @@ export function SubagentPanel({
             <span className="truncate text-title text-ink" title={current.name}>
               {current.name}
             </span>
-            {setup && <span className="truncate font-mono text-keycap text-muted">{setup}</span>}
+            {setup && <span className="truncate font-mono text-meta text-muted" title={setup}>{setup}</span>}
           </div>
           <AgentChip status={current.status} />
           <StopSubagent key={current.id} session={session} subagent={current} />
@@ -220,14 +220,14 @@ function SubagentRow({
   return (
     <li>
       <ContextMenu.Root>
-        <ContextMenu.Trigger render={<div className="group/agent relative rounded-sm transition-colors hover:bg-raised" />}>
+        <ContextMenu.Trigger render={<div className="group/agent relative rounded-sm transition-colors hover:bg-tint-hover" />}>
           <button type="button" className="flex w-full flex-col items-start gap-0.5 rounded-sm py-2 pr-20 pl-3 text-left focus-visible:-outline-offset-2" onClick={onOpen} title={s.description || undefined}>
             <span className="flex w-full items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-ui font-medium text-ink">{s.name || 'Subagent'}</span>
+              <span className="min-w-0 flex-1 truncate text-ui font-medium text-ink" title={s.name || undefined}>{s.name || 'Subagent'}</span>
             </span>
             {s.description && <span className="line-clamp-2 text-caption text-muted">{s.description}</span>}
             <span className="flex flex-wrap items-center gap-x-2 text-caption text-muted">
-              {setup && <span className="font-mono text-keycap">{setup}</span>}
+              {setup && <span className="font-mono text-meta">{setup}</span>}
               {meta.length > 0 && <span className="tabular-nums">{meta.join(' · ')}</span>}
             </span>
             {stopping.error && <span className="text-caption text-error">{stopping.error}</span>}
@@ -326,7 +326,7 @@ function AgentTranscriptView({
       {subagent.status === 'failed' && <Note tone="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</Note>}
       {subagent.status === 'cancelled' && <Note>Stopped before it finished.</Note>}
       {result && (
-        <div className="rounded-md bg-sunken/70 px-3 py-2 text-ui">
+        <div className="rounded-md bg-tint-well px-3 py-2 text-ui">
           <div className="mb-1 text-caption text-muted">Result sent to the main agent</div>
           <Markdown text={result} />
         </div>
@@ -397,7 +397,7 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
   return (
     <div className="shrink-0 border-t border-hairline p-3">
       <form
-        className="flex flex-col rounded-md border border-hairline bg-raised transition-[border-color] focus-within:border-hairline-strong"
+        className="flex flex-col rounded-md border border-hairline bg-raised transition-[border-color] focus-within:border-hairline-strong has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-1 has-[textarea:focus-visible]:outline-focus"
         aria-label={`Follow up with subagent ${subagent.name}`}
         onSubmit={(e) => {
           e.preventDefault();
@@ -437,8 +437,8 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
           className="max-h-40 min-h-12 w-full resize-none bg-transparent px-3 py-2 text-ui text-ink outline-hidden [field-sizing:content] max-sm:text-chat-lg"
         />
         <div className="flex justify-end px-2 pb-2">
-          <Button type="submit" size="sm" variant="primary" disabled={cannotSubmit}>
-            {busy ? 'Sending…' : 'Send'}
+          <Button type="submit" size="sm" variant="primary" loading={busy} disabled={cannotSubmit}>
+            Send
           </Button>
         </div>
       </form>
@@ -466,8 +466,8 @@ function StopSubagent({ session, subagent }: { session: SessionDetail; subagent:
   }
   return (
     <Tip label={error ?? (requested ? 'Stop requested' : 'Stop this subagent')}>
-      <Button size="sm" variant="secondary" aria-label={`Stop subagent ${subagent.name}`} disabled={busy || requested || readOnly(session)} onClick={() => void stop()}>
-        {busy ? <Spinner /> : <Square className="!size-3" fill="currentColor" />}
+      <Button size="sm" variant="secondary" aria-label={`Stop subagent ${subagent.name}`} loading={busy} disabled={requested || readOnly(session)} onClick={() => void stop()}>
+        <Square className="!size-3" fill="currentColor" />
         {requested ? 'Requested' : 'Stop'}
       </Button>
     </Tip>

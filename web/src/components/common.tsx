@@ -10,6 +10,8 @@ import { fenceClosed } from '../lib/diagram';
 import type { HighlightTree } from '../lib/highlight';
 import { DiagramCard } from './Diagram';
 import { Button } from './ui/button';
+import { Chip } from './ui/chip';
+import { Input } from './ui/input';
 import { ContextMenu, type ActionItem } from './ui/menu';
 
 export const STATE_LABELS: Record<SessionState, string> = {
@@ -48,7 +50,8 @@ export const TONE_TEXT: Record<Tone, string> = {
   error: 'text-error',
   warning: 'text-warning',
   muted: 'text-muted',
-  faint: 'text-faint',
+  // Faint text is muted text: the faint colour is for glyphs only (it is under AA for words).
+  faint: 'text-muted',
 };
 
 const TONE_BG: Record<Tone, string> = {
@@ -117,18 +120,10 @@ export function StateMark({ state, label = false, title, className }: { state: S
     );
   }
   return (
-    <span
-      className={cn(
-        'inline-flex h-5 shrink-0 items-center gap-1.5 rounded-xs px-1.5 text-caption whitespace-nowrap',
-        attention ? 'bg-attention-wash text-attention' : TONE_TEXT[tone],
-        tone === 'faint' && 'text-muted',
-        className,
-      )}
-      title={title}
-    >
+    <Chip tone={attention ? 'attention' : tone === 'faint' ? 'muted' : tone} className={className} title={title}>
       <StateGlyph state={state} />
       {text}
-    </span>
+    </Chip>
   );
 }
 
@@ -191,7 +186,7 @@ const BADGE_BG: Record<BadgeColor, string> = {
 /** A Project's badge: a 16px rounded square in its tone with the two characters. Decorative; the name beside it carries the meaning. */
 export function ProjectBadge({ badge, className }: { badge: Badge; className?: string }) {
   return (
-    <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs font-mono text-[8px] leading-none font-semibold text-on-primary select-none', BADGE_BG[badge.color], className)}>
+    <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs font-mono text-badge font-semibold text-on-primary select-none', BADGE_BG[badge.color], className)}>
       {badge.text}
     </span>
   );
@@ -202,14 +197,7 @@ export function Dot({ tone, className, pulse = false }: { tone: Tone; className?
   return <span aria-hidden="true" className={cn('inline-block size-2 shrink-0 rounded-full', TONE_BG[tone], pulse && 'animate-pulse-dot', className)} />;
 }
 
-export function Spinner({ className }: { className?: string }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn('inline-block size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-accent border-r-transparent motion-reduce:animate-none', className)}
-    />
-  );
-}
+export { Spinner } from './ui/spinner';
 
 export function SubagentIdleIcon({ className }: { className?: string }) {
   return <CornerDownLeft aria-hidden="true" className={cn('size-3.5', className)} />;
@@ -291,10 +279,11 @@ export function InlineName({
     }
   };
   return (
-    <input
+    <Input
       ref={ref}
+      size="sm"
       aria-label={label}
-      className={cn('h-7 w-full min-w-0 rounded-xs border border-hairline-strong bg-raised px-1.5 text-ink outline-hidden focus:border-accent', className)}
+      className={className}
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={onKeyDown}
@@ -322,14 +311,14 @@ export function CodeBlock({ language, className, text, head, body, foot, childre
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger render={<div className={cn('group/code relative my-2.5 overflow-hidden rounded-md border border-hairline bg-code-bg', className)} />}>
-        <div className="flex h-6 items-center gap-2 border-b border-hairline/70 px-3 text-code-sm text-muted">
+        <div className="flex h-6 items-center gap-2 border-b border-hairline px-3 text-code-sm text-muted">
           <span className="font-mono">{language ?? 'code'}</span>
           {head ?? <span className="flex-1" />}
           <Button
-            size="icon"
+            size="icon-sm"
             variant="subtle"
             aria-label={copied ? 'Copied' : 'Copy code'}
-            className={cn('size-6 text-muted opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
+            className={cn('text-muted opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
             onClick={() => copy(read())}
           >
             {copied ? <Check /> : <Copy />}

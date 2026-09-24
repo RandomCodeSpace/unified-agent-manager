@@ -4,8 +4,8 @@ import { ApiError, api, describeError, isStatus, type DirList } from '../api';
 import { cn } from '../lib/cn';
 import { breadcrumbs, cleanPath, listingError, matchFrom, parentOf } from '../lib/folders';
 import { Note } from './common';
-import { inputClass } from './TaskDefaults';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 /** One listing request. A fresh object each time, so the same folder can be listed again after a folder is created in it. */
 interface Want {
@@ -227,7 +227,8 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
                     type="button"
                     aria-current={last ? 'location' : undefined}
                     aria-label={i === 0 ? 'Root' : undefined}
-                    className={cn('h-6 max-w-full truncate rounded-xs px-1 transition-colors duration-100 hover:bg-canvas hover:text-ink pointer-coarse:min-h-11', last ? 'text-ink' : 'text-muted')}
+                    className={cn('h-6 max-w-full truncate rounded-xs px-1 transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11', last ? 'text-ink' : 'text-muted')}
+                    title={c.name}
                     onClick={() => open(c.path)}
                   >
                     {c.name}
@@ -248,12 +249,12 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
           <div className="shrink-0 p-1.5 pl-3">
             <div className="flex items-center gap-2">
               <FolderPlus aria-hidden="true" className="size-4 shrink-0 text-muted" />
-              <input
+              <Input
                 ref={nameInput}
                 aria-label="New folder name"
                 aria-invalid={createError ? true : undefined}
                 aria-describedby={createError ? `${id}-create-error` : undefined}
-                className={cn(inputClass, 'min-w-0 flex-1 font-mono text-code')}
+                className="min-w-0 flex-1 font-mono text-code"
                 placeholder="Folder name"
                 spellCheck={false}
                 autoComplete="off"
@@ -271,10 +272,10 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
                   }
                 }}
               />
-              <Button size="icon" variant="subtle" aria-label="Create folder" className="hover:bg-surface" disabled={loading || createBusy || !newName.trim()} onClick={() => void create()}>
+              <Button size="icon" variant="subtle" aria-label="Create folder" disabled={loading || createBusy || !newName.trim()} onClick={() => void create()}>
                 <Check />
               </Button>
-              <Button size="icon" variant="subtle" aria-label="Cancel new folder" className="hover:bg-surface" disabled={createBusy} onClick={cancelCreate}>
+              <Button size="icon" variant="subtle" aria-label="Cancel new folder" disabled={createBusy} onClick={cancelCreate}>
                 <X />
               </Button>
             </div>
@@ -330,7 +331,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
                 onDoubleClick={() => open(e.path)}
               >
                 <Folder aria-hidden="true" className="size-4 shrink-0 text-muted" />
-                <span className="min-w-0 flex-1 truncate font-mono text-code">{e.name}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-code" title={e.name}>{e.name}</span>
                 {e.git && (
                   <span className={markClass}>
                     <GitBranch aria-hidden="true" className="size-3" />
@@ -346,7 +347,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
                 <span
                   data-opens=""
                   aria-hidden="true"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-xs text-faint transition-colors duration-100 hover:bg-canvas hover:text-ink pointer-coarse:size-11"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-xs text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:size-11"
                 >
                   <ChevronRight className="size-4" />
                 </span>
