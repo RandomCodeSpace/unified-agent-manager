@@ -216,10 +216,7 @@ func (s *Server) logRequest(r *http.Request, outcome string, status int) {
 	for name, values := range r.Header {
 		logged := make([]string, len(values))
 		for i, v := range values {
-			if redactedHeader(name) {
-				v = "[redacted]"
-			}
-			logged[i] = capLogValue(v)
+			logged[i] = redactHeaderValue(name, v)
 		}
 		headers[name] = logged
 	}
@@ -231,8 +228,21 @@ func (s *Server) logRequest(r *http.Request, outcome string, status int) {
 	log.Info("web request", args...)
 }
 
-func redactedHeader(name string) bool {
-	return strings.EqualFold(name, "Cookie") || strings.EqualFold(name, "Authorization") || strings.EqualFold(name, "Proxy-Authorization")
+// credentialHints are name fragments of headers that can carry a credential:
+// Cookie, Authorization and Proxy-Authorization, and custom ones such as
+// X-Api-Key, X-Auth-Token or a proxy's JWT assertion.
+var credentialHints = []string{"auth", "cookie", "token", "key", "secret", "session", "jwt", "signature", "password", "credential"}
+
+// redactHeaderValue is the logged form of one header value: a placeholder
+// when the header can carry a credential, otherwise the value, capped.
+func redactHeaderValue(name, value string) string {
+	lower := strings.ToLower(name)
+	for _, hint := range credentialHints {
+		if strings.Contains(lower, hint) {
+			return "[redacted]"
+		}
+	}
+	return capLogValue(value)
 }
 
 func capLogValue(v string) string {

@@ -267,6 +267,9 @@ func TestLogHeaders(t *testing.T) {
 		r.Header["cookie"] = []string{"uam_web=secret-1"}
 		r.Header["AUTHORIZATION"] = []string{"Bearer secret-2"}
 		r.Header.Set("Proxy-Authorization", "Basic secret-3")
+		r.Header.Set("X-Api-Key", "secret-4")
+		r.Header.Set("X-Auth-Token", "secret-5")
+		r.Header.Set("Cf-Access-Jwt-Assertion", "secret-6")
 		r.Header.Set("X-Long", strings.Repeat("a", 4000))
 		r.Header.Set("X-Evil", forged)
 	})
@@ -281,7 +284,7 @@ func TestLogHeaders(t *testing.T) {
 		t.Fatalf("allowed record = %v", rec)
 	}
 	headers, _ := rec["headers"].(map[string]any)
-	for _, name := range []string{"cookie", "AUTHORIZATION", "Proxy-Authorization"} {
+	for _, name := range []string{"cookie", "AUTHORIZATION", "Proxy-Authorization", "X-Api-Key", "X-Auth-Token", "Cf-Access-Jwt-Assertion"} {
 		if v, _ := headers[name].([]any); len(v) != 1 || v[0] != "[redacted]" {
 			t.Fatalf("header %s = %v, want [redacted]", name, headers[name])
 		}

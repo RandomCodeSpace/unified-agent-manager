@@ -341,9 +341,11 @@ method, the path with its query, the remote address, the `Host`, every request
 header, and whether the request was allowed or refused (`host not allowed`,
 `cross-origin request rejected`, the JSON content-type refusal, or
 `authentication required`, with the status code). It is off by default, and
-`uam web status` shows `Header logging: on` while it is on. The values of
-`Cookie`, `Authorization` and `Proxy-Authorization` are logged as
-`[redacted]`, other values are cut at 512 bytes, and bodies are never logged.
+`uam web status` shows `Header logging: on` while it is on. Headers that can
+carry a credential are logged as `[redacted]`: `Cookie`, `Authorization`,
+`Proxy-Authorization`, and any whose name contains `auth`, `cookie`, `token`,
+`key`, `secret`, `session`, `jwt`, `signature`, `password` or `credential`.
+Other values are cut at 512 bytes, and bodies are never logged.
 Other headers are logged as sent, so turn it off again (`uam web stop`, then
 `uam web` without the flag) once you have what you need.
 
