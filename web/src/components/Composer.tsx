@@ -577,7 +577,6 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
           {live && steerUnavailable && !hasExtras && !cmd && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
         </div>
       )}
-      <ExecutionStatus execution={session.execution} supported={!!session.capabilities.execution_modes} />
       {commandResult && commandResult.kind !== 'action' && (
         <div className="border-b border-hairline px-3.5 py-2 text-ui text-body">
           <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon" variant="subtle" aria-label="Dismiss command result" className="size-6" onClick={() => dismissResult()}><X /></Button></div>
@@ -725,6 +724,7 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
           reason={locked ? 'This task is read-only.' : undefined}
           onChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}
         />
+        <ExecutionStatus execution={session.execution} supported={!!session.capabilities.execution_modes} />
         {/* The actions wrap onto the next row as one right-aligned group when the toolbar is too narrow. */}
         <span className="ml-auto flex items-center gap-0.5">
         {!locked && (

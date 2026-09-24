@@ -1,5 +1,9 @@
+import { ChevronDown, Repeat2 } from 'lucide-react';
 import type { ExecutionState } from '../api';
 import { formatCredits } from '../lib/cost';
+import { Button } from './ui/button';
+import { Popover } from './ui/popover';
+import { Tip } from './ui/tooltip';
 
 /** Runtime observations only. Unknown data keeps its last observation visibly qualified. */
 export function ExecutionStatus({ execution, supported }: { execution: ExecutionState | null | undefined; supported: boolean }) {
@@ -7,21 +11,30 @@ export function ExecutionStatus({ execution, supported }: { execution: Execution
   const objective = execution?.objective;
   const current = execution?.known === true;
   const mode = execution?.mode;
+  const label = current && mode ? mode.charAt(0).toUpperCase() + mode.slice(1) : 'Status unavailable';
   return (
-    <div className="border-b border-hairline px-3.5 py-2 text-caption text-muted">
-      <div role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-medium text-body">Execution: {current && mode ? mode.charAt(0).toUpperCase() + mode.slice(1) : 'Status unavailable'}</span>
-        {!current && mode && <span>Last reported: {mode}</span>}
-        {objective && <span>{current ? '' : 'Last reported objective: '}{objective.status}</span>}
-      </div>
-      {objective && <details className="mt-1">
-        <summary className="cursor-pointer break-words py-1 text-body pointer-coarse:min-h-11">{objective.objective}</summary>
-        <div className="space-y-1 pb-1">
-          <p>{objective.turn_count} {objective.turn_count === 1 ? 'turn' : 'turns'} reported{objective.credits_used !== undefined ? ` · ${formatCredits(objective.credits_used)} credits used` : ''}{objective.credit_limit !== undefined ? ` · ${formatCredits(objective.credit_limit)} credit limit` : ''}</p>
-          {objective.pause_reason && <p>{objective.pause_reason}</p>}
-          {objective.completion_summary && <p className="whitespace-pre-wrap">{objective.completion_summary}</p>}
-        </div>
-      </details>}
-    </div>
+    <Popover.Root>
+      <Tip label={`Execution: ${label}${current && objective ? ` · ${objective.status}` : ''}`}>
+        <Popover.Trigger render={<Button id="composer-execution" size="sm" variant="subtle" aria-label={`Execution: ${label}`} />}>
+          <Repeat2 aria-hidden="true" className="text-faint" />
+          <span>{label}</span>
+          <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+        </Popover.Trigger>
+      </Tip>
+      <Popover.Content>
+        <Popover.Title>Execution mode</Popover.Title>
+        <p role="status">{label}</p>
+        {!current && mode && <p className="text-caption text-muted">Last reported: {mode}</p>}
+        {objective && <>
+          <p className="text-caption text-muted">{current ? 'Objective: ' : 'Last reported objective: '}{objective.status}</p>
+          <p className="break-words">{objective.objective}</p>
+          <div className="space-y-1 text-caption text-muted">
+            <p>{objective.turn_count} {objective.turn_count === 1 ? 'turn' : 'turns'} reported{objective.credits_used !== undefined ? ` · ${formatCredits(objective.credits_used)} credits used` : ''}{objective.credit_limit !== undefined ? ` · ${formatCredits(objective.credit_limit)} credit limit` : ''}</p>
+            {objective.pause_reason && <p>{objective.pause_reason}</p>}
+            {objective.completion_summary && <p className="whitespace-pre-wrap">{objective.completion_summary}</p>}
+          </div>
+        </>}
+      </Popover.Content>
+    </Popover.Root>
   );
 }
