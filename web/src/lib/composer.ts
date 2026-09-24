@@ -50,10 +50,12 @@ export function applyPick(text: string, trigger: Trigger, value: string): { text
 }
 
 /** `/name arguments` when `name` is a listed command; null means the text is plain. */
-export function parseCommand(text: string, commands: readonly (Pick<Command, 'name'> & Partial<Pick<Command, 'kind'>>)[]): { name: string; args: string } | null {
+export function parseCommand(text: string, commands: readonly (Pick<Command, 'name'> & Partial<Pick<Command, 'kind'>> & { aliases?: string[] })[]): { name: string; args: string } | null {
   const m = /^([/$])(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
-  if (!m || !commands.some((c) => c.name === m[2] && (m[1] !== '$' || c.kind === 'skill'))) return null;
-  return { name: m[2], args: (m[3] ?? '').trim() };
+  if (!m) return null;
+  const offered = commands.filter((c) => m[1] !== '$' || c.kind === 'skill');
+  const command = offered.find((c) => c.name === m[2]) ?? offered.find((c) => c.aliases?.includes(m[2]));
+  return command ? { name: command.name, args: (m[3] ?? '').trim() } : null;
 }
 
 /**
@@ -66,13 +68,13 @@ export function commandPending(text: string, commands: readonly Pick<Command, 'n
 }
 
 /** Commands matching `query`: a name starting with it first, then a name or description containing it. Case-insensitive; empty query keeps all. */
-export function filterCommands<T extends Pick<Command, 'name' | 'description'>>(commands: readonly T[], query: string): T[] {
+export function filterCommands<T extends Pick<Command, 'name' | 'description'> & { aliases?: string[] }>(commands: readonly T[], query: string): T[] {
   const q = query.toLowerCase();
   const rank = (c: T) => {
     if (!q) return 0;
-    const name = c.name.toLowerCase();
-    if (name.startsWith(q)) return 0;
-    if (name.includes(q)) return 1;
+    const names = [c.name, ...(c.aliases ?? [])].map((name) => name.toLowerCase());
+    if (names.some((name) => name.startsWith(q))) return 0;
+    if (names.some((name) => name.includes(q))) return 1;
     if (c.description.toLowerCase().includes(q)) return 2;
     return -1;
   };
@@ -81,6 +83,23 @@ export function filterCommands<T extends Pick<Command, 'name' | 'description'>>(
     .filter((x) => x.r >= 0)
     .sort((a, b) => a.r - b.r || a.i - b.i)
     .map((x) => x.c);
+}
+
+/** A known command stays a command even when it cannot run. */
+export function commandReason(command: Command | undefined, live: boolean): string {
+  if (!command) return '';
+  return command.disabled_reason || (live && !command.allow_during_turn ? `/${command.name} runs between turns; wait for this turn to finish.` : '');
+}
+
+/** Literal argument choices replace only the argument before the caret. */
+export function argumentTrigger(text: string, caret: number, commands: readonly Command[]): { trigger: Trigger; command: Command } | null {
+  const before = text.slice(0, caret);
+  const match = /^([/$]\S+\s+)([^\n]*)$/.exec(before);
+  if (!match) return null;
+  const parsed = parseCommand(match[1].trim(), commands);
+  const command = commands.find((c) => c.name === parsed?.name);
+  if (!command?.input_choices?.length) return null;
+  return { command, trigger: { kind: '/', start: match[1].length, end: caret, query: match[2] } };
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

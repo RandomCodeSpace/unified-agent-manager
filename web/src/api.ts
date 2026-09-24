@@ -29,6 +29,7 @@ export interface Capabilities {
   session_diff: boolean;
   history: boolean;
   context_size?: boolean;
+  execution_modes?: boolean;
   /** The provider reports account quota and per-Task AI units (#188); the second parity exception. */
   usage?: boolean;
   /** A chosen model can title the provider's new Tasks (#183). */
@@ -113,6 +114,32 @@ export interface Command {
   description: string;
   kind: 'skill' | 'command';
   input_hint: string;
+  aliases?: string[];
+  allow_during_turn?: boolean;
+  disabled_reason?: string;
+  input_choices?: { name: string; description: string }[];
+  input_required?: boolean;
+}
+
+export type CommandResult =
+  | { kind: 'text'; text: string; markdown?: boolean; prefill_input?: string }
+  | { kind: 'select'; title: string; command: string; options: { name: string; description: string; group?: string }[] }
+  | { kind: 'action'; action: 'model' | 'permissions' | 'context' | 'usage' | 'rename' }
+  | { kind: 'completed'; text?: string };
+
+export interface ExecutionState {
+  known: boolean;
+  mode?: 'interactive' | 'plan' | 'autopilot';
+  objective?: {
+    id: number;
+    objective: string;
+    status: 'active' | 'paused' | 'completed';
+    turn_count: number;
+    pause_reason?: string;
+    completion_summary?: string;
+    credits_used?: number;
+    credit_limit?: number;
+  };
 }
 
 export interface FileEntry {
@@ -234,6 +261,7 @@ export interface SessionSummary {
   /** AI units the conversation used so far, once the provider reports them; never zero. */
   usage?: { ai_units: number };
   mode?: 'safe' | 'yolo';
+  execution?: ExecutionState | null;
   stage?: 'active' | 'settled' | 'archived';
   queued?: number;
   state: SessionState;
@@ -372,6 +400,7 @@ export interface PromptExtras {
 export interface Submission {
   request_id: string;
   status: SubmissionStatus;
+  command_result?: CommandResult;
   error?: string;
   time: string;
 }
@@ -603,6 +632,7 @@ export const api = {
   files: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
   upload: uploadFile,
   attachmentUrl: (id: string, attachmentId: string) => `/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`,
+  cancelBackgroundTask: (id: string, taskId: string) => call<{ accepted: true; background_tasks: BackgroundTasks }>('POST', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/cancel`),
   cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
   close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),
   respond: (id: string, iid: string, answer: Answer) =>

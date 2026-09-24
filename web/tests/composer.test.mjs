@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyPick, commandPending, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
+import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
 
 const commands = [
   { name: 'review', description: 'Review the changes', kind: 'command', input_hint: '' },
@@ -98,4 +98,33 @@ test('dollar opens the skills picker and resolves only listed skills', () => {
   assert.equal(parseCommand('$unknown', commands), null);
   assert.equal(commandPending('$explain this', null, null), true);
   assert.equal(commandPending('$explain this', commands, null), false);
+});
+
+
+test('command aliases are searchable and resolve to the canonical command, including disabled commands', () => {
+  const list = [
+    { name: 'permissions', description: 'Permission mode', kind: 'command', aliases: ['yolo'] },
+    { name: 'terminal-only', description: 'Unavailable here', kind: 'command', aliases: ['shell'], disabled_reason: 'Requires the terminal interface.' },
+  ];
+  assert.equal(filterCommands(list, 'YOLO')[0].name, 'permissions');
+  assert.deepEqual(parseCommand('/yolo on', list), { name: 'permissions', args: 'on' });
+  assert.deepEqual(parseCommand('/shell', list), { name: 'terminal-only', args: '' });
+  assert.equal(parseCommand('$yolo', list), null);
+  assert.deepEqual(parseCommand('/yolo off', [...list, { name: 'yolo', kind: 'command' }]), { name: 'yolo', args: 'off' });
+});
+
+
+test('command availability keeps disabled and between-turn operations out of prompts', () => {
+  assert.equal(commandReason({ name: 'review' }, true), '/review runs between turns; wait for this turn to finish.');
+  assert.equal(commandReason({ name: 'yolo', allow_during_turn: true }, true), '');
+  assert.equal(commandReason({ name: 'remote', allow_during_turn: true, disabled_reason: 'Terminal only.' }, false), 'Terminal only.');
+});
+
+test('argument choices follow aliases and replace only the argument token', () => {
+  const list = [{ name: 'autopilot', kind: 'command', aliases: ['goal'], input_choices: [{ name: 'on', description: 'Enable' }] }];
+  const result = argumentTrigger('/goal o', 7, list);
+  assert.equal(result.command.name, 'autopilot');
+  assert.deepEqual(applyPick('/goal o', result.trigger, 'on'), { text: '/goal on ', caret: 9 });
+  assert.equal(argumentTrigger('/goal', 5, list), null);
+  assert.equal(argumentTrigger('plain text', 10, list), null);
 });

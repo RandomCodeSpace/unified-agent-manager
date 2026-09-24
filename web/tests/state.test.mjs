@@ -149,3 +149,14 @@ test('background shell updates stay separate from foreground and reconnect inval
   state = update(state, { name: 'background_tasks', seq: 15, session_id: 'task', background_tasks: { known: true, tasks: [] } });
   assert.deepEqual(state.detail.background_tasks.tasks, []);
 });
+
+
+test('execution snapshots clear on null and become unknown on disconnect', () => {
+  const execution = { known: true, mode: 'autopilot', objective: { id: 1, objective: 'A real objective', status: 'active', turn_count: 2 } };
+  let state = { ...initialState, selectedId: 'task', connection: 'connected', detail: { id: 'task', execution } };
+  state = reducer(state, { type: 'connection', status: 'reconnecting' });
+  assert.equal(state.detail.execution.known, false);
+  assert.equal(state.detail.execution.objective.status, 'active');
+  state = reducer(state, { type: 'upsert_session', session: { id: 'task', execution: null } });
+  assert.equal(state.detail.execution, null);
+});

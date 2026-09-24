@@ -9,11 +9,11 @@ import { Tip } from './ui/tooltip';
 
 const tones = { accent: 'text-accent', attention: 'text-attention', danger: 'text-error', muted: 'text-muted' };
 
-function Value({ label, title, face, children, className }: { label: string; title: string; face: ReactNode; children: ReactNode; className?: string }) {
+function Value({ id, label, title, face, children, className }: { id?: string; label: string; title: string; face: ReactNode; children: ReactNode; className?: string }) {
   return (
     <Popover.Root>
       <Tip label={label}>
-        <Popover.Trigger render={<Button size="sm" variant="subtle" aria-label={label} className={cn('px-1.5 text-caption tabular-nums pointer-coarse:min-w-11', className)} />}>
+        <Popover.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={label} className={cn('px-1.5 text-caption tabular-nums pointer-coarse:min-w-11', className)} />}>
           {face}
         </Popover.Trigger>
       </Tip>
@@ -42,7 +42,7 @@ export function ComposerUsage({ session, model }: { session: SessionDetail; mode
   const reset = quota?.reset_at && Date.parse(quota.reset_at) > now ? new Date(quota.reset_at).toLocaleString() : null;
   return (
     <>
-      <Value label={contextLabel} title="Context usage" className={tones[ringTone(fraction)]} face={
+      <Value id="composer-context-usage" label={contextLabel} title="Context usage" className={tones[ringTone(fraction)]} face={
         <svg viewBox="0 0 16 16" aria-hidden="true" className="size-4 -rotate-90" fill="none">
           <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" className="text-hairline-strong" />
           <circle cx="8" cy="8" r="6" pathLength="100" stroke="currentColor" strokeWidth="2" strokeDasharray={`${fraction * 100} 100`} />
@@ -53,7 +53,7 @@ export function ComposerUsage({ session, model }: { session: SessionDetail; mode
         {context?.cached !== undefined && <p className="text-caption text-muted">Cached in latest call: {compactTokens(context.cached)} tokens</p>}
       </Value>
       {session.capabilities.usage && <>
-        <Value label={`AI credits: ${quotaLabel}`} title="AI credits" face={quotaLabel} className={quota ? tones[creditsTone(quota)] : 'text-muted'}>
+        <Value id="composer-usage" label={`AI credits: ${quotaLabel}`} title="AI credits" face={quotaLabel} className={quota ? tones[creditsTone(quota)] : 'text-muted'}>
           <p>{quota ? quotaText(quota) : 'The provider has not reported account usage.'}</p>
           {reset && <p className="text-caption text-muted">Resets {reset}</p>}
           <p className="text-caption">This task: {session.usage ? `${formatCredits(session.usage.ai_units)} AI units` : 'not reported yet'}</p>

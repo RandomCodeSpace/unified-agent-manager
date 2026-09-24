@@ -27,7 +27,7 @@ On the Linux host:
 On Windows: the built-in OpenSSH client (PowerShell) and a browser. Nothing is
 installed on Windows.
 
-The beta build is pinned to Go 1.25.14. Browser and provider validation used
+The release build is pinned to Go 1.25.14. Earlier browser and provider validation used
 Copilot CLI 1.0.88 and Go 1.26.5 on Linux 6.8.
 
 ## Start the service
@@ -309,14 +309,29 @@ are logged only at debug level (`UAM_DEBUG=1`).
   > on everything anyway. With `--no-auth` behind a public reverse proxy or
   > on an address beyond loopback, anyone who can reach the page can start a
   > yolo Task.
-- **Commands**: type `/` as the first character of a message to list the
-  Task's commands: Copilot's `/init` and `/review`, and the skills your account
-  and the project provide. The list filters as you type; Up and Down move,
-  Enter or Tab picks, Esc closes. Sending `/name arguments` runs the command
-  with the rest of the text as its arguments and shows `/name arguments` in
-  the conversation. A command runs only between turns; it is not queued or
-  steered. A `/word` that is not on the list is sent as plain text, and so is
-  anything that starts with `$`, `!`, `#` or `@agent`.
+- **Commands**: type `/` at the start of a message to list supported provider
+  commands and skills. Names and aliases are searchable. Known unsupported
+  commands stay visible with their reason and cannot become ordinary prompts.
+  Up and Down move, Enter or Tab picks, and Esc closes. Argument choices fill
+  the input; press Enter to run. Commands use their own endpoint, never Queue
+  or Steer; only commands marked available during a turn can run then.
+  A failed catalogue load holds slash input and offers Retry commands.
+  Results can display text, offer subcommands, or open the existing model,
+  permissions, context, usage or rename control. Choosing a subcommand fills
+  the composer for explicit submission. `/yolo` and `/allow-all` change the
+  same Safe/Yolo permission policy as the toolbar; autopilot does not change it.
+- **Execution mode**: supported providers report Interactive, Plan or Autopilot
+  separately from permissions. The composer shows the runtime's objective
+  status and, on expansion, reported turns, credits, limits and pause or
+  completion details. Missing or stale observations say Status unavailable.
+  Stop remains available between autopilot turns, disables continuation and
+  pauses queued follow-ups through the existing cancellation operation. Partial
+  cancellation failures remain errors rather than a claimed stopped state.
+- **Background tasks**: running provider shells appear above the composer with
+  their own Stop action. Stopping one shell does not stop the foreground turn.
+  Stop requested means the provider accepted cancellation; the list waits for
+  a reported terminal state. Unknown or read-only tasks cannot be stopped.
+  Subagents retain their Stop action in the subagent panel and context menu.
 - **File references**: type `@` at the start of a message or after a space to search the project's
   files: what `git ls-files` sees, including untracked files that are not
   ignored, and their directories. Picking one inserts `@path` and adds a chip;

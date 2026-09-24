@@ -72,8 +72,8 @@ export function reducer(state: State, action: Action): State {
       return { ...state, selectedId: action.id, detail: null, detailSeq: -1, agents: {} };
     case 'connection': {
       if (state.connection === action.status) return state;
-      const detail = action.status !== 'connected' && state.detail?.background_tasks
-        ? { ...state.detail, background_tasks: { ...state.detail.background_tasks, known: false } }
+      const detail = action.status !== 'connected' && state.detail
+        ? { ...state.detail, ...(state.detail.background_tasks ? { background_tasks: { ...state.detail.background_tasks, known: false } } : {}), ...(state.detail.execution ? { execution: { ...state.detail.execution, known: false } } : {}) }
         : state.detail;
       return { ...state, connection: action.status, detail };
     }
@@ -220,7 +220,7 @@ function withSession(state: State, s: SessionSummary): State {
   const detail = state.detail;
   // state_detail, last_model, context and usage are omitempty on the wire: an absent key must clear the old value.
   const merged =
-    detail && detail.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context, usage: s.usage } : detail;
+    detail && detail.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context, usage: s.usage, execution: s.execution } : detail;
   return { ...state, sessions: upsert(state.sessions, s), detail: merged };
 }
 

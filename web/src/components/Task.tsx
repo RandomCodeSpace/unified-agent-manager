@@ -1,6 +1,6 @@
 import { ArrowDown, Bot, Ellipsis, Pencil } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { LIVE, api, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Project, type SessionDetail, type SessionSummary } from '../api';
+import { LIVE, api, describeError, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Project, type SessionDetail, type SessionSummary } from '../api';
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { ChangesSheet } from './Changes';
@@ -33,23 +33,44 @@ interface Props {
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
 const BOTTOM_SLACK = 32;
 
-function BackgroundTaskList({ snapshot }: { snapshot: BackgroundTasks | undefined }) {
-  if (!snapshot?.tasks.length) return null;
-  const running = snapshot.tasks.filter((task) => task.status === 'running').length;
+function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string; snapshot: BackgroundTasks | undefined; locked: boolean }) {
+  const [response, setResponse] = useState<{ source: BackgroundTasks | undefined; snapshot: BackgroundTasks } | null>(null);
+  const [requests, setRequests] = useState<Record<string, { pending?: boolean; requested?: boolean; error?: string }>>({});
+  // A newer SSE observation wins over a cancellation response started from an older snapshot.
+  const shown = response && response.source === snapshot ? response.snapshot : snapshot;
+  if (!shown?.tasks.length) return null;
+  const running = shown.tasks.filter((task) => task.status === 'running').length;
+  async function stop(id: string) {
+    if (requests[id]?.pending || locked || !shown?.known) return;
+    setRequests((r) => ({ ...r, [id]: { pending: true } }));
+    try {
+      const result = await api.cancelBackgroundTask(sessionId, id);
+      setResponse({ source: snapshot, snapshot: result.background_tasks });
+      setRequests((r) => ({ ...r, [id]: { requested: result.accepted } }));
+    } catch (e) {
+      setRequests((r) => ({ ...r, [id]: { error: describeError(e) } }));
+    }
+  }
   return (
-    <details className="mb-2 text-caption text-muted">
+    <details className="mb-2 text-caption text-muted" open={running > 0 || undefined}>
       <summary className="cursor-pointer py-2">
-        Background tasks · {snapshot.known ? `${running} running` : 'Status unavailable'}
+        Background tasks · {shown.known ? `${running} running` : 'Status unavailable'}
       </summary>
-      {!snapshot.known && <p className="pb-2">Last reported tasks. Their current status is unavailable.</p>}
+      {!shown.known && <p className="pb-2">Last reported tasks. Their current status is unavailable.</p>}
       <ul className="max-h-40 space-y-2 overflow-y-auto overscroll-contain pb-2">
-        {snapshot.tasks.map((task) => (
+        {shown.tasks.map((task) => (
           <li key={task.id} className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
-              <span className="shrink-0 capitalize">{snapshot.known ? task.status : 'Unknown'}</span>
+              <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
+              {task.status === 'running' && <Tip label={locked ? 'This task is read-only.' : !shown.known ? 'Refresh the connection to check this task before stopping it.' : 'Stop this background shell'}>
+                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} disabled={locked || !shown.known || requests[task.id]?.pending || requests[task.id]?.requested} onClick={() => void stop(task.id)}>
+                  {requests[task.id]?.pending ? <><Spinner /> Stopping…</> : requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
+                </Button>
+              </Tip>}
             </div>
             <code className="block truncate font-mono text-code-sm" title={task.command}>{task.command}</code>
+            {requests[task.id]?.error && <p role="alert" className="pt-1 text-error">{requests[task.id].error}</p>}
           </li>
         ))}
       </ul>
@@ -251,8 +272,8 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               New output
             </Button>
           )}
-          <BackgroundTaskList snapshot={session.background_tasks} />
-          <Composer key={session.id} session={session} project={project} fileCount={fileCount} onChanges={() => { setPanel(null); onSheet(true); }} onSessionUpdate={onSessionUpdate} />
+          <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
+          <Composer key={session.id} session={session} project={project} fileCount={fileCount} onChanges={() => { setPanel(null); onSheet(true); }} onRename={() => actions.startRename(session.id, 'header')} onSessionUpdate={onSessionUpdate} />
         </div>
       </div>
 
