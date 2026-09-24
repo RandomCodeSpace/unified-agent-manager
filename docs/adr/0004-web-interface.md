@@ -613,3 +613,43 @@ Task is active, its conversation is open, it runs no turn and waits for no
 answer, and the subagent is `idle`, or when the provider cannot chat with a
 subagent. It never opens a conversation. Status changes arrive through the
 existing subagent event and detail response.
+
+## Project defaults for new Tasks
+
+- Date: 2026-09-24 (decided in #171)
+
+A Project may keep **defaults for new Tasks**: `{provider, model, effort,
+context_size, mode}`. **New task** creates the Task at once with the Project's
+defaults and no prompt or name, then opens its empty chat. The first message
+goes through the normal composer, and the provider titles the Task from it as
+before. This replaces the New Task form.
+
+- **Storage.** A `web_projects` entry gains an optional `defaults` object with
+  all five keys, omitted when the Project has none, so nothing migrates. On
+  load, defaults with a missing provider, a control character, an oversized
+  value, an unknown context size or a mode other than `safe` or `yolo` are
+  cleared; the Project stays. An empty context size loads as `default`.
+- **Checks on write.** The provider must be registered. Model, effort and
+  context size are checked against the provider's models exactly as a Task's
+  selection is, so a context size other than `default` needs the provider's
+  context-size capability. `mode` must be `safe` or `yolo`; empty is refused.
+  An empty context size is stored as `default`. A failed check is 400 and
+  changes nothing.
+- **Resolved by the browser.** The server applies no defaults: `POST
+  /api/sessions` is unchanged and already takes no prompt and no name. The
+  browser resolves the defaults against the live models. A default model the
+  provider no longer offers falls back to `auto` (or the first model), with no
+  effort and context size `default`, so New task never fails on a stale
+  default. A Project without defaults uses `auto`, no effort, `default` and
+  `safe`.
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `POST /api/projects` | gains `"defaults"?` | 201 `Project`; 400 invalid defaults; otherwise unchanged |
+| `PATCH /api/projects/{id}` | `{"name"?, "defaults"?}` | `Project`; the name is handled as before; 400 when neither is given or the defaults are invalid, checked before anything changes; 404 |
+
+`Project` gains `defaults: {provider, model, effort, context_size, mode}`,
+omitted when the Project has none; `context_size` is `default` unless a tier is
+chosen. A change sends a `project` frame, as a rename does.

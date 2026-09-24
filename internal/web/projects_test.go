@@ -66,7 +66,7 @@ func TestProjectsAddRenameAndOnePerDirectory(t *testing.T) {
 		t.Fatalf("snapshot projects = %s", snap.data["projects"])
 	}
 	dir := t.TempDir()
-	p, err := m.AddProject(dir, "")
+	p, err := m.AddProject(dir, "", nil)
 	if err != nil || p.Name != filepath.Base(dir) || p.ID == "" || !validRequestID(p.ID) {
 		t.Fatalf("AddProject = %+v, %v", p, err)
 	}
@@ -75,23 +75,23 @@ func TestProjectsAddRenameAndOnePerDirectory(t *testing.T) {
 	if announced.ID != p.ID || announced.Name != p.Name || announced.Dir != p.Dir || !announced.CreatedAt.Equal(p.CreatedAt) {
 		t.Fatalf("project frame = %+v, want %+v", announced, p)
 	}
-	_, err = m.AddProject(dir+"/.", "other")
+	_, err = m.AddProject(dir+"/.", "other", nil)
 	var dup *Error
 	if !errors.As(err, &dup) || dup.Status != http.StatusConflict || dup.ProjectID != p.ID {
 		t.Fatalf("second project for the directory = %v", err)
 	}
-	renamed, err := m.RenameProject(p.ID, "  My \x1b[1mrepo ")
+	renamed, err := m.UpdateProject(p.ID, setting("  My \x1b[1mrepo "), nil)
 	if err != nil || renamed.Name != "My repo" || renamed.Dir != dir {
-		t.Fatalf("RenameProject = %+v, %v", renamed, err)
+		t.Fatalf("UpdateProject = %+v, %v", renamed, err)
 	}
 	decodeField(t, frameOf(t, sub, "project"), "project", &announced)
 	if announced.Name != "My repo" {
 		t.Fatalf("rename frame = %+v", announced)
 	}
-	if reset, err := m.RenameProject(p.ID, ""); err != nil || reset.Name != filepath.Base(dir) {
+	if reset, err := m.UpdateProject(p.ID, setting(""), nil); err != nil || reset.Name != filepath.Base(dir) {
 		t.Fatalf("empty rename = %+v, %v", reset, err)
 	}
-	if _, err := m.RenameProject("missing", "x"); statusOf(err) != http.StatusNotFound {
+	if _, err := m.UpdateProject("missing", setting("x"), nil); statusOf(err) != http.StatusNotFound {
 		t.Fatalf("rename unknown = %v, want 404", err)
 	}
 	cfg, err := st.Load()
@@ -100,6 +100,64 @@ func TestProjectsAddRenameAndOnePerDirectory(t *testing.T) {
 	}
 	if stored := cfg.WebProjects[p.ID]; stored.Dir != dir || stored.Name != filepath.Base(dir) || len(cfg.WebProjects) != 1 {
 		t.Fatalf("stored projects = %+v", cfg.WebProjects)
+	}
+}
+
+func TestProjectDefaultsValidatedStoredAndLoaded(t *testing.T) {
+	caps := allCaps
+	caps.ContextSize = true
+	fake := agenttest.NewProvider("fake", caps)
+	fake.SetModels(selectionModels(), nil)
+	plain := agenttest.NewProvider("plain", allCaps)
+	plain.SetModels(selectionModels(), nil)
+	st := openTestStore(t)
+	m := startManager(t, st, fake, plain)
+	for _, d := range []TaskDefaults{
+		{Provider: "missing", Mode: "safe"},
+		{Provider: "fake", Model: "gpt-9", Mode: "safe"},
+		{Provider: "fake", Model: "b", Effort: "low", Mode: "safe"},
+		{Provider: "fake", Model: "auto", Effort: "high", Mode: "safe"},
+		{Provider: "plain", Model: "a", ContextSize: "long_context", Mode: "safe"},
+		{Provider: "fake", Model: "b", ContextSize: "long_context", Mode: "safe"},
+		{Provider: "fake", Model: "a", Mode: "bogus"},
+		{Provider: "fake", Model: "a"},
+	} {
+		if _, err := m.AddProject(t.TempDir(), "", &d); statusOf(err) != http.StatusBadRequest {
+			t.Fatalf("AddProject with defaults %+v = %v, want 400", d, err)
+		}
+	}
+	if got := m.Projects(); len(got) != 0 {
+		t.Fatalf("refused defaults added projects: %+v", got)
+	}
+	want := TaskDefaults{Provider: "fake", Model: "a", Effort: "high", ContextSize: "long_context", Mode: "yolo"}
+	p, err := m.AddProject(t.TempDir(), "repo", &want)
+	if err != nil || p.Defaults != want {
+		t.Fatalf("AddProject with defaults = %+v, %v", p, err)
+	}
+	dir := t.TempDir()
+	bare, err := m.UpdateProject(addProject(t, m, dir), nil, &TaskDefaults{Provider: "plain", Model: "auto", Mode: "safe"})
+	if err != nil || bare.Name != filepath.Base(dir) || bare.Defaults != (TaskDefaults{Provider: "plain", Model: "auto", ContextSize: "default", Mode: "safe"}) {
+		t.Fatalf("defaults only = %+v, %v", bare, err)
+	}
+	if _, err := m.UpdateProject(p.ID, setting("renamed"), &TaskDefaults{Provider: "fake", Mode: ""}); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("invalid defaults with a name = %v, want 400", err)
+	}
+	if got := m.Projects()[0]; got.Name != "repo" || got.Defaults != want {
+		t.Fatalf("refused update changed the project: %+v", got)
+	}
+	both, err := m.UpdateProject(p.ID, setting("renamed"), &TaskDefaults{Provider: "fake", ContextSize: "default", Mode: "safe"})
+	if err != nil || both.Name != "renamed" || both.Defaults != (TaskDefaults{Provider: "fake", ContextSize: "default", Mode: "safe"}) {
+		t.Fatalf("name and defaults = %+v, %v", both, err)
+	}
+	if named, err := m.UpdateProject(p.ID, setting("again"), nil); err != nil || named.Name != "again" || named.Defaults != both.Defaults {
+		t.Fatalf("name only = %+v, %v", named, err)
+	}
+	if _, err := m.UpdateProject("missing", nil, &want); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("update unknown = %v, want 404", err)
+	}
+	loaded := startManager(t, st, agenttest.NewProvider("fake", caps), agenttest.NewProvider("plain", allCaps)).Projects()
+	if len(loaded) != 2 || loaded[0].Name != "again" || loaded[0].Defaults != both.Defaults || loaded[1].Defaults != bare.Defaults {
+		t.Fatalf("projects after reload = %+v", loaded)
 	}
 }
 
@@ -369,7 +427,7 @@ func TestWritersKeepFieldsANewerUamWrote(t *testing.T) {
 	if _, err := m.Rename(id, "new name"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.RenameProject(projectID, "renamed"); err != nil {
+	if _, err := m.UpdateProject(projectID, setting("renamed"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Close(id); err != nil { // flushes synchronously
@@ -766,6 +824,75 @@ func TestReopenRestoresSubagentsFromHistory(t *testing.T) {
 	}
 	if sd, err := m.Subagent(id, "agent-1"); err != nil || len(sd.Items) != 2 || sd.Items[0].Text != "delegated" {
 		t.Fatalf("reopened subagent = %+v, %v", sd, err)
+	}
+}
+
+func TestProjectDefaultsRoutes(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	ts.prov.SetModels(selectionModels(), nil)
+	ts.m.mu.Lock()
+	ts.m.modelsAt["fake"] = time.Time{}
+	ts.m.mu.Unlock()
+	ts.m.RefreshModels()
+	add := func(body string) Project {
+		t.Helper()
+		w := ts.do(http.MethodPost, "/api/projects", body, auth)
+		var p Project
+		if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil || w.Code != http.StatusCreated {
+			t.Fatalf("POST /api/projects %s = %d %s", body, w.Code, w.Body)
+		}
+		return p
+	}
+	for _, defaults := range []string{`{"provider":"fake","mode":""}`, `{"provider":"nope","mode":"safe"}`, `{"provider":"fake","model":"b","effort":"low","mode":"safe"}`} {
+		w := ts.do(http.MethodPost, "/api/projects", `{"dir":"`+t.TempDir()+`","defaults":`+defaults+`}`, auth)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"error"`) {
+			t.Fatalf("POST /api/projects defaults %s = %d %s, want 400", defaults, w.Code, w.Body)
+		}
+	}
+	withDefaults := add(`{"dir":"` + t.TempDir() + `","defaults":{"provider":"fake","model":"b","effort":"high","context_size":"","mode":"yolo"}}`)
+	bare := add(`{"dir":"` + t.TempDir() + `","name":"bare"}`)
+	patch := func(id, body string, want int) string {
+		t.Helper()
+		w := ts.do(http.MethodPatch, "/api/projects/"+id, body, auth)
+		if w.Code != want {
+			t.Fatalf("PATCH /api/projects/%s %s = %d %s, want %d", id, body, w.Code, w.Body, want)
+		}
+		return w.Body.String()
+	}
+	const defaultsB = `"defaults":{"provider":"fake","model":"b","effort":"high","context_size":"default","mode":"yolo"}`
+	if got := patch(withDefaults.ID, `{"name":"renamed"}`, http.StatusOK); !strings.Contains(got, `"name":"renamed"`) || !strings.Contains(got, defaultsB) {
+		t.Fatalf("name only = %s", got)
+	}
+	if got := patch(bare.ID, `{"name":"still bare"}`, http.StatusOK); strings.Contains(got, `"defaults"`) {
+		t.Fatalf("name only without defaults = %s", got)
+	}
+	if got := patch(bare.ID, `{"defaults":{"provider":"fake","model":"auto","effort":"","context_size":"default","mode":"safe"}}`, http.StatusOK); !strings.Contains(got, `"name":"still bare"`) ||
+		!strings.Contains(got, `"defaults":{"provider":"fake","model":"auto","effort":"","context_size":"default","mode":"safe"}`) {
+		t.Fatalf("defaults only = %s", got)
+	}
+	if got := patch(withDefaults.ID, `{"name":"both","defaults":{"provider":"fake","model":"","effort":"","context_size":"default","mode":"safe"}}`, http.StatusOK); !strings.Contains(got, `"name":"both"`) ||
+		!strings.Contains(got, `"defaults":{"provider":"fake","model":"","effort":"","context_size":"default","mode":"safe"}`) {
+		t.Fatalf("name and defaults = %s", got)
+	}
+	patch(withDefaults.ID, `{}`, http.StatusBadRequest)
+	patch(withDefaults.ID, `{"defaults":null}`, http.StatusBadRequest)
+	patch(withDefaults.ID, `{"defaults":{"provider":"fake","mode":"bogus"}}`, http.StatusBadRequest)
+	patch("missing", `{"defaults":{"provider":"fake","mode":"safe"}}`, http.StatusNotFound)
+	none := add(`{"dir":"` + t.TempDir() + `"}`)
+
+	w := ts.do(http.MethodGet, "/api/projects", "", auth)
+	var list struct {
+		Projects []map[string]json.RawMessage `json:"projects"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list.Projects) != 3 {
+		t.Fatalf("projects = %d %s", w.Code, w.Body)
+	}
+	for _, p := range list.Projects {
+		_, has := p["defaults"]
+		if id := strings.Trim(string(p["id"]), `"`); has == (id == none.ID) {
+			t.Fatalf("project %s defaults present = %v in %s", id, has, w.Body)
+		}
 	}
 }
 

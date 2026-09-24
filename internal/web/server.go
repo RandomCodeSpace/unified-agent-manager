@@ -113,7 +113,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/projects", s.handleProjects)
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
-	mux.HandleFunc("PATCH /api/projects/{id}", s.handleRenameProject)
+	mux.HandleFunc("PATCH /api/projects/{id}", s.handleUpdateProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
 	mux.HandleFunc("GET /api/sessions", s.handleList)
 	mux.HandleFunc("POST /api/sessions", s.handleCreate)
@@ -291,13 +291,14 @@ func (s *Server) handleProjects(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Dir  string `json:"dir"`
-		Name string `json:"name"`
+		Dir      string        `json:"dir"`
+		Name     string        `json:"name"`
+		Defaults *TaskDefaults `json:"defaults"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	p, err := s.m.AddProject(body.Dir, body.Name)
+	p, err := s.m.AddProject(body.Dir, body.Name, body.Defaults)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -305,14 +306,19 @@ func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, p)
 }
 
-func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name     *string       `json:"name"`
+		Defaults *TaskDefaults `json:"defaults"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	p, err := s.m.RenameProject(r.PathValue("id"), body.Name)
+	if body.Name == nil && body.Defaults == nil {
+		writeError(w, http.StatusBadRequest, "name or defaults is required")
+		return
+	}
+	p, err := s.m.UpdateProject(r.PathValue("id"), body.Name, body.Defaults)
 	if err != nil {
 		writeFailure(w, err)
 		return

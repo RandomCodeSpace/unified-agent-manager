@@ -330,7 +330,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	for id, p := range cfg.WebProjects {
-		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt}
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Defaults: TaskDefaults(p.Defaults)}
 	}
 	for _, rec := range cfg.Sessions {
 		if rec.Surface != store.SurfaceWeb || rec.ID == "" {
@@ -737,9 +737,10 @@ func (m *Manager) publishProjectLocked(p Project) {
 	m.broadcastLocked("project", "", func(seq uint64) any { return projectEvent{Seq: seq, Project: p} })
 }
 
-// AddProject adds the directory dir as a Project. A directory has at most
-// one Project; adding it again reports the existing one with 409.
-func (m *Manager) AddProject(dir, name string) (Project, error) {
+// AddProject adds the directory dir as a Project, with defaults for its new
+// Tasks unless defaults is nil. A directory has at most one Project; adding
+// it again reports the existing one with 409.
+func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project, error) {
 	canonical, err := canonicalWorkdir(dir)
 	if err != nil {
 		return Project{}, err
@@ -747,6 +748,12 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	clean, err := cleanName(name, filepath.Base(canonical))
 	if err != nil {
 		return Project{}, err
+	}
+	var d TaskDefaults
+	if defaults != nil {
+		if d, err = m.taskDefaults(*defaults); err != nil {
+			return Project{}, err
+		}
 	}
 	id, err := newUUID()
 	if err != nil {
@@ -769,7 +776,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	if existing != "" {
 		return Project{}, projectExists(existing)
 	}
-	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now()}
+	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Defaults: d}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		for _, other := range cfg.WebProjects {
 			if other.Dir == canonical {
@@ -780,7 +787,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 		if cfg.WebProjects == nil {
 			cfg.WebProjects = map[string]store.WebProject{}
 		}
-		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt}
+		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt, Defaults: store.WebTaskDefaults(d)}
 		return nil
 	}); err != nil {
 		if existing != "" {
@@ -800,31 +807,44 @@ func projectExists(id string) *Error {
 	return &Error{Status: http.StatusConflict, Message: "this directory already has a project", ProjectID: id}
 }
 
-// RenameProject renames a Project. An empty name resets it to the
+// UpdateProject renames a Project, sets the defaults for its new Tasks, or
+// both; a nil argument leaves that part alone. An empty name resets it to the
 // directory's base name.
-func (m *Manager) RenameProject(id, name string) (Project, error) {
+func (m *Manager) UpdateProject(id string, name *string, defaults *TaskDefaults) (Project, error) {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
 	p := m.projects[id]
-	var dir string
+	var next Project
 	if p != nil {
-		dir = p.Dir
+		next = *p
 	}
 	m.mu.Unlock()
 	if p == nil {
 		return Project{}, errProjectNotFound
 	}
-	clean, err := cleanName(name, filepath.Base(dir))
-	if err != nil {
-		return Project{}, err
+	var err error
+	if name != nil {
+		if next.Name, err = cleanName(*name, filepath.Base(next.Dir)); err != nil {
+			return Project{}, err
+		}
+	}
+	if defaults != nil {
+		if next.Defaults, err = m.taskDefaults(*defaults); err != nil {
+			return Project{}, err
+		}
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		stored, ok := cfg.WebProjects[id]
 		if !ok {
 			return errProjectNotFound
 		}
-		stored.Name = clean
+		if name != nil {
+			stored.Name = next.Name
+		}
+		if defaults != nil {
+			stored.Defaults = store.WebTaskDefaults(next.Defaults)
+		}
 		cfg.WebProjects[id] = stored
 		return nil
 	}); err != nil {
@@ -835,9 +855,30 @@ func (m *Manager) RenameProject(id, name string) (Project, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p.Name = clean
+	*p = next
 	m.publishProjectLocked(*p)
 	return *p, nil
+}
+
+// taskDefaults checks a Project's defaults for new Tasks the way Create
+// checks a Task's selection and mode, and returns them with an empty context
+// size made "default". The provider need only be registered.
+func (m *Manager) taskDefaults(d TaskDefaults) (TaskDefaults, error) {
+	d.ContextSize = cmp.Or(d.ContextSize, "default")
+	m.mu.Lock()
+	registered := m.providers[d.Provider] != nil
+	selectionErr := m.validateSelectionLocked(d.Provider, d.Model, d.Effort, d.ContextSize)
+	m.mu.Unlock()
+	if !registered {
+		return TaskDefaults{}, newError(http.StatusBadRequest, "unknown provider %q", d.Provider)
+	}
+	if selectionErr != nil {
+		return TaskDefaults{}, selectionErr
+	}
+	if _, err := parseMode(d.Mode); err != nil {
+		return TaskDefaults{}, err
+	}
+	return d, nil
 }
 
 var errProjectNotFound = newError(http.StatusNotFound, "project not found")
