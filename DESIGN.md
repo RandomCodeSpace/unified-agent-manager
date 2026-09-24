@@ -13,7 +13,7 @@ colors:
   ink: "#25262b"
   body: "#494b53"
   muted: "#686b77"
-  faint: "#686d79"
+  faint: "#858995"
   hairline: "#e6e7ec"
   hairline-strong: "#c9ccd5"
   primary: "#25262b"
@@ -39,6 +39,9 @@ colors:
   diff-del-bg: "#efd6d2"
   diff-del-text: "#7f1d1d"
   backdrop: "rgba(28, 27, 24, 0.35)"
+  tint-hover: "#eceef2"
+  tint-selected: "#e9edf8"
+  tint-well: "#f4f5f8"
   badge-red: "#b3352a"
   badge-orange: "#a84c12"
   badge-amber: "#876000"
@@ -122,6 +125,18 @@ typography:
     fontFamily: "'JetBrains Mono Variable', ui-monospace, monospace"
     fontSize: 11px
     fontWeight: 500
+    lineHeight: 1
+    letterSpacing: 0
+  meta:
+    fontFamily: "'Geist Variable', system-ui, sans-serif"
+    fontSize: 11px
+    fontWeight: 400
+    lineHeight: 1.3
+    letterSpacing: 0
+  badge:
+    fontFamily: "'JetBrains Mono Variable', ui-monospace, monospace"
+    fontSize: 8px
+    fontWeight: 600
     lineHeight: 1
     letterSpacing: 0
 
@@ -225,7 +240,7 @@ components:
     textColor: "{colors.ink}"
     typography: "{typography.ui}"
   task-row-meta:
-    typography: "{typography.caption}"
+    typography: "{typography.meta}"
     textColor: "{colors.muted}"
   shelf-header:
     textColor: "{colors.muted}"
@@ -240,7 +255,7 @@ components:
     padding: "0 8px 0 12px"
   main-header-meta:
     textColor: "{colors.muted}"
-    typography: "{typography.keycap}"
+    typography: "{typography.meta}"
     height: 28px
   transcript:
     backgroundColor: "{colors.canvas}"

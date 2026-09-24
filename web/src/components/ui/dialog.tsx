@@ -85,8 +85,8 @@ export function AlertDialog({ open, onOpenChange, onClosed, title, description, 
               <BaseAlertDialog.Close render={<Button variant="secondary" ref={cancel} />}>
                 {cancelLabel}
               </BaseAlertDialog.Close>
-              <Button variant={danger ? 'danger' : 'primary'} className={danger ? 'border border-error/40 bg-raised' : undefined} disabled={busy || disabled} onClick={onConfirm}>
-                {busy ? 'Working…' : confirmLabel}
+              <Button variant={danger ? 'danger' : 'primary'} className={danger ? 'border border-hairline-strong bg-raised' : undefined} loading={busy} disabled={disabled} onClick={onConfirm}>
+                {confirmLabel}
               </Button>
             </div>
           </BaseAlertDialog.Popup>

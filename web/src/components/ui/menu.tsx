@@ -11,8 +11,9 @@ import { cn } from '../../lib/cn';
 export const popupClass =
   'z-50 min-w-44 origin-(--transform-origin) rounded-md border border-hairline-strong bg-raised p-1 text-ink shadow-float outline-hidden transition-[opacity,scale] duration-100 data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0';
 
+/** One row of any popup list (menus, selects, the composer's inline picker): the keyboard or pointer highlight is the `tint-hover` step. */
 export const itemClass =
-  'relative flex min-h-[30px] w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-ui text-body outline-hidden data-highlighted:bg-canvas data-highlighted:text-ink data-disabled:opacity-45 pointer-coarse:min-h-11 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted data-highlighted:[&_svg]:text-ink';
+  'relative flex min-h-[30px] w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1 text-ui text-body outline-hidden data-highlighted:bg-tint-hover data-highlighted:text-ink data-disabled:opacity-45 pointer-coarse:min-h-11 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted data-highlighted:[&_svg]:text-ink';
 
 export const dangerItemClass = 'text-error data-highlighted:bg-error-wash data-highlighted:text-error [&_svg]:text-error data-highlighted:[&_svg]:text-error';
 
