@@ -1,5 +1,5 @@
 import { Check, CircleDashed, Copy, CornerDownLeft, Minus, Pause, X } from 'lucide-react';
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { LIVE, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
@@ -7,6 +7,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed } from '../lib/diagram';
+import { splitBlocks } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
 import { DiagramCard } from './Diagram';
 import { Button } from './ui/button';
@@ -453,19 +454,31 @@ const mdComponents: Components = {
   },
 };
 
-/** Markdown for untrusted provider text: no raw HTML, no images, safe links only. */
+/**
+ * Markdown for untrusted provider text: no raw HTML, no images, safe links only. Rendered
+ * in top-level blocks, so while it streams only the last block is parsed again per delta.
+ */
 export function Markdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
+  const blocks = useMemo(() => splitBlocks(text), [text]);
+  return (
+    <div className={cn('md', className)}>
+      {blocks.map((block, i) => (
+        <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} />
+      ))}
+    </div>
+  );
+}
+
+const MarkdownBlock = memo(function MarkdownBlock({ text, streaming }: { text: string; streaming: boolean }) {
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   return (
     <MdContext.Provider value={source}>
-      <div className={cn('md', className)}>
-        <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents} disallowedElements={['img']} unwrapDisallowed>
-          {text}
-        </ReactMarkdown>
-      </div>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents} disallowedElements={['img']} unwrapDisallowed>
+        {text}
+      </ReactMarkdown>
     </MdContext.Provider>
   );
-}
+});
 
 /** A `caption` line for feedback: `error` and `warn` are the only coloured ones. */
 export function Note({ tone = 'muted', className, children, role, id }: { tone?: 'muted' | 'error' | 'warn' | 'info'; className?: string; children: ReactNode; role?: 'alert' | 'status'; id?: string }) {
