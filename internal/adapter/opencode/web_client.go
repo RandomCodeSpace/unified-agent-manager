@@ -57,7 +57,7 @@ func newAscendingMessageID() (string, error) {
 	webAscendingIDLock.Unlock()
 	var timeBytes [6]byte
 	for index := range timeBytes {
-		timeBytes[index] = byte(value >> (40 - 8*index))
+		timeBytes[index] = byte(value >> (40 - 8*index)) // #nosec G115 -- OpenCode encodes the low 48 bits; each iteration intentionally keeps one byte.
 	}
 	for index, b := range random {
 		random[index] = webBase62Alphabet[int(b)%len(webBase62Alphabet)]

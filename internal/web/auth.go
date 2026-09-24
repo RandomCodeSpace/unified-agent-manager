@@ -143,7 +143,7 @@ func secureRequest(r *http.Request) bool {
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is set for TLS/proxy HTTPS; loopback/SSH HTTP is supported, with HttpOnly and SameSiteStrict always set.
 		Name: cookieName, Value: value, Path: "/", MaxAge: maxAge,
 		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secureRequest(r),
 	})

@@ -163,6 +163,11 @@ func TestSessionScopeChanges(t *testing.T) {
 
 func TestCountLinesSkipsLinksAndSpecialFiles(t *testing.T) {
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
 	fifo := filepath.Join(dir, "fifo")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		t.Skipf("mkfifo: %v", err)
@@ -177,8 +182,8 @@ func TestCountLinesSkipsLinksAndSpecialFiles(t *testing.T) {
 	}
 	done := make(chan [2]int, 1)
 	go func() {
-		a, _ := countLines(link, 1<<20)
-		b, _ := countLines(fifo, 1<<20)
+		a, _ := countLines(root, "link", 1<<20)
+		b, _ := countLines(root, "fifo", 1<<20)
 		done <- [2]int{a, b}
 	}()
 	select {
@@ -189,7 +194,37 @@ func TestCountLinesSkipsLinksAndSpecialFiles(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("countLines blocked on a FIFO")
 	}
-	if n, _ := countLines(regular, 1<<20); n != 2 {
+	if n, _ := countLines(root, "file", 1<<20); n != 2 {
 		t.Fatalf("regular file lines = %d, want 2", n)
+	}
+}
+
+func TestCountLinesRejectsChangedParentSymlink(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	parent := filepath.Join(dir, "new")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "file"), []byte("inside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "file"), []byte("private\ncontents\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Git listed new/file before a concurrent writer replaced its parent.
+	if err := os.Rename(parent, parent+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, parent); err != nil {
+		t.Fatal(err)
+	}
+	const budget = 1024
+	if n, left := countLines(root, "new/file", budget); n != 0 || left != budget {
+		t.Fatalf("read outside repository: lines=%d, remaining budget=%d", n, left)
 	}
 }

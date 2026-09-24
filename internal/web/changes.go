@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -199,12 +198,17 @@ func workspaceChanges(ctx context.Context, workdir string) (Changes, error) {
 		out.Reason = fmt.Sprintf("showing the first %d changed files", min(len(entries), maxChangedFiles))
 		entries = entries[:min(len(entries), maxChangedFiles)]
 	}
+	root, err := os.OpenRoot(repo.top)
+	if err != nil {
+		return out, newError(http.StatusBadGateway, "could not open working tree: %s", shortError(err))
+	}
+	defer func() { _ = root.Close() }()
 	stats := repo.numstat(ctx)
 	budget := untrackedBudget
 	for _, e := range entries {
 		file := ChangedFile{Path: e.path, Status: e.status}
 		if e.untracked || !repo.hasHead {
-			file.Additions, budget = countLines(filepath.Join(repo.top, e.path), budget)
+			file.Additions, budget = countLines(root, e.path, budget)
 		} else if st, ok := stats[e.path]; ok {
 			file.Additions, file.Deletions = st[0], st[1]
 		}
@@ -333,17 +337,17 @@ func (r *gitRepo) numstat(ctx context.Context) map[string][2]int {
 }
 
 // countLines counts lines of a new file within a shared read budget.
-func countLines(path string, budget int) (int, int) {
+func countLines(root *os.Root, path string, budget int) (int, int) {
 	if budget <= 0 {
 		return 0, budget
 	}
-	// git lists an untracked symlink without following it. Count only regular
-	// files, and never follow a link: opening a FIFO would block, and a link
-	// out of the tree would reveal its target's size.
-	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+	// Root confines parent-directory resolution even when a directory changes
+	// to a symlink after git lists it. Reject final symlinks and special files:
+	// a FIFO could block, and an outside link could disclose its target's size.
+	if info, err := root.Lstat(path); err != nil || !info.Mode().IsRegular() {
 		return 0, budget
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 -- path is a git-reported file inside the session's repository.
+	f, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return 0, budget
 	}

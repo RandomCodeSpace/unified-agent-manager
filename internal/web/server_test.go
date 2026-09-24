@@ -387,10 +387,23 @@ func TestEventStreamOverHTTP(t *testing.T) {
 	if first := next(); !strings.Contains(first, "event: snapshot") {
 		t.Fatalf("first event = %q", first)
 	}
-	conv.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "hi"})
+	const text = "<script>alert(1)</script>\n\nevent: forged\ndata: {}"
+	conv.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: text})
 	sawItem, sawHeartbeat := false, false
 	for !sawItem || !sawHeartbeat {
 		ev := next()
+		if strings.HasPrefix(ev, "event: item\n") {
+			if strings.Contains(ev, "<script>") || strings.Contains(ev, "\nevent: forged") {
+				t.Fatalf("unescaped stream content = %q", ev)
+			}
+			var payload struct {
+				Item agentapi.Item `json:"item"`
+			}
+			data := strings.TrimSuffix(strings.TrimPrefix(ev, "event: item\ndata: "), "\n")
+			if err := json.Unmarshal([]byte(data), &payload); err != nil || payload.Item.Text != text {
+				t.Fatalf("stream JSON = %q, %v", data, err)
+			}
+		}
 		sawItem = sawItem || strings.Contains(ev, "event: item")
 		sawHeartbeat = sawHeartbeat || strings.HasPrefix(ev, ": keep-alive")
 	}

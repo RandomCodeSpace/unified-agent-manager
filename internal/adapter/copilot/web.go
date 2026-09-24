@@ -216,7 +216,7 @@ func resolveCopilot() (string, error) {
 }
 
 func nodeScript(path string) bool {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- resolveCopilot supplies the service owner's PATH executable; only its bounded shebang is read.
 	if err != nil {
 		return false
 	}
@@ -239,7 +239,7 @@ func (p *webProvider) Check(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, webCheckTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "--version")
+	cmd := exec.CommandContext(ctx, path, "--version") // #nosec G204 -- resolveCopilot uses the service owner's PATH; fixed argument, no shell or request input.
 	// The npm shim runs the real binary as a child that inherits the output
 	// pipe; WaitDelay stops a timed-out check from waiting on that child.
 	cmd.WaitDelay = time.Second
@@ -374,7 +374,7 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 		return nil, fmt.Errorf("start copilot CLI: %s", errText(err))
 	}
 	p.client, p.stop = c, make(chan struct{})
-	go p.watch(c, p.stop)
+	go p.watch(c, p.stop) // #nosec G118 -- provider-owned watchdog outlives requests; Shutdown/fail closes stop and each ping has a timeout.
 	return c, nil
 }
 
