@@ -363,3 +363,64 @@ describes, then the `session` frame with the new `queued` count. The frame
 therefore sits in `seq` order with the state around it. Stop turn, for
 example, sends `queue` with `paused: true` and then `session` with
 `cancelled`.
+
+## Yolo mode
+
+- Date: 2026-09-24 (decided in #150, built in #152)
+
+Until now the service never answered a permission request or a question for
+the user. That changes for one case. The service never answers a question, and
+it never approves a permission request unless the user turned on yolo for that
+Task. Autopilot is left out: only Copilot has it, so it fails the same-way rule
+above.
+
+- **Mode.** Each Task has a mode, `safe` (the default) or `yolo`, stored in
+  the record's existing `mode` field. Web records were always written `safe`,
+  and the store already reads an unknown value as `safe`, so nothing migrates.
+  The mode can change at any time, even while a turn runs.
+- **Approvals.** On a yolo Task, the service answers each permission request
+  with the option the adapter marked `AllowOnce`, which allows that one request
+  only. It never picks "allow for this session" or any other option. Requests
+  from subagents arrive on the Task and are answered the same way.
+- **Exceptions.** Questions always wait for the user. So does a permission
+  request that has no `AllowOnce` option: Copilot leaves the mark off when its
+  managed policy says a person must approve (`RequiresManagedApproval()`), or
+  when the request is of a kind the SDK cannot read.
+- **One answer.** The service claims the request exactly as a browser answer
+  does, so the first answer wins. A browser answer that arrives while yolo
+  answers is refused with 409, and yolo skips a request a browser is already
+  answering. A claimed request does not count as pending, so the Task does not
+  show "awaiting permission" while yolo answers it. If the provider call fails
+  for another reason than the request being gone, the request goes back to the
+  user.
+- **Switching.** A change applies to requests raised afterwards. Switching to
+  yolo also answers the permission requests pending at that moment: the user
+  who turns yolo on has just said that every request may run, and leaving the
+  one the turn is waiting on for a click would stop the Task anyway. Switching
+  back to safe stops approving from the next request on; answers already sent
+  stay sent.
+- **Record.** An auto-approved request stays in the Task's interactions,
+  `answered`, with the resolution `allowed (yolo)`, in the detail and on the
+  event stream, so the transcript shows what ran without asking.
+
+This does not use Copilot's `session.permissions.setMode(allow-all)`. That RPC
+is experimental, it stores the permission state in the provider conversation,
+where `copilot --resume` would inherit it, and OpenCode has no runtime switch
+that behaves the same.
+
+### Provider contract additions
+
+| Addition | Meaning |
+|---|---|
+| `Option.AllowOnce` (`allow_once`) | Marks the decision that allows this one request and nothing more. Copilot marks `approve_once` unless managed policy requires a person. OpenCode marks `once`. |
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `POST /api/sessions` | gains `"mode"?` | `safe` when absent; 400 for anything but `safe` or `yolo` |
+| `PATCH /api/sessions/{id}` | gains `"mode"?`, alone or with `name` and `model` | `SessionSummary`; 400 for an invalid mode, checked before anything changes |
+
+`SessionSummary` gains `mode`. A mode change moves `updated_at`, is written to
+`sessions.json`, and sends a `session` frame. `Interaction.options[]` gains
+`allow_once`, omitted when false.

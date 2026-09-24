@@ -132,8 +132,25 @@ off, run `uam web stop`, then `uam web` without the flag.
 - **Approvals and questions**: when the provider asks for permission or asks a
   question, a card appears in the conversation and a "Needs you" mark on the
   Task in the project list and on the home screen. Nothing is approved
-  automatically. If no browser is connected, the request waits; the first
+  automatically unless you turned on yolo for that Task, and questions always
+  wait for you. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused.
+- **Yolo**: a Task in yolo mode does not ask for permission. As each
+  permission request arrives, UAM allows it once, the same as clicking "Allow
+  once". That includes requests from subagents. Shell commands, file writes,
+  reads outside the project directory, and web fetches then run without a
+  prompt. Questions from the agent still wait for you, and so does any request
+  your organization's Copilot policy says a person must approve. Tasks start
+  in safe mode. You can pick yolo when you create a Task or switch it at any
+  time, even during a turn. Switching to yolo also allows the request the Task
+  is waiting on; switching back to safe makes the next request ask again. Every
+  request yolo allowed stays in the conversation, marked "allowed (yolo)".
+
+  > **Warning:** in yolo mode the agent can run any command and change any
+  > file your Linux account can reach, with your credentials, and nobody is
+  > asked first. Turn it on only for a project where you would click "Allow"
+  > on everything anyway. With `--no-auth` behind a public reverse proxy,
+  > anyone who can reach the page can start a yolo Task.
 - **Messages while a turn runs**: you can queue a message or steer the turn
   with it.
   - **Queue** holds the message until the turn completes, then sends it as
