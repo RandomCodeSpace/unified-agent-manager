@@ -1,23 +1,28 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { api, describeError, isStatus, resolveTaskDefaults, type Project, type SessionSummary, type TaskDefaults } from '../api';
-import { ConfirmDialog, Dialog, useApp } from './common';
-import { TaskDefaultsFields } from './TaskDefaults';
+import { Note, useApp } from './common';
+import { Field, TaskDefaultsFields } from './TaskDefaults';
+import { Button } from './ui/button';
+import { AlertDialog, Dialog } from './ui/dialog';
+
+const inputClass = 'h-9 w-full rounded-sm border border-hairline-strong bg-raised px-2.5 text-ui text-ink outline-hidden transition-colors placeholder:text-muted focus:border-accent disabled:opacity-45';
 
 /** Add a project by directory. A 409 means the directory already has one: that project is selected instead. */
-export function AddProjectDialog({
-  onAdded,
-  onExisting,
-  onClose,
-}: {
-  onAdded: (p: Project) => void;
-  onExisting: (projectId: string) => void;
+/** Shared by the three dialogs: `open` drives the transition, `onClosed` fires after it, then the owner unmounts. */
+export interface DialogLifecycle {
+  open: boolean;
   onClose: () => void;
-}) {
+  onClosed: () => void;
+}
+
+export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting }: DialogLifecycle & { onAdded: (p: Project) => void; onExisting: (projectId: string) => void }) {
   const { meta } = useApp();
   const recent = meta?.recent_workdirs ?? [];
+  const first = useRef<HTMLInputElement>(null);
   const [dir, setDir] = useState('');
   const [name, setName] = useState('');
-  const [defaults, setDefaults] = useState(() => resolveTaskDefaults(meta));
+  // Defaults start from what New task would use today; the dialog mounts fresh each time it opens.
+  const [defaults, setDefaults] = useState<TaskDefaults | null>(() => resolveTaskDefaults(meta));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,16 +47,16 @@ export function AddProjectDialog({
   }
 
   return (
-    <Dialog title="Add a project" onClose={onClose}>
-      <form className="form" onSubmit={submit}>
-        <label className="field">
-          <span className="control-label">Directory on the host</span>
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} onClosed={onClosed} initialFocus={first} title="Add a project" description="A directory on this host. Tasks run inside it.">
+      <form id="add-project" className="flex flex-col gap-4" onSubmit={submit}>
+        <Field id="add-dir" label="Directory on the host">
           <input
-            className="input mono"
+            id="add-dir"
+            className={`${inputClass} font-mono text-code-sm`}
             type="text"
             list="recent-workdirs"
             required
-            autoFocus
+            ref={first}
             spellCheck={false}
             placeholder="/path/to/project"
             value={dir}
@@ -62,24 +67,30 @@ export function AddProjectDialog({
               <option key={w} value={w} />
             ))}
           </datalist>
-        </label>
-        <label className="field">
-          <span className="control-label">Name</span>
-          <input className="input" type="text" placeholder="Defaults to the folder name" value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <DefaultsSection prefix="add" value={defaults} disabled={busy} onChange={setDefaults} />
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
+        </Field>
+        <Field id="add-name" label="Name">
+          <input id="add-name" className={inputClass} type="text" placeholder="Defaults to the folder name" value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        {defaults && (
+          <section aria-labelledby="add-defaults-title" className="mt-1 border-t border-hairline pt-4">
+            <h3 id="add-defaults-title" className="mb-3 text-title text-ink">
+              Defaults for new tasks
+            </h3>
+            <TaskDefaultsFields prefix="add" value={defaults} disabled={busy} onChange={setDefaults} />
+          </section>
         )}
-        <div className="actions">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>
+        {error && (
+          <Note tone="error" role="alert">
+            {error}
+          </Note>
+        )}
+        <div className="flex flex-wrap justify-end gap-2 pt-1 max-sm:[&>button]:flex-1">
+          <Button variant="secondary" onClick={onClose}>
             Cancel
-          </button>
-          <button type="submit" className="btn btn-primary" disabled={busy || !dir.trim()}>
-            Add project
-          </button>
+          </Button>
+          <Button type="submit" variant="primary" disabled={busy || !dir.trim()}>
+            {busy ? 'Adding…' : 'Add project'}
+          </Button>
         </div>
       </form>
     </Dialog>
@@ -87,8 +98,9 @@ export function AddProjectDialog({
 }
 
 /** Name and defaults for new Tasks; the defaults start from what New task would use today. */
-export function EditProjectDialog({ project, onUpdated, onClose }: { project: Project; onUpdated: (p: Project) => void; onClose: () => void }) {
+export function EditProjectDialog({ open, onClose, onClosed, project, onUpdated }: DialogLifecycle & { project: Project; onUpdated: (p: Project) => void }) {
   const { meta } = useApp();
+  const first = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(project.name);
   const [defaults, setDefaults] = useState(() => resolveTaskDefaults(meta, project.defaults));
   const [busy, setBusy] = useState(false);
@@ -109,79 +121,88 @@ export function EditProjectDialog({ project, onUpdated, onClose }: { project: Pr
   }
 
   return (
-    <Dialog title="Edit project" onClose={onClose}>
-      <form className="form" onSubmit={submit}>
-        <label className="field">
-          <span className="control-label">Name</span>
-          <input className="input" type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <DefaultsSection prefix="edit" value={defaults} disabled={busy} onChange={setDefaults} />
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} onClosed={onClosed} initialFocus={first} title="Edit project" description={<span className="font-mono text-code-sm">{project.dir}</span>}>
+      <form className="flex flex-col gap-4" onSubmit={submit}>
+        <Field id="edit-name" label="Name">
+          <input id="edit-name" className={inputClass} type="text" ref={first} value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        {defaults && (
+          <section aria-labelledby="edit-defaults-title" className="mt-1 border-t border-hairline pt-4">
+            <h3 id="edit-defaults-title" className="mb-3 text-title text-ink">
+              Defaults for new tasks
+            </h3>
+            <TaskDefaultsFields prefix="edit" value={defaults} disabled={busy} onChange={setDefaults} />
+          </section>
         )}
-        <div className="actions">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>
+        {error && (
+          <Note tone="error" role="alert">
+            {error}
+          </Note>
+        )}
+        <div className="flex flex-wrap justify-end gap-2 pt-1 max-sm:[&>button]:flex-1">
+          <Button variant="secondary" onClick={onClose}>
             Cancel
-          </button>
-          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>
-            Save
-          </button>
+          </Button>
+          <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
+            {busy ? 'Saving…' : 'Save'}
+          </Button>
         </div>
       </form>
     </Dialog>
   );
 }
 
-/** Hidden until the provider list has loaded; the dialog then submits without defaults. */
-function DefaultsSection({ prefix, value, disabled, onChange }: { prefix: string; value: TaskDefaults | null; disabled: boolean; onChange: (next: TaskDefaults) => void }) {
-  if (!value) return null;
-  return (
-    <div className="dialog-section">
-      <h3 className="eyebrow">Defaults for new tasks</h3>
-      <TaskDefaultsFields prefix={prefix} value={value} disabled={disabled} onChange={onChange} />
-    </div>
-  );
-}
-
-export function RemoveProjectDialog({
-  project,
-  tasks,
-  onRemoved,
-  onClose,
-}: {
-  project: Project;
-  tasks: SessionSummary[];
-  onRemoved: (id: string) => void;
-  onClose: () => void;
-}) {
+export function RemoveProjectDialog({ open, onClose, onClosed, project, tasks, onRemoved }: DialogLifecycle & { project: Project; tasks: SessionSummary[]; onRemoved: (id: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const unarchived = tasks.filter((t) => t.stage !== 'archived').length;
+
+  async function confirm() {
+    setBusy(true);
+    setError(null);
+    try {
+      try {
+        await api.deleteProject(project.id);
+      } catch (e) {
+        if (isStatus(e, 409)) throw new Error('Archive every task in this project before removing it.', { cause: e });
+        throw e;
+      }
+      onRemoved(project.id);
+      onClose();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <ConfirmDialog
+    <AlertDialog
+      open={open}
+      onOpenChange={(o) => !o && onClose()}
+      onClosed={onClosed}
       title={`Remove ${project.name}?`}
+      description={
+        <>
+          This removes the project and its {tasks.length === 1 ? 'one task' : `${tasks.length} tasks`} from UAM. The directory <code className="rounded-xs bg-sunken px-1 font-mono text-code-sm">{project.dir}</code> and the
+          provider conversations in it are untouched.
+        </>
+      }
       confirmLabel="Remove project"
+      busy={busy}
       disabled={unarchived > 0}
-      onClose={onClose}
-      onConfirm={async () => {
-        try {
-          await api.deleteProject(project.id);
-        } catch (e) {
-          if (isStatus(e, 409)) throw new Error('Archive every task in this project before removing it.');
-          throw e;
-        }
-        onRemoved(project.id);
-      }}
+      onConfirm={() => void confirm()}
     >
-      <p>
-        This removes the project and its {tasks.length === 1 ? 'one task' : `${tasks.length} tasks`} from UAM. The directory{' '}
-        <code>{project.dir}</code> and the provider conversations in it are untouched.
-      </p>
       {unarchived > 0 && (
-        <p className="warn">
+        <Note tone="warn" className="mt-3">
           {unarchived === 1 ? 'One task is' : `${unarchived} tasks are`} not archived. Archive every task before removing this project.
-        </p>
+        </Note>
       )}
-    </ConfirmDialog>
+      {error && (
+        <Note tone="error" role="alert" className="mt-3">
+          {error}
+        </Note>
+      )}
+    </AlertDialog>
   );
 }

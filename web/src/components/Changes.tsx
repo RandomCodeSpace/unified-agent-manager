@@ -1,16 +1,26 @@
+import { Copy, Ellipsis, FileDiff, RefreshCw, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
-import { api, describeError, type Changes as ChangesData, type FileDiff, type Scope, type SessionSummary } from '../api';
+import { api, describeError, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
+import { useCopied } from '../lib/clipboard';
+import { cn } from '../lib/cn';
+import { Note } from './common';
+import { PanelHeader, SidePanel } from './Subagents';
+import { Button } from './ui/button';
+import { ContextMenu, Menu, type ActionItem } from './ui/menu';
+import { Tip } from './ui/tooltip';
 
 /** Scope the meta line counts: the provider's own diff when it has one, else the working tree. */
 export function defaultScope(s: SessionSummary): Scope {
   return s.capabilities.session_diff ? 'session' : 'workspace';
 }
 
+const STATUS_TONE: Record<string, string> = { A: 'text-success', D: 'text-error', '?': 'text-success' };
+
 /**
  * The Changes sheet: file list plus one unified diff. `changes` for the default scope is
  * owned by the Task view (it feeds the header count); other scopes load here. Inline beside
- * the column on wide screens, an overlay panel otherwise.
+ * the column on wide screens (resizable), an overlay panel otherwise.
  */
 export function ChangesSheet({
   session,
@@ -43,7 +53,6 @@ export function ChangesSheet({
   useEffect(() => {
     if (isDefault) return;
     let live = true;
-    setError(null);
     api
       .changes(session.id, scope)
       .then((c) => live && setOther(c))
@@ -61,69 +70,129 @@ export function ChangesSheet({
   const label = data ? data.label : `${projectName} vs HEAD`;
 
   function refresh() {
+    setError(null);
     setTick((t) => t + 1);
     if (isDefault) onRefresh();
   }
 
+  function changeScope(s: Scope) {
+    setError(null);
+    setScope(s);
+  }
+
   return (
-    <aside className={inline ? 'sheet' : 'sheet sheet-overlay'} role={inline ? undefined : 'dialog'} aria-modal={inline ? undefined : true} aria-label="Changes">
-      <div className="sheet-head">
-        <span className="sheet-title">Changes</span>
+    <SidePanel id="changes" inline={inline} label="Changes" defaultWidth={440}>
+      <PanelHeader>
+        <FileDiff aria-hidden="true" className="size-4 text-muted" />
+        <span className="text-title text-ink">Changes</span>
         {data?.supported && (
-          <span className="sheet-counts num">
-            {files.length} {files.length === 1 ? 'file' : 'files'} · <span className="add">+{adds}</span> <span className="del">−{dels}</span>
+          <span className="text-caption tabular-nums text-muted">
+            {files.length} {files.length === 1 ? 'file' : 'files'} · <span className="text-success">+{adds}</span> <span className="text-error">−{dels}</span>
           </span>
         )}
-        <span className="spacer" />
+        <span className="flex-1" />
         {canSession && (
-          <div className="sheet-scope" role="group" aria-label="Scope">
+          <div className="flex rounded-sm bg-sunken p-0.5" role="group" aria-label="Scope">
             {(['session', 'workspace'] as const).map((s) => (
-              <button key={s} type="button" className="btn btn-ghost btn-sm" aria-pressed={scope === s} onClick={() => setScope(s)}>
+              <button
+                key={s}
+                type="button"
+                className={cn('h-6 rounded-xs px-2 text-caption transition-colors', scope === s ? 'bg-raised text-ink shadow-[0_1px_2px_rgba(28,27,24,0.08)]' : 'text-muted hover:text-ink')}
+                aria-pressed={scope === s}
+                onClick={() => changeScope(s)}
+              >
                 {s === 'session' ? 'This task' : 'Workspace'}
               </button>
             ))}
           </div>
         )}
-        <button type="button" className="btn btn-icon" aria-label="Refresh" title="Refresh" onClick={refresh}>
-          <span aria-hidden="true">↻</span>
-        </button>
-        <button ref={closeRef} type="button" className="btn btn-icon" aria-label="Close changes" title="Close" onClick={onClose}>
-          <span aria-hidden="true">×</span>
-        </button>
-      </div>
-      <p className="caption sheet-sub" title={label}>
+        <Tip label="Refresh">
+          <Button size="icon-md" aria-label="Refresh" className="text-muted" onClick={refresh}>
+            <RefreshCw />
+          </Button>
+        </Tip>
+        <Button ref={closeRef} size="icon-md" aria-label="Close changes" className="text-muted" onClick={onClose}>
+          <X />
+        </Button>
+      </PanelHeader>
+      <p className="truncate border-b border-hairline/60 px-3 py-1 text-caption text-muted" title={label}>
         {label}
       </p>
-      <ul className="files">
+      <ul className="max-h-[40%] shrink-0 overflow-y-auto border-b border-hairline p-1">
         {error && (
-          <li className="error pad" role="alert">
-            {error}
+          <li className="px-2 py-1">
+            <Note tone="error" role="alert">
+              {error}
+            </Note>
           </li>
         )}
-        {!data && !error && <li className="caption pad">Loading…</li>}
-        {data && !data.supported && <li className="caption pad">{data.reason || 'Not available for this task.'}</li>}
-        {data?.supported && files.length === 0 && <li className="caption pad">No changes.</li>}
-        {files.map((f) => (
-          <li key={f.path}>
-            <button type="button" className="file" aria-pressed={f.path === shownPath} onClick={() => setPath(f.path)} title={f.path}>
-              <span className={`file-status file-status-${f.status}`}>{f.status}</span>
-              <span className="file-path">{f.path}</span>
-              <span className="num">
-                <span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span>
-              </span>
-            </button>
+        {!data && !error && (
+          <li className="flex flex-col gap-1.5 px-2 py-2" aria-busy="true">
+            <span className="h-3 w-1/2 rounded-xs bg-sunken animate-pulse-dot" />
+            <span className="h-3 w-2/3 rounded-xs bg-sunken animate-pulse-dot" />
           </li>
+        )}
+        {data && !data.supported && (
+          <li className="px-2 py-1">
+            <Note>{data.reason || 'Not available for this task.'}</Note>
+          </li>
+        )}
+        {data?.supported && files.length === 0 && (
+          <li className="px-2 py-1">
+            <Note>No changes.</Note>
+          </li>
+        )}
+        {files.map((f) => (
+          <FileRow key={f.path} file={f} selected={f.path === shownPath} onOpen={() => setPath(f.path)} />
         ))}
       </ul>
-      <div className="sheet-diff">
-        {shownPath && <FileView key={`${scope}:${shownPath}:${tick}`} sessionId={session.id} scope={scope} path={shownPath} />}
-      </div>
-    </aside>
+      <div className="min-h-0 flex-1 overflow-auto">{shownPath && <FileView key={`${scope}:${shownPath}:${tick}`} sessionId={session.id} scope={scope} path={shownPath} />}</div>
+    </SidePanel>
+  );
+}
+
+function FileRow({ file: f, selected, onOpen }: { file: ChangeFile; selected: boolean; onOpen: () => void }) {
+  const [, copy] = useCopied();
+  const items: ActionItem[] = [
+    { key: 'open', label: 'Open diff', icon: <FileDiff />, onSelect: onOpen },
+    { key: 'copy', label: 'Copy path', icon: <Copy />, onSelect: () => copy(f.path) },
+  ];
+  return (
+    <li>
+      <ContextMenu.Root>
+        <ContextMenu.Trigger render={<div className="group/file relative" />}>
+          <button
+            type="button"
+            aria-pressed={selected}
+            title={f.path}
+            className={cn('grid h-8 w-full grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-9 pl-2 text-left font-mono text-code-sm transition-colors focus-visible:-outline-offset-2', selected ? 'bg-raised text-ink' : 'text-body hover:bg-raised/60')}
+            onClick={onOpen}
+          >
+            <span className={cn('text-center', STATUS_TONE[f.status] ?? 'text-muted')}>{f.status}</span>
+            <span className="truncate [direction:rtl] text-left [unicode-bidi:plaintext]">{f.path}</span>
+            <span className="tabular-nums">
+              <span className="text-success">+{f.additions}</span> <span className="text-error">−{f.deletions}</span>
+            </span>
+          </button>
+          <Menu.Root modal={false}>
+            <Menu.Trigger render={<Button size="icon" aria-label={`Actions for ${f.path}`} className="absolute top-1/2 right-1 size-6 -translate-y-1/2 text-muted opacity-0 transition-opacity group-hover/file:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
+              <Ellipsis />
+            </Menu.Trigger>
+            <Menu.Content align="end">
+              <Menu.Actions items={items} />
+            </Menu.Content>
+          </Menu.Root>
+        </ContextMenu.Trigger>
+        <ContextMenu.Content>
+          <ContextMenu.Actions items={items} />
+        </ContextMenu.Content>
+      </ContextMenu.Root>
+    </li>
   );
 }
 
 function FileView({ sessionId, scope, path }: { sessionId: string; scope: Scope; path: string }) {
-  const [file, setFile] = useState<FileDiff | null>(null);
+  const [file, setFile] = useState<FileDiffData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -149,17 +218,26 @@ function FileView({ sessionId, scope, path }: { sessionId: string; scope: Scope;
 
   if (error) {
     return (
-      <p className="error" role="alert">
+      <Note tone="error" role="alert" className="p-3">
         {error}
-      </p>
+      </Note>
     );
   }
-  if (!file) return <p className="caption">Loading diff…</p>;
-  if (patch instanceof Error) return <p className="error">Could not parse diff: {patch.message}</p>;
-  if (!patch || patch.hunks.length === 0) return <p className="caption">No textual changes in {file.path}.</p>;
+  if (!file) {
+    return (
+      <div className="flex flex-col gap-1.5 p-3" aria-busy="true">
+        <span className="h-3 w-3/5 rounded-xs bg-sunken animate-pulse-dot" />
+        <span className="h-3 w-4/5 rounded-xs bg-sunken animate-pulse-dot" />
+        <span className="h-3 w-1/2 rounded-xs bg-sunken animate-pulse-dot" />
+        <span className="sr-only">Loading diff…</span>
+      </div>
+    );
+  }
+  if (patch instanceof Error) return <Note tone="error" className="p-3">Could not parse diff: {patch.message}</Note>;
+  if (!patch || patch.hunks.length === 0) return <Note className="p-3">No textual changes in {file.path}.</Note>;
 
   return (
-    <table className="diff" translate="no">
+    <table className="diff animate-fade-in" translate="no">
       <caption>{file.path}</caption>
       <tbody>{patch.hunks.flatMap((h, hi) => renderHunk(h, hi))}</tbody>
     </table>

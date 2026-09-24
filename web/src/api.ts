@@ -69,6 +69,8 @@ export interface Project {
   created_at: string;
   /** Defaults for new Tasks; absent when the Project has none. */
   defaults?: TaskDefaults;
+  /** Current git branch of the directory; absent unless it is a checkout on a named branch. May change between `project` frames. */
+  branch?: string;
 }
 
 export interface SessionSummary {

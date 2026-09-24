@@ -105,7 +105,7 @@ export function seed(): MockState {
     ],
   };
 
-  // p1 has defaults, p2 none, p3 a default model the provider no longer offers.
+  // p1 has defaults and a long branch, p2 none of either, p3 a default model the provider no longer offers.
   const projects: Project[] = [
     {
       id: 'p1',
@@ -113,6 +113,7 @@ export function seed(): MockState {
       dir: '/home/user/projects/unified-agent-manager',
       created_at: ago(60 * 24 * 9),
       defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
+      branch: 'feat/web-project-defaults-and-sidebar-revamp',
     },
     { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4) },
     {
@@ -121,6 +122,7 @@ export function seed(): MockState {
       dir: '/home/user/projects/notes-site',
       created_at: ago(60 * 24 * 2),
       defaults: { provider: 'copilot', model: 'gpt-5.5-nova', effort: 'high', context_size: 'long_context', mode: 'yolo' },
+      branch: 'main',
     },
   ];
 
@@ -439,6 +441,62 @@ export function seed(): MockState {
       items: [
         { id: 'i1', kind: 'user', time: ago(60 * 31), text: 'Bump the dev dependencies and run the build.' },
         { id: 'i2', kind: 'assistant', time: ago(60 * 30), text: 'Bumped 6 packages; build passes.' },
+      ],
+    }),
+    task({
+      id: 't11',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'claude-haiku-4.5',
+      last_model: 'claude-haiku-4.5',
+      name: '',
+      title: 'Explain the attach status bar design',
+      state: 'closed',
+      stage: 'settled',
+      created_at: ago(60 * 50),
+      updated_at: ago(60 * 48),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(60 * 50), text: 'Explain why the attach status bar sits on a reserved row and never on codex.' },
+        {
+          id: 'i2',
+          kind: 'assistant',
+          time: ago(60 * 48),
+          text: 'The bar takes one reserved terminal row so it never overwrites provider output. Codex and omp draw their own bottom line in cooked mode, so the bar is disabled for them; alt-screen providers keep it.',
+        },
+      ],
+    }),
+    task({
+      id: 't12',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'auto',
+      last_model: 'mai-code-1.1-flash',
+      name: 'Pin GitHub Actions to Node 24',
+      title: '',
+      state: 'closed',
+      stage: 'archived',
+      created_at: ago(60 * 24 * 3),
+      updated_at: ago(60 * 24 * 3 - 20),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(60 * 24 * 3), text: 'Move every workflow to the Node 24 action releases and keep the SHA pins.' },
+        tool('i2', 60 * 24 * 3 - 5, { name: 'edit', title: 'Edit .github/workflows/ci.yml', status: 'completed', output: '@@ -30,2 +30,2 @@\n-        uses: actions/setup-node@v4\n+        uses: actions/setup-node@v5' }),
+        { id: 'i3', kind: 'assistant', time: ago(60 * 24 * 3 - 20), text: 'Done. Seven workflows now pin the Node 24 releases; CI is green on the branch.' },
+      ],
+    }),
+    task({
+      id: 't13',
+      project_id: 'p3',
+      workdir: p('p3'),
+      model: 'gpt-5-mini',
+      name: '',
+      title: 'Migrate the RSS template to Atom',
+      state: 'closed',
+      stage: 'archived',
+      created_at: ago(60 * 24 * 6),
+      updated_at: ago(60 * 24 * 6 - 30),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(60 * 24 * 6), text: 'Replace the RSS 2.0 feed template with Atom and keep the same URL.' },
+        { id: 'i2', kind: 'assistant', time: ago(60 * 24 * 6 - 30), text: 'Switched `templates/feed.xml` to Atom 1.0. The URL is unchanged and the validator passes.' },
       ],
     }),
   ];
