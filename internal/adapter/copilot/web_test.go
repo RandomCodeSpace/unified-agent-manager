@@ -393,7 +393,10 @@ func TestWebAllowOnceMarkerFollowsManagedPolicy(t *testing.T) {
 	unreadable := shellRequest("unreadable")
 	unreadable.PermissionRequest = nil
 	h.fs.onEvent(ev("e3", unreadable))
-	for id, want := range map[string]string{"plain": "approve_once", "managed": "", "unreadable": ""} {
+	unknown := shellRequest("unknown")
+	unknown.PermissionRequest = &rpc.RawPermissionRequest{Discriminator: "future-kind", Raw: []byte(`{"kind":"future-kind"}`)}
+	h.fs.onEvent(ev("e4", unknown))
+	for id, want := range map[string]string{"plain": "approve_once", "managed": "", "unreadable": "", "unknown": ""} {
 		var marked []string
 		for _, o := range h.sink.interaction(id).Options {
 			if o.AllowOnce {

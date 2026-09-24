@@ -943,7 +943,8 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	}
 	// A request the managed policy says a person must approve, or one this
 	// SDK cannot read, is never marked for automatic approval.
-	managed := d.PermissionRequest == nil || d.PermissionRequest.RequiresManagedApproval()
+	_, raw := d.PermissionRequest.(*rpc.RawPermissionRequest)
+	managed := d.PermissionRequest == nil || raw || d.PermissionRequest.RequiresManagedApproval()
 	add(agentapi.Option{ID: "approve_once", Label: "Allow once", AllowOnce: !managed}, &rpc.PermissionDecisionApproveOnce{ApprovedInteractively: copilot.Bool(true)})
 	if dec := sessionApproval(d.PromptRequest); dec != nil {
 		add(agentapi.Option{ID: "approve_session", Label: "Allow for this session"}, dec)
