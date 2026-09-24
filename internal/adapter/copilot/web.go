@@ -30,6 +30,7 @@ const (
 	webStartTimeout = 30 * time.Second
 	webStopTimeout  = 15 * time.Second
 	webCheckTimeout = 10 * time.Second
+	webTasksTimeout = 10 * time.Second
 	maxToolText     = 64 << 10
 	maxErrorText    = 512
 )
@@ -62,6 +63,10 @@ type sdkSession interface {
 	SetEffort(ctx context.Context, effort string) error
 	Abort(ctx context.Context) error
 	CancelSubagent(ctx context.Context, agentID string) (bool, error)
+	// ListTasks returns the tasks the CLI tracks, subagents included.
+	ListTasks(ctx context.Context) ([]rpc.TaskInfo, error)
+	// MessageSubagent sends a follow-up to one agent task.
+	MessageSubagent(ctx context.Context, agentID, message string) (*rpc.TasksSendMessageResult, error)
 	Events(ctx context.Context) ([]copilot.SessionEvent, error)
 	// RespondPermission answers a pending permission request. It reports false
 	// when the CLI no longer considered the request pending.
@@ -129,6 +134,22 @@ func (a sdkSessionAdapter) CancelSubagent(ctx context.Context, agentID string) (
 		return false, err
 	}
 	return result.Cancelled, nil
+}
+
+func (a sdkSessionAdapter) ListTasks(ctx context.Context) ([]rpc.TaskInfo, error) {
+	result, err := a.s.RPC.Tasks.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return result.Tasks, nil
+}
+
+func (a sdkSessionAdapter) MessageSubagent(ctx context.Context, agentID, message string) (*rpc.TasksSendMessageResult, error) {
+	result, err := a.s.RPC.Tasks.SendMessage(ctx, &rpc.TasksSendMessageRequest{ID: agentID, Message: message})
+	if err != nil && isRPCError(err) {
+		return nil, rejectedError{err}
+	}
+	return result, err
 }
 
 func (a sdkSessionAdapter) SwitchModel(ctx context.Context, req *rpc.ModelSwitchToRequest) (*rpc.ModelSwitchToResult, error) {
@@ -302,7 +323,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	}
 	c := &conversation{
 		p: p, client: client, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
-		seen: map[string]bool{},
+		seen: map[string]bool{}, watch: map[string]time.Time{},
 	}
 	// Permission requests are answered through the pending-permission RPC
 	// with the request id from the permission.requested event; the SDK
@@ -345,7 +366,10 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		p.poke()
 		return nil, fmt.Errorf("open copilot conversation: %s", errText(err))
 	}
+	// Under mu: a subagent event may already start a task-list read.
+	c.mu.Lock()
 	c.sess, c.id = sess, sess.ID()
+	c.mu.Unlock()
 	if !p.track(c) {
 		_ = c.Close(ctx)
 		return nil, agentapi.ErrClosed
@@ -523,6 +547,15 @@ type conversation struct {
 	// before the Send that carried it returns its message ID.
 	steering int
 	seen     map[string]bool
+	// watch holds the agents only session.tasks.list can settle: a finished
+	// one that may take follow-ups, and one running a follow-up, keyed to the
+	// time the follow-up was sent. listing is set while a read runs; relist
+	// asks it for one more.
+	watch           map[string]time.Time
+	listing, relist bool
+	// taskRPC orders task-list reads and follow-up sends, so a list read from
+	// before a send never overwrites the follow-up it started.
+	taskRPC sync.Mutex
 }
 
 type steer struct {
@@ -583,7 +616,33 @@ func (c *conversation) History(ctx context.Context) (agentapi.History, error) {
 		}
 	}
 	c.mu.Unlock()
-	return history(evs), nil
+	recorded := history(evs)
+	c.restoreIdle(ctx, recorded.Subagents)
+	return recorded, nil
+}
+
+// restoreIdle reads the task list once for a reopened conversation's
+// completed subagents. Recorded events never say that one still takes
+// follow-ups; only the live list does.
+func (c *conversation) restoreIdle(ctx context.Context, subs []agentapi.Subagent) {
+	if !slices.ContainsFunc(subs, func(sa agentapi.Subagent) bool { return sa.Status == agentapi.SubagentCompleted }) {
+		return
+	}
+	c.taskRPC.Lock()
+	defer c.taskRPC.Unlock()
+	tasks, err := c.sess.ListTasks(ctx)
+	if err != nil {
+		c.p.poke()
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range subs {
+		if sa := c.subs.byID[subs[i].ID]; sa != nil && sa.Status == agentapi.SubagentCompleted &&
+			subs[i].Status == agentapi.SubagentCompleted && takesFollowUps(agentTask(tasks, sa.ID)) {
+			sa.Status, subs[i].Status = agentapi.SubagentIdle, agentapi.SubagentIdle
+		}
+	}
 }
 
 // SetModel changes all three settings between turns and checks the runtime's
@@ -770,7 +829,68 @@ func (c *conversation) CancelSubagent(ctx context.Context, agentID string) error
 	}
 	c.stoppedSubagents[agentID] = true
 	c.expireSubagentLocked(agentID)
+	// A stopped follow-up may end without a subagent event.
+	c.checkTasksLocked()
 	return nil
+}
+
+// PromptSubagent sends text to exactly agentID, only while this record says
+// idle: the CLI accepts a message for a running agent and never delivers it.
+// An accepted follow-up runs until the task list reports it idle or ended.
+func (c *conversation) PromptSubagent(ctx context.Context, agentID, text string) error {
+	c.taskRPC.Lock()
+	defer c.taskRPC.Unlock()
+	c.mu.Lock()
+	closed, sa := c.closed, c.subs.byID[agentID]
+	var status agentapi.SubagentStatus
+	if sa != nil {
+		status = sa.Status
+	}
+	c.mu.Unlock()
+	switch {
+	case closed:
+		return agentapi.ErrClosed
+	case sa == nil:
+		return errors.New("copilot has no such subagent")
+	case status != agentapi.SubagentIdle:
+		return fmt.Errorf("the subagent is %s, not waiting for a follow-up", status)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	sent := time.Now()
+	res, err := c.sess.MessageSubagent(ctx, agentID, text)
+	var uncertain error
+	switch {
+	case err != nil:
+		uncertain = c.sendError(err)
+		if !errors.Is(uncertain, agentapi.ErrSubmissionUncertain) {
+			return uncertain
+		}
+	case res == nil:
+		uncertain = fmt.Errorf("%w: copilot returned no result", agentapi.ErrSubmissionUncertain)
+	case !res.Sent:
+		reason := "copilot did not deliver the follow-up"
+		if res.Error != nil && *res.Error != "" {
+			reason += ": " + clip(displaytext.Sanitize(*res.Error), maxErrorText)
+		}
+		return errors.New(reason)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if sa.Status == agentapi.SubagentIdle {
+		// A follow-up that may have arrived blocks another until the task list
+		// settles it. An accepted one ends only with an idle entry newer than
+		// the send: the list can still report the idle from before it.
+		if uncertain != nil {
+			sent = time.Time{}
+		}
+		sa.Status, sa.EndedAt = agentapi.SubagentRunning, time.Time{}
+		v := *sa
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &v})
+		c.watchLocked(agentID, sent)
+	}
+	return uncertain
 }
 
 func (c *conversation) Diff(context.Context) ([]agentapi.FileDiff, error) {
@@ -867,6 +987,7 @@ func (c *conversation) Close(ctx context.Context) error {
 		return nil
 	}
 	perms := c.expireLocked()
+	c.endIdleLocked()
 	c.closed = true
 	clear(c.pending)
 	c.mu.Unlock()
@@ -941,8 +1062,133 @@ func (c *conversation) exitLocked(reason string) {
 	}
 	c.expireLocked()
 	clear(c.pending)
+	c.endIdleLocked()
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventExit, Error: reason})
 	c.closed = true
+}
+
+// endIdleLocked reports idle subagents as completed when the conversation
+// ends: without a live task list nothing says they still take follow-ups.
+func (c *conversation) endIdleLocked() {
+	for _, id := range c.subs.order {
+		if sa := c.subs.byID[id]; sa.Status == agentapi.SubagentIdle {
+			sa.Status = agentapi.SubagentCompleted
+			v := *sa
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &v})
+		}
+	}
+	clear(c.watch)
+}
+
+// watchLocked has the task list settle agentID from now on. A non-zero sent
+// ignores idle entries from before that follow-up.
+func (c *conversation) watchLocked(agentID string, sent time.Time) {
+	c.watch[agentID] = sent
+	c.checkTasksLocked()
+}
+
+// checkTasksLocked reads the task list for the watched agents on its own
+// goroutine: a request made on the event goroutine stalls the connection its
+// answer arrives on. One read runs at a time; asking during it adds one more.
+func (c *conversation) checkTasksLocked() {
+	if c.closed || c.sess == nil || len(c.watch) == 0 {
+		return
+	}
+	if c.listing {
+		c.relist = true
+		return
+	}
+	c.listing = true
+	go c.readTasks(c.sess)
+}
+
+func (c *conversation) readTasks(sess sdkSession) {
+	for {
+		c.taskRPC.Lock()
+		ctx, cancel := context.WithTimeout(context.Background(), webTasksTimeout)
+		tasks, err := sess.ListTasks(ctx)
+		cancel()
+		c.mu.Lock()
+		switch {
+		case err != nil:
+			c.p.poke()
+		case !c.closed:
+			c.applyTasksLocked(tasks)
+		}
+		again := c.relist && !c.closed && len(c.watch) > 0
+		c.listing, c.relist = again, false
+		c.mu.Unlock()
+		c.taskRPC.Unlock()
+		if !again {
+			return
+		}
+	}
+}
+
+// applyTasksLocked settles the watched agents from one task-list read. Only
+// the entry for the exact agent counts. It is idle only when the list says
+// idle with a synchronous wait: a follow-up to a background agent wakes the
+// main agent. A finished agent is otherwise left completed; a follow-up ends
+// with the status the list reports.
+func (c *conversation) applyTasksLocked(tasks []rpc.TaskInfo) {
+	for id, sent := range c.watch {
+		sa, t := c.subs.byID[id], agentTask(tasks, id)
+		followUp := sa != nil && sa.Status == agentapi.SubagentRunning
+		if !followUp && (sa == nil || sa.Status != agentapi.SubagentCompleted) {
+			delete(c.watch, id) // an event ended it meanwhile
+			continue
+		}
+		if t == nil && followUp || t != nil && t.Status == rpc.TaskStatusRunning || followUp && idleBefore(t, sent) {
+			continue // not settled yet
+		}
+		delete(c.watch, id)
+		status := agentapi.SubagentCompleted
+		switch {
+		case takesFollowUps(t):
+			status = agentapi.SubagentIdle
+		case !followUp:
+			continue
+		case t.Status == rpc.TaskStatusFailed:
+			status = agentapi.SubagentFailed
+			if t.Error != nil {
+				sa.Error = clip(displaytext.Sanitize(*t.Error), maxErrorText)
+			}
+		case t.Status == rpc.TaskStatusCancelled:
+			status = agentapi.SubagentCancelled
+			c.expireSubagentLocked(id)
+		}
+		sa.Status = status
+		if sa.EndedAt.IsZero() {
+			sa.EndedAt = time.Now()
+			if t.IdleSince != nil && status == agentapi.SubagentIdle {
+				sa.EndedAt = *t.IdleSince
+			}
+		}
+		v := *sa
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &v})
+	}
+}
+
+// agentTask returns the task list's entry for exactly agentID, or nil.
+func agentTask(tasks []rpc.TaskInfo, agentID string) *rpc.TaskAgentInfo {
+	for _, t := range tasks {
+		if a, ok := t.(*rpc.TaskAgentInfo); ok && a.ID == agentID {
+			return a
+		}
+	}
+	return nil
+}
+
+// idleBefore reports an idle entry that entered idle before sent, so it does
+// not describe the follow-up sent then. An entry without the time counts.
+func idleBefore(t *rpc.TaskAgentInfo, sent time.Time) bool {
+	return !sent.IsZero() && t != nil && t.Status == rpc.TaskStatusIdle && t.IdleSince != nil && !t.IdleSince.After(sent)
+}
+
+// takesFollowUps reports a task-list entry that waits for a follow-up the
+// main agent never sees: idle, and started for a synchronous wait.
+func takesFollowUps(t *rpc.TaskAgentInfo) bool {
+	return t != nil && t.Status == rpc.TaskStatusIdle && t.ExecutionMode != nil && *t.ExecutionMode == rpc.TaskExecutionModeSync
 }
 
 // askUser is the SDK's ask_user callback. It runs on its own goroutine and
@@ -1009,7 +1255,14 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 				c.expireSubagentLocked(sa.ID)
 			}
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
+			if sa.Status == agentapi.SubagentCompleted {
+				c.watchLocked(sa.ID, time.Time{})
+			}
 		}
+		return
+	case *rpc.SessionBackgroundTasksChangedData:
+		// The only sign that a follow-up ended: it sends no subagent event.
+		c.checkTasksLocked()
 		return
 	case *rpc.SessionErrorData:
 		if agentID == "" {
@@ -1359,9 +1612,11 @@ func agentOf(ev copilot.SessionEvent) string {
 	return *ev.AgentID
 }
 
-// subagentLog keeps each subagent's record by its agent ID. The first
+// subagentLog keeps each subagent's record by its agent ID. Events change a
+// running record, and end an idle one only as failed or cancelled. The first
 // terminal event wins: Copilot reports a second, cancelled completion for an
-// idle subagent when the client disconnects.
+// idle subagent when the client disconnects. Only the task list makes a
+// completed record idle, and only an accepted follow-up makes it run again.
 type subagentLog struct {
 	byID   map[string]*agentapi.Subagent
 	byCall map[string]string // spawning tool call ID -> agent ID
@@ -1384,7 +1639,7 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 			return agentapi.Subagent{}, false
 		}
 		sa := l.get(agentID)
-		if sa.Status.Terminal() {
+		if sa.Status.Terminal() || sa.Status == agentapi.SubagentIdle {
 			return agentapi.Subagent{}, false
 		}
 		sa.ParentToolCallID, sa.Name, sa.Description = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), d.AgentDescription
@@ -1399,7 +1654,7 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 			return agentapi.Subagent{}, false
 		}
 		sa := l.get(agentID)
-		if sa.Status.Terminal() {
+		if sa.Status.Terminal() || sa.Status == agentapi.SubagentIdle {
 			return agentapi.Subagent{}, false
 		}
 		sa.Model = d.Model
@@ -1426,7 +1681,7 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		return agentapi.Subagent{}, false
 	}
 	sa := l.get(agentID)
-	if sa.Status.Terminal() {
+	if sa.Status.Terminal() || sa.Status == agentapi.SubagentIdle && status == agentapi.SubagentCompleted {
 		return agentapi.Subagent{}, false
 	}
 	if sa.ParentToolCallID == "" {

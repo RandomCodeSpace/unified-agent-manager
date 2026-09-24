@@ -573,3 +573,42 @@ restore them. Cleanup uses `Interaction.AgentID` and preserves other agents'
 requests. Copilot SDK v1.0.14 supplies an agent ID for permission events but
 its `ask_user` callback supplies only a session ID. Such unattributed questions
 stay pending because UAM cannot safely assign them to the stopped subagent.
+
+## Chat with an idle subagent
+
+- Date: 2026-09-24 (decided in #169)
+
+`Subagent.Status` gains `idle`, which is not terminal: the live provider
+reports that the subagent finished and takes a follow-up. `failed` and
+`cancelled` stay final. `completed` becomes `idle` only on the provider's
+report, and `idle` becomes `running` only when UAM's own follow-up is accepted.
+When a conversation closes or its runtime exits, `idle` falls back to
+`completed`.
+
+`Conversation.PromptSubagent(ctx, agentID, text)` sends a follow-up to the
+exact agent instance. The main agent does not see it and no Task turn starts.
+Ambiguous failures wrap `ErrSubmissionUncertain` and are never resent.
+OpenCode stays unregistered and returns `ErrUnsupported`.
+
+Copilot reads `session.tasks.list`. A subagent is `idle` only when the entry
+for its exact agent ID says `idle` with execution mode `sync`; a background
+subagent never is, because a follow-up wakes the main agent. The list is read
+after a `subagent.completed` that was not cancelled, and after each
+`session.background_tasks_changed` until the subagent is idle again or has
+ended. A reopened conversation reads the list once; UAM's own record never
+restores `idle`. `session.tasks.sendMessage` targets the agent ID, never the
+parent tool call. `sent: false` is a refusal, with the provider's error. The
+follow-up's events carry the agent ID and go only to the subagent's
+transcript.
+
+`POST /api/sessions/{id}/subagents/{agent_id}/prompt` takes
+`{"text", "request_id"}` and returns 202 with a `Submission`, validated as a
+Task prompt: 400 for a missing UUID or empty text, 413 over the prompt limit.
+A repeated `request_id` returns the recorded outcome without a second send.
+These outcomes are kept apart from the Task's submissions, in memory and
+bounded the same way; `last_submission`, the queue and the Task's state do not
+change. Unknown Tasks or agents return 404. The route returns 409 unless the
+Task is active, its conversation is open, it runs no turn and waits for no
+answer, and the subagent is `idle`, or when the provider cannot chat with a
+subagent. It never opens a conversation. Status changes arrive through the
+existing subagent event and detail response.

@@ -122,6 +122,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDelete)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}", s.handleSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/cancel", s.handleCancelSubagent)
+	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/prompt", s.handlePromptSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/resume", s.handleQueueResume)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/clear", s.handleQueueClear)
@@ -478,6 +479,22 @@ func (s *Server) handleCancelSubagent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, subagent)
+}
+
+func (s *Server) handlePromptSubagent(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text      string `json:"text"`
+		RequestID string `json:"request_id"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	sub, err := s.m.PromptSubagent(r.PathValue("id"), r.PathValue("agent_id"), body.Text, body.RequestID)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, sub)
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {

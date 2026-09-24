@@ -114,6 +114,11 @@ type fakeSession struct {
 	subCancels        []string
 	subCancelErr      error
 	subCancelRejected bool
+	tasks             []rpc.TaskInfo
+	taskLists         int
+	subMessages       []string
+	subMessageResult  *rpc.TasksSendMessageResult
+	subMessageErr     error
 	abortErr          error
 	aborts            int
 	respondHook       func(context.Context, string, rpc.PermissionDecision) (bool, error)
@@ -126,6 +131,26 @@ func (s *fakeSession) CancelSubagent(_ context.Context, id string) (bool, error)
 	defer s.mu.Unlock()
 	s.subCancels = append(s.subCancels, id)
 	return !s.subCancelRejected, s.subCancelErr
+}
+
+func (s *fakeSession) ListTasks(context.Context) ([]rpc.TaskInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.taskLists++
+	return append([]rpc.TaskInfo(nil), s.tasks...), nil
+}
+
+func (s *fakeSession) MessageSubagent(_ context.Context, agentID, message string) (*rpc.TasksSendMessageResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.subMessages = append(s.subMessages, agentID+": "+message)
+	if s.subMessageErr != nil {
+		return nil, s.subMessageErr
+	}
+	if s.subMessageResult != nil {
+		return s.subMessageResult, nil
+	}
+	return &rpc.TasksSendMessageResult{Sent: true}, nil
 }
 
 func (s *fakeSession) ID() string { return s.id }

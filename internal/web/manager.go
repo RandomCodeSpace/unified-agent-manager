@@ -179,6 +179,9 @@ type webSession struct {
 	submissions []Submission
 	last        *Submission
 	createReq   string
+	// subagentPrompts are the outcomes of follow-ups to subagents, within
+	// maxSubmissions. They are not Task submissions: last never holds one.
+	subagentPrompts []Submission
 
 	// queue holds prompts waiting for the running turn, oldest first. It
 	// lives in memory only: stopping the service drops it.
@@ -2074,6 +2077,90 @@ func (m *Manager) CancelSubagent(id, agentID string) (agentapi.Subagent, error) 
 	default:
 		return agentapi.Subagent{}, newError(http.StatusBadGateway, "could not stop subagent: %s", shortError(err))
 	}
+}
+
+// PromptSubagent sends text to one idle subagent of an active Task whose
+// conversation is open and runs no turn. The follow-up is not a Task turn:
+// the Task's state, queue and last submission stay as they are, and the
+// subagent's status arrives through its events. A repeated request ID
+// returns the recorded outcome without contacting the provider.
+func (m *Manager) PromptSubagent(id, agentID, text, requestID string) (Submission, error) {
+	if !validRequestID(requestID) {
+		return Submission{}, newError(http.StatusBadRequest, "request_id must be a UUID")
+	}
+	if strings.TrimSpace(text) == "" {
+		return Submission{}, newError(http.StatusBadRequest, "prompt text is required")
+	}
+	if len(text) > maxPromptBytes {
+		return Submission{}, newError(http.StatusRequestEntityTooLarge, "prompt is too large")
+	}
+	s, err := m.lookup(id)
+	if err != nil {
+		return Submission{}, err
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	m.mu.Lock()
+	if i := slices.IndexFunc(s.subagentPrompts, func(p Submission) bool { return p.RequestID == requestID }); i >= 0 {
+		sub := s.subagentPrompts[i]
+		m.mu.Unlock()
+		return sub, nil
+	}
+	sa := s.subIdx[agentID]
+	switch {
+	case s.removed:
+		err = newError(http.StatusNotFound, "session not found")
+	case sa == nil:
+		err = newError(http.StatusNotFound, "subagent not found")
+	case m.closed:
+		err = errShuttingDown
+	case s.stage != StageActive:
+		err = s.readOnlyLocked()
+	case s.conv == nil:
+		err = newError(http.StatusConflict, "the provider conversation is not open")
+	case busy(s.state()):
+		err = newError(http.StatusConflict, "the task is running or waiting for input; a subagent takes a follow-up only while the task is idle")
+	case sa.Status == agentapi.SubagentRunning:
+		err = newError(http.StatusConflict, "the subagent is still running; it takes a follow-up once it is idle")
+	case sa.Status != agentapi.SubagentIdle:
+		err = newError(http.StatusConflict, "the subagent does not take follow-ups (%s)", sa.Status)
+	}
+	conv := s.conv
+	m.mu.Unlock()
+	if err != nil {
+		return Submission{}, err
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, sendTimeout)
+	err = conv.PromptSubagent(ctx, agentID, text)
+	cancel()
+	switch {
+	case err == nil:
+		return m.recordSubagentPrompt(s, requestID, SubmissionAccepted, ""), nil
+	case errors.Is(err, agentapi.ErrUnsupported):
+		return Submission{}, newError(http.StatusConflict, "this provider cannot chat with a subagent")
+	case errors.Is(err, agentapi.ErrClosed):
+		return Submission{}, newError(http.StatusConflict, "the provider conversation is closed")
+	}
+	log.Warn("web subagent follow-up failed", "session", s.id, "error", err)
+	if errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		// Never resend: the subagent may already be working on it.
+		return m.recordSubagentPrompt(s, requestID, SubmissionUncertain,
+			"the provider may or may not have received this follow-up, and uam did not resend it: "+shortError(err)), nil
+	}
+	return m.recordSubagentPrompt(s, requestID, SubmissionRejected, shortError(err)), nil
+}
+
+// recordSubagentPrompt keeps a follow-up's outcome for repeated request IDs.
+// Nothing else changes: the subagent's own events report what it does.
+func (m *Manager) recordSubagentPrompt(s *webSession, reqID, status, msg string) Submission {
+	sub := Submission{RequestID: reqID, Status: status, Error: msg, Time: m.now()}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s.subagentPrompts = append(s.subagentPrompts, sub)
+	if len(s.subagentPrompts) > maxSubmissions {
+		s.subagentPrompts = append([]Submission(nil), s.subagentPrompts[len(s.subagentPrompts)-maxSubmissions:]...)
+	}
+	return sub
 }
 
 // Close disconnects the conversation and keeps the record.
