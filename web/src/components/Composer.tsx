@@ -61,6 +61,7 @@ function Picker({
   choices,
   disabled,
   reason,
+  hint,
   mono = false,
   compact = false,
   onChange,
@@ -73,6 +74,8 @@ function Picker({
   choices: Choice[];
   disabled: boolean;
   reason?: string;
+  /** A second tooltip line (the model the latest turn was routed to). */
+  hint?: string;
   mono?: boolean;
   compact?: boolean;
   onChange: (value: string) => void;
@@ -89,10 +92,11 @@ function Picker({
       {c.label}
     </Menu.RadioItem>
   );
+  const tip = (first: string) => (hint ? <>{first}<span className="block text-on-primary/70">{hint}</span></> : first);
   if (disabled) {
     return (
-      <Tip label={reason ?? `${label} cannot change now`}>
-        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}`} className="text-muted">
+      <Tip label={tip(reason ?? `${label} cannot change now`)}>
+        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hint ? ` ${hint}.` : ''}`} className="text-muted">
           {face}
         </Button>
       </Tip>
@@ -100,7 +104,7 @@ function Picker({
   }
   return (
     <Menu.Root modal={false}>
-      <Tip label={compact ? `${label}: ${display}` : label}>
+      <Tip label={tip(compact ? `${label}: ${display}` : label)}>
         <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} className="text-body" />}>{face}</Menu.Trigger>
       </Tip>
       <Menu.Content side="top" align="start" sideOffset={6} className="min-w-52">
@@ -754,6 +758,7 @@ function ComposerView({ session, project, fileCount, onChanges, onRename, onSess
           })}
           disabled={settingsLocked}
           reason={locked ? 'This task is read-only.' : live ? 'The model changes between turns.' : undefined}
+          hint={routed ? `Latest turn ran on ${routed}` : undefined}
           onChange={(v) => void settings({ model: v })}
         />
         {hiddenModel && <span className="text-caption text-muted">Hidden in Settings</span>}
@@ -905,11 +910,6 @@ function ComposerView({ session, project, fileCount, onChanges, onRename, onSess
         </Button>
         {project?.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1 font-mono" title={project.branch}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
       </div>
-      {routed && (
-        <p className="border-t border-hairline px-3.5 py-1 text-caption text-muted">
-          Latest turn ran on <span className="font-mono">{routed}</span>
-        </p>
-      )}
       {busy && busy !== 'settings' && (
         <span className="sr-only" role="status">
           Updating {busy}…

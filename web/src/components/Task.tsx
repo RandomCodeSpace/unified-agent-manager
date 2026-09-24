@@ -6,7 +6,7 @@ import { popupOpen } from '../App';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
 import { Chip } from './ui/chip';
-import { usePresence } from './ui/collapse';
+import { Collapse, usePresence } from './ui/collapse';
 import { Composer } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
@@ -186,6 +186,18 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
     if (atBottom.current) setShowJump(false);
   }
 
+  // A decided card collapses in place (its last pending look, inert) instead of vanishing; it leaves once the collapse has run.
+  const pendingIds = session.interactions.filter((i) => i.state === 'pending').map((i) => i.id).join(',');
+  const [seenPending, setSeenPending] = useState(pendingIds);
+  const [lingering, setLingering] = useState<Interaction[]>([]);
+  if (pendingIds !== seenPending) {
+    setSeenPending(pendingIds);
+    const gone = seenPending.split(',').filter((id) => id && !pendingIds.split(',').includes(id));
+    const decided = gone.flatMap((id) => session.interactions.filter((i) => i.id === id)).map((i) => ({ ...i, state: 'pending' as const }));
+    if (decided.length) setLingering((l) => [...l, ...decided.filter((i) => !l.some((x) => x.id === i.id))]);
+  }
+  const cards = [...session.interactions.filter((i) => i.state === 'pending'), ...lingering.filter((i) => !session.interactions.some((x) => x.id === i.id && x.state === 'pending'))];
+
   const name = taskName(session);
   const fileCount = changes?.supported ? changes.files.length : null;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
@@ -276,11 +288,11 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               provider={session.provider}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
             />
-            {session.interactions
-              .filter((i) => i.state === 'pending')
-              .map((i) => (
-                <InteractionCard key={i.id} session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
-              ))}
+            {cards.map((i) => (
+              <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && x.state === 'pending')} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
+                <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
+              </Collapse>
+            ))}
             {session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
             {session.state === 'failed' && (
               <Note tone="error" role="alert">

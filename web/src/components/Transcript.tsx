@@ -61,7 +61,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
     const timing = timingForTurn(turnTimings, userItemId);
     const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live });
     if (!group.length) {
-      if (showEnd) out.push(<WorkedIndicator key={`end-${timing!.id}`} timing={timing} />);
+      if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} />);
       return;
     }
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
@@ -70,11 +70,12 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       return agent ? <SubagentRow key={item.id} item={item} subagent={agent} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
     });
     if (last && working) showedWorking = true;
+    // One status row heads the turn: "Working for 12s" becomes "Worked for 12s" in the same slot, and
+    // streamed content lands below it, so nothing on screen moves at either moment.
     out.push(
       <div key={`turn-${after}`} className="flex flex-col gap-3">
-        {last && working && <WorkingIndicator start={foregroundStart(turnTimings)} />}
+        {last && working ? <TurnStatus working start={foregroundStart(turnTimings)} /> : showEnd && <TurnStatus timing={timing} />}
         {nodes}
-        {showEnd && <WorkedIndicator timing={timing} />}
       </div>,
     );
     group = [];
@@ -93,7 +94,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
   return (
     <>
       {out}
-      {working && !showedWorking && <WorkingIndicator start={foregroundStart(turnTimings)} />}
+      {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
     </>
   );
 }
@@ -160,23 +161,24 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
   return out;
 }
 
-function WorkedIndicator({ timing }: { timing?: TurnTiming }) {
-  const elapsed = completedDuration(timing);
-  return <div className="border-b border-hairline py-2 text-caption tabular-nums text-muted" title={elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>{elapsed ? `Worked for ${elapsed}` : 'Worked'}</div>;
-}
-
-function WorkingIndicator({ start }: { start?: string }) {
+/**
+ * The row that heads a turn (DESIGN.md turn status), in one slot for both states: the
+ * working mark and a live "Working for 12s" while the turn runs, then "Worked for 12s" once
+ * it ended. Without a recorded duration the row stays as the separator, with no label.
+ */
+function TurnStatus({ working = false, start, timing }: { working?: boolean; start?: string; timing?: TurnTiming }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!working) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
-  const elapsed = elapsedSince(start, now);
+  }, [working]);
+  const elapsed = working ? elapsedSince(start, now) : completedDuration(timing);
   return (
-    <div className="flex items-center gap-2 border-b border-hairline py-2 text-caption text-muted">
-      <WorkingMark />
-      <span role="status" className="sr-only">Working</span>
-      <span role="timer" aria-live="off" className="tabular-nums">{elapsed ? `Working for ${elapsed}` : 'Working'}</span>
+    <div className="flex min-h-[34px] items-center gap-2 border-b border-hairline py-2 text-caption tabular-nums text-muted" title={working ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
+      {working && <WorkingMark />}
+      {working && <span role="status" className="sr-only">Working</span>}
+      {working ? <span role="timer" aria-live="off">{elapsed ? `Working for ${elapsed}` : 'Working'}</span> : elapsed && <span className="animate-fade-in">Worked for {elapsed}</span>}
     </div>
   );
 }
@@ -618,7 +620,7 @@ export function AgentItems({ sessionId, agentId, items, interactions, live }: { 
   return (
     <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
       {renderEntries(mergeByTime(items, [...loose, ...questions]), ctx)}
-      {live && <WorkingIndicator />}
+      {live && <TurnStatus working />}
     </div>
   );
 }
