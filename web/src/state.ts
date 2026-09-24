@@ -56,6 +56,7 @@ export type Action =
   | { type: 'update'; data: UpdateData }
   | { type: 'settings'; settings: Settings }
   | { type: 'detail_loaded'; detail: SessionDetail }
+  /** A session from an HTTP reply; ignored when the live state is already newer (by updated_at). */
   | { type: 'upsert_session'; session: SessionSummary }
   | { type: 'remove_session'; id: string }
   | { type: 'upsert_project'; project: Project }
@@ -102,8 +103,12 @@ export function reducer(state: State, action: Action): State {
       if (detail.id !== state.selectedId || detail.seq === undefined || detail.seq <= state.detailSeq) return state;
       return { ...withSession(state, detail), detail, detailSeq: detail.seq, agents: {} };
     }
-    case 'upsert_session':
+    case 'upsert_session': {
+      // An HTTP reply can land after live frames that already carry a newer state.
+      const current = state.sessions.find((s) => s.id === action.session.id);
+      if (current && Date.parse(action.session.updated_at) < Date.parse(current.updated_at)) return state;
       return withSession(state, action.session);
+    }
     case 'remove_session':
       return withoutSession(state, action.id);
     case 'upsert_project':

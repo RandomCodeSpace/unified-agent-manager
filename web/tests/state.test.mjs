@@ -177,3 +177,17 @@ test('foreground timing follows ordered live evidence and survives snapshots whi
   state = reducer(state, { type: 'connection', status: 'offline' });
   assert.deepEqual(state.detail.turn_timings, [ended]);
 });
+
+test('an HTTP reply older than the live session state does not roll it back', () => {
+  let state = loading();
+  // The cancel reply is computed at 12:00:01; the turn end frame (12:00:02) arrives first.
+  state = update(state, { name: 'session', seq: 11, session: { id: 'task', state: 'idle', name: 'Live', updated_at: '2026-09-24T12:00:02.5+02:00' } });
+  const stale = { id: 'task', state: 'cancelled', name: 'Live', updated_at: '2026-09-24T10:00:01.123456789Z' };
+  assert.equal(reducer(state, { type: 'upsert_session', session: stale }), state);
+  assert.equal(state.detail.state, 'idle');
+  // A reply as new as the live state, or newer, still applies (a rename that did not touch updated_at).
+  state = reducer(state, { type: 'upsert_session', session: { id: 'task', state: 'idle', name: 'Renamed', updated_at: '2026-09-24T10:00:02.5Z' } });
+  assert.equal(state.sessions[0].name, 'Renamed');
+  state = reducer(state, { type: 'upsert_session', session: { id: 'task', state: 'completed', name: 'Renamed', updated_at: '2026-09-24T10:00:03Z' } });
+  assert.equal(state.detail.state, 'completed');
+});
