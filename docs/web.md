@@ -143,8 +143,8 @@ off, run `uam web stop`, then `uam web` without the flag.
   - **Steer** adds the message to the turn that is running. The agent reads
     it before its next step, and it shows in the conversation, marked as a
     steer, at the point where the agent took it in. A steer cannot be taken
-    back. If the turn ends before the agent took it in, a notice says the
-    steer was not delivered and quotes it. With Copilot, a steer also moves a
+    back. If the turn is stopped or fails before the agent took it in, a
+    notice says the steer was not delivered and quotes it. With Copilot, a steer also moves a
     shell command that is running to the background.
   - When no turn is running, both send the message at once.
 - **Paused queue**: the queue pauses when a turn is stopped or fails, when
@@ -256,7 +256,8 @@ private and rotate it if it leaks. With `--no-auth` it is not protected at all
   reopened after the service restarts.
 - **Late steers (Copilot).** A steer that arrives while Copilot writes the
   last reply of a turn is answered right after that reply, in the same turn,
-  and shows as an ordinary message without the steer mark.
+  and shows as an ordinary message without the steer mark. One that arrives
+  just after the turn ended starts a new turn.
 - **Copilot session diffs.** Copilot does not report per-conversation file
   changes; use the Workspace view.
 - **Opening a web conversation elsewhere at the same time.** Do not

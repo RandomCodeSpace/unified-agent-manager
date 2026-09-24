@@ -289,13 +289,14 @@ provider can offer the same way.
 ### Steer
 
 - UAM accepts a steer only while a turn runs (`working` or waiting for the
-  user). A steer never changes the Task's state or starts a turn. The turn it
-  joins reports its own end, and the queue drains only after that.
+  user). UAM does not change the Task's state for a steer. The turn it joins
+  reports its own end, and the queue drains only after that. A steer that
+  reaches the provider after that turn ended can start a new turn, which the
+  provider reports like any other turn start.
 - An accepted steer cannot be withdrawn. When the provider uses it, its user
-  item carries `delivery: "steer"`. When the turn ends without using it, the
-  transcript gets a notice that quotes it, "Steer not delivered: the turn was
-  stopped" ("the turn failed" or "the turn ended first" for the other
-  endings).
+  item carries `delivery: "steer"`. When the turn is stopped or fails without
+  using it, the transcript gets a notice that quotes it, "Steer not
+  delivered: the turn was stopped" (or "the turn failed").
 - A lost response is `uncertain`. UAM resends nothing.
 
 ### Provider contract additions (`internal/agentapi`)
@@ -316,8 +317,11 @@ main-agent `user.message` with that `messageId` marks the steer as used, and
 `delivery: "steering"` sets `Item.Delivery`. A steer that arrives during the
 turn's final model call gets a follow-up call in the same turn, with
 `delivery: "queued"`. It counts as delivered but carries no mark. A steer
-still unused at the turn's `session.idle` gets the notice, and
-`session.abort` drops unused steers. When a steer arrives, Copilot also moves
+still unused at an aborted or failed `session.idle` gets the notice, and
+`session.abort` drops unused steers. One still unused at a completed idle
+reached the CLI after that idle, and the CLI starts a new turn with it. A
+main-agent `user.message` with `delivery: "idle"` reports `TurnWorking`, so
+that turn is tracked and can be stopped. When a steer arrives, Copilot also moves
 a running foreground shell command to the background. That completes the
 shell's tool call, and the adapter ignores the partial output the shell keeps
 sending under the same call ID. OpenCode, which is not registered, returns

@@ -593,8 +593,8 @@ func (c *conversation) sendError(err error) error {
 // running turn before its next model call, and moves a running foreground
 // shell command to the background. It reports no turn transition. The
 // message ID the CLI returns links the steer to its user message: that
-// message is marked as a steer, and a steer the turn ends without is
-// reported as not delivered (the CLI drops unused steers on abort).
+// message is marked as a steer, and a steer a stopped or failed turn ends
+// without is reported as not delivered (the CLI drops unused steers on abort).
 func (c *conversation) Steer(ctx context.Context, prompt string) error {
 	c.mu.Lock()
 	if c.closed {
@@ -855,6 +855,11 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 				c.seen[*d.MessageID] = true
 			}
 		}
+		// A message delivered while idle starts a turn: also a steer that
+		// reached the CLI after the idle of the turn it was meant for.
+		if agentID == "" && d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliveryIdle {
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
+		}
 	case *rpc.SessionIdleData:
 		if agentID != "" {
 			return
@@ -896,14 +901,15 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 }
 
 // undeliveredLocked reports each steer the ending turn did not use as a
-// notice. The CLI folds a steer it accepted during a turn into that turn
-// before going idle, and drops it when the turn is aborted, so a steer still
-// pending at the idle was not delivered.
+// notice. The CLI drops unused steers when a turn is aborted. A steer still
+// pending at a completed idle is not reported: the CLI either used it in that
+// turn or, when it arrived after the idle, starts a new turn with it.
 func (c *conversation) undeliveredLocked(state agentapi.TurnState, at time.Time) {
 	reason := "the turn was stopped"
 	switch state {
 	case agentapi.TurnCompleted:
-		reason = "the turn ended first"
+		c.steers = nil
+		return
 	case agentapi.TurnFailed:
 		reason = "the turn failed"
 	}

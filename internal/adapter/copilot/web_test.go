@@ -763,6 +763,39 @@ func TestWebBackgroundedShellOutputKeepsTheCallCompleted(t *testing.T) {
 	}
 }
 
+// A steer that reaches the CLI after its idle starts a new turn there, which
+// reports the steer's user message with delivery "idle".
+func TestWebSteerDeliveredAfterIdleStartsATurn(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	_ = h.conv.Send(ctx, "start")                     // msg-1
+	if err := h.conv.Steer(ctx, "late"); err != nil { // msg-2
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	if got := notices(h.sink.all()); len(got) != 0 {
+		t.Fatalf("a completed turn reported its steer as not delivered: %q", got)
+	}
+	before := len(h.sink.all())
+	h.fs.onEvent(ev("u2", userMessage("msg-2", rpc.UserMessageDeliveryIdle, "late")))
+	var turns []agentapi.TurnState
+	for _, e := range h.sink.all()[before:] {
+		if e.Kind == agentapi.EventTurn {
+			turns = append(turns, e.Turn.State)
+		}
+	}
+	if len(turns) != 1 || turns[0] != agentapi.TurnWorking {
+		t.Fatalf("turns after the idle-delivered steer = %v, want [working]", turns)
+	}
+	if it := h.sink.last().Item; it == nil || it.ID != "msg-2" || it.Kind != agentapi.ItemUser {
+		t.Fatalf("steer item = %+v", it)
+	}
+	h.fs.onEvent(ev("i2", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
+	if got := notices(h.sink.all()); len(got) != 0 {
+		t.Fatalf("a used steer was reported as not delivered: %q", got)
+	}
+}
+
 func TestWebToolStartReusingAnEndedIDStreamsItsOutput(t *testing.T) {
 	h := openWeb(t)
 	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
