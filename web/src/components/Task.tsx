@@ -83,6 +83,7 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
 export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
   const actions = useTaskActions();
   const [changes, setChanges] = useState<ChangesData | null>(null);
+  const [changesError, setChangesError] = useState<string | null>(null);
   const [changesTick, setChangesTick] = useState(0);
   const [showJump, setShowJump] = useState(false);
   const [panel, setPanel] = useState<PanelView | null>(null);
@@ -99,8 +100,16 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
     let alive = true;
     api
       .changes(session.id, session.capabilities.session_diff ? 'session' : 'workspace')
-      .then((c) => alive && setChanges(c))
-      .catch(() => alive && setChanges(null));
+      .then((c) => {
+        if (!alive) return;
+        setChanges(c);
+        setChangesError(null);
+      })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        setChanges(null);
+        setChangesError(describeError(e));
+      });
     return () => {
       alive = false;
     };
@@ -279,7 +288,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
         </div>
       </div>
 
-      {sheetOpen && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} inline={sidePanelInline} onRefresh={() => setChangesTick((t) => t + 1)} onClose={() => onSheet(false)} />}
+      {sheetOpen && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} inline={sidePanelInline} onRefresh={() => { setChangesError(null); setChangesTick((t) => t + 1); }} onClose={() => onSheet(false)} />}
       {shownPanel && !sidePanelInline && <button type="button" className="fixed inset-0 z-30 bg-backdrop animate-fade-in" aria-label="Close subagents" onClick={closePanel} />}
       {shownPanel && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={shownPanel} inline={sidePanelInline} onView={setPanel} onClose={closePanel} onLocate={locate} />}
     </div>

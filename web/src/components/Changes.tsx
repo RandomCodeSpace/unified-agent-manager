@@ -27,6 +27,7 @@ export function ChangesSheet({
   session,
   projectName,
   changes,
+  changesError,
   inline,
   onRefresh,
   onClose,
@@ -34,6 +35,8 @@ export function ChangesSheet({
   session: SessionSummary;
   projectName: string;
   changes: ChangesData | null;
+  /** Why the default scope's list failed to load; null while it loads or once it has. */
+  changesError: string | null;
   inline: boolean;
   onRefresh: () => void;
   onClose: () => void;
@@ -41,7 +44,7 @@ export function ChangesSheet({
   const canSession = session.capabilities.session_diff;
   const [scope, setScope] = useState<Scope>(defaultScope(session));
   const [other, setOther] = useState<ChangesData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [otherError, setError] = useState<string | null>(null);
   const [path, setPath] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -64,6 +67,7 @@ export function ChangesSheet({
   }, [session.id, scope, isDefault, tick]);
 
   const data = isDefault ? changes : other;
+  const error = isDefault ? changesError : otherError;
   const files = data?.supported ? data.files : [];
   const shownPath = path && files.some((f) => f.path === path) ? path : (files[0]?.path ?? null);
   const adds = files.reduce((n, f) => n + f.additions, 0);
@@ -119,8 +123,11 @@ export function ChangesSheet({
       <ul className="max-h-[40%] shrink-0 overflow-y-auto border-b border-hairline p-1">
         {error && (
           <li className="px-2 py-1">
-            <Note tone="error" role="alert">
-              {error}
+            <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
+              <span className="min-w-0 flex-1">Could not load the changes: {error}</span>
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
             </Note>
           </li>
         )}
