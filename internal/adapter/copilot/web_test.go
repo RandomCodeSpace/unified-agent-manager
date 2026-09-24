@@ -409,6 +409,27 @@ func TestWebAllowOnceMarkerFollowsManagedPolicy(t *testing.T) {
 	}
 }
 
+// Only a person's approve_once is reported as approved interactively; an
+// automatic (yolo) approval leaves the flag off.
+func TestWebApproveOnceReportsWhetherAPersonApproved(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	h.fs.onEvent(ev("e1", shellRequest("human")))
+	h.fs.onEvent(ev("e2", shellRequest("auto")))
+	if err := h.conv.Respond(ctx, "human", agentapi.Answer{Decision: "approve_once"}); err != nil {
+		t.Fatalf("Respond human: %v", err)
+	}
+	if err := h.conv.Respond(ctx, "auto", agentapi.Answer{Decision: "approve_once", Auto: true}); err != nil {
+		t.Fatalf("Respond auto: %v", err)
+	}
+	if d, ok := h.fs.answer("human").(*rpc.PermissionDecisionApproveOnce); !ok || d.ApprovedInteractively == nil || !*d.ApprovedInteractively {
+		t.Fatalf("human decision = %#v", h.fs.answer("human"))
+	}
+	if d, ok := h.fs.answer("auto").(*rpc.PermissionDecisionApproveOnce); !ok || d.ApprovedInteractively != nil {
+		t.Fatalf("auto decision = %#v", h.fs.answer("auto"))
+	}
+}
+
 func TestWebPermissionWaitsForRespond(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()

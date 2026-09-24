@@ -221,6 +221,26 @@ func TestModeSwitchAnswersPendingAndAppliesToLaterRequests(t *testing.T) {
 	}
 }
 
+// Only yolo marks its answer automatic; a browser cannot claim to be yolo.
+func TestOnlyYoloAnswersAreMarkedAutomatic(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	yolo, yconv := createTask(t, ts.m, ts.prov, "yolo")
+	safe, sconv := createTask(t, ts.m, ts.prov, "safe")
+	yconv.EmitInteraction(onceRequest("p1", ""))
+	waitAllowed(t, ts.m, yolo.ID, "p1")
+	sconv.EmitInteraction(onceRequest("p2", ""))
+	if w := ts.do(http.MethodPost, "/api/sessions/"+safe.ID+"/interactions/p2", `{"decision":"once","auto":true}`, auth); w.Code != http.StatusOK {
+		t.Fatalf("browser answer = %d %s", w.Code, w.Body)
+	}
+	if r := yconv.Responds(); len(r) != 1 || !r[0].Answer.Auto {
+		t.Fatalf("yolo responds = %+v", r)
+	}
+	if r := sconv.Responds(); len(r) != 1 || r[0].Answer.Auto {
+		t.Fatalf("browser responds = %+v", r)
+	}
+}
+
 func TestModeValidation(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)

@@ -2169,7 +2169,7 @@ func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) {
 	if i < 0 {
 		return
 	}
-	conv, id, answer := s.conv, ix.ID, agentapi.Answer{Decision: ix.Options[i].ID}
+	conv, id, answer := s.conv, ix.ID, agentapi.Answer{Decision: ix.Options[i].ID, Auto: true}
 	ix.answering, ix.yolo = true, true
 	m.wg.Add(1)
 	go func() {

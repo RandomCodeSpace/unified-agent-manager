@@ -657,6 +657,9 @@ func (c *conversation) Respond(ctx context.Context, id string, ans agentapi.Answ
 		c.mu.Unlock()
 		return fmt.Errorf("copilot: unknown permission decision %q", ans.Decision)
 	}
+	if _, once := decision.(*rpc.PermissionDecisionApproveOnce); once && ans.Auto {
+		decision = &rpc.PermissionDecisionApproveOnce{} // no person approved it
+	}
 	in.answering = true
 	c.mu.Unlock()
 

@@ -412,7 +412,8 @@ that behaves the same.
 
 | Addition | Meaning |
 |---|---|
-| `Option.AllowOnce` (`allow_once`) | Marks the decision that allows this one request and nothing more. Copilot marks `approve_once` unless managed policy requires a person. OpenCode marks `once`. |
+| `Option.AllowOnce` (`allow_once`) | Marks the decision that allows this one request and nothing more. Copilot marks `approve_once` unless managed policy requires a person or the SDK cannot read the request's kind. OpenCode marks `once`. |
+| `Answer.Auto` (never serialized) | Set only by yolo. Copilot then sends `approve_once` without `approvedInteractively`, which it sets for a person's answer. A client cannot set it. |
 
 ### HTTP additions and changes
 

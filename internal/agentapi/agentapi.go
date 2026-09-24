@@ -347,6 +347,9 @@ type Answer struct {
 	Decision string     `json:"decision,omitempty"`
 	Answers  [][]string `json:"answers,omitempty"`
 	Reject   bool       `json:"reject,omitempty"`
+	// Auto marks an answer UAM gave on its own (yolo), not one a person chose.
+	// It is internal: a client can never set it.
+	Auto bool `json:"-"`
 }
 
 // SubagentStatus is the lifecycle of one subagent.
