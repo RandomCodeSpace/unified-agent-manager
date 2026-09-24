@@ -1,25 +1,54 @@
-import { ChevronRight, Ellipsis, FolderMinus, FolderPlus, GitBranch, LogOut, Plus, Settings2, SquarePen } from 'lucide-react';
+import { ChevronDown, ChevronRight, Ellipsis, FolderMinus, FolderPlus, GitBranch, ListFilter, LogOut, Settings as SettingsIcon, Settings2, Search, SquarePen, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, needsYou, readOnly, type Project, type SessionSummary } from '../api';
+import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
-import { groupTasks, mostRecentProject, tasksOf } from '../lib/tasks';
+import { filteredProject, groupTasks, mostRecentProject, sidebarTasks, visibleProjects } from '../lib/tasks';
 import type { Connection } from '../state';
-import { Dot, InlineName, STATE_LABELS, STATE_TONE, Sep, StateMark, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
+import { Dot, InlineName, ProjectBadge, STATE_LABELS, STATE_TONE, StateMark, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
+import { PreviousSessionsEntry, usePreviousCounts } from './PreviousSessions';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
+import copilotIcon from '../assets/copilot.svg';
 
 /** Project-level navigation and actions. */
 export interface WorkspaceActions {
-  onHome: () => void;
   onNewTask: (projectId: string) => void;
   onAddProject: () => void;
   onEditProject: (p: Project) => void;
   onRemoveProject: (p: Project) => void;
-  /** UI-local collapsed project groups. */
-  collapsed: ReadonlySet<string>;
-  onToggleProject: (id: string) => void;
+  /** The Project the sidebar is filtered to; null shows every Project. Remembered per browser. */
+  filter: string | null;
+  onFilter: (id: string | null) => void;
+  /** Whether the sidebar (or, on a narrow screen, the drawer) is showing. */
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  settingsOpen: boolean;
+  onSettings: () => void;
+}
+
+/**
+ * The sidebar toggle (Ctrl/Cmd+B). In the sidebar header it hides the sidebar; at the start
+ * of the main pane's header, once hidden, it brings it back. On a narrow screen it opens
+ * and closes the drawer instead.
+ */
+export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = false, className }: { id?: string; open: boolean; onToggle: () => void; size?: 'icon' | 'icon-md'; wordmark?: boolean; className?: string }) {
+  const label = open ? 'Hide sidebar' : 'Show sidebar';
+  return (
+    <Tip
+      label={
+        <>
+          {label}
+          <span className="block text-on-primary/70">Ctrl+B</span>
+        </>
+      }
+    >
+      <Button id={id} size={wordmark ? 'md' : size} aria-label={label} aria-expanded={open} aria-keyshortcuts="Control+B Meta+B" className={cn('[&_svg]:size-4', wordmark && 'px-1', className)} onClick={onToggle}>
+        <Brand markOnly={!wordmark} />
+      </Button>
+    </Tip>
+  );
 }
 
 export const CONNECTION_TEXT: Record<Connection, string> = {
@@ -45,7 +74,7 @@ function readShelves(): Record<string, boolean> {
 export function Brand({ className, markOnly = false }: { className?: string; markOnly?: boolean }) {
   return (
     <span className={cn('inline-flex items-center gap-2', className)}>
-      <svg aria-hidden="true" viewBox="0 0 20 20" className="size-5 shrink-0">
+      <svg aria-hidden="true" viewBox="0 0 20 20" className="size-4 shrink-0">
         <rect x="1" y="1" width="18" height="18" rx="5" className="fill-ink" />
         <rect x="4.5" y="5" width="4.5" height="10" rx="1.2" className="fill-raised" />
         <rect x="11" y="5" width="4.5" height="6" rx="1.2" className="fill-raised" />
@@ -60,8 +89,8 @@ export function Brand({ className, markOnly = false }: { className?: string; mar
 
 const NAV = '[data-nav]:not([disabled])';
 
-/** Arrow keys move between rows; Home/End jump; Left/Right collapse or expand a project. */
-function onListKeyDown(e: KeyboardEvent<HTMLElement>, actions: WorkspaceActions) {
+/** Arrow keys move between visible Task and shelf rows; Home/End jump. */
+function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
   const target = e.target as HTMLElement;
   if (target.tagName === 'INPUT') return;
   const rows = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(NAV)).filter((el) => el.offsetParent !== null);
@@ -79,16 +108,7 @@ function onListKeyDown(e: KeyboardEvent<HTMLElement>, actions: WorkspaceActions)
       return focus(0);
     case 'End':
       return focus(rows.length - 1);
-    case 'ArrowRight':
-    case 'ArrowLeft': {
-      const project = target.dataset.project;
-      if (!project) return;
-      const open = target.getAttribute('aria-expanded') === 'true';
-      if ((e.key === 'ArrowRight') !== open) {
-        actions.onToggleProject(project);
-        e.preventDefault();
-      } else if (e.key === 'ArrowRight') focus(i + 1);
-    }
+
   }
 }
 
@@ -129,41 +149,44 @@ function rowMeta(s: SessionSummary, unread: boolean): { text: string; tone: stri
   return { text: relTime(s.updated_at), tone: 'text-muted' };
 }
 
-function TaskRow({ session: s, selected }: { session: SessionSummary; selected: boolean }) {
+function TaskRow({ session: s, project, selected }: { session: SessionSummary; project: Project; selected: boolean }) {
   const { hasNews } = useApp();
   const a = useTaskActions();
-  const [menuOpen, setMenuOpen] = useState(false);
+  // A touch release after opening the context menu must not select the Task and close the drawer.
+  const contextOpen = useRef(false);
   const unread = hasNews(s);
   const attention = needsYou(s) && !readOnly(s);
   const strong = selected || attention || unread;
   const items = taskMenuItems(s, a, 'row');
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
   const meta = rowMeta(s, unread);
-  // One class string for the button and for the plain grid that replaces it while renaming, so the swap never shifts layout.
+  // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   const rowClass = cn(
-    'grid h-8 w-full grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-2 pl-2 text-left text-ui transition-[background-color,color,box-shadow] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11 pointer-coarse:pr-10',
-    selected ? 'bg-raised text-ink shadow-raised' : 'hover:bg-canvas',
-    menuOpen && !selected && 'bg-canvas',
+    'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised/75 px-2.5 py-2 text-left text-caption transition-colors duration-100 focus-visible:-outline-offset-2',
+    selected ? 'bg-accent-wash/65 text-ink' : 'hover:bg-sunken',
     readOnly(s) && !selected && 'text-muted',
     strong ? 'font-medium text-ink' : 'text-body',
   );
 
   const row = (
-    <div className={cn('group relative', menuOpen && 'is-open')} data-task-row={s.id}>
+    <div data-task-row={s.id}>
       {renaming ? (
         // Not a button while the input is inside: interactive content cannot nest in one.
         <div className={rowClass}>
-          <StateMark state={s.state} />
-          <Sep />
-          <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="col-span-2 h-6" label="Task name" />
+          <span className="flex w-full min-w-0 items-center gap-1.5 text-keycap text-muted"><ProjectBadge badge={project.badge} /><span className="truncate">{project.name}</span></span>
+          <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
         </div>
       ) : (
         <button
           type="button"
           data-nav=""
           aria-current={selected ? 'true' : undefined}
+          title={taskName(s) || 'New task'}
           className={rowClass}
-          onClick={() => a.select(s.id)}
+          onClick={(event) => {
+            if (contextOpen.current) { event.preventDefault(); return; }
+            a.select(s.id);
+          }}
           onDoubleClick={() => canRename(s, a) && a.startRename(s.id, 'row')}
           onKeyDown={(e) => {
             if (e.key === 'F2' && canRename(s, a)) {
@@ -172,47 +195,31 @@ function TaskRow({ session: s, selected }: { session: SessionSummary; selected: 
             }
           }}
         >
-          <StateMark state={s.state} />
-          <Sep />
-          <TaskTitle session={s} className="truncate" />
-          <Sep />
-          <span
-            className={cn(
-              'text-caption tabular-nums whitespace-nowrap transition-opacity duration-100 group-hover:opacity-0 group-focus-within:opacity-0 group-[.is-open]:opacity-0 pointer-coarse:group-hover:opacity-100 pointer-coarse:group-focus-within:opacity-100',
-              meta.tone,
-            )}
-          >
-            {meta.text}
+          <span className="flex w-full min-w-0 items-center gap-1.5">
+            {s.provider && <span className="shrink-0 text-keycap font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
+              {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
+            </span>}
+            <TaskTitle session={s} className="min-w-0 flex-1 truncate text-caption" />
+            <span className={cn('flex shrink-0 items-center gap-1 text-keycap font-normal tabular-nums whitespace-nowrap', meta.tone)}>
+              {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
+              {meta.text}
+            </span>
+          </span>
+          <span className="flex w-full min-w-0 items-center gap-1.5 text-keycap font-normal text-muted">
+            <ProjectBadge badge={project.badge} />
+            <span className="min-w-0 flex-1 truncate" title={project.dir}>{project.name}</span>
+            {project.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
+            {readOnly(s) && <span className="shrink-0">{s.stage === 'archived' ? 'Archived' : 'Settled'}</span>}
           </span>
         </button>
       )}
-      {!renaming && (
-        <Menu.Root open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
-          <Menu.Trigger
-            render={
-              <Button
-                size="icon"
-                variant={selected ? 'subtle' : 'ghost'}
-                aria-label={`Actions for ${s.name || s.title || 'new task'}`}
-                className={cn(
-                  'absolute top-1/2 right-1 -translate-y-1/2 text-muted opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100 data-open:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100',
-                )}
-              />
-            }
-          >
-            <Ellipsis />
-          </Menu.Trigger>
-          <Menu.Content align="start" side="right" sideOffset={6}>
-            <Menu.Actions items={items} />
-          </Menu.Content>
-        </Menu.Root>
-      )}
+
     </div>
   );
 
   return (
     <li>
-      <ContextMenu.Root>
+      <ContextMenu.Root onOpenChange={(open) => { contextOpen.current = open; }}>
         <ContextMenu.Trigger render={<div />}>{row}</ContextMenu.Trigger>
         <ContextMenu.Content>
           <ContextMenu.Actions items={items} />
@@ -224,7 +231,7 @@ function TaskRow({ session: s, selected }: { session: SessionSummary; selected: 
 
 /* ---------- Shelf (Settled / Archived) ---------- */
 
-function Shelf({ label, tasks, selectedId, open, onToggle }: { label: string; tasks: SessionSummary[]; selectedId: string | null; open: boolean; onToggle: () => void }) {
+function Shelf({ projects, label, tasks, selectedId, open, onToggle }: { projects: ReadonlyMap<string, Project>; label: string; tasks: SessionSummary[]; selectedId: string | null; open: boolean; onToggle: () => void }) {
   if (tasks.length === 0) return null;
   const pinned = !open ? tasks.find((t) => t.id === selectedId) : undefined;
   return (
@@ -245,140 +252,80 @@ function Shelf({ label, tasks, selectedId, open, onToggle }: { label: string; ta
       <Collapsible open={open}>
         <ul className="flex flex-col gap-px pt-px">
           {tasks.map((t) => (
-            <TaskRow key={t.id} session={t} selected={t.id === selectedId} />
+            <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />
           ))}
         </ul>
       </Collapsible>
       {pinned && (
         <ul className="flex flex-col gap-px">
-          <TaskRow session={pinned} selected />
+          <TaskRow project={projects.get(pinned.project_id)!} session={pinned} selected />
         </ul>
       )}
     </div>
   );
 }
 
-/* ---------- Project group ---------- */
-
-function ProjectGroup({
-  project: p,
-  tasks,
-  selectedId,
-  actions,
-  shelves,
-  onToggleShelf,
-}: {
-  project: Project;
-  tasks: SessionSummary[];
-  selectedId: string | null;
-  actions: WorkspaceActions;
-  shelves: Record<string, boolean>;
-  onToggleShelf: (key: string) => void;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const open = !actions.collapsed.has(p.id);
-  const { active, settled, archived } = groupTasks(tasks);
-  const attention = active.filter(needsYou).length;
-  const pinned = !open ? tasks.find((t) => t.id === selectedId) : undefined;
+/** Project management follows the selected filter; it never heads a collapsible Task group. */
+function ProjectActions({ project, actions }: { project: Project; actions: WorkspaceActions }) {
   const items: ActionItem[] = [
-    { key: 'new', label: 'New task', icon: <SquarePen />, onSelect: () => actions.onNewTask(p.id) },
-    { key: 'edit', label: 'Edit project', icon: <Settings2 />, onSelect: () => actions.onEditProject(p), separator: true },
-    { key: 'remove', label: 'Remove project', icon: <FolderMinus />, danger: true, onSelect: () => actions.onRemoveProject(p) },
+    { key: 'new', label: 'New task', icon: <SquarePen />, onSelect: () => actions.onNewTask(project.id) },
+    { key: 'edit', label: 'Edit project', icon: <Settings2 />, onSelect: () => actions.onEditProject(project), separator: true },
+    { key: 'remove', label: 'Remove project', icon: <FolderMinus />, danger: true, onSelect: () => actions.onRemoveProject(project) },
   ];
+  return <Menu.Root modal={false}>
+    <Menu.Trigger render={<Button size="icon" aria-label={`Project actions for ${project.name}`} className="text-muted" />}><Ellipsis /></Menu.Trigger>
+    <Menu.Content align="end"><Menu.Actions items={items} /></Menu.Content>
+  </Menu.Root>;
+}
 
+/* ---------- Project filter ---------- */
+
+/** "All projects" or the chosen Project's badge and name; the menu lists every Project. Active, it sits raised with a one-click clear. */
+function ProjectFilter({ projects, filter, onFilter, actions }: { projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; actions: WorkspaceActions }) {
+  const chosen = filteredProject(projects, filter);
   return (
-    <section aria-label={p.name} className="mb-2">
-      <ContextMenu.Root>
-        <ContextMenu.Trigger render={<div />}>
-          <div className={cn('group relative', menuOpen && 'is-open')}>
+    <div className="flex shrink-0 items-center gap-0.5 px-2 pb-1">
+      <Menu.Root modal={false}>
+        <Menu.Trigger
+          render={
             <button
               type="button"
-              data-nav=""
-              data-project={p.id}
-              aria-expanded={open}
+              aria-label={chosen ? `Project filter: ${chosen.name}` : 'Project filter: all projects'}
               className={cn(
-                'flex w-full items-center gap-1.5 rounded-sm pr-16 pl-1 text-left transition-colors duration-100 hover:bg-canvas focus-visible:-outline-offset-2 pointer-coarse:pr-20',
-                p.branch ? 'min-h-10 py-1 pointer-coarse:min-h-12' : 'h-8 pointer-coarse:h-11',
-                menuOpen && 'bg-canvas',
+                'flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-sm pr-1.5 pl-1 text-left text-ui transition-[background-color,color,box-shadow] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
+                chosen ? 'bg-raised font-medium text-ink shadow-raised' : 'text-muted hover:bg-canvas hover:text-body data-open:bg-canvas',
               )}
-              onClick={() => actions.onToggleProject(p.id)}
-            >
-              <span className="relative flex size-4 shrink-0 items-center justify-center">
-                <ChevronRight
-                  aria-hidden="true"
-                  className={cn('size-3.5 text-faint transition-[transform,opacity] duration-160 ease-app', open && 'rotate-90', !open && attention > 0 && 'opacity-0 group-hover:opacity-100')}
-                />
-                {!open && attention > 0 && <Dot tone="attention" className="absolute transition-opacity duration-160 group-hover:opacity-0" />}
-              </span>
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-ui font-medium text-ink">{p.name}</span>
-                {p.branch && (
-                  <span className="flex min-w-0 items-center gap-1 text-caption text-muted" title={p.branch}>
-                    <GitBranch aria-hidden="true" className="size-3 shrink-0 text-faint" />
-                    <span className="truncate font-mono text-keycap">{p.branch}</span>
-                  </span>
-                )}
-              </span>
-              {!open && (
-                <span className="ml-auto text-caption tabular-nums text-faint">
-                  {active.length}
-                  <span className="sr-only"> active tasks</span>
-                  {attention > 0 && <span className="sr-only">, {attention} need you</span>}
+            />
+          }
+        >
+          {chosen ? <ProjectBadge badge={chosen.badge} /> : <ListFilter aria-hidden="true" className="mx-0.5 size-4 text-faint" />}
+          <span className="truncate">{chosen ? chosen.name : 'All projects'}</span>
+          <ChevronDown aria-hidden="true" className="ml-auto size-3 shrink-0 text-faint" />
+        </Menu.Trigger>
+        <Menu.Content align="start" side="bottom" sideOffset={4} className="min-w-56">
+          <Menu.RadioGroup value={chosen?.id ?? ''} onValueChange={(v) => onFilter(v ? String(v) : null)}>
+            <Menu.Label>Show</Menu.Label>
+            <Menu.RadioItem value="">All projects</Menu.RadioItem>
+            {projects.map((p) => (
+              <Menu.RadioItem key={p.id} value={p.id}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <ProjectBadge badge={p.badge} />
+                  <span className="truncate">{p.name}</span>
                 </span>
-              )}
-            </button>
-            <span className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100 group-[.is-open]:opacity-100 pointer-coarse:opacity-100">
-              <Tip label="New task">
-                <Button size="icon" aria-label={`New task in ${p.name}`} className="text-muted" onClick={() => actions.onNewTask(p.id)}>
-                  <SquarePen />
-                </Button>
-              </Tip>
-              <Menu.Root open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
-                <Menu.Trigger render={<Button size="icon" aria-label={`Project actions for ${p.name}`} className="text-muted data-open:opacity-100" />}>
-                  <Ellipsis />
-                </Menu.Trigger>
-                <Menu.Content align="start" side="right" sideOffset={6}>
-                  <Menu.Actions items={items} />
-                </Menu.Content>
-              </Menu.Root>
-            </span>
-          </div>
-        </ContextMenu.Trigger>
-        <ContextMenu.Content>
-          <ContextMenu.Actions items={items} />
-        </ContextMenu.Content>
-      </ContextMenu.Root>
-
-      <Collapsible open={open}>
-        <div className="pt-px pl-2">
-          <ul className="flex flex-col gap-px">
-            {active.map((t) => (
-              <TaskRow key={t.id} session={t} selected={t.id === selectedId} />
+              </Menu.RadioItem>
             ))}
-            {active.length === 0 && (
-              <li>
-                <button
-                  type="button"
-                  data-nav=""
-                  className="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-ui text-muted transition-colors hover:bg-canvas hover:text-ink focus-visible:-outline-offset-2 pointer-coarse:h-11"
-                  onClick={() => actions.onNewTask(p.id)}
-                >
-                  <Plus aria-hidden="true" className="size-4 text-faint" />
-                  New task
-                </button>
-              </li>
-            )}
-          </ul>
-          <Shelf label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${p.id}:settled`]} onToggle={() => onToggleShelf(`${p.id}:settled`)} />
-          <Shelf label="Archived" tasks={archived} selectedId={selectedId} open={!!shelves[`${p.id}:archived`]} onToggle={() => onToggleShelf(`${p.id}:archived`)} />
-        </div>
-      </Collapsible>
-      {pinned && (
-        <ul className="pl-2">
-          <TaskRow session={pinned} selected />
-        </ul>
+          </Menu.RadioGroup>
+        </Menu.Content>
+      </Menu.Root>
+      {chosen && <ProjectActions project={chosen} actions={actions} />}
+      {chosen && (
+        <Tip label="Show all projects">
+          <Button size="icon" aria-label="Clear the project filter" className="text-muted" onClick={() => onFilter(null)}>
+            <X />
+          </Button>
+        </Tip>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -404,9 +351,18 @@ export function Sidebar({
   version?: string;
 }) {
   useMinuteTick();
+  const previousCounts = usePreviousCounts(projects, sessions);
+  const [query, setQuery] = useState('');
   const [shelves, setShelves] = useState<Record<string, boolean>>(readShelves);
   const list = useRef<HTMLDivElement>(null);
-  const recent = useMemo(() => mostRecentProject(projects, sessions, selectedId), [projects, sessions, selectedId]);
+  // Under a filter, New task targets the filtered Project.
+  const visible = useMemo(() => visibleProjects(projects, actions.filter), [projects, actions.filter]);
+  const chosen = filteredProject(projects, actions.filter);
+  const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
+  const tasks = useMemo(() => sidebarTasks(projects, sessions, actions.filter, query), [projects, sessions, actions.filter, query]);
+  const { active, settled, archived } = groupTasks(tasks);
+  const shelfScope = chosen?.id ?? 'all';
+  const recent = useMemo(() => mostRecentProject(visible, sessions, selectedId), [visible, sessions, selectedId]);
   const toggleShelf = (key: string) =>
     setShelves((s) => {
       const next = { ...s, [key]: !s[key] };
@@ -423,16 +379,17 @@ export function Sidebar({
   const conn = CONNECTION_TONE[connection];
 
   return (
-    <nav aria-label="Projects" className="flex h-full min-h-0 flex-col bg-rail text-body">
-      <header className="flex h-header shrink-0 items-center gap-0.5 pr-2 pl-3">
-        <button type="button" className="mr-auto flex h-8 items-center rounded-sm pr-2 transition-colors hover:bg-canvas pointer-coarse:h-11" onClick={actions.onHome} aria-label="Home">
-          <Brand />
-        </button>
-        <Tip label={connection === 'connected' ? 'Connected' : CONNECTION_TEXT[connection]}>
-          <span role="status" className="flex size-7 items-center justify-center">
-            <Dot tone={conn} pulse={connection !== 'connected'} />
-            <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
-          </span>
+    <nav aria-label="Tasks" className="flex h-full min-h-0 flex-col bg-rail text-body">
+      <header className="flex h-header shrink-0 items-center gap-0.5 px-2">
+        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted focus-within:bg-raised focus-within:outline focus-within:outline-focus">
+          <Search aria-hidden="true" className="size-3.5 shrink-0" />
+          <input type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
+        </label>
+        <SidebarToggle id="sidebar-hide" open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
+        <Tip label="Add project">
+          <Button size="icon" aria-label="Add project" className="text-muted" onClick={actions.onAddProject}>
+            <FolderPlus />
+          </Button>
         </Tip>
         {recent && (
           <Tip
@@ -448,15 +405,14 @@ export function Sidebar({
             </Button>
           </Tip>
         )}
-        <Tip label="Add project">
-          <Button size="icon" aria-label="Add project" className="text-muted" onClick={actions.onAddProject}>
-            <FolderPlus />
-          </Button>
-        </Tip>
+
       </header>
 
+      {projects.length > 0 && <ProjectFilter projects={projects} filter={actions.filter} onFilter={actions.onFilter} actions={actions} />}
+      {chosen && <div className="px-2"><PreviousSessionsEntry key={chosen.id} project={chosen} count={previousCounts[chosen.id]} /></div>}
+
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
-      <div ref={list} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-1 pb-3" onKeyDown={(e) => onListKeyDown(e, actions)}>
+      <div ref={list} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-1 pb-3" onKeyDown={(e) => onListKeyDown(e)}>
         {projects.length === 0 ? (
           <div className="flex flex-col items-start gap-3 px-2 pt-6">
             <p className="text-ui text-muted">No projects yet. A project is a directory on this host.</p>
@@ -465,10 +421,18 @@ export function Sidebar({
               Add project
             </Button>
           </div>
+        ) : query.trim() ? (
+          <>
+            <p className="px-2 py-2 text-caption text-muted" role="status">{tasks.length} matching tasks</p>
+            <ul className="flex flex-col gap-1">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+          </>
         ) : (
-          projects.map((p) => (
-            <ProjectGroup key={p.id} project={p} tasks={tasksOf(sessions, p.id)} selectedId={selectedId} actions={actions} shelves={shelves} onToggleShelf={toggleShelf} />
-          ))
+          <>
+            <ul className="flex flex-col gap-1">{active.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+            {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
+            <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${shelfScope}:settled`]} onToggle={() => toggleShelf(`${shelfScope}:settled`)} />
+            <Shelf projects={projectMap} label="Archived" tasks={archived} selectedId={selectedId} open={!!shelves[`${shelfScope}:archived`]} onToggle={() => toggleShelf(`${shelfScope}:archived`)} />
+          </>
         )}
       </div>
 
@@ -478,7 +442,18 @@ export function Sidebar({
           {CONNECTION_TEXT[connection]}
         </p>
       )}
-      <footer className="flex h-9 shrink-0 items-center gap-2 px-3 text-caption text-faint">
+      <footer className="flex min-h-9 shrink-0 items-center gap-2 px-3 text-caption text-faint">
+        <Tip label="Settings">
+          <Button size="icon" aria-label="Settings" aria-pressed={actions.settingsOpen} className="-ml-1.5 text-muted" onClick={actions.onSettings}>
+            <SettingsIcon />
+          </Button>
+        </Tip>
+        <Tip label={connection === 'connected' ? 'Connected' : CONNECTION_TEXT[connection]}>
+          <span role="status" className="flex size-7 items-center justify-center">
+            <Dot tone={conn} pulse={connection !== 'connected'} />
+            <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
+          </span>
+        </Tip>
         {version && <span className="truncate font-mono text-keycap">{version}</span>}
         <span className="flex-1" />
         {authRequired && (

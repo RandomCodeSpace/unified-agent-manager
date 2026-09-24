@@ -1,4 +1,5 @@
 import { modelCatalog, provider, type TaskDefaults } from '../api';
+import { modelChoices } from '../lib/models';
 import { MODE_TEXT, contextReason, effortReason, sizeLabel } from './Composer';
 import { Note, useApp } from './common';
 import { Select } from './ui/select';
@@ -20,9 +21,10 @@ export function Field({ id, label, hint, children }: { id: string; label: string
 
 /** The settings a new Task starts with: model, effort, context size and mode. Used by the Add and Edit project dialogs. */
 export function TaskDefaultsFields({ prefix, value, disabled, onChange }: { prefix: string; value: TaskDefaults; disabled: boolean; onChange: (next: TaskDefaults) => void }) {
-  const { meta } = useApp();
+  const { meta, settings } = useApp();
   const chosen = provider(meta, value.provider);
   const catalog = modelCatalog(meta, value.provider);
+  const choices = modelChoices(catalog, settings.hidden_models?.[value.provider], value.model);
   const model = catalog.find((m) => m.id === value.model);
   const noEffort = effortReason(model);
   const noContext = contextReason(model, !!chosen?.capabilities.context_size);
@@ -37,7 +39,7 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: { pref
               mono
               value={value.model}
               disabled={disabled}
-              items={catalog.map((m) => ({ value: m.id, label: m.name }))}
+              items={choices.map(({ model: m, note }) => ({ value: m.id, label: `${m.name}${note ? ` (${note.toLowerCase()})` : ''}`, hidden: !!note }))}
               onValueChange={(id) => {
                 const next = catalog.find((m) => m.id === id);
                 onChange({

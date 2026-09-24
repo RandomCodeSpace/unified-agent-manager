@@ -24,7 +24,8 @@ structured APIs:
 
 Only Copilot is registered for now. Web features are built against Copilot
 first, and a provider is offered only when it supports them the same way.
-Per-Task context size is the one capability-gated exception to this rule.
+Per-Task context size, usage and credits (#188), and importing previous
+sessions are capability-gated exceptions to this rule.
 The image and PDF gate for attachments is not an exception: it follows what
 each model reports, and every provider must apply it the same way.
 The OpenCode integration stays in the code base, unregistered.
@@ -57,11 +58,12 @@ Web sessions are stored in `sessions.json` as ordinary `SessionRecord`s with
 `provider_session_id`, and a small `web` object with the last known turn state
 and last accepted prompt request ID. Terminal commands and the dashboard do
 not list, attach, resume, or prune records whose `surface` is non-empty, and
-the web service only opens `surface: "web"` records. Neither surface takes over
-a conversation owned by the other.
+the web service only opens `surface: "web"` records. Import can link a new
+web Task to a terminal conversation after the in-use check; each surface retains its own record and never deletes the other.
 
 Tokens and transcripts are not written to disk by UAM. Transcript history is
-read back from the provider when a conversation is reopened.
+read back from the provider when a conversation is reopened, and read without
+opening it for a Task whose conversation is not open (see Task lifecycle).
 
 ### Access
 
@@ -228,9 +230,10 @@ Context sizes are `{id, tokens}` entries. Copilot advertises `default` and,
 when available, `long_context`, using the corresponding billing prompt
 budgets. These are not the model's total context window. No known budget
 means no size option; `auto` has none. The `context_size` capability enables
-per-Task selection and is the only provider-parity exception. A provider
+per-Task selection and is the first provider-parity exception. A provider
 without it accepts only Default. The browser warns that long context may
-cost more; the API does not expose prices. Creation defaults to `default`;
+cost more; models carry their token prices since #188 (see Usage and
+credits). Creation defaults to `default`;
 an explicit empty `context_size` also selects `default`.
 
 Model, effort and context size are validated together under the Task's
@@ -524,9 +527,75 @@ This replaces the delete and remove rules in the Projects section above.
 - **Retries.** A repeated `request_id` of a prompt sent before the Task was
   settled still returns its recorded outcome.
 
-A settled or archived Task shows no transcript after the service restarts,
-because UAM keeps no transcript and does not open the conversation to read it.
-The same is true of a closed Task today.
+### Transcripts of Tasks that are not open
+
+- Date: 2026-09-24 (decided in #193; replaces "a settled or archived Task
+  shows no transcript after the service restarts")
+
+Viewing a Task whose conversation is not open reads its recorded transcript
+without opening the conversation. That covers settled and archived Tasks,
+closed and failed ones, and every Task after the service restarts until its
+conversation opens again. Viewing means `GET /api/sessions/{id}`, the
+snapshot of `GET /api/events?session={id}`, and `GET
+/api/sessions/{id}/subagents/{agent_id}`.
+
+- **Read-only.** Reading sends nothing, changes neither mode nor model, and
+  leaves the Task as it was: its stage, state and `updated_at` stay, and a
+  settled or archived Task stays read-only. A failed read changes nothing
+  either; the detail says why.
+- **Copilot.** The adapter reads the persisted journal with
+  `sessions.readPersistedEvents` (experimental). It does not create, resume
+  or activate the session, so it takes no in-use lock and starts no hook or
+  MCP server. It retains at most 16 MiB of encoded events and 64 pages,
+  newest first. A longer journal keeps its newest part and sets
+  `history_truncated`. Older pages are drained without retention to finish
+  the SDK snapshot and release its handle. The SDK exposes no release-cursor
+  call. Cancellation is bounded by the read context; a cursor left after an
+  interrupted continuation expires after five idle minutes. The experimental
+  API excludes ephemeral events and may omit payloads reconstructed only
+  for an active session. The transcript is rebuilt by the same code as a
+  reopen. Measured with CLI 1.0.88 on a Task settled after two turns with a
+  subagent, and on one whose CLI was killed with an idle subagent: reading
+  left `events.jsonl` unchanged (size, modification time and SHA-256), and the
+  items, subagents and attachment digests matched a resume. A resume with
+  `getMessages` and a disconnect also wrote nothing to `events.jsonl`, but it
+  takes the in-use lock while it reads, removed a dead holder's stale lock
+  files, and activates the session, so it is not used for reading.
+- **OpenCode** (unregistered) uses its conversation open path, whose
+  transcript reads are GET requests. This is not a registered web provider.
+- **Missing journals.** CLI 1.0.88 returns an unstructured RPC -32603 error
+  containing `journal is unavailable` for an absent or unreadable journal.
+  The adapter maps that text to `ErrConversationNotFound`; a recorded-error
+  test pins the match. It cannot distinguish a missing journal from an
+  unreadable one.
+- **State.** `SessionDetail` gains `history`: `loaded`, `loading` or
+  `unavailable`, and `history_reason` when unavailable. Detail also has `seq`;
+  browsers discard an older detail response after a newer history event.
+  The first view answers `loading` at once and starts the read; a `history` event then
+  carries the items. A conversation that opens reads the record itself and
+  also sends a `history` event.
+- **Bounds.** At most two reads run at a time; views of a Task that is being
+  read share its read. A transcript read this way stays in memory and is
+  dropped after 10 minutes without a view while no event stream watches the
+  Task; the next view reads it again. A failed read is tried again on a view
+  a minute later. Encoded retained items and subagent metadata are capped at 16 MiB per history,
+  keeping its newest items; the history frame stays below the 32 MiB
+  subscriber limit. Cached histories share a 64 MiB budget with
+  least-recently-viewed eviction, including watched Tasks under pressure.
+  A delete or a send cancels an in-flight read. Import uses the HTTP request
+  context and waits at most five seconds for a read slot, then returns 503.
+- **Subagents.** Nothing of a conversation that is not open runs, so a
+  subagent the record leaves running shows as cancelled, as it does when a
+  conversation closes.
+
+| Provider contract addition (`internal/agentapi`) | Meaning |
+|---|---|
+| `HistoryReader.ReadHistory(ctx, ReadRequest{ConversationID, Workdir}) (History, error)` | Optional. Reads a record without opening the conversation; `ErrConversationNotFound` when the ID has none |
+| `History.Truncated` | Only the newest part of a record too large to read whole was returned |
+
+| Event | `data` |
+|---|---|
+| `history` | `{"seq", "session_id", "history", "history_reason"?, "history_truncated", "items": [Item], "subagents": [Subagent]}`: replaces the main-agent items and the subagents the browser shows |
 
 ### HTTP additions and changes
 
@@ -543,6 +612,10 @@ The same is true of a closed Task today.
 `SessionSummary` gains `stage` (omitted while active), `settled_at` and
 `archived_at` (omitted while unset). A stage change moves `updated_at`, is
 written to `sessions.json`, and sends a `session` frame.
+
+| Method and path | Body | Result |
+|---|---|---|
+| `GET /api/sessions/{id}` | – | `SessionDetail` gains `seq`, `history` and `history_reason`; a Task whose conversation is not open answers `loading` at once, and a `history` event follows |
 
 ## Stop one subagent
 
@@ -911,6 +984,266 @@ No request carries base64 in JSON.
 `QueuedPrompt` gains `attachments: [{"id", "name", "mime", "size"}]`, omitted
 when empty.
 
+## Project badges
+
+- Date: 2026-09-24 (decided in #184)
+
+Each Project has a badge: two characters on a colour, taken from its name.
+The owner asked for text from the Project's name and a random colour.
+
+- **Text.** Two uppercase ASCII letters or digits, unique among Projects. The
+  first is the name's first ASCII letter or digit, or `P` when it has none.
+  The second is the last ASCII letter or digit, so "config" gets `CG` and
+  "configuration" gets `CN`. When that pair is taken, choose a random remaining
+  letter or digit from the name. When those pairs are taken, or the name has
+  one character, use a random free A–Z, then any free pair. Only past 1,296
+  Projects can a text repeat; once all pairs are used, keep stored duplicates.
+- **Colour.** A key from a fixed palette of ten tones: `red`, `orange`,
+  `amber`, `lime`, `green`, `teal`, `cyan`, `blue`, `violet`, `pink`. UAM
+  picks at random among the tones no other Project uses, or among all ten
+  once each is used. The browser maps each key to a colour of the one theme;
+  the server stores and sends only the key.
+- **Assignment.** Adding a Project picks its badge against the stored
+  Projects. On start, UAM gives a new badge to every Project whose badge is
+  missing, whose text is not two uppercase ASCII letters or digits, whose
+  colour is not a palette key, or whose text an older Project's badge already
+  has; the older Project keeps its badge. It writes `sessions.json` only when
+  it changed a badge. A rename, a defaults change and a restart keep the
+  badge. If the store is read-only, assignment uses the Project ID as a
+  stable seed. The choices use `math/rand/v2`; a badge is not a secret.
+  The Add dialog says the badge is assigned when added, since its colour
+  and collision fallback depend on the Projects stored at that moment.
+- **Storage.** A `web_projects` entry gains `badge: {"text", "color"}`,
+  omitted until one is assigned, so nothing migrates.
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `POST /api/projects` | unchanged | 201 `Project` with its new badge |
+| `PATCH /api/projects/{id}` | unchanged | `Project`; the badge never changes |
+
+`Project` gains `badge: {"text", "color"}` in every response and in the
+`project` and `snapshot` frames.
+
+## Settings
+
+- Date: 2026-09-24 (decided in #183)
+
+The service stores the web interface's settings, so they apply in every
+browser. The first says what Enter does in the composer while a turn runs:
+`steer`, the owner's default, or `queue`. The other action stays on
+Ctrl/Cmd+Enter. Files and attachments queue because steering accepts text
+only. If the provider refuses steering as unsupported, the draft stays in
+place and the next Enter queues it with an explanation. Commands stay
+blocked during a turn because the server cannot queue commands.
+The browser applies the setting: the prompt API does not
+change, and the client still sends `mode`. The second picks the model that
+titles new Tasks, built to the contract from research #182.
+
+- **Storage.** A top-level `web_settings` object next to `web_projects` holds
+  `send_default`. It is omitted until a setting is changed, so nothing
+  migrates and a store the web interface never touched gains no key. On
+  load, an absent or unrecognised `send_default` means `steer` at runtime.
+  The raw value and keys a newer UAM wrote inside `web_settings` survive
+  unrelated writes.
+- **Checks on write.** `PATCH` accepts only keys it knows. An unknown key, a
+  value that is not a string, or a value other than `steer` or `queue` is 400
+  and changes nothing. A request that changes nothing writes nothing and
+  sends no frame.
+- **Hidden models (#191).** `hidden_models: {<provider>: [model ID]}` lists
+  the models the browser does not offer anywhere a model is chosen. A `PATCH`
+  replaces the list of each provider it names and leaves the others; an
+  empty list hides nothing for that provider, and the key is omitted when no
+  model is hidden. The provider must be registered. Each ID is 1 to 128
+  bytes of UTF-8 without control characters, as stored model IDs are
+  checked; duplicates are removed and the list is sorted; at most 200 IDs
+  per provider. IDs the catalog does not list now are kept, since models
+  can come back. Hiding every model the provider lists now is 400. On load,
+  invalid IDs are dropped and the same caps apply. Hiding is a display
+  preference, not a policy: the server does not refuse a hidden model in a
+  Task's or a Project's requests, and a Task or Project default already on
+  one keeps it.
+- **Task title model.** `title_model: {<provider>: <model ID>}` names the
+  model that titles a provider's new Tasks. A provider without an entry
+  keeps its own title, the default. In a headless Copilot session that title
+  is the first prompt as typed. A `PATCH` sets each provider it names and
+  leaves the others. An empty ID removes that provider's entry, and the key
+  is omitted when no provider has one. The provider must be registered. A
+  model also needs the `titles` capability and an ID in the provider's
+  current list, `auto` included. Anything else is 400. On load, UAM drops
+  entries whose provider or ID is empty, longer than 256 bytes or holds a
+  control character. The setting is read when a Task's first prompt is
+  accepted, so changing it never retitles a Task.
+- **When a Task gets a title.** Only when the provider accepts the Task's
+  first prompt, the Task has no name and no title yet, it has no user item
+  and no accepted or uncertain submission, and the setting names a model for
+  its provider. Commands, steers, later prompts and reopened Tasks never
+  start a job. UAM sends the prompt text only, sanitized and cut to 2,000
+  runes, never files or attachments. The job runs in the background and
+  never delays the turn. At most two run at once. Each gets 20 s from the
+  moment it has a slot.
+- **Applying it.** UAM drops `<think>` blocks from the reply and keeps the
+  content of a `<title>` or `<session-title>` element when there is one. It
+  takes the first non-empty line, sanitizes it and collapses whitespace. It
+  strips a `Title:` label, wrapping quotes, backticks and emphasis, and a
+  trailing `.`, `,`, `:` or `;`. Past 60 runes it cuts at the last space
+  within 60, or at 60, without an ellipsis. UAM then sets `web.title` and
+  calls `Conversation.SetTitle`. For Copilot that is `session.name.set`,
+  which marks the name as set by the user, so neither the CLI nor its TUI
+  renames the session later. Browsers still show `name || title || "New
+  task"`. Copilot's first-prompt title shows until UAM's arrives, 3 to 5 s
+  later in the probes. A rename made while the job runs wins, even one the
+  user cleared again. UAM then drops its title and leaves the conversation's
+  name alone.
+- **Failure.** An unavailable model, a send or session error, the timeout or
+  a reply that cleans to nothing leaves the provider's title. UAM logs it at
+  info with the Task ID, the model and the error, never the message, and
+  neither retries nor tries another model. When `SetTitle` fails, the web
+  keeps UAM's title, Copilot keeps its own, and UAM logs that too.
+- **The title session.** Copilot's `Title` runs a separate session with the
+  chosen model at its lowest effort (`none`, else `minimal`, else `low`,
+  else the model's default) in the Task's directory. It has no tools, and
+  config discovery, custom instructions, hooks, host git, skills, infinite
+  sessions, memory, streaming and the session store are off. A fixed system
+  message replaces Copilot's, the client name is `uam-title`, and every
+  permission request is rejected. Once the session exists, UAM disconnects
+  and deletes it with a fresh 5 s deadline, whether the job succeeded,
+  failed or was cut short by shutdown. Shutdown waits for title jobs before
+  it stops the providers. With the store off, the delete leaves nothing. A
+  probe on 2026-09-24 titled a sample prompt with gpt-6-luna in 2.7 s as
+  "Add persistent light and dark mode toggle". Afterwards the session had no
+  `session-state` directory, no `session-store.db` row and no `session.list`
+  entry, so `copilot --resume` never lists it after the job. Every title
+  costs AI credits; research #182 measured about 0.002 per title for
+  gpt-6-luna. OpenCode has no `titles` capability yet.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Capabilities.Titles` (`titles`) | The provider implements `Titler` and its conversations implement `SetTitle`. Only such providers can have a title model. |
+| `Titler.Title(ctx, TitleRequest{Model, Workdir, Text})` → `string` | Asks the model for a title in a throwaway conversation without tools, which it always deletes, and returns the reply as it came. `ctx` bounds the whole call. |
+| `Conversation.SetTitle(ctx, title)` | Names the conversation in the provider's own store. `ErrUnsupported` means the provider cannot. |
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `GET /api/settings` | – | `Settings`: `{"send_default", "hidden_models"?: {<provider>: [model ID]}, "title_model"?: {<provider>: model ID}}` |
+| `PATCH /api/settings` | `{"send_default"?, "hidden_models"?: {<provider>: [model ID]}, "title_model"?: {<provider>: model ID}}` | the new `Settings`; 400 for an unknown key or value, an unregistered provider, an invalid ID, more than 200 IDs, every listed model hidden, or a title model the provider cannot use or does not list, checked before anything changes |
+
+Both routes pass the same Host, cross-origin, JSON and sign-in checks as
+every other route.
+
+### Event stream additions
+
+| Event | `data` |
+|---|---|
+| `snapshot` | gains `"settings": Settings` |
+| `settings` | `{"seq", "settings": Settings}`, sent when a setting changes, `hidden_models` and `title_model` included |
+
+## Usage and credits
+
+- Date: 2026-09-24 (decided in #188)
+
+The owner asked to show AI credits used and remaining next to the model. This
+is the second capability-gated exception to provider parity, after per-Task
+context size. A provider has the `usage` capability only when it reports
+account quota; Copilot does, and OpenCode, which is not registered, does not.
+The browser shows usage only for a provider with the capability.
+
+- **Account quota.** UAM reads every usage provider's quota at start, after
+  each of its turns ends, and at most once a minute while a browser is
+  connected. A browser gets the cached result: in the `snapshot` frame, as a
+  `usage` frame when what it shows changes, and from `GET /api/usage`, which
+  never calls the provider. A failed read keeps the last quotas and sets
+  `stale`. `reset_at` is shown only while it is in the future: on
+  2026-09-24 Copilot returned a `resetDate` a few minutes before the call.
+  Copilot's `account.getQuota` is experimental. In the same probe, the
+  premium request count did not change in a read a few seconds after a 1x
+  turn, so a count can lag the turn that used it.
+- **Per Task.** A Task's `usage: {ai_units}` is its conversation's AI units
+  so far, main agent and subagents together, once the provider reports them;
+  it is absent before that, never zero. Each report is the conversation's
+  total, not an increment, so a later report replaces an earlier one. UAM does
+  not store it. Copilot reports each model call's cost in `assistant.usage`
+  as nano-AI units, which UAM divides by 10⁹. AI units are the AI Credits the
+  catalog's token prices use: a probe's call priced at the catalog's prices
+  cost exactly its `totalNanoAiu`. The adapter adds each call to the CLI's
+  latest session total from `session.usage_checkpoint` (or
+  `session.shutdown`), which replaces the running sum when it arrives.
+- **What history keeps.** `assistant.usage` is ephemeral: the CLI never
+  records it in `events.jsonl`. It does record `session.usage_checkpoint`
+  after model calls and `session.shutdown` on disconnect, both with the
+  session-wide `totalNanoAiu`. The 2026-09-24 probe found that total in
+  `session.getEvents` after a disconnect and resume in the same CLI and
+  after a CLI restart. So a Task's AI units survive a browser reload (UAM
+  holds them) and a service restart once its recorded transcript loads,
+  from the latest recorded total. This includes a settled or archived Task
+  whose transcript is read without opening its conversation.
+- **Per model.** Models gain `cost_tier`, Copilot's relative cost
+  (`low`, `medium`, `high` or `very_high`), and `discount_percent`, which
+  Copilot reports for `auto` (10 on 2026-09-24). Both are omitted when not
+  reported; an unknown tier or a discount outside 1–100 is dropped.
+- **Prices.** The owner then asked for the cost next to the model based on
+  the context. Models gain `prices`: Copilot's `billing.tokenPrices` in AI
+  Credits per `batch_size` tokens (1,000,000 on 2026-09-24), as `input`,
+  `output`, `cache_read`, `cache_write` and `max_prompt_tokens`, and a
+  `long_context` object with the same fields except `batch_size`. UAM takes
+  `cacheReadPrice`, else the deprecated `cachePrice`, and `maxPromptTokens`,
+  else the deprecated `contextMax`. A field Copilot does not report is
+  omitted, a negative or non-finite price is dropped, and a model with no
+  price left has no `prices`; `auto` has none.
+- **Cached share.** Each main-agent `assistant.usage` reports the call's
+  `inputTokens` and, of those, the `cacheReadTokens` read from the prompt
+  cache (the probe's `inputTokens` also counted `cacheWriteTokens`). The
+  Task's `context` gains `prompt` and `cached` from the latest such call, so
+  the browser can price the cached share of the context at `cache_read` and
+  the rest at `input`. They are omitted until a call reports them, stay on
+  later context reports until the next call replaces them, and follow the
+  `context` rules: live only, cleared by a reopen or a selection change. A report with `cached` above `prompt`
+  or below 0 drops both. The context usage report itself says nothing about
+  the cache.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Capabilities.Usage` (`usage`) | The provider implements `QuotaReporter` and reports conversation usage. |
+| `QuotaReporter.Quota(ctx)` → `[]Quota{Type, Used, Entitlement, Unlimited, RemainingPercent, Overage, ResetAt}` | The signed-in account's quotas, sorted by type. `Entitlement` is 0 when unlimited; `ResetAt` is zero when not reported. |
+| `EventUsage` with `Usage{AIUnits}` | The conversation's AI units so far. |
+| `History.Usage` | The recorded total, or nil when the record has none. |
+| `Model.CostTier`, `Model.DiscountPercent` | The relative cost tier (`Cost*` constants) and a whole-number discount. |
+| `Model.Prices` → `Prices{BatchSize, TierPrices, LongContext *TierPrices}`, `TierPrices{Input, Output, CacheRead, CacheWrite, MaxPromptTokens}` | Token prices per batch in AI Credits; nil prices were not reported. |
+| `Context.Prompt`, `Context.Cached` | The latest main-agent call's input tokens and how many of them were read from the cache. |
+
+Copilot mapping: `Quota` sends `account.getQuota`; an entitlement of -1 or
+`isUnlimitedEntitlement` means unlimited. `CostTier` comes from
+`modelPickerPriceCategory`, `DiscountPercent` from `billing.discountPercent`.
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `GET /api/usage` | – | `{"quotas": [{"provider", "type", "used", "entitlement", "unlimited", "remaining_percent", "overage", "reset_at"?}], "stale", "updated_at"?}`; quotas sorted by provider, then type; `updated_at` is when the oldest shown quotas were read, omitted before a read succeeded |
+
+It passes the same Host, cross-origin and sign-in checks as every other
+route. `ProviderInfo.capabilities` gains `usage`; models in `/api/meta` gain
+`cost_tier`, `discount_percent` and `prices: {"batch_size", "input", "output",
+"cache_read", "cache_write", "max_prompt_tokens", "long_context"?: {"input",
+"output", "cache_read", "cache_write", "max_prompt_tokens"}}` where reported.
+`SessionSummary`, and so `SessionDetail`, gains optional
+`usage: {"ai_units"}`, sent in `session` frames like `context`, and
+`context` gains optional `prompt` and `cached`.
+
+### Event stream additions
+
+| Event | `data` |
+|---|---|
+| `snapshot` | gains `"usage"`, the `GET /api/usage` body |
+| `usage` | `{"seq", "usage"}`, sent when the quotas or `stale` change |
+
 ## Browsing folders for a Project
 
 - Date: 2026-09-24 (decided in #190)
@@ -974,3 +1307,412 @@ as the service user. That is no more than a signed-in browser can already do
 through a Task. With `--no-auth` on an address others can reach, including
 behind a public reverse proxy, anyone who can reach the service can browse
 the tree and create folders, the same exposure as the rest of the service.
+
+## Diagrams in a sandboxed frame
+
+Issue #189. Providers answer with fenced ` ```mermaid ` blocks and code in
+many languages; the page showed both as plain code.
+
+### Context
+
+- The service policy is `style-src 'self'` with no `unsafe-inline`; the page
+  renders no `<style>` element and no `style=""` markup (DESIGN.md, "CSP
+  constraints"). Mermaid cannot meet that: a feasibility probe of mermaid
+  11.17.2 and 12.0.0 with `securityLevel: 'strict'`, `htmlLabels: false` and
+  every render target always inserted a `<style>` element and set about 200
+  `style` attributes, 74 violations for a flowchart and 13 for a sequence
+  diagram, and no setting avoids it. mermaid 12.0.0 also pulls `lodash-es`
+  with two high-severity advisories.
+- Relaxing `style-src` for the page would extend the same allowance to every
+  provider reply's markup, so it was not an option; neither was Mermaid's own
+  `securityLevel: 'sandbox'`, which builds a `srcdoc` frame with an inline
+  script per diagram inside the page.
+
+### Decision
+
+mermaid 11.17.2 (MIT, exact pin, `npm audit` clean) runs only inside one
+hidden `<iframe sandbox="allow-scripts">`, created on the first diagram and
+never given `allow-same-origin`. Its document, `/diagram-frame.html`, is a
+second Vite bundle embedded like the rest and served by the Go service with
+its own policy:
+
+```text
+default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'
+```
+
+Every other response keeps the service policy unchanged, byte for byte
+(`TestOnlyTheDiagramFrameRelaxesThePolicy`); the page's policy needs no
+`frame-src`, since `default-src 'self'` covers it.
+
+What the isolation gives:
+
+- The frame's origin is opaque. `document.cookie` and `localStorage` throw
+  `SecurityError`; a `fetch` of the API is refused by `connect-src 'none'`
+  before it leaves, and would be a cross-site request without cookies
+  anyway. The sandbox grants no forms, popups or top navigation.
+- `frame-ancestors 'self'` (plus `X-Frame-Options: SAMEORIGIN`) lets only
+  the service's own origin embed the document.
+- The page treats the frame as untrusted: it accepts messages only from its
+  own frame's window, validates their shape, and shows the SVG only as
+  `<img src="data:image/svg+xml;charset=utf-8,…">`, never as inline DOM. An
+  SVG image is an isolated document that runs no script and loads nothing,
+  and `img-src 'self' data:` already allowed it.
+
+Protocol (`web/src/lib/diagram.ts`, shared by both bundles): the page posts
+`{id, source, theme}` with target `'*'`, since an opaque origin cannot be
+named; the frame renders with `securityLevel: 'strict'`, `htmlLabels: false`,
+theme `base` and variables from the DESIGN.md tokens, writes the viewBox
+size onto the SVG root as `width` and `height` (Mermaid's `width="100%"`
+would make the image 300×150), and posts `{id, svg, width, height}` or
+`{id, error}` back to the origin the request came from. One request is in
+flight at a time with a 10 s deadline, and the frame load has the same
+deadline. A frame that fails to load or stops responding is discarded;
+every request assigned to it falls back to code. The next render creates a
+fresh frame. Results are cached per source; parse errors remain cached,
+while transient failures can be retried when the block mounts again.
+
+### Findings (Chromium 148)
+
+- `'self'` in the frame's policy resolves to the document URL's origin, not
+  to the opaque origin: the script and a stylesheet from `/assets/` load.
+  (CSP's *self-origin* is the response URL's origin; Chromium matches the
+  opaque origin's precursor.)
+- A module script does not load in the frame: module fetches use `mode:
+  cors`, the request `Origin` is `null`, and the service sends no
+  `Access-Control-Allow-Origin`. The frame bundle is therefore a classic
+  IIFE with Mermaid's lazy diagram chunks inlined (3.4 MB, 924 kB gzip),
+  fetched once per page load on the first diagram. Fonts are CORS-fetched
+  too, so the frame cannot use the self-hosted Inter, and an SVG image could
+  not load a web font either: diagrams measure and draw with the system
+  sans stack, which both documents resolve the same way.
+- The frame's navigation request is made by the page and carries the
+  session cookie (same-site); the frame's own subresource requests carry
+  none (cross-site). The document is static and unauthenticated like
+  `index.html` and `/assets/*`; it holds no secret, so the auth model does
+  not change. The Host check applies to it as to every request.
+- Mermaid measures text in the frame, and gantt and the charts take their
+  width from it, so the frame is laid out at 800×600, invisible, not
+  `display: none`.
+- Sequence labels wrap within their available width, so notes spanning two
+  participants keep their text inside the fixed-width note box.
+
+### HTTP additions and changes
+
+| Method and path | Result |
+|---|---|
+| `GET /diagram-frame.html` | the frame document with the frame policy, `X-Frame-Options: SAMEORIGIN` and `Cache-Control: no-cache`; 403 for a foreign Host; 405 for other methods |
+| `GET /assets/diagram-frame-<hash>.js` | the frame bundle, served like every asset, with the service policy |
+
+### Highlighting
+
+Code blocks with a language are highlighted by lowlight 3.3.0 (MIT) over
+highlight.js 11.11.2 (BSD-3-Clause; lowlight pins `~11.11`), 18 grammars,
+loaded on the first such block as a 73.6 kB chunk. lowlight returns a tree
+that is turned into React elements, so the page sets no innerHTML. The
+`hljs-*` classes take their colours from the tokens in `index.css`. The main
+bundle grew from 748.0 to 756.5 kB (gzip 232.1 to 235.4 kB).
+
+### Consequences
+
+- Two policies exist. The frame's is bound to one document by name in
+  `serveAsset`, and the tests pin both strings and check that assets, the
+  SPA fallback, the API and refusals all keep the service policy.
+- The first diagram of a page load costs a 3.4 MB download. A code-split
+  ESM frame would need `Access-Control-Allow-Origin` on `/assets/*` (public
+  files, but a header the service has never sent) or a slimmer Mermaid
+  registration; both are possible follow-ups.
+- Diagrams use the system font, not Inter.
+- Mermaid's error text appears as a quiet note under the code; the code
+  block stays usable either way.
+
+## Tool calls, thinking and approvals in the turn
+
+- Date: 2026-09-24 (decided in #181)
+
+A permission request now names the tool call it is for, so the browser can
+show a decided request on that call's row instead of as a line of its own.
+This section holds the backend part of the contract.
+
+- **Link.** `Interaction.ToolCallID` (`tool_call_id`) is the ID of the `tool`
+  item, with the same `agent_id`, that the request is for: for a permission,
+  the call that needs it; for a question, the tool call that asked it
+  (Copilot's `ask_user`, see "Copilot questions" below). It is empty when
+  the provider does not say or the adapter does not know the item. The
+  browser treats an empty ID, or one that matches no item it holds, as no
+  link.
+- **Copilot.** Every permission request kind in SDK 1.0.14 has an optional
+  `toolCallId`: shell, write, read, url, mcp, custom-tool, memory, hook,
+  factory and the three extension kinds. The adapter reads the same field
+  from the raw JSON of a kind the SDK cannot read, and trims it. It is the
+  `toolCallId` of the tool execution events, which the transcript already
+  uses as the tool item's ID.
+- **OpenCode.** A permission names its call by `tool.callID`, but the adapter
+  gives a tool item the ID of its part. So it remembers the part ID of each
+  call ID it sees in a tool part and reports that part ID, or nothing while
+  the part is unknown. It looks the part up each time it reports the request.
+  A request replayed on reopen before the history is read therefore gets its
+  link when it resolves. OpenCode stays unregistered.
+- **Sanitizing.** The service keeps `tool_call_id` only if it is valid UTF-8,
+  at most 256 bytes, and holds no space or control character. It drops
+  anything else rather than cleaning it, because a changed ID would match no
+  tool item.
+- **Where.** Every serialized `Interaction` carries the field:
+  `SessionDetail.interactions` (also inside the `snapshot` frame), the
+  `interaction` frame, and the reply of
+  `POST /api/sessions/{id}/interactions/{iid}`. `SubagentDetail` has no
+  interactions. A subagent's requests are in the Task's `interactions`, with
+  their `agent_id`.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Interaction.ToolCallID` (`tool_call_id`, omitted when empty) | The ID of the `tool` item, with the same `AgentID`, that a request is for: the call a permission is for, or the call that asked a question. Empty when unknown. |
+
+### HTTP additions and changes
+
+No route changes. `Interaction` gains `tool_call_id`, omitted when empty.
+
+### Browser
+
+The browser shows what ran in the turn, in the order it ran, and nothing about
+it after the transcript.
+
+- **Tool rows.** Each `tool` item is one row in its turn: a status mark, the
+  tool name, and its main argument on one line, ellipsised. The argument comes
+  from the input JSON per tool (`web/src/lib/transcript.ts`): the command for
+  `bash`, the URL for `web_fetch`, the path for `view`, `create` and `edit`,
+  the pattern for `grep` and `glob`, the query for `sql`, the skill name, the
+  description for `task`; an unknown tool takes the first of those keys it
+  has, then its first string value, then the JSON itself; a non-JSON input
+  shows as is. The full input and output stay behind the row's disclosure.
+  The owner's later screenshot direction groups consecutive calls under an
+  expandable summary of successful operations, with distinct known file paths
+  and explicit running, failed and missing-result counts. Every original row
+  stays available inside; prose, thinking, questions and subagent rows remain
+  interleaved. The foreground timeline uses the original user item time while
+  working, including across steer. Completed turns say "Worked" without an
+  elapsed value: item creation and session update times are not completion
+  timestamps. Background task status remains separate.
+- **Thinking.** A reasoning item's text shows inline, clamped to three lines
+  (measured, so one long paragraph clamps too) with Show more / Show less;
+  while it streams, the latest three lines show. An empty reasoning item is
+  not drawn. The expanded state is remembered per item for the browser
+  session, as before. Copilot history restores thinking from the recorded
+  assistant message's `reasoningText`, including messages with no visible
+  content. Live reasoning is not duplicated when that message arrives.
+- **Approvals.** A decided request whose `tool_call_id` matches a tool item
+  with the same `agent_id` appears only as a mark on that row: a shield and a
+  word, "auto" when the resolution is `allowed (yolo)`, "allowed" for
+  `answered`, "denied" for `rejected`, "expired" for `expired`. The tooltip
+  and the accessible name give the full resolution. When several requests
+  name one call, the mark shows the latest outcome and a count of earlier
+  requests; its tooltip and accessible name retain every resolution. A
+  decided request without a matched call joins its turn's rows at its time,
+  as a quiet row of the same kind. Pending
+  requests stay action cards after the transcript, and are the only requests
+  drawn there.
+- **Questions.** Every provider's question interaction renders a question
+  block in its turn, linked to its tool when known and standalone otherwise.
+  Copilot's `ask_user` also restores the question and choices from the tool input
+  (`{"question", "choices"}`), and once the call completes, the answer from
+  its output ("User selected: <choice>" for a choice, "User responded:
+  <text>" for typed text, per a probe on CLI 1.0.88; any other text is shown
+  whole) under "You answered", with the chosen choice marked. A call left
+  open after a restart or stopped turn reads "No answer." A decline is
+  read from the linked interaction's `rejected` state, or, from history, from
+  the output the CLI records for it: a *completed* call whose output is
+  "User responded: The user was unable to respond due to an error". A failed
+  call shows its output. This comes from the tool item, so it survives a
+  reload and a restart. The live question interaction, when the adapter
+  linked it (see below), or a decided question whose text matches the call
+  when it did not, is claimed by that block. Repeated questions with the same
+  text match calls in time order. A pending question also keeps its action
+  card, where the user answers it.
+- **Copilot questions.** The SDK's `ask_user` callback carries the question
+  and choices only. The `user_input.requested` event carries the same
+  question with its `toolCallId` and the envelope's agent ID, so the adapter
+  matches the two by question text in arrival order, whichever arrives first:
+  a pending question that has no tool call yet is emitted again with the link and its
+  agent; an event that arrives first is kept for the callback. Each queue is
+  capped at 16; unmatched events and answered-question markers expire after
+  30 seconds. A late event for an already answered question is consumed
+  before the next question with that text. An event without a tool call links
+  nothing. The callback has no agent ID, so identical concurrent questions
+  cannot be matched across agents more precisely than their arrival order.
+- **Subagents.** The Subagents panel draws the same rows, blocks and marks,
+  with the requests whose `agent_id` is the subagent's.
+
+## Images from tools
+
+- Date: 2026-09-24 (decided in #187)
+
+No Copilot model returns images, but tools can: a screenshot tool, an MCP
+server, or Copilot's `view` of an image file. UAM keeps the images a tool's
+result carried with the Task and names them on that tool item. This section
+holds the backend part of the contract.
+
+- **Copilot, live.** A `tool.execution_complete` result can carry images two
+  ways: `contents` blocks of type `image` (base64 `data` and `mimeType`,
+  what MCP tools return) and `binaryResultsForLlm` entries of type `image`
+  with inline `data`. A probe on 2026-09-24 (CLI 1.0.88, SDK 1.0.14,
+  `gpt-5-mini`) had `view` of a png in the project return only the second
+  form, for the main agent and for a subagent alike. The adapter maps both
+  forms; entries of type `resource`, audio and size-omitted markers are not
+  images.
+- **Copilot, recorded.** The recorded completion keeps no bytes. Its
+  `binaryResultsForLlm` entry holds `assetId: "sha256:<hex>"` and
+  `byteLength`, and a `session.binary_asset` event written just before it
+  holds the bytes under that asset ID. The probe found both after a reload
+  and after the CLI was stopped and the session resumed, and UAM restored the
+  image from them with its own copy deleted. The adapter holds at most 64
+  recent asset events; a result naming an asset it does not hold reports the
+  digest alone, and UAM links it to its stored copy by SHA-256. A
+  size-omitted marker has no bytes and no digest, so such an image cannot come
+  back after a restart.
+- **OpenCode.** A completed tool state holds `attachments`, file parts with a
+  `data:` URL; OpenCode 1.18's `read` and `webfetch` return an image that
+  way. The adapter maps the image parts, with the part's `filename` as the
+  name. The stored part keeps the URL, so the history has the bytes too.
+  OpenCode stays unregistered.
+- **Storage.** Tool images live with the uploads in
+  `web-attachments/<task id>/`, 0700 directories and 0600 files, as
+  `<image id>` and `<image id>.json`. The record is the upload record with
+  `"tool": true`. A tool image lives as long as its Task: the 24-hour expiry
+  skips it, deleting the Task or removing its Project deletes it, and the
+  start-up sweep removes the directories of unknown Tasks. It is not an
+  upload: naming its ID in a prompt's `attachments` is a 400. Read-only history
+  loads and imports use the same image store before publishing the transcript;
+  an import that cannot register its Task removes its newly stored images.
+- **Checks.** UAM sniffs the bytes: png, jpeg, gif and webp only, by
+  `http.DetectContentType`, so SVG never passes. It takes the type from the
+  bytes, never from the provider. An image may be at most 5 MiB, and a Task
+  keeps at most 50 tool images. An image this Task already keeps, by the
+  SHA-256 of its bytes, is not stored again and gets the same ID, whichever
+  tool call or agent returned it. An image the provider reports by digest
+  alone is shown only when that copy exists.
+- **Dropped images.** An image that fails a check, is past the cap, or has
+  no bytes and no stored copy is left out of `images`, and the tool item's
+  `images_note` says how many and why, for example "1 image not kept: a task
+  keeps at most 50 images". The tool item is published immediately without
+  images. A worker stores images from a queue capped at 256 tool results,
+  then publishes the item with their IDs. A full queue drops the images with
+  a note. No stream frame carries an image without an ID, and image storage
+  never blocks the provider event callback.
+- **Serving.** A tool image is served by the attachment route with the
+  upload headers: the sniffed `Content-Type`, `nosniff`, the service CSP,
+  `Cache-Control: no-store` and `inline`. A tool image without a name gets
+  `Content-Disposition: inline` with no file name.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Item.Images []Image` (`images`, omitted when empty) | The images a tool item's result returned, in the provider's order. |
+| `Image{ID, MIME, Size, Name, SHA256, Data}` | Adapters fill `Data`, `MIME` and `Name` when the provider has one, or `SHA256` alone when the record has only the digest. UAM digests and stores `Data`, sets `ID`, `Size` and the sniffed `MIME`, and clears `Data`. `SHA256` and `Data` never reach a browser. |
+| `Item.ImagesNote` (`images_note`, omitted when empty) | Set by UAM when it left images out, and why. Adapters leave it empty. |
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `GET /api/sessions/{id}/attachments/{attachment_id}` | – | also serves a tool image by its `images[].id`; 401 signed out; 404 for an unknown Task or image, or another Task's |
+
+A tool item gains `images: [{"id", "mime", "size", "name"?}]` and
+`images_note?`, in `SessionDetail.items` (also in the `snapshot` frame), the
+`item` frame and `SubagentDetail.items`.
+
+### Browser
+
+The tool row shows its `images` as thumbnails up to 160px high under the
+row, visible without opening the disclosure, loaded from
+`GET /api/sessions/{id}/attachments/{image id}`: the same thumbnails and
+lightbox as a user turn's uploads (`ImageThumbs` in
+`web/src/components/Attachments.tsx`), so a click opens the image large with
+**Open original**. An image without a name is "Image". `images_note` follows
+the thumbnails as a caption. The browser never builds a `blob:` or `data:`
+URL for them, so `img-src 'self' data:` stands. The Subagents panel does the
+same.
+
+## Importing previous sessions
+
+- Date: 2026-09-24 (decided in #192, from the research in #138)
+
+A Project lists the conversations its provider recorded for the Project's
+directory, and the user can import one as a Task. This is a
+capability-gated exception to the provider-parity rule. A provider offers
+`import` only when it can list conversations by folder and can tell that another client
+holds one open. Copilot probes `sessions.checkInUse` and
+`readPersistedEvents` once per provider instance and advertises `import` only
+when both are supported. OpenCode cannot: it keeps no per-session lock
+(#138), so its conversations are not listed or imported.
+
+- **List.** `Importer.Previous` lists the conversations whose working
+  directory is exactly the Project's directory: Copilot's `session.list` with
+  an exact `cwd` filter, remote sessions left out. A Copilot session appears
+  only after its first message. UAM leaves out conversations any Task is
+  linked to, sanitizes titles like other provider labels, sorts newest first
+  by `updated_at`, and returns at most 100. `in_use` comes from `InUse`.
+- **Import.** The conversation must be listed for the Project's directory, no
+  Task may be linked to it, and no other client may hold it. UAM reads its
+  transcript with the reader of the Task lifecycle section, then creates an
+  active Task linked to it. Nothing is sent to the model. The Task starts in
+  state `closed` with the transcript loaded: viewing never opens it, and its
+  next prompt opens it. It keeps the model the record last selected for the
+  main agent when the provider offers that model, otherwise it takes the
+  Project's defaults when they name this provider, otherwise the provider
+  default. It takes the Project's default mode. The provider's title is shown
+  until the user names the Task.
+- **In use.** `InUse` is Copilot's `sessions.checkInUse` (experimental),
+  backed by an `flock` per holder process. It reports other processes
+  holding the conversation on this host under the same `COPILOT_HOME`,
+  including a uam terminal session and a terminal `copilot --resume`. It
+  never reports the CLI of uam web itself; uam web tracks its own open
+  conversations. Only imported or terminal-linked Tasks
+  run this check before every send, command, steer and subagent follow-up,
+  and before a queued prompt is sent. While another client holds the
+  conversation, the write is refused with 409 and nothing is sent; a queued
+  prompt stays at the front and the queue pauses. A check that fails refuses
+  with 502, and nothing is sent. The check times out after five seconds and
+  releases the Task operation lock while waiting. If a lifecycle operation
+  changes the Task meanwhile, the send is refused and must be retried.
+- **Race window.** The check is a snapshot, not a lock. A client that opens
+  the conversation after the check, while UAM opens it, sends, or runs the
+  turn, is not caught. Two writers then fork the journal without an error
+  (#138), and each keeps its own view of the history. While uam web holds a
+  conversation, a terminal `copilot --resume` shows Copilot's "Session in
+  use" dialog; "Resume anyway" is the user's choice.
+- **Terminal sessions.** A uam terminal session tied to the same conversation
+  (a terminal record with the same provider and `provider_session_id`, the
+  most recently seen one) stays the terminal's. Import records its ID in the
+  Task's `web.terminal_session`. While that session's host runs, which the
+  service checks as the terminal does (the host's state file and a
+  start-time-checked process), the detail shows `terminal_session`. Deleting
+  the web Task deletes only its own record: never the terminal record, and
+  never the provider's conversation.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Capabilities.Import` | The provider implements `Importer` |
+| `Importer.Previous(ctx, workdir) ([]PreviousConversation, error)` | Conversations recorded with exactly `workdir` as their working directory; empty lists all local conversations with their Workdir |
+| `Importer.InUse(ctx, ids) ([]string, error)` | The IDs another process holds open; a snapshot, never the provider's own runtime |
+| `PreviousConversation{ID, Title, Workdir, CreatedAt, UpdatedAt}` | `Title` is untrusted provider text |
+| `History.Model` | The main agent's model as the record last selects it, or "" |
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `GET /api/previous/counts` | – | 200 `{project_id: count}` for every Project, including zero, capped at 100; one provider listing without in-use checks; 502 on listing failure |
+| `GET /api/projects/{id}/previous` | – | 200 `[{"provider", "conversation_id", "title", "created_at", "updated_at", "in_use"}]`, `[]` without an importing provider; 404 unknown Project; 502 when listing or the in-use check fails |
+| `POST /api/projects/{id}/previous/{conversation_id}/import` | ignored (`Content-Type: application/json`) | 201 `SessionSummary` with `state: "closed"`; 400 invalid ID; 404 unknown Project, or a conversation not listed for its directory or gone; 409 already a Task, held by another client, or the directory is gone; 502 when listing, the in-use check or the read fails; 503 when the read queue is busy or import is cancelled |
+| `POST /api/sessions/{id}/prompt`, `/command`, `/subagents/{agent_id}/prompt` | unchanged | 409 while another client holds the conversation; 502 when the check fails |
+| `GET /api/sessions/{id}` | – | `SessionDetail` gains `terminal_session: {"id", "name"}` while the tied terminal session's host runs |
+| `GET /api/meta` | – | `capabilities` gains `import` |
+
+The record's `web` object gains `terminal_session`, the ID of the tied
+terminal record, and `imported`, a durable boolean marking imported Tasks.
+The capability flag is the authority for import support; providers setting it
+must implement `Importer`.

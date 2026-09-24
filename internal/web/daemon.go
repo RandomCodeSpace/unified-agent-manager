@@ -350,6 +350,8 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 		return err
 	}
 	mgr := NewManager(st, cfg.Providers)
+	hosts := session.NewClient()
+	mgr.SetHostProbe(func(name string) bool { return hosts.HasSession(context.Background(), name) })
 	if err := mgr.Start(context.Background()); err != nil {
 		return err
 	}

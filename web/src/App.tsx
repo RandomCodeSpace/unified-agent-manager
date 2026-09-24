@@ -1,12 +1,14 @@
-import { FolderPlus, Menu as MenuIcon, SquarePen, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog, RemoveProjectDialog } from './components/Projects';
-import { Brand, CONNECTION_TEXT, Sidebar, type WorkspaceActions } from './components/Sidebar';
-import { mostRecentProject, tasksOf } from './lib/tasks';
+import { SettingsView } from './components/Settings';
+import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
+import { cn } from './lib/cn';
+import { tasksOf } from './lib/tasks';
 import { Task } from './components/Task';
 import { TaskActionsContext, type Renaming, type TaskActions } from './components/taskActions';
 import { Button } from './components/ui/button';
@@ -21,9 +23,11 @@ type TaskDialog = { kind: 'archive' | 'delete' | 'close'; id: string } | null;
 const NARROW = '(max-width: 959px)';
 /** From this width the Changes sheet sits beside the column instead of over it. */
 const SHEET_INLINE = '(min-width: 1280px)';
-const HIDDEN_KEY = 'uam.hiddenProjects';
 const VIEWED_KEY = 'uam.viewed';
+const SIDEBAR_KEY = 'uam.sidebar';
+const FILTER_KEY = 'uam.projectFilter';
 const HASH_PREFIX = '#task=';
+const SETTINGS_HASH = '#settings';
 
 // Older servers omit `required`; treat absent as true.
 const loggedIn = (r: { authenticated: boolean; required?: boolean }) => r.authenticated || r.required === false;
@@ -62,8 +66,11 @@ export default function App() {
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [renaming, setRenaming] = useState<Renaming | null>(null);
   const [busyTask, setBusyTask] = useState<string | null>(null);
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set(readJSON<string[]>(HIDDEN_KEY, [])));
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
+  const [sidebarOpen, setSidebarOpen] = useState(() => readJSON<boolean>(SIDEBAR_KEY, true));
+  const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
+  const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === SETTINGS_HASH);
+  const aside = useRef<HTMLElement>(null);
   const loadedAt = useRef(new Date().toISOString());
   // One create per project at a time; the request ID survives a failure so a retry is idempotent.
   const creating = useRef(new Map<string, { id: string; busy: boolean }>());
@@ -89,12 +96,40 @@ export default function App() {
     api.meta().then(setMeta).catch(() => setMeta(null));
   }, [auth]);
 
-  // Keep the selected task in the URL fragment so a reload lands on it.
+  // Keep the view in the URL fragment so a reload lands on it: `#settings`, else the selected task.
   useEffect(() => {
     const id = state.selectedId;
-    const next = id ? `${HASH_PREFIX}${encodeURIComponent(id)}` : '';
+    const next = settingsOpen ? SETTINGS_HASH : id ? `${HASH_PREFIX}${encodeURIComponent(id)}` : '';
     if (window.location.hash !== next) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next}`);
-  }, [state.selectedId]);
+  }, [state.selectedId, settingsOpen]);
+
+  /**
+   * Hides or shows the sidebar (wide layout), remembered per browser. Focus follows the
+   * toggle the user was on, so a keyboard user is never left on an inert element; focus
+   * anywhere else (the composer) is left alone.
+   */
+  const toggleSidebar = useCallback(() => {
+    const next = !sidebarOpen;
+    setSidebarOpen(next);
+    localStorage.setItem(SIDEBAR_KEY, JSON.stringify(next));
+    const active = document.activeElement;
+    const onToggle = next ? active?.id === 'sidebar-show' : !!aside.current?.contains(active);
+    if (onToggle) requestAnimationFrame(() => document.getElementById(next ? 'sidebar-hide' : 'sidebar-show')?.focus());
+  }, [sidebarOpen]);
+
+  // Ctrl/Cmd+B toggles the sidebar, or the drawer on a narrow screen.
+  useEffect(() => {
+    if (auth !== 'in') return;
+    const onKey = (e: KeyboardEvent) => {
+      const modifier = navigator.platform.startsWith('Mac') ? e.metaKey : e.ctrlKey;
+      if (!modifier || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'b' || e.defaultPrevented || popupOpen()) return;
+      e.preventDefault();
+      if (narrow) setDrawerOpen((o) => !o);
+      else toggleSidebar();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [auth, narrow, toggleSidebar]);
 
   // Esc closes the Changes sheet when no popup owns the key (popups and the drawer handle their own).
   useEffect(() => {
@@ -145,12 +180,24 @@ export default function App() {
     es.addEventListener('snapshot', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as SnapshotData;
       dispatch({ type: 'snapshot', data });
+      setFilter((current) => {
+        if (!current || data.projects.some((p) => p.id === current)) return current;
+        localStorage.removeItem(FILTER_KEY);
+        return null;
+      });
       if (data.session && data.session.id === selected) markViewed(selected, data.session.updated_at);
     });
     for (const name of UPDATE_EVENTS) {
       es.addEventListener(name, (e) => {
         const data = { name, ...JSON.parse((e as MessageEvent).data) } as UpdateData;
         dispatch({ type: 'update', data });
+        if (data.name === 'project_removed') {
+          setFilter((current) => {
+            if (current !== data.project_id) return current;
+            localStorage.removeItem(FILTER_KEY);
+            return null;
+          });
+        }
         if (data.name === 'session' && data.session.id === selected) markViewed(selected, data.session.updated_at);
       });
     }
@@ -169,7 +216,7 @@ export default function App() {
     [viewed, state.selectedId],
   );
 
-  const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews }), [meta, narrow, hasNews]);
+  const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage }), [meta, narrow, hasNews, state.settings, state.usage]);
 
   // Focus the composer of a Task that was just created, once its detail is on screen.
   const detailId = state.detail?.id;
@@ -193,6 +240,7 @@ export default function App() {
     setNotice(null);
     setSheetOpen(false);
     setDrawerOpen(false);
+    setSettingsOpen(false);
   }, []);
 
   /** New task: create it at once with the Project's defaults, no prompt or name, and open its chat. */
@@ -204,7 +252,7 @@ export default function App() {
       setNotice(null);
       try {
         const project = state.projects.find((p) => p.id === projectId);
-        const settings = project && resolveTaskDefaults(meta, project.defaults);
+        const settings = project && resolveTaskDefaults(meta, project.defaults, state.settings.hidden_models);
         if (!project || !settings) throw new Error(meta ? 'No provider is available.' : 'The provider list has not loaded yet.');
         const info = provider(meta, settings.provider);
         if (info && !info.available) throw new Error(`${info.display_name} is unavailable: ${info.reason || 'not installed'}`);
@@ -218,7 +266,7 @@ export default function App() {
         setNotice(`Could not start a task: ${describeError(e)}`);
       }
     },
-    [state.projects, meta, select],
+    [state.projects, state.settings.hidden_models, meta, select],
   );
 
   /** Runs one lifecycle request; the result is dispatched, a failure becomes the notice line. */
@@ -260,22 +308,24 @@ export default function App() {
 
   const actions: WorkspaceActions = useMemo(
     () => ({
-      onHome: () => select(null),
       onNewTask: (projectId) => void startTask(projectId),
       onAddProject: () => openDialog({ kind: 'add' }),
       onEditProject: (project) => openDialog({ kind: 'edit', project }),
       onRemoveProject: (project) => openDialog({ kind: 'remove', project }),
-      collapsed: hidden,
-      onToggleProject: (id) =>
-        setHidden((h) => {
-          const next = new Set(h);
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          localStorage.setItem(HIDDEN_KEY, JSON.stringify([...next]));
-          return next;
-        }),
+      filter,
+      onFilter: (id) => {
+        setFilter(id);
+        localStorage.setItem(FILTER_KEY, JSON.stringify(id));
+      },
+      sidebarOpen: narrow ? drawerOpen : sidebarOpen,
+      onToggleSidebar: () => (narrow ? setDrawerOpen((o) => !o) : toggleSidebar()),
+      settingsOpen,
+      onSettings: () => {
+        setSettingsOpen((o) => !o);
+        setDrawerOpen(false);
+      },
     }),
-    [hidden, startTask, select, openDialog],
+    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, startTask, openDialog, toggleSidebar],
   );
 
   if (auth === 'checking') {
@@ -290,16 +340,10 @@ export default function App() {
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
   const project = selected ? state.projects.find((p) => p.id === selected.project_id) : undefined;
   const dialogTask = taskDialog ? state.sessions.find((s) => s.id === taskDialog.id) : undefined;
-  const recent = mostRecentProject(state.projects, state.sessions, state.selectedId);
 
   function showProject(id: string) {
-    setHidden((h) => {
-      if (!h.has(id)) return h;
-      const next = new Set(h);
-      next.delete(id);
-      localStorage.setItem(HIDDEN_KEY, JSON.stringify([...next]));
-      return next;
-    });
+    setFilter(id);
+    localStorage.setItem(FILTER_KEY, JSON.stringify(id));
     select(null);
   }
 
@@ -340,15 +384,17 @@ export default function App() {
     />
   );
 
-  // On narrow screens the header carries the drawer button; the Task pane renders its own header.
-  const menuButton = narrow ? (
-    <Button size="icon-md" aria-label="Projects" aria-expanded={drawerOpen} className="-ml-1 text-muted" onClick={() => setDrawerOpen((o) => !o)}>
-      <MenuIcon />
-    </Button>
+  // The main pane's header starts with the sidebar toggle when the sidebar is hidden, or the drawer toggle on a narrow screen.
+  const leading = narrow ? (
+    <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1" />
+  ) : !sidebarOpen ? (
+    <SidebarToggle id="sidebar-show" size="icon-md" open={false} onToggle={toggleSidebar} className="-ml-1" />
   ) : null;
 
   let pane: React.ReactNode;
-  if (state.detail && selected) {
+  if (settingsOpen) {
+    pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} />;
+  } else if (state.detail && selected) {
     pane = (
       <Task
         key={state.detail.id}
@@ -364,12 +410,12 @@ export default function App() {
         }}
         onSessionUpdate={(s) => dispatch({ type: 'upsert_session', session: s })}
         onInteractionUpdate={(sessionId, interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction })}
-        leading={menuButton}
+        leading={leading}
       />
     );
   } else if (state.selectedId && state.snapshotSeq >= 0 && !selected) {
     pane = (
-      <EmptyPane leading={menuButton} connection={state.connection} narrow={narrow}>
+      <EmptyPane leading={leading} connection={state.connection}>
         <h1 className="text-display-md">This task no longer exists.</h1>
         <p className="text-ui text-muted">It was deleted, or its project was removed.</p>
         <Button variant="secondary" onClick={() => select(null)}>
@@ -378,36 +424,13 @@ export default function App() {
       </EmptyPane>
     );
   } else if (state.selectedId) {
-    pane = <LoadingPane leading={menuButton} />;
+    pane = <LoadingPane leading={leading} />;
   } else {
+    // A quiet placeholder (issue #185): New task and Add project live in the sidebar.
     pane = (
-      <EmptyPane leading={menuButton} connection={state.connection} narrow={narrow}>
+      <EmptyPane leading={leading} connection={state.connection}>
         <Brand markOnly className="[&_svg]:size-9 opacity-80" />
-        {recent ? (
-          <>
-            <h1 className="text-display-md">Ready when you are.</h1>
-            <p className="max-w-sm text-ui text-muted">Open a task from the sidebar, or start a new one. Settled and archived tasks keep their full conversation there too.</p>
-            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-              <Button variant="primary" onClick={() => void startTask(recent.id)}>
-                <SquarePen />
-                New task in {recent.name}
-              </Button>
-              <Button onClick={() => openDialog({ kind: 'add' })}>
-                <FolderPlus />
-                Add project
-              </Button>
-            </div>
-          </>
-        ) : (
-          <>
-            <h1 className="text-display-md">Add a project to begin.</h1>
-            <p className="max-w-sm text-ui text-muted">A project is a directory on this host. Tasks run inside it with the defaults you choose.</p>
-            <Button variant="primary" className="mt-2" onClick={() => openDialog({ kind: 'add' })}>
-              <FolderPlus />
-              Add project
-            </Button>
-          </>
-        )}
+        <p className="text-ui text-muted">{state.projects.length > 0 ? 'Open a task from the sidebar, or start a new one there.' : 'Add a project in the sidebar to begin.'}</p>
       </EmptyPane>
     );
   }
@@ -416,8 +439,19 @@ export default function App() {
     <AppContext.Provider value={ctx}>
       <TaskActionsContext.Provider value={taskActions}>
         <TooltipProvider delay={400} closeDelay={0}>
-          <div className={narrow ? 'grid h-dvh grid-cols-1' : 'grid h-dvh grid-cols-[264px_minmax(0,1fr)]'}>
-            {!narrow && <aside className="min-h-0">{sidebar}</aside>}
+          <div
+            className={
+              narrow
+                ? 'grid h-dvh grid-cols-1'
+                : cn('grid h-dvh transition-[grid-template-columns] duration-240 ease-app', sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]')
+            }
+          >
+            {/* The column animates to 0; the sidebar keeps its width inside so nothing reflows on the way, and is inert once hidden. */}
+            {!narrow && (
+              <aside ref={aside} className="min-h-0 overflow-hidden" inert={!sidebarOpen} aria-hidden={!sidebarOpen}>
+                <div className="h-full w-rail">{sidebar}</div>
+              </aside>
+            )}
             {narrow && (
               <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects">
                 {sidebar}
@@ -509,12 +543,12 @@ export default function App() {
   );
 }
 
-/** The narrow layout's header for the non-Task views: drawer button, brand, connection. */
+/** The header of the non-Task views while the sidebar is away (narrow, or hidden): its toggle, the brand, the connection. */
 function PaneHeader({ leading, connection }: { leading: React.ReactNode; connection?: keyof typeof CONNECTION_TEXT }) {
   return (
     <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">
       {leading}
-      <Brand />
+      <span className="text-title font-semibold text-ink">uam</span>
       <span className="flex-1" />
       {connection && connection !== 'connected' && (
         <span role="status" className="flex items-center gap-1.5 text-caption text-warning" title={CONNECTION_TEXT[connection]}>
@@ -526,10 +560,10 @@ function PaneHeader({ leading, connection }: { leading: React.ReactNode; connect
   );
 }
 
-function EmptyPane({ leading, connection, narrow, children }: { leading: React.ReactNode; connection: keyof typeof CONNECTION_TEXT; narrow: boolean; children: React.ReactNode }) {
+function EmptyPane({ leading, connection, children }: { leading: React.ReactNode; connection: keyof typeof CONNECTION_TEXT; children: React.ReactNode }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {narrow && <PaneHeader leading={leading} connection={connection} />}
+      {leading && <PaneHeader leading={leading} connection={connection} />}
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 pb-16 text-center animate-rise">{children}</div>
     </div>
   );

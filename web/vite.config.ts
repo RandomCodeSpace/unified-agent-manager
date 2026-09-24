@@ -1,17 +1,99 @@
-import { defineConfig, type Plugin } from 'vite';
+import { build, defineConfig, type Plugin, type ResolvedConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   base: '/',
-  plugins: [react(), tailwindcss(), mockAttachmentRoute()],
+  plugins: [react(), tailwindcss(), diagramFrame(), mockAttachmentRoute()],
   build: {
     outDir: '../internal/web/dist',
     emptyOutDir: true,
     // Never inline assets as data: URIs; the server's CSP allows fonts from 'self' only.
     assetsInlineLimit: 0,
   },
+  // Dev only: the diagram frame's module scripts come from an opaque origin (`Origin: null`),
+  // which the default localhost-only CORS rule refuses. The production frame is a classic script.
+  server: { cors: { origin: [/^https?:\/\/(?:(?:[^:]+\.)?localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/, 'null'] } },
+  optimizeDeps: { include: ['mermaid'] },
 });
+
+const FRAME_DOCUMENT = 'diagram-frame.html';
+const FRAME_ENTRY = 'src/diagram-frame/main.ts';
+
+const frameHtml = (script: string, module = false) =>
+  [
+    '<!doctype html>',
+    '<html lang="en">',
+    '  <head>',
+    '    <meta charset="utf-8" />',
+    '    <meta name="referrer" content="no-referrer" />',
+    '    <meta name="color-scheme" content="light" />',
+    '    <title>Diagram renderer</title>',
+    '  </head>',
+    '  <body>',
+    `    <script${module ? ' type="module"' : ''} src="${script}"></script>`,
+    '  </body>',
+    '</html>',
+    '',
+  ].join('\n');
+
+/**
+ * The diagram frame (`/diagram-frame.html`, ADR 0004) is a second bundle: a classic script,
+ * because the page embeds the document sandboxed without `allow-same-origin`, its origin is
+ * opaque, and a module script from an opaque origin needs CORS headers the service never
+ * sends. An IIFE entry cannot join the code-split app build, so the frame is built on its own
+ * after it, into the same directory, with Mermaid's lazy diagram chunks inlined; the document
+ * that loads it is emitted with the hashed script name. In dev the same document loads the
+ * source as a module (see `server.cors`).
+ */
+function diagramFrame(): Plugin {
+  let config: ResolvedConfig;
+  return {
+    name: 'uam-diagram-frame',
+    configResolved(c) {
+      config = c;
+    },
+    async closeBundle() {
+      if (config.command !== 'build') return;
+      await build({
+        configFile: false,
+        root: config.root,
+        base: config.base,
+        logLevel: config.logLevel,
+        publicDir: false,
+        build: {
+          outDir: config.build.outDir,
+          emptyOutDir: false,
+          assetsInlineLimit: 0,
+          modulePreload: false,
+          rollupOptions: {
+            input: { 'diagram-frame': FRAME_ENTRY },
+            output: { format: 'iife', inlineDynamicImports: true, entryFileNames: 'assets/[name]-[hash].js', assetFileNames: 'assets/[name]-[hash][extname]' },
+          },
+        },
+        plugins: [
+          {
+            name: 'uam-diagram-frame-document',
+            generateBundle(_options, bundle) {
+              const entry = Object.values(bundle).find((f) => f.type === 'chunk' && f.isEntry);
+              if (!entry) throw new Error('diagram frame: no entry chunk');
+              this.emitFile({ type: 'asset', fileName: FRAME_DOCUMENT, source: frameHtml(`${config.base}${entry.fileName}`) });
+            },
+          },
+        ],
+      });
+    },
+    configureServer(server) {
+      server.middlewares.use((rawReq, rawRes, next) => {
+        const req = rawReq as unknown as { url?: string };
+        const res = rawRes as unknown as { setHeader(name: string, value: string): void; end(body: string): void };
+        if ((req.url ?? '').split('?')[0] !== `/${FRAME_DOCUMENT}`) return next();
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(frameHtml(`/${FRAME_ENTRY}`, true));
+      });
+    },
+  };
+}
 
 /**
  * Dev only: the in-browser mock (`?mock`) fakes `fetch`, but `<img src>` and links load the

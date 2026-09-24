@@ -3,6 +3,8 @@
 // wire names (snake_case). Paths keep the `sessions` name; the UI calls them
 // Tasks.
 
+import { visibleModels } from './lib/models';
+
 export type SessionState =
   | 'idle'
   | 'starting'
@@ -27,6 +29,12 @@ export interface Capabilities {
   session_diff: boolean;
   history: boolean;
   context_size?: boolean;
+  execution_modes?: boolean;
+  /** The provider reports account quota and per-Task AI units (#188); the second parity exception. */
+  usage?: boolean;
+  /** A chosen model can title the provider's new Tasks (#183). */
+  titles?: boolean;
+  import?: boolean;
 }
 
 /** What a model accepts as uploads; absent on the model means it reports nothing and is not gated. */
@@ -38,6 +46,24 @@ export interface Media {
   types?: string[];
 }
 
+export type CostTier = 'low' | 'medium' | 'high' | 'very_high';
+
+/** One context tier's token prices in AI Credits per `Prices.batch_size` tokens; an absent price was not reported. */
+export interface TierPrices {
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
+  /** The tier's prompt budget; the long-context prices apply past it. */
+  max_prompt_tokens?: number;
+}
+
+export interface Prices extends TierPrices {
+  /** Tokens per priced batch (1,000,000 for Copilot); absent means 1,000,000. */
+  batch_size?: number;
+  long_context?: TierPrices;
+}
+
 /** One selectable model of the signed-in account. */
 export interface Model {
   id: string;
@@ -45,6 +71,41 @@ export interface Model {
   efforts?: string[];
   context_sizes?: { id: string; tokens: number }[];
   media?: Media;
+  /** The provider's relative cost of the model; absent when it reports none. */
+  cost_tier?: CostTier;
+  /** Whole-number discount on usage billed through this model (Copilot's `auto`). */
+  discount_percent?: number;
+  /** Token prices; absent when the provider reports none (`auto`). */
+  prices?: Prices;
+}
+
+/** The latest live context report: `prompt` and `cached` come from the latest main-agent call and may lag `used`. */
+export interface ContextUsage {
+  used: number;
+  limit: number;
+  prompt?: number;
+  cached?: number;
+}
+
+/** One account quota of a provider with the `usage` capability. */
+export interface Quota {
+  provider: string;
+  type: string;
+  used: number;
+  entitlement: number;
+  unlimited: boolean;
+  remaining_percent: number;
+  overage: number;
+  /** Present only while it lies in the future. */
+  reset_at?: string;
+}
+
+/** `GET /api/usage`, the `usage` frame and the snapshot's `usage`: the last quota read that succeeded. */
+export interface AccountUsage {
+  quotas: Quota[];
+  /** The latest read failed; the quotas are the previous ones. */
+  stale: boolean;
+  updated_at?: string;
 }
 
 /** A command the Task can run from the composer (`/name`). */
@@ -53,6 +114,32 @@ export interface Command {
   description: string;
   kind: 'skill' | 'command';
   input_hint: string;
+  aliases?: string[];
+  allow_during_turn?: boolean;
+  disabled_reason?: string;
+  input_choices?: { name: string; description: string }[];
+  input_required?: boolean;
+}
+
+export type CommandResult =
+  | { kind: 'text'; text: string; markdown?: boolean; prefill_input?: string }
+  | { kind: 'select'; title: string; command: string; options: { name: string; description: string; group?: string }[] }
+  | { kind: 'action'; action: 'model' | 'permissions' | 'context' | 'usage' | 'rename' }
+  | { kind: 'completed'; text?: string };
+
+export interface ExecutionState {
+  known: boolean;
+  mode?: 'interactive' | 'plan' | 'autopilot';
+  objective?: {
+    id: number;
+    objective: string;
+    status: 'active' | 'paused' | 'completed';
+    turn_count: number;
+    pause_reason?: string;
+    completion_summary?: string;
+    credits_used?: number;
+    credit_limit?: number;
+  };
 }
 
 export interface FileEntry {
@@ -120,11 +207,33 @@ export interface TaskDefaults {
   mode: 'safe' | 'yolo';
 }
 
+export const BADGE_COLORS = ['red', 'orange', 'amber', 'lime', 'green', 'teal', 'cyan', 'blue', 'violet', 'pink'] as const;
+export type BadgeColor = (typeof BADGE_COLORS)[number];
+
+/** A Project's badge: two uppercase characters on one of the ten palette tones (DESIGN.md Badges). */
+export interface Badge {
+  text: string;
+  color: BadgeColor;
+}
+
+export type SendDefault = 'steer' | 'queue';
+
+/** The web interface's settings, kept by the service so they apply in every browser. */
+export interface Settings {
+  /** What Enter does while a turn runs. */
+  send_default: SendDefault;
+  /** Model IDs not offered anywhere a model is chosen, by provider; omitted when none is hidden (#191). */
+  hidden_models?: Record<string, string[]>;
+  /** The model that titles a provider's new Tasks; omitted when every provider keeps its own title (#183). */
+  title_model?: Record<string, string>;
+}
+
 export interface Project {
   id: string;
   name: string;
   dir: string;
   created_at: string;
+  badge: Badge;
   /** Defaults for new Tasks; absent when the Project has none. */
   defaults?: TaskDefaults;
   /** Current git branch of the directory; absent unless it is a checkout on a named branch. May change between `project` frames. */
@@ -148,8 +257,11 @@ export interface SessionSummary {
   subagents_running: number;
   effort?: string;
   context_size?: string;
-  context?: { used: number; limit: number };
+  context?: ContextUsage;
+  /** AI units the conversation used so far, once the provider reports them; never zero. */
+  usage?: { ai_units: number };
   mode?: 'safe' | 'yolo';
+  execution?: ExecutionState | null;
   stage?: 'active' | 'settled' | 'archived';
   queued?: number;
   state: SessionState;
@@ -172,6 +284,14 @@ export interface ToolCall {
   output?: string;
 }
 
+/** An image a tool's result returned, stored with the Task; served by the attachment route. */
+export interface ToolImage {
+  id: string;
+  mime: string;
+  size: number;
+  name?: string;
+}
+
 export interface Item {
   id: string;
   kind: ItemKind;
@@ -183,6 +303,10 @@ export interface Item {
   agent_id?: string;
   /** Uploads a user item carried; never their bytes. */
   attachments?: Attachment[];
+  /** Images a tool item's result returned, in the provider's order. */
+  images?: ToolImage[];
+  /** Why some of a tool item's images were left out. */
+  images_note?: string;
 }
 
 /** `idle` is not terminal: the subagent finished and accepts a follow-up (see promptSubagent). */
@@ -202,6 +326,12 @@ export interface Subagent {
   /** Model id and effort level the subagent runs with, when the provider reports them. */
   model?: string;
   effort?: string;
+}
+
+/** Live provider-owned shells. Unknown snapshots retain the last observation only. */
+export interface BackgroundTasks {
+  known: boolean;
+  tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string }[];
 }
 
 export interface SubagentDetail {
@@ -239,6 +369,8 @@ export interface Interaction {
   resolution?: string;
   time: string;
   agent_id?: string;
+  /** The `tool` item (same `agent_id`) this request is for; absent or unmatched means no link. */
+  tool_call_id?: string;
 }
 
 export interface Answer {
@@ -268,17 +400,32 @@ export interface PromptExtras {
 export interface Submission {
   request_id: string;
   status: SubmissionStatus;
+  command_result?: CommandResult;
   error?: string;
   time: string;
 }
 
+export interface PreviousSession {
+  provider: string;
+  conversation_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  in_use: boolean;
+}
+
 export interface SessionDetail extends SessionSummary {
+  seq?: number;
+  history?: 'loaded' | 'loading' | 'unavailable';
+  history_reason?: string;
+  terminal_session?: { id: string; name: string };
   queue?: QueuedPrompt[];
   queue_paused?: boolean;
   /** Main agent items only; subagent items come from the subagent route. */
   items: Item[];
   interactions: Interaction[];
   subagents: Subagent[];
+  background_tasks?: BackgroundTasks;
   history_truncated: boolean;
   last_submission: Submission | null;
 }
@@ -313,16 +460,23 @@ export interface FileDiff {
 export interface SnapshotData {
   seq: number;
   projects: Project[];
+  /** Absent from a service older than settings; the defaults apply then. */
+  settings?: Settings;
+  /** Absent from a service older than usage (#188). */
+  usage?: AccountUsage;
   sessions: SessionSummary[];
   session: SessionDetail | null;
 }
 
 export type UpdateData =
+  | { name: 'history'; seq: number; session_id: string; history: 'loaded' | 'loading' | 'unavailable'; history_reason?: string; history_truncated: boolean; items: Item[]; subagents: Subagent[] }
   | { name: 'queue'; seq: number; session_id: string; queue: QueuedPrompt[]; paused: boolean }
   | { name: 'session'; seq: number; session: SessionSummary }
   | { name: 'session_removed'; seq: number; session_id: string }
   | { name: 'project'; seq: number; project: Project }
   | { name: 'project_removed'; seq: number; project_id: string }
+  | { name: 'settings'; seq: number; settings: Settings }
+  | { name: 'usage'; seq: number; usage: AccountUsage }
   | { name: 'item'; seq: number; session_id: string; item: Item; agent_id?: string }
   | {
       name: 'delta';
@@ -335,19 +489,24 @@ export type UpdateData =
     }
   | { name: 'interaction'; seq: number; session_id: string; interaction: Interaction }
   | { name: 'submission'; seq: number; session_id: string; submission: Submission }
-  | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent };
+  | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent }
+  | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks };
 
 export const UPDATE_EVENTS = [
   'session',
+  'history',
   'session_removed',
   'project',
   'project_removed',
+  'settings',
+  'usage',
   'item',
   'delta',
   'interaction',
   'submission',
   'queue',
   'subagent',
+  'background_tasks',
 ] as const;
 
 export class ApiError extends Error {
@@ -422,6 +581,11 @@ export const api = {
   logout: () => call<void>('POST', '/api/logout'),
   meta: () => call<Meta>('GET', '/api/meta'),
 
+  session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}`),
+  previousCounts: () => call<Record<string, number>>('GET', '/api/previous/counts'),
+  previous: (id: string) => call<PreviousSession[]>('GET', `/api/projects/${enc(id)}/previous`),
+  importPrevious: (id: string, conversationId: string) => call<SessionSummary>('POST', `/api/projects/${enc(id)}/previous/${enc(conversationId)}/import`),
+
   projects: async () => (await call<{ projects: Project[] }>('GET', '/api/projects')).projects,
   createProject: (body: { dir: string; name?: string; defaults?: TaskDefaults }) => call<Project>('POST', '/api/projects', body),
   updateProject: (id: string, body: { name?: string; defaults?: TaskDefaults }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
@@ -429,6 +593,12 @@ export const api = {
   /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
   listDirs: (path?: string, hidden = false) => call<DirList>('GET', `/api/fs/dirs${path ? `?path=${enc(path)}${hidden ? '&hidden=1' : ''}` : hidden ? '?hidden=1' : ''}`),
   makeDir: (parent: string, name: string) => call<{ path: string }>('POST', '/api/fs/dirs', { parent, name }),
+
+  webSettings: () => call<Settings>('GET', '/api/settings'),
+  /** The service refuses an unknown key or value with 400 and changes nothing. */
+  updateWebSettings: (body: Partial<Settings>) => call<Settings>('PATCH', '/api/settings', body),
+  /** The cached account quotas; never calls the provider. */
+  usage: () => call<AccountUsage>('GET', '/api/usage'),
 
   createSession: (body: {
     project_id: string;
@@ -462,6 +632,7 @@ export const api = {
   files: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
   upload: uploadFile,
   attachmentUrl: (id: string, attachmentId: string) => `/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`,
+  cancelBackgroundTask: (id: string, taskId: string) => call<{ accepted: true; background_tasks: BackgroundTasks }>('POST', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/cancel`),
   cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
   close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),
   respond: (id: string, iid: string, answer: Answer) =>
@@ -558,20 +729,21 @@ export function modelCatalog(meta: Meta | null, providerName: string): Model[] {
 /**
  * What a new Task starts with, from a Project's defaults checked against the live catalog:
  * the default provider if listed and available, else the first available one; the default
- * model if offered, keeping its effort and context size only where still offered; a model
- * no longer offered falls back to `auto` (else the first model) with effort cleared and
- * context size `default`. Without defaults: `auto`, no effort, `default`, safe. Null until
- * the provider list has loaded.
+ * model if offered and not hidden in Settings, keeping its effort and context size only
+ * where still offered; a model no longer offered, or hidden, falls back to `auto` (else the
+ * first visible model) with effort cleared and context size `default`. Without defaults:
+ * `auto`, no effort, `default`, safe. Null until the provider list has loaded.
  */
-export function resolveTaskDefaults(meta: Meta | null, defaults?: TaskDefaults): TaskDefaults | null {
+export function resolveTaskDefaults(meta: Meta | null, defaults?: TaskDefaults, hidden?: Settings['hidden_models']): TaskDefaults | null {
   const providers = meta?.providers ?? [];
   const chosen =
     (defaults && providers.find((p) => p.name === defaults.provider && p.available)) ?? providers.find((p) => p.available) ?? providers[0];
   if (!chosen) return null;
   const mode = defaults?.mode ?? 'safe';
-  const model = defaults && chosen.models.find((m) => m.id === defaults.model);
+  const offered = visibleModels(chosen.models, hidden?.[chosen.name]);
+  const model = defaults && offered.find((m) => m.id === defaults.model);
   if (!defaults || !model) {
-    const first = chosen.models.some((m) => m.id === 'auto') ? 'auto' : (chosen.models[0]?.id ?? '');
+    const first = offered.some((m) => m.id === 'auto') ? 'auto' : (offered[0]?.id ?? '');
     return { provider: chosen.name, model: first, effort: '', context_size: 'default', mode };
   }
   const contextOffered = !!chosen.capabilities.context_size && !!model.context_sizes?.some((s) => s.id === defaults.context_size);

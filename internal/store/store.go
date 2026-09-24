@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
@@ -69,6 +71,8 @@ type Config struct {
 	UI             UISettings               `json:"ui"`
 	// WebProjects holds the web interface's Projects, keyed by Project ID.
 	WebProjects map[string]WebProject `json:"web_projects,omitempty"`
+	// WebSettings are the web interface's settings, shared by every browser.
+	WebSettings WebSettings `json:"web_settings,omitzero"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -97,6 +101,7 @@ type configAlias struct {
 	Sessions       map[string]SessionRecord `json:"sessions"`
 	UI             UISettings               `json:"ui"`
 	WebProjects    map[string]WebProject    `json:"web_projects,omitempty"`
+	WebSettings    WebSettings              `json:"web_settings,omitzero"`
 }
 
 // knownConfigFields lists modeled keys and runtime-only keys that must never
@@ -109,6 +114,7 @@ var knownConfigFields = map[string]struct{}{
 	"sessions":                    {},
 	"ui":                          {},
 	"web_projects":                {},
+	"web_settings":                {},
 	"client_id":                   {},
 	"client_ids":                  {},
 	"client_role":                 {},
@@ -142,6 +148,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		Sessions:       c.Sessions,
 		UI:             c.UI,
 		WebProjects:    c.WebProjects,
+		WebSettings:    c.WebSettings,
 	})
 	if err != nil {
 		return nil, err
@@ -161,6 +168,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.Sessions = alias.Sessions
 	c.UI = alias.UI
 	c.WebProjects = alias.WebProjects
+	c.WebSettings = alias.WebSettings
 	unknown, err := decodeUnknownJSON(data, knownConfigFields)
 	if err != nil {
 		return err
@@ -329,8 +337,10 @@ type WebState struct {
 	RequestID string `json:"request_id,omitempty"`
 	// RequestStatus is that submission's outcome: accepted, rejected or
 	// uncertain.
-	RequestStatus string    `json:"request_status,omitempty"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	RequestStatus      string          `json:"request_status,omitempty"`
+	CommandResult      json.RawMessage `json:"command_result,omitempty"`
+	CommandSubmissions json.RawMessage `json:"command_submissions,omitempty"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 	// Detail is a sanitized, short explanation of the state (usually an error).
 	Detail string `json:"detail,omitempty"`
 	// ProjectID is the WebProject the session (a Task) belongs to.
@@ -350,6 +360,12 @@ type WebState struct {
 	SettledAt time.Time `json:"settled_at,omitzero"`
 	// ArchivedAt is when the Task was archived.
 	ArchivedAt time.Time `json:"archived_at,omitzero"`
+	// TerminalSession is the ID of the terminal session record tied to the
+	// same provider conversation when the Task was imported. That record
+	// stays the terminal's.
+	TerminalSession string `json:"terminal_session,omitempty"`
+	// Imported marks a conversation created outside this web service.
+	Imported bool `json:"imported,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -365,19 +381,23 @@ func (w *WebState) Update(v WebState) {
 type webStateAlias WebState
 
 var knownWebStateFields = map[string]struct{}{
-	"turn":           {},
-	"request_id":     {},
-	"request_status": {},
-	"updated_at":     {},
-	"detail":         {},
-	"project_id":     {},
-	"model":          {},
-	"effort":         {},
-	"context_size":   {},
-	"title":          {},
-	"stage":          {},
-	"settled_at":     {},
-	"archived_at":    {},
+	"turn":                {},
+	"request_id":          {},
+	"request_status":      {},
+	"command_result":      {},
+	"command_submissions": {},
+	"updated_at":          {},
+	"detail":              {},
+	"project_id":          {},
+	"model":               {},
+	"effort":              {},
+	"context_size":        {},
+	"title":               {},
+	"stage":               {},
+	"settled_at":          {},
+	"archived_at":         {},
+	"terminal_session":    {},
+	"imported":            {},
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {
@@ -412,8 +432,18 @@ type WebProject struct {
 	// Defaults are the settings a new Task in the Project starts with; zero
 	// when the Project has none.
 	Defaults WebTaskDefaults `json:"defaults,omitzero"`
+	// Badge is zero until the web service assigns one; it also replaces an
+	// invalid one on load.
+	Badge WebBadge `json:"badge,omitzero"`
 
 	unknown map[string]json.RawMessage
+}
+
+// WebBadge is a Project's badge: Text is two uppercase ASCII letters or
+// digits, Color a palette key the browser maps to a colour.
+type WebBadge struct {
+	Text  string `json:"text"`
+	Color string `json:"color"`
 }
 
 // WebTaskDefaults are a Project's settings for new Tasks. ContextSize is
@@ -434,6 +464,7 @@ var knownWebProjectFields = map[string]struct{}{
 	"dir":        {},
 	"created_at": {},
 	"defaults":   {},
+	"badge":      {},
 }
 
 func (p WebProject) MarshalJSON() ([]byte, error) {
@@ -455,6 +486,111 @@ func (p *WebProject) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	p.unknown = unknown
+	return nil
+}
+
+// WebSettings are the web interface's settings. The zero value writes no
+// web_settings key.
+type WebSettings struct {
+	// SendDefault is what Enter does while a turn runs: WebSendSteer or
+	// WebSendQueue. Empty or unrecognised values mean steer at runtime.
+	SendDefault string `json:"send_default,omitempty"`
+	// HiddenModels lists, by provider, the model IDs the browser does not
+	// offer: sorted, without duplicates, at most MaxHiddenModels each. It is
+	// a display preference, never a check on requests.
+	HiddenModels map[string][]string `json:"hidden_models,omitempty"`
+	// TitleModel maps a provider to the model that titles its new Tasks. A
+	// provider without an entry keeps its own title.
+	TitleModel map[string]string `json:"title_model,omitempty"`
+
+	unknown map[string]json.RawMessage
+}
+
+// Hidden model limits: IDs per provider, and bytes per ID.
+const (
+	MaxHiddenModels     = 200
+	MaxHiddenModelBytes = 128
+)
+
+// ValidHiddenModel reports whether id can be stored as a hidden model ID:
+// 1 to MaxHiddenModelBytes bytes of UTF-8 without control characters, as
+// stored model IDs are checked.
+func ValidHiddenModel(id string) bool {
+	return id != "" && len(id) <= MaxHiddenModelBytes && utf8.ValidString(id) && !hasControlChar(id)
+}
+
+// cleanHiddenModels keeps the valid entries of loaded hidden models: a
+// provider name like a stored provider, valid IDs sorted without duplicates,
+// the first MaxHiddenModels of them.
+func cleanHiddenModels(w *WebSettings) {
+	for provider, ids := range w.HiddenModels {
+		clean := slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return !ValidHiddenModel(id) })
+		slices.Sort(clean)
+		clean = slices.Compact(clean)
+		if len(clean) > MaxHiddenModels {
+			clean = clean[:MaxHiddenModels]
+		}
+		if len(clean) != len(ids) {
+			log.Warn("cleaning stored hidden models", "provider", provider)
+		}
+		if provider == "" || hasControlChar(provider) || len(provider) > maxWebModelBytes || len(clean) == 0 {
+			delete(w.HiddenModels, provider)
+			continue
+		}
+		w.HiddenModels[provider] = clean
+	}
+	if len(w.HiddenModels) == 0 {
+		w.HiddenModels = nil
+	}
+}
+
+// cleanTitleModels drops loaded title models whose provider or model ID is
+// empty, too long or holds a control character.
+func cleanTitleModels(w *WebSettings) {
+	for provider, model := range w.TitleModel {
+		if provider == "" || hasControlChar(provider) || len(provider) > maxWebModelBytes || model == "" || hasControlChar(model) || len(model) > maxWebModelBytes {
+			log.Warn("clearing invalid stored title model", "provider", provider)
+			delete(w.TitleModel, provider)
+		}
+	}
+	if len(w.TitleModel) == 0 {
+		w.TitleModel = nil
+	}
+}
+
+// The values of WebSettings.SendDefault.
+const (
+	WebSendSteer = "steer"
+	WebSendQueue = "queue"
+)
+
+type webSettingsAlias WebSettings
+
+var knownWebSettingsFields = map[string]struct{}{
+	"send_default":  {},
+	"hidden_models": {},
+	"title_model":   {},
+}
+
+func (w WebSettings) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(webSettingsAlias(w))
+	if err != nil {
+		return nil, err
+	}
+	return mergeUnknownJSON(base, w.unknown, knownWebSettingsFields)
+}
+
+func (w *WebSettings) UnmarshalJSON(data []byte) error {
+	var alias webSettingsAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*w = WebSettings(alias)
+	unknown, err := decodeUnknownJSON(data, knownWebSettingsFields)
+	if err != nil {
+		return err
+	}
+	w.unknown = unknown
 	return nil
 }
 
@@ -681,6 +817,8 @@ func (s *Store) loadNoLock() (Config, error) {
 	// including the read-only newer-schema one below.
 	dropInvalidRecords(&cfg)
 	dropInvalidProjects(&cfg)
+	cleanHiddenModels(&cfg.WebSettings)
+	cleanTitleModels(&cfg.WebSettings)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
 	// erroring or clobbering it on the next save (F33).

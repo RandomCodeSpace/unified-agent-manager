@@ -1,5 +1,5 @@
-/* Tailwind v4 theme built from DESIGN.md. One mid-light theme (owner decision, 2026-09-24):
-   a dimmed-paper canvas, the rail a step darker, raised surfaces a step lighter, never white.
+/* Tailwind v4 theme built from DESIGN.md. One cool light theme (reference direction, 2026-09-24):
+   a near-white canvas, quiet gray rail and bubbles, white raised controls.
    Every colour, size, radius and shadow in the app is one of these tokens. */
 
 @import 'tailwindcss';
@@ -7,22 +7,22 @@
 @theme {
   /* Surfaces and text: only the DESIGN.md ladder exists; Tailwind's palette is removed. */
   --color-*: initial;
-  --color-rail: #dedcd6;
-  --color-canvas: #e8e6e1;
-  --color-surface: #eeece7;
-  --color-raised: #f3f2ee;
-  --color-sunken: #dedcd6;
-  --color-bubble: #f3f2ee;
-  --color-ink: #1c1b18;
-  --color-body: #3d3b36;
-  --color-muted: #5c5953;
-  --color-faint: #7d7a72;
-  --color-hairline: #d3d1ca;
-  --color-hairline-strong: #bfbdb5;
-  --color-primary: #1c1b18;
-  --color-on-primary: #f3f2ee;
+  --color-rail: #f7f8fa;
+  --color-canvas: #fcfcfd;
+  --color-surface: #f7f8fa;
+  --color-raised: #ffffff;
+  --color-sunken: #f0f1f4;
+  --color-bubble: #f1f2f5;
+  --color-ink: #25262b;
+  --color-body: #494b53;
+  --color-muted: #686b77;
+  --color-faint: #686d79;
+  --color-hairline: #e6e7ec;
+  --color-hairline-strong: #c9ccd5;
+  --color-primary: #25262b;
+  --color-on-primary: #ffffff;
   --color-accent: #2a55bd;
-  --color-on-accent: #f3f2ee;
+  --color-on-accent: #ffffff;
   --color-accent-wash: #dbe3f5;
   --color-focus: #2a55bd;
   --color-selection: #cfdaf3;
@@ -36,14 +36,26 @@
   --color-error-wash: #f4d9d5;
   --color-info: #2a55bd;
   --color-info-wash: #dbe3f5;
-  --color-code-bg: #dedcd6;
+  --color-code-bg: #f3f4f7;
   --color-diff-add-bg: #d3e6da;
   --color-diff-add-text: #14532d;
   --color-diff-del-bg: #efd6d2;
   --color-diff-del-text: #7f1d1d;
   --color-backdrop: rgba(28, 27, 24, 0.35);
 
-  --font-sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Project badge tones (DESIGN.md Badges): fills under `on-primary` text, every pair at least 4.5:1. */
+  --color-badge-red: #b3352a;
+  --color-badge-orange: #a84c12;
+  --color-badge-amber: #876000;
+  --color-badge-lime: #56740f;
+  --color-badge-green: #287541;
+  --color-badge-teal: #13756b;
+  --color-badge-cyan: #0e7089;
+  --color-badge-blue: #3260c4;
+  --color-badge-violet: #6c4fc6;
+  --color-badge-pink: #b0347c;
+
+  --font-sans: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 
   /* Type scale: the DESIGN.md names, used as text-<name>. */
@@ -65,8 +77,8 @@
   --text-title: 14px;
   --text-title--line-height: 1.4;
   --text-title--font-weight: 600;
-  --text-chat: 15px;
-  --text-chat--line-height: 1.6;
+  --text-chat: 14px;
+  --text-chat--line-height: 1.7;
   --text-chat-lg: 16px;
   --text-chat-lg--line-height: 1.6;
   --text-display-sm: 17px;
@@ -119,7 +131,24 @@
   --animate-rise: rise 240ms var(--ease-app);
   --animate-fade-in: fade-in 160ms var(--ease-app);
   --animate-slide-in: slide-in 240ms var(--ease-app);
+  --animate-orbit: orbit 1.6s linear infinite;
+  --animate-breathe: breathe 1.6s ease-in-out infinite;
 
+  /* The working mark: a satellite circles the core while the core breathes (1.6s, in step). */
+  @keyframes orbit {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
   @keyframes pulse-dot {
     0%,
     100% {
@@ -300,6 +329,11 @@
   .md h1 {
     margin-top: 18px;
   }
+  /* Thinking: the whole text stays muted, headings included, and its first heading sits flush. */
+  .md-quiet :is(h1, h2, h3, h4, h5, h6) {
+    color: inherit;
+    margin-top: 10px;
+  }
   .md strong {
     font-weight: 600;
     color: var(--color-ink);
@@ -364,6 +398,62 @@
   }
   .md img {
     display: none;
+  }
+
+  /* Code highlighting (highlight.js classes via lowlight): five tones on the `code-bg` well,
+     each a text or diff token; weight stays 400–500 and nothing is italic. */
+  .hljs-comment,
+  .hljs-quote,
+  .hljs-meta {
+    color: var(--color-muted);
+  }
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-doctag,
+  .hljs-name,
+  .hljs-tag {
+    color: var(--color-accent);
+  }
+  .hljs-string,
+  .hljs-regexp,
+  .hljs-symbol,
+  .hljs-template-tag,
+  .hljs-bullet {
+    color: var(--color-success);
+  }
+  .hljs-number,
+  .hljs-literal,
+  .hljs-link {
+    color: var(--color-attention);
+  }
+  .hljs-attr,
+  .hljs-attribute,
+  .hljs-variable,
+  .hljs-template-variable,
+  .hljs-built_in,
+  .hljs-type,
+  .hljs-params,
+  .hljs-selector-class,
+  .hljs-selector-id,
+  .hljs-selector-attr,
+  .hljs-selector-pseudo {
+    color: var(--color-warning);
+  }
+  .hljs-title,
+  .hljs-section {
+    color: var(--color-ink);
+    font-weight: 500;
+  }
+  .hljs-addition {
+    color: var(--color-diff-add-text);
+    background: var(--color-diff-add-bg);
+  }
+  .hljs-deletion {
+    color: var(--color-diff-del-text);
+    background: var(--color-diff-del-bg);
+  }
+  .hljs-strong {
+    font-weight: 600;
   }
 
   /* Unified diff table (Changes sheet). */

@@ -36,6 +36,14 @@ const (
 	streamWriteWait   = 15 * time.Second
 	maxLoggedValue    = 512
 	contentSecurity   = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+	// frameDocument is the only response with another policy: the document
+	// Mermaid renders in (ADR 0004, "Diagrams in a sandboxed frame"). The page
+	// embeds it with sandbox="allow-scripts" and no allow-same-origin, so its
+	// origin is opaque: it holds no cookie and, with connect-src 'none', can
+	// reach no route. 'self' resolves to this service's origin for the script;
+	// inline styles are allowed because Mermaid's SVG needs them.
+	frameDocument = "diagram-frame.html"
+	frameSecurity = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 )
 
 // ServerConfig configures the HTTP interface.
@@ -127,8 +135,14 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
 	mux.HandleFunc("PATCH /api/projects/{id}", s.handleUpdateProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
+	mux.HandleFunc("GET /api/settings", s.handleSettings)
+	mux.HandleFunc("PATCH /api/settings", s.handleUpdateSettings)
+	mux.HandleFunc("GET /api/usage", s.handleUsage)
 	mux.HandleFunc("GET /api/fs/dirs", s.handleListDirs)
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
+	mux.HandleFunc("GET /api/projects/{id}/previous", s.handlePrevious)
+	mux.HandleFunc("GET /api/previous/counts", s.handlePreviousCounts)
+	mux.HandleFunc("POST /api/projects/{id}/previous/{conversation_id}/import", s.handleImport)
 	mux.HandleFunc("GET /api/sessions", s.handleList)
 	mux.HandleFunc("POST /api/sessions", s.handleCreate)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleDetail)
@@ -136,6 +150,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDelete)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}", s.handleSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/cancel", s.handleCancelSubagent)
+	mux.HandleFunc("POST /api/sessions/{id}/background-tasks/{task_id}/cancel", s.handleCancelBackgroundTask)
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/prompt", s.handlePromptSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
 	mux.HandleFunc("POST /api/sessions/{id}/command", s.handleCommand)
@@ -432,6 +447,71 @@ func (s *Server) handleRemoveProject(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleSettings(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.m.Settings())
+}
+
+// handleUpdateSettings refuses a key it does not know, so a misspelt
+// setting is an error rather than a silent no-op.
+func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var body map[string]json.RawMessage
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	var patch SettingsPatch
+	for key, raw := range body {
+		switch key {
+		case "send_default":
+			patch.SendDefault = new(string)
+			if json.Unmarshal(raw, patch.SendDefault) != nil {
+				writeError(w, http.StatusBadRequest, "send_default must be a string")
+				return
+			}
+		case "hidden_models":
+			if patch.HiddenModels = hiddenModelsBody(raw); patch.HiddenModels == nil {
+				writeError(w, http.StatusBadRequest, "hidden_models must map providers to lists of model IDs")
+				return
+			}
+		case "title_model":
+			if json.Unmarshal(raw, &patch.TitleModel) != nil || patch.TitleModel == nil {
+				writeError(w, http.StatusBadRequest, "title_model must map providers to model IDs")
+				return
+			}
+		default:
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown setting %q", key))
+			return
+		}
+	}
+	settings, err := s.m.UpdateSettings(patch)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+// hiddenModelsBody decodes a hidden_models object, or returns nil when raw is
+// not an object of string lists (null included).
+func hiddenModelsBody(raw json.RawMessage) map[string][]string {
+	var byProvider map[string]json.RawMessage
+	if json.Unmarshal(raw, &byProvider) != nil || byProvider == nil {
+		return nil
+	}
+	out := make(map[string][]string, len(byProvider))
+	for provider, list := range byProvider {
+		var ids []string
+		if json.Unmarshal(list, &ids) != nil || ids == nil {
+			return nil
+		}
+		out[provider] = ids
+	}
+	return out
+}
+
+func (s *Server) handleUsage(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.m.AccountUsage())
+}
+
 func (s *Server) handleListDirs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	list, err := listDirs(q.Get("path"), q.Get("hidden") == "1", maxDirEntries)
@@ -456,6 +536,35 @@ func (s *Server) handleMakeDir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"path": p})
+}
+
+func (s *Server) handlePrevious(w http.ResponseWriter, r *http.Request) {
+	list, err := s.m.Previous(r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handlePreviousCounts(w http.ResponseWriter, r *http.Request) {
+	counts, err := s.m.PreviousCounts(r.Context())
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, counts)
+}
+
+// handleImport imports a previous conversation as a Task. The body, if any,
+// is ignored.
+func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.m.Import(r.Context(), r.PathValue("id"), r.PathValue("conversation_id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, summary)
 }
 
 func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
@@ -657,7 +766,8 @@ func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Set("Content-Type", contentType)
 	h.Set("X-Content-Type-Options", "nosniff")
-	if value := mime.FormatMediaType(disposition, map[string]string{"filename": att.Name}); value != "" {
+	// A tool image may have no name.
+	if value := mime.FormatMediaType(disposition, map[string]string{"filename": att.Name}); value != "" && att.Name != "" {
 		h.Set("Content-Disposition", value)
 	} else {
 		h.Set("Content-Disposition", disposition)
@@ -864,8 +974,14 @@ func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string)
 	if !ok {
 		return false
 	}
-	if name == "index.html" {
+	switch name {
+	case "index.html":
 		w.Header().Set("Cache-Control", "no-cache")
+	case frameDocument:
+		h := w.Header()
+		h.Set("Content-Security-Policy", frameSecurity)
+		h.Set("X-Frame-Options", "SAMEORIGIN")
+		h.Set("Cache-Control", "no-cache")
 	}
 	http.ServeContent(w, r, name, info.ModTime(), content)
 	return true

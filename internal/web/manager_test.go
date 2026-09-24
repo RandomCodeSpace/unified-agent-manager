@@ -417,6 +417,66 @@ func TestInteractionExpiredAndQuestionValidation(t *testing.T) {
 	}
 }
 
+// An interaction's tool call ID reaches the stream and the detail as
+// tool_call_id; one unfit to match a tool item's ID is dropped.
+func TestInteractionToolCallIDReachesStreamAndDetail(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	sub, _, err := m.Subscribe(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	want := map[string]string{
+		"linked": "call_1", "none": "", "long": "", "control": "", "spaced": "", "invalid": "",
+	}
+	for id, toolCallID := range map[string]string{
+		"linked":  "call_1",
+		"none":    "",
+		"long":    strings.Repeat("c", maxToolCallID+1),
+		"control": "call\x1b[2J",
+		"spaced":  "call 1",
+		"invalid": "call\xff",
+	} {
+		ix := permissionRequest(id)
+		ix.ToolCallID = toolCallID
+		conv.EmitInteraction(ix)
+	}
+	for range want {
+		f := frameOf(t, sub, "interaction")
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(f.data["interaction"], &fields); err != nil {
+			t.Fatal(err)
+		}
+		var id, got string
+		_ = json.Unmarshal(fields["id"], &id)
+		raw, present := fields["tool_call_id"]
+		if present {
+			_ = json.Unmarshal(raw, &got)
+		}
+		if got != want[id] || present != (want[id] != "") {
+			t.Fatalf("%s: stream tool_call_id = %s (present %v), want %q", id, raw, present, want[id])
+		}
+	}
+	d := detail(t, m, sum.ID)
+	if len(d.Interactions) != len(want) {
+		t.Fatalf("detail interactions = %d, want %d", len(d.Interactions), len(want))
+	}
+	for _, ix := range d.Interactions {
+		if ix.ToolCallID != want[ix.ID] {
+			t.Fatalf("%s: detail ToolCallID = %q, want %q", ix.ID, ix.ToolCallID, want[ix.ID])
+		}
+	}
+	body, err := json.Marshal(d)
+	if err != nil || !strings.Contains(string(body), `"tool_call_id":"call_1"`) {
+		t.Fatalf("detail JSON lacks tool_call_id: %s %v", body, err)
+	}
+	answered, err := m.Answer(sum.ID, "linked", agentapi.Answer{Decision: "allow"})
+	if err != nil || answered.ToolCallID != "call_1" {
+		t.Fatalf("answered = %+v %v", answered, err)
+	}
+}
+
 func TestCancelCallsCancelOnly(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	sum, conv := createSession(t, m, prov)

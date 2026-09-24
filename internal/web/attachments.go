@@ -36,6 +36,9 @@ const (
 	uploadsDir    = "web-attachments"
 	mimePDF       = "application/pdf"
 	mimeText      = "text/plain"
+	// Limits for the images tools return, kept beside the uploads.
+	maxToolImageBytes = 5 << 20
+	maxToolImages     = 50
 )
 
 var imageTypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
@@ -52,6 +55,9 @@ type upload struct {
 	// UsedAt is set once a prompt carrying it was accepted, or may have
 	// been; a used upload lives as long as its Task.
 	UsedAt time.Time `json:"used_at,omitzero"`
+	// Tool marks an image a tool's result returned rather than an upload.
+	// It lives as long as its Task and is never a prompt attachment.
+	Tool bool `json:"tool,omitempty"`
 }
 
 func (u *upload) info() agentapi.Attachment {
@@ -203,9 +209,26 @@ func (m *Manager) Upload(id, name string, data []byte) (agentapi.Attachment, err
 	}
 	sum := sha256.Sum256(data)
 	u := &upload{ID: uid, Name: cleanUploadName(name), MIME: mime, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:]), CreatedAt: m.now()}
+	if err := m.storeUpload(s, u, data); err != nil {
+		if errors.Is(err, errTaskRemoved) {
+			return agentapi.Attachment{}, newError(http.StatusNotFound, "session not found")
+		}
+		return agentapi.Attachment{}, fmt.Errorf("store attachment: %w", err)
+	}
+	m.sweepUploads()
+	return u.info(), nil
+}
+
+// errTaskRemoved reports a Task deleted while one of its files was stored.
+var errTaskRemoved = errors.New("task removed")
+
+// storeUpload writes an upload or tool image and records it on the Task. A
+// Task deleted meanwhile keeps nothing: the file goes with it, and the error
+// is errTaskRemoved.
+func (m *Manager) storeUpload(s *webSession, u *upload, data []byte) error {
 	dir := m.taskUploadDir(s.id)
 	if err := writeUpload(m.uploadRoot(), dir, u, data); err != nil {
-		return agentapi.Attachment{}, fmt.Errorf("store attachment: %w", err)
+		return err
 	}
 	m.mu.Lock()
 	removed := s.removed
@@ -217,12 +240,10 @@ func (m *Manager) Upload(id, name string, data []byte) (agentapi.Attachment, err
 	}
 	m.mu.Unlock()
 	if removed {
-		// Deleted while storing: nothing of the Task may stay behind.
 		removeUploads(dir)
-		return agentapi.Attachment{}, newError(http.StatusNotFound, "session not found")
+		return errTaskRemoved
 	}
-	m.sweepUploads()
-	return u.info(), nil
+	return nil
 }
 
 // writeUpload stores data and its record owner-only: 0700 directories and
@@ -343,7 +364,7 @@ func (m *Manager) sweepUploads() {
 	m.mu.Lock()
 	for _, s := range m.sessions {
 		for id, u := range s.uploads {
-			if !u.UsedAt.IsZero() || !u.CreatedAt.Before(cutoff) || s.queuedUpload(id) {
+			if u.Tool || !u.UsedAt.IsZero() || !u.CreatedAt.Before(cutoff) || s.queuedUpload(id) {
 				continue
 			}
 			delete(s.uploads, id)
@@ -366,17 +387,22 @@ func (s *webSession) queuedUpload(id string) bool {
 	})
 }
 
-// sweepLoop expires unused uploads while the service runs.
+// sweepLoop expires unused uploads and drops idle read-only transcripts
+// while the service runs.
 func (m *Manager) sweepLoop() {
 	defer m.wg.Done()
 	t := time.NewTicker(sweepInterval)
 	defer t.Stop()
+	h := time.NewTicker(historySweep)
+	defer h.Stop()
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
 		case <-t.C:
 			m.sweepUploads()
+		case <-h.C:
+			m.evictHistories()
 		}
 	}
 }
@@ -394,7 +420,7 @@ func (m *Manager) checkUploadsLocked(s *webSession, ids []string) ([]*upload, er
 			continue
 		}
 		u := s.uploads[id]
-		if u == nil {
+		if u == nil || u.Tool {
 			return nil, newError(http.StatusBadRequest, "attachment %q is not an upload of this task", clipRunes(displaytext.Sanitize(id), maxDetailRunes))
 		}
 		out = append(out, u)
@@ -481,6 +507,111 @@ func (s *webSession) linkUploadsLocked(it *agentapi.Item) {
 			}
 		}
 	}
+}
+
+// keepImages stores a tool item's images with its Task and replaces each
+// with its stored copy: ID, sniffed type, size and name, without the bytes.
+// An image this Task already keeps, by SHA-256, is not stored again, and an
+// image without bytes is found that way only. The rest are dropped, and
+// ImagesNote says why. It writes files, so it runs without Manager.mu.
+func (m *Manager) keepImages(s *webSession, it *agentapi.Item) {
+	if len(it.Images) == 0 {
+		return
+	}
+	s.imageMu.Lock()
+	defer s.imageMu.Unlock()
+	var kept []agentapi.Image
+	var reasons []string
+	dropped := 0
+	for _, img := range it.Images {
+		u, reason := m.keepImage(s, img)
+		if u == nil {
+			dropped++
+			if !slices.Contains(reasons, reason) {
+				reasons = append(reasons, reason)
+			}
+			continue
+		}
+		if !slices.ContainsFunc(kept, func(k agentapi.Image) bool { return k.ID == u.ID }) {
+			kept = append(kept, agentapi.Image{ID: u.ID, MIME: u.MIME, Size: u.Size, Name: u.Name, SHA256: u.SHA256})
+		}
+	}
+	it.Images, it.ImagesNote = kept, ""
+	if dropped > 0 {
+		it.ImagesNote = imagesNote(dropped, strings.Join(reasons, "; "))
+	}
+}
+
+// imagesNote says how many of a tool item's images were left out, and why.
+func imagesNote(dropped int, why string) string {
+	noun := "images"
+	if dropped == 1 {
+		noun = "image"
+	}
+	return fmt.Sprintf("%d %s not kept: %s", dropped, noun, why)
+}
+
+// keepImage returns the stored copy of one tool image, storing it when the
+// Task has none, or the reason it is not kept.
+func (m *Manager) keepImage(s *webSession, img agentapi.Image) (*upload, string) {
+	digest, mime := strings.ToLower(img.SHA256), ""
+	if len(img.Data) > 0 {
+		if len(img.Data) > maxToolImageBytes {
+			return nil, "over 5 MiB"
+		}
+		if mime = http.DetectContentType(img.Data); !isImage(mime) {
+			return nil, "not a png, jpeg, gif or webp image"
+		}
+		sum := sha256.Sum256(img.Data)
+		digest = hex.EncodeToString(sum[:])
+	}
+	m.mu.Lock()
+	stored, count := s.toolImageLocked(digest)
+	removed := s.removed
+	m.mu.Unlock()
+	switch {
+	case removed:
+		return nil, "the task was deleted"
+	case stored != nil:
+		return stored, ""
+	case len(img.Data) == 0:
+		return nil, "the provider did not record its bytes"
+	case count >= maxToolImages:
+		return nil, fmt.Sprintf("a task keeps at most %d images", maxToolImages)
+	}
+	id, err := newUUID()
+	if err != nil {
+		return nil, "could not be stored"
+	}
+	u := &upload{ID: id, MIME: mime, Size: int64(len(img.Data)), SHA256: digest, CreatedAt: m.now(), Tool: true}
+	if img.Name != "" {
+		u.Name = cleanUploadName(img.Name)
+	}
+	if err := m.storeUpload(s, u, img.Data); err != nil {
+		if errors.Is(err, errTaskRemoved) {
+			return nil, "the task was deleted"
+		}
+		log.Warn("store tool image failed", "session", s.id, "error", err)
+		return nil, "could not be stored"
+	}
+	return u, ""
+}
+
+// toolImageLocked returns the Task's stored tool image with this digest, if
+// any, and how many tool images it keeps.
+func (s *webSession) toolImageLocked(digest string) (*upload, int) {
+	var match *upload
+	count := 0
+	for _, u := range s.uploads {
+		if !u.Tool {
+			continue
+		}
+		count++
+		if digest != "" && u.SHA256 == digest {
+			match = u
+		}
+	}
+	return match, count
 }
 
 // Attachment returns one stored upload of a Task and its bytes.

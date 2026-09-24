@@ -1,11 +1,15 @@
-import { ArrowUp, ChevronDown, Cpu, File, Folder, Gauge, Layers, ListEnd, ListPlus, Paperclip, Shield, ShieldOff, Square, X, Zap } from 'lucide-react';
+import { ArrowUp, ChevronDown, Cpu, File, FileDiff, Folder, Gauge, GitBranch, ListEnd, ListPlus, Paperclip, Shield, ShieldOff, Square, X, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type FileEntry, type Model, type PromptMode, type SessionDetail, type SessionSummary, type Submission } from '../api';
+import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type Project, type PromptMode, type SessionDetail, type SessionSummary, type Submission } from '../api';
 import { LIMITS, acceptFor, checkUpload, fileKind, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
-import { applyPick, commandPending, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
+import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
+import { visibleModels } from '../lib/models';
+import { ComposerUsage } from './ComposerUsage';
+import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
-import { Note, Spinner, useApp } from './common';
+import { Markdown, Note, ProjectBadge, Spinner, useApp } from './common';
+import { ExecutionStatus } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { Button } from './ui/button';
 import { Menu } from './ui/menu';
@@ -30,7 +34,6 @@ export function contextReason(model: Model | undefined, supported: boolean): str
 const MAX_FILE_REFS = 20;
 const LIST_ID = 'composer-picker';
 const LIMITS_TEXT = 'Images up to 3 MiB, PDF up to 10 MiB, text up to 256 KiB · 5 per message';
-const COMMANDS_CLOSED = 'Commands are listed once the conversation is open. Send a message first.';
 
 const sentence = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
@@ -111,7 +114,8 @@ function CommandRow({ c }: { c: Command }) {
   return (
     <>
       <span className="shrink-0 font-mono text-code-sm font-medium text-ink">/{c.name}</span>
-      {c.input_hint && <span className="shrink-0 font-mono text-code-sm text-faint">{c.input_hint}</span>}
+      {c.aliases?.length ? <span className="truncate font-mono text-code-sm text-faint">{c.aliases.map((name) => `/${name}`).join(', ')}</span> : null}
+      {c.input_hint && <span className="min-w-0 truncate font-mono text-code-sm text-faint">{c.input_hint}</span>}
       {c.description && <span className="min-w-0 flex-1 truncate text-caption text-muted">{c.description}</span>}
     </>
   );
@@ -137,20 +141,26 @@ function FileRow({ f }: { f: FileEntry }) {
 
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
 
-export function Composer({ session, onSessionUpdate }: { session: SessionDetail; onSessionUpdate: (s: SessionSummary) => void }) {
-  const { meta } = useApp();
+export function Composer({ session, project, fileCount, onChanges, onRename, onSessionUpdate }: { session: SessionDetail; project?: Project; fileCount: number | null; onChanges: () => void; onRename: () => void; onSessionUpdate: (s: SessionSummary) => void }) {
+  const { meta, settings: appSettings } = useApp();
   const [text, setText] = useState('');
   const [caret, setCaret] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [steerUnavailable, setSteerUnavailable] = useState('');
   const [outcome, setOutcome] = useState<Submission | null>(null);
+  const [dismissedResultId, setDismissedResultId] = useState<string | null>(null);
+  const [commandAction, setCommandAction] = useState<Extract<CommandResult, { kind: 'action' }>['action'] | null>(null);
   const pending = useRef<{ key: string; id: string } | null>(null);
   const refocus = useRef(false);
   const live = LIVE.includes(session.state);
   const locked = readOnly(session);
   const last = outcome && (!session.last_submission || outcome.time >= session.last_submission.time) ? outcome : session.last_submission;
+  const commandResult = last?.status === 'accepted' && last.request_id !== dismissedResultId ? last.command_result : null;
+  const dismissResult = () => setDismissedResultId(last?.request_id ?? null);
   const catalog = modelCatalog(meta, session.provider);
-  const models = catalog.some((m) => m.id === session.model) ? catalog : [{ id: session.model, name: session.model || 'Default model' }, ...catalog];
+  const models = visibleModels(catalog, appSettings.hidden_models?.[session.provider]);
+  const hiddenModel = appSettings.hidden_models?.[session.provider]?.includes(session.model);
   const selectedModel = catalog.find((m) => m.id === session.model);
   const modelLabel = modelName(meta, session.provider, session.model);
   const routed = session.last_model && session.last_model !== session.model ? modelName(meta, session.provider, session.last_model) : null;
@@ -158,9 +168,12 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
   const effort = session.effort ?? '';
   const contextSize = session.context_size || 'default';
   const sizes = selectedModel?.context_sizes ?? [];
+  const selectedSize = sizes.find((s) => s.id === contextSize);
+  const contextLabel = selectedSize?.tokens ? compactTokens(selectedSize.tokens) : sizeLabel(contextSize);
   const noEffort = effortReason(selectedModel);
   const noContext = contextReason(selectedModel, !!session.capabilities.context_size);
   const settingsLocked = live || !!busy || locked;
+  const autopilot = session.execution?.mode === 'autopilot' || session.execution?.objective?.status === 'active';
   const mode = session.mode ?? 'safe';
 
   /* ---------- `/` and `@` pickers ---------- */
@@ -171,31 +184,49 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
   const [files, setFiles] = useState<string[]>([]);
-  const [commands, setCommands] = useState<Command[] | null>(null);
-  const [commandsError, setCommandsError] = useState<string | null>(null);
-  const fetchingCommands = useRef(false);
+  const [commandVersion, setCommandVersion] = useState(0);
+  const commandKey = `${session.id}:${session.open}:${live}:${session.mode}:${session.execution?.mode}:${commandVersion}`;
+  const [commandList, setCommandList] = useState<{ key: string; commands: Command[] | null; error: string | null } | null>(null);
+  const commands = commandList?.key === commandKey ? commandList.commands : null;
+  const commandsError = commandList?.key === commandKey ? commandList.error : null;
   const [fileList, setFileList] = useState<{ q: string; files: FileEntry[]; reason: string } | null>(null);
   const fileSeq = useRef(0);
 
-  const rawTrigger = useMemo(() => triggerAt(text, caret), [text, caret]);
+  const argument = useMemo(() => triggerAt(text, caret) ? null : argumentTrigger(text, caret, commands ?? []), [text, caret, commands]);
+  const rawTrigger = useMemo(() => triggerAt(text, caret) ?? argument?.trigger ?? null, [text, caret, argument]);
   const triggerKey = rawTrigger ? `${rawTrigger.kind}${rawTrigger.start}` : null;
   const trigger = rawTrigger && dismissed !== triggerKey && !locked && !busy ? rawTrigger : null;
-  // A `/name…` text holds the send until the list says whether it is a command; a closed conversation has no list and sends as typed.
-  const pendingCommand = session.open && commandPending(text, commands, commandsError);
-  const wantCommands = session.open && (trigger?.kind === '/' || pendingCommand);
+  const shapedCommand = /^[/$]\S/.test(text.trim());
+  const pendingCommand = commandPending(text, commands, commandsError);
+  const wantCommands = !locked && (trigger?.kind === '/' || trigger?.kind === '$' || pendingCommand);
 
-  // The command list is fetched when the picker first opens (or a `/name…` text waits for it) and kept; a failure is retried on the next open.
+  // Fetching can reopen an exact closed conversation, but never submits a prompt.
+  // Catalogue failures hold slash-shaped input instead of falling through to a prompt.
   useEffect(() => {
-    if (!wantCommands || commands || commandsError || fetchingCommands.current) return;
-    fetchingCommands.current = true;
-    api
-      .commands(session.id)
-      .then((list) => setCommands(list))
-      .catch((e) => setCommandsError(isStatus(e, 409) ? COMMANDS_CLOSED : sentence(describeError(e))))
-      .finally(() => {
-        fetchingCommands.current = false;
-      });
-  }, [wantCommands, commands, commandsError, session.id]);
+    if (!wantCommands || commands || commandsError) return;
+    let current = true;
+    api.commands(session.id)
+      .then((list) => current && setCommandList({ key: commandKey, commands: list, error: null }))
+      .catch((e) => current && setCommandList({ key: commandKey, commands: null, error: sentence(describeError(e)) }));
+    return () => { current = false; };
+  }, [wantCommands, commands, commandsError, commandKey, session.id]);
+
+  // Open the same controls used by the toolbar after submission unlocks them.
+  useEffect(() => {
+    if (busy || !commandAction) return;
+    const action = commandAction;
+    const timer = window.setTimeout(() => {
+      setCommandAction(null);
+      if (action === 'rename') { onRename(); return; }
+      const target = document.getElementById({ model: 'composer-model', permissions: 'composer-mode', context: 'composer-context-usage', usage: 'composer-usage' }[action]);
+      if (!target || target.getAttribute('aria-disabled') === 'true' || target.hasAttribute('disabled')) {
+        setError(`The ${action} control is unavailable now.`);
+        return;
+      }
+      target.click();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [busy, commandAction, onRename]);
 
   // Files: debounced search; a stale answer never overwrites a newer one.
   const fileQuery = trigger?.kind === '@' ? trigger.query : null;
@@ -216,17 +247,23 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
 
   const items = useMemo<PickerItem[]>(() => {
     if (!trigger) return [];
-    if (trigger.kind === '/') {
-      const matched = filterCommands(commands ?? [], trigger.query);
+    if (argument) {
+      return (argument.command.input_choices ?? []).filter((c) => c.name.toLowerCase().includes(trigger.query.toLowerCase())).map((c) => ({
+        key: c.name, label: `${c.name}. ${c.description}`, render: <><span className="font-mono text-code-sm">{c.name}</span><span className="min-w-0 text-caption text-muted">{c.description}</span></>,
+      }));
+    }
+    if (trigger.kind === '/' || trigger.kind === '$') {
+      const matched = filterCommands((commands ?? []).filter((c) => trigger.kind !== '$' || c.kind === 'skill'), trigger.query);
       return [...matched.filter((c) => c.kind !== 'skill'), ...matched.filter((c) => c.kind === 'skill')].map((c) => ({
         key: c.name,
         group: c.kind === 'skill' ? 'Skills' : 'Commands',
-        label: `/${c.name}${c.description ? `. ${c.description}` : ''}`,
+        label: `/${c.name}${c.aliases?.length ? `, aliases ${c.aliases.map((name) => `/${name}`).join(', ')}` : ''}. ${commandReason(c, live) || c.description}`,
+        disabled: !!commandReason(c, live),
         render: <CommandRow c={c} />,
       }));
     }
     return (fileList?.files ?? []).map((f) => ({ key: f.path, label: `${f.type === 'directory' ? 'Directory' : 'File'} ${f.path}`, render: <FileRow f={f} /> }));
-  }, [trigger, commands, fileList]);
+  }, [trigger, argument, commands, fileList, live]);
   const hi = Math.min(highlight, Math.max(0, items.length - 1));
   const filesLoading = fileQuery !== null && fileList?.q !== fileQuery;
   const commandsLoading = !!wantCommands && !commands && !commandsError;
@@ -256,11 +293,15 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
 
   function pick(item: PickerItem) {
     if (!trigger) return;
+    if (item.disabled) {
+      setError(commandReason(commands?.find((c) => c.name === item.key), live));
+      return;
+    }
     if (trigger.kind === '@' && !files.includes(item.key) && files.length >= MAX_FILE_REFS) {
       setError(`A message references at most ${MAX_FILE_REFS} files.`);
       return;
     }
-    const next = applyPick(text, trigger, `${trigger.kind}${item.key}`);
+    const next = applyPick(text, trigger, argument ? item.key : `${trigger.kind}${item.key}`);
     if (trigger.kind === '@') setFiles((f) => (f.includes(item.key) ? f : [...f, item.key]));
     pendingCaret.current = next.caret;
     setText(next.text);
@@ -332,22 +373,29 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
   /* ---------- Sending ---------- */
 
   const cmd = commands ? parseCommand(text, commands) : null;
+  const descriptor = commands?.find((c) => c.name === cmd?.name);
+  const commandBlocked = commandReason(descriptor, live) || (descriptor?.input_required && !cmd?.args ? `/${descriptor.name} needs ${descriptor.input_hint || 'an argument'}.` : '');
   const blocked = uploading
     ? 'Wait for the upload to finish'
     : refused
       ? 'Remove the attachment that was refused'
       : pendingCommand
         ? 'Wait for the command list to load'
-        : live && cmd
-          ? `/${cmd.name} runs between turns; wait for this turn to finish`
-          : '';
-  const steerBlocked = hasExtras ? 'A steer takes text only; queue the message instead' : '';
+        : shapedCommand && commandsError
+          ? 'Commands could not be loaded. Retry the command list.'
+          : commandBlocked;
+  const steerBlocked = hasExtras ? 'A steer takes text only; queue the message instead' : steerUnavailable;
   const cannotSubmit = !!busy || locked || session.state === 'starting' || !text.trim() || !!blocked;
+  // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The primary button is Enter's;
+  // the secondary is the other's, and stays Steer, disabled with its reason, while a steer is impossible.
+  const steerDefault = appSettings.send_default === 'steer';
+  const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
+  const other: PromptMode = steerBlocked ? 'steer' : modified;
 
   async function send(promptMode: PromptMode) {
     const t = text.trim();
-    if (cannotSubmit || (promptMode === 'send' && live)) return;
-    if (promptMode === 'steer' && steerBlocked) {
+    if (cannotSubmit || (!cmd && promptMode === 'send' && live)) return;
+    if (!cmd && promptMode === 'steer' && steerBlocked) {
       setError(`${steerBlocked}.`);
       return;
     }
@@ -358,17 +406,28 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
     setBusy(promptMode);
     setError(null);
     try {
-      const sub = cmd && promptMode === 'send' ? await api.command(session.id, cmd.name, cmd.args, id, extras) : await api.prompt(session.id, t, id, promptMode, extras);
+      const sub = cmd ? await api.command(session.id, cmd.name, cmd.args, id, extras) : await api.prompt(session.id, t, id, promptMode, extras);
       setOutcome(sub);
-      pending.current = null;
       if (sub.status === 'accepted' || sub.status === 'queued') {
-        setText('');
-        setCaret(0);
+        pending.current = null;
+        const result = sub.command_result;
+        const prefill = result?.kind === 'text' ? result.prefill_input ?? '' : '';
+        setText(prefill);
+        setCaret(prefill.length);
+        if (cmd) {
+          if (result?.kind === 'action') setCommandAction(result.action);
+          setCommandVersion((v) => v + 1);
+        }
         setFiles([]);
         setUploads([]);
         setDismissed(null);
       }
     } catch (e) {
+      if (!cmd && promptMode === 'steer' && isStatus(e, 409) && e.message.includes('cannot steer a running turn')) {
+        setSteerUnavailable('This provider cannot steer a running turn');
+        setError('This provider cannot steer a running turn. Your message is still here; Enter will queue it.');
+        return;
+      }
       setError(`${describeError(e)}. Nothing will be retried automatically. Repeating this action with unchanged text uses the same request (${id.slice(0, 8)}).`);
     } finally {
       setBusy(null);
@@ -413,16 +472,18 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      void send(e.ctrlKey || e.metaKey ? 'steer' : live ? 'queue' : 'send');
+      void send(e.ctrlKey || e.metaKey ? modified : enter);
     }
   }
 
-  const sendLabel = busy === 'send' || busy === 'queue' ? 'Submitting…' : live ? 'Queue' : cmd ? `Run /${cmd.name}` : 'Send';
+  const sendLabel = busy === enter ? 'Submitting…' : cmd ? `Run /${cmd.name}` : live ? (enter === 'steer' ? 'Steer' : 'Queue') : 'Send';
   const pickerNote =
-    trigger?.kind === '/' ? (!session.open ? COMMANDS_CLOSED : commandsError) : trigger?.kind === '@' && fileList?.q === trigger.query && fileList.reason ? sentence(fileList.reason) : null;
+    (trigger?.kind === '/' || trigger?.kind === '$') ? (commandsError || (items[hi]?.disabled ? commandReason(commands?.find((c) => c.name === items[hi].key), live) : null)) : trigger?.kind === '@' && fileList?.q === trigger.query && fileList.reason ? sentence(fileList.reason) : null;
   const pickerEmpty =
-    trigger?.kind === '/'
-      ? commands && commands.length === 0
+    (trigger?.kind === '/' || trigger?.kind === '$')
+      ? argument
+        ? 'Type arguments, then press Enter to run.'
+        : commands && commands.length === 0
         ? 'This task has no commands.'
         : trigger.query
           ? `No command matches “/${trigger.query}”. Enter sends it as text.`
@@ -452,7 +513,7 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
       )}
       onSubmit={(e) => {
         e.preventDefault();
-        void send(live ? 'queue' : 'send');
+        void send(enter);
       }}
       onDragEnter={(e) => {
         if (locked || !hasFiles(e)) return;
@@ -479,10 +540,10 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
       {trigger && (
         <InlinePicker
           id={LIST_ID}
-          title={trigger.kind === '/' ? 'Commands' : 'Files'}
+          title={argument ? `/${argument.command.name} arguments` : trigger.kind === '$' ? 'Skills' : trigger.kind === '/' ? 'Commands' : 'Files'}
           items={items}
           highlighted={hi}
-          loading={trigger.kind === '/' ? commandsLoading : filesLoading && !fileList}
+          loading={trigger.kind !== '@' ? commandsLoading : filesLoading && !fileList}
           empty={pickerEmpty}
           note={pickerNote}
           onHighlight={setHighlight}
@@ -490,17 +551,17 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
           popupRef={popup}
         />
       )}
-      {(locked || last?.status === 'uncertain' || last?.status === 'rejected' || error || (live && cmd) || (live && hasExtras)) && (
+      {(locked || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked)) && (
         <div className="flex flex-col gap-1 border-b border-hairline px-3.5 py-2">
           {locked && <Note>{session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.'}</Note>}
           {last?.status === 'uncertain' && (
             <Note tone="warn" role="alert">
-              The provider may or may not have received your last prompt. Check the conversation before sending again; it will not be resent automatically.
+              Your last submission may have changed the provider state. Check the conversation and settings before retrying; it will not be resent automatically.
             </Note>
           )}
           {last?.status === 'rejected' && (
             <Note tone="error" role="alert">
-              Last prompt rejected{last.error ? `: ${last.error}` : '.'}
+              Last submission rejected{last.error ? `: ${last.error}` : '.'}
             </Note>
           )}
           {error && (
@@ -508,12 +569,26 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
               {error}
             </Note>
           )}
-          {live && cmd && (
-            <Note role="status">
-              <span className="font-mono text-code-sm text-ink">/{cmd.name}</span> runs between turns. Wait for this turn to finish; commands are not queued.
-            </Note>
+          {commandBlocked && <Note role="status">{commandBlocked}</Note>}
+          {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
+          {live && hasExtras && !cmd && (
+            <Note>{steerDefault ? 'Enter queues this message: a steer takes text only, so files and attachments go with the next turn.' : 'Files and attachments go with a queued message; Steer takes text only.'}</Note>
           )}
-          {live && hasExtras && !cmd && <Note>Files and attachments go with a queued message; Steer takes text only.</Note>}
+          {live && steerUnavailable && !hasExtras && !cmd && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
+        </div>
+      )}
+      {commandResult && commandResult.kind !== 'action' && (
+        <div className="border-b border-hairline px-3.5 py-2 text-ui text-body">
+          <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon" variant="subtle" aria-label="Dismiss command result" className="size-6" onClick={() => dismissResult()}><X /></Button></div>
+          {commandResult.kind === 'select' ? <>
+            <p className="text-caption text-muted">{commandResult.title}</p>
+            <div className="max-h-40 overflow-y-auto">
+              {commandResult.options.map((choice) => <Button key={choice.name} size="sm" variant="subtle" disabled={!!busy || locked} className="h-auto min-h-8 w-full justify-start whitespace-normal text-left pointer-coarse:min-h-11" onClick={() => {
+                const next = `/${commandResult.command} ${choice.name} `;
+                updateText(next, next.length); pendingCaret.current = next.length; dismissResult(); textarea.current?.focus();
+              }}><span className="font-mono">{choice.name}</span><span className="text-caption text-muted">{choice.description}</span></Button>)}
+            </div>
+          </> : commandResult.kind === 'text' && commandResult.markdown ? <Markdown text={commandResult.text} /> : <p className="whitespace-pre-wrap" role="status">{commandResult.text || 'Command completed.'}</p>}
         </div>
       )}
       {queue.length > 0 && (
@@ -569,7 +644,7 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
         id="composer-text"
         rows={2}
         value={text}
-        placeholder={locked ? '' : live ? 'Queue a follow-up, or steer this turn…' : 'Message the agent… (/ commands, @ files)'}
+        placeholder={locked ? '' : live ? (steerDefault ? 'Steer this turn, or queue a follow-up…' : 'Queue a follow-up, or steer this turn…') : 'Ask anything, @ files, $ skills, / commands'}
         onChange={(e) => updateText(e.target.value, e.target.selectionStart ?? e.target.value.length)}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
         onKeyDown={onKeyDown}
@@ -589,6 +664,69 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
       />
 
       <div className="flex flex-wrap items-center gap-0.5 px-2 pt-1 pb-2">
+        <Picker
+          id="composer-model"
+          icon={<Cpu aria-hidden="true" className="text-faint" />}
+          label="Model"
+          value={session.model}
+          display={modelLabel}
+          mono
+          choices={models.map((m) => {
+            const estimate = estimateTurnCost(m, session.context, contextSize);
+            const prices = session.capabilities.usage ? modelCostLine(m) : '';
+            return { value: m.id, label: m.name, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
+          })}
+          disabled={settingsLocked}
+          reason={locked ? 'This task is read-only.' : live ? 'The model changes between turns.' : undefined}
+          onChange={(v) => void settings({ model: v })}
+        />
+        {hiddenModel && <span className="text-caption text-muted">Hidden in Settings</span>}
+        <ComposerUsage session={session} model={selectedModel} />
+        <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline-strong" />
+        <Menu.Root modal={false}>
+          <Tip label={settingsLocked ? (locked ? 'This task is read-only.' : 'Effort and context change between turns.') : 'Effort and context size'}>
+            <Menu.Trigger disabled={settingsLocked} render={<Button id="composer-effort-context" size="sm" variant="subtle" aria-label={`Effort and context size: ${effort || 'Default'} · ${contextLabel}`} />}>
+              <Gauge aria-hidden="true" className="text-faint" />
+              <span>{effort || 'Default'} · {contextLabel}</span>
+              <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+            </Menu.Trigger>
+          </Tip>
+          <Menu.Content side="top" align="start">
+            <Menu.Group>
+              <Menu.Label>Effort</Menu.Label>
+              {noEffort ? <p className="max-w-64 px-2 py-1 text-caption text-muted">{noEffort}</p> : <Menu.RadioGroup value={effort} onValueChange={(v) => void settings({ effort: v as string })}>
+                <Menu.RadioItem value="">Default</Menu.RadioItem>
+                {(selectedModel?.efforts ?? []).map((e) => <Menu.RadioItem key={e} value={e}>{e}</Menu.RadioItem>)}
+              </Menu.RadioGroup>}
+            </Menu.Group>
+            <Menu.Separator />
+            <Menu.Group>
+              <Menu.Label>Context size</Menu.Label>
+              {noContext ? <p className="max-w-64 px-2 py-1 text-caption text-muted">{noContext}</p> : <Menu.RadioGroup value={contextSize} onValueChange={(v) => void settings({ context_size: v as string })}>
+                {!sizes.some((s) => s.id === 'default') && <Menu.RadioItem value="default">Default</Menu.RadioItem>}
+                {sizes.map((s) => <Menu.RadioItem key={s.id} value={s.id} description={s.id === 'long_context' ? 'May cost more' : undefined}>{sizeLabel(s.id)} · {compactTokens(s.tokens)}</Menu.RadioItem>)}
+              </Menu.RadioGroup>}
+            </Menu.Group>
+          </Menu.Content>
+        </Menu.Root>
+        <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline-strong" />
+        <Picker
+          id="composer-mode"
+          icon={mode === 'yolo' ? <ShieldOff aria-hidden="true" className="text-attention" /> : <Shield aria-hidden="true" className="text-faint" />}
+          label="Permissions"
+          value={mode}
+          display={mode === 'yolo' ? 'Yolo' : 'Safe'}
+          choices={[
+            { value: 'safe', label: 'Safe', description: MODE_TEXT.safe },
+            { value: 'yolo', label: 'Yolo', description: MODE_TEXT.yolo },
+          ]}
+          disabled={!!busy || locked}
+          reason={locked ? 'This task is read-only.' : undefined}
+          onChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}
+        />
+        <ExecutionStatus execution={session.execution} supported={!!session.capabilities.execution_modes} />
+        {/* The actions wrap onto the next row as one right-aligned group when the toolbar is too narrow. */}
+        <span className="ml-auto flex items-center gap-0.5">
         {!locked && (
           <>
             <input
@@ -626,75 +764,28 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
             </Tip>
           </>
         )}
-        <Picker
-          id="composer-model"
-          icon={<Cpu aria-hidden="true" className="text-faint" />}
-          label="Model"
-          value={session.model}
-          display={modelLabel}
-          mono
-          choices={models.map((m) => ({ value: m.id, label: m.name }))}
-          disabled={settingsLocked}
-          reason={locked ? 'This task is read-only.' : live ? 'The model changes between turns.' : undefined}
-          onChange={(v) => void settings({ model: v })}
-        />
-        <Picker
-          id="composer-effort"
-          icon={<Gauge aria-hidden="true" className="text-faint" />}
-          label="Effort"
-          value={effort}
-          display={effort || 'Default'}
-          compact
-          choices={[{ value: '', label: 'Default', description: 'Leaves the choice to the provider' }, ...(selectedModel?.efforts ?? []).map((e) => ({ value: e, label: e }))]}
-          disabled={settingsLocked || !!noEffort}
-          reason={locked ? 'This task is read-only.' : live ? 'Effort changes between turns.' : noEffort || undefined}
-          onChange={(v) => void settings({ effort: v })}
-        />
-        <Picker
-          id="composer-context-size"
-          icon={<Layers aria-hidden="true" className="text-faint" />}
-          label="Context size"
-          value={contextSize}
-          display={sizeLabel(contextSize)}
-          compact
-          choices={[
-            ...(sizes.some((s) => s.id === 'default') ? [] : [{ value: 'default', label: 'Default' }]),
-            ...sizes.map((s) => ({ value: s.id, label: sizeLabel(s.id), description: `${s.tokens.toLocaleString()} tokens${s.id === 'long_context' ? ' · may cost more' : ''}` })),
-          ]}
-          disabled={settingsLocked || !!noContext}
-          reason={locked ? 'This task is read-only.' : live ? 'Context size changes between turns.' : noContext || undefined}
-          onChange={(v) => void settings({ context_size: v })}
-        />
-        <Picker
-          id="composer-mode"
-          icon={mode === 'yolo' ? <ShieldOff aria-hidden="true" className="text-attention" /> : <Shield aria-hidden="true" className="text-faint" />}
-          label="Mode"
-          value={mode}
-          display={mode === 'yolo' ? 'Yolo' : 'Safe'}
-          compact
-          choices={[
-            { value: 'safe', label: 'Safe', description: MODE_TEXT.safe },
-            { value: 'yolo', label: 'Yolo', description: MODE_TEXT.yolo },
-          ]}
-          disabled={!!busy || locked}
-          reason={locked ? 'This task is read-only.' : undefined}
-          onChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}
-        />
-        {/* The actions wrap onto the next row as one right-aligned group when the toolbar is too narrow. */}
-        <span className="ml-auto flex items-center gap-0.5">
+
         {busy === 'settings' && <Spinner className="mr-1" />}
-        {live && (
-          <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and pause queued follow-ups'}>
-            <Button size="icon-md" variant="secondary" aria-label="Stop turn" className="animate-rise" disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
+        {(live || autopilot) && (
+          <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop execution and pause queued follow-ups'}>
+            <Button size="icon-md" variant="danger" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="animate-rise rounded-full bg-error text-on-primary hover:bg-error/90" disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
               {busy === 'stop' ? <Spinner /> : <Square className="!size-3.5" fill="currentColor" />}
             </Button>
           </Tip>
         )}
-        {live && (
+        {live && !cmd && other === 'steer' && (
           <Tip label={steerBlocked || 'Steer this turn (Ctrl+Enter)'}>
             <Button size="md" variant="secondary" className="animate-rise" disabled={cannotSubmit || !!steerBlocked} onClick={() => void send('steer')}>
               {busy === 'steer' ? <Spinner /> : <Zap />}
               Steer
+            </Button>
+          </Tip>
+        )}
+        {live && !cmd && other === 'queue' && (
+          <Tip label="Queue for the next turn (Ctrl+Enter)">
+            <Button size="md" variant="secondary" className="animate-rise" disabled={cannotSubmit} onClick={() => void send('queue')}>
+              {busy === 'queue' ? <Spinner /> : <ListPlus />}
+              Queue
             </Button>
           </Tip>
         )}
@@ -703,10 +794,10 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
             label={
               blocked ? (
                 blocked
-              ) : live ? (
+              ) : live && !cmd ? (
                 <>
-                  Queue for the next turn (Enter)
-                  <span className="block text-on-primary/70">Ctrl+Enter steers · Shift+Enter adds a line</span>
+                  {enter === 'steer' ? 'Steer this turn (Enter)' : 'Queue for the next turn (Enter)'}
+                  <span className="block text-on-primary/70">{steerBlocked || (enter === 'steer' ? 'Ctrl+Enter queues' : 'Ctrl+Enter steers')} · Shift+Enter adds a line</span>
                 </>
               ) : (
                 <>
@@ -716,12 +807,24 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
               )
             }
           >
-            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 transition-transform duration-100 active:scale-95" disabled={cannotSubmit}>
-              {busy === 'send' || busy === 'queue' ? <Spinner className="border-on-primary border-r-transparent" /> : live ? <ListPlus /> : <ArrowUp strokeWidth={2.25} />}
+            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full transition-transform duration-100 active:scale-95" disabled={cannotSubmit}>
+              {busy === enter ? <Spinner className="border-on-primary border-r-transparent" /> : !live ? <ArrowUp strokeWidth={2.25} /> : enter === 'steer' ? <Zap /> : <ListPlus />}
             </Button>
           </Tip>
         )}
         </span>
+      </div>
+      <div className="flex min-h-8 items-center gap-2 rounded-b-md border-t border-hairline bg-sunken px-3 text-caption text-muted">
+        <span className="flex min-w-0 items-center gap-2 max-sm:hidden">
+          {project && <ProjectBadge badge={project.badge} />}
+          <span className="max-w-52 truncate">{project?.name ?? 'Project'}</span>
+          <span aria-hidden="true">·</span><span title={session.workdir}>Project folder</span>
+        </span>
+        <span className="flex-1" />
+        <Button id="changes-link" size="sm" variant="subtle" aria-label={`Open changes${fileCount !== null ? `, ${fileCount} files` : ''}`} className="px-1 text-caption text-muted" onClick={onChanges}>
+          <FileDiff aria-hidden="true" />{fileCount === null ? 'Changes' : `${fileCount} changed`}
+        </Button>
+        {project?.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1 font-mono" title={project.branch}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
       </div>
       {routed && (
         <p className="border-t border-hairline/60 px-3.5 py-1 text-caption text-muted">

@@ -151,6 +151,9 @@ type webToolState struct {
 	Title  string          `json:"title"`
 	Error  string          `json:"error"`
 	Time   *webPartTime    `json:"time"`
+	// Attachments are the file parts a completed tool returned, such as the
+	// image read or webfetch loaded, with data: URLs.
+	Attachments []webPart `json:"attachments"`
 }
 
 type webPart struct {
@@ -158,6 +161,7 @@ type webPart struct {
 	SessionID string        `json:"sessionID"`
 	MessageID string        `json:"messageID"`
 	Type      string        `json:"type"`
+	CallID    string        `json:"callID"`
 	Text      string        `json:"text"`
 	Synthetic bool          `json:"synthetic"`
 	Ignored   bool          `json:"ignored"`
@@ -181,6 +185,9 @@ type webPermissionRequest struct {
 	Permission string         `json:"permission"`
 	Patterns   []string       `json:"patterns"`
 	Metadata   map[string]any `json:"metadata"`
+	Tool       struct {
+		CallID string `json:"callID"`
+	} `json:"tool"`
 }
 
 type webQuestionOption struct {
@@ -199,6 +206,10 @@ type webQuestionRequest struct {
 	ID        string            `json:"id"`
 	SessionID string            `json:"sessionID"`
 	Questions []webQuestionInfo `json:"questions"`
+	// Tool names the tool call that asked, when OpenCode says so.
+	Tool struct {
+		CallID string `json:"callID"`
+	} `json:"tool"`
 }
 
 type webFileDiff struct {

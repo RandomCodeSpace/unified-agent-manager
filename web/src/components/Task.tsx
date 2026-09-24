@@ -1,12 +1,12 @@
-import { ArrowDown, Bot, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
+import { ArrowDown, Bot, Ellipsis, Pencil } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { LIVE, api, modelName, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Project, type SessionDetail, type SessionSummary } from '../api';
-import { cn } from '../lib/cn';
+import { LIVE, api, describeError, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Project, type SessionDetail, type SessionSummary } from '../api';
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { ChangesSheet } from './Changes';
-import { INTERRUPTED_TEXT, InlineName, Note, Spinner, StateMark, TaskTitle, useApp } from './common';
+import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
 import { Composer } from './Composer';
+import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
@@ -33,33 +33,53 @@ interface Props {
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
 const BOTTOM_SLACK = 32;
 
-const compact = (n: number) => n.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 });
-
-/** Context usage as a quiet bar: the fill is a CSS custom property set through CSSOM. */
-function ContextMeter({ used, limit }: { used: number; limit: number }) {
-  const fill = useRef<HTMLSpanElement>(null);
-  const pct = Math.max(0, Math.min(100, limit > 0 ? (used / limit) * 100 : 0));
-  useLayoutEffect(() => {
-    fill.current?.style.setProperty('--fill', `${pct.toFixed(1)}%`);
-  }, [pct]);
-  const text = `${used.toLocaleString()} of ${limit.toLocaleString()} tokens used`;
+function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string; snapshot: BackgroundTasks | undefined; locked: boolean }) {
+  const [response, setResponse] = useState<{ source: BackgroundTasks | undefined; snapshot: BackgroundTasks } | null>(null);
+  const [requests, setRequests] = useState<Record<string, { pending?: boolean; requested?: boolean; error?: string }>>({});
+  // A newer SSE observation wins over a cancellation response started from an older snapshot.
+  const shown = response && response.source === snapshot ? response.snapshot : snapshot;
+  if (!shown?.tasks.length) return null;
+  const running = shown.tasks.filter((task) => task.status === 'running').length;
+  async function stop(id: string) {
+    if (requests[id]?.pending || locked || !shown?.known) return;
+    setRequests((r) => ({ ...r, [id]: { pending: true } }));
+    try {
+      const result = await api.cancelBackgroundTask(sessionId, id);
+      setResponse({ source: snapshot, snapshot: result.background_tasks });
+      setRequests((r) => ({ ...r, [id]: { requested: result.accepted } }));
+    } catch (e) {
+      setRequests((r) => ({ ...r, [id]: { error: describeError(e) } }));
+    }
+  }
   return (
-    <Tip label={text}>
-      <span role="meter" aria-valuemin={0} aria-valuemax={limit || 1} aria-valuenow={used} aria-valuetext={text} aria-label="Context" className="flex items-center gap-2 text-caption tabular-nums text-muted">
-        <span className="relative h-1 w-16 overflow-hidden rounded-xs bg-sunken">
-          <span ref={fill} className={cn('absolute inset-y-0 left-0 w-(--fill) rounded-xs transition-[width] duration-240 ease-app', pct >= 90 ? 'bg-warning' : 'bg-accent')} />
-        </span>
-        <span aria-hidden="true">
-          {compact(used)} / {compact(limit)}
-        </span>
-      </span>
-    </Tip>
+    <details className="mb-2 text-caption text-muted" open={running > 0 || undefined}>
+      <summary className="cursor-pointer py-2">
+        Background tasks · {shown.known ? `${running} running` : 'Status unavailable'}
+      </summary>
+      {!shown.known && <p className="pb-2">Last reported tasks. Their current status is unavailable.</p>}
+      <ul className="max-h-40 space-y-2 overflow-y-auto overscroll-contain pb-2">
+        {shown.tasks.map((task) => (
+          <li key={task.id} className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
+              <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
+              {task.status === 'running' && <Tip label={locked ? 'This task is read-only.' : !shown.known ? 'Refresh the connection to check this task before stopping it.' : 'Stop this background shell'}>
+                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} disabled={locked || !shown.known || requests[task.id]?.pending || requests[task.id]?.requested} onClick={() => void stop(task.id)}>
+                  {requests[task.id]?.pending ? <><Spinner /> Stopping…</> : requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
+                </Button>
+              </Tip>}
+            </div>
+            <code className="block truncate font-mono text-code-sm" title={task.command}>{task.command}</code>
+            {requests[task.id]?.error && <p role="alert" className="pt-1 text-error">{requests[task.id].error}</p>}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
 /** The conversation pane: a 44px header, the transcript scrolling in a fixed column, the composer pinned below. */
 export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
-  const { meta } = useApp();
   const actions = useTaskActions();
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesTick, setChangesTick] = useState(0);
@@ -146,7 +166,6 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
   const fileCount = changes?.supported ? changes.files.length : null;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
-  const model = modelName(meta, session.provider, session.last_model || session.model);
   const items = taskMenuItems(session, actions, 'header');
   const renamable = canRename(session, actions);
 
@@ -156,6 +175,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
         <header className="flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3">
           {leading}
           <div className="group/title flex min-w-0 flex-1 items-center gap-1.5">
+            {project && <ProjectBadge badge={project.badge} className="mr-0.5" />}
             {renaming ? (
               <InlineName initial={session.name} label="Task name" className="h-8 max-w-md text-display-sm font-semibold" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
             ) : (
@@ -200,16 +220,6 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               </Button>
             </Tip>
           )}
-          <Tip label="Changes in the working tree">
-            <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={`Changes${fileCount !== null ? `, ${fileCount} ${fileCount === 1 ? 'file' : 'files'}` : ''}`} className="px-2 text-muted" onClick={() => {
-                setPanel(null);
-                onSheet(!sheetOpen);
-              }}>
-              <FileDiff />
-              <span className="max-sm:hidden">Changes</span>
-              {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
-            </Button>
-          </Tip>
           <Menu.Root modal={false}>
             <Menu.Trigger render={<Button size="icon-md" aria-label="Task actions" className="text-muted" />}>
               <Ellipsis />
@@ -220,26 +230,10 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
           </Menu.Root>
         </header>
 
-        {(project?.branch || model || session.context) && (
-          <div className="flex h-7 shrink-0 items-center gap-3 overflow-hidden border-b border-hairline/60 px-3 text-caption text-muted sm:px-4">
-            {project?.branch && (
-              <span className="flex min-w-0 max-w-[40%] items-center gap-1" title={project.branch}>
-                <GitBranch aria-hidden="true" className="size-3 shrink-0 text-faint" />
-                <span className="truncate font-mono text-keycap">{project.branch}</span>
-              </span>
-            )}
-            {model && (
-              <span className="flex min-w-0 items-center gap-1 truncate" title={session.last_model && session.last_model !== session.model ? `Latest turn ran on ${model}` : undefined}>
-                <span className="truncate font-mono text-keycap">{model}</span>
-              </span>
-            )}
-            <span className="flex-1" />
-            {session.context && <ContextMeter used={session.context.used} limit={session.context.limit} />}
-          </div>
-        )}
-
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll}>
           <div className="mx-auto flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
+            <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />
+            {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && (
               <div className="flex flex-col items-center gap-1 py-10 text-center animate-rise">
@@ -250,16 +244,18 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
             <Transcript
               sessionId={session.id}
               items={session.items}
+              interactions={session.interactions}
               subagents={session.subagents}
               live={live}
               working={working}
               provider={session.provider}
-              model={session.last_model || session.model}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
             />
-            {session.interactions.map((i) => (
-              <InteractionCard key={i.id} session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
-            ))}
+            {session.interactions
+              .filter((i) => i.state === 'pending')
+              .map((i) => (
+                <InteractionCard key={i.id} session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
+              ))}
             {session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
             {session.state === 'failed' && (
               <Note tone="error" role="alert">
@@ -276,13 +272,14 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               New output
             </Button>
           )}
-          <Composer key={session.id} session={session} onSessionUpdate={onSessionUpdate} />
+          <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
+          <Composer key={session.id} session={session} project={project} fileCount={fileCount} onChanges={() => { setPanel(null); onSheet(true); }} onRename={() => actions.startRename(session.id, 'header')} onSessionUpdate={onSessionUpdate} />
         </div>
       </div>
 
       {sheetOpen && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} inline={sidePanelInline} onRefresh={() => setChangesTick((t) => t + 1)} onClose={() => onSheet(false)} />}
       {shownPanel && !sidePanelInline && <button type="button" className="fixed inset-0 z-30 bg-backdrop animate-fade-in" aria-label="Close subagents" onClick={closePanel} />}
-      {shownPanel && <SubagentPanel session={session} agents={agents} snapshotSeq={snapshotSeq} view={shownPanel} inline={sidePanelInline} onView={setPanel} onClose={closePanel} onLocate={locate} />}
+      {shownPanel && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={shownPanel} inline={sidePanelInline} onView={setPanel} onClose={closePanel} onLocate={locate} />}
     </div>
   );
 }

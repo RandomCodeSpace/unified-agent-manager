@@ -7,6 +7,7 @@ export interface PickerItem {
   /** Group label rendered above the first item of each run. */
   group?: string;
   label: string;
+  disabled?: boolean;
   render: ReactNode;
 }
 
@@ -89,10 +90,12 @@ export function InlinePicker({
                 tabIndex={-1}
                 id={`${id}-${item.key}`}
                 aria-selected={i === highlighted}
+                aria-disabled={item.disabled || undefined}
                 aria-label={item.label}
                 className={cn(
                   'flex min-h-[30px] w-full cursor-default items-center gap-2 rounded-sm px-2 py-1 text-left text-ui text-body outline-hidden transition-colors duration-100 pointer-coarse:min-h-11 [&_svg]:size-4 [&_svg]:shrink-0',
                   i === highlighted && 'bg-canvas text-ink',
+                  item.disabled && 'text-muted',
                 )}
                 onMouseMove={() => i !== highlighted && onHighlight(i)}
                 onClick={() => onPick(item)}

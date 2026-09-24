@@ -1,11 +1,14 @@
 import { Check, CircleDashed, Copy, CornerDownLeft, Minus, Pause, X } from 'lucide-react';
-import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { LIVE, taskName, type Meta, type SessionState, type SessionSummary } from '../api';
+import { LIVE, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import type { Action } from '../state';
+import { DEFAULT_SETTINGS, type Action } from '../state';
+import { fenceClosed } from '../lib/diagram';
+import type { HighlightTree } from '../lib/highlight';
+import { DiagramCard } from './Diagram';
 import { Button } from './ui/button';
 import { ContextMenu, type ActionItem } from './ui/menu';
 
@@ -67,6 +70,9 @@ export interface AppContextValue {
   narrow: boolean;
   /** Tasks with activity the user has not looked at yet (UI-local). */
   hasNews: (s: SessionSummary) => boolean;
+  /** The service's settings (the send default the composer follows). */
+  settings: Settings;
+  usage: AccountUsage | null;
 }
 
 export const AppContext = createContext<AppContextValue>({
@@ -74,6 +80,8 @@ export const AppContext = createContext<AppContextValue>({
   dispatch: () => {},
   narrow: false,
   hasNews: () => false,
+  settings: DEFAULT_SETTINGS,
+  usage: null,
 });
 
 export const useApp = () => useContext(AppContext);
@@ -124,12 +132,30 @@ export function StateMark({ state, label = false, title, className }: { state: S
   );
 }
 
+/**
+ * The working mark (DESIGN.md): an `accent` core that breathes while a satellite circles
+ * it on a faint ring; under reduced motion the same glyph, still. 14px, crisp from 12 to 16.
+ * One component, so the sidebar rows, the Task header, the subagent chips and the
+ * transcript's working row all move alike.
+ */
+export function WorkingMark({ className }: { className?: string }) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" className={cn('size-3.5 shrink-0 text-accent', className)}>
+      <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.25" className="opacity-25" />
+      <circle cx="8" cy="8" r="2" fill="currentColor" className="animate-breathe motion-reduce:animate-none" />
+      <g className="origin-center animate-orbit motion-reduce:animate-none">
+        <circle cx="8" cy="2.5" r="1.5" fill="currentColor" />
+      </g>
+    </svg>
+  );
+}
+
 function StateGlyph({ state }: { state: SessionState }) {
   const tone = STATE_TONE[state];
   switch (state) {
     case 'working':
     case 'starting':
-      return <span aria-hidden="true" className="size-2 rounded-full bg-accent animate-pulse-dot motion-reduce:bg-transparent motion-reduce:shadow-[inset_0_0_0_2px_var(--color-accent)]" />;
+      return <WorkingMark />;
     case 'awaiting_permission':
     case 'awaiting_answer':
       return <span aria-hidden="true" className="size-2 rounded-full bg-attention" />;
@@ -146,6 +172,29 @@ function StateGlyph({ state }: { state: SessionState }) {
     default:
       return <span aria-hidden="true" className={cn('size-2 rounded-full border-[1.5px]', tone === 'faint' ? 'border-faint' : `border-current ${TONE_TEXT[tone]}`)} />;
   }
+}
+
+// Full class names so Tailwind emits every tone (DESIGN.md Badges).
+const BADGE_BG: Record<BadgeColor, string> = {
+  red: 'bg-badge-red',
+  orange: 'bg-badge-orange',
+  amber: 'bg-badge-amber',
+  lime: 'bg-badge-lime',
+  green: 'bg-badge-green',
+  teal: 'bg-badge-teal',
+  cyan: 'bg-badge-cyan',
+  blue: 'bg-badge-blue',
+  violet: 'bg-badge-violet',
+  pink: 'bg-badge-pink',
+};
+
+/** A Project's badge: a 16px rounded square in its tone with the two characters. Decorative; the name beside it carries the meaning. */
+export function ProjectBadge({ badge, className }: { badge: Badge; className?: string }) {
+  return (
+    <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs font-mono text-[8px] leading-none font-semibold text-on-primary select-none', BADGE_BG[badge.color], className)}>
+      {badge.text}
+    </span>
+  );
 }
 
 /** A tiny dot in a tone; used for connection status and unread marks. */
@@ -261,32 +310,37 @@ const remarkPlugins = [remarkGfm];
 /**
  * A code block (DESIGN.md `code-block`): sunken well, hairline, 10px radius, a 24px header
  * with the language when known and a copy button; right-click offers Copy code. The text
- * is read from the DOM, so it is exactly what is shown.
+ * is read from the DOM, so it is exactly what is shown, unless `text` names what to copy.
+ * The slots are for the diagram card: `head` is the header's middle (default: a spacer),
+ * `body` replaces the `<pre>`, `foot` is a line under it.
  */
-export function CodeBlock({ language, className, children }: { language?: string; className?: string; children: ReactNode }) {
+export function CodeBlock({ language, className, text, head, body, foot, children }: { language?: string; className?: string; text?: string; head?: ReactNode; body?: ReactNode; foot?: ReactNode; children: ReactNode }) {
   const pre = useRef<HTMLPreElement>(null);
   const [copied, copy] = useCopied();
-  const text = () => pre.current?.textContent ?? '';
-  const items: ActionItem[] = [{ key: 'copy', label: 'Copy code', icon: <Copy />, onSelect: () => copy(text()) }];
+  const read = () => text ?? pre.current?.textContent ?? '';
+  const items: ActionItem[] = [{ key: 'copy', label: 'Copy code', icon: <Copy />, onSelect: () => copy(read()) }];
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger render={<div className={cn('group/code relative my-2.5 overflow-hidden rounded-md border border-hairline bg-code-bg', className)} />}>
         <div className="flex h-6 items-center gap-2 border-b border-hairline/70 px-3 text-code-sm text-muted">
           <span className="font-mono">{language ?? 'code'}</span>
-          <span className="flex-1" />
+          {head ?? <span className="flex-1" />}
           <Button
             size="icon"
             variant="subtle"
             aria-label={copied ? 'Copied' : 'Copy code'}
             className={cn('size-6 text-muted opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
-            onClick={() => copy(text())}
+            onClick={() => copy(read())}
           >
             {copied ? <Check /> : <Copy />}
           </Button>
         </div>
-        <pre ref={pre} translate="no" className="!my-0 !rounded-none !border-0 max-h-[480px] overflow-auto px-3 py-2.5 font-mono text-code text-ink">
-          {children}
-        </pre>
+        {body ?? (
+          <pre ref={pre} translate="no" className="!my-0 !rounded-none !border-0 max-h-[480px] overflow-auto px-3 py-2.5 font-mono text-code text-ink">
+            {children}
+          </pre>
+        )}
+        {foot}
       </ContextMenu.Trigger>
       <ContextMenu.Content>
         <ContextMenu.Actions items={items} />
@@ -294,6 +348,75 @@ export function CodeBlock({ language, className, children }: { language?: string
     </ContextMenu.Root>
   );
 }
+
+type Highlighter = typeof import('../lib/highlight');
+let highlighter: Highlighter | null = null;
+let highlighterLoad: Promise<Highlighter> | null = null;
+
+/** The highlighter module once it is here; the first caller starts the download. */
+function useHighlighter(): Highlighter | null {
+  const [mod, setMod] = useState(highlighter);
+  useEffect(() => {
+    if (mod) return;
+    let on = true;
+    (highlighterLoad ??= import('../lib/highlight').then((m) => (highlighter = m))).then(
+      (m) => on && setMod(m),
+      () => {},
+    );
+    return () => {
+      on = false;
+    };
+  }, [mod]);
+  return mod;
+}
+
+/** Beyond this many characters a block stays plain: highlighting runs again on every streamed delta. */
+const MAX_HIGHLIGHT = 100_000;
+
+function hastToReact(nodes: HighlightTree['children'], prefix = ''): ReactNode[] {
+  return nodes.map((n, i) => {
+    if (n.type === 'text') return n.value;
+    if (n.type !== 'element') return null;
+    const cls = n.properties.className;
+    return (
+      <span key={`${prefix}${i}`} className={Array.isArray(cls) ? cls.join(' ') : undefined}>
+        {hastToReact(n.children, `${prefix}${i}.`)}
+      </span>
+    );
+  });
+}
+
+/** The code with `hljs-*` spans once the highlighter has loaded and knows the language; plain until then. */
+function Highlighted({ language, code }: { language: string; code: string }) {
+  const h = useHighlighter();
+  const tree = useMemo(() => (h && code.length <= MAX_HIGHLIGHT ? h.highlight(language, code) : null), [h, language, code]);
+  return tree ? <>{hastToReact(tree.children)}</> : <>{code}</>;
+}
+
+interface MdSource {
+  text: string;
+  /** The text is still arriving: a fence that has not closed yet is not a diagram. */
+  streaming: boolean;
+}
+
+const MdContext = createContext<MdSource>({ text: '', streaming: false });
+
+interface Span {
+  start: { offset?: number };
+  end: { offset?: number };
+}
+
+function MermaidBlock({ source, position, children }: { source: string; position?: Span; children: ReactNode }) {
+  const { text, streaming } = useContext(MdContext);
+  const ready = !streaming || !position || fenceClosed(text, position.start.offset ?? 0, position.end.offset ?? text.length);
+  return (
+    <DiagramCard source={source} ready={ready}>
+      {children}
+    </DiagramCard>
+  );
+}
+
+const languageOf = (className: unknown): string | undefined => /language-([\w+-]+)/.exec(Array.isArray(className) ? className.join(' ') : String(className ?? ''))?.[1];
 
 const mdComponents: Components = {
   a({ href, children }) {
@@ -306,22 +429,42 @@ const mdComponents: Components = {
       <span>{children}</span>
     );
   },
-  pre({ children }) {
-    const child = Array.isArray(children) ? children[0] : children;
-    const cls = child && typeof child === 'object' && 'props' in child ? String((child.props as { className?: string }).className ?? '') : '';
-    const language = /language-([\w+-]+)/.exec(cls)?.[1];
+  code({ className, children }) {
+    const language = languageOf(className);
+    const code = typeof children === 'string' ? children : Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;
+    if (!language || code === null) return <code className={className}>{children}</code>;
+    return (
+      <code className={className}>
+        <Highlighted language={language} code={code} />
+      </code>
+    );
+  },
+  pre({ node, children }) {
+    const code = node?.children[0];
+    const language = code?.type === 'element' ? languageOf(code.properties.className) : undefined;
+    if (language === 'mermaid' && code?.type === 'element') {
+      const first = code.children[0];
+      return (
+        <MermaidBlock source={first?.type === 'text' ? first.value : ''} position={node?.position}>
+          {children}
+        </MermaidBlock>
+      );
+    }
     return <CodeBlock language={language}>{children}</CodeBlock>;
   },
 };
 
 /** Markdown for untrusted provider text: no raw HTML, no images, safe links only. */
-export function Markdown({ text, className }: { text: string; className?: string }) {
+export function Markdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
+  const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   return (
-    <div className={cn('md', className)}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents} disallowedElements={['img']} unwrapDisallowed>
-        {text}
-      </ReactMarkdown>
-    </div>
+    <MdContext.Provider value={source}>
+      <div className={cn('md', className)}>
+        <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents} disallowedElements={['img']} unwrapDisallowed>
+          {text}
+        </ReactMarkdown>
+      </div>
+    </MdContext.Provider>
   );
 }
 

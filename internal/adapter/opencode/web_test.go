@@ -2,7 +2,9 @@ package opencode
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -639,6 +641,49 @@ func TestWebDeltasAndToolUpserts(t *testing.T) {
 	}
 }
 
+// TestWebToolImages follows OpenCode 1.18: a completed read or webfetch of
+// an image returns it as a file part with a data: URL in the tool state's
+// attachments, which the stored part keeps.
+func TestWebToolImages(t *testing.T) {
+	h := newWebHarness(t)
+	conversation, sink := h.open(t, "")
+	id := conversation.ID()
+	img := []byte("\x89PNG from read")
+	state := map[string]any{"status": "completed", "input": map[string]any{"filePath": "/w/shot.png"}, "output": "Image read successfully", "title": "shot.png", "metadata": map[string]any{}, "time": map[string]any{"start": 7, "end": 9},
+		"attachments": []map[string]any{
+			{"id": "prt_img", "type": "file", "mime": "image/png", "filename": "shot.png", "url": "data:image/png;base64," + base64.StdEncoding.EncodeToString(img)},
+			{"id": "prt_pdf", "type": "file", "mime": "application/pdf", "url": "data:application/pdf;base64,JVBERi0="},
+			{"id": "prt_ref", "type": "file", "mime": "image/png", "url": "file:///w/other.png"},
+		}}
+	part := map[string]any{"id": "prt_tool", "messageID": "msg_a1", "sessionID": id, "type": "tool", "callID": "c1", "tool": "read", "state": state}
+	h.fake.emit("message.part.updated", map[string]any{"sessionID": id, "part": part})
+	h.barrier(t, sink, id)
+	check := func(what string, it agentapi.Item) {
+		t.Helper()
+		if it.Kind != agentapi.ItemTool || len(it.Images) != 1 || !bytes.Equal(it.Images[0].Data, img) || it.Images[0].MIME != "image/png" ||
+			it.Images[0].Name != "shot.png" || it.Images[0].SHA256 != "" || it.Images[0].ID != "" {
+			t.Fatalf("%s tool item = %+v", what, it)
+		}
+	}
+	var live *agentapi.Item
+	for _, event := range sink.snapshot() {
+		if event.Kind == agentapi.EventItem && event.Item.ID == "prt_tool" {
+			live = event.Item
+		}
+	}
+	if live == nil {
+		t.Fatal("no tool item")
+	}
+	check("live", *live)
+
+	h.fake.addMessage(id, webTestMessage("msg_a1", "assistant", 1000, part))
+	recorded, err := conversation.History(t.Context())
+	if err != nil || len(recorded.Items) != 1 {
+		t.Fatalf("History = %+v, %v", recorded.Items, err)
+	}
+	check("recorded", recorded.Items[0])
+}
+
 func TestWebTurnStates(t *testing.T) {
 	h := newWebHarness(t)
 	conversation, sink := h.open(t, "")
@@ -728,6 +773,60 @@ func TestWebPermissionRespond(t *testing.T) {
 		t.Fatalf("404 Respond = %v", err)
 	}
 	sink.waitFor(t, "expired permission", isInteraction("per_two", agentapi.InteractionExpired))
+}
+
+// A permission names its tool call by OpenCode's call ID; the interaction
+// names the part that shows that call, once the part is known.
+func TestWebPermissionNamesItsToolPart(t *testing.T) {
+	h := newWebHarness(t)
+	conversation, sink := h.open(t, "")
+	id := conversation.ID()
+	ask := func(requestID string, tool map[string]any) {
+		request := map[string]any{"id": requestID, "sessionID": id, "permission": "bash", "patterns": []string{"ls"}, "metadata": map[string]any{}, "always": []string{}}
+		if tool != nil {
+			request["tool"] = tool
+		}
+		h.fake.emit("permission.asked", request)
+	}
+	ask("per_early", map[string]any{"messageID": "msg_a1", "callID": "c1"})
+	if got := sink.waitFor(t, "early permission", isInteraction("per_early", agentapi.InteractionPending)).Interaction.ToolCallID; got != "" {
+		t.Fatalf("permission before its tool part: ToolCallID = %q, want empty", got)
+	}
+	h.fake.emit("message.part.updated", map[string]any{"sessionID": id, "part": map[string]any{"id": "prt_tool", "messageID": "msg_a1", "sessionID": id, "type": "tool", "callID": "c1", "tool": "bash", "state": map[string]any{"status": "running", "input": map[string]any{"command": "ls"}, "time": map[string]any{"start": 7}}}})
+	tool := sink.waitFor(t, "tool item", func(event agentapi.Event) bool {
+		return event.Kind == agentapi.EventItem && event.Item.Kind == agentapi.ItemTool
+	}).Item
+	ask("per_late", map[string]any{"messageID": "msg_a1", "callID": "c1"})
+	ask("per_none", nil)
+	ask("per_other", map[string]any{"messageID": "msg_a1", "callID": "c_unknown"})
+	for requestID, want := range map[string]string{"per_late": tool.ID, "per_none": "", "per_other": ""} {
+		if got := sink.waitFor(t, requestID, isInteraction(requestID, agentapi.InteractionPending)).Interaction.ToolCallID; got != want {
+			t.Fatalf("%s: ToolCallID = %q, want %q", requestID, got, want)
+		}
+	}
+	h.fake.emit("permission.replied", map[string]any{"sessionID": id, "requestID": "per_early", "reply": "once"})
+	if got := sink.waitFor(t, "early permission answered", isInteraction("per_early", agentapi.InteractionAnswered)).Interaction.ToolCallID; got != "prt_tool" {
+		t.Fatalf("answered permission: ToolCallID = %q, want prt_tool", got)
+	}
+
+	// A question names its call the same way. The call is forgotten once it
+	// completes, but a request linked while it ran keeps its part.
+	h.fake.emit("question.asked", map[string]any{"id": "que_tool", "sessionID": id, "questions": []map[string]any{{"question": "Which?", "options": []map[string]any{{"label": "A"}}}}, "tool": map[string]any{"messageID": "msg_a1", "callID": "c1"}})
+	if got := sink.waitFor(t, "question", isInteraction("que_tool", agentapi.InteractionPending)).Interaction.ToolCallID; got != "prt_tool" {
+		t.Fatalf("question: ToolCallID = %q, want prt_tool", got)
+	}
+	h.fake.emit("message.part.updated", map[string]any{"sessionID": id, "part": map[string]any{"id": "prt_tool", "messageID": "msg_a1", "sessionID": id, "type": "tool", "callID": "c1", "tool": "bash", "state": map[string]any{"status": "completed", "input": map[string]any{"command": "ls"}, "output": "a", "title": "ls", "metadata": map[string]any{}, "time": map[string]any{"start": 7, "end": 8}}}})
+	sink.waitFor(t, "completed tool", func(event agentapi.Event) bool {
+		return event.Kind == agentapi.EventItem && event.Item.Kind == agentapi.ItemTool && event.Item.Tool.Status == agentapi.ToolCompleted
+	})
+	h.fake.emit("question.replied", map[string]any{"sessionID": id, "requestID": "que_tool", "answers": [][]string{{"A"}}})
+	if got := sink.waitFor(t, "answered question", isInteraction("que_tool", agentapi.InteractionAnswered)).Interaction.ToolCallID; got != "prt_tool" {
+		t.Fatalf("question answered after its call completed: ToolCallID = %q, want prt_tool", got)
+	}
+	ask("per_after", map[string]any{"messageID": "msg_a1", "callID": "c1"})
+	if got := sink.waitFor(t, "late permission", isInteraction("per_after", agentapi.InteractionPending)).Interaction.ToolCallID; got != "" {
+		t.Fatalf("permission for a completed call: ToolCallID = %q, want empty", got)
+	}
 }
 
 func TestWebQuestionRespondAndReject(t *testing.T) {
@@ -1142,5 +1241,45 @@ func TestSSEForwardsAllEventsOnlyWhenRequested(t *testing.T) {
 		if fmt.Sprint(types) != want {
 			t.Fatalf("allEvents=%v forwarded %v", all, types)
 		}
+	}
+}
+
+func TestWebReadHistoryOnlyReads(t *testing.T) {
+	h := newWebHarness(t)
+	created, _ := h.open(t, "")
+	id := created.ID()
+	if err := created.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h.fake.addMessage(id, webTestMessage("msg_0001", "user", 1000, webTestText("prt_0001", "msg_0001", "hello")))
+	h.fake.addMessage(id, webTestMessage("msg_0002", "assistant", 1001, webTestText("prt_0002", "msg_0002", "hi")))
+	h.fake.mu.Lock()
+	before := len(h.fake.requests)
+	h.fake.mu.Unlock()
+
+	recorded, err := h.provider.ReadHistory(t.Context(), agentapi.ReadRequest{ConversationID: id, Workdir: h.fake.directory})
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if len(recorded.Items) != 2 || recorded.Items[0].ID != "prt_0001" || recorded.Items[1].Text != "hi" {
+		t.Fatalf("items = %+v", recorded.Items)
+	}
+	h.fake.mu.Lock()
+	requests := append([]fakeWebRequest(nil), h.fake.requests[before:]...)
+	h.fake.mu.Unlock()
+	for _, r := range requests {
+		if r.Method != http.MethodGet {
+			t.Fatalf("reading sent %s %s", r.Method, r.Path)
+		}
+	}
+
+	h.fake.mu.Lock()
+	delete(h.fake.sessions, id)
+	h.fake.mu.Unlock()
+	if _, err := h.provider.ReadHistory(t.Context(), agentapi.ReadRequest{ConversationID: id, Workdir: h.fake.directory}); !errors.Is(err, agentapi.ErrConversationNotFound) {
+		t.Fatalf("ReadHistory of a deleted session = %v", err)
+	}
+	if h.provider.Capabilities().Import {
+		t.Fatal("OpenCode cannot tell another holder, so it must not import")
 	}
 }

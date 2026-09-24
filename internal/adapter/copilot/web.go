@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 const (
@@ -36,6 +38,11 @@ const (
 	webTasksTimeout = 10 * time.Second
 	maxToolText     = 64 << 10
 	maxErrorText    = 512
+	// Read-only history retains at most webReadBytes encoded events from
+	// webReadPages newest pages. Older pages are drained to release the snapshot.
+	webReadEvents = 1000
+	webReadPages  = 64
+	webReadBytes  = 16 << 20
 )
 
 var (
@@ -52,8 +59,20 @@ type sdkClient interface {
 	ForceStop()
 	Ping(ctx context.Context) error
 	ListModels(ctx context.Context) ([]rpc.Model, error)
+	// Quota reads the signed-in account's quota snapshots by type.
+	Quota(ctx context.Context) (map[string]rpc.AccountQuotaSnapshot, error)
 	CreateSession(ctx context.Context, cfg *copilot.SessionConfig) (sdkSession, error)
 	ResumeSession(ctx context.Context, id string, cfg *copilot.ResumeSessionConfig) (sdkSession, error)
+	// DeleteSession deletes a session and its stored data for good.
+	DeleteSession(ctx context.Context, id string) error
+	// ReadEvents reads one page of a session's persisted journal without
+	// creating, resuming or activating the session.
+	ReadEvents(ctx context.Context, req *rpc.SessionsReadPersistedEventsRequest) (*rpc.EventsReadResult, error)
+	// ListSessions lists the sessions whose working directory is exactly
+	// workdir.
+	ListSessions(ctx context.Context, workdir string) ([]copilot.SessionMetadata, error)
+	// CheckInUse returns the ids another process holds by a live in-use lock.
+	CheckInUse(ctx context.Context, ids []string) ([]string, error)
 }
 
 // sdkSession is the part of a Copilot SDK session the web provider drives.
@@ -62,6 +81,12 @@ type sdkSession interface {
 	// Send submits a message and returns the message ID the CLI assigned to
 	// it.
 	Send(ctx context.Context, msg copilot.MessageOptions) (string, error)
+	// SendAndWait submits a message, waits for the session to go idle and
+	// returns the text of the last assistant message.
+	SendAndWait(ctx context.Context, msg copilot.MessageOptions) (string, error)
+	// SetName names the session through the experimental session.name.set,
+	// which also stops the CLI from naming it.
+	SetName(ctx context.Context, name string) error
 	// ListCommands lists the session's built-in commands and skills.
 	ListCommands(ctx context.Context) ([]rpc.SlashCommandInfo, error)
 	// InvokeCommand resolves a command; it starts no turn.
@@ -90,6 +115,15 @@ func (e rejectedError) Unwrap() error { return e.err }
 
 type sdkClientAdapter struct{ c *copilot.Client }
 
+// ImportSupported probes optional CLI methods without opening a session.
+func (a sdkClientAdapter) ImportSupported(ctx context.Context) bool {
+	if _, err := a.CheckInUse(ctx, []string{}); err != nil {
+		return false
+	}
+	_, err := a.ReadEvents(ctx, &rpc.SessionsReadPersistedEventsRequest{SessionID: "00000000-0000-4000-8000-000000000000"})
+	return err == nil || strings.Contains(err.Error(), "journal is unavailable")
+}
+
 func (a sdkClientAdapter) Start(ctx context.Context) error { return a.c.Start(ctx) }
 func (a sdkClientAdapter) Stop() error                     { return a.c.Stop() }
 func (a sdkClientAdapter) ForceStop()                      { a.c.ForceStop() }
@@ -110,6 +144,15 @@ func (a sdkClientAdapter) ListModels(ctx context.Context) ([]rpc.Model, error) {
 	return res.Models, nil
 }
 
+// Quota sends the experimental account.getQuota request.
+func (a sdkClientAdapter) Quota(ctx context.Context) (map[string]rpc.AccountQuotaSnapshot, error) {
+	res, err := a.c.RPC.Account.GetQuota(ctx, &rpc.AccountGetQuotaRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return res.QuotaSnapshots, nil
+}
+
 func (a sdkClientAdapter) CreateSession(ctx context.Context, cfg *copilot.SessionConfig) (sdkSession, error) {
 	s, err := a.c.CreateSession(ctx, cfg)
 	if err != nil {
@@ -118,12 +161,35 @@ func (a sdkClientAdapter) CreateSession(ctx context.Context, cfg *copilot.Sessio
 	return sdkSessionAdapter{s}, nil
 }
 
+func (a sdkClientAdapter) DeleteSession(ctx context.Context, id string) error {
+	return a.c.DeleteSession(ctx, id)
+}
+
 func (a sdkClientAdapter) ResumeSession(ctx context.Context, id string, cfg *copilot.ResumeSessionConfig) (sdkSession, error) {
 	s, err := a.c.ResumeSession(ctx, id, cfg)
 	if err != nil {
 		return nil, err
 	}
 	return sdkSessionAdapter{s}, nil
+}
+
+func (a sdkClientAdapter) ReadEvents(ctx context.Context, req *rpc.SessionsReadPersistedEventsRequest) (*rpc.EventsReadResult, error) {
+	return a.c.RPC.Sessions.ReadPersistedEvents(ctx, req)
+}
+
+func (a sdkClientAdapter) ListSessions(ctx context.Context, workdir string) ([]copilot.SessionMetadata, error) {
+	if workdir == "" {
+		return a.c.ListSessions(ctx, nil)
+	}
+	return a.c.ListSessions(ctx, &copilot.SessionListFilter{WorkingDirectory: workdir})
+}
+
+func (a sdkClientAdapter) CheckInUse(ctx context.Context, ids []string) ([]string, error) {
+	res, err := a.c.RPC.Sessions.CheckInUse(ctx, &rpc.SessionsCheckInUseRequest{SessionIDs: ids})
+	if err != nil {
+		return nil, err
+	}
+	return res.InUse, nil
 }
 
 type sdkSessionAdapter struct{ s *copilot.Session }
@@ -176,6 +242,22 @@ func (a sdkSessionAdapter) Send(ctx context.Context, msg copilot.MessageOptions)
 	return id, err
 }
 
+func (a sdkSessionAdapter) SendAndWait(ctx context.Context, msg copilot.MessageOptions) (string, error) {
+	ev, err := a.s.SendAndWait(ctx, msg)
+	if err != nil || ev == nil {
+		return "", err
+	}
+	if d, ok := ev.Data.(*copilot.AssistantMessageData); ok {
+		return d.Content, nil
+	}
+	return "", nil
+}
+
+func (a sdkSessionAdapter) SetName(ctx context.Context, name string) error {
+	_, err := a.s.RPC.Name.Set(ctx, &rpc.NameSetRequest{Name: name})
+	return err
+}
+
 func (a sdkSessionAdapter) ListCommands(ctx context.Context) ([]rpc.SlashCommandInfo, error) {
 	res, err := a.s.RPC.Commands.List(ctx, &rpc.SessionCommandsListRequest{
 		IncludeBuiltins: copilot.Bool(true), IncludeSkills: copilot.Bool(true), IncludeClientCommands: copilot.Bool(false),
@@ -217,11 +299,13 @@ type webProvider struct {
 	pingEvery time.Duration
 	kick      chan struct{}
 
-	mu     sync.Mutex
-	client sdkClient
-	stop   chan struct{} // closed to end the current watchdog
-	convs  map[*conversation]struct{}
-	shut   bool
+	mu              sync.Mutex
+	client          sdkClient
+	stop            chan struct{} // closed to end the current watchdog
+	convs           map[*conversation]struct{}
+	shut            bool
+	importSupported bool
+	importProbed    bool
 }
 
 // NewWebProvider returns the Copilot integration for the web service.
@@ -271,7 +355,9 @@ func (p *webProvider) Name() string        { return agentapi.ProviderCopilot }
 func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 
 func (p *webProvider) Capabilities() agentapi.Capabilities {
-	return agentapi.Capabilities{Cancel: true, Permissions: true, Questions: true, History: true, ContextSize: true}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -316,7 +402,13 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 		if m.ID == "" || (m.Policy != nil && m.Policy.State != rpc.ModelPolicyStateEnabled) {
 			continue
 		}
-		mo := agentapi.Model{ID: m.ID, Name: m.Name, Efforts: append([]string{}, m.SupportedReasoningEfforts...), ContextSizes: []agentapi.ContextSize{}, Media: media(m.Capabilities)}
+		mo := agentapi.Model{ID: m.ID, Name: m.Name, Efforts: append([]string{}, m.SupportedReasoningEfforts...), ContextSizes: []agentapi.ContextSize{}, Media: media(m.Capabilities), CostTier: costTier(m.ModelPickerPriceCategory)}
+		if m.Billing != nil {
+			if d := m.Billing.DiscountPercent; d != nil && *d > 0 && *d <= 100 {
+				mo.DiscountPercent = int(*d)
+			}
+			mo.Prices = prices(m.Billing.TokenPrices)
+		}
 		if m.ID == "auto" {
 			mo.Efforts = []string{}
 		}
@@ -332,6 +424,167 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 		out = append(out, mo)
 	}
 	return out, nil
+}
+
+// prices copies the catalog's token prices, preferring cacheReadPrice and
+// maxPromptTokens over their deprecated names cachePrice and contextMax.
+func prices(tp *rpc.ModelBillingTokenPrices) *agentapi.Prices {
+	if tp == nil {
+		return nil
+	}
+	p := &agentapi.Prices{TierPrices: tierPrices(tp.InputPrice, tp.OutputPrice, cmp.Or(tp.CacheReadPrice, tp.CachePrice), tp.CacheWritePrice, cmp.Or(tp.MaxPromptTokens, tp.ContextMax))}
+	if tp.BatchSize != nil {
+		p.BatchSize = *tp.BatchSize
+	}
+	if lc := tp.LongContext; lc != nil {
+		long := tierPrices(lc.InputPrice, lc.OutputPrice, cmp.Or(lc.CacheReadPrice, lc.CachePrice), lc.CacheWritePrice, cmp.Or(lc.MaxPromptTokens, lc.ContextMax))
+		p.LongContext = &long
+	}
+	return p
+}
+
+func tierPrices(input, output, cacheRead, cacheWrite *float64, maxPrompt *int64) agentapi.TierPrices {
+	value := func(v *float64) *float64 {
+		if v == nil {
+			return nil
+		}
+		c := *v
+		return &c
+	}
+	t := agentapi.TierPrices{Input: value(input), Output: value(output), CacheRead: value(cacheRead), CacheWrite: value(cacheWrite)}
+	if maxPrompt != nil {
+		t.MaxPromptTokens = *maxPrompt
+	}
+	return t
+}
+
+// costTier maps the catalog's relative cost tier; an unknown one is dropped.
+func costTier(c *rpc.ModelPickerPriceCategory) string {
+	if c == nil {
+		return ""
+	}
+	switch *c {
+	case rpc.ModelPickerPriceCategoryLow:
+		return agentapi.CostLow
+	case rpc.ModelPickerPriceCategoryMedium:
+		return agentapi.CostMedium
+	case rpc.ModelPickerPriceCategoryHigh:
+		return agentapi.CostHigh
+	case rpc.ModelPickerPriceCategoryVeryHigh:
+		return agentapi.CostVeryHigh
+	}
+	return ""
+}
+
+// Quota reads the account's quotas through account.getQuota. An entitlement
+// of -1 means unlimited, as does the unlimited flag.
+func (p *webProvider) Quota(ctx context.Context) ([]agentapi.Quota, error) {
+	client, err := p.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	snaps, err := client.Quota(ctx)
+	if err != nil {
+		p.poke()
+		return nil, fmt.Errorf("read copilot quota: %s", errText(err))
+	}
+	out := make([]agentapi.Quota, 0, len(snaps))
+	for kind, q := range snaps {
+		quota := agentapi.Quota{
+			Type: kind, Used: q.UsedRequests, Entitlement: q.EntitlementRequests, Unlimited: q.IsUnlimitedEntitlement || q.EntitlementRequests < 0,
+			RemainingPercent: q.RemainingPercentage, Overage: q.Overage,
+		}
+		if quota.Unlimited {
+			quota.Entitlement = 0
+		}
+		if q.ResetDate != nil {
+			quota.ResetAt = *q.ResetDate
+		}
+		out = append(out, quota)
+	}
+	slices.SortFunc(out, func(a, b agentapi.Quota) int { return strings.Compare(a.Type, b.Type) })
+	return out, nil
+}
+
+// titleDeleteTimeout bounds deleting a title session, whatever ended it.
+const titleDeleteTimeout = 5 * time.Second
+
+// titleSystem replaces Copilot's system prompt in a title session.
+const titleSystem = `You write a title for a coding task from the user's first message.
+Rules:
+- 3 to 6 words, sentence case, at most 60 characters.
+- Name the task, not the conversation. No quotes, no trailing punctuation, no emoji.
+- Output only the title on one line. Do not answer or carry out the message.`
+
+// Title asks req.Model for a title in a throwaway session with no tools,
+// no discovered configuration, no session store and a fixed system message.
+// Once created, the session is always disconnected and deleted, with a fresh
+// deadline, so neither its directory nor a session-store row outlives it.
+func (p *webProvider) Title(ctx context.Context, req agentapi.TitleRequest) (string, error) {
+	client, err := p.ensureStarted(ctx)
+	if err != nil {
+		return "", err
+	}
+	sess, err := client.CreateSession(ctx, &copilot.SessionConfig{
+		ClientName:                         "uam-title",
+		Model:                              req.Model,
+		ReasoningEffort:                    titleEffort(ctx, client, req.Model),
+		WorkingDirectory:                   req.Workdir,
+		AvailableTools:                     []string{},
+		EnableConfigDiscovery:              copilot.Bool(false),
+		SkipCustomInstructions:             copilot.Bool(true),
+		EnableOnDemandInstructionDiscovery: copilot.Bool(false),
+		EnableFileHooks:                    copilot.Bool(false),
+		EnableHostGitOperations:            copilot.Bool(false),
+		EnableSessionStore:                 copilot.Bool(false),
+		EnableSkills:                       copilot.Bool(false),
+		InfiniteSessions:                   &copilot.InfiniteSessionConfig{Enabled: copilot.Bool(false)},
+		Memory:                             &copilot.MemoryConfiguration{Enabled: false},
+		SystemMessage:                      &copilot.SystemMessageConfig{Mode: "replace", Content: titleSystem},
+		Streaming:                          copilot.Bool(false),
+		OnPermissionRequest: func(copilot.PermissionRequest, copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
+			return &rpc.PermissionDecisionReject{}, nil
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("create copilot title session: %s", errText(err))
+	}
+	defer func() {
+		id := sess.ID()
+		if err := sess.Disconnect(); err != nil {
+			log.Info("disconnect copilot title session failed", "conversation", id, "error", err)
+		}
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleDeleteTimeout)
+		defer cancel()
+		if err := client.DeleteSession(dctx, id); err != nil {
+			log.Warn("delete copilot title session failed", "conversation", id, "error", err)
+		}
+	}()
+	reply, err := sess.SendAndWait(ctx, copilot.MessageOptions{Prompt: "<user_message>\n" + req.Text + "\n</user_message>"})
+	if err != nil {
+		return "", fmt.Errorf("copilot title: %s", errText(err))
+	}
+	return reply, nil
+}
+
+// titleEffort is the lowest reasoning effort model supports, or "" for its
+// default when it lists none or the catalog cannot be read.
+func titleEffort(ctx context.Context, client sdkClient, model string) string {
+	models, err := client.ListModels(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, m := range models {
+		if m.ID != model {
+			continue
+		}
+		for _, effort := range []string{"none", "minimal", "low"} {
+			if slices.Contains(m.SupportedReasoningEfforts, effort) {
+				return effort
+			}
+		}
+	}
+	return ""
 }
 
 // media is a model's upload gate from the catalog: images need
@@ -369,6 +622,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	c := &conversation{
 		p: p, client: client, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
 		seen: map[string]bool{}, watch: map[string]time.Time{},
+		reportEmptyTasks: req.ConversationID != "",
 	}
 	// Permission requests are answered through the pending-permission RPC
 	// with the request id from the permission.requested event; the SDK
@@ -379,15 +633,16 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	var sess sdkSession
 	if req.ConversationID == "" {
 		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{
-			SessionID:           req.SessionID,
-			WorkingDirectory:    req.Workdir,
-			Model:               req.Model,
-			ReasoningEffort:     req.Effort,
-			ContextTier:         copilot.ContextTier(req.ContextSize),
-			Streaming:           copilot.Bool(true),
-			OnPermissionRequest: deferPermission,
-			OnUserInputRequest:  c.askUser,
-			OnEvent:             c.onEvent,
+			SessionID:             req.SessionID,
+			WorkingDirectory:      req.Workdir,
+			Model:                 req.Model,
+			ReasoningEffort:       req.Effort,
+			ContextTier:           copilot.ContextTier(req.ContextSize),
+			Streaming:             copilot.Bool(true),
+			OnPermissionRequest:   deferPermission,
+			OnUserInputRequest:    c.askUser,
+			OnExitPlanModeRequest: refusePlanExit,
+			OnEvent:               c.onEvent,
 			// Discovery loads what the terminal CLI loads for this directory:
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
@@ -399,10 +654,11 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Streaming:        copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
-			ContinuePendingWork: copilot.Bool(false),
-			OnPermissionRequest: deferPermission,
-			OnUserInputRequest:  c.askUser,
-			OnEvent:             c.onEvent,
+			ContinuePendingWork:   copilot.Bool(false),
+			OnPermissionRequest:   deferPermission,
+			OnUserInputRequest:    c.askUser,
+			OnExitPlanModeRequest: refusePlanExit,
+			OnEvent:               c.onEvent,
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 		})
@@ -420,12 +676,143 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	// Under mu: a subagent event may already start a task-list read.
 	c.mu.Lock()
 	c.sess, c.id = sess, sess.ID()
+	if req.ConversationID != "" || c.relist {
+		c.relist = false
+		c.checkTasksLocked()
+	}
 	c.mu.Unlock()
 	if !p.track(c) {
 		_ = c.Close(ctx)
 		return nil, agentapi.ErrClosed
 	}
+	c.control.Lock()
+	c.refreshExecution(ctx)
+	c.control.Unlock()
 	return c, nil
+}
+
+// ReadHistory reads the conversation's persisted journal through the
+// experimental sessions.readPersistedEvents, which neither resumes nor locks
+// the session: nothing is written, no hook or MCP server starts, and a
+// terminal resuming it meanwhile sees no other holder. Measured against CLI
+// 1.0.88 (#193), it returns the same transcript as a resume. The newest
+// webReadPages pages of a larger journal are kept.
+func (p *webProvider) ReadHistory(ctx context.Context, req agentapi.ReadRequest) (agentapi.History, error) {
+	if req.ConversationID == "" {
+		return agentapi.History{}, errors.New("copilot: ReadRequest.ConversationID is required")
+	}
+	client, err := p.ensureStarted(ctx)
+	if err != nil {
+		return agentapi.History{}, err
+	}
+	// Newest first, so a journal cut at webReadPages keeps its latest turns.
+	backward, max := rpc.EventsReadDirectionBackward, int64(webReadEvents)
+	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Direction: &backward, Max: &max}
+	var pages [][]copilot.SessionEvent
+	truncated := false
+	bytesKept := 0
+	model := ""
+	for {
+		res, err := client.ReadEvents(ctx, read)
+		switch {
+		case err != nil && strings.Contains(err.Error(), "journal is unavailable"):
+			return agentapi.History{}, fmt.Errorf("%w: %s", agentapi.ErrConversationNotFound, req.ConversationID)
+		case err != nil:
+			p.poke()
+			return agentapi.History{}, fmt.Errorf("read copilot history: %s", errText(err))
+		case res == nil || res.CursorStatus == rpc.EventsCursorStatusExpired:
+			return agentapi.History{}, errors.New("read copilot history: the journal changed while it was read")
+		}
+		// The last model selection may predate the retained transcript. Keep
+		// it while draining older pages so import preserves the model.
+		for i := len(res.Events) - 1; i >= 0 && model == ""; i-- {
+			if agentOf(res.Events[i]) == "" {
+				model = recordedModel(res.Events[i])
+			}
+		}
+		if !truncated {
+			start := len(res.Events)
+			for start > 0 {
+				encoded, err := json.Marshal(res.Events[start-1])
+				if err != nil {
+					return agentapi.History{}, fmt.Errorf("measure copilot history: %w", err)
+				}
+				if bytesKept+len(encoded) > webReadBytes {
+					truncated = true
+					break
+				}
+				bytesKept += len(encoded)
+				start--
+			}
+			pages = append(pages, slices.Clone(res.Events[start:]))
+			if len(pages) == webReadPages && res.HasMore {
+				truncated = true
+			}
+		}
+		if !res.HasMore {
+			break
+		}
+		// Finish a truncated snapshot without retaining older pages. The SDK
+		// has no release-cursor API; completion releases its pinned journal.
+		cursor := res.Cursor
+		read = &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Cursor: &cursor, Direction: &backward, Max: &max}
+	}
+	var evs []copilot.SessionEvent
+	for i := len(pages) - 1; i >= 0; i-- {
+		evs = append(evs, pages[i]...)
+	}
+	recorded := history(evs)
+	recorded.Model = model
+	recorded.Truncated = truncated
+	return recorded, nil
+}
+
+// Previous lists the local sessions recorded with exactly workdir as their
+// working directory, newest first. A session is listed once it has its first
+// message.
+func (p *webProvider) Previous(ctx context.Context, workdir string) ([]agentapi.PreviousConversation, error) {
+	client, err := p.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	list, err := client.ListSessions(ctx, workdir)
+	if err != nil {
+		p.poke()
+		return nil, fmt.Errorf("list copilot sessions: %s", errText(err))
+	}
+	out := []agentapi.PreviousConversation{}
+	for _, s := range list {
+		// A remote session has no local journal to read.
+		if s.IsRemote || s.Context == nil || (workdir != "" && s.Context.WorkingDirectory != workdir) {
+			continue
+		}
+		c := agentapi.PreviousConversation{ID: s.SessionID, Workdir: s.Context.WorkingDirectory, CreatedAt: s.StartTime, UpdatedAt: s.ModifiedTime}
+		if s.Summary != nil {
+			c.Title = *s.Summary
+		}
+		out = append(out, c)
+	}
+	slices.SortFunc(out, func(a, b agentapi.PreviousConversation) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
+	return out, nil
+}
+
+// InUse reports which of ids another process holds, through the
+// experimental sessions.checkInUse: live in-use locks on this host under the
+// same COPILOT_HOME. The CLI this provider runs is not reported.
+func (p *webProvider) InUse(ctx context.Context, ids []string) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	client, err := p.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	held, err := client.CheckInUse(ctx, ids)
+	if err != nil {
+		p.poke()
+		return nil, fmt.Errorf("check copilot sessions in use: %s", errText(err))
+	}
+	return held, nil
 }
 
 func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
@@ -447,6 +834,14 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	if err := c.Start(sctx); err != nil {
 		c.ForceStop()
 		return nil, fmt.Errorf("start copilot CLI: %s", errText(err))
+	}
+	if !p.importProbed {
+		if probe, ok := c.(interface{ ImportSupported(context.Context) bool }); ok {
+			probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+			p.importSupported = probe.ImportSupported(probeCtx)
+			probeCancel()
+		}
+		p.importProbed = true
 	}
 	p.client, p.stop = c, make(chan struct{})
 	go p.watch(c, p.stop) // #nosec G118 -- provider-owned watchdog outlives requests; Shutdown/fail closes stop and each ping has a timeout.
@@ -580,16 +975,35 @@ type conversation struct {
 	id     string
 	sink   agentapi.EventSink
 
-	mu               sync.Mutex
-	closed           bool
-	pending          map[string]*interaction
+	mu      sync.Mutex
+	closed  bool
+	pending map[string]*interaction
+	// questions pairs user_input.requested events with ask_user callbacks.
+	questions        questionLinks
 	stoppedSubagents map[string]bool
 	tr               *transcript
 	subs             *subagentLog
 	turnErr          string
 	idles            int
+	// Once the provider reports foreground idle, session.idle is only its
+	// broader background-work boundary and must not end another turn.
+	assistantIdleSeen bool
+	autopilotTurn     bool
+	foregroundIdle    bool
+	backgroundTasks   *agentapi.BackgroundTasks
+	execution         *agentapi.ExecutionState
+	executionRevision uint64
+	control           sync.Mutex
+	reportEmptyTasks  bool
 	// turnModel is the model of the turn's latest main-agent model call.
 	turnModel string
+	// usage is the latest main-agent context report, kept so a model call's
+	// cache report can be sent with it.
+	usage agentapi.Context
+	// nanoAIU is the conversation's cost so far in nano-AI units: the
+	// session total the CLI last recorded plus each model call reported
+	// since. usageSent is what was last emitted.
+	nanoAIU, usageSent float64
 	// steers includes sends in flight so idle can record their outcome before
 	// the CLI returns the message ID. Accepted, unused steers remain here.
 	steers []*steer
@@ -625,6 +1039,169 @@ type interaction struct {
 type userReply struct {
 	resp copilot.UserInputResponse
 	err  error
+}
+
+// questionLinks pairs each user_input.requested event with the ask_user
+// callback for the same question. The callback carries the question and
+// choices only; the event carries the same question with its tool call and
+// agent. Neither names the other, so they pair by question text in arrival
+// order, whichever side comes first. Every entry is bounded and expires:
+// the two sides of one question arrive within moments of each other.
+type questionLinks struct {
+	// events are the events without a callback yet, by question text,
+	// oldest first.
+	events map[string][]questionEvent
+	// waiting are the pending questions without an event yet, oldest first.
+	waiting []*interaction
+	// spent counts, by question text, the questions that were answered
+	// before their event came, with the time of the newest, so a late event
+	// is dropped rather than attached to the next question with that text.
+	spent map[string]spentQuestions
+}
+
+type questionEvent struct {
+	toolCallID, agentID string
+	at                  time.Time
+}
+
+type spentQuestions struct {
+	n  int
+	at time.Time
+}
+
+// maxQuestionLinks bounds each side of questionLinks; questionLinkTTL is how
+// long one side waits for the other. A question past either shows without
+// its tool call.
+const (
+	maxQuestionLinks = 16
+	questionLinkTTL  = 30 * time.Second
+)
+
+// linkQuestionLocked handles a user_input.requested event: it links the
+// oldest waiting question with that text, which is emitted again with the
+// link and its agent, or is dropped when that question was already answered,
+// or waits for its callback.
+func (c *conversation) linkQuestionLocked(d *rpc.UserInputRequestedData, agentID string, now time.Time) {
+	if d.ToolCallID == nil {
+		return
+	}
+	id := strings.TrimSpace(*d.ToolCallID)
+	if id == "" {
+		return
+	}
+	q := &c.questions
+	q.expire(now)
+	// An older callback may already be answered while the next same-text
+	// question waits. Consume that older event before matching a waiter.
+	if sp, ok := q.spent[d.Question]; ok {
+		if sp.n--; sp.n == 0 {
+			delete(q.spent, d.Question)
+		} else {
+			q.spent[d.Question] = sp
+		}
+		return
+	}
+	for i, in := range q.waiting {
+		if in.Questions[0].Text != d.Question {
+			continue
+		}
+		q.waiting = slices.Delete(q.waiting, i, i+1)
+		in.ToolCallID = id
+		if in.AgentID == "" {
+			in.AgentID = agentID
+		}
+		c.emitInteractionLocked(in)
+		return
+	}
+	if q.events == nil {
+		q.events = map[string][]questionEvent{}
+	}
+	if q.count() >= maxQuestionLinks {
+		q.dropOldestEvent()
+	}
+	q.events[d.Question] = append(q.events[d.Question], questionEvent{toolCallID: id, agentID: agentID, at: now})
+}
+
+// askedLocked gives a new question its event's tool call and agent when the
+// event came first; otherwise the question waits for it.
+func (c *conversation) askedLocked(in *interaction, now time.Time) {
+	q := &c.questions
+	q.expire(now)
+	text := in.Questions[0].Text
+	if evs := q.events[text]; len(evs) > 0 {
+		in.ToolCallID, in.AgentID = evs[0].toolCallID, evs[0].agentID
+		if len(evs) == 1 {
+			delete(q.events, text)
+		} else {
+			q.events[text] = evs[1:]
+		}
+		return
+	}
+	if len(q.waiting) >= maxQuestionLinks {
+		q.waiting = q.waiting[1:]
+	}
+	q.waiting = append(q.waiting, in)
+}
+
+// settledLocked forgets a question that ended. One still waiting for its
+// event is counted as spent, so that event links nothing when it comes.
+func (c *conversation) settledLocked(in *interaction, now time.Time) {
+	q := &c.questions
+	i := slices.Index(q.waiting, in)
+	if i < 0 {
+		return
+	}
+	q.waiting = slices.Delete(q.waiting, i, i+1)
+	if q.spent == nil {
+		q.spent = map[string]spentQuestions{}
+	}
+	if len(q.spent) >= maxQuestionLinks {
+		clear(q.spent)
+	}
+	sp := q.spent[in.Questions[0].Text]
+	q.spent[in.Questions[0].Text] = spentQuestions{n: sp.n + 1, at: now}
+}
+
+func (q *questionLinks) count() int {
+	n := 0
+	for _, evs := range q.events {
+		n += len(evs)
+	}
+	return n
+}
+
+func (q *questionLinks) dropOldestEvent() {
+	var oldest string
+	var at time.Time
+	for text, evs := range q.events {
+		if oldest == "" || evs[0].at.Before(at) {
+			oldest, at = text, evs[0].at
+		}
+	}
+	if len(q.events[oldest]) == 1 {
+		delete(q.events, oldest)
+	} else {
+		q.events[oldest] = q.events[oldest][1:]
+	}
+}
+
+// expire drops the events and spent counts older than questionLinkTTL. A
+// waiting question stays as long as it is pending: the user may take long
+// to answer, and its event, if it comes at all, comes at once.
+func (q *questionLinks) expire(now time.Time) {
+	for text, evs := range q.events {
+		evs = slices.DeleteFunc(evs, func(e questionEvent) bool { return now.Sub(e.at) > questionLinkTTL })
+		if len(evs) == 0 {
+			delete(q.events, text)
+		} else {
+			q.events[text] = evs
+		}
+	}
+	for text, sp := range q.spent {
+		if now.Sub(sp.at) > questionLinkTTL {
+			delete(q.spent, text)
+		}
+	}
 }
 
 func (c *conversation) ID() string { return c.id }
@@ -668,6 +1245,14 @@ func (c *conversation) History(ctx context.Context) (agentapi.History, error) {
 	}
 	c.mu.Unlock()
 	recorded := history(evs)
+	// Model-call reports are not recorded; the CLI's session total is. Live
+	// calls after the last recorded total keep the higher live figure.
+	if total, ok := recordedTotal(evs); ok {
+		c.mu.Lock()
+		c.nanoAIU = max(c.nanoAIU, total)
+		recorded.Usage = &agentapi.Usage{AIUnits: c.nanoAIU / nanoPerUnit}
+		c.mu.Unlock()
+	}
 	c.restoreIdle(ctx, recorded.Subagents)
 	return recorded, nil
 }
@@ -749,6 +1334,10 @@ func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize 
 			return c.selectionUncertain(ctx, fmt.Errorf("model changed but resetting effort failed: %s", errText(err)))
 		}
 	}
+	// The old report describes the old selection; wait for a fresh one.
+	c.mu.Lock()
+	c.usage = agentapi.Context{}
+	c.mu.Unlock()
 	return nil
 }
 
@@ -765,76 +1354,24 @@ func (c *conversation) selectionUncertain(ctx context.Context, err error) error 
 	return fmt.Errorf("copilot model settings: %s", reason)
 }
 
+// SetTitle names the session with session.name.set. The CLI records the name
+// as set by the user, so neither it nor the terminal CLI renames it later.
+func (c *conversation) SetTitle(ctx context.Context, title string) error {
+	if c.isClosed() {
+		return agentapi.ErrClosed
+	}
+	if err := c.sess.SetName(ctx, title); err != nil {
+		c.p.poke()
+		return fmt.Errorf("copilot rename: %s", errText(err))
+	}
+	return nil
+}
+
 // Send uses the "enqueue" mode explicitly: a prompt that reaches a CLI still
 // busy with a turn runs after that turn instead of joining it. Referenced
 // files go as file and directory attachments with their absolute paths.
 func (c *conversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
 	return c.send(ctx, copilot.MessageOptions{Prompt: prompt.Text, Attachments: attachments(prompt)})
-}
-
-// Commands lists skills and the built-in prompt commands init and review.
-// Other built-ins duplicate web controls, change the mode, only print text,
-// or reach outside the Task.
-func (c *conversation) Commands(ctx context.Context) ([]agentapi.Command, error) {
-	if c.isClosed() {
-		return nil, agentapi.ErrClosed
-	}
-	listed, err := c.sess.ListCommands(ctx)
-	if err != nil {
-		c.p.poke()
-		return nil, fmt.Errorf("copilot commands: %s", errText(err))
-	}
-	out := []agentapi.Command{}
-	for _, cmd := range listed {
-		kind := agentapi.CommandSkill
-		switch {
-		case cmd.Kind == rpc.SlashCommandKindSkill:
-		case cmd.Kind == rpc.SlashCommandKindBuiltin && (cmd.Name == "init" || cmd.Name == "review"):
-			kind = agentapi.CommandPrompt
-		default:
-			continue
-		}
-		hint := ""
-		if cmd.Input != nil {
-			hint = cmd.Input.Hint
-		}
-		out = append(out, agentapi.Command{Name: cmd.Name, Description: cmd.Description, Kind: kind, InputHint: hint})
-	}
-	return out, nil
-}
-
-// RunCommand resolves the command, then sends the prompt it returns, shown
-// as "/name arguments". Only a prompt that keeps the session's mode is
-// sent; any other result was not a turn and is refused.
-func (c *conversation) RunCommand(ctx context.Context, name string, args agentapi.Prompt) error {
-	if c.isClosed() {
-		return agentapi.ErrClosed
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	res, err := c.sess.InvokeCommand(ctx, name, args.Text)
-	if err != nil {
-		// Invoking starts no turn, so nothing was submitted.
-		c.p.poke()
-		return fmt.Errorf("copilot refused /%s: %s", name, errText(err))
-	}
-	prompt, ok := res.(*rpc.SlashCommandAgentPromptResult)
-	switch {
-	case !ok:
-		kind := "no result"
-		if res != nil {
-			kind = string(res.Kind())
-		}
-		return fmt.Errorf("copilot answered /%s with %s, not a prompt; uam sent nothing", name, kind)
-	case prompt.Mode != nil:
-		return fmt.Errorf("copilot's /%s would switch the session to %s mode; uam sent nothing", name, *prompt.Mode)
-	case prompt.Prompt == "":
-		return fmt.Errorf("copilot's /%s returned an empty prompt; uam sent nothing", name)
-	}
-	return c.send(ctx, copilot.MessageOptions{
-		Prompt: prompt.Prompt, DisplayPrompt: strings.TrimSpace("/" + name + " " + args.Text), Attachments: attachments(args),
-	})
 }
 
 // attachments maps a prompt's references to Copilot attachments; uploads go
@@ -906,6 +1443,8 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	defer c.mu.Unlock()
 	// An idle seen while Send was in flight already ended this turn.
 	if c.idles == idles {
+		c.foregroundIdle = false
+		c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 	}
 	return nil
@@ -963,12 +1502,23 @@ func (c *conversation) Steer(ctx context.Context, prompt string) error {
 }
 
 func (c *conversation) Cancel(ctx context.Context) error {
+	c.control.Lock()
+	defer c.control.Unlock()
 	if c.isClosed() {
 		return agentapi.ErrClosed
 	}
-	if err := c.sess.Abort(ctx); err != nil {
-		c.p.poke()
-		return fmt.Errorf("copilot cancel: %s", errText(err))
+	var modeErr error
+	if runtime, ok := c.sess.(executionSession); ok {
+		modeErr = runtime.SetExecutionMode(ctx, rpc.SessionModeInteractive)
+		c.refreshExecution(ctx)
+	}
+	// Abort must still run after a partial mode failure, with its own bounded
+	// context if the mode operation used up the original deadline.
+	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	abortErr := c.sess.Abort(abortCtx)
+	if modeErr != nil || abortErr != nil {
+		return fmt.Errorf("copilot stop: %w", errors.Join(modeErr, abortErr))
 	}
 	return nil
 }
@@ -1148,6 +1698,7 @@ func (c *conversation) answerLocked(in *interaction, ans agentapi.Answer) error 
 		in.State = agentapi.InteractionAnswered
 	}
 	delete(c.pending, in.ID)
+	c.settledLocked(in, time.Now())
 	c.emitInteractionLocked(in)
 	in.reply <- r
 	return nil
@@ -1197,6 +1748,7 @@ func (c *conversation) expireSubagentLocked(agentID string) {
 		in.State, in.Resolution = agentapi.InteractionExpired, "the subagent was stopped"
 		c.emitInteractionLocked(in)
 		if in.reply != nil {
+			c.settledLocked(in, time.Now())
 			in.reply <- userReply{err: errNoUser}
 		}
 	}
@@ -1215,6 +1767,7 @@ func (c *conversation) expireLocked() []string {
 		in.State = agentapi.InteractionExpired
 		c.emitInteractionLocked(in)
 		if in.reply != nil {
+			c.settledLocked(in, time.Now())
 			in.reply <- userReply{err: errNoUser}
 		} else {
 			perms = append(perms, id)
@@ -1260,11 +1813,15 @@ func (c *conversation) watchLocked(agentID string, sent time.Time) {
 	c.checkTasksLocked()
 }
 
-// checkTasksLocked reads the task list for the watched agents on its own
+// checkTasksLocked reads background shells and watched agents on its own
 // goroutine: a request made on the event goroutine stalls the connection its
 // answer arrives on. One read runs at a time; asking during it adds one more.
 func (c *conversation) checkTasksLocked() {
-	if c.closed || c.sess == nil || len(c.watch) == 0 {
+	if c.closed {
+		return
+	}
+	if c.sess == nil {
+		c.relist = true
 		return
 	}
 	if c.listing {
@@ -1285,10 +1842,17 @@ func (c *conversation) readTasks(sess sdkSession) {
 		switch {
 		case err != nil:
 			c.p.poke()
+			if !c.closed && c.backgroundTasks != nil {
+				snapshot := *c.backgroundTasks
+				snapshot.Known = false
+				c.backgroundTasks = &snapshot
+				c.emitLocked(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &snapshot})
+			}
 		case !c.closed:
+			c.applyShellTasksLocked(tasks)
 			c.applyTasksLocked(tasks)
 		}
-		again := c.relist && !c.closed && len(c.watch) > 0
+		again := c.relist && !c.closed
 		c.listing, c.relist = again, false
 		c.mu.Unlock()
 		c.taskRPC.Unlock()
@@ -1296,6 +1860,34 @@ func (c *conversation) readTasks(sess sdkSession) {
 			return
 		}
 	}
+}
+
+func (c *conversation) applyShellTasksLocked(tasks []rpc.TaskInfo) {
+	snapshot := agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{}}
+	for _, task := range tasks {
+		shell, ok := task.(*rpc.TaskShellInfo)
+		if !ok {
+			continue
+		}
+		item := agentapi.BackgroundTask{
+			ID: shell.ID, Command: clip(displaytext.Sanitize(shell.Command), maxToolText),
+			Description: clip(displaytext.Sanitize(shell.Description), maxErrorText),
+			Status:      string(shell.Status), StartedAt: shell.StartedAt,
+		}
+		if shell.CompletedAt != nil {
+			item.EndedAt = *shell.CompletedAt
+		}
+		snapshot.Tasks = append(snapshot.Tasks, item)
+	}
+	if c.backgroundTasks == nil && len(snapshot.Tasks) == 0 && !c.reportEmptyTasks {
+		return
+	}
+	c.reportEmptyTasks = false
+	if c.backgroundTasks != nil && c.backgroundTasks.Known && slices.Equal(c.backgroundTasks.Tasks, snapshot.Tasks) {
+		return
+	}
+	c.backgroundTasks = &snapshot
+	c.emitLocked(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &snapshot})
 }
 
 // applyTasksLocked settles the watched agents from one task-list read. Only
@@ -1384,6 +1976,7 @@ func (c *conversation) askUser(req copilot.UserInputRequest, _ copilot.UserInput
 		c.mu.Unlock()
 		return copilot.UserInputResponse{}, errNoUser
 	}
+	c.askedLocked(in, time.Now())
 	c.pending[in.ID] = in
 	c.emitInteractionLocked(in)
 	c.mu.Unlock()
@@ -1407,16 +2000,38 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.emitLocked(deltaEvent(agentID, d.MessageID, agentapi.ItemAssistant, d.DeltaContent))
 		return
 	case *rpc.AssistantReasoningDeltaData:
+		c.tr.streamedReasoning(agentID)
 		c.emitLocked(deltaEvent(agentID, reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.DeltaContent))
 		return
 	case *rpc.AssistantUsageData:
 		if agentID == "" && d.Model != "" {
 			c.turnModel = d.Model
 		}
+		if agentID == "" && d.InputTokens != nil && *d.InputTokens >= 0 {
+			// Input tokens include those read from and written to the cache.
+			c.usage.Prompt, c.usage.Cached = *d.InputTokens, 0
+			if d.CacheReadTokens != nil {
+				c.usage.Cached = min(max(*d.CacheReadTokens, 0), *d.InputTokens)
+			}
+			c.emitContextLocked()
+		}
+		// Every call costs, a subagent's included.
+		if d.CopilotUsage != nil && d.CopilotUsage.TotalNanoAiu > 0 {
+			c.nanoAIU += d.CopilotUsage.TotalNanoAiu
+			c.emitUsageLocked()
+		}
+		return
+	case *rpc.SessionUsageCheckpointData:
+		// The CLI's session-wide total, which the next reopen reads back.
+		if d.TotalNanoAiu >= 0 {
+			c.nanoAIU = d.TotalNanoAiu
+			c.emitUsageLocked()
+		}
 		return
 	case *rpc.SessionUsageInfoData:
 		if agentID == "" && d.CurrentTokens >= 0 && d.TokenLimit > 0 {
-			c.emitLocked(agentapi.Event{Kind: agentapi.EventContext, Context: &agentapi.Context{Used: d.CurrentTokens, Limit: d.TokenLimit}})
+			c.usage.Used, c.usage.Limit = d.CurrentTokens, d.TokenLimit
+			c.emitContextLocked()
 		}
 		return
 	case *rpc.SessionTitleChangedData:
@@ -1434,8 +2049,18 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 		return
 	case *rpc.SessionBackgroundTasksChangedData:
-		// The only sign that a follow-up ended: it sends no subagent event.
+		// Shell changes and follow-up completion both invalidate the task list.
 		c.checkTasksLocked()
+		return
+	case *rpc.UserInputRequestedData:
+		c.linkQuestionLocked(d, agentID, time.Now())
+		return
+	case *rpc.AssistantTurnStartData:
+		if agentID == "" {
+			c.foregroundIdle = false
+			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
+		}
 		return
 	case *rpc.SessionErrorData:
 		if agentID == "" {
@@ -1451,25 +2076,62 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		// A message delivered while idle starts a turn: also a steer that
 		// reached the CLI after the idle of the turn it was meant for.
 		if agentID == "" && d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliveryIdle {
+			c.foregroundIdle = false
+			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 		}
-	case *rpc.SessionIdleData:
+	case *rpc.SessionModeChangedData:
+		if agentID == "" {
+			c.executionRevision++
+			if c.execution == nil {
+				c.execution = &agentapi.ExecutionState{}
+			}
+			next := *c.execution
+			next.Mode, next.Known = string(d.NewMode), false
+			if d.NewMode != rpc.SessionModeAutopilot {
+				c.autopilotTurn = false
+			}
+			c.execution = &next
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventExecution, Execution: &next})
+			c.checkExecutionLocked()
+		}
+		return
+	case *rpc.SessionAutopilotObjectiveChangedData:
+		if agentID == "" {
+			c.executionRevision++
+			c.checkExecutionLocked()
+		}
+		return
+	case *rpc.AssistantIdleData:
 		if agentID != "" {
 			return
 		}
-		c.idles++
-		turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel}
-		switch {
-		case d.Aborted != nil && *d.Aborted:
-			turn.State = agentapi.TurnCancelled
-			// An abort withdraws the turn's prompts; the CLI stops waiting.
-			c.expireLocked()
-		case c.turnErr != "":
-			turn.State, turn.Error = agentapi.TurnFailed, c.turnErr
+		if (c.autopilotTurn || c.execution != nil && (c.execution.Mode == "autopilot" || c.execution.Mode == "")) && (d.Aborted == nil || !*d.Aborted) {
+			c.autopilotTurn = true
+			return
 		}
-		c.turnErr, c.turnModel = "", ""
-		c.undeliveredLocked(turn.State, ev.Timestamp)
-		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &turn})
+		c.assistantIdleSeen = true
+		c.finishTurnLocked(d.Aborted, ev.Timestamp)
+		return
+	case *rpc.SessionIdleData:
+		if agentID == "" && d.Mode != nil && *d.Mode == rpc.SessionModeAutopilot && (d.Aborted == nil || !*d.Aborted) {
+			c.autopilotTurn = true
+			next := agentapi.ExecutionState{Mode: "autopilot"}
+			if c.execution != nil {
+				next = *c.execution
+				next.Mode = "autopilot"
+				next.Known = false
+			}
+			c.execution = &next
+			c.executionRevision++
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventExecution, Execution: &next})
+			c.checkExecutionLocked()
+			return
+		}
+		if agentID == "" && (!c.assistantIdleSeen || c.autopilotTurn) && (d.Mode == nil || *d.Mode != rpc.SessionModeAutopilot || d.Aborted != nil && *d.Aborted) {
+			c.finishTurnLocked(d.Aborted, ev.Timestamp)
+			c.autopilotTurn = false
+		}
 		return
 	case *rpc.PermissionRequestedData:
 		c.permissionRequestedLocked(d, ev.Timestamp, agentID)
@@ -1478,6 +2140,10 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.permissionCompletedLocked(d)
 		return
 	case *rpc.SessionShutdownData:
+		if d.TotalNanoAiu != nil && *d.TotalNanoAiu >= 0 {
+			c.nanoAIU = *d.TotalNanoAiu
+			c.emitUsageLocked()
+		}
 		if d.ShutdownType == rpc.ShutdownTypeError {
 			reason := "Copilot session shut down"
 			if d.ErrorReason != nil {
@@ -1488,9 +2154,49 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 		return
 	}
-	if it, ok := c.tr.item(ev); ok {
+	for _, it := range c.tr.items(ev) {
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &it})
 	}
+}
+
+// nanoPerUnit converts the CLI's nano-AI units to AI units, the unit of the
+// catalog's token prices (AI Credits).
+const nanoPerUnit = 1e9
+
+// emitContextLocked reports the context once a report gave its limit.
+func (c *conversation) emitContextLocked() {
+	if c.usage.Limit > 0 {
+		usage := c.usage
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventContext, Context: &usage})
+	}
+}
+
+// emitUsageLocked reports the conversation's AI units when they changed.
+func (c *conversation) emitUsageLocked() {
+	if c.nanoAIU == c.usageSent {
+		return
+	}
+	c.usageSent = c.nanoAIU
+	c.emitLocked(agentapi.Event{Kind: agentapi.EventUsage, Usage: &agentapi.Usage{AIUnits: c.nanoAIU / nanoPerUnit}})
+}
+
+func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
+	if c.foregroundIdle {
+		return
+	}
+	c.foregroundIdle = true
+	c.idles++
+	turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel}
+	switch {
+	case aborted != nil && *aborted:
+		turn.State = agentapi.TurnCancelled
+		c.expireLocked()
+	case c.turnErr != "":
+		turn.State, turn.Error = agentapi.TurnFailed, c.turnErr
+	}
+	c.turnErr, c.turnModel = "", ""
+	c.undeliveredLocked(turn.State, at)
+	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &turn})
 }
 
 // undeliveredLocked reports each steer the ending turn did not use as a
@@ -1536,7 +2242,7 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	}
 	title, detail := describePermission(d)
 	in := &interaction{
-		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID},
+		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID, ToolCallID: permissionToolCallID(d.PermissionRequest)},
 		decisions:   map[string]rpc.PermissionDecision{},
 	}
 	add := func(opt agentapi.Option, dec rpc.PermissionDecision) {
@@ -1644,6 +2350,52 @@ func describePermission(d *rpc.PermissionRequestedData) (title, detail string) {
 	return "Permission request: " + kind, compactJSON(d.PermissionRequest)
 }
 
+// permissionToolCallID returns the tool call a permission request is for,
+// or "" when the request does not say. It is the ToolCallID of the tool
+// execution events, which the transcript uses as the tool item's ID. Every
+// request kind in SDK 1.0.14 has an optional toolCallId; a kind the SDK
+// cannot read keeps its raw JSON, which is read for the same field.
+func permissionToolCallID(pr rpc.PermissionRequest) string {
+	var id *string
+	switch r := pr.(type) {
+	case *rpc.PermissionRequestShell:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestWrite:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestRead:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestURL:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestMCP:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestCustomTool:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestMemory:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestHook:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestFactory:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestExtensionEnvAccess:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestExtensionManagement:
+		id = r.ToolCallID
+	case *rpc.PermissionRequestExtensionPermissionAccess:
+		id = r.ToolCallID
+	case *rpc.RawPermissionRequest:
+		var v struct {
+			ToolCallID *string `json:"toolCallId"`
+		}
+		if json.Unmarshal(r.Raw, &v) == nil {
+			id = v.ToolCallID
+		}
+	}
+	if id == nil {
+		return ""
+	}
+	return strings.TrimSpace(*id)
+}
+
 func sandboxBypass(requested *bool, reason *string) string {
 	if requested == nil || !*requested {
 		return ""
@@ -1663,14 +2415,59 @@ type transcript struct {
 	// a steer moved to the background completes its call at once, then keeps
 	// streaming partial output under the same ID; that must not reopen it.
 	ended map[string]struct{}
+	// assets holds recent session.binary_asset events by asset ID. The CLI
+	// records one just before the tool completion that names it.
+	assets map[string]*rpc.SessionBinaryAssetData
+	// reasoned marks each agent that streamed reasoning since its last
+	// assistant message, so that message's recorded reasoningText is not
+	// shown a second time.
+	reasoned map[string]bool
 }
 
 // maxEndedTools bounds transcript.ended. Forgetting older IDs only lets a
 // partial result that arrives very late reopen its tool call.
 const maxEndedTools = 1024
 
+// maxAssets bounds transcript.assets. A tool result that names a forgotten
+// asset reports the image by its digest alone.
+const maxAssets = 64
+
 func newTranscript() *transcript {
-	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}}
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}}
+}
+
+// items maps one event to its transcript items. An assistant message whose
+// agent streamed no reasoning since its previous message yields the
+// message's recorded reasoningText as a reasoning item first: the CLI records
+// reasoning only there, so this is how thinking comes back from history. A
+// live turn streams assistant.reasoning before the message, and that item
+// already holds the text.
+func (t *transcript) items(ev copilot.SessionEvent) []agentapi.Item {
+	var out []agentapi.Item
+	if d, ok := ev.Data.(*rpc.AssistantMessageData); ok {
+		agentID := agentOf(ev)
+		if text := reasoningText(d); text != "" && !t.reasoned[agentID] {
+			out = append(out, agentapi.Item{ID: reasoningItemID(d.MessageID), Kind: agentapi.ItemReasoning, Text: text, Time: ev.Timestamp, AgentID: agentID})
+		}
+		delete(t.reasoned, agentID)
+	}
+	if it, ok := t.item(ev); ok {
+		out = append(out, it)
+	}
+	return out
+}
+
+// streamedReasoning notes that an agent's reasoning arrived live, ahead of
+// the message it belongs to.
+func (t *transcript) streamedReasoning(agentID string) {
+	t.reasoned[agentID] = true
+}
+
+func reasoningText(d *rpc.AssistantMessageData) string {
+	if d.ReasoningText == nil {
+		return ""
+	}
+	return strings.TrimSpace(*d.ReasoningText)
 }
 
 func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
@@ -1691,6 +2488,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		}
 		it.ID, it.Kind, it.Text = d.MessageID, agentapi.ItemAssistant, d.Content
 	case *rpc.AssistantReasoningData:
+		t.streamedReasoning(it.AgentID)
 		it.ID, it.Kind, it.Text = reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.Content
 	case *rpc.SessionCompactionCompleteData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Conversation compacted."
@@ -1726,6 +2524,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		tc.Status = agentapi.ToolCompleted
 		if d.Result != nil {
 			tc.Output = clip(d.Result.Content, maxToolText)
+			it.Images = t.images(d.Result)
 		}
 		if !d.Success {
 			tc.Status = agentapi.ToolFailed
@@ -1734,10 +2533,52 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 			}
 		}
 		it.ID, it.Kind, it.Tool = d.ToolCallID, agentapi.ItemTool, tc
+	case *rpc.SessionBinaryAssetData:
+		if len(t.assets) >= maxAssets {
+			clear(t.assets)
+		}
+		t.assets[d.AssetID] = d
+		return it, false
 	default:
 		return it, false
 	}
 	return it, true
+}
+
+// images returns the images a tool result carried: its image content blocks
+// and its model-facing binary results. A live result holds the bytes. A
+// recorded one names a session.binary_asset event by its asset ID,
+// "sha256:<hex>" of the bytes; without that event only the digest is known.
+func (t *transcript) images(r *rpc.ToolExecutionCompleteResult) []agentapi.Image {
+	var out []agentapi.Image
+	add := func(data, mime string) {
+		b, err := base64.StdEncoding.DecodeString(data)
+		if err != nil || len(b) == 0 {
+			return
+		}
+		out = append(out, agentapi.Image{MIME: mime, Data: b})
+	}
+	for _, c := range r.Contents {
+		if img, ok := c.(*rpc.ToolExecutionCompleteContentImage); ok {
+			add(img.Data, img.MIMEType)
+		}
+	}
+	for _, b := range r.BinaryResultsForLlm {
+		if b == nil || b.Type() != rpc.PersistedBinaryResultTypeImage {
+			continue
+		}
+		switch b := b.(type) {
+		case *rpc.PersistedBinaryImage:
+			add(b.Data, b.MIMEType)
+		case *rpc.BinaryAssetReference:
+			if a := t.assets[b.AssetID]; a != nil {
+				add(a.Data, a.MIMEType)
+			} else if digest, ok := strings.CutPrefix(b.AssetID, "sha256:"); ok {
+				out = append(out, agentapi.Image{MIME: b.MIMEType, SHA256: strings.ToLower(digest)})
+			}
+		}
+	}
+	return out
 }
 
 func (t *transcript) tool(id string) *agentapi.ToolCall {
@@ -1755,26 +2596,67 @@ func (t *transcript) tool(id string) *agentapi.ToolCall {
 func history(evs []copilot.SessionEvent) agentapi.History {
 	t, subs := newTranscript(), newSubagentLog()
 	var items []agentapi.Item
+	var model string
 	index := map[[2]string]int{}
 	for _, ev := range evs {
 		if ev.Ephemeral != nil && *ev.Ephemeral {
 			continue
 		}
+		if m := recordedModel(ev); m != "" && agentOf(ev) == "" {
+			model = m
+		}
 		subs.apply(ev)
-		it, ok := t.item(ev)
-		if !ok {
-			continue
+		for _, it := range t.items(ev) {
+			key := [2]string{it.AgentID, it.ID}
+			if i, seen := index[key]; seen {
+				it.Time = items[i].Time
+				items[i] = it
+				continue
+			}
+			index[key] = len(items)
+			items = append(items, it)
 		}
-		key := [2]string{it.AgentID, it.ID}
-		if i, seen := index[key]; seen {
-			it.Time = items[i].Time
-			items[i] = it
-			continue
-		}
-		index[key] = len(items)
-		items = append(items, it)
 	}
-	return agentapi.History{Items: items, Subagents: subs.list()}
+	h := agentapi.History{Items: items, Subagents: subs.list(), Model: model}
+	if total, ok := recordedTotal(evs); ok {
+		h.Usage = &agentapi.Usage{AIUnits: total / nanoPerUnit}
+	}
+	return h
+}
+
+// recordedTotal is the session-wide nano-AI units of the latest recorded
+// usage checkpoint or shutdown. The CLI never records assistant.usage.
+func recordedTotal(evs []copilot.SessionEvent) (total float64, ok bool) {
+	for _, ev := range evs {
+		var t *float64
+		switch d := ev.Data.(type) {
+		case *rpc.SessionUsageCheckpointData:
+			t = &d.TotalNanoAiu
+		case *rpc.SessionShutdownData:
+			t = d.TotalNanoAiu
+		}
+		if t != nil && *t >= 0 && (ev.Ephemeral == nil || !*ev.Ephemeral) {
+			total, ok = *t, true
+		}
+	}
+	return total, ok
+}
+
+// recordedModel is the model an event records as selected, or "".
+func recordedModel(ev copilot.SessionEvent) string {
+	var selected *string
+	switch d := ev.Data.(type) {
+	case *rpc.SessionModelChangeData:
+		return d.NewModel
+	case *rpc.SessionStartData:
+		selected = d.SelectedModel
+	case *rpc.SessionResumeData:
+		selected = d.SelectedModel
+	}
+	if selected == nil {
+		return ""
+	}
+	return *selected
 }
 
 // agentOf returns the envelope's subagent instance ID, or "" for the main

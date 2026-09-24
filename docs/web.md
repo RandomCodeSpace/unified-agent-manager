@@ -27,7 +27,7 @@ On the Linux host:
 On Windows: the built-in OpenSSH client (PowerShell) and a browser. Nothing is
 installed on Windows.
 
-The beta build is pinned to Go 1.25.14. Browser and provider validation used
+The release build is pinned to Go 1.25.14. Earlier browser and provider validation used
 Copilot CLI 1.0.88 and Go 1.26.5 on Linux 6.8.
 
 ## Start the service
@@ -150,6 +150,13 @@ are logged only at debug level (`UAM_DEBUG=1`).
   with "Edit project", which also renames it. Editing a Project changes only
   its record in UAM. Web sessions from before Projects existed are placed in
   a Project for their directory, named after it, when the service starts.
+  Each Project has a badge of two characters on a colour: the first letter or
+  digit of its name and the last one (`CG` for config), then a random remaining
+  letter if that pair is taken (`P` for a name without
+  ASCII letters or digits), different from every other Project's, on a colour
+  no other Project uses while one is left. UAM picks it when you add the
+  Project and keeps it when you rename it; Projects from before badges
+  existed get one when the service starts.
 - **Tasks**: "New task" in a Project opens an empty conversation at once,
   with the Project's defaults applied, and puts the cursor in the composer.
   There is no form and no required first prompt: type the first message when
@@ -163,7 +170,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   directory.
 - **Names and titles**: the name is optional. Without one, the Task shows the
   title the provider gives the conversation (Copilot uses the first prompt),
-  or "New task" until there is one. Clearing a name shows the title again.
+  or "New task" until there is one. With a title model set on the Settings
+  page, a model titles the Task from its first message a few seconds later.
+  Clearing a name shows the title again.
   Rename from the Task's row menu (hover "…" or right-click), the header
   menu, F2 on a row, or a double-click on the name; the name is edited in
   place. Renaming a Task does not rename the conversation at the provider.
@@ -172,6 +181,15 @@ are logged only at debug level (`UAM_DEBUG=1`).
   between turns, not while a turn runs; the new model applies from the next
   turn. The list is refreshed at most every five minutes, so a changed
   subscription shows up without restarting the service.
+- **Model visibility**: Settings → Models hides models from the composer,
+  Project defaults and title-model choices. Existing Tasks and defaults keep
+  their current model and show "hidden in Settings". New models are visible
+  automatically. Hiding is a display preference, not an access rule.
+- **Composer layout**: the toolbar groups Model, Effort/Context and Safe/Yolo.
+  The strip underneath shows the Project, branch and changed-file count;
+  click the count to open Changes. The toolbar wraps on phones. Type `$`
+  at the start of a message to pick a skill; `/` still lists commands and
+  skills, and `@` references files.
 - **Copilot configuration**: Copilot Tasks load what the terminal CLI loads
   for the directory: your and the project's skills, the project's custom
   agents, custom instructions, hooks in `.github/hooks/`, and the built-in
@@ -186,23 +204,69 @@ are logged only at debug level (`UAM_DEBUG=1`).
 - **Context size**: choose a size offered by the model, where available.
   The sizes are Copilot's prompt budgets. Long context may cost more. A
   change applies between turns; switching to a model without the selected
-  size resets it to Default. Per-Task context size is the sole exception to
-  the shared provider feature rules and requires the provider's capability.
-  Copilot is still the only registered provider.
-- **Context meter**: the Task header shows used tokens and the active prompt
-  budget once Copilot reports them. Missing usage stays hidden, not zero.
+  size resets it to Default. Per-Task context size is one of the exceptions
+  to the shared provider feature rules (usage and credits and import also use capabilities) and
+  requires the provider's capability. Copilot is still the only registered
+  provider.
+- **Context usage**: the ring beside the composer model shows used tokens
+  as a share of the active prompt budget. Click it for token counts and the
+  reported cached share. Before a report, the track is empty and its popover
+  says usage is unavailable. Effort and context size share one menu.
   The meter is live only: reopening a conversation, restarting the service
   or changing its selection clears it until a fresh report. Compaction or
   truncation appears as a notice in the conversation; the next usage report
   updates the meter.
+- **Usage and credits**: for a provider that reports quota (Copilot has the
+  `usage` capability), UAM reads the account's quotas when it starts, after
+  each turn ends, and at most once a minute while a browser is open, and
+  keeps the last result. `GET /api/usage` returns it as
+  `{"quotas": [{"provider", "type", "used", "entitlement", "unlimited",
+  "remaining_percent", "overage", "reset_at"}], "stale", "updated_at"}`; the
+  event stream carries the same object in `snapshot` and sends it as a
+  `usage` frame when it changes. A failed read keeps the last quotas and sets
+  `stale`; `reset_at` appears only while it is in the future; an unlimited
+  quota has `entitlement` 0. A Task's `usage: {"ai_units"}` is what its
+  conversation used so far, subagents included, and is absent until Copilot
+  reports it. Copilot does not keep per-call costs in its history but does
+  record the session total, so the figure comes back after a service restart
+  once its recorded transcript loads, including a settled or archived Task
+  viewed read-only. Models in `/api/meta` carry `cost_tier` (`low`, `medium`,
+  `high`, `very_high`), for `auto` `discount_percent`, and `prices`: Copilot's
+  token prices in AI Credits (the unit of `ai_units`) per `batch_size`
+  tokens, for `input`, `output`, `cache_read` and `cache_write`, with
+  `max_prompt_tokens` and a `long_context` tier where Copilot has one. The
+  Task's `context` adds `prompt`, the input tokens of the latest main-agent
+  model call, and `cached`, how many of those came from the prompt cache, so
+  an estimate can price the cached share at `cache_read`. The composer shows
+  remaining credits in a popover chip, including stale state when a refresh
+  fails. The input-cost estimate beside it excludes output; the model menu
+  shows the same estimate for each model. No estimate appears without prices
+  or reported context.
 - **Conversation**: your messages sit on the right, the agent's on the left,
   both rendered as markdown (never as HTML) while they stream. The agent's
-  reasoning, when the provider reports it, is a collapsed "Thinking…" row
-  with a live one-line preview while it streams and "Thought for 12s" once
-  done; expanding it shows the full text, and the choice is kept per block
-  for the browser session. Runs of tool calls fold into one line that
-  expands in place. If you scroll up while text arrives, the view stays put
+  reasoning, when the provider reports it, shows inline in grey, three lines
+  at a time with "Show more"; while it streams you see the latest lines, and
+  "Thought for 12s" once done. Every tool call is its own line: what ran
+  (the shell command, URL, file path, search pattern, query or skill), a
+  mark for running, done or failed, and, in yolo mode, "auto" where UAM
+  allowed it; a call you allowed or denied yourself says so on the same
+  line. Click a line for the full input and output. A run of more than eight
+  calls keeps the first two and the last three and folds the rest behind
+  "Show N more". When the agent asks you a question, the conversation shows
+  the question, its choices and your answer under "You answered", also after
+  a reload or restart. An interrupted question without a recorded answer
+  shows "No answer." Copilot's recorded thinking also returns after a restart.
+  If you scroll up while text arrives, the view stays put
   and offers "New output".
+- **Diagrams and code**: a fenced ` ```mermaid ` block in a reply renders as
+  a diagram once its fence has closed, with a Diagram / Code toggle and Copy
+  code in its header; clicking the diagram opens it larger. A block Mermaid
+  cannot parse shows the code with a note. Code blocks with a language are
+  highlighted (Go, TypeScript, JavaScript, shell, JSON, YAML, Python, Rust,
+  SQL, HTML/XML, CSS, Markdown, Dockerfile, Makefile, INI/TOML, diff).
+  Diagrams render in the browser inside a sandboxed frame that cannot read
+  your session or call the service (ADR 0004); the first diagram of a page
+  load fetches Mermaid (3.4 MB).
 - **Subagents**: when the agent delegates work to a subagent, the Task shows
   one compact row under the tool call that started it (name, status, and
   the duration once it ended) and a "Subagents" button in the header with
@@ -224,7 +288,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   sidebar says Approval or Input. Nothing is approved
   automatically unless you turned on yolo for that Task, and questions always
   wait for you. If no browser is connected, the request waits; the first
-  answer from any tab wins and later answers are refused.
+  answer from any tab wins and later answers are refused. Once decided, the
+  card goes away: the decision shows on the tool call it was for, and a
+  request UAM could not tie to a call shows as one grey line where it
+  happened.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
   once". That includes requests from subagents. Shell commands, file writes,
@@ -242,14 +309,31 @@ are logged only at debug level (`UAM_DEBUG=1`).
   > on everything anyway. With `--no-auth` behind a public reverse proxy or
   > on an address beyond loopback, anyone who can reach the page can start a
   > yolo Task.
-- **Commands**: type `/` as the first character of a message to list the
-  Task's commands: Copilot's `/init` and `/review`, and the skills your account
-  and the project provide. The list filters as you type; Up and Down move,
-  Enter or Tab picks, Esc closes. Sending `/name arguments` runs the command
-  with the rest of the text as its arguments and shows `/name arguments` in
-  the conversation. A command runs only between turns; it is not queued or
-  steered. A `/word` that is not on the list is sent as plain text, and so is
-  anything that starts with `$`, `!`, `#` or `@agent`.
+- **Commands**: type `/` at the start of a message to list supported provider
+  commands and skills. Names and aliases are searchable. Known unsupported
+  commands stay visible with their reason and cannot become ordinary prompts.
+  Up and Down move, Enter or Tab picks, and Esc closes. Argument choices fill
+  the input; press Enter to run. Commands use their own endpoint, never Queue
+  or Steer; only commands marked available during a turn can run then.
+  A failed catalogue load holds slash input and offers Retry commands.
+  Results can display text, offer subcommands, or open the existing model,
+  permissions, context, usage or rename control. Choosing a subcommand fills
+  the composer for explicit submission. `/yolo` and `/allow-all` change the
+  same Safe/Yolo permission policy as the toolbar; autopilot does not change it.
+  See [Web commands and execution state](web-commands.md) for the exact supported
+  command list, limits and retry behavior.
+- **Execution mode**: supported providers report Interactive, Plan or Autopilot
+  separately from permissions. The composer shows the runtime's objective
+  status and, on expansion, reported turns, credits, limits and pause or
+  completion details. Missing or stale observations say Status unavailable.
+  Stop remains available between autopilot turns, disables continuation and
+  pauses queued follow-ups through the existing cancellation operation. Partial
+  cancellation failures remain errors rather than a claimed stopped state.
+- **Background tasks**: running provider shells appear above the composer with
+  their own Stop action. Stopping one shell does not stop the foreground turn.
+  Stop requested means the provider accepted cancellation; the list waits for
+  a reported terminal state. Unknown or read-only tasks cannot be stopped.
+  Subagents retain their Stop action in the subagent panel and context menu.
 - **File references**: type `@` at the start of a message or after a space to search the project's
   files: what `git ls-files` sees, including untracked files that are not
   ignored, and their directories. Picking one inserts `@path` and adds a chip;
@@ -272,6 +356,14 @@ are logged only at debug level (`UAM_DEBUG=1`).
   larger on click and other files as chips that open the stored copy, also
   after a reload. UAM keeps the files outside the project (see Settle,
   archive, and delete).
+- **Images from tools**: when a tool returns an image, such as a screenshot
+  or Copilot's `view` of an image file, UAM keeps a copy with the Task and
+  shows it as a thumbnail under that tool call, for subagents too; click it
+  to see it large. Kept: png, jpeg, gif and
+  webp up to 5 MiB, at most 50 per Task, one copy of each distinct image;
+  the tool call notes any it left out and why. They come back after a reload
+  or a restart of UAM, because Copilot records the image's bytes in its
+  session. They are deleted with the Task, like attachments.
 - **Messages while a turn runs**: you can queue a message or steer the turn
   with it.
   - **Queue** holds the message until the turn completes, then sends it as
@@ -285,6 +377,41 @@ are logged only at debug level (`UAM_DEBUG=1`).
     notice says the steer was not delivered and quotes it. With Copilot, a steer also moves a
     shell command that is running to the background.
   - When no turn is running, both send the message at once.
+  - While a turn runs, Enter does what the Settings view says (steer by
+    default) and Ctrl+Enter (⌘+Enter on a Mac) the other; the two buttons
+    and their tooltips follow the setting. A message that carries files or
+    attachments always queues, since a steer takes text only, and the
+    composer says so.
+- **Settings**: the gear at the bottom of the sidebar opens the Settings view
+  in the main pane (`#settings` in the address bar). UAM keeps the web
+  interface's settings in `sessions.json`, so they apply in every browser.
+  The first is what Enter does while a turn runs: steer (the default) or
+  queue. A change is saved as you make it; if the service refuses it, the
+  old value comes back with the reason. `GET /api/settings` returns the
+  settings as `{"send_default": "steer"}`, and `PATCH /api/settings` with
+  `{"send_default": "queue"}` changes them. An unknown key or value is
+  refused and changes nothing. `hidden_models`, e.g.
+  `{"hidden_models": {"copilot": ["gpt-5-mini"]}}`, lists the models not
+  offered in the pickers; a `PATCH` replaces the list of each provider it
+  names, and an empty list shows all of that provider's models again. At
+  least one model the provider lists must stay visible, and a provider can
+  hide at most 200 IDs of up to 128 bytes each. An ID the provider no longer
+  lists is kept. Hiding is only a display preference: a Task or Project
+  already on a hidden model keeps it.
+  `title_model`, e.g. `{"title_model": {"copilot": "gpt-6-luna"}}`, picks
+  the model that titles each new Task from its first message. With no entry,
+  or an empty ID, the provider keeps its own title, which for Copilot is the
+  first prompt. Only a provider with the `titles` capability can have one
+  (Copilot, not OpenCode), and the model must be in its current list. UAM
+  asks the model in a separate short Copilot session with no tools and no
+  session store, and deletes that session afterwards. It then shows the
+  title, 60 characters at most, and writes it into the Copilot session, so
+  `copilot --resume` shows it too. Only the first message counts: later
+  messages, commands, reopened Tasks and a changed setting never retitle a
+  Task. A name you type wins, even while the title is on its way. If the
+  model fails or takes more than 20 s, the provider's title stays, and the
+  service log says why. Each title costs AI credits, about 0.002 with
+  gpt-6-luna.
 - **Paused queue**: the queue pauses when a turn is stopped or fails, when
   the provider process ends, when you close the session, and when the
   provider refuses a message or may not have received it. A paused queue
@@ -303,7 +430,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   an archived Task can be deleted, and a Project can be removed only once
   every Task in it is archived. Deleting or removing never deletes the
   provider's copy of the conversation and never touches the directory. It does
-  delete the files you attached to the Task's prompts, which UAM keeps in
+  delete the files you attached to the Task's prompts and the images its
+  tools returned, which UAM keeps in
   `~/.config/uam/web-attachments/` (or `$UAM_CONFIG_DIR/web-attachments/`).
   An attachment you upload but never send is deleted after 24 hours.
 
@@ -318,8 +446,41 @@ are logged only at debug level (`UAM_DEBUG=1`).
   A settled or archived Task takes no messages, queue actions, model, effort,
   context-size or mode changes. You can still rename a settled Task. Stop a
   running turn, answer what waits for you, and send or clear the queue before
-  you settle or archive. After the service restarts, a settled or archived Task shows no
-  conversation, the same as a closed one.
+  you settle or archive.
+
+  A Task whose conversation is not open, such as a settled, archived or
+  closed Task, or any Task after the service restarts, still shows its whole
+  conversation. UAM reads it from Copilot's record without opening it: it
+  sends nothing and changes nothing, and Copilot records nothing. The
+  conversation appears after a moment; when it cannot be read, the Task
+  says why and stays as it was. UAM keeps a conversation read this way in
+  memory for up to 10 idle minutes, with a total memory budget that can evict
+  older views sooner. Large histories show their newest retained part and a
+  truncation note.
+- **Previous sessions**: each Project can list the Copilot sessions started
+  in exactly its directory outside the web interface, for example with
+  `copilot` in a terminal or in a uam terminal session: newest first, at
+  most 100, with their title and date, leaving out the ones that are already
+  Tasks. A session appears once it has a first message. Importing one makes
+  it a Task with its whole conversation; nothing is sent. The Task keeps the
+  session's model when Copilot still offers it, otherwise it takes the
+  Project's defaults, and it takes the Project's mode. It starts closed: your
+  next message opens the session. Import is offered when the installed
+  Copilot CLI supports both history reading and in-use detection;
+  OpenCode cannot tell when another program uses a session, so it offers no
+  import.
+- **Another program using the session**: a session that another program has
+  open, such as a terminal `copilot --resume` or a uam terminal session, is
+  marked in use and cannot be imported. Before every message, command, steer,
+  queued message and subagent follow-up of an imported or terminal-linked
+  Task, UAM checks that no other program has the session open, and refuses while one does; a queued
+  message then waits and the queue pauses. The check is not a lock: a
+  program that opens the session after it, for example during the turn, is
+  not caught, and both then write to the same session without an error.
+  While UAM has a session open, `copilot --resume` in a terminal warns that
+  it is in use. A Task imported from a uam terminal session shows that it is
+  also open in the terminal while that session runs. Deleting the Task never
+  deletes the terminal session or Copilot's session.
 - **Changes**: the "Changes" button in the Task header shows how many files
   differ from `HEAD` in the project directory and opens them beside the
   conversation with the diff (a full-screen sheet on a narrow window). That
@@ -327,19 +488,31 @@ are logged only at debug level (`UAM_DEBUG=1`).
   session. On a wide window this panel and the Subagents panel can be
   resized by dragging their inner edge (the handle also takes the arrow
   keys; double-click resets); the width is kept per browser.
-- **Sidebar**: the sidebar is the only list of Tasks. Each Project shows its
-  active Tasks, then collapsed "Settled" and "Archived" shelves; a settled or
-  archived Task opens read-only. A row shows the name or title, a state
-  mark, and the time of the last activity, or a short word (Approval, Input,
-  Working, Failed, …) while something is happening or new. Hover a row for
-  "…" or right-click it for Rename, Close conversation, Settle or Reopen,
-  Archive and Delete; a Project row offers New task, Edit project and Remove
-  project. Arrow keys move between rows, Left and Right collapse and expand
-  a Project, Enter opens, F2 renames. A Project on a named git branch shows
-  the branch under its name and in the Task header. With no Task open, the
-  main pane offers only New task and Add project. On a narrow window the
-  sidebar opens as a drawer. There is one theme; it does not follow the
-  system.
+- **Sidebar**: Tasks form one flat list with a compact card for each Task,
+  followed by collapsible "Settled" and "Archived" shelves. A card shows its
+  Project, state or last activity, title, provider icon and branch when known.
+  A settled or archived Task opens read-only. Search matches Task names and
+  titles, Project names and branches within the chosen Project filter.
+  Right-click a card, press Shift+F10 or the Menu key, or long-press on touch
+  for Rename, Close conversation, Settle or Reopen, Archive and Delete.
+  Arrow keys move between cards,
+  Enter opens a Task and F2 renames it. Selecting a Project in the filter
+  exposes its New task, Edit project, Remove project and Previous sessions
+  controls; there are no collapsible Project headings.
+  - **Filter**: the control at the top of the sidebar shows "All projects"
+    or the chosen Project's badge and name, and lists every Project. Choosing
+    one shows only that Project's Tasks, shelves included, and New task then
+    targets it; the × beside it clears the filter. The choice is kept per
+    browser.
+  - **Hide the sidebar**: the UAM icon beside Search in the sidebar header, or
+    Ctrl+B (⌘+B on a Mac), hides the sidebar and the conversation takes the
+    width; the same icon then sits at the start of the main pane's header.
+    Toggling it keeps the selected Task and its URL.
+    The choice is kept per browser. On a narrow window the sidebar is a
+    drawer that the button and the shortcut open and close.
+  - With no Task open, the main pane shows only the uam mark and one line;
+    New task and Add project are in the sidebar. There is one theme; it does
+    not follow the system.
 
 States shown for each session:
 
@@ -351,7 +524,7 @@ States shown for each session:
 | cancelled | The last turn was stopped with Stop turn |
 | failed | The provider reported an error, or its process or event stream ended; the detail says which |
 | interrupted | UAM stopped while a turn was running; the turn was not resumed or resent |
-| closed | The conversation was closed from the web interface |
+| closed | The conversation was closed from the web interface, or the Task was imported and has not been sent a message yet |
 
 A prompt is sent at most once per click. Retrying after a network error reuses
 the same request ID, and the service answers a repeated request ID with the
@@ -491,10 +664,16 @@ private and rotate it if it leaks. With `--no-auth` it is not protected at all
 - **Separate from terminal sessions.** The dashboard, `uam ls`, and
   `uam attach` do not show web sessions, and the web interface does not show
   terminal sessions. `uam attach <id>` on a web session explains this.
-  Neither side takes over the other's conversations.
+  Neither side takes over the other's records. The web interface can import
+  the Copilot conversation of a terminal session as a Task (see Previous
+  sessions); the terminal session stays the terminal's.
 - **Copilot sessions without a prompt.** Copilot saves a conversation only
   after its first message. A session created without a prompt cannot be
   reopened after the service restarts.
+- **Diagrams.** Only fenced ` ```mermaid ` blocks render; other diagram
+  languages stay code. Mermaid draws with the system font, not the interface
+  font, and a diagram wider than the pane is scaled down; open it for full
+  size. The first diagram on a page fetches a 3.4 MB script, once.
 - **Late steers (Copilot).** A steer that arrives while Copilot writes the
   last reply of a turn is answered right after that reply, in the same turn,
   and shows as an ordinary message without the steer mark. One that arrives

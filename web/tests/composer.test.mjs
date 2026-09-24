@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyPick, commandPending, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
+import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
 
 const commands = [
   { name: 'review', description: 'Review the changes', kind: 'command', input_hint: '' },
@@ -66,6 +66,18 @@ test('filtering ranks a name prefix first, then a name or description match', ()
   assert.deepEqual(filterCommands(commands, 'zzz'), []);
 });
 
+test('Enter follows the send default while a turn runs; the modifier does the other action', () => {
+  assert.deepEqual(enterActions(true, 'steer', false), { enter: 'steer', modified: 'queue' });
+  assert.deepEqual(enterActions(true, 'queue', false), { enter: 'queue', modified: 'steer' });
+});
+
+test('with no turn running both send; when a steer is impossible both queue', () => {
+  assert.deepEqual(enterActions(false, 'steer', false), { enter: 'send', modified: 'send' });
+  assert.deepEqual(enterActions(false, 'queue', true), { enter: 'send', modified: 'send' });
+  assert.deepEqual(enterActions(true, 'steer', true), { enter: 'queue', modified: 'queue' });
+  assert.deepEqual(enterActions(true, 'queue', true), { enter: 'queue', modified: 'queue' });
+});
+
 test('a file chip lives as long as its @token; removing the chip removes the token', () => {
   const files = ['docs/web.md', 'internal/vterm/redraw.go'];
   assert.deepEqual(pruneFiles('read @docs/web.md and @internal/vterm/redraw.go', files), files);
@@ -76,4 +88,43 @@ test('a file chip lives as long as its @token; removing the chip removes the tok
   assert.equal(removeToken('@docs/web.md', 'docs/web.md'), '');
   assert.equal(removeToken('a\n@docs/web.md', 'docs/web.md'), 'a\n');
   assert.equal(removeToken('@docs/web.md.bak', 'docs/web.md'), '@docs/web.md.bak');
+});
+
+test('dollar opens the skills picker and resolves only listed skills', () => {
+  const commands = [{ name: 'review', kind: 'command' }, { name: 'explain', kind: 'skill' }];
+  assert.deepEqual(triggerAt('$exp', 4), { kind: '$', start: 0, end: 4, query: 'exp' });
+  assert.deepEqual(parseCommand('$explain this file', commands), { name: 'explain', args: 'this file' });
+  assert.equal(parseCommand('$review', commands), null);
+  assert.equal(parseCommand('$unknown', commands), null);
+  assert.equal(commandPending('$explain this', null, null), true);
+  assert.equal(commandPending('$explain this', commands, null), false);
+});
+
+
+test('command aliases are searchable and resolve to the canonical command, including disabled commands', () => {
+  const list = [
+    { name: 'permissions', description: 'Permission mode', kind: 'command', aliases: ['yolo'] },
+    { name: 'terminal-only', description: 'Unavailable here', kind: 'command', aliases: ['shell'], disabled_reason: 'Requires the terminal interface.' },
+  ];
+  assert.equal(filterCommands(list, 'YOLO')[0].name, 'permissions');
+  assert.deepEqual(parseCommand('/yolo on', list), { name: 'permissions', args: 'on' });
+  assert.deepEqual(parseCommand('/shell', list), { name: 'terminal-only', args: '' });
+  assert.equal(parseCommand('$yolo', list), null);
+  assert.deepEqual(parseCommand('/yolo off', [...list, { name: 'yolo', kind: 'command' }]), { name: 'yolo', args: 'off' });
+});
+
+
+test('command availability keeps disabled and between-turn operations out of prompts', () => {
+  assert.equal(commandReason({ name: 'review' }, true), '/review runs between turns; wait for this turn to finish.');
+  assert.equal(commandReason({ name: 'yolo', allow_during_turn: true }, true), '');
+  assert.equal(commandReason({ name: 'remote', allow_during_turn: true, disabled_reason: 'Terminal only.' }, false), 'Terminal only.');
+});
+
+test('argument choices follow aliases and replace only the argument token', () => {
+  const list = [{ name: 'autopilot', kind: 'command', aliases: ['goal'], input_choices: [{ name: 'on', description: 'Enable' }] }];
+  const result = argumentTrigger('/goal o', 7, list);
+  assert.equal(result.command.name, 'autopilot');
+  assert.deepEqual(applyPick('/goal o', result.trigger, 'on'), { text: '/goal on ', caret: 9 });
+  assert.equal(argumentTrigger('/goal', 5, list), null);
+  assert.equal(argumentTrigger('plain text', 10, list), null);
 });

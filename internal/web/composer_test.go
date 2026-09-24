@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
@@ -249,7 +250,7 @@ func TestCommandRunsOnlyListedCommandsLikeASend(t *testing.T) {
 		{Name: "review", Description: "Review changes", Kind: agentapi.CommandPrompt, InputHint: "what"},
 		{Name: "probe-skill", Kind: agentapi.CommandSkill},
 	}
-	if !slices.Equal(commands, want) {
+	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands = %+v, want %+v", commands, want)
 	}
 

@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveTaskDefaults } from '../src/api.ts';
+import { registerHooks } from 'node:module';
+
+// The browser resolves extensionless TypeScript imports; node's strip-types runner does not.
+const hooks = registerHooks({
+  resolve(specifier, context, nextResolve) {
+    return nextResolve(specifier === './lib/models' ? './lib/models.ts' : specifier, context);
+  },
+});
+const { resolveTaskDefaults } = await import('../src/api.ts');
+hooks.deregister();
 
 const sizes = [{ id: 'default', tokens: 200 }, { id: 'long_context', tokens: 900 }];
 const copilot = {
@@ -25,6 +34,12 @@ test('a project without defaults gets what the old form started with', () => {
 test('defaults the catalog still offers are kept as they are', () => {
   const d = { provider: 'copilot', model: 'haiku', effort: 'high', context_size: 'long_context', mode: 'yolo' };
   assert.deepEqual(resolveTaskDefaults(meta, d), d);
+});
+
+test('new tasks fall back to a visible model when the project default is hidden', () => {
+  const d = { provider: 'copilot', model: 'haiku', effort: 'high', context_size: 'long_context', mode: 'yolo' };
+  assert.deepEqual(resolveTaskDefaults(meta, d, { copilot: ['haiku'] }), { ...fallback, mode: 'yolo' });
+  assert.deepEqual(resolveTaskDefaults(meta, d, { copilot: ['haiku', 'auto'] }), { ...fallback, model: 'mini', mode: 'yolo' });
 });
 
 test('effort and context size survive only where the model and provider offer them', () => {

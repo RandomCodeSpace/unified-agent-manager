@@ -183,9 +183,9 @@ the terminal commands, but `uam web` reports that its UI has not been built.
 
 Release tags contain a generated UI commit, so
 `go install github.com/RandomCodeSpace/unified-agent-manager/cmd/uam@<version>`
-includes the web UI without Node.js. Use the exact published beta version,
-for example `@v0.8.0-beta.1`, to select a beta; `@latest` normally selects a
-stable release. See [release preparation](docs/releasing.md) for the local,
+includes the web UI without Node.js. Use `@v0.8.0` for this stable release,
+or `@latest` for the newest stable release. A beta requires its exact published
+tag, such as `@v0.8.0-beta.1`. See [release preparation](docs/releasing.md) for the local,
 reviewable tag workflow.
 
 Read [Testing UAM](docs/testing.md)

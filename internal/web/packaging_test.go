@@ -52,4 +52,20 @@ func TestEmbeddedFrontendPackaging(t *testing.T) {
 			t.Fatalf("embedded asset %s: %d, %d bytes", asset[1], w.Code, w.Body.Len())
 		}
 	}
+	// The diagram frame: its own policy, and a classic script, since a module
+	// script from the sandboxed frame's opaque origin cannot pass CORS.
+	frame := get("/diagram-frame.html")
+	if frame.Code != http.StatusOK || frame.Header().Get("Content-Security-Policy") != frameSecurity {
+		t.Fatalf("embedded frame: %d %q", frame.Code, frame.Header().Get("Content-Security-Policy"))
+	}
+	if strings.Contains(frame.Body.String(), `type="module"`) {
+		t.Fatalf("the frame must load a classic script, got %s", frame.Body)
+	}
+	script := regexp.MustCompile(`<script src="(/assets/diagram-frame-[^" ]+\.js)"></script>`).FindStringSubmatch(frame.Body.String())
+	if script == nil {
+		t.Fatalf("embedded frame must reference its hashed script: %s", frame.Body)
+	}
+	if w := get(script[1]); w.Code != http.StatusOK || w.Header().Get("Content-Security-Policy") != contentSecurity || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/javascript") {
+		t.Fatalf("embedded frame script %s: %d %q %q", script[1], w.Code, w.Header().Get("Content-Security-Policy"), w.Header().Get("Content-Type"))
+	}
 }

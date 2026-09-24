@@ -1,6 +1,9 @@
-import type { Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, SnapshotData, SubagentDetail, UpdateData } from './api';
+import type { AccountUsage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, SubagentDetail, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
+
+/** The service's defaults, in force until its snapshot arrives (and on a service too old to send one). */
+export const DEFAULT_SETTINGS: Settings = { send_default: 'steer' };
 
 /** A frame that arrived for a subagent while its transcript fetch was in flight. */
 export type Buffered = Extract<UpdateData, { name: 'item' | 'delta' | 'subagent' }>;
@@ -23,8 +26,14 @@ export interface State {
   detail: SessionDetail | null;
   /** seq of the latest snapshot; updates with seq <= this are ignored. -1 before any snapshot. */
   snapshotSeq: number;
+  /** Newest selected-task frame or detail response, used to reject stale reloads. */
+  detailSeq: number;
   connection: Connection;
   agents: Record<string, AgentTranscript>;
+  /** The service's settings, from the snapshot and `settings` frames; the defaults until the first snapshot. */
+  settings: Settings;
+  /** The account quotas, from the snapshot and `usage` frames; null until a snapshot carries them (#188). */
+  usage: AccountUsage | null;
 }
 
 export const initialState: State = {
@@ -33,8 +42,11 @@ export const initialState: State = {
   selectedId: null,
   detail: null,
   snapshotSeq: -1,
+  detailSeq: -1,
   connection: 'connecting',
   agents: {},
+  settings: DEFAULT_SETTINGS,
+  usage: null,
 };
 
 export type Action =
@@ -42,6 +54,8 @@ export type Action =
   | { type: 'connection'; status: Connection }
   | { type: 'snapshot'; data: SnapshotData }
   | { type: 'update'; data: UpdateData }
+  | { type: 'settings'; settings: Settings }
+  | { type: 'detail_loaded'; detail: SessionDetail }
   | { type: 'upsert_session'; session: SessionSummary }
   | { type: 'remove_session'; id: string }
   | { type: 'upsert_project'; project: Project }
@@ -55,11 +69,16 @@ export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'select':
       if (action.id === state.selectedId) return state;
-      return { ...state, selectedId: action.id, detail: null, agents: {} };
-    case 'connection':
-      return state.connection === action.status ? state : { ...state, connection: action.status };
+      return { ...state, selectedId: action.id, detail: null, detailSeq: -1, agents: {} };
+    case 'connection': {
+      if (state.connection === action.status) return state;
+      const detail = action.status !== 'connected' && state.detail
+        ? { ...state.detail, ...(state.detail.background_tasks ? { background_tasks: { ...state.detail.background_tasks, known: false } } : {}), ...(state.detail.execution ? { execution: { ...state.detail.execution, known: false } } : {}) }
+        : state.detail;
+      return { ...state, connection: action.status, detail };
+    }
     case 'snapshot': {
-      const { seq, sessions, session, projects } = action.data;
+      const { seq, sessions, session, projects, settings, usage } = action.data;
       const detail = session && session.id === state.selectedId ? session : null;
       // A fresh snapshot invalidates subagent transcripts loaded under the old stream;
       // expanded blocks reload them (see SubagentBlock).
@@ -69,9 +88,19 @@ export function reducer(state: State, action: Action): State {
         sessions,
         detail,
         snapshotSeq: seq,
+        detailSeq: seq,
         connection: 'connected',
         agents: {},
+        settings: settings ?? DEFAULT_SETTINGS,
+        usage: usage ?? null,
       };
+    }
+    case 'settings':
+      return { ...state, settings: action.settings };
+    case 'detail_loaded': {
+      const detail = action.detail;
+      if (detail.id !== state.selectedId || detail.seq === undefined || detail.seq <= state.detailSeq) return state;
+      return { ...withSession(state, detail), detail, detailSeq: detail.seq, agents: {} };
     }
     case 'upsert_session':
       return withSession(state, action.session);
@@ -106,6 +135,10 @@ export function reducer(state: State, action: Action): State {
       if (d.seq <= state.snapshotSeq) return state;
       switch (d.name) {
         case 'session':
+          if (d.session.id === state.selectedId) {
+            if (d.seq <= state.detailSeq) return state;
+            state = { ...state, detailSeq: d.seq };
+          }
           return withSession(state, d.session);
         case 'session_removed':
           return withoutSession(state, d.session_id);
@@ -113,10 +146,17 @@ export function reducer(state: State, action: Action): State {
           return { ...state, projects: upsert(state.projects, d.project) };
         case 'project_removed':
           return withoutProject(state, d.project_id);
+        case 'settings':
+          return { ...state, settings: d.settings };
+        case 'usage':
+          return { ...state, usage: d.usage };
       }
       const detail = state.detail;
-      if (!detail || d.session_id !== detail.id) return state;
+      if (!detail || d.session_id !== detail.id || d.seq <= state.detailSeq) return state;
+      state = { ...state, detailSeq: d.seq };
       switch (d.name) {
+        case 'history':
+          return { ...state, detail: { ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents }, agents: {} };
         case 'item':
           if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
           return { ...state, detail: { ...detail, items: upsert(detail.items, d.item) } };
@@ -131,6 +171,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, detail: { ...detail, last_submission: d.submission } };
         case 'subagent':
           return withAgentFrame(state, d.subagent.id, d);
+        case 'background_tasks':
+          return { ...state, detail: { ...detail, background_tasks: d.background_tasks } };
       }
     }
   }
@@ -176,9 +218,9 @@ function upsert<T extends { id: string }>(list: T[], v: T): T[] {
 
 function withSession(state: State, s: SessionSummary): State {
   const detail = state.detail;
-  // state_detail and last_model are omitempty on the wire: an absent key must clear the old value.
+  // state_detail, last_model, context and usage are omitempty on the wire: an absent key must clear the old value.
   const merged =
-    detail && detail.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context } : detail;
+    detail && detail.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context, usage: s.usage, execution: s.execution } : detail;
   return { ...state, sessions: upsert(state.sessions, s), detail: merged };
 }
 
