@@ -214,7 +214,7 @@ export function SubagentPanel({
             <section key={status} aria-label={label} className="mb-3">
               <div className="flex h-7 items-center gap-2 px-2 text-caption text-muted">
                 <span>{label}</span>
-                <span className="tabular-nums text-faint">{rows.length}</span>
+                <span className="tabular-nums text-muted">{rows.length}</span>
                 <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
               </div>
               <ul className="flex flex-col gap-px">

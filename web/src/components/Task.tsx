@@ -44,6 +44,12 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
   const shown = response && response.source === snapshot ? response.snapshot : snapshot;
   const running = shown?.tasks.filter((task) => task.status === 'running').length ?? 0;
   const [open, setOpen] = useState(running > 0);
+  // Opens itself when a background task starts, as the list did before; closing it stays the user's choice.
+  const [wasRunning, setWasRunning] = useState(running);
+  if (running !== wasRunning) {
+    setWasRunning(running);
+    if (wasRunning === 0 && running > 0) setOpen(true);
+  }
   if (!shown?.tasks.length) return null;
   async function stop(id: string) {
     if (requests[id]?.pending || locked || !shown?.known) return;

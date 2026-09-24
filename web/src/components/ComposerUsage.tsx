@@ -41,7 +41,8 @@ export function ComposerUsage({ session, model }: { session: SessionDetail; mode
   const cost = estimateTurnCost(model, context, session.context_size);
   const quotaLabel = quota ? `${quotaFace(quota)}${usage?.stale ? ' · stale' : ''}` : 'Usage unavailable';
   const reset = quota?.reset_at && Date.parse(quota.reset_at) > now ? new Date(quota.reset_at).toLocaleString() : null;
-  // The ring waits for a reported value; on a phone the credits are a glyph and the estimate lives in the credits popover.
+  // The ring waits for a reported value; on a phone the credits are a glyph. The per-turn estimate lives in the credits
+  // popover at every width, so the control row stays one row inside the capped column.
   return (
     <>
       {context && context.limit > 0 && <Value id="composer-context-usage" label={contextLabel} title="Context usage" className={tones[ringTone(fraction)]} face={
@@ -59,13 +60,9 @@ export function ComposerUsage({ session, model }: { session: SessionDetail; mode
           <p>{quota ? quotaText(quota) : 'The provider has not reported account usage.'}</p>
           {reset && <p className="text-caption text-muted">Resets {reset}</p>}
           <p className="text-caption">This task: {session.usage ? `${formatCredits(session.usage.ai_units)} AI units` : 'not reported yet'}</p>
-          {cost !== null && <p className="text-caption sm:hidden">≈ {formatCredits(cost)} credits per turn, input only</p>}
+          {cost !== null && <p className="text-caption">≈ {formatCredits(cost)} credits per turn at {compactTokens(context!.used)} context tokens, input only. Reported cached tokens use the cache-read price; actual usage may differ.</p>}
           {usage?.stale && <p className="text-caption text-attention">The last refresh failed. Showing the previous quota.</p>}
         </Value>
-        {cost !== null && <Value label={`Estimated input cost: ${formatCredits(cost)} credits per turn, excludes output`} title="Estimated input cost" className="text-muted max-sm:hidden" face={`≈ ${formatCredits(cost)} credits / turn`}>
-          <p>At {compactTokens(context!.used)} context tokens. Excludes output.</p>
-          <p className="text-caption text-muted">Reported cached tokens use the cache-read price. Actual usage may differ.</p>
-        </Value>}
       </>}
     </>
   );

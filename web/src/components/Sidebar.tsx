@@ -227,14 +227,15 @@ function Shelf({ projects, label, tasks, selectedId, open, onToggle }: { project
         onClick={onToggle}
       >
         <span className="whitespace-nowrap">
-          {label} <span className="tabular-nums text-faint">{tasks.length}</span>
+          {label} <span className="tabular-nums text-muted">{tasks.length}</span>
         </span>
         <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
         <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
       <Collapse open={open}>
         <ul className="flex flex-col gap-px pt-px">
-          {tasks.map((t) => (
+          {/* The pinned copy below owns the selected row while the shelf is closed: one view-transition name each. */}
+          {tasks.filter((t) => t !== pinned).map((t) => (
             <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />
           ))}
         </ul>
