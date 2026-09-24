@@ -121,7 +121,7 @@ export interface Subagent {
   parent_tool_call_id?: string;
   name: string;
   description?: string;
-  /** Terminal statuses are final; close, runtime exit and service stop mark running ones cancelled and idle ones completed. */
+  /** Failed and cancelled are final; completed turns idle only on the provider's report. Close, runtime exit and service stop mark running ones cancelled and idle ones completed. */
   status: SubagentStatus;
   error?: string;
   started_at?: string;

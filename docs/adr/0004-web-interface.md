@@ -581,7 +581,8 @@ stay pending because UAM cannot safely assign them to the stopped subagent.
 `Subagent.Status` gains `idle`, which is not terminal: the live provider
 reports that the subagent finished and takes a follow-up. `failed` and
 `cancelled` stay final. `completed` becomes `idle` only on the provider's
-report, and `idle` becomes `running` only when UAM's own follow-up is accepted.
+report, and `idle` becomes `running` only when UAM's own follow-up is accepted
+or its outcome is uncertain; the task list then settles it.
 When a conversation closes or its runtime exits, `idle` falls back to
 `completed`.
 

@@ -263,6 +263,8 @@ function AgentTranscriptView({
   );
 }
 
+const UNCERTAIN_FOLLOW_UP = 'The subagent may or may not have received your message. Check its transcript before sending again; it will not be resent automatically.';
+
 /**
  * A follow-up to one idle subagent, which the main agent never sees. Shown only while the
  * subagent is idle; enabled only while the task itself is active and between turns. The
@@ -274,9 +276,12 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Submission | null>(null);
   const pending = useRef<{ text: string; id: string } | null>(null);
-  if (subagent.status !== 'idle') return null;
+  // An uncertain follow-up keeps the subagent running until the provider settles it; say so meanwhile.
+  if (subagent.status !== 'idle') {
+    return outcome?.status === 'uncertain' ? <div className="panel-foot"><p className="warn" role="alert">{UNCERTAIN_FOLLOW_UP}</p></div> : null;
+  }
   const blocked = readOnly(session)
-    ? session.stage === 'settled' ? 'Settled. Reopen this task to continue.' : 'Archived. This task is read-only.'
+    ? session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.'
     : LIVE.includes(session.state) ? 'Unavailable while the task is running a turn.' : null;
   const cannotSubmit = busy || !!blocked || !text.trim();
 
@@ -309,7 +314,7 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
     <form className="composer" aria-label={`Follow up with subagent ${subagent.name}`} onSubmit={(e) => { e.preventDefault(); void send(); }}>
       <p className="caption">Follow up with this subagent only. The main agent does not see this conversation.</p>
       {blocked && <p className="caption" role="status">{blocked}</p>}
-      {outcome?.status === 'uncertain' && <p className="warn" role="alert">The subagent may or may not have received your message. Check its transcript before sending again; it will not be resent automatically.</p>}
+      {outcome?.status === 'uncertain' && <p className="warn" role="alert">{UNCERTAIN_FOLLOW_UP}</p>}
       {outcome?.status === 'rejected' && <p className="error" role="alert">Rejected{outcome.error ? `: ${outcome.error}` : '.'}</p>}
       {error && <p className="error" role="alert">{error}</p>}
       <label className="sr-only" htmlFor={textId}>Follow-up for subagent {subagent.name}</label>
