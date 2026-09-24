@@ -177,6 +177,12 @@ export function seed(): MockState {
           text: 'After detaching and re-attaching, focus events stop arriving in the provider. The first attach is fine. Find the cause in internal/vterm and fix it with a regression test.',
         },
         {
+          id: 'r1',
+          kind: 'reasoning',
+          time: ago(9),
+          text: 'The first attach works, so the mode is applied once. On re-attach the client resets the terminal and `Redraw` must replay every mode. The earlier fix (#28) covered private modes; focus events (`?1004`) are tracked separately in `modes.go`.\n\nPlan: confirm with grep, add `replayFocusEvents`, and cover it with a test that detaches and re-attaches.',
+        },
+        {
           id: 'i2',
           kind: 'assistant',
           time: ago(8),
@@ -236,13 +242,21 @@ export function seed(): MockState {
       updated_at: ago(42),
       items: [
         { id: 'i1', kind: 'user', time: ago(60), text: 'Add a line to `uam doctor` that reports the detected terminal and glyph set.' },
+        { id: 'r1', kind: 'reasoning', time: ago(58), text: '`doctor.go` prints rows through `printRow`; the terminal probe already exposes `term.Describe()`. One line plus a test.' },
         tool('i2', 55, { name: 'edit', title: 'Edit cmd/doctor.go', status: 'completed', output: '@@ -30,4 +30,5 @@\n \tprintRow("shell", shell)\n+\tprintRow("terminal", term.Describe())' }),
         tool('i3', 50, { name: 'bash', title: 'go test ./cmd/...', status: 'completed', output: 'ok  \tcmd\t0.41s' }),
         {
           id: 'i4',
           kind: 'assistant',
           time: ago(42),
-          text: 'Done. `uam doctor` now prints a `terminal` row with the name and the glyph set the probe chose. The existing doctor tests pass; I added one that fakes a narrow terminal.',
+          text: 'Done. `uam doctor` now prints a `terminal` row with the name and the glyph set the probe chose:\n\n```text\nshell     zsh 5.9\nterminal  Windows Terminal · wide glyphs\n```\n\nThe existing doctor tests pass; I added one that fakes a narrow terminal.',
+        },
+        { id: 'i5', kind: 'user', time: ago(44), text: 'Does it handle `TERM=dumb`?' },
+        {
+          id: 'i6',
+          kind: 'assistant',
+          time: ago(42),
+          text: 'Yes. With `TERM=dumb` the probe is skipped and the row reads `terminal  dumb · ASCII glyphs`. Covered by `TestDoctorDumbTerminal`.',
         },
       ],
     }),
@@ -309,7 +323,7 @@ export function seed(): MockState {
       state: 'working',
       created_at: ago(0),
       updated_at: ago(0),
-      items: [{ id: 'i1', kind: 'user', time: ago(0), text: 'Which of these aliases are never used? Check the zsh history file.' }],
+      items: [{ id: 'i1', kind: 'user', time: ago(0), text: 'Which of these aliases are never used? Check the zsh history file.\n\n```sh\nalias gs="git status"\nalias gl="git log --oneline"\nalias dcu="docker compose up"\nalias serve="python -m http.server"\n```' }],
     }),
     task({
       id: 't8',
@@ -332,6 +346,7 @@ export function seed(): MockState {
       subagents: [a1, a2],
       agentItems: {
         a1: [
+          { id: 's0', kind: 'reasoning', time: ago(10), agent_id: 'a1', text: 'Grep for `<img` first, then read each hit for a missing `alt`.' },
           tool('s1', 10, { name: 'grep', title: 'Search "<img" in templates', status: 'completed', output: 'templates/post.html:13\ntemplates/list.html:22' }, 'a1'),
           tool('s2', 9, { name: 'view', title: 'Read templates/post.html', status: 'completed', output: '64 lines' }, 'a1'),
           {

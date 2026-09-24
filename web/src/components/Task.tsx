@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   LIVE,
   api,
@@ -29,29 +29,22 @@ interface Props {
   onSessionUpdate: (s: SessionSummary) => void;
   onDeleted: (id: string) => void;
   onInteractionUpdate: (sessionId: string, i: Interaction) => void;
-  /** The scrolling element; the composer sticks to its bottom. */
-  scroller: RefObject<HTMLDivElement | null>;
 }
 
-/** The reading column: kicker, serif title, meta line of text links, transcript, cards, composer. */
-export function Task({
-  session,
-  project,
-  agents,
-  snapshotSeq,
-  sheetOpen,
-  onSheet,
-  onSessionUpdate,
-  onDeleted,
-  onInteractionUpdate,
-  scroller,
-}: Props) {
+/** Distance from the bottom, in px, under which the view counts as "at the bottom". */
+const BOTTOM_SLACK = 32;
+
+/** The conversation pane: header on top, the transcript scrolling in the middle, the composer pinned below. */
+export function Task({ session, project, agents, snapshotSeq, sheetOpen, onSheet, onSessionUpdate, onDeleted, onInteractionUpdate }: Props) {
   const { meta } = useApp();
   const [dialog, setDialog] = useState<'rename' | 'close' | 'delete' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesTick, setChangesTick] = useState(0);
+  const [showJump, setShowJump] = useState(false);
   const live = LIVE.includes(session.state);
+  const working = session.state === 'working' || session.state === 'starting';
+  const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
 
   // The "n files changed" count: fetched on open, again when a turn starts or ends, and on Refresh.
@@ -66,24 +59,33 @@ export function Task({
     };
   }, [session.id, session.capabilities.session_diff, live, changesTick]);
 
-  useLayoutEffect(() => {
-    atBottom.current = true;
-  }, [session.id]);
-
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [session.id, session.items, session.interactions, agents, scroller]);
-
-  useEffect(() => {
+  const scrollToBottom = useCallback(() => {
     const el = scroller.current;
     if (!el) return;
-    const onScroll = () => {
-      atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-    };
-    el.addEventListener('scroll', onScroll);
-    return () => el.removeEventListener('scroll', onScroll);
-  }, [scroller]);
+    el.scrollTop = el.scrollHeight;
+    atBottom.current = true;
+    setShowJump(false);
+  }, []);
+
+  useLayoutEffect(() => {
+    atBottom.current = true;
+    setShowJump(false);
+  }, [session.id]);
+
+  // Follow new content only while the reader is at the bottom; otherwise offer a way back.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    if (atBottom.current) el.scrollTop = el.scrollHeight;
+    else if (el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setShowJump(true);
+  }, [session.id, session.items, session.interactions, agents]);
+
+  function onScroll() {
+    const el = scroller.current;
+    if (!el) return;
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
+    if (atBottom.current) setShowJump(false);
+  }
 
   async function run(op: () => Promise<SessionSummary>) {
     setError(null);
@@ -99,8 +101,8 @@ export function Task({
   const fileCount = changes?.supported ? changes.files.length : null;
 
   return (
-    <>
-      <article className="column">
+    <div className="pane">
+      <header className="pane-head">
         <div className="kicker">
           <span>{project?.name ?? 'Project'}</span>
           <span aria-hidden="true">·</span>
@@ -140,6 +142,9 @@ export function Task({
             {error}
           </p>
         )}
+      </header>
+
+      <div className="pane-body" ref={scroller} onScroll={onScroll}>
         {session.history_truncated && <p className="notice">Earlier history was truncated; only the most recent part is shown.</p>}
         <Transcript
           sessionId={session.id}
@@ -148,6 +153,7 @@ export function Task({
           agents={agents}
           snapshotSeq={snapshotSeq}
           live={live}
+          working={working}
         />
         {session.interactions.map((i) => (
           <InteractionCard key={i.id} session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
@@ -158,8 +164,14 @@ export function Task({
             Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}
           </p>
         )}
-      </article>
-      <div className="composer-wrap">
+      </div>
+
+      <div className="pane-foot">
+        {showJump && (
+          <button type="button" className="pill pill-outline pill-sm jump" onClick={scrollToBottom}>
+            Jump to latest
+          </button>
+        )}
         <Composer session={session} onSessionUpdate={onSessionUpdate} />
       </div>
 
@@ -216,6 +228,6 @@ export function Task({
           <p>This removes the task record from UAM. The provider conversation on the host is untouched.</p>
         </ConfirmDialog>
       )}
-    </>
+    </div>
   );
 }

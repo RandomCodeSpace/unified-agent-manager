@@ -111,8 +111,13 @@ off, run `uam web stop`, then `uam web` without the flag.
   between turns, not while a turn runs; the new model applies from the next
   turn. The list is refreshed at most every five minutes, so a changed
   subscription shows up without restarting the service.
-- **Conversation**: responses stream in; tool calls appear as expandable rows
-  that update in place.
+- **Conversation**: your messages sit on the right, the agent's on the left,
+  both rendered as markdown (never as HTML) while they stream. The agent's
+  reasoning, when the provider reports it, is a collapsed "Thinking" block
+  with a live one-line preview; expanding it shows the full text, and the
+  choice is kept per block for the browser session. Runs of tool calls fold
+  into one line that expands in place. If you scroll up while text arrives,
+  the view stays put and offers "Jump to latest".
 - **Subagents**: when the agent delegates work to a subagent, the subagent
   shows up in the Task under the tool call that started it, with its status
   (running, completed, failed, or cancelled). Expanding it loads its own

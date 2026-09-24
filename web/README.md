@@ -39,10 +39,12 @@ contain it. `#task=<id>` in the URL opens a task directly.
 - `src/App.tsx` — auth check, the single `EventSource`, theme, narrow
   layout, navigation (home deck / task / new task), the project dialogs.
 - `src/components/` — Rail (projects and tasks), Deck (home screen with the
-  "Needs you" list), Task (reading column: title, meta line, transcript,
-  composer), Transcript (ledger-folded tool calls and inline subagents),
-  Interactions, Composer, Changes (sheet), NewTask, Projects (dialogs),
-  Login, and shared atoms in `common.tsx`.
+  "Needs you" list), Task (the conversation pane: header, scrolling
+  transcript with a "Jump to latest" pill, pinned composer), Transcript
+  (chat bubbles, markdown everywhere, collapsible Thinking blocks,
+  ledger-folded tool calls, inline subagents), Interactions, Composer,
+  Changes (sheet), NewTask, Projects (dialogs), Login, and shared atoms in
+  `common.tsx`.
 - `src/styles.css` — design tokens (light and dark) and all styling.
 - `src/mock/` — development-only fake service (see above).
 

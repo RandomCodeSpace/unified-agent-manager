@@ -1,12 +1,16 @@
-import type { Interaction, Item, Project, SessionDetail, SessionSummary, SnapshotData, Subagent, UpdateData } from './api';
+import type { Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, SnapshotData, Subagent, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
+
+/** A frame that arrived for a subagent while its transcript fetch was in flight. */
+export type Buffered = { kind: 'item'; item: Item } | { kind: 'delta'; item_id: string; itemKind: ItemKind; text: string };
 
 /** A subagent transcript, present once its block was expanded. Live frames with that agent_id land here. */
 export interface AgentTranscript {
   loading: boolean;
   error?: string;
   items: Item[];
+  buffered: Buffered[];
 }
 
 export interface State {
@@ -81,19 +85,18 @@ export function reducer(state: State, action: Action): State {
       return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, action.interaction) } };
     }
     case 'agent_loading':
-      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, items: [] } } };
+      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, items: [], buffered: [] } } };
     case 'agent_loaded': {
-      // Frames that arrived while the fetch was in flight were buffered under the id;
-      // the fetched transcript wins for items in both, buffered-only items are kept.
-      const buffered = state.agents[action.agentId]?.items ?? [];
-      let items = action.items;
-      for (const b of buffered) if (!items.some((x) => x.id === b.id)) items = [...items, b];
+      const items = replay(action.items, state.agents[action.agentId]?.buffered ?? [], action.agentId);
       const detail = state.detail;
       const withAgent = detail ? { ...detail, subagents: upsert(detail.subagents, action.subagent) } : detail;
-      return { ...state, detail: withAgent, agents: { ...state.agents, [action.agentId]: { loading: false, items } } };
+      return { ...state, detail: withAgent, agents: { ...state.agents, [action.agentId]: { loading: false, items, buffered: [] } } };
     }
     case 'agent_failed':
-      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: false, error: action.error, items: [] } } };
+      return {
+        ...state,
+        agents: { ...state.agents, [action.agentId]: { loading: false, error: action.error, items: [], buffered: [] } },
+      };
     case 'update': {
       const d = action.data;
       if (d.seq <= state.snapshotSeq) return state;
@@ -111,13 +114,11 @@ export function reducer(state: State, action: Action): State {
       if (!detail || d.session_id !== detail.id) return state;
       switch (d.name) {
         case 'item':
-          if (d.agent_id) return withAgentItems(state, d.agent_id, (items) => upsert(items, d.item));
+          if (d.agent_id) return withAgent(state, d.agent_id, { kind: 'item', item: d.item });
           return { ...state, detail: { ...detail, items: upsert(detail.items, d.item) } };
-        case 'delta': {
-          const apply = (items: Item[]) => appendDelta(items, d.item_id, d.kind, d.text, d.agent_id);
-          if (d.agent_id) return withAgentItems(state, d.agent_id, apply);
-          return { ...state, detail: { ...detail, items: apply(detail.items) } };
-        }
+        case 'delta':
+          if (d.agent_id) return withAgent(state, d.agent_id, { kind: 'delta', item_id: d.item_id, itemKind: d.kind, text: d.text });
+          return { ...state, detail: { ...detail, items: appendDelta(detail.items, d.item_id, d.kind, d.text) } };
         case 'interaction':
           return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, d.interaction) } };
         case 'submission':
@@ -129,20 +130,53 @@ export function reducer(state: State, action: Action): State {
   }
 }
 
-function appendDelta(items: Item[], itemId: string, kind: Item['kind'], text: string, agentId?: string): Item[] {
+function appendDelta(items: Item[], itemId: string, kind: ItemKind, text: string, agentId?: string): Item[] {
   const out = items.slice();
   const i = out.findIndex((x) => x.id === itemId);
-  if (i < 0) out.push({ id: itemId, kind, text, time: new Date().toISOString(), agent_id: agentId });
+  if (i < 0) out.push({ id: itemId, kind, text, time: new Date().toISOString(), ...(agentId ? { agent_id: agentId } : {}) });
   else out[i] = { ...out[i], text: (out[i].text ?? '') + text };
   return out;
 }
 
-/** Applies fn to a subagent transcript if that transcript is loaded (or loading); otherwise the frame is dropped
- *  and the transcript is fetched whole when the block is expanded. */
-function withAgentItems(state: State, agentId: string, fn: (items: Item[]) => Item[]): State {
+/**
+ * Routes a live frame to a subagent transcript. While its fetch is in flight the frame is
+ * buffered and replayed onto the fetched items; before the block was ever expanded the frame
+ * is dropped, since the transcript is fetched whole on expand.
+ */
+function withAgent(state: State, agentId: string, frame: Buffered): State {
   const a = state.agents[agentId];
   if (!a) return state;
-  return { ...state, agents: { ...state.agents, [agentId]: { ...a, items: fn(a.items) } } };
+  if (a.loading) return { ...state, agents: { ...state.agents, [agentId]: { ...a, buffered: [...a.buffered, frame] } } };
+  return { ...state, agents: { ...state.agents, [agentId]: { ...a, items: applyFrame(a.items, frame, agentId) } } };
+}
+
+function applyFrame(items: Item[], frame: Buffered, agentId: string): Item[] {
+  if (frame.kind === 'item') return upsert(items, frame.item);
+  return appendDelta(items, frame.item_id, frame.itemKind, frame.text, agentId);
+}
+
+/**
+ * Merges frames buffered during the fetch onto the fetched transcript. The fetched copy wins
+ * for whole items it already has. Buffered delta text is appended per item unless the fetched
+ * text already ends with it, which means the fetch was taken after those deltas.
+ */
+function replay(fetched: Item[], buffered: Buffered[], agentId: string): Item[] {
+  let items = fetched;
+  const extra = new Map<string, { kind: ItemKind; text: string }>();
+  for (const b of buffered) {
+    if (b.kind === 'item') {
+      if (!items.some((x) => x.id === b.item.id)) items = [...items, b.item];
+      continue;
+    }
+    const e = extra.get(b.item_id);
+    extra.set(b.item_id, { kind: b.itemKind, text: (e?.text ?? '') + b.text });
+  }
+  for (const [id, e] of extra) {
+    const i = items.findIndex((x) => x.id === id);
+    if (i < 0) items = appendDelta(items, id, e.kind, e.text, agentId);
+    else if (!(items[i].text ?? '').endsWith(e.text)) items = appendDelta(items, id, e.kind, e.text, agentId);
+  }
+  return items;
 }
 
 function upsert<T extends { id: string }>(list: T[], v: T): T[] {
@@ -170,11 +204,7 @@ function withoutSession(state: State, id: string): State {
 function withoutProject(state: State, id: string): State {
   // The server also sends session_removed for each of its tasks; dropping them here keeps
   // the rail consistent if those frames were coalesced away.
-  const next = withSessionsOf(state, id);
+  const gone = state.sessions.filter((s) => s.project_id === id).map((s) => s.id);
+  const next = gone.reduce((st, sid) => withoutSession(st, sid), state);
   return { ...next, projects: next.projects.filter((p) => p.id !== id) };
-}
-
-function withSessionsOf(state: State, projectId: string): State {
-  const gone = state.sessions.filter((s) => s.project_id === projectId).map((s) => s.id);
-  return gone.reduce((st, id) => withoutSession(st, id), state);
 }

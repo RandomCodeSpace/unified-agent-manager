@@ -103,6 +103,7 @@ body,
 }
 
 body {
+  overflow: hidden;
   font: 14px/1.5 var(--sans);
   letter-spacing: 0.1px;
   color: var(--body);
@@ -650,11 +651,13 @@ dialog::backdrop {
   letter-spacing: -0.3px;
 }
 
-/* Shell: borderless two columns on the canvas. */
+/* Shell: the full viewport, borderless two columns on the canvas. Nothing scrolls but the panes. */
 
 .shell {
   display: grid;
-  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  width: 100vw;
   grid-template-columns: var(--rail-w) minmax(0, 1fr);
   background: var(--canvas);
 }
@@ -818,17 +821,15 @@ dialog::backdrop {
   background: var(--scrim);
 }
 
-/* Reading column */
+/* Forms and empty states inside `.page` */
 
 .column {
-  max-width: 68ch;
-  margin: 0 auto;
-  padding: 40px 28px 24px;
+  max-width: 860px;
+  padding: 32px 40px 24px;
 }
 
 .column.empty {
   padding-top: 120px;
-  text-align: center;
 }
 
 .column.empty .title {
@@ -862,50 +863,144 @@ dialog::backdrop {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 16px;
-  margin-bottom: 30px;
   font-size: 12.5px;
 }
 
-/* Transcript */
+/* Conversation pane: header, scrolling transcript, pinned composer. */
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.pane-head {
+  flex: none;
+  padding: 18px 32px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.pane-head .title {
+  margin: 6px 0 8px;
+  font-size: 26px;
+}
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 32px 8px;
+}
+
+.pane-foot {
+  position: relative;
+  flex: none;
+  padding: 8px 32px 16px;
+}
+
+.jump {
+  position: absolute;
+  top: -34px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+/* Transcript: chat bubbles, user right and assistant left; everything else full width, left. */
 
 .transcript {
   min-width: 0;
 }
 
-.you {
-  margin: 0 0 20px;
-  padding-top: 12px;
-  border-top: 1px solid var(--hairline);
+.msg {
+  width: fit-content;
+  max-width: 75%;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: var(--r-xl);
+  overflow-wrap: anywhere;
+}
+
+.msg-user {
+  margin-left: auto;
+  background: var(--surface-strong);
   color: var(--ink);
 }
 
-.transcript > .you:first-child {
-  padding-top: 0;
-  border-top: 0;
-}
-
-.turn {
-  margin: 0 0 18px;
-}
-
-.turn-assistant {
+.msg-assistant {
+  background: var(--surface);
   color: var(--body-strong);
-  font-size: 15px;
-  line-height: 1.65;
+  font-size: 14.5px;
+  line-height: 1.6;
 }
 
-.reasoning {
+.working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.working .mark-dot {
+  background: var(--ink);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* Thinking: a reasoning item, collapsed to one line while it streams. */
+
+.thinking {
+  max-width: 75%;
   margin: 0 0 14px;
 }
 
-.reasoning summary {
+.thinking > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
   font-size: 12.5px;
   color: var(--muted);
+  list-style: none;
   cursor: pointer;
 }
 
-.reasoning .plain {
-  margin-top: 6px;
+.thinking > summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking > summary:hover .thinking-label {
+  color: var(--ink);
+}
+
+.thinking-label {
+  flex: none;
+  font-weight: 500;
+}
+
+.thinking-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: italic;
+}
+
+.thinking-live .thinking-preview {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.thinking-body {
+  margin-top: 4px;
+  padding: 10px 14px;
+  border-radius: var(--r-lg);
+  background: var(--surface-strong);
+  color: var(--body);
   font-size: 13px;
 }
 
@@ -934,12 +1029,16 @@ dialog::backdrop {
 .md pre {
   margin: 0 0 10px;
   padding: 8px 10px;
-  overflow: auto;
+  overflow-x: auto;
   border-radius: var(--r-md);
   background: var(--surface-strong);
   font: 12.5px/1.5 var(--mono);
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: pre;
+}
+
+.msg-user .md pre,
+.thinking-body .md pre {
+  background: var(--surface);
 }
 
 .md :not(pre) > code {
@@ -1128,8 +1227,13 @@ dialog::backdrop {
   background: var(--surface);
 }
 
-.agent-body .turn-assistant {
+.agent-body .msg-assistant {
   font-size: 13.5px;
+}
+
+.agent-body .msg-user,
+.agent-body .thinking-body {
+  background: var(--surface);
 }
 
 .agent-result {
@@ -1228,18 +1332,9 @@ dialog::backdrop {
   margin-top: 4px;
 }
 
-/* Composer: a floating card that sticks to the bottom of the page. */
-
-.composer-wrap {
-  position: sticky;
-  bottom: 0;
-  padding: 14px 28px 20px;
-  background: linear-gradient(to top, var(--canvas) 72%, transparent);
-}
+/* Composer: a floating card pinned under the transcript, as wide as the pane. */
 
 .composer {
-  max-width: 68ch;
-  margin: 0 auto;
   padding: 10px 12px 8px;
   border: 1px solid transparent;
   border-radius: var(--r-xl);
@@ -1459,7 +1554,6 @@ dialog::backdrop {
 .needs,
 .project {
   position: relative;
-  max-width: 1080px;
 }
 
 .deck-head {
@@ -1612,12 +1706,26 @@ dialog::backdrop {
   padding-top: 80px;
 }
 
-.narrow .title {
-  font-size: 26px;
+.narrow .title,
+.narrow .pane-head .title {
+  font-size: 22px;
 }
 
-.narrow .composer-wrap {
-  padding: 10px 12px 14px;
+.narrow .pane-head {
+  padding: 8px 14px 10px;
+}
+
+.narrow .pane-body {
+  padding: 14px 14px 8px;
+}
+
+.narrow .pane-foot {
+  padding: 6px 10px 12px;
+}
+
+.narrow .msg,
+.narrow .thinking {
+  max-width: 90%;
 }
 
 .narrow .composer-hint,

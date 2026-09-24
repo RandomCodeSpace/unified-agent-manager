@@ -8,6 +8,31 @@ import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
 
+const THINKING =
+  'The user wants a small, safe change. I should check the existing tests first, then edit the one function involved and run the package tests rather than the whole suite.';
+
+const LONG_THINKING = `The history file is at ~/.zsh_history and uses the extended format, so each line starts with a timestamp.
+
+I need the alias names from .zshrc, then count how often each appears as the first word of a command. Aliases that never appear are the unused ones.
+
+A plain grep per alias would be quadratic on a large history; better to build one awk pass that tallies first words, then join against the alias list.`;
+
+const ALIAS_ANSWER = `Three aliases never appear in the last 10,000 history entries:
+
+| Alias | Expands to |
+|---|---|
+| \`gl\` | \`git log --oneline\` |
+| \`dcu\` | \`docker compose up\` |
+| \`serve\` | \`python -m http.server\` |
+
+I counted first words with one pass over \`~/.zsh_history\`:
+
+\`\`\`sh
+awk -F';' '{ split($2, w, " "); n[w[1]]++ } END { for (k in n) print n[k], k }' ~/.zsh_history | sort -rn
+\`\`\`
+
+Want me to remove them from \`.zshrc\`?`;
+
 const now = () => new Date().toISOString();
 let counter = 1000;
 const nextId = (prefix: string) => `${prefix}${++counter}`;
@@ -90,12 +115,22 @@ export function install(): void {
     else list[i] = item;
     broadcast('item', { session_id: t.id, item, ...(item.agent_id ? { agent_id: item.agent_id } : {}) }, t.id);
   };
-  const delta = (t: MockTask, itemId: string, text: string, agentId?: string) => {
+  const delta = (t: MockTask, itemId: string, text: string, kind: 'assistant' | 'reasoning' = 'assistant', agentId?: string) => {
     const list = agentId ? (t.agentItems[agentId] ??= []) : t.items;
     const it = list.find((x) => x.id === itemId);
     if (it) it.text = (it.text ?? '') + text;
-    else list.push({ id: itemId, kind: 'assistant', text, time: now(), ...(agentId ? { agent_id: agentId } : {}) });
-    broadcast('delta', { session_id: t.id, item_id: itemId, kind: 'assistant', text, ...(agentId ? { agent_id: agentId } : {}) }, t.id);
+    else list.push({ id: itemId, kind, text, time: now(), ...(agentId ? { agent_id: agentId } : {}) });
+    broadcast('delta', { session_id: t.id, item_id: itemId, kind, text, ...(agentId ? { agent_id: agentId } : {}) }, t.id);
+  };
+  /** Streams `text` as deltas onto a new item, a word at a time, until the task is no longer busy. */
+  const stream = async (t: MockTask, text: string, kind: 'assistant' | 'reasoning', msPerWord: number, agentId?: string) => {
+    const id = nextId(kind === 'reasoning' ? 'r' : 'm');
+    for (const word of text.split(' ')) {
+      if (!busy(t)) return false;
+      delta(t, id, `${word} `, kind, agentId);
+      await wait(msPerWord);
+    }
+    return true;
   };
   const setSubagent = (t: MockTask, id: string, status: SubagentStatus, error?: string) => {
     const s = t.subagents.find((x) => x.id === id);
@@ -109,16 +144,13 @@ export function install(): void {
   };
   const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
-  /** Streams an assistant reply, then a tool call, then a closing line, and completes the turn. */
+  /** Streams reasoning, then an assistant reply, then a tool call, then a closing line, and completes the turn. */
   async function reply(t: MockTask, text: string, model = 'mai-code-1.1-flash') {
     await wait(600);
     if (!t.name && !t.title) touch(t, { title: (t.items.find((i) => i.kind === 'user')?.text ?? 'New task').slice(0, 60) });
-    const id = nextId('m');
-    for (const word of text.split(' ')) {
-      if (!busy(t)) return;
-      delta(t, id, `${word} `);
-      await wait(45);
-    }
+    if (!(await stream(t, THINKING, 'reasoning', 70))) return;
+    await wait(200);
+    if (!(await stream(t, text, 'assistant', 45))) return;
     await wait(300);
     if (!busy(t)) return;
     const tid = nextId('c');
@@ -132,8 +164,9 @@ export function install(): void {
     touch(t, { state: 'completed', last_model: model });
   }
 
-  /** Keeps t8's two subagents alive: each adds a step every few seconds, then finishes. */
+  /** Keeps t8's two subagents alive: each thinks and adds a step every few seconds, then finishes. */
   async function runSubagents(t: MockTask) {
+    void stream(t, 'The list template is fine; the cover image on post.html is the only one without alt text, so I will patch that and run the validator.', 'reasoning', 180, 'a1');
     for (let step = 1; step <= 3; step++) {
       await wait(2500);
       if (!busy(t)) return;
@@ -143,7 +176,7 @@ export function install(): void {
     }
     await wait(2000);
     if (!busy(t)) return;
-    pushItem(t, { id: nextId('a1-x'), kind: 'assistant', time: now(), agent_id: 'a1', text: 'Cover images now carry alt text. Two templates changed.' });
+    await stream(t, 'Cover images now carry `alt` text. Two templates changed:\n\n- `templates/post.html`\n- `templates/list.html`', 'assistant', 60, 'a1');
     setSubagent(t, 'a1', 'completed');
     await wait(2500);
     if (!busy(t)) return;
@@ -154,7 +187,16 @@ export function install(): void {
     pushItem(t, { id: nextId('m'), kind: 'assistant', time: now(), text: 'Both surveys are in. Cover images now carry alt text, and the muted token is 5.0:1 on white. Two files changed.' });
     touch(t, { state: 'completed' });
   }
-  let subagentsStarted = false;
+  /** t7 is mid-turn from the start: a long think, then a markdown answer, streamed slowly enough to watch. */
+  async function runThinking(t: MockTask) {
+    await wait(400);
+    if (!(await stream(t, LONG_THINKING, 'reasoning', 220))) return;
+    await wait(400);
+    touch(t, { title: 'Which of these aliases are never used?' });
+    if (!(await stream(t, ALIAS_ANSWER, 'assistant', 60))) return;
+    touch(t, { state: 'completed', last_model: 'mai-code-1.1-flash' });
+  }
+  const started = new Set<string>();
 
   const hooks = {
     attach(src: FakeEventSource) {
@@ -165,9 +207,14 @@ export function install(): void {
         return () => sources.delete(src);
       }
       src.emit('snapshot', { seq, projects: st.projects, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
-      if (t?.id === 't8' && !subagentsStarted) {
-        subagentsStarted = true;
-        void runSubagents(t);
+      if (t && !started.has(t.id)) {
+        if (t.id === 't8') {
+          started.add(t.id);
+          void runSubagents(t);
+        } else if (t.id === 't7') {
+          started.add(t.id);
+          void runThinking(t);
+        }
       }
       return () => sources.delete(src);
     },
@@ -302,7 +349,10 @@ export function install(): void {
           t.last_submission = sub;
           touch(t, { state: 'working', state_detail: undefined, open: true });
           broadcast('submission', { session_id: t.id, submission: sub }, t.id);
-          void reply(t, `Looked into that. Here is what I found about "${text.slice(0, 40)}": the change is small and covered by the existing tests.`);
+          void reply(
+            t,
+            `Looked into that. Here is what I found about "${text.slice(0, 40)}":\n\n- the change is small and covered by the existing tests\n- nothing else references \`replayModes\`\n\n\`\`\`go\nfunc (v *VTerm) replayFocusEvents(w io.Writer) error {\n\tif !v.focusEvents {\n\t\treturn nil\n\t}\n\t_, err := w.Write([]byte("\\x1b[?1004h"))\n\treturn err\n}\n\`\`\``,
+          );
           return json(202, sub);
         }
         case 'cancel': {

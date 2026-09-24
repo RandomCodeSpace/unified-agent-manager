@@ -12,14 +12,16 @@ interface Props {
   snapshotSeq: number;
   /** The provider still holds the turn, so pending tools may still report. */
   live: boolean;
+  /** A turn is running (not merely waiting for the user): the last text item is still streaming. */
+  working: boolean;
 }
 
 /**
- * Main transcript. Consecutive tool calls fold into one ledger line; a tool call that
- * started a subagent stands on its own with the subagent block under it, and consecutive
- * ones (parallel subagents) stack.
+ * Main transcript. Text items are chat bubbles (user right, assistant left), consecutive tool
+ * calls fold into one ledger line, and a tool call that started a subagent stands on its own
+ * with the subagent block under it; consecutive ones (parallel subagents) stack.
  */
-export function Transcript({ sessionId, items, subagents, agents, snapshotSeq, live }: Props) {
+export function Transcript({ sessionId, items, subagents, agents, snapshotSeq, live, working }: Props) {
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
 
@@ -30,12 +32,12 @@ export function Transcript({ sessionId, items, subagents, agents, snapshotSeq, l
     out.push(<Ledger key={`ledger-${run[0].id}`} items={run} live={live} />);
     run = [];
   };
-  for (const item of items) {
+  items.forEach((item, k) => {
     if (item.kind === 'tool') {
       const agent = byParent.get(item.id);
       if (!agent) {
         run.push(item);
-        continue;
+        return;
       }
       flush();
       out.push(
@@ -48,13 +50,27 @@ export function Transcript({ sessionId, items, subagents, agents, snapshotSeq, l
           snapshotSeq={snapshotSeq}
         />,
       );
-      continue;
+      return;
     }
     flush();
-    out.push(<Turn key={item.id} item={item} />);
-  }
+    out.push(<Turn key={item.id} item={item} streaming={working && k === items.length - 1} />);
+  });
   flush();
-  return <div className="transcript">{out}</div>;
+  return (
+    <div className="transcript">
+      {out}
+      {working && <WorkingIndicator />}
+    </div>
+  );
+}
+
+function WorkingIndicator() {
+  return (
+    <div className="working" role="status">
+      <span className="mark-dot" aria-hidden="true" />
+      Working…
+    </div>
+  );
 }
 
 function Ledger({ items, live }: { items: Item[]; live: boolean }) {
@@ -102,7 +118,7 @@ export const ToolRow = memo(function ToolRow({ item, live }: { item: Item; live:
         </span>
       </summary>
       <div className="tool-body">
-        {item.text && <div className="plain">{item.text}</div>}
+        {item.text && <Markdown text={item.text} />}
         {t?.input && (
           <>
             <div className="label">Input</div>
@@ -121,36 +137,82 @@ export const ToolRow = memo(function ToolRow({ item, live }: { item: Item; live:
   );
 });
 
-export const Turn = memo(function Turn({ item }: { item: Item }) {
+/** One text item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
+export const Turn = memo(function Turn({ item, streaming }: { item: Item; streaming: boolean }) {
   switch (item.kind) {
     case 'user':
       return (
-        <div className="you">
-          <div className="label">You</div>
-          <div className="plain">{item.text}</div>
+        <div className="msg msg-user">
+          <span className="sr-only">You: </span>
+          <Markdown text={item.text ?? ''} />
         </div>
       );
     case 'assistant':
       return (
-        <div className="turn turn-assistant">
+        <div className="msg msg-assistant">
           <Markdown text={item.text ?? ''} />
         </div>
       );
     case 'reasoning':
-      return (
-        <details className="reasoning">
-          <summary>Reasoning</summary>
-          <div className="plain muted">{item.text}</div>
-        </details>
-      );
+      return <Thinking item={item} streaming={streaming} />;
     case 'notice':
-      return <p className="notice">{item.text}</p>;
+      return (
+        <div className="notice">
+          <Markdown text={item.text ?? ''} />
+        </div>
+      );
     case 'tool':
       return <ToolRow item={item} live={false} />;
     default:
       return null;
   }
 });
+
+const THINKING_KEY = 'uam.thinking:';
+
+/** Last non-empty line of the text, with leading markdown marks stripped, for the collapsed preview. */
+function lastLine(text: string): string {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  const line = lines[lines.length - 1] ?? '';
+  return line.replace(/^[#>*\-\s`]+/, '').replace(/`/g, '');
+}
+
+/**
+ * A reasoning item: a "Thinking" block, collapsed by default. While it streams the summary
+ * shows the latest line; expanding shows the full markdown. The choice is remembered per
+ * item for the browser session.
+ */
+export function Thinking({ item, streaming }: { item: Item; streaming: boolean }) {
+  const key = THINKING_KEY + item.id;
+  const [open, setOpen] = useState(() => sessionStorage.getItem(key) === '1');
+  const text = item.text ?? '';
+  const preview = lastLine(text);
+  return (
+    <details
+      className={streaming ? 'thinking thinking-live' : 'thinking'}
+      open={open}
+      onToggle={(e) => {
+        const next = e.currentTarget.open;
+        if (next === open) return;
+        setOpen(next);
+        sessionStorage.setItem(key, next ? '1' : '0');
+      }}
+    >
+      <summary>
+        <span className="thinking-label">{streaming ? 'Thinking…' : 'Thinking'}</span>
+        {!open && preview && (
+          <>
+            <Sep />
+            <span className="thinking-preview">{preview}</span>
+          </>
+        )}
+      </summary>
+      <div className="thinking-body">
+        <Markdown text={text} />
+      </div>
+    </details>
+  );
+}
 
 const AGENT_STATUS: Record<SubagentStatus, string> = {
   running: 'running',
@@ -230,17 +292,14 @@ function SubagentBlock({
             <Markdown text={item.tool.output} />
           </div>
         )}
-        {subagent.status === 'failed' && (
-          <p className="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</p>
-        )}
+        {subagent.status === 'failed' && <p className="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</p>}
         {subagent.status === 'cancelled' && <p className="muted small">Stopped before it finished.</p>}
-        {live && <p className="muted small">Running…</p>}
       </div>
     </details>
   );
 }
 
-/** A subagent's own transcript: tool calls fold like the main one; nested `task` calls stay plain rows. */
+/** A subagent's own transcript: same bubbles and thinking blocks; tool calls fold like the main one. */
 function AgentItems({ items, live }: { items: Item[]; live: boolean }) {
   const out: ReactNode[] = [];
   let run: Item[] = [];
@@ -248,14 +307,19 @@ function AgentItems({ items, live }: { items: Item[]; live: boolean }) {
     if (run.length) out.push(<Ledger key={`ledger-${run[0].id}`} items={run} live={live} />);
     run = [];
   };
-  for (const item of items) {
+  items.forEach((item, k) => {
     if (item.kind === 'tool') {
       run.push(item);
-      continue;
+      return;
     }
     flush();
-    out.push(<Turn key={item.id} item={item} />);
-  }
+    out.push(<Turn key={item.id} item={item} streaming={live && k === items.length - 1} />);
+  });
   flush();
-  return <div className="transcript transcript-agent">{out}</div>;
+  return (
+    <div className="transcript transcript-agent">
+      {out}
+      {live && <WorkingIndicator />}
+    </div>
+  );
 }

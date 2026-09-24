@@ -79,7 +79,6 @@ export default function App() {
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set(readJSON<string[]>(HIDDEN_KEY, [])));
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
   const loadedAt = useRef(new Date().toISOString());
-  const scroller = useRef<HTMLDivElement | null>(null);
   const drawerButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -262,7 +261,9 @@ export default function App() {
     }
   }
 
+  // The task pane manages its own scrolling; every other view scrolls inside `.page`.
   let page: React.ReactNode;
+  let pane: React.ReactNode = null;
   if (newTaskProject) {
     page = (
       <NewTask
@@ -275,7 +276,7 @@ export default function App() {
       />
     );
   } else if (state.detail && selected) {
-    page = (
+    pane = (
       <Task
         session={state.detail}
         project={project}
@@ -289,7 +290,6 @@ export default function App() {
         onSessionUpdate={upsertSession}
         onDeleted={(id) => dispatch({ type: 'remove_session', id })}
         onInteractionUpdate={(sessionId, interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction })}
-        scroller={scroller}
       />
     );
   } else if (state.selectedId && state.snapshotSeq >= 0 && !selected) {
@@ -352,9 +352,7 @@ export default function App() {
               )}
             </div>
           )}
-          <div className="page" ref={scroller}>
-            {page}
-          </div>
+          {pane ?? <div className="page">{page}</div>}
         </main>
 
         {(sheetOpen || (narrow && drawerOpen)) && (
