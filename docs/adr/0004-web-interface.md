@@ -789,10 +789,11 @@ No request carries base64 in JSON.
 - **Types.** UAM takes the type from the bytes, never from the name or a
   header. An image is what `http.DetectContentType` calls png, jpeg, gif or
   webp. A PDF must be `application/pdf` there and start with `%PDF-`. Anything
-  else must sniff as `text/`, be valid UTF-8 and hold no NUL byte; UAM stores
-  and sends it as `text/plain`. A text file whose first element is `<svg>` is
-  refused, and so are HEIC, audio, video, archives and executables (415). HTML
-  passes as text and is never served as HTML.
+  else that is valid UTF-8 and holds no NUL byte is text, whatever
+  `http.DetectContentType` makes of its first bytes; UAM stores and sends it as
+  `text/plain`. A text file whose first element is `<svg>` is refused. HEIC,
+  audio, video, archives and executables fail the text rule (415). HTML passes
+  as text and is never served as HTML.
 - **Limits.** Images 3 MiB, PDFs 10 MiB, text 256 KiB (413). A prompt carries
   at most 5 uploads, and no more images than the model's `max_images` (400).
 - **Model gate.** The owner chose to gate images and PDFs per model. Copilot's
