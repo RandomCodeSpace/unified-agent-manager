@@ -95,6 +95,10 @@ func (c *conversation) refreshExecution(ctx context.Context) {
 	c.execution = state
 	if state != nil && state.Known && state.Mode != "autopilot" {
 		c.autopilotTurn = false
+		if c.idleUnresolved {
+			c.assistantIdleSeen = true
+			c.finishTurnLocked(nil, time.Now())
+		}
 	}
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventExecution, Execution: state})
 }

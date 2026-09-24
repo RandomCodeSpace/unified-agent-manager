@@ -60,6 +60,10 @@ const (
 	historySweep = time.Minute
 )
 
+// idleClose is how long an open conversation stays open with nothing
+// running and no viewer before the sweep closes it; a var for tests.
+var idleClose = 15 * time.Minute
+
 // Manager owns every web session, its provider conversation, and the event
 // fan-out to browsers.
 //
@@ -226,6 +230,9 @@ type webSession struct {
 	// ignored.
 	gen     uint64
 	opening chan struct{}
+	// activeAt is when the open conversation last had an event, work or a
+	// viewer; zero until the idle sweep first sees it.
+	activeAt time.Time
 
 	items     []agentapi.Item
 	itemIdx   map[string]int
@@ -1664,6 +1671,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	if s.gen != gen {
 		return
 	}
+	s.activeAt = m.now()
 	before := m.summaryLocked(s)
 	switch ev.Kind {
 	case agentapi.EventItem:
@@ -2153,6 +2161,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	switch {
 	case err == nil && !stale:
 		s.conv = conv
+		s.activeAt = m.now()
 		if s.base == StateClosed || s.base == StateFailed {
 			s.setBase(StateIdle, "")
 		}
@@ -3034,6 +3043,76 @@ func (m *Manager) disconnectLocked(s *webSession) agentapi.Conversation {
 	m.pauseQueueLocked(s)
 	s.setBase(StateClosed, "")
 	return conv
+}
+
+// closeIdleConversations closes every open conversation that stayed idle
+// and unwatched for idleClose. The Task keeps its state; its next view or
+// prompt reopens the conversation, as after a restart.
+func (m *Manager) closeIdleConversations() {
+	m.mu.Lock()
+	now := m.now()
+	var idle []*webSession
+	for _, s := range m.sessions {
+		switch {
+		case s.conv == nil:
+		case s.activeAt.IsZero() || m.keepsOpenLocked(s):
+			s.activeAt = now
+		case now.Sub(s.activeAt) >= idleClose:
+			idle = append(idle, s)
+		}
+	}
+	m.mu.Unlock()
+	for _, s := range idle {
+		m.closeIdle(s)
+	}
+}
+
+// closeIdle closes s's conversation when it is still idle. A Task whose op is
+// held (a prompt, open or stage change) is left for the next sweep.
+func (m *Manager) closeIdle(s *webSession) {
+	if !s.op.TryLock() {
+		return
+	}
+	defer s.op.Unlock()
+	m.mu.Lock()
+	idle := m.now().Sub(s.activeAt)
+	if m.closed || s.removed || s.conv == nil || m.keepsOpenLocked(s) || idle < idleClose {
+		m.mu.Unlock()
+		return
+	}
+	before := m.summaryLocked(s)
+	conv := s.conv
+	s.conv = nil
+	s.gen++
+	m.endSubagentsLocked(s)
+	m.forgetBackgroundTaskStateLocked(s)
+	// The provider keeps the transcript; the reopen reads it again.
+	if m.infos[s.provider].Capabilities.History {
+		m.dropHistoryLocked(s)
+	}
+	m.changedLocked(s, before)
+	m.mu.Unlock()
+	m.closeConversation(conv)
+	log.Info("closed idle web conversation", "session", s.id, "idle", idle.Round(time.Second))
+}
+
+// keepsOpenLocked reports whether s has a viewer or anything its open
+// conversation still runs or waits for.
+func (m *Manager) keepsOpenLocked(s *webSession) bool {
+	for sub := range m.subs {
+		if sub.session == s.id {
+			return true
+		}
+	}
+	if s.settleableLocked() != nil || s.runningSubagents() > 0 {
+		return true
+	}
+	if t := s.backgroundTasks; t != nil && (!t.Known || slices.ContainsFunc(t.Tasks, func(task agentapi.BackgroundTask) bool {
+		return task.Status != "completed" && task.Status != "failed" && task.Status != "cancelled"
+	})) {
+		return true
+	}
+	return s.execution != nil && s.execution.Objective != nil && s.execution.Objective.Status == "active"
 }
 
 // Settle marks an active Task complete and closes its conversation. It is

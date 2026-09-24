@@ -1005,6 +1005,11 @@ func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string)
 		h.Set("Content-Security-Policy", frameSecurity)
 		h.Set("X-Frame-Options", "SAMEORIGIN")
 		h.Set("Cache-Control", "no-cache")
+	default:
+		// Vite names every file under assets/ by its content hash.
+		if strings.HasPrefix(name, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
 	}
 	http.ServeContent(w, r, name, info.ModTime(), content)
 	return true

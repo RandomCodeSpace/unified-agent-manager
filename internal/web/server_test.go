@@ -342,11 +342,24 @@ func TestEmbeddedIndexAndSPAFallback(t *testing.T) {
 	if w := ts2.do(http.MethodGet, "/assets/style.css", ""); !strings.HasPrefix(w.Header().Get("Content-Type"), "text/css") {
 		t.Fatalf("css content type %q", w.Header().Get("Content-Type"))
 	}
+	// Hashed build output is cached for good; documents that name it are revalidated.
+	for target, want := range map[string]string{
+		"/assets/app.js":    "public, max-age=31536000, immutable",
+		"/assets/style.css": "public, max-age=31536000, immutable",
+		"/":                 "no-cache",
+		"/index.html":       "no-cache",
+		"/sessions/abc":     "no-cache",
+		"/assets/":          "no-cache",
+	} {
+		if got := ts2.do(http.MethodGet, target, "").Header().Get("Cache-Control"); got != want {
+			t.Fatalf("GET %s Cache-Control = %q, want %q", target, got, want)
+		}
+	}
 	if w := ts2.do(http.MethodGet, "/assets/", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "<title>app</title>") {
 		t.Fatalf("directory must not be listed: %d %s", w.Code, w.Body)
 	}
-	if w := ts2.do(http.MethodGet, "/assets/missing.js", ""); w.Code != http.StatusNotFound {
-		t.Fatalf("missing asset = %d, want 404", w.Code)
+	if w := ts2.do(http.MethodGet, "/assets/missing.js", ""); w.Code != http.StatusNotFound || w.Header().Get("Cache-Control") != "" {
+		t.Fatalf("missing asset = %d %q, want uncached 404", w.Code, w.Header().Get("Cache-Control"))
 	}
 	if w := ts2.do(http.MethodGet, "/api/nope", "", withCookie(ts2)); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), `"error"`) {
 		t.Fatalf("unknown api = %d %s", w.Code, w.Body)

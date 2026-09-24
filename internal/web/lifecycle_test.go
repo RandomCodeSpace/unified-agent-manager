@@ -395,3 +395,110 @@ func TestLifecycleRoutes(t *testing.T) {
 		t.Fatalf("delete an archived task = %d %s", w.Code, w.Body)
 	}
 }
+
+// An open conversation left idle and unviewed for idleClose is closed without
+// changing the Task; the next prompt reopens it as after a restart.
+func TestIdleConversationClosesAndReopensOnPrompt(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	prov.SetModels([]agentapi.Model{{ID: "a", Name: "A"}}, nil)
+	st := openTestStore(t)
+	m := startManager(t, st, prov)
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: addProject(t, m, t.TempDir()), Model: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	if _, err := m.SetMode(sum.ID, "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "work", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+		t.Fatal(err)
+	}
+	reply := agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "done"}
+	conv.EmitItem(reply)
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	prov.SetHistory(conv.ID(), agentapi.History{Items: []agentapi.Item{reply}})
+	viewer, _, err := m.Subscribe(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left := time.Now().Add(time.Hour)
+	setNow(m, left.Add(-time.Hour+idleClose))
+	m.closeIdleConversations()
+	setNow(m, left)
+	m.Unsubscribe(viewer)
+	setNow(m, left.Add(idleClose-time.Second))
+	m.closeIdleConversations()
+	if conv.Closes() != 0 {
+		t.Fatal("closed a viewed conversation or one idle for less than idleClose")
+	}
+
+	setNow(m, left.Add(idleClose))
+	m.closeIdleConversations()
+	d := detail(t, m, sum.ID)
+	if conv.Closes() != 1 || d.Open || d.State != StateCompleted || d.Model != "a" || d.Mode != "yolo" {
+		t.Fatalf("after idle close: closes %d, detail %+v", conv.Closes(), d.SessionSummary)
+	}
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := loadRecord(t, st, "fake", sum.ID); rec.Web.Turn != StateCompleted {
+		t.Fatalf("stored state after idle close = %q", rec.Web.Turn)
+	}
+
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "more", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+		t.Fatal(err)
+	}
+	next := prov.Last()
+	opens := prov.Opens()
+	if next == conv || len(opens) != 2 || opens[1].ConversationID != sum.ConversationID || len(next.Sends()) != 1 || strings.Join(next.ModelSets(), ",") != "a" {
+		t.Fatalf("reopen: opens %+v, sends %v, models %v", opens, next.Sends(), next.ModelSets())
+	}
+	d = detail(t, m, sum.ID)
+	if !d.Open || d.Mode != "yolo" || d.Model != "a" || len(d.Items) == 0 || d.Items[0].ID != "a1" {
+		t.Fatalf("reopened detail = %+v", d)
+	}
+}
+
+// Work, a pending answer or a viewer keeps an open conversation open however
+// long it has been.
+func TestBusyOrWatchedConversationStaysOpen(t *testing.T) {
+	for name, keep := range map[string]func(*Manager, string, *agenttest.Conversation){
+		"turn": func(_ *Manager, _ string, c *agenttest.Conversation) { c.EmitTurn(agentapi.TurnWorking, "") },
+		"queue": func(m *Manager, id string, _ *agenttest.Conversation) {
+			m.mu.Lock()
+			m.sessions[id].queue = []QueuedPrompt{{RequestID: "q"}}
+			m.mu.Unlock()
+		},
+		"permission": func(_ *Manager, _ string, c *agenttest.Conversation) { c.EmitInteraction(permissionRequest("p1")) },
+		"subagent": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.EmitSubagent(agentapi.Subagent{ID: "sa", Status: agentapi.SubagentRunning})
+		},
+		"shell": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{{ID: "t", Status: "running"}}}})
+		},
+		"unknown shells": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{}})
+		},
+		"objective": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.Emit(agentapi.Event{Kind: agentapi.EventExecution, Execution: &agentapi.ExecutionState{Known: true, Mode: "autopilot", Objective: &agentapi.AutopilotObjective{Status: "active"}}})
+		},
+		"viewer": func(m *Manager, id string, _ *agenttest.Conversation) {
+			if _, _, err := m.Subscribe(id); err != nil {
+				panic(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, prov, _ := newTestManager(t)
+			sum, conv := createSession(t, m, prov)
+			m.closeIdleConversations() // first seen now
+			keep(m, sum.ID, conv)
+			setNow(m, time.Now().Add(24*time.Hour))
+			m.closeIdleConversations()
+			if s, _ := m.Summary(sum.ID); conv.Closes() != 0 || !s.Open {
+				t.Fatalf("closed a busy or watched conversation: %+v", s)
+			}
+		})
+	}
+}
