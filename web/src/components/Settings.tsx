@@ -3,6 +3,7 @@ import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, describeError, type CustomModel, type Model, type SendDefault, type Settings } from '../api';
 import { Note, Spinner, useApp } from './common';
 import { Field, inputClass } from './TaskDefaults';
+import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { modelChoices } from '../lib/models';
 import { Select } from './ui/select';
@@ -38,67 +39,194 @@ function Row({ id, label, help, children }: { id: string; label: string; help: R
   );
 }
 
-const emptyCustom = { display_name: '', name: '', base_url: '', model_id: '', api_key_env: '' };
+/** The provider being added or edited; `original` is its saved name, none for a new one. */
+interface ProviderDraft {
+  original?: string;
+  name: string;
+  base_url: string;
+  api_key_env: string;
+  /** The IDs offered in the checklist: loaded from the endpoint, saved, or typed in. */
+  ids: string[];
+  selected: string[];
+  query: string;
+  manual: string;
+}
+
+const newProvider: ProviderDraft = { name: '', base_url: '', api_key_env: '', ids: [], selected: [], query: '', manual: '' };
 
 /**
- * Custom (BYOM) models: OpenAI-compatible endpoints offered next to Copilot's models. The key
- * never passes through here; each model names the service environment variable that holds it.
+ * Custom (BYOM) models, by provider: an OpenAI-compatible endpoint whose models are chosen
+ * from what it lists (the service loads the list) or typed in. The key never passes through
+ * here; each provider names the service environment variable that holds it.
  */
 function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; disabled: boolean; onSave: (next: CustomModel[]) => Promise<boolean> }) {
-  const [draft, setDraft] = useState(emptyCustom);
-  const bare = (list: CustomModel[]) => list.map(({ key_present: _, ...m }) => m);
-  const field = (key: keyof typeof emptyCustom, label: string, placeholder: string, mono = false) => (
+  const [draft, setDraft] = useState<ProviderDraft | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const providers = customProviders(models);
+  const busy = disabled || loading;
+
+  function edit(p?: CustomProvider) {
+    setLoadError(null);
+    setDraft(p ? { ...newProvider, original: p.name, name: p.name, base_url: p.base_url, api_key_env: p.api_key_env, ids: p.models.map((m) => m.model_id), selected: p.models.map((m) => m.model_id) } : newProvider);
+  }
+  async function load(d: ProviderDraft) {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await api.discoverModels({ base_url: d.base_url.trim(), api_key_env: d.api_key_env.trim() });
+      setDraft((cur) => cur && { ...cur, ids: [...new Set([...res.models, ...cur.selected])].sort() });
+      if (res.truncated) setLoadError(`Showing the first ${res.models.length} models the endpoint lists.`);
+    } catch (e) {
+      setLoadError(`Could not load the models: ${describeError(e)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function save(e: FormEvent, d: ProviderDraft) {
+    e.preventDefault();
+    const provider = { name: d.name.trim(), base_url: d.base_url.trim(), api_key_env: d.api_key_env.trim() };
+    if (await onSave(withProvider(models, d.original, provider, d.selected))) setDraft(null);
+  }
+  const field = (d: ProviderDraft, key: 'name' | 'base_url' | 'api_key_env', label: string, placeholder: string) => (
     <Field id={`custom-${key}`} label={label}>
       <input
         id={`custom-${key}`}
-        className={mono ? `${inputClass} font-mono text-code-sm` : inputClass}
+        className={`${inputClass} font-mono text-code-sm`}
         type="text"
         spellCheck={false}
         autoComplete="off"
-        required={key !== 'display_name'}
+        required
         placeholder={placeholder}
-        disabled={disabled}
-        value={draft[key]}
-        onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
+        disabled={busy}
+        value={d[key]}
+        onChange={(e) => setDraft({ ...d, [key]: e.target.value })}
       />
     </Field>
   );
-  async function add(e: FormEvent) {
-    e.preventDefault();
-    const entry: CustomModel = { ...draft, display_name: draft.display_name.trim() || undefined, name: draft.name.trim(), base_url: draft.base_url.trim(), model_id: draft.model_id.trim(), api_key_env: draft.api_key_env.trim() };
-    if (await onSave([...bare(models), entry])) setDraft(emptyCustom);
-  }
+
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-ui font-medium">Custom models</h3>
+      <div className="flex items-center gap-3">
+        <h3 className="flex-1 text-ui font-medium">Custom models</h3>
+        {!draft && (
+          <Button size="sm" variant="secondary" disabled={disabled} onClick={() => edit()}>
+            Add provider
+          </Button>
+        )}
+      </div>
       <Note>
         OpenAI-compatible endpoints, offered with GitHub Copilot's models. The API key stays in the service's environment: export it as a variable named UAM_BYOM_&lt;NAME&gt; where the
         service starts (for example in ~/.bashrc), restart the service, and name that variable here.
       </Note>
-      {models.map((m, i) => (
-        <div key={`${m.name}/${m.model_id}`} className="flex min-h-12 items-center gap-3 border-b border-hairline py-2">
-          <div className="flex min-w-0 flex-1 flex-col">
-            <span className="text-ui font-medium text-ink">{m.display_name || `${m.name}/${m.model_id}`}</span>
-            <span className="min-w-0 break-all font-mono text-keycap text-muted">
-              {m.name}/{m.model_id} · {m.base_url}
-            </span>
-            <Note tone={m.key_present ? 'muted' : 'warn'}>{m.key_present ? `Key from ${m.api_key_env}` : `${m.api_key_env} is not set in the service's environment`}</Note>
+      {providers.map((p) => (
+        <section key={p.name} aria-label={`${p.name} models`} className="flex flex-col border-b border-hairline py-2">
+          <div className="flex min-h-8 items-center gap-2">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="text-ui font-medium text-ink">{p.name}</span>
+              <span className="min-w-0 break-all font-mono text-keycap text-muted">{p.base_url}</span>
+              <Note tone={p.key_present ? 'muted' : 'warn'}>{p.key_present ? `Key from ${p.api_key_env}` : `${p.api_key_env} is not set in the service's environment`}</Note>
+            </div>
+            <Button size="sm" disabled={busy || !!draft} onClick={() => edit(p)}>
+              Edit
+            </Button>
+            <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove provider ${p.name}`} onClick={() => void onSave(withProvider(models, p.name, p, []))}>
+              Remove
+            </Button>
           </div>
-          <Button size="sm" variant="danger" disabled={disabled} aria-label={`Remove ${m.display_name || `${m.name}/${m.model_id}`}`} onClick={() => void onSave(bare(models.filter((_, j) => j !== i)))}>
-            Remove
-          </Button>
-        </div>
+          {p.models.map((m) => (
+            <div key={m.model_id} className="flex min-h-8 items-center gap-2 pl-3">
+              <span className="min-w-0 flex-1 truncate text-ui text-ink" title={`${p.name}/${m.model_id}`}>
+                {m.display_name || m.model_id}
+                {m.display_name && m.display_name !== m.model_id && <span className="ml-2 font-mono text-keycap text-muted">{m.model_id}</span>}
+              </span>
+              <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove ${p.name}/${m.model_id}`} onClick={() => void onSave(withProvider(models, p.name, p, p.models.filter((o) => o !== m).map((o) => o.model_id)))}>
+                Remove
+              </Button>
+            </div>
+          ))}
+        </section>
       ))}
-      <form aria-label="Add a custom model" className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={(e) => void add(e)}>
-        {field('display_name', 'Display name', 'Optional')}
-        {field('name', 'Provider name', 'openrouter', true)}
-        {field('base_url', 'Base URL', 'https://openrouter.ai/api/v1', true)}
-        {field('model_id', 'Model ID', 'qwen/qwen3-coder', true)}
-        {field('api_key_env', 'API key variable', 'UAM_BYOM_OPENROUTER', true)}
-        <Button type="submit" variant="secondary" size="lg" disabled={disabled} className="justify-self-start">
-          Add model
-        </Button>
-      </form>
+      {draft && (
+        <form aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 border-b border-hairline py-2" onSubmit={(e) => void save(e, draft)}>
+          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
+            {field(draft, 'name', 'Provider name', 'ollama')}
+            {field(draft, 'base_url', 'Base URL', 'https://ollama.com/v1')}
+            {field(draft, 'api_key_env', 'API key variable', 'UAM_BYOM_OLLAMA')}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" disabled={busy || !draft.base_url.trim() || !draft.api_key_env.trim()} onClick={() => void load(draft)}>
+              {loading && <Spinner />}
+              Load models
+            </Button>
+            <input
+              aria-label="Search models"
+              className={`${inputClass} h-8 w-48 font-mono text-code-sm`}
+              type="search"
+              placeholder="Search"
+              disabled={busy || !draft.ids.length}
+              value={draft.query}
+              onChange={(e) => setDraft({ ...draft, query: e.target.value })}
+            />
+            <Button size="sm" disabled={busy || !draft.ids.length} onClick={() => setDraft({ ...draft, selected: [...new Set([...draft.selected, ...matchingIds(draft.ids, draft.query)])] })}>
+              Select all
+            </Button>
+            <Button size="sm" disabled={busy || !draft.selected.length} onClick={() => setDraft({ ...draft, selected: draft.selected.filter((id) => !matchingIds(draft.ids, draft.query).includes(id)) })}>
+              None
+            </Button>
+            <span className="text-caption text-muted">{draft.selected.length} selected</span>
+          </div>
+          {loadError && <Note tone="warn" role="alert">{loadError}</Note>}
+          {draft.ids.length > 0 && (
+            <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto rounded-sm border border-hairline px-2 py-1">
+              {matchingIds(draft.ids, draft.query).map((id) => (
+                <label key={id} className="flex min-h-7 items-center gap-2 font-mono text-code-sm text-ink">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-accent"
+                    disabled={busy}
+                    checked={draft.selected.includes(id)}
+                    onChange={(e) => setDraft({ ...draft, selected: e.target.checked ? [...draft.selected, id] : draft.selected.filter((s) => s !== id) })}
+                  />
+                  {id}
+                </label>
+              ))}
+            </fieldset>
+          )}
+          <div className="flex flex-wrap items-end gap-2">
+            <Field id="custom-manual" label="Add a model ID the endpoint does not list">
+              <input
+                id="custom-manual"
+                className={`${inputClass} w-64 font-mono text-code-sm`}
+                type="text"
+                spellCheck={false}
+                autoComplete="off"
+                disabled={busy}
+                value={draft.manual}
+                onChange={(e) => setDraft({ ...draft, manual: e.target.value })}
+              />
+            </Field>
+            <Button
+              size="lg"
+              disabled={busy || !draft.manual.trim()}
+              onClick={() => {
+                const id = draft.manual.trim();
+                setDraft({ ...draft, manual: '', ids: [...new Set([...draft.ids, id])].sort(), selected: [...new Set([...draft.selected, id])] });
+              }}
+            >
+              Add ID
+            </Button>
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" variant="primary" size="lg" disabled={busy}>
+              Save provider
+            </Button>
+            <Button size="lg" disabled={loading} onClick={() => setDraft(null)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }

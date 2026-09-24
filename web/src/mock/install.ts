@@ -442,6 +442,11 @@ export function install(): void {
     if (path === '/api/meta') return json(200, st.meta);
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
+    if (path === '/api/settings/custom-models/discover' && method === 'POST') {
+      // The mock serves a fixed list, as an OpenAI-compatible /models would; keys are never set.
+      if (!/^UAM_BYOM_[A-Za-z0-9_]+$/.test(String(body.api_key_env ?? ''))) return fail(400, 'API key variable must be named UAM_BYOM_<NAME>');
+      return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
+    }
     if (path === '/api/settings' && method === 'PATCH') {
       for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models') return fail(400, `unknown setting "${key}"`);
       if (Array.isArray(body.custom_models)) {

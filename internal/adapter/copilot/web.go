@@ -647,6 +647,9 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		seen: map[string]bool{}, watch: map[string]time.Time{},
 		reportEmptyTasks: req.ConversationID != "",
 	}
+	if req.ConversationID == "" {
+		c.selected = req.Model
+	}
 	// A resumed session keeps its selected model but not its custom
 	// models, so every open supplies them.
 	custom := p.customModels()
@@ -1031,6 +1034,9 @@ type conversation struct {
 	turnModel string
 	// byom is what the session has of the custom models.
 	byom registered
+	// selected is the model this client last selected: at create or by
+	// SetModel; "" until then on a resumed session.
+	selected string
 	// usage is the latest main-agent context report, kept so a model call's
 	// cache report can be sent with it.
 	usage agentapi.Context
@@ -1377,6 +1383,7 @@ func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize 
 	// The old report describes the old selection; wait for a fresh one.
 	c.mu.Lock()
 	c.usage = agentapi.Context{}
+	c.selected = model
 	c.mu.Unlock()
 	return nil
 }
@@ -2047,7 +2054,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		if agentID == "" && d.Model != "" {
 			c.turnModel = d.Model
 			if d.IsByok != nil && *d.IsByok {
-				c.turnModel = c.p.customSelection(d.Model)
+				c.turnModel = c.p.customSelection(d.Model, c.selected)
 			}
 		}
 		if agentID == "" && d.InputTokens != nil && *d.InputTokens >= 0 {

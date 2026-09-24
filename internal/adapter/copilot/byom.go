@@ -138,8 +138,13 @@ func addProviders(providers []copilot.NamedProviderConfig, models []copilot.Prov
 }
 
 // customSelection maps a BYOK model call's provider-local model back to its
-// selection ID, so the turn is not shown as routed to another model.
-func (p *webProvider) customSelection(model string) string {
+// selection ID, so the turn is not shown as routed to another model. Two
+// providers can serve one model ID: the conversation's selected model wins
+// when it matches, else the first custom model with that ID.
+func (p *webProvider) customSelection(model, selected string) string {
+	if m, ok := p.customModel(selected); ok && m.ModelID == model {
+		return selected
+	}
 	for _, m := range p.customModels() {
 		if m.ModelID == model {
 			return m.SelectionID()

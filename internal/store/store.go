@@ -538,7 +538,7 @@ type WebCustomModel struct {
 
 // Custom model limits: models, and bytes per field.
 const (
-	MaxCustomModels         = 32
+	MaxCustomModels         = 100
 	MaxCustomModelNameBytes = 64
 	MaxCustomModelURLBytes  = 512
 	// CustomModelKeyPrefix starts every custom model's key variable name.

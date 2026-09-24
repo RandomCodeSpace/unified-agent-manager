@@ -138,6 +138,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("PATCH /api/settings", s.handleUpdateSettings)
+	mux.HandleFunc("POST /api/settings/custom-models/discover", s.handleDiscoverModels)
 	mux.HandleFunc("GET /api/usage", s.handleUsage)
 	mux.HandleFunc("GET /api/fs/dirs", s.handleListDirs)
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
@@ -497,6 +498,19 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
+	var req DiscoverRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	res, err := s.m.DiscoverModels(r.Context(), req)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // hiddenModelsBody decodes a hidden_models object, or returns nil when raw is

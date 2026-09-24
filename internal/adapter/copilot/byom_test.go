@@ -145,3 +145,30 @@ func TestWebCustomModelTurnKeepsSelectionID(t *testing.T) {
 		t.Fatalf("turn model = %q", got)
 	}
 }
+
+// Two providers serving one model ID: the turn names the one the
+// conversation selected, not the first configured.
+func TestWebCustomModelTurnPrefersSelectedProvider(t *testing.T) {
+	t.Setenv("UAM_TEST_ACME_KEY", "acme-secret")
+	t.Setenv("UAM_TEST_LOCAL_KEY", "local-secret")
+	h := openWeb(t)
+	h.p.SetCustomModels(append(slices.Clone(testCustom), agentapi.CustomModel{Name: "mirror", BaseURL: "https://mirror.example/v1", ModelID: "coder", APIKeyEnv: "UAM_TEST_LOCAL_KEY"}))
+	c := h.conv.(*conversation)
+	turn := func() string {
+		c.onEvent(copilot.SessionEvent{Data: &rpc.AssistantUsageData{Model: "coder", IsByok: copilot.Bool(true)}})
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.turnModel
+	}
+	if got := turn(); got != "acme/coder" {
+		t.Fatalf("with nothing selected: %q", got)
+	}
+	for _, id := range []string{"mirror/coder", "acme/coder", "mirror/coder"} {
+		if err := h.conv.SetModel(context.Background(), id, "", "default"); err != nil {
+			t.Fatal(err)
+		}
+		if got := turn(); got != id {
+			t.Fatalf("selected %s, turn names %q", id, got)
+		}
+	}
+}

@@ -626,6 +626,9 @@ export const api = {
   webSettings: () => call<Settings>('GET', '/api/settings'),
   /** The service refuses an unknown key or value with 400 and changes nothing. */
   updateWebSettings: (body: Partial<Settings>) => call<Settings>('PATCH', '/api/settings', body),
+  /** The model IDs an OpenAI-compatible endpoint lists; the service fetches them with the named key variable. */
+  discoverModels: (body: { base_url: string; api_key_env: string; wire_api?: string }) =>
+    call<{ models: string[]; truncated?: boolean; key_present: boolean }>('POST', '/api/settings/custom-models/discover', body),
   /** The cached account quotas; never calls the provider. */
   usage: () => call<AccountUsage>('GET', '/api/usage'),
 

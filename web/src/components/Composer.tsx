@@ -41,6 +41,8 @@ interface Choice {
   value: string;
   label: ReactNode;
   description?: ReactNode;
+  /** Choices with a group are listed after the others under its label, e.g. a custom model's provider. */
+  group?: string;
 }
 
 /**
@@ -82,6 +84,11 @@ function Picker({
       <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
     </>
   );
+  const item = (c: Choice) => (
+    <Menu.RadioItem key={c.value} value={c.value} description={c.description} className={mono ? 'font-mono text-code-sm [&_.text-caption]:font-sans' : undefined}>
+      {c.label}
+    </Menu.RadioItem>
+  );
   if (disabled) {
     return (
       <Tip label={reason ?? `${label} cannot change now`}>
@@ -99,11 +106,14 @@ function Picker({
       <Menu.Content side="top" align="start" sideOffset={6} className="min-w-52">
         <Menu.RadioGroup value={value} onValueChange={(v) => onChange(v as string)}>
           <Menu.Label>{label}</Menu.Label>
-          {choices.map((c) => (
-            <Menu.RadioItem key={c.value} value={c.value} description={c.description} className={mono ? 'font-mono text-code-sm [&_.text-caption]:font-sans' : undefined}>
-              {c.label}
-            </Menu.RadioItem>
-          ))}
+          {choices.filter((c) => !c.group).map(item)}
+          {[...new Set(choices.flatMap((c) => (c.group ? [c.group] : [])))].map((group) => [
+            <Menu.Separator key={`separator-${group}`} />,
+            <Menu.Group key={group}>
+              <Menu.Label>{group}</Menu.Label>
+              {choices.filter((c) => c.group === group).map(item)}
+            </Menu.Group>,
+          ])}
         </Menu.RadioGroup>
       </Menu.Content>
     </Menu.Root>
@@ -708,7 +718,8 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
           choices={models.map((m) => {
             const estimate = estimateTurnCost(m, session.context, contextSize);
             const prices = session.capabilities.usage ? modelCostLine(m) : '';
-            return { value: m.id, label: m.name, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
+            const group = appSettings.custom_models?.find((c) => `${c.name}/${c.model_id}` === m.id)?.name;
+            return { value: m.id, label: m.name, group, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
           })}
           disabled={settingsLocked}
           reason={locked ? 'This task is read-only.' : live ? 'The model changes between turns.' : undefined}

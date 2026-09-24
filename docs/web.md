@@ -423,12 +423,27 @@ are logged only at debug level (`UAM_DEBUG=1`).
   send any other variable of the service's environment to its endpoint. The
   model's ID in UAM is `provider/model_id`, e.g.
   `openrouter/qwen/qwen3-coder`. Models that share a provider name share its
-  base URL and key variable; at most 32 are kept. `PATCH /api/settings` with
+  base URL and key variable; at most 100 are kept. `PATCH /api/settings` with
   `{"custom_models": [...]}` replaces the whole list (fields `name`,
   `display_name`, `base_url`, `model_id`, `wire_api` (`completions`, the
   default, or `responses`) and `api_key_env`); `[]` removes them all.
   Removing a model also takes it out of `hidden_models` and clears a
-  `title_model` set to it. The key itself never passes through the browser,
+  `title_model` set to it. In Settings a provider is added or edited as
+  a whole: name, base URL and key variable, then **Load models** lists what
+  the endpoint serves as a searchable checklist (select all or none), and a
+  model ID the endpoint does not list can be typed in. Saving writes one
+  entry per checked model, named by its ID. The composer's model menu lists
+  custom models under their provider name. **Load models** is
+  `POST /api/settings/custom-models/discover` with
+  `{"base_url", "api_key_env", "wire_api"}` (validated like a custom model);
+  the service sends one `GET {base_url}/models` with the key, follows no
+  redirect, stops after 10 s or 1 MiB, and answers
+  `{"models": [sorted IDs, at most 500], "truncated": true|omitted,
+  "key_present": true}`, or an error with only the upstream status line.
+  This is a request from the service to a URL the browser chose: on an
+  instance without sign-in (`--no-auth`) anyone who reaches it can make the
+  service send such a GET, with a `UAM_BYOM_` key, to any host it can reach,
+  loopback and private addresses included. The key itself never passes through the browser,
   the API, `sessions.json` or the service log: the service reads the
   variable from its own environment when it opens a Copilot session, and
   settings only report `key_present`. Export the variable where the service
