@@ -104,7 +104,7 @@ off, run `uam web stop`, then `uam web` without the flag.
 - **Tasks**: "New task" in a Project opens an empty conversation at once,
   with the Project's defaults applied, and puts the cursor in the composer.
   There is no form and no required first prompt: type the first message when
-  you are ready. The controls under the composer still change the model,
+  you are ready. The pickers in the composer's toolbar still change the model,
   effort, context size and mode for that Task alone. A Project without
   defaults starts a Task with `auto`, default effort, default context size and
   safe mode. A default model the provider no longer offers is replaced by
@@ -115,7 +115,9 @@ off, run `uam web stop`, then `uam web` without the flag.
 - **Names and titles**: the name is optional. Without one, the Task shows the
   title the provider gives the conversation (Copilot uses the first prompt),
   or "New task" until there is one. Clearing a name shows the title again.
-  Renaming a Task does not rename the conversation at the provider.
+  Rename from the Task's row menu (hover "…" or right-click), the header
+  menu, F2 on a row, or a double-click on the name; the name is edited in
+  place. Renaming a Task does not rename the conversation at the provider.
 - **Models**: the model list shows the models your Copilot account can
   select; the default is the provider's own choice. You can switch the model
   between turns, not while a turn runs; the new model applies from the next
@@ -164,8 +166,8 @@ off, run `uam web stop`, then `uam web` without the flag.
   not see that conversation, and a follow-up whose delivery is uncertain is
   never resent.
 - **Approvals and questions**: when the provider asks for permission or asks a
-  question, a card appears in the conversation and a "Needs you" mark on the
-  Task in the project list and on the home screen. Nothing is approved
+  question, a card appears in the conversation and the Task's row in the
+  sidebar says Approval or Input. Nothing is approved
   automatically unless you turned on yolo for that Task, and questions always
   wait for you. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused.
@@ -208,7 +210,8 @@ off, run `uam web stop`, then `uam web` without the flag.
   yet are dropped, each with a notice.
 - **Close session** disconnects UAM from the provider conversation and keeps
   the record. Sending another prompt reopens the same conversation.
-- **Settle, archive, and delete**: when a Task is done, settle it. A settled
+- **Settle, archive, and delete**: when a Task is done, settle it from its
+  row menu (hover "…" or right-click) or the header menu. A settled
   Task is read-only and its conversation is closed; reopen it to continue,
   and your next message picks up the same conversation. Archive a Task, settled
   or not, to put it away for good; an archived Task cannot be reopened. Only
@@ -229,14 +232,26 @@ off, run `uam web stop`, then `uam web` without the flag.
   running turn, answer what waits for you, and send or clear the queue before
   you settle or archive. After the service restarts, a settled or archived Task shows no
   conversation, the same as a closed one.
-- **Changes**: the Task's meta line shows how many files differ from `HEAD`
-  in the project directory and opens them as a sheet with the diff. That
+- **Changes**: the "Changes" button in the Task header shows how many files
+  differ from `HEAD` in the project directory and opens them beside the
+  conversation with the diff (a full-screen sheet on a narrow window). That
   includes edits made by anything else in the working tree, not only this
-  session.
-- **Home screen**: with no Task open, the page lists Tasks that need you or
-  have new activity since you last looked, then every Project with its
-  Tasks. On a narrow window the project list opens as a drawer. The theme
-  follows the system and can be toggled from the project list.
+  session. On a wide window this panel and the Subagents panel can be
+  resized by dragging their inner edge (the handle also takes the arrow
+  keys; double-click resets); the width is kept per browser.
+- **Sidebar**: the sidebar is the only list of Tasks. Each Project shows its
+  active Tasks, then collapsed "Settled" and "Archived" shelves; a settled or
+  archived Task opens read-only. A row shows the name or title, a state
+  mark, and the time of the last activity, or a short word (Approval, Input,
+  Working, Failed, …) while something is happening or new. Hover a row for
+  "…" or right-click it for Rename, Close conversation, Settle or Reopen,
+  Archive and Delete; a Project row offers New task, Edit project and Remove
+  project. Arrow keys move between rows, Left and Right collapse and expand
+  a Project, Enter opens, F2 renames. A Project on a named git branch shows
+  the branch under its name and in the Task header. With no Task open, the
+  main pane offers only New task and Add project. On a narrow window the
+  sidebar opens as a drawer. There is one theme; it does not follow the
+  system.
 
 States shown for each session:
 
