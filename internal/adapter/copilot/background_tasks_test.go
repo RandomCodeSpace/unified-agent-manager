@@ -147,3 +147,68 @@ func TestWebReopenPublishesKnownEmptyShellSnapshot(t *testing.T) {
 		t.Fatalf("successful empty refresh left old unknown shells: %+v", got)
 	}
 }
+
+// unresolvedIdle opens a Task whose open-time execution read failed, runs a
+// turn that leaves a background shell running and delivers the main-agent
+// assistant.idle without session.idle, which the CLI defers while the shell
+// runs (rpc.SessionIdleData/AssistantIdleData docs). The read at that idle
+// returns resolved.
+func unresolvedIdle(t *testing.T, resolved agentapi.ExecutionState) (webHarness, func() *agentapi.Turn) {
+	t.Helper()
+	h, runtime := runtimeHarness(t)
+	c := h.conv.(*conversation)
+	runtime.readErr = errors.New("mode read failed")
+	c.mu.Lock()
+	c.execution = nil
+	c.mu.Unlock()
+	c.refreshExecution(context.Background())
+	runtime.runtimeMu.Lock()
+	runtime.readErr, runtime.state = nil, resolved
+	runtime.runtimeMu.Unlock()
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "start a server"}); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("start", &rpc.AssistantTurnStartData{TurnID: "1"}))
+	h.fs.setTasks(&rpc.TaskShellInfo{ID: "server", Command: "python3 -m http.server 8000", Status: rpc.TaskStatusRunning})
+	h.fs.onEvent(ev("background", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 1)
+	h.fs.onEvent(ev("final", &rpc.AssistantMessageData{MessageID: "reply", Content: "The server is running."}))
+	h.fs.onEvent(ev("model-end", &rpc.AssistantTurnEndData{TurnID: "1"}))
+	h.fs.onEvent(ev("main-idle", &rpc.AssistantIdleData{}))
+	// The idle's own execution read resolves the mode.
+	waitFor(t, "execution read after assistant.idle", func() bool {
+		ex := h.sink.last().Execution
+		return ex != nil && ex.Known
+	})
+	lastTurn := func() *agentapi.Turn {
+		var last *agentapi.Turn
+		for _, event := range h.sink.all() {
+			if event.Turn != nil {
+				last = event.Turn
+			}
+		}
+		return last
+	}
+	return h, lastTurn
+}
+
+func TestWebAssistantIdleEndsTurnWithBackgroundShellWhenModeUnknown(t *testing.T) {
+	h, lastTurn := unresolvedIdle(t, agentapi.ExecutionState{Known: true, Mode: "interactive"})
+	if last := lastTurn(); last == nil || last.State != agentapi.TurnCompleted {
+		t.Fatalf("turn = %+v", last)
+	}
+	if h.fs.aborts != 0 {
+		t.Fatal("ending the turn stopped the background shell")
+	}
+}
+
+func TestWebUnresolvedAssistantIdleKeepsAutopilotWorking(t *testing.T) {
+	h, lastTurn := unresolvedIdle(t, agentapi.ExecutionState{Known: true, Mode: "autopilot"})
+	if last := lastTurn(); last == nil || last.State != agentapi.TurnWorking {
+		t.Fatalf("assistant.idle ended an autopilot turn: %+v", last)
+	}
+	h.fs.onEvent(ev("terminal", &rpc.SessionIdleData{}))
+	if last := lastTurn(); last == nil || last.State != agentapi.TurnCompleted {
+		t.Fatalf("terminal session.idle = %+v", last)
+	}
+}

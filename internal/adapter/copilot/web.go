@@ -1025,6 +1025,10 @@ type conversation struct {
 	assistantIdleSeen bool
 	autopilotTurn     bool
 	foregroundIdle    bool
+	// idleUnresolved marks a main-agent assistant.idle seen while the mode
+	// was unknown. The CLI withholds session.idle while background work runs,
+	// so a read showing a non-autopilot mode ends the turn instead.
+	idleUnresolved    bool
 	backgroundTasks   *agentapi.BackgroundTasks
 	execution         *agentapi.ExecutionState
 	executionRevision uint64
@@ -1491,6 +1495,7 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	// An idle seen while Send was in flight already ended this turn.
 	if c.idles == idles {
 		c.foregroundIdle = false
+		c.idleUnresolved = false
 		c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 	}
@@ -2108,6 +2113,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.AssistantTurnStartData:
 		if agentID == "" {
 			c.foregroundIdle = false
+			c.idleUnresolved = false
 			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 		}
@@ -2127,6 +2133,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		// reached the CLI after the idle of the turn it was meant for.
 		if agentID == "" && d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliveryIdle {
 			c.foregroundIdle = false
+			c.idleUnresolved = false
 			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 		}
@@ -2157,6 +2164,10 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			return
 		}
 		if (c.autopilotTurn || c.execution != nil && (c.execution.Mode == "autopilot" || c.execution.Mode == "")) && (d.Aborted == nil || !*d.Aborted) {
+			if c.execution != nil && c.execution.Mode == "" {
+				c.idleUnresolved = true
+				c.checkExecutionLocked()
+			}
 			c.autopilotTurn = true
 			return
 		}
@@ -2235,6 +2246,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 		return
 	}
 	c.foregroundIdle = true
+	c.idleUnresolved = false
 	c.idles++
 	turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel}
 	switch {
