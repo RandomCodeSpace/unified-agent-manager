@@ -156,6 +156,8 @@ type QueuedPrompt struct {
 
 // SubagentDetail is one subagent and its retained transcript.
 type SubagentDetail struct {
+	// Seq is the SSE sequence captured with the transcript and metadata.
+	Seq      uint64            `json:"seq"`
 	Subagent agentapi.Subagent `json:"subagent"`
 	Items    []agentapi.Item   `json:"items"`
 }

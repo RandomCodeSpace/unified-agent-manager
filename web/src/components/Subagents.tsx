@@ -213,7 +213,7 @@ function AgentTranscriptView({
     dispatch({ type: 'agent_loading', agentId: subagent.id });
     api
       .subagent(sessionId, subagent.id)
-      .then((d) => !cancelled && dispatch({ type: 'agent_loaded', agentId: subagent.id, subagent: d.subagent, items: d.items }))
+      .then((d) => !cancelled && dispatch({ type: 'agent_loaded', agentId: subagent.id, ...d }))
       .catch((e: unknown) => !cancelled && dispatch({ type: 'agent_failed', agentId: subagent.id, error: describeError(e) }));
     return () => {
       cancelled = true;

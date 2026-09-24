@@ -131,6 +131,8 @@ export interface Subagent {
 }
 
 export interface SubagentDetail {
+  /** SSE sequence captured with the transcript and metadata. */
+  seq: number;
   subagent: Subagent;
   items: Item[];
 }

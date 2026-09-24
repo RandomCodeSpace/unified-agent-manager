@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "vite",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "prebuild": "npm test",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

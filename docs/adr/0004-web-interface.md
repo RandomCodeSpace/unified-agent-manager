@@ -277,7 +277,7 @@ history replay; the meter changes only when a fresh usage report arrives.
 | `POST /api/sessions` | `{"project_id", "provider", "model"?, "effort"?, "context_size"?, "name"?, "prompt"?, "request_id"?}` | 201 `SessionSummary`; 400 unknown project or invalid selection; 409 when the directory no longer exists. `workdir` is no longer accepted. |
 | `PATCH /api/sessions/{id}` | `{"name"?, "model"?, "effort"?, "context_size"?}` | `SessionSummary`; empty `name` shows the title again; 400 nothing to change or invalid selection; 409 selection change while a turn runs; 502 provider refused or did not confirm the selection |
 | `DELETE /api/sessions/{id}` | – | 204; 404; 409 while busy |
-| `GET /api/sessions/{id}/subagents/{agent_id}` | – | `{"subagent": Subagent, "items": [Item]}`; 404 |
+| `GET /api/sessions/{id}/subagents/{agent_id}` | – | `{"seq", "subagent": Subagent, "items": [Item]}`; 404 |
 
 A `DELETE` without a body needs no `Content-Type`; it still passes the
 `Host`, cross-origin and cookie checks.
@@ -307,7 +307,11 @@ Shape changes:
 | `project_removed` | `{"seq", "project_id"}` |
 | `session_removed` | `{"seq", "session_id"}` |
 
-Sequencing, bounded queues and the snapshot rules are unchanged.
+The subagent GET captures `seq`, metadata and items under the same manager
+lock used for SSE updates. Browsers buffer subagent events during the fetch
+and apply only events with `seq` greater than the response's sequence, in
+their original order. This boundary also excludes captured events delivered
+after the response. Bounded queues and the stream snapshot rules are unchanged.
 
 ## Steer and queue
 

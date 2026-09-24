@@ -1,13 +1,15 @@
-import type { Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, SnapshotData, Subagent, UpdateData } from './api';
+import type { Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, SnapshotData, SubagentDetail, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 
 /** A frame that arrived for a subagent while its transcript fetch was in flight. */
-export type Buffered = { kind: 'item'; item: Item } | { kind: 'delta'; item_id: string; itemKind: ItemKind; text: string };
+export type Buffered = Extract<UpdateData, { name: 'item' | 'delta' | 'subagent' }>;
 
 /** A subagent transcript, present once its block was expanded. Live frames with that agent_id land here. */
 export interface AgentTranscript {
   loading: boolean;
+  /** Events through this sequence are already included in the fetched transcript and metadata. */
+  snapshotSeq: number;
   error?: string;
   items: Item[];
   buffered: Buffered[];
@@ -46,7 +48,7 @@ export type Action =
   | { type: 'remove_project'; id: string }
   | { type: 'upsert_interaction'; sessionId: string; interaction: Interaction }
   | { type: 'agent_loading'; agentId: string }
-  | { type: 'agent_loaded'; agentId: string; subagent: Subagent; items: Item[] }
+  | ({ type: 'agent_loaded'; agentId: string } & SubagentDetail)
   | { type: 'agent_failed'; agentId: string; error: string };
 
 export function reducer(state: State, action: Action): State {
@@ -85,17 +87,19 @@ export function reducer(state: State, action: Action): State {
       return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, action.interaction) } };
     }
     case 'agent_loading':
-      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, items: [], buffered: [] } } };
+      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, snapshotSeq: state.agents[action.agentId]?.snapshotSeq ?? -1, items: [], buffered: [] } } };
     case 'agent_loaded': {
-      const items = replay(action.items, state.agents[action.agentId]?.buffered ?? [], action.agentId);
       const detail = state.detail;
       const withAgent = detail ? { ...detail, subagents: upsert(detail.subagents, action.subagent) } : detail;
-      return { ...state, detail: withAgent, agents: { ...state.agents, [action.agentId]: { loading: false, items, buffered: [] } } };
+      const loaded = { ...state, detail: withAgent, agents: { ...state.agents, [action.agentId]: { loading: false, snapshotSeq: action.seq, items: action.items, buffered: [] } } };
+      // The response and SSE may arrive in either order. Replay only events
+      // after the server's snapshot, retaining their original order.
+      return (state.agents[action.agentId]?.buffered ?? []).reduce((next, frame) => withAgentFrame(next, action.agentId, frame), loaded);
     }
     case 'agent_failed':
       return {
         ...state,
-        agents: { ...state.agents, [action.agentId]: { loading: false, error: action.error, items: [], buffered: [] } },
+        agents: { ...state.agents, [action.agentId]: { loading: false, snapshotSeq: -1, error: action.error, items: [], buffered: [] } },
       };
     case 'update': {
       const d = action.data;
@@ -114,10 +118,10 @@ export function reducer(state: State, action: Action): State {
       if (!detail || d.session_id !== detail.id) return state;
       switch (d.name) {
         case 'item':
-          if (d.agent_id) return withAgent(state, d.agent_id, { kind: 'item', item: d.item });
+          if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
           return { ...state, detail: { ...detail, items: upsert(detail.items, d.item) } };
         case 'delta':
-          if (d.agent_id) return withAgent(state, d.agent_id, { kind: 'delta', item_id: d.item_id, itemKind: d.kind, text: d.text });
+          if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
           return { ...state, detail: { ...detail, items: appendDelta(detail.items, d.item_id, d.kind, d.text) } };
         case 'interaction':
           return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, d.interaction) } };
@@ -126,7 +130,7 @@ export function reducer(state: State, action: Action): State {
         case 'submission':
           return { ...state, detail: { ...detail, last_submission: d.submission } };
         case 'subagent':
-          return { ...state, detail: { ...detail, subagents: upsert(detail.subagents, d.subagent) } };
+          return withAgentFrame(state, d.subagent.id, d);
       }
     }
   }
@@ -141,43 +145,24 @@ function appendDelta(items: Item[], itemId: string, kind: ItemKind, text: string
 }
 
 /**
- * Routes a live frame to a subagent transcript. While its fetch is in flight the frame is
- * buffered and replayed onto the fetched items; before the block was ever expanded the frame
- * is dropped, since the transcript is fetched whole on expand.
+ * Routes subagent updates and buffers them during the transcript fetch. Metadata
+ * stays live even before the transcript is opened. Frames already in the fetched
+ * snapshot are ignored, including those delivered after the response.
  */
-function withAgent(state: State, agentId: string, frame: Buffered): State {
+function withAgentFrame(state: State, agentId: string, frame: Buffered): State {
   const a = state.agents[agentId];
+  if (a && frame.seq <= a.snapshotSeq) return state;
+  if (frame.name === 'subagent' && state.detail) {
+    state = { ...state, detail: { ...state.detail, subagents: upsert(state.detail.subagents, frame.subagent) } };
+  }
   if (!a) return state;
   if (a.loading) return { ...state, agents: { ...state.agents, [agentId]: { ...a, buffered: [...a.buffered, frame] } } };
   return { ...state, agents: { ...state.agents, [agentId]: { ...a, items: applyFrame(a.items, frame, agentId) } } };
 }
 
 function applyFrame(items: Item[], frame: Buffered, agentId: string): Item[] {
-  if (frame.kind === 'item') return upsert(items, frame.item);
-  return appendDelta(items, frame.item_id, frame.itemKind, frame.text, agentId);
-}
-
-/**
- * Merges frames buffered during the fetch onto the fetched transcript. The fetched copy wins
- * for whole items it already has. Buffered delta text is appended per item unless the fetched
- * text already ends with it, which means the fetch was taken after those deltas.
- */
-function replay(fetched: Item[], buffered: Buffered[], agentId: string): Item[] {
-  let items = fetched;
-  const extra = new Map<string, { kind: ItemKind; text: string }>();
-  for (const b of buffered) {
-    if (b.kind === 'item') {
-      if (!items.some((x) => x.id === b.item.id)) items = [...items, b.item];
-      continue;
-    }
-    const e = extra.get(b.item_id);
-    extra.set(b.item_id, { kind: b.itemKind, text: (e?.text ?? '') + b.text });
-  }
-  for (const [id, e] of extra) {
-    const i = items.findIndex((x) => x.id === id);
-    if (i < 0) items = appendDelta(items, id, e.kind, e.text, agentId);
-    else if (!(items[i].text ?? '').endsWith(e.text)) items = appendDelta(items, id, e.kind, e.text, agentId);
-  }
+  if (frame.name === 'item') return upsert(items, frame.item);
+  if (frame.name === 'delta') return appendDelta(items, frame.item_id, frame.kind, frame.text, agentId);
   return items;
 }
 

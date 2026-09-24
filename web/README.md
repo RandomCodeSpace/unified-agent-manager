@@ -12,7 +12,8 @@ npm ci
 npm run build
 ```
 
-`npm run build` type-checks (`tsc --noEmit`) and writes the production bundle
+`npm test` runs the reducer regressions with Node's built-in test runner.
+`npm run build` runs those tests, type-checks (`tsc --noEmit`) and writes the production bundle
 to `../internal/web/dist`, which the Go binary embeds. Node 22.12+ is
 required (`.node-version` pins the version used for CI and release preparation).
 The generated `internal/web/dist` directory is ignored on source branches.

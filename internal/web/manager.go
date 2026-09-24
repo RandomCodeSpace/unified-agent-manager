@@ -706,7 +706,7 @@ func (m *Manager) Subagent(id, agentID string) (SubagentDetail, error) {
 	if sa == nil {
 		return SubagentDetail{}, newError(http.StatusNotFound, "subagent not found")
 	}
-	return SubagentDetail{Subagent: *sa, Items: s.agentItems(agentID)}, nil
+	return SubagentDetail{Seq: m.seq, Subagent: *sa, Items: s.agentItems(agentID)}, nil
 }
 
 func (m *Manager) projectsLocked() []Project {

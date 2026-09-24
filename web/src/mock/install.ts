@@ -411,7 +411,7 @@ export function install(): void {
       const t = find(decodeURIComponent(r[1]));
       const s = t?.subagents.find((x) => x.id === decodeURIComponent(r![2]));
       if (!t || !s) return fail(404, 'subagent not found');
-      return json(200, { subagent: s, items: t.agentItems[s.id] ?? [] });
+      return json(200, { seq, subagent: s, items: t.agentItems[s.id] ?? [] });
     }
     return fail(404, `mock: no route for ${method} ${path}`);
   }
