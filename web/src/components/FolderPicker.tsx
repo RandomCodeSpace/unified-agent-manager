@@ -1,15 +1,18 @@
 import { Check, ChevronRight, Eye, EyeOff, Folder, FolderPlus, FolderUp, GitBranch, Link, X } from 'lucide-react';
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { ApiError, api, describeError, isStatus, type DirList } from '../api';
 import { cn } from '../lib/cn';
-import { breadcrumbs, cleanPath, listingError, matchFrom, parentOf, visibleFolders } from '../lib/folders';
+import { breadcrumbs, cleanPath, listingError, matchFrom, parentOf } from '../lib/folders';
 import { Note } from './common';
+import { inputClass } from './TaskDefaults';
 import { Button } from './ui/button';
 
 /** One listing request. A fresh object each time, so the same folder can be listed again after a folder is created in it. */
 interface Want {
   /** Absent: the service user's home. */
   path?: string;
+  /** Dot-folders too; the server filters and caps after the filter. */
+  hidden: boolean;
   /** Fall back to home when this path cannot be listed (the path field held something that is not a folder). */
   fallback?: boolean;
 }
@@ -25,7 +28,7 @@ const TYPEAHEAD_MS = 700;
 /**
  * The Add project dialog's inline folder browser (DESIGN.md: Folder picker). A breadcrumb, a
  * listbox of folders in a `canvas` well, and a footer. The selection is the target: **Use this
- * folder** takes the selected row, else the folder being shown. Focus stays on the listbox
+ * folder** takes the selected path, else the folder being shown. Focus stays on the listbox
  * (`aria-activedescendant`): arrows move, Enter opens, Backspace goes up, typing jumps to a
  * name, Ctrl/Cmd+Enter uses. Escape cancels the New folder row first, then closes the picker;
  * the dialog stays open either way.
@@ -35,9 +38,10 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
   const list = useRef<HTMLDivElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   const typed = useRef({ text: '', at: 0 });
-  const [want, setWant] = useState<Want>(() => ({ path: cleanPath(start) || undefined, fallback: true }));
+  const [want, setWant] = useState<Want>(() => ({ path: cleanPath(start) || undefined, hidden: false, fallback: true }));
+  /** The request in flight or answered last; a create that finishes after the user moved on must not undo the move. */
+  const latest = useRef(want);
   const [listing, setListing] = useState<Listing | null>(null);
-  const [showHidden, setShowHidden] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -45,23 +49,24 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
   const [createError, setCreateError] = useState<string | null>(null);
 
   const loading = listing?.for !== want;
-  const entries = listing ? visibleFolders(listing.entries, showHidden) : [];
+  const entries = listing?.entries ?? [];
   const selIndex = entries.findIndex((e) => e.path === selected);
-  const target = selIndex >= 0 ? entries[selIndex].path : listing?.path;
-  const hiddenCount = listing ? listing.entries.length - visibleFolders(listing.entries, false).length : 0;
+  // A path, not an index: a folder just created is the target before the re-list shows it.
+  const target = selected ?? listing?.path;
   const crumbs = breadcrumbs(listing?.path ?? '');
 
   useEffect(() => {
+    latest.current = want;
     let live = true;
     api
-      .listDirs(want.path)
+      .listDirs(want.path, want.hidden)
       .then((l) => live && setListing({ ...l, for: want }))
       .catch((e: unknown) => {
         if (!live) return;
         const status = e instanceof ApiError ? e.status : 0;
         // Not a folder (400, 404): start at home instead. A folder that exists but cannot be read says so.
         if (want.fallback && status !== 403) {
-          setWant({});
+          setWant({ hidden: want.hidden });
           return;
         }
         const path = want.path ?? '';
@@ -87,7 +92,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
   }, [creating]);
 
   function open(path: string) {
-    setWant({ path });
+    setWant({ path, hidden: want.hidden });
     setSelected(null);
     setCreating(false);
     setCreateError(null);
@@ -100,6 +105,12 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
 
   function choose() {
     if (target) onUse(target);
+  }
+
+  function toggleHidden() {
+    const hidden = !want.hidden;
+    if (!hidden && entries[selIndex]?.hidden) setSelected(null);
+    setWant({ ...want, hidden, fallback: false });
   }
 
   function startCreate() {
@@ -117,14 +128,17 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
   async function create() {
     const name = newName.trim();
     if (!name || !listing || createBusy) return;
+    const at = want;
     setCreateBusy(true);
     setCreateError(null);
     try {
       const { path } = await api.makeDir(listing.path, name);
       setCreating(false);
-      if (name.startsWith('.')) setShowHidden(true);
-      setSelected(path);
-      setWant({ path: listing.path });
+      // Select the new folder only while the user is still in the folder it was made in; a move made meanwhile stands.
+      if (latest.current.path === at.path) {
+        setSelected(path);
+        setWant({ path: at.path, hidden: latest.current.hidden || name.startsWith('.') });
+      }
       list.current?.focus();
     } catch (e) {
       setCreateError(isStatus(e, 409) ? 'A folder with this name already exists' : describeError(e));
@@ -181,7 +195,18 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
     if (hit >= 0) setSelected(entries[hit].path);
   }
 
+  /** The option is one button. Its chevron is a hit region, not a control: a press there opens the folder, anywhere else selects it. */
+  function onRowClick(e: MouseEvent<HTMLButtonElement>, path: string) {
+    if ((e.target as HTMLElement).closest('[data-opens]')) {
+      open(path);
+      return;
+    }
+    setSelected(path);
+    list.current?.focus();
+  }
+
   const markClass = 'flex shrink-0 items-center gap-1 text-caption text-muted';
+  const statusClass = 'shrink-0 px-3 py-3 text-caption text-muted';
 
   return (
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- every control inside is focusable; this only relays Ctrl/Cmd+Enter and Escape from them.
@@ -202,7 +227,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
                     type="button"
                     aria-current={last ? 'location' : undefined}
                     aria-label={i === 0 ? 'Root' : undefined}
-                    className={cn('h-6 max-w-full truncate rounded-xs px-1 transition-colors duration-100 hover:bg-canvas hover:text-ink', last ? 'text-ink' : 'text-muted')}
+                    className={cn('h-6 max-w-full truncate rounded-xs px-1 transition-colors duration-100 hover:bg-canvas hover:text-ink pointer-coarse:min-h-11', last ? 'text-ink' : 'text-muted')}
                     onClick={() => open(c.path)}
                   >
                     {c.name}
@@ -212,23 +237,23 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
             })}
           </ol>
         </nav>
-        <Button size="sm" aria-pressed={showHidden} className="-mr-2 shrink-0 text-muted" onClick={() => setShowHidden(!showHidden)}>
-          {showHidden ? <Eye /> : <EyeOff />}
+        <Button size="sm" aria-pressed={want.hidden} className="shrink-0 text-muted" onClick={toggleHidden}>
+          {want.hidden ? <Eye /> : <EyeOff />}
           Show hidden
         </Button>
       </div>
 
-      <div className="flex h-[min(320px,40dvh)] flex-col overflow-hidden rounded-sm bg-canvas max-sm:h-[55dvh]">
+      <div className="flex h-picker flex-col overflow-hidden rounded-sm bg-canvas max-sm:h-picker-phone">
         {creating && (
-          <div className="border-b border-hairline p-1">
-            <div className="flex items-center gap-2 pl-1">
+          <div className="shrink-0 p-1.5 pl-3">
+            <div className="flex items-center gap-2">
               <FolderPlus aria-hidden="true" className="size-4 shrink-0 text-muted" />
               <input
                 ref={nameInput}
                 aria-label="New folder name"
                 aria-invalid={createError ? true : undefined}
                 aria-describedby={createError ? `${id}-create-error` : undefined}
-                className="h-7 min-w-0 flex-1 rounded-xs border border-hairline-strong bg-raised px-2 font-mono text-code text-ink outline-hidden transition-colors placeholder:text-muted focus:border-accent disabled:opacity-45 pointer-coarse:h-9"
+                className={cn(inputClass, 'min-w-0 flex-1 font-mono text-code')}
                 placeholder="Folder name"
                 spellCheck={false}
                 autoComplete="off"
@@ -254,12 +279,25 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
               </Button>
             </div>
             {createError && (
-              <Note id={`${id}-create-error`} tone="error" role="alert" className="px-1 pt-1">
+              <Note id={`${id}-create-error`} tone="error" role="alert" className="pt-1.5 pl-6">
                 {createError}
               </Note>
             )}
           </div>
         )}
+        {loading && !listing && (
+          <div aria-hidden="true" className="flex shrink-0 flex-col gap-1 p-2">
+            <span className="h-6 w-2/3 rounded-sm bg-surface animate-pulse-dot" />
+            <span className="h-6 w-1/2 rounded-sm bg-surface animate-pulse-dot" />
+            <span className="h-6 w-3/5 rounded-sm bg-surface animate-pulse-dot" />
+          </div>
+        )}
+        {listing?.error && (
+          <p role="status" className={statusClass}>
+            {listing.error}
+          </p>
+        )}
+        {listing && !listing.error && !loading && entries.length === 0 && <p className={statusClass}>No folders here</p>}
         <div
           ref={list}
           id={`${id}-list`}
@@ -271,78 +309,52 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
           className="min-h-0 flex-1 overflow-y-auto p-1 focus-visible:-outline-offset-2"
           onKeyDown={onListKey}
         >
-          {loading && !listing && (
-            <div aria-hidden="true" className="flex flex-col gap-1 p-1">
-              <span className="h-6 w-2/3 rounded-sm bg-surface animate-pulse-dot" />
-              <span className="h-6 w-1/2 rounded-sm bg-surface animate-pulse-dot" />
-              <span className="h-6 w-3/5 rounded-sm bg-surface animate-pulse-dot" />
-            </div>
-          )}
-          {listing?.error && (
-            <p role="status" className="px-2 py-3 text-caption text-muted">
-              {listing.error}
-            </p>
-          )}
-          {listing && !listing.error && !loading && entries.length === 0 && (
-            <p className="px-2 py-3 text-caption text-muted">{hiddenCount > 0 ? `No folders here except ${hiddenCount} hidden` : 'No folders here'}</p>
-          )}
           {entries.map((e, i) => {
             const sel = i === selIndex;
             return (
-              // The option is a button (native keyboard semantics); the chevron that opens the folder sits beside it, since a button cannot hold one.
-              <div
+              <button
                 key={e.path}
+                type="button"
+                role="option"
+                id={`${id}-opt-${i}`}
+                aria-selected={sel}
+                tabIndex={-1}
                 className={cn(
-                  'flex items-center rounded-sm pr-1 transition-[background-color,color,box-shadow] duration-100',
+                  'flex h-8 w-full cursor-default items-center gap-2 rounded-sm pr-0 pl-2 text-left outline-hidden transition-[background-color,color,box-shadow] duration-100 select-none pointer-coarse:h-11',
                   sel ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-surface',
                   e.hidden && !sel && 'text-muted',
                   loading && 'opacity-60',
                 )}
+                onMouseDown={(ev) => ev.preventDefault()}
+                onClick={(ev) => onRowClick(ev, e.path)}
+                onDoubleClick={() => open(e.path)}
               >
-                <button
-                  type="button"
-                  role="option"
-                  id={`${id}-opt-${i}`}
-                  aria-selected={sel}
-                  tabIndex={-1}
-                  className="flex h-8 min-w-0 flex-1 cursor-default items-center gap-2 pl-2 text-left outline-hidden select-none pointer-coarse:h-11"
-                  onMouseDown={(ev) => ev.preventDefault()}
-                  onClick={() => {
-                    setSelected(e.path);
-                    list.current?.focus();
-                  }}
-                  onDoubleClick={() => open(e.path)}
+                <Folder aria-hidden="true" className="size-4 shrink-0 text-muted" />
+                <span className="min-w-0 flex-1 truncate font-mono text-code">{e.name}</span>
+                {e.git && (
+                  <span className={markClass}>
+                    <GitBranch aria-hidden="true" className="size-3" />
+                    git
+                  </span>
+                )}
+                {e.link && (
+                  <span className={markClass}>
+                    <Link aria-hidden="true" className="size-3" />
+                    link
+                  </span>
+                )}
+                <span
+                  data-opens=""
+                  aria-hidden="true"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-xs text-faint transition-colors duration-100 hover:bg-canvas hover:text-ink pointer-coarse:size-11"
                 >
-                  <Folder aria-hidden="true" className="size-4 shrink-0 text-muted" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-code">{e.name}</span>
-                  {e.git && (
-                    <span className={markClass}>
-                      <GitBranch aria-hidden="true" className="size-3" />
-                      git
-                    </span>
-                  )}
-                  {e.link && (
-                    <span className={markClass}>
-                      <Link aria-hidden="true" className="size-3" />
-                      link
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  aria-label={`Open ${e.name}`}
-                  className="flex size-7 shrink-0 items-center justify-center rounded-xs text-faint transition-colors duration-100 hover:bg-canvas hover:text-ink pointer-coarse:size-10"
-                  onMouseDown={(ev) => ev.preventDefault()}
-                  onClick={() => open(e.path)}
-                >
-                  <ChevronRight aria-hidden="true" className="size-4" />
-                </button>
-              </div>
+                  <ChevronRight className="size-4" />
+                </span>
+              </button>
             );
           })}
-          {listing?.truncated && <p className="px-2 py-1.5 text-caption text-muted">Showing the first 1,000</p>}
         </div>
+        {listing?.truncated && <p className={cn(statusClass, 'py-1.5')}>Showing the first 1,000</p>}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 max-sm:[&>button]:flex-1">

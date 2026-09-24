@@ -12,7 +12,8 @@ npm ci
 npm run build
 ```
 
-`npm test` runs the reducer and sidebar-grouping regressions with Node's
+`npm test` runs the reducer, sidebar-grouping, composer, attachment and
+folder-path (`tests/folders.test.mjs`) regressions with Node's
 built-in test runner; `npm run lint` runs ESLint (typescript-eslint,
 react-hooks, jsx-a11y). `npm run build` runs both, type-checks
 (`tsc --noEmit`) and writes the production bundle to `../internal/web/dist`,
@@ -58,13 +59,16 @@ contain it. `#task=<id>` in the URL opens a task directly.
   shared `SidePanel` with its drag handle), Interactions, Composer (the
   toolbar of model/effort/context/mode pickers plus send, stop, steer and
   queue), Changes (file list and diff), TaskDefaults, Projects (dialogs),
-  Login, `taskActions.tsx` (the shared Rename/Settle/Reopen/Archive/Delete
-  menu items and their rules) and shared atoms in `common.tsx`.
+  FolderPicker (the Add project dialog's inline folder browser: breadcrumb,
+  listbox, New folder, Use this folder), Login, `taskActions.tsx` (the
+  shared Rename/Settle/Reopen/Archive/Delete menu items and their rules)
+  and shared atoms in `common.tsx`.
 - `src/components/ui/` — the Base UI wrappers (button, menu and context
   menu, dialog, alert dialog, sheet, tooltip, select) styled with the
   tokens.
 - `src/lib/` — `cn` (clsx + tailwind-merge), clipboard helpers, the
-  `useResizable` hook, sidebar grouping helpers.
+  `useResizable` hook, sidebar grouping helpers, and the folder picker's
+  path and breadcrumb logic (`folders.ts`).
 - `src/index.css` — Tailwind v4 entry: the DESIGN.md tokens as `@theme`
   (colours, type scale, radii, shadows, motion), base styles, and the
   markdown and diff component styles. There is one mid-light theme.

@@ -42,11 +42,6 @@ export function parentOf(path: string): string | undefined {
   return i <= 0 ? '/' : path.slice(0, i);
 }
 
-/** The server always returns hidden folders; the picker filters them. */
-export function visibleFolders<T extends { hidden: boolean }>(entries: T[], showHidden: boolean): T[] {
-  return showHidden ? entries : entries.filter((e) => !e.hidden);
-}
-
 /** What the picker says when a listing fails; the server's technical reason is kept for anything unexpected. */
 export function listingError(status: number, message: string): string {
   switch (status) {

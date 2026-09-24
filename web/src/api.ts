@@ -426,8 +426,8 @@ export const api = {
   createProject: (body: { dir: string; name?: string; defaults?: TaskDefaults }) => call<Project>('POST', '/api/projects', body),
   updateProject: (id: string, body: { name?: string; defaults?: TaskDefaults }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
   deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
-  /** Subdirectories of an absolute directory; the service user's home without `path`. */
-  listDirs: (path?: string) => call<DirList>('GET', path ? `/api/fs/dirs?path=${enc(path)}` : '/api/fs/dirs'),
+  /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
+  listDirs: (path?: string, hidden = false) => call<DirList>('GET', `/api/fs/dirs${path ? `?path=${enc(path)}${hidden ? '&hidden=1' : ''}` : hidden ? '?hidden=1' : ''}`),
   makeDir: (parent: string, name: string) => call<{ path: string }>('POST', '/api/fs/dirs', { parent, name }),
 
   createSession: (body: {

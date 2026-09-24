@@ -433,7 +433,8 @@ func (s *Server) handleRemoveProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListDirs(w http.ResponseWriter, r *http.Request) {
-	list, err := listDirs(r.URL.Query().Get("path"), maxDirEntries)
+	q := r.URL.Query()
+	list, err := listDirs(q.Get("path"), q.Get("hidden") == "1", maxDirEntries)
 	if err != nil {
 		writeFailure(w, err)
 		return

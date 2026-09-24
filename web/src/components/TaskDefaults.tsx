@@ -3,6 +3,9 @@ import { MODE_TEXT, contextReason, effortReason, sizeLabel } from './Composer';
 import { Note, useApp } from './common';
 import { Select } from './ui/select';
 
+/** DESIGN.md text input: 36px, `raised`, a `hairline-strong` edge that turns `accent` on focus. Shared by the project dialogs and the folder picker. */
+export const inputClass = 'h-9 w-full rounded-sm border border-hairline-strong bg-raised px-2.5 text-ui text-ink outline-hidden transition-colors placeholder:text-muted focus:border-accent disabled:opacity-45';
+
 export function Field({ id, label, hint, children }: { id: string; label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">

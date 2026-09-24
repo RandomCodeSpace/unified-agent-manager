@@ -4,11 +4,9 @@ import { api, describeError, isStatus, resolveTaskDefaults, type Project, type S
 import { cn } from '../lib/cn';
 import { Note, useApp } from './common';
 import { FolderPicker } from './FolderPicker';
-import { Field, TaskDefaultsFields } from './TaskDefaults';
+import { Field, TaskDefaultsFields, inputClass } from './TaskDefaults';
 import { Button } from './ui/button';
 import { AlertDialog, Dialog } from './ui/dialog';
-
-const inputClass = 'h-9 w-full rounded-sm border border-hairline-strong bg-raised px-2.5 text-ui text-ink outline-hidden transition-colors placeholder:text-muted focus:border-accent disabled:opacity-45';
 
 /** Add a project by directory. A 409 means the directory already has one: that project is selected instead. */
 /** Shared by the three dialogs: `open` drives the transition, `onClosed` fires after it, then the owner unmounts. */

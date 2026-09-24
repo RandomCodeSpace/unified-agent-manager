@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { breadcrumbs, cleanPath, listingError, matchFrom, parentOf, visibleFolders } from '../src/lib/folders.ts';
+import { breadcrumbs, cleanPath, listingError, matchFrom, parentOf } from '../src/lib/folders.ts';
 
 test('a typed path is cleaned to the form the server accepts', () => {
   assert.equal(cleanPath(' /home/dev/ '), '/home/dev');
@@ -27,15 +27,6 @@ test('the parent of a path stops at the root', () => {
   assert.equal(parentOf('/home'), '/');
   assert.equal(parentOf('/'), undefined);
   assert.equal(parentOf(''), undefined);
-});
-
-test('hidden folders show only with the toggle', () => {
-  const entries = [
-    { name: '.git', hidden: true },
-    { name: 'src', hidden: false },
-  ];
-  assert.deepEqual(visibleFolders(entries, false).map((e) => e.name), ['src']);
-  assert.deepEqual(visibleFolders(entries, true).map((e) => e.name), ['.git', 'src']);
 });
 
 test('listing errors are plain words for the known statuses', () => {

@@ -920,21 +920,33 @@ browses the host's directories and creates one. The server lists and creates;
 the Project is still added through `POST /api/projects`, which resolves
 symbolic links as before.
 
-- **Paths.** A path must be absolute and in clean form (`filepath.Clean(p) ==
-  p`), valid UTF-8 and without NUL; anything else is 400, before the file
-  system is asked. A missing path is 404 (also when a component is a file),
-  permission denied is 403 (`fs.ErrPermission`), and a path that is not a
-  directory is 400. An empty `path` lists the service user's home.
+- **Paths.** A path must pass the one rule shared with `canonicalWorkdir`
+  (`checkPathText`): present, absolute and *displayable*, that is valid UTF-8
+  that display cleaning (`displaytext.Sanitize`) leaves unchanged and free of
+  control characters. The folder routes also require clean form
+  (`filepath.Clean(p) == p`). Anything else is 400, before the file system
+  is asked. Then: a missing path is 404 (also when a component is a file);
+  permission denied is 403 (`fs.ErrPermission`), as is a read-only file
+  system (`EROFS`, "You can't create folders here"); a component over the
+  name limit (`ENAMETOOLONG`) or a symbolic-link loop (`ELOOP`) is 400; a
+  full disk or quota (`ENOSPC`, `EDQUOT`) is 507; a path that is not a
+  directory is 400. None of these is logged as a failure; only an unexpected
+  error is a 500. An empty `path` lists the service user's home.
 - **Listing.** `os.ReadDir` reads the directory. Only directories are listed,
   and symbolic links that `os.Stat` resolves to a directory, marked `link`;
-  files, other links and entries whose names are not valid UTF-8 are left out.
-  Nothing inside an entry is read except whether it holds `.git`, a directory
-  or, in a linked worktree, a file (`git`). `hidden` means the name starts
-  with `.`; hidden entries are always listed and the browser filters them.
-  Entries are sorted by name without regard to case, then by exact name, and
-  capped at 1,000 with `truncated: true`. `name` is cleaned for display like
-  other labels; `path` is exact. `parent` is `filepath.Dir(path)`, omitted at
-  `/`. Paths are not resolved, so a link's entries sit under the link's path.
+  files and other links are left out. So is any entry whose name is not
+  displayable (see Paths): `canonicalWorkdir` would refuse it as a Project,
+  and leaving it out rather than marking it unusable means the browser never
+  holds a raw path that cleaning would have changed. Nothing inside an entry
+  is read except whether it holds `.git`, a directory or, in a linked
+  worktree, a file (`git`). `hidden` means the name starts with `.`;
+  dot-folders are left out unless the query has `hidden=1`, and the browser's
+  Show hidden toggle lists again with it. Entries are sorted by name without
+  regard to case, then by exact name, and capped at 1,000 after the hidden
+  filter, with `truncated: true`, so a truncated listing always shows 1,000
+  rows. `name` is the last element of `path`, both exactly as on disk.
+  `parent` is `filepath.Dir(path)`, omitted at `/`. Paths are not resolved,
+  so a link's entries sit under the link's path.
 - **Creating.** `name` must be one path element: not empty, `.` or `..`, no
   `/`, NUL or other control character, no leading or trailing whitespace, at
   most 255 bytes, valid UTF-8. `parent` must be an existing directory under
@@ -949,8 +961,8 @@ symbolic links as before.
 
 | Method and path | Body | Result |
 |---|---|---|
-| `GET /api/fs/dirs?path=` | – | `{"path", "parent"?, "entries": [{"name", "path", "git", "hidden", "link"}], "truncated"}`; 400 relative, unclean or not a directory; 403 permission denied; 404 missing |
-| `POST /api/fs/dirs` | `{"parent", "name"}` | 201 `{"path"}`; 400 invalid name or parent, or parent not a directory; 403 permission denied; 404 missing parent; 409 the name exists |
+| `GET /api/fs/dirs?path=&hidden=` | – | `{"path", "parent"?, "entries": [{"name", "path", "git", "hidden", "link"}], "truncated"}`; dot-folders only with `hidden=1`; 400 relative, unclean, not displayable, too long, a link loop or not a directory; 403 permission denied; 404 missing |
+| `POST /api/fs/dirs` | `{"parent", "name"}` | 201 `{"path"}`; 400 invalid name or parent, or parent not a directory; 403 permission denied or a read-only file system; 404 missing parent; 409 the name exists; 507 disk full or quota exceeded |
 
 Both routes need sign-in and pass the `Host` check; the POST also passes the
 cross-origin and JSON checks.

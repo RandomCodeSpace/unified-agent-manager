@@ -43,8 +43,13 @@ func lockDir(t *testing.T, dir string, mode os.FileMode) {
 
 func TestListDirsPathRules(t *testing.T) {
 	root := t.TempDir()
-	mkdirs(t, root, "a")
+	mkdirs(t, root, "a", "ctl\x01")
 	writeFiles(t, root, "file")
+	for link, target := range map[string]string{"loop1": "loop2", "loop2": "loop1"} {
+		if err := os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, tc := range []struct {
 		name, path string
 		want       int
@@ -58,13 +63,18 @@ func TestListDirsPathRules(t *testing.T) {
 		{"dot dot", root + "/a/../a", http.StatusBadRequest},
 		{"dot", root + "/.", http.StatusBadRequest},
 		{"NUL", root + "/a\x00", http.StatusBadRequest},
+		{"control, even when it exists", root + "/ctl\x01", http.StatusBadRequest},
+		{"escape sequence", root + "/a\x1b[31m", http.StatusBadRequest},
+		{"tab", root + "/a\tb", http.StatusBadRequest},
 		{"invalid UTF-8", root + "/\xff", http.StatusBadRequest},
+		{"too long", root + "/" + strings.Repeat("x", 256), http.StatusBadRequest},
+		{"symbolic link loop", root + "/loop1", http.StatusBadRequest},
 		{"missing", root + "/missing", http.StatusNotFound},
 		{"under a file", root + "/file/a", http.StatusNotFound},
 		{"file", root + "/file", http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := listDirs(tc.path, maxDirEntries)
+			_, err := listDirs(tc.path, false, maxDirEntries)
 			got := http.StatusOK
 			if err != nil {
 				got = statusOf(err)
@@ -85,20 +95,19 @@ func TestListDirsEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	list, err := listDirs(root, maxDirEntries)
+	list, err := listDirs(root, false, maxDirEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
 	at := func(name string) string { return filepath.Join(root, name) }
+	// Names that display cleaning would change ("x\x1b[31mred") and dot-folders are left out.
 	want := []DirEntry{
-		{Name: ".hidden", Path: at(".hidden"), Hidden: true},
 		{Name: "Alpha", Path: at("Alpha")},
 		{Name: "alpha", Path: at("alpha")},
 		{Name: "beta", Path: at("beta")},
 		{Name: "linkdir", Path: at("linkdir"), Link: true},
 		{Name: "repo", Path: at("repo"), Git: true},
 		{Name: "worktree", Path: at("worktree"), Git: true},
-		{Name: "xred", Path: at("x\x1b[31mred")},
 	}
 	if !slices.Equal(list.Entries, want) {
 		t.Fatalf("entries =\n%+v\nwant\n%+v", list.Entries, want)
@@ -106,25 +115,78 @@ func TestListDirsEntries(t *testing.T) {
 	if list.Path != root || list.Parent != filepath.Dir(root) || list.Truncated {
 		t.Fatalf("list = path %q parent %q truncated %v", list.Path, list.Parent, list.Truncated)
 	}
+	for _, e := range list.Entries {
+		if !displayable(e.Name) || !displayable(e.Path) {
+			t.Fatalf("entry %+v is not displayable as it is", e)
+		}
+	}
+	withHidden, err := listDirs(root, true, maxDirEntries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := append([]DirEntry{{Name: ".hidden", Path: at(".hidden"), Hidden: true}}, want...); !slices.Equal(withHidden.Entries, want) {
+		t.Fatalf("entries with hidden =\n%+v\nwant\n%+v", withHidden.Entries, want)
+	}
 }
 
 func TestListDirsCap(t *testing.T) {
 	root := t.TempDir()
-	mkdirs(t, root, "c", "a", "b")
-	list, err := listDirs(root, 2)
+	mkdirs(t, root, "c", "a", "b", ".h1", ".h2")
+	list, err := listDirs(root, false, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(list.Entries) != 2 || list.Entries[0].Name != "a" || list.Entries[1].Name != "b" || !list.Truncated {
 		t.Fatalf("capped list = %+v", list)
 	}
-	if list, _ := listDirs(root, 3); len(list.Entries) != 3 || list.Truncated {
+	// The cap counts what is listed: without hidden folders, three visible ones fit.
+	if list, _ := listDirs(root, false, 3); len(list.Entries) != 3 || list.Truncated {
 		t.Fatalf("list at the cap = %+v", list)
+	}
+	if list, _ := listDirs(root, true, 2); len(list.Entries) != 2 || list.Entries[0].Name != ".h1" || list.Entries[1].Name != ".h2" || !list.Truncated {
+		t.Fatalf("capped list with hidden = %+v", list)
+	}
+}
+
+func TestCheckPathText(t *testing.T) {
+	// One rule for the folder routes and for a Project's dir.
+	for _, tc := range []struct {
+		name, path string
+		want       int
+	}{
+		{"absolute", "/tmp/x", http.StatusOK},
+		{"empty", "", http.StatusBadRequest},
+		{"relative", "x", http.StatusBadRequest},
+		{"control", "/tmp/a\x01", http.StatusBadRequest},
+		{"escape sequence", "/tmp/a\x1b[31m", http.StatusBadRequest},
+		{"newline", "/tmp/a\nb", http.StatusBadRequest},
+		{"invalid UTF-8", "/tmp/\xff", http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for name, check := range map[string]func(string) error{
+				"checkPathText": func(p string) error { return checkPathText("dir", p) },
+				"canonicalWorkdir": func(p string) error {
+					_, err := canonicalWorkdir(p)
+					if err != nil && tc.want == http.StatusOK {
+						return nil // exists or not is the file system's answer, not this rule's
+					}
+					return err
+				},
+			} {
+				got := http.StatusOK
+				if err := check(tc.path); err != nil {
+					got = statusOf(err)
+				}
+				if got != tc.want {
+					t.Fatalf("%s(%q) = %d, want %d", name, tc.path, got, tc.want)
+				}
+			}
+		})
 	}
 }
 
 func TestListDirsRootHasNoParent(t *testing.T) {
-	list, err := listDirs("/", maxDirEntries)
+	list, err := listDirs("/", false, maxDirEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +201,7 @@ func TestListDirsPermissionDenied(t *testing.T) {
 	mkdirs(t, root, "locked/inner")
 	lockDir(t, filepath.Join(root, "locked"), 0)
 	for _, p := range []string{filepath.Join(root, "locked"), filepath.Join(root, "locked", "inner")} {
-		if _, err := listDirs(p, maxDirEntries); statusOf(err) != http.StatusForbidden {
+		if _, err := listDirs(p, false, maxDirEntries); statusOf(err) != http.StatusForbidden {
 			t.Fatalf("listDirs(%q) = %v, want 403", p, err)
 		}
 	}
@@ -156,6 +218,8 @@ func TestMakeDirRules(t *testing.T) {
 		{"no parent", "", "x", http.StatusBadRequest},
 		{"relative parent", "tmp", "x", http.StatusBadRequest},
 		{"unclean parent", root + "/", "x", http.StatusBadRequest},
+		{"control in parent", root + "/a\x01", "x", http.StatusBadRequest},
+		{"parent too long", root + "/" + strings.Repeat("x", 256), "x", http.StatusBadRequest},
 		{"missing parent", root + "/missing", "x", http.StatusNotFound},
 		{"parent is a file", root + "/file", "x", http.StatusBadRequest},
 		{"empty", root, "", http.StatusBadRequest},
@@ -217,7 +281,7 @@ func TestMakeDirPermissionDenied(t *testing.T) {
 func TestFolderRoutes(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	root := t.TempDir()
-	mkdirs(t, root, "sub")
+	mkdirs(t, root, "sub", ".dot")
 	list := "/api/fs/dirs?" + url.Values{"path": {root}}.Encode()
 	create := `{"parent":"` + root + `","name":"made"}`
 
@@ -246,6 +310,10 @@ func TestFolderRoutes(t *testing.T) {
 	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil ||
 		got.Path != root || len(got.Entries) != 1 || got.Entries[0].Path != filepath.Join(root, "sub") {
 		t.Fatalf("list = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodGet, list+"&hidden=1", "", withCookie(ts)); w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil ||
+		len(got.Entries) != 2 || got.Entries[0].Name != ".dot" || !got.Entries[0].Hidden {
+		t.Fatalf("list with hidden=1 = %d %s", w.Code, w.Body)
 	}
 	t.Setenv("HOME", root)
 	if w := ts.do(http.MethodGet, "/api/fs/dirs", "", withCookie(ts)); w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || got.Path != root {

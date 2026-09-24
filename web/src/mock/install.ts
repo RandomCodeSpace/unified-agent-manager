@@ -371,6 +371,55 @@ export function install(): void {
     return { mime: 'text/plain' };
   }
 
+  // Folders for Add project → Browse: a small tree under the mock home. String checks only, no regular expressions.
+  const HOME = '/home/user';
+  const folders = new Set([
+    '/',
+    '/etc',
+    '/home',
+    '/root',
+    '/tmp',
+    HOME,
+    ...st.meta.recent_workdirs,
+    `${HOME}/projects`,
+    `${HOME}/projects/archive`,
+    `${HOME}/.config`,
+    `${HOME}/.cache`,
+    `${HOME}/projects/unified-agent-manager/.git`,
+  ]);
+  const gitFolders = new Set(st.meta.recent_workdirs);
+  const parentDir = (p: string) => (p === '/' ? undefined : p.slice(0, p.lastIndexOf('/')) || '/');
+  const cleanDir = (p: string) => p.split('/').every((s) => s !== '.' && s !== '..') && !p.endsWith('/') && !p.includes('//');
+
+  function listDirs(url: URL): Response {
+    const p = url.searchParams.get('path') || HOME;
+    if (!p.startsWith('/') || (p !== '/' && !cleanDir(p))) return fail(400, 'path must be an absolute path in clean form');
+    if (p === '/root' || p.startsWith('/root/')) return fail(403, 'permission denied');
+    if (!folders.has(p)) return fail(404, 'path does not exist');
+    const hidden = url.searchParams.get('hidden') === '1';
+    const entries = [...folders]
+      .filter((d) => d !== '/' && parentDir(d) === p)
+      .map((d) => ({ name: d.slice(d.lastIndexOf('/') + 1), path: d }))
+      .filter((e) => hidden || !e.name.startsWith('.'))
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.name.localeCompare(b.name))
+      .map((e) => ({ ...e, git: gitFolders.has(e.path), hidden: e.name.startsWith('.'), link: e.name === 'archive' }));
+    return json(200, { path: p, ...(parentDir(p) ? { parent: parentDir(p) } : {}), entries, truncated: false });
+  }
+
+  function makeDir(body: Json): Response {
+    const parent = String(body.parent ?? '');
+    const name = String(body.name ?? '');
+    if (!parent) return fail(400, 'parent is required');
+    if (!name) return fail(400, 'name is required');
+    if (name === '.' || name === '..' || name.includes('/') || name.trim() !== name) return fail(400, 'name must be one plain path element');
+    if (!folders.has(parent)) return fail(404, 'parent does not exist');
+    if (parent === '/root' || parent === '/etc') return fail(403, 'permission denied');
+    const made = parent === '/' ? `/${name}` : `${parent}/${name}`;
+    if (folders.has(made)) return fail(409, 'a file or folder with this name already exists');
+    folders.add(made);
+    return json(201, { path: made });
+  }
+
   function route(method: string, url: URL, body: Json, raw?: Uint8Array): Response {
     const path = url.pathname;
     const m = (re: RegExp) => path.match(re);
@@ -379,6 +428,8 @@ export function install(): void {
     if (path === '/api/auth') return json(200, { authenticated: true, required: false });
     if (path === '/api/logout') return json(204);
     if (path === '/api/meta') return json(200, st.meta);
+
+    if (path === '/api/fs/dirs') return method === 'POST' ? makeDir(body) : listDirs(url);
 
     if (path === '/api/projects' && method === 'GET') return json(200, { projects: st.projects });
     if (path === '/api/projects' && method === 'POST') {

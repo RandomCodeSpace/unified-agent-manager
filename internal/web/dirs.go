@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
@@ -23,7 +24,8 @@ const (
 	maxDirNameBytes = 255
 )
 
-// DirEntry is one folder in a listing. Name is for display; Path is exact.
+// DirEntry is one folder in a listing. Name is the last element of Path; both
+// are displayable as they are (see displayable).
 type DirEntry struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
@@ -44,9 +46,10 @@ type DirList struct {
 }
 
 // listDirs lists the folders in p, the service user's home when p is empty:
-// directories and links to them, never files. At most limit entries are
-// returned, sorted by name without regard to case.
-func listDirs(p string, limit int) (DirList, error) {
+// directories and links to them, never files. Dot-folders are left out unless
+// showHidden. At most limit entries are returned, counted after that filter,
+// sorted by name without regard to case.
+func listDirs(p string, showHidden bool, limit int) (DirList, error) {
 	if p == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -67,7 +70,13 @@ func listDirs(p string, limit int) (DirList, error) {
 	}
 	for _, e := range all {
 		name := e.Name()
-		if !utf8.ValidString(name) {
+		// A name display cleaning would change is left out: canonicalWorkdir would
+		// refuse it as a Project, and the browser must not render it raw.
+		if !displayable(name) {
+			continue
+		}
+		hidden := strings.HasPrefix(name, ".")
+		if hidden && !showHidden {
 			continue
 		}
 		full := filepath.Join(p, name)
@@ -79,7 +88,7 @@ func listDirs(p string, limit int) (DirList, error) {
 		} else if !e.IsDir() {
 			continue
 		}
-		out.Entries = append(out.Entries, DirEntry{Name: name, Path: full, Hidden: strings.HasPrefix(name, "."), Link: link})
+		out.Entries = append(out.Entries, DirEntry{Name: name, Path: full, Hidden: hidden, Link: link})
 	}
 	slices.SortFunc(out.Entries, func(a, b DirEntry) int {
 		if c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); c != 0 {
@@ -95,7 +104,6 @@ func listDirs(p string, limit int) (DirList, error) {
 		if info, err := os.Stat(filepath.Join(e.Path, ".git")); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
 			e.Git = true
 		}
-		e.Name = cleanTitle(e.Name)
 	}
 	log.Debug("web folders listed", "path", p, "entries", len(out.Entries), "truncated", out.Truncated)
 	return out, nil
@@ -124,15 +132,38 @@ func makeDir(parent, name string) (string, error) {
 	return p, nil
 }
 
-// checkDir refuses a path that is not absolute and in clean form, before the
-// file system is asked, and then one that is not an existing directory.
-func checkDir(field, p string) error {
+// displayable reports whether s can be shown exactly as it is: valid UTF-8
+// that display cleaning leaves alone (no control characters, escape
+// sequences, tabs or line breaks). Every path and name the folder routes
+// return passes it, so the browser never renders raw text that cleaning would
+// have changed.
+func displayable(s string) bool {
+	return utf8.ValidString(s) && displaytext.Sanitize(s) == s && !strings.ContainsFunc(s, unicode.IsControl)
+}
+
+// checkPathText is the one rule a directory path must pass before the file
+// system is asked, shared by the folder routes and canonicalWorkdir (a
+// Project's dir): present, displayable and absolute.
+func checkPathText(field, p string) error {
 	switch {
-	case !utf8.ValidString(p) || strings.ContainsRune(p, 0):
-		return newError(http.StatusBadRequest, "%s is not a valid path", field)
+	case p == "":
+		return newError(http.StatusBadRequest, "%s is required", field)
+	case !displayable(p):
+		return newError(http.StatusBadRequest, "%s contains control characters", field)
 	case !filepath.IsAbs(p):
 		return newError(http.StatusBadRequest, "%s must be an absolute path", field)
-	case filepath.Clean(p) != p:
+	}
+	return nil
+}
+
+// checkDir refuses a path that fails checkPathText or is not in clean form,
+// before the file system is asked, and then one that is not an existing
+// directory.
+func checkDir(field, p string) error {
+	if err := checkPathText(field, p); err != nil {
+		return err
+	}
+	if filepath.Clean(p) != p {
 		return newError(http.StatusBadRequest, "%s must be in clean form", field)
 	}
 	info, err := os.Stat(p)
@@ -166,13 +197,25 @@ func checkDirName(name string) error {
 	return nil
 }
 
-// dirError maps a file system failure on field to its HTTP status.
+// dirError maps a file system failure on field to its HTTP status. What the
+// client sent (4xx) or the host's state (507) is answered, not logged as a
+// failure; only an unexpected error becomes a 500.
 func dirError(field string, err error) error {
 	switch {
 	case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
 		return newError(http.StatusNotFound, "%s does not exist", field)
 	case errors.Is(err, fs.ErrPermission):
 		return newError(http.StatusForbidden, "permission denied")
+	case errors.Is(err, syscall.EROFS):
+		return newError(http.StatusForbidden, "You can't create folders here")
+	case errors.Is(err, syscall.ELOOP):
+		return newError(http.StatusBadRequest, "%s has too many symbolic links", field)
+	case errors.Is(err, syscall.ENAMETOOLONG):
+		return newError(http.StatusBadRequest, "%s is too long", field)
+	case errors.Is(err, syscall.ENOSPC):
+		return newError(http.StatusInsufficientStorage, "no space left on the disk")
+	case errors.Is(err, syscall.EDQUOT):
+		return newError(http.StatusInsufficientStorage, "disk quota exceeded")
 	}
 	return fmt.Errorf("%s: %w", field, err)
 }

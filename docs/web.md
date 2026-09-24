@@ -116,10 +116,16 @@ beyond loopback, anyone who can reach that address. To turn it back off, run
 For adding a Project, the API also lists and creates folders on the host, as
 the service user. `GET /api/fs/dirs?path=<absolute path>` returns the
 subdirectories of a directory (your home when `path` is empty), never files:
-`{"path", "parent", "entries": [{"name", "path", "git", "hidden", "link"}],
-"truncated"}`, at most 1,000 entries. `POST /api/fs/dirs` with `{"parent",
-"name"}` creates one folder (mode 0755) and returns 201 `{"path"}`, or 409
-when the name exists. Both need sign-in like every other API route. With
+`{"path", "parent"?, "entries": [{"name", "path", "git", "hidden", "link"}],
+"truncated"}`, without dot-folders unless `hidden=1` is added, at most 1,000
+entries after that filter; `parent` is absent at `/`. Folders whose names
+could not be shown as they are (control characters, escape sequences) are
+left out, since a Project cannot be added there either. `POST /api/fs/dirs`
+with `{"parent", "name"}` creates one folder (mode 0755) and returns 201
+`{"path"}`, or 409 when the name exists. A path that is not a folder, too
+long or a symbolic-link loop is 400, one you cannot read or write is 403,
+a missing one 404, and a full disk or quota 507. Both need sign-in like
+every other API route. With
 `--no-auth` on an address others can reach, anyone who can reach the service
 can browse your directory tree and create folders in it, the same exposure as
 the rest of the service. Created folders are logged with their path; listings
