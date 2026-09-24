@@ -6,6 +6,7 @@ import { Sep, StateMark, TaskTitle, useApp } from './common';
 export interface WorkspaceActions {
   onSelect: (id: string) => void;
   onHome: () => void;
+  onProject: (projectId: string) => void;
   onNewTask: (projectId: string) => void;
   onAddProject: () => void;
   onRenameProject: (p: Project) => void;
@@ -29,6 +30,7 @@ export const CONNECTION_TEXT: Record<Connection, string> = {
 /** Attention mark at the end of a task row: a "Needs you" dot beats the new-activity dot. */
 export function Attention({ session }: { session: SessionSummary }) {
   const { hasNews } = useApp();
+  if (readOnly(session)) return null;
   if (needsYou(session)) {
     return (
       <span className="dot-attention" title="Needs you">
@@ -77,7 +79,7 @@ export function Rail({
   onLogout: () => void;
   connection: Connection;
 }) {
-  const needs = sessions.filter(needsYou).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  const needs = sessions.filter((s) => !readOnly(s) && needsYou(s)).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
   return (
     <nav className="rail" aria-label="Projects">
       <div className="rail-top">
@@ -103,7 +105,7 @@ export function Rail({
       <div className="rail-group-label eyebrow">Projects</div>
       {projects.length === 0 && <p className="caption pad">No projects yet.</p>}
       {projects.map((p) => {
-        const tasks = tasksOf(sessions, p.id);
+        const tasks = tasksOf(sessions, p.id).filter((s) => !readOnly(s));
         const hidden = actions.collapsed.has(p.id);
         const attention = tasks.filter(needsYou).length;
         return (
@@ -127,6 +129,11 @@ export function Rail({
                 <li>
                   <button type="button" className="rail-task rail-task-new" onClick={() => actions.onNewTask(p.id)}>
                     <span aria-hidden="true">+</span> New task
+                  </button>
+                </li>
+                <li>
+                  <button type="button" className="rail-task rail-task-new" onClick={() => actions.onProject(p.id)}>
+                    Settled &amp; archive
                   </button>
                 </li>
               </ul>

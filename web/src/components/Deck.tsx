@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { modelName, needsYou, readOnly, stageLabel, type Project, type SessionSummary } from '../api';
 import { STATE_LABELS, Sep, StateMark, TaskTitle, relTime, useApp } from './common';
 import { Attention, tasksOf, type WorkspaceActions } from './Rail';
@@ -91,9 +91,12 @@ function ProjectSection({
   actions: WorkspaceActions;
   highlight: boolean;
 }) {
-  const { meta } = useApp();
   const heading = useRef<HTMLHeadingElement>(null);
+  const [archive, setArchive] = useState(false);
   const hidden = actions.collapsed.has(p.id);
+  const active = tasks.filter((t) => !readOnly(t));
+  const settled = tasks.filter((t) => t.stage === 'settled');
+  const archived = tasks.filter((t) => t.stage === 'archived');
 
   useEffect(() => {
     if (!highlight) return;
@@ -127,25 +130,52 @@ function ProjectSection({
         </div>
       </div>
       {!hidden && (
-        <ul className="rows">
-          {tasks.map((t) => (
-            <li key={t.id}>
-              <button type="button" className="deck-row" onClick={() => actions.onSelect(t.id)}>
-                <StateMark state={t.state} label={false} />
-                <Sep />
-                <span className="deck-row-main">
-                  <TaskTitle session={t} className="deck-row-title" />
-                  <Attention session={t} />
-                </span>
-                <span className="deck-row-sub deck-row-state">{readOnly(t) ? stageLabel(t) : STATE_LABELS[t.state]}</span>
-                <span className="deck-row-sub deck-row-model mono">{modelName(meta, t.provider, t.model)}</span>
-                <span className="deck-row-time num">{relTime(t.updated_at)}</span>
-              </button>
-            </li>
-          ))}
-          {tasks.length === 0 && <li className="caption pad">No tasks yet.</li>}
-        </ul>
+        <>
+          <div className="deck-history-nav">
+            <button type="button" className="btn btn-ghost btn-sm" aria-pressed={archive} onClick={() => setArchive((a) => !a)}>
+              {archive ? 'Back to active tasks' : `Archive · ${archived.length}`}
+            </button>
+          </div>
+          {archive ? (
+            <section aria-label={`${p.name} archive`}>
+              <h3 className="caption pad">Archive</h3>
+              <ProjectTasks tasks={archived} onSelect={actions.onSelect} empty="No archived tasks." />
+            </section>
+          ) : (
+            <>
+              <ProjectTasks tasks={active} onSelect={actions.onSelect} empty={tasks.length === 0 ? 'No tasks yet.' : 'No active tasks.'} />
+              <details className="settled-tasks">
+                <summary><span className="chev" aria-hidden="true" />Settled <span className="count num">· {settled.length}</span></summary>
+                <ProjectTasks tasks={settled} onSelect={actions.onSelect} empty="No settled tasks." />
+              </details>
+            </>
+          )}
+        </>
       )}
     </section>
+  );
+}
+
+function ProjectTasks({ tasks, onSelect, empty }: { tasks: SessionSummary[]; onSelect: (id: string) => void; empty: string }) {
+  const { meta } = useApp();
+  return (
+    <ul className="rows">
+      {tasks.map((t) => (
+        <li key={t.id}>
+          <button type="button" className="deck-row" onClick={() => onSelect(t.id)}>
+            <StateMark state={t.state} label={false} />
+            <Sep />
+            <span className="deck-row-main">
+              <TaskTitle session={t} className="deck-row-title" />
+              <Attention session={t} />
+            </span>
+            <span className="deck-row-sub deck-row-state">{readOnly(t) ? stageLabel(t) : STATE_LABELS[t.state]}</span>
+            <span className="deck-row-sub deck-row-model mono">{modelName(meta, t.provider, t.model)}</span>
+            <span className="deck-row-time num">{relTime(t.updated_at)}</span>
+          </button>
+        </li>
+      ))}
+      {tasks.length === 0 && <li className="caption pad">{empty}</li>}
+    </ul>
   );
 }

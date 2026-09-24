@@ -2034,6 +2034,29 @@ dialog::backdrop {
   gap: 2px;
 }
 
+.deck-history-nav {
+  padding: 4px 8px;
+}
+
+.settled-tasks > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 8px;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.settled-tasks > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settled-tasks > summary:hover {
+  background: var(--raised);
+}
+
 .rows {
   margin: 0;
   padding: 0;
@@ -2115,6 +2138,10 @@ dialog::backdrop {
 .narrow .deck-row {
   grid-template-columns: 12px minmax(0, 1fr) auto;
   height: 52px;
+}
+
+.narrow .deck-history-nav .btn {
+  min-height: 44px;
 }
 
 .narrow .deck-row-model,
