@@ -19,7 +19,9 @@ var badgeColors = []string{"red", "orange", "amber", "lime", "green", "teal", "c
 const badgeChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 // randomPick is the Manager's default pick: a random int in [0, n).
-func randomPick(n int) int { return rand.IntN(n) }
+func randomPick(n int) int {
+	return rand.IntN(n) // #nosec G404 -- badge colours and letters are cosmetic, not security-sensitive values.
+}
 
 func validBadge(b store.WebBadge) bool {
 	return len(b.Text) == 2 && strings.IndexByte(badgeChars, b.Text[0]) >= 0 && strings.IndexByte(badgeChars, b.Text[1]) >= 0 &&
@@ -138,9 +140,9 @@ func assignBadges(cfg *store.Config, pick func(int) int) {
 		pk := pick
 		if pk == nil {
 			h := fnv.New64a()
-			h.Write([]byte(id))
+			_, _ = h.Write([]byte(id)) // hash.Hash.Write never returns an error.
 			seed := h.Sum64()
-			pk = rand.New(rand.NewPCG(seed, seed)).IntN
+			pk = rand.New(rand.NewPCG(seed, seed)).IntN // #nosec G404 -- a deterministic cosmetic badge must survive a read-only store restart.
 		}
 		p.Badge = newBadge(loadedName(p.Name, p.Dir), cfg.WebProjects, pk)
 		cfg.WebProjects[id] = p
