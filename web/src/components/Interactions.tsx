@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent } from 'react';
-import { api, ApiError, describeError, type Answer, type Interaction, type Question, type SessionDetail } from '../api';
+import { api, describeError, isStatus, type Answer, type Interaction, type Question, type SessionDetail } from '../api';
 
 const STATE_TEXT: Record<Interaction['state'], string> = {
   pending: 'Pending',
@@ -8,6 +8,10 @@ const STATE_TEXT: Record<Interaction['state'], string> = {
   expired: 'Expired',
 };
 
+/**
+ * Permission or question card. The first answer from any tab wins: a 409 means someone
+ * else answered, a 410 means the provider withdrew the request.
+ */
 export function InteractionCard({
   session,
   interaction,
@@ -21,8 +25,8 @@ export function InteractionCard({
   const [note, setNote] = useState<string | null>(null);
   const titleId = useId();
   const pending = interaction.state === 'pending';
-  const permitted =
-    interaction.kind === 'permission' ? session.capabilities.permissions : session.capabilities.questions;
+  const permission = interaction.kind === 'permission';
+  const permitted = permission ? session.capabilities.permissions : session.capabilities.questions;
 
   async function respond(answer: Answer) {
     setBusy(true);
@@ -30,33 +34,36 @@ export function InteractionCard({
     try {
       onUpdate(await api.respond(session.id, interaction.id, answer));
     } catch (e) {
-      const status = e instanceof ApiError ? e.status : 0;
-      if (status === 409) setNote('This request was already answered elsewhere.');
-      else if (status === 410) setNote('This request expired before it was answered.');
+      if (isStatus(e, 409)) setNote('This request was already answered elsewhere.');
+      else if (isStatus(e, 410)) setNote('This request expired before it was answered.');
       else setNote(describeError(e));
     } finally {
       setBusy(false);
     }
   }
 
+  const cls = ['card', 'interaction', pending ? `interaction-pending ${permission ? 'bloom-peach' : 'bloom-sky'}` : 'interaction-done'].join(' ');
+
   return (
-    <section className={pending ? 'interaction pending' : 'interaction resolved'} aria-labelledby={titleId}>
-      <div className="interaction-kind">
-        {interaction.kind === 'permission' ? 'Permission request' : 'Question'}
+    <section className={cls} aria-labelledby={titleId}>
+      <div className="label">
+        {permission ? 'Permission' : 'Question'}
         {!pending && ` · ${STATE_TEXT[interaction.state]}`}
       </div>
-      <h3 id={titleId}>{interaction.title}</h3>
-      {interaction.detail && <pre>{interaction.detail}</pre>}
-      {interaction.kind === 'permission' ? (
-        <div className="actions start">
-          {pending && !permitted && <span className="muted">This provider does not accept decisions from UAM.</span>}
+      <h3 id={titleId} className="card-title">
+        {interaction.title}
+      </h3>
+      {interaction.detail && <pre className="code">{interaction.detail}</pre>}
+      {permission ? (
+        <div className="row wrap">
+          {pending && !permitted && <span className="muted small">This provider does not accept decisions from UAM.</span>}
           {pending &&
             permitted &&
-            (interaction.options ?? []).map((o) => (
+            (interaction.options ?? []).map((o, k) => (
               <button
                 key={o.id}
                 type="button"
-                className={o.reject ? 'btn danger' : 'btn primary'}
+                className={o.reject ? 'pill pill-outline' : k === 0 ? 'pill pill-primary' : 'pill pill-outline'}
                 disabled={busy}
                 onClick={() => respond({ decision: o.id })}
               >
@@ -73,13 +80,11 @@ export function InteractionCard({
           onDecline={() => respond({ reject: true })}
         />
       )}
-      {pending && interaction.kind === 'question' && !permitted && (
-        <p className="muted">This provider does not accept answers from UAM.</p>
-      )}
+      {pending && !permission && !permitted && <p className="muted small">This provider does not accept answers from UAM.</p>}
       {!pending && (
-        <p className="muted">
+        <p className="muted small">
           {STATE_TEXT[interaction.state]}
-          {interaction.resolution ? `: ${interaction.resolution}` : ''}
+          {interaction.resolution ? ` · ${interaction.resolution}` : ''}
         </p>
       )}
       {note && (
@@ -152,10 +157,12 @@ function QuestionForm({
             </label>
           ))}
           {q.custom && (
-            <label className="choice">
-              <span className="muted">Your answer</span>
+            <label className="choice choice-custom">
+              <span className="sr-only">Your answer</span>
               <input
+                className="input"
                 type="text"
+                placeholder="Your answer"
                 value={custom[qi] ?? ''}
                 onChange={(e) => setCustom((prev) => prev.map((v, i) => (i === qi ? e.target.value : v)))}
               />
@@ -164,11 +171,11 @@ function QuestionForm({
         </fieldset>
       ))}
       {!disabled && (
-        <div className="actions start">
-          <button type="submit" className="btn primary" disabled={!complete}>
-            Submit
+        <div className="row wrap">
+          <button type="submit" className="pill pill-primary" disabled={!complete}>
+            Answer
           </button>
-          <button type="button" className="btn" onClick={onDecline}>
+          <button type="button" className="pill pill-outline" onClick={onDecline}>
             Decline
           </button>
         </div>

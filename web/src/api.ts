@@ -1,5 +1,7 @@
-// Typed mirror of docs/adr/0004-web-interface.md and internal/agentapi.
-// Field names are the wire names (snake_case).
+// Typed mirror of docs/adr/0004-web-interface.md plus the additions decided in
+// issue #142 (projects, model catalog, titles, subagents). Field names are the
+// wire names (snake_case). Paths keep the `sessions` name; the UI calls them
+// Tasks.
 
 export type SessionState =
   | 'idle'
@@ -13,6 +15,11 @@ export type SessionState =
   | 'interrupted'
   | 'closed';
 
+/** States in which the provider still holds the turn. */
+export const LIVE: readonly SessionState[] = ['starting', 'working', 'awaiting_permission', 'awaiting_answer'];
+/** States in which the provider is waiting for the user. */
+export const ATTENTION: readonly SessionState[] = ['awaiting_permission', 'awaiting_answer'];
+
 export interface Capabilities {
   cancel: boolean;
   permissions: boolean;
@@ -21,12 +28,20 @@ export interface Capabilities {
   history: boolean;
 }
 
+/** One selectable model of the signed-in account. */
+export interface Model {
+  id: string;
+  name: string;
+}
+
 export interface ProviderInfo {
   name: string;
   display_name: string;
   available: boolean;
   reason?: string;
   capabilities: Capabilities;
+  /** Selectable models; empty means "provider default only". */
+  models: Model[];
 }
 
 export interface Meta {
@@ -35,12 +50,28 @@ export interface Meta {
   recent_workdirs: string[];
 }
 
+export interface Project {
+  id: string;
+  name: string;
+  dir: string;
+  created_at: string;
+}
+
 export interface SessionSummary {
   id: string;
+  project_id: string;
   provider: string;
+  /** User-given name; empty means "display the provider title". */
   name: string;
+  /** Provider-generated conversation title; empty until it arrives. */
+  title: string;
   workdir: string;
   conversation_id: string;
+  /** Selected model; empty means the provider default (and cannot be set back to empty). */
+  model: string;
+  /** Model reported by the latest turn; live only, empty when unknown. */
+  last_model: string;
+  subagents_running: number;
   state: SessionState;
   state_detail?: string;
   open: boolean;
@@ -67,6 +98,28 @@ export interface Item {
   text?: string;
   tool?: ToolCall;
   time: string;
+  /** Subagent instance that produced the item; absent for the main agent. */
+  agent_id?: string;
+}
+
+export type SubagentStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface Subagent {
+  id: string;
+  /** Item id of the `task` tool call that started this subagent (a tool item's id is the provider tool call id). */
+  parent_tool_call_id?: string;
+  name: string;
+  description?: string;
+  /** Terminal statuses are final; close, runtime exit and service stop mark running ones cancelled. */
+  status: SubagentStatus;
+  error?: string;
+  started_at?: string;
+  ended_at?: string;
+}
+
+export interface SubagentDetail {
+  subagent: Subagent;
+  items: Item[];
 }
 
 export type InteractionKind = 'permission' | 'question';
@@ -96,6 +149,7 @@ export interface Interaction {
   state: InteractionState;
   resolution?: string;
   time: string;
+  agent_id?: string;
 }
 
 export interface Answer {
@@ -114,8 +168,10 @@ export interface Submission {
 }
 
 export interface SessionDetail extends SessionSummary {
+  /** Main agent items only; subagent items come from the subagent route. */
   items: Item[];
   interactions: Interaction[];
+  subagents: Subagent[];
   history_truncated: boolean;
   last_submission: Submission | null;
 }
@@ -149,24 +205,50 @@ export interface FileDiff {
 
 export interface SnapshotData {
   seq: number;
+  projects: Project[];
   sessions: SessionSummary[];
   session: SessionDetail | null;
 }
 
 export type UpdateData =
   | { name: 'session'; seq: number; session: SessionSummary }
-  | { name: 'item'; seq: number; session_id: string; item: Item }
-  | { name: 'delta'; seq: number; session_id: string; item_id: string; kind: ItemKind; text: string }
+  | { name: 'session_removed'; seq: number; session_id: string }
+  | { name: 'project'; seq: number; project: Project }
+  | { name: 'project_removed'; seq: number; project_id: string }
+  | { name: 'item'; seq: number; session_id: string; item: Item; agent_id?: string }
+  | {
+      name: 'delta';
+      seq: number;
+      session_id: string;
+      item_id: string;
+      kind: ItemKind;
+      text: string;
+      agent_id?: string;
+    }
   | { name: 'interaction'; seq: number; session_id: string; interaction: Interaction }
-  | { name: 'submission'; seq: number; session_id: string; submission: Submission };
+  | { name: 'submission'; seq: number; session_id: string; submission: Submission }
+  | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent };
 
-export const UPDATE_EVENTS = ['session', 'item', 'delta', 'interaction', 'submission'] as const;
+export const UPDATE_EVENTS = [
+  'session',
+  'session_removed',
+  'project',
+  'project_removed',
+  'item',
+  'delta',
+  'interaction',
+  'submission',
+  'subagent',
+] as const;
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Parsed JSON error body, when the server sent one (e.g. `project_id` on 409). */
+  body: Record<string, unknown>;
+  constructor(status: number, message: string, body: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -181,32 +263,46 @@ export function describeError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
+export function isStatus(e: unknown, status: number): e is ApiError {
+  return e instanceof ApiError && e.status === status;
+}
+
+type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+
+async function call<T>(method: Method, path: string, body?: unknown): Promise<T> {
+  // GET and DELETE carry no body; the others are JSON (the server rejects anything else).
+  const bodyless = method === 'GET' || method === 'DELETE';
   let res: Response;
   try {
     res = await fetch(path, {
       method,
       credentials: 'same-origin',
-      headers: method === 'GET' ? undefined : { 'Content-Type': 'application/json' },
-      body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
+      headers: bodyless ? undefined : { 'Content-Type': 'application/json' },
+      body: bodyless ? undefined : JSON.stringify(body ?? {}),
     });
   } catch {
     throw new ApiError(0, 'Could not reach the server');
   }
   if (res.status === 401 && path !== '/api/login') unauthorized();
-  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  if (!res.ok) {
+    const parsed = await errorBody(res);
+    throw new ApiError(res.status, parsed.message, parsed.body);
+  }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
-async function errorMessage(res: Response): Promise<string> {
+async function errorBody(res: Response): Promise<{ message: string; body: Record<string, unknown> }> {
   try {
-    const j = (await res.json()) as { error?: unknown };
-    if (typeof j.error === 'string' && j.error) return j.error;
+    const j = (await res.json()) as Record<string, unknown>;
+    if (j && typeof j === 'object') {
+      const message = typeof j.error === 'string' && j.error ? j.error : `${res.status} ${res.statusText}`.trim();
+      return { message, body: j };
+    }
   } catch {
     // not JSON
   }
-  return `${res.status} ${res.statusText}`.trim();
+  return { message: `${res.status} ${res.statusText}`.trim(), body: {} };
 }
 
 const enc = encodeURIComponent;
@@ -216,9 +312,23 @@ export const api = {
   login: (token: string) => call<void>('POST', '/api/login', { token }),
   logout: () => call<void>('POST', '/api/logout'),
   meta: () => call<Meta>('GET', '/api/meta'),
-  createSession: (body: { provider: string; workdir: string; name: string; prompt?: string; request_id: string }) =>
-    call<SessionSummary>('POST', '/api/sessions', body),
+
+  projects: async () => (await call<{ projects: Project[] }>('GET', '/api/projects')).projects,
+  createProject: (body: { dir: string; name?: string }) => call<Project>('POST', '/api/projects', body),
+  renameProject: (id: string, name: string) => call<Project>('PATCH', `/api/projects/${enc(id)}`, { name }),
+  deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
+
+  createSession: (body: {
+    project_id: string;
+    provider: string;
+    model?: string;
+    name?: string;
+    prompt?: string;
+    request_id: string;
+  }) => call<SessionSummary>('POST', '/api/sessions', body),
   rename: (id: string, name: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { name }),
+  setModel: (id: string, model: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { model }),
+  deleteSession: (id: string) => call<void>('DELETE', `/api/sessions/${enc(id)}`),
   prompt: (id: string, text: string, request_id: string) =>
     call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id }),
   cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
@@ -228,6 +338,8 @@ export const api = {
   changes: (id: string, scope: Scope) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`),
   changeFile: (id: string, scope: Scope, path: string) =>
     call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`),
+  subagent: (id: string, agentId: string) =>
+    call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`),
   eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}` : '/api/events'),
 };
 
@@ -246,14 +358,33 @@ export function basename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-export function sessionName(s: SessionSummary): string {
-  return s.name || basename(s.workdir);
+/** Display name of a Task: the user's name, else the provider title, else a placeholder. */
+export function taskName(s: Pick<SessionSummary, 'name' | 'title'>): string {
+  return s.name || s.title || '';
 }
 
 export function pendingCount(s: SessionSummary): number {
   return typeof s.pending === 'number' ? s.pending : s.pending ? 1 : 0;
 }
 
+export function needsYou(s: SessionSummary): boolean {
+  return ATTENTION.includes(s.state) || pendingCount(s) > 0;
+}
+
+export function provider(meta: Meta | null, name: string): ProviderInfo | undefined {
+  return meta?.providers.find((p) => p.name === name);
+}
+
 export function providerLabel(meta: Meta | null, name: string): string {
-  return meta?.providers.find((p) => p.name === name)?.display_name ?? name;
+  return provider(meta, name)?.display_name ?? name;
+}
+
+export function modelCatalog(meta: Meta | null, providerName: string): Model[] {
+  // `?? []` tolerates a server older than the catalog.
+  return provider(meta, providerName)?.models ?? [];
+}
+
+export function modelName(meta: Meta | null, providerName: string, id: string): string {
+  if (!id) return 'Default model';
+  return modelCatalog(meta, providerName).find((m) => m.id === id)?.name ?? id;
 }

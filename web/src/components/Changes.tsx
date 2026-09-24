@@ -1,90 +1,113 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { api, describeError, type Changes as ChangesData, type FileDiff, type Scope, type SessionSummary } from '../api';
 
-export function Changes({ session }: { session: SessionSummary }) {
+/** Scope the meta line counts: the provider's own diff when it has one, else the working tree. */
+export function defaultScope(s: SessionSummary): Scope {
+  return s.capabilities.session_diff ? 'session' : 'workspace';
+}
+
+/**
+ * The Changes sheet: file list plus one unified diff. `changes` for the default scope is
+ * owned by the Task view (it feeds the "n files changed" link); other scopes load here.
+ */
+export function ChangesSheet({
+  session,
+  projectName,
+  changes,
+  onRefresh,
+  onClose,
+}: {
+  session: SessionSummary;
+  projectName: string;
+  changes: ChangesData | null;
+  onRefresh: () => void;
+  onClose: () => void;
+}) {
   const canSession = session.capabilities.session_diff;
-  const [scopePref, setScopePref] = useState<Scope>('session');
-  const scope: Scope = canSession ? scopePref : 'workspace';
-  const [changes, setChanges] = useState<ChangesData | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [scope, setScope] = useState<Scope>(defaultScope(session));
+  const [other, setOther] = useState<ChangesData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [path, setPath] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
+    closeRef.current?.focus();
+  }, []);
+
+  const isDefault = scope === defaultScope(session);
+  useEffect(() => {
+    if (isDefault) return;
     let live = true;
-    setLoading(true);
     setError(null);
     api
       .changes(session.id, scope)
-      .then((c) => live && setChanges(c))
-      .catch((e: unknown) => live && setError(describeError(e)))
-      .finally(() => live && setLoading(false));
+      .then((c) => live && setOther(c))
+      .catch((e: unknown) => live && setError(describeError(e)));
     return () => {
       live = false;
     };
-  }, [session.id, scope, tick]);
+  }, [session.id, scope, isDefault, tick]);
+
+  const data = isDefault ? changes : other;
+  const files = data?.supported ? data.files : [];
+  const shownPath = path && files.some((f) => f.path === path) ? path : (files[0]?.path ?? null);
+
+  function refresh() {
+    setTick((t) => t + 1);
+    if (isDefault) onRefresh();
+  }
 
   return (
-    <>
-      <div className="panel-head">
-        <h2>Changes</h2>
-        <button type="button" className="btn small" onClick={() => setTick((t) => t + 1)} disabled={loading}>
+    <section className="sheet" role="dialog" aria-modal="true" aria-label="Changes">
+      <div className="sheet-head">
+        <div>
+          <div className="label">Changes</div>
+          <span className="muted small">{data ? data.label : `${projectName} vs HEAD`}</span>
+        </div>
+        <span className="spacer" />
+        {canSession && (
+          <div className="segmented" role="group" aria-label="Scope">
+            {(['session', 'workspace'] as const).map((s) => (
+              <button key={s} type="button" aria-pressed={scope === s} onClick={() => setScope(s)}>
+                {s === 'session' ? 'This task' : 'Workspace'}
+              </button>
+            ))}
+          </div>
+        )}
+        <button type="button" className="pill pill-text pill-sm" onClick={refresh}>
           Refresh
         </button>
+        <button ref={closeRef} type="button" className="iconbtn" aria-label="Close changes" onClick={onClose}>
+          ×
+        </button>
       </div>
-      {canSession && (
-        <div className="segmented" role="group" aria-label="Scope">
-          {(['session', 'workspace'] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              aria-pressed={scope === s}
-              onClick={() => {
-                setScopePref(s);
-                setPath(null);
-              }}
-            >
-              {s === 'session' ? 'Session' : 'Workspace'}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="changes-body">
-        {changes && <p className="scope-label">{changes.label}</p>}
-        {loading && <p className="muted">Loading…</p>}
+      <ul className="files">
         {error && (
-          <p className="error" role="alert">
+          <li className="error pad" role="alert">
             {error}
-          </p>
+          </li>
         )}
-        {changes && !changes.supported && <p className="muted">{changes.reason || 'Not available for this session.'}</p>}
-        {changes?.supported && changes.files.length === 0 && !loading && <p className="muted">No changes.</p>}
-        {changes?.supported && changes.files.length > 0 && (
-          <ul className="file-list">
-            {changes.files.map((f) => (
-              <li key={f.path}>
-                <button
-                  type="button"
-                  className="file-row"
-                  aria-pressed={f.path === path}
-                  onClick={() => setPath(f.path)}
-                  title={f.path}
-                >
-                  <span className="file-status">{f.status}</span>
-                  <span className="file-path">{f.path}</span>
-                  <span className="file-counts">
-                    <span className="add">+{f.additions}</span> <span className="del">-{f.deletions}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {path && <FileView key={`${scope}:${path}:${tick}`} sessionId={session.id} scope={scope} path={path} />}
+        {!data && !error && <li className="muted small pad">Loading…</li>}
+        {data && !data.supported && <li className="muted small pad">{data.reason || 'Not available for this task.'}</li>}
+        {data?.supported && files.length === 0 && <li className="muted small pad">No changes.</li>}
+        {files.map((f) => (
+          <li key={f.path}>
+            <button type="button" className="file" aria-pressed={f.path === shownPath} onClick={() => setPath(f.path)} title={f.path}>
+              <span className="file-status mono">{f.status}</span>
+              <span className="file-path mono">{f.path}</span>
+              <span className="file-counts mono">
+                <span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="sheet-diff">
+        {shownPath && <FileView key={`${scope}:${shownPath}:${tick}`} sessionId={session.id} scope={scope} path={shownPath} />}
       </div>
-    </>
+    </section>
   );
 }
 
@@ -120,13 +143,13 @@ function FileView({ sessionId, scope, path }: { sessionId: string; scope: Scope;
       </p>
     );
   }
-  if (!file) return <p className="muted">Loading diff…</p>;
+  if (!file) return <p className="muted small">Loading diff…</p>;
   if (patch instanceof Error) return <p className="error">Could not parse diff: {patch.message}</p>;
-  if (!patch || patch.hunks.length === 0) return <p className="muted">No textual changes in {file.path}.</p>;
+  if (!patch || patch.hunks.length === 0) return <p className="muted small">No textual changes in {file.path}.</p>;
 
   return (
     <table className="diff">
-      <caption>{file.path}</caption>
+      <caption className="mono">{file.path}</caption>
       <tbody>{patch.hunks.flatMap((h, hi) => renderHunk(h, hi))}</tbody>
     </table>
   );
@@ -162,7 +185,7 @@ function renderHunk(h: StructuredPatch['hunks'][number], hi: number) {
       <tr key={`${hi}-${li}`} className={cls}>
         <td className="num">{left}</td>
         <td className="num">{right}</td>
-        <td className="code">
+        <td className="code-cell">
           <span className="sign">{sign}</span>
           {text}
         </td>

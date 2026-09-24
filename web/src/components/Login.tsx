@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { api, ApiError, describeError } from '../api';
+import { api, describeError, isStatus } from '../api';
 
 export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [token, setToken] = useState('');
@@ -15,7 +15,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
       setToken('');
       onLoggedIn();
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 401 ? 'That token was not accepted.' : describeError(err));
+      setError(isStatus(err, 401) ? 'That token was not accepted.' : describeError(err));
     } finally {
       setBusy(false);
     }
@@ -23,14 +23,17 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
 
   return (
     <main className="login">
+      <span className="orb orb-peach" aria-hidden="true" />
       <form className="login-card form" onSubmit={submit}>
-        <h1>UAM</h1>
-        <p>
-          Enter the access token for this server. To see it, run <code>uam web</code> on the server; it prints the token whether or not the service is already running.
+        <h1 className="display login-brand">uam</h1>
+        <p className="muted">
+          Enter the access token for this server. To see it, run <code>uam web</code> on the server; it prints the token
+          whether or not the service is already running.
         </p>
-        <label>
-          Access token
+        <label className="field">
+          <span className="control-label">Access token</span>
           <input
+            className="input"
             type="password"
             autoComplete="off"
             autoCapitalize="off"
@@ -47,7 +50,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
           </p>
         )}
         <div className="actions">
-          <button type="submit" className="btn primary" disabled={busy || !token}>
+          <button type="submit" className="pill pill-primary" disabled={busy || !token}>
             Log in
           </button>
         </div>

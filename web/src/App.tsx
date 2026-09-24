@@ -1,36 +1,86 @@
-import { useEffect, useReducer, useState } from 'react';
-import { api, onUnauthorized, UPDATE_EVENTS, type Meta, type SessionSummary } from './api';
-import { initialState, reducer, type Connection } from './state';
-import { Changes } from './components/Changes';
-import { Conversation } from './components/Conversation';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { UPDATE_EVENTS, api, onUnauthorized, type Meta, type Project, type SessionSummary } from './api';
+import { initialState, reducer } from './state';
+import { AppContext, TaskTitle } from './components/common';
+import { Deck } from './components/Deck';
 import { Login } from './components/Login';
-import { Sidebar } from './components/Sidebar';
+import { NewTask } from './components/NewTask';
+import { AddProjectDialog, RemoveProjectDialog, RenameProjectDialog } from './components/Projects';
+import { CONNECTION_TEXT, Rail, tasksOf, type WorkspaceActions } from './components/Rail';
+import { Task } from './components/Task';
 
 type Auth = 'checking' | 'in' | 'out';
-type Drawer = 'sidebar' | 'changes' | null;
+type Theme = 'light' | 'dark';
+type ProjectDialog = { kind: 'add' } | { kind: 'rename'; project: Project } | { kind: 'remove'; project: Project } | null;
 
-const NARROW = '(max-width: 900px)';
-const CHANGES_PREF = 'uam.changesOpen';
-
-const CONNECTION_TEXT: Record<Connection, string> = {
-  connecting: 'Connecting…',
-  connected: 'Connected',
-  reconnecting: 'Connection lost — reconnecting. Closing this page does not stop work on the server',
-  offline: 'Offline — retrying. Closing this page does not stop work on the server',
-};
+const NARROW = '(max-width: 720px)';
+const THEME_KEY = 'uam.theme';
+const HIDDEN_KEY = 'uam.hiddenProjects';
+const VIEWED_KEY = 'uam.viewed';
+const HASH_PREFIX = '#task=';
 
 // Older servers omit `required`; treat absent as true.
 const loggedIn = (r: { authenticated: boolean; required?: boolean }) => r.authenticated || r.required === false;
 
+function readJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function useTheme(): [Theme, () => void] {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored = localStorage.getItem(THEME_KEY);
+    if (stored === 'light' || stored === 'dark') return stored;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+  // Follow the system until the user picks explicitly.
+  useEffect(() => {
+    if (localStorage.getItem(THEME_KEY)) return;
+    const m = window.matchMedia('(prefers-color-scheme: dark)');
+    const on = () => setTheme(m.matches ? 'dark' : 'light');
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
+  }, []);
+  const toggle = useCallback(() => {
+    setTheme((t) => {
+      const next = t === 'dark' ? 'light' : 'dark';
+      localStorage.setItem(THEME_KEY, next);
+      return next;
+    });
+  }, []);
+  return [theme, toggle];
+}
+
+function initialSelection(): string | null {
+  const h = window.location.hash;
+  return h.startsWith(HASH_PREFIX) ? decodeURIComponent(h.slice(HASH_PREFIX.length)) || null : null;
+}
+
 export default function App() {
   const [auth, setAuth] = useState<Auth>('checking');
   const [authRequired, setAuthRequired] = useState(true);
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, selectedId: initialSelection() }));
   const [meta, setMeta] = useState<Meta | null>(null);
   const [streamKey, setStreamKey] = useState(0);
   const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW).matches);
-  const [drawer, setDrawer] = useState<Drawer>(null);
-  const [changesOpen, setChangesOpen] = useState(() => localStorage.getItem(CHANGES_PREF) !== '0');
+  const [theme, toggleTheme] = useTheme();
+  const [newTaskIn, setNewTaskIn] = useState<string | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [dialog, setDialog] = useState<ProjectDialog>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set(readJSON<string[]>(HIDDEN_KEY, [])));
+  const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
+  const loadedAt = useRef(new Date().toISOString());
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const drawerButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     onUnauthorized(() => {
@@ -58,15 +108,47 @@ export default function App() {
     return () => m.removeEventListener('change', onChange);
   }, []);
 
-  // Esc closes an open drawer (dialogs handle their own Esc).
+  // Keep the selected task in the URL fragment so a reload lands on it.
   useEffect(() => {
-    if (!drawer) return;
+    const id = state.selectedId;
+    const next = id ? `${HASH_PREFIX}${encodeURIComponent(id)}` : '';
+    if (window.location.hash !== next) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next}`);
+  }, [state.selectedId]);
+
+  // Esc closes the sheet, then the drawer; native dialogs handle their own Esc.
+  useEffect(() => {
+    if (!sheetOpen && !drawerOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !document.querySelector('dialog[open]')) setDrawer(null);
+      if (e.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+      if (sheetOpen) {
+        setSheetOpen(false);
+        document.getElementById('changes-link')?.focus();
+      } else {
+        setDrawerOpen(false);
+        drawerButton.current?.focus();
+      }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [drawer]);
+  }, [sheetOpen, drawerOpen]);
+
+  // Move focus into the drawer when it opens.
+  useEffect(() => {
+    if (drawerOpen) document.querySelector<HTMLElement>('.rail-drawer button')?.focus();
+  }, [drawerOpen]);
+
+  // The selected task counts as viewed as long as it is on screen.
+  const detailUpdated = state.detail?.updated_at;
+  useEffect(() => {
+    const id = state.selectedId;
+    if (!id || !detailUpdated) return;
+    setViewed((v) => {
+      if (v[id] === detailUpdated) return v;
+      const next = { ...v, [id]: detailUpdated };
+      localStorage.setItem(VIEWED_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, [state.selectedId, detailUpdated]);
 
   // One EventSource at a time, scoped to the selected session.
   useEffect(() => {
@@ -92,9 +174,7 @@ export default function App() {
     };
     es.addEventListener('snapshot', (e) => dispatch({ type: 'snapshot', data: JSON.parse((e as MessageEvent).data) }));
     for (const name of UPDATE_EVENTS) {
-      es.addEventListener(name, (e) =>
-        dispatch({ type: 'update', data: { name, ...JSON.parse((e as MessageEvent).data) } }),
-      );
+      es.addEventListener(name, (e) => dispatch({ type: 'update', data: { name, ...JSON.parse((e as MessageEvent).data) } }));
     }
     return () => {
       es.close();
@@ -102,30 +182,76 @@ export default function App() {
     };
   }, [auth, state.selectedId, streamKey]);
 
+  const hasNews = useCallback(
+    (s: SessionSummary) => {
+      if (s.id === state.selectedId) return false;
+      const seen = viewed[s.id] ?? loadedAt.current;
+      return s.updated_at > seen;
+    },
+    [viewed, state.selectedId],
+  );
+
+  const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews }), [meta, narrow, hasNews]);
+
+  const actions: WorkspaceActions = useMemo(
+    () => ({
+      onSelect: (id) => {
+        dispatch({ type: 'select', id });
+        setNewTaskIn(null);
+        setSheetOpen(false);
+        setDrawerOpen(false);
+        setHighlightId(null);
+      },
+      onHome: () => {
+        dispatch({ type: 'select', id: null });
+        setNewTaskIn(null);
+        setSheetOpen(false);
+        setDrawerOpen(false);
+      },
+      onNewTask: (projectId) => {
+        dispatch({ type: 'select', id: null });
+        setNewTaskIn(projectId);
+        setSheetOpen(false);
+        setDrawerOpen(false);
+      },
+      onAddProject: () => setDialog({ kind: 'add' }),
+      onRenameProject: (project) => setDialog({ kind: 'rename', project }),
+      onRemoveProject: (project) => setDialog({ kind: 'remove', project }),
+      collapsed: hidden,
+      onToggleProject: (id) =>
+        setHidden((h) => {
+          const next = new Set(h);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          localStorage.setItem(HIDDEN_KEY, JSON.stringify([...next]));
+          return next;
+        }),
+    }),
+    [hidden],
+  );
+
   if (auth === 'checking') return <main className="login muted">Loading…</main>;
   if (auth === 'out') return <Login onLoggedIn={() => setAuth('in')} />;
 
-  const showSidebar = narrow ? drawer === 'sidebar' : true;
-  const showChanges = narrow ? drawer === 'changes' : changesOpen;
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
-
-  function toggleChanges() {
-    if (narrow) {
-      setDrawer(drawer === 'changes' ? null : 'changes');
-      return;
-    }
-    const next = !changesOpen;
-    setChangesOpen(next);
-    localStorage.setItem(CHANGES_PREF, next ? '1' : '0');
-  }
-
-  function select(id: string) {
-    dispatch({ type: 'select', id });
-    setDrawer(null);
-  }
+  const project = selected ? state.projects.find((p) => p.id === selected.project_id) : undefined;
+  const newTaskProject = newTaskIn ? state.projects.find((p) => p.id === newTaskIn) : undefined;
+  const showRail = narrow ? drawerOpen : true;
 
   function upsertSession(s: SessionSummary) {
     dispatch({ type: 'upsert_session', session: s });
+  }
+
+  function showProject(id: string) {
+    setHidden((h) => {
+      if (!h.has(id)) return h;
+      const next = new Set(h);
+      next.delete(id);
+      localStorage.setItem(HIDDEN_KEY, JSON.stringify([...next]));
+      return next;
+    });
+    actions.onHome();
+    setHighlightId(id);
   }
 
   async function logout() {
@@ -136,90 +262,142 @@ export default function App() {
     }
   }
 
+  let page: React.ReactNode;
+  if (newTaskProject) {
+    page = (
+      <NewTask
+        project={newTaskProject}
+        onCreated={(s) => {
+          upsertSession(s);
+          actions.onSelect(s.id);
+        }}
+        onCancel={actions.onHome}
+      />
+    );
+  } else if (state.detail && selected) {
+    page = (
+      <Task
+        session={state.detail}
+        project={project}
+        agents={state.agents}
+        snapshotSeq={state.snapshotSeq}
+        sheetOpen={sheetOpen}
+        onSheet={(open) => {
+          setSheetOpen(open);
+          if (!open) document.getElementById('changes-link')?.focus();
+        }}
+        onSessionUpdate={upsertSession}
+        onDeleted={(id) => dispatch({ type: 'remove_session', id })}
+        onInteractionUpdate={(sessionId, interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction })}
+        scroller={scroller}
+      />
+    );
+  } else if (state.selectedId && state.snapshotSeq >= 0 && !selected) {
+    page = (
+      <div className="column empty">
+        <h1 className="display title">This task no longer exists.</h1>
+        <button type="button" className="pill pill-outline" onClick={actions.onHome}>
+          Back to projects
+        </button>
+      </div>
+    );
+  } else if (state.selectedId) {
+    page = (
+      <div className="column empty">
+        <p className="muted">Loading conversation…</p>
+      </div>
+    );
+  } else {
+    page = <Deck projects={state.projects} sessions={state.sessions} actions={actions} highlightId={highlightId} />;
+  }
+
   return (
-    <div className={narrow ? 'app narrow' : 'app'}>
-      <header className="topbar">
-        {narrow && (
-          <button
-            type="button"
-            className="btn small"
-            aria-expanded={drawer === 'sidebar'}
-            onClick={() => setDrawer(drawer === 'sidebar' ? null : 'sidebar')}
-          >
-            Sessions
-          </button>
-        )}
-        <h1>UAM</h1>
-        <span className={`conn conn-${state.connection}`} role="status">
-          <span className="dot" aria-hidden="true" />
-          {CONNECTION_TEXT[state.connection]}
-        </span>
-        <span className="spacer" />
-        {selected && (
-          <button type="button" className="btn small" aria-pressed={showChanges} onClick={toggleChanges}>
-            Changes
-          </button>
-        )}
-        {authRequired && (
-          <button type="button" className="btn small" onClick={() => void logout()}>
-            Log out
-          </button>
-        )}
-      </header>
-
-      {showSidebar && (
-        <aside className="sidebar" aria-label="Sessions">
-          <Sidebar
-            sessions={state.sessions}
-            selectedId={state.selectedId}
-            meta={meta}
-            onSelect={select}
-            onCreated={(s) => {
-              upsertSession(s);
-              select(s.id);
-            }}
-          />
-        </aside>
-      )}
-
-      <main className="main">
-        {state.detail ? (
-          <Conversation
-            session={state.detail}
-            meta={meta}
-            onSessionUpdate={upsertSession}
-            onInteractionUpdate={(sessionId, interaction) =>
-              dispatch({ type: 'upsert_interaction', sessionId, interaction })
-            }
-          />
-        ) : (
-          <div className="empty">
-            {!state.selectedId ? (
-              <>
-                <p>Select a session or create a new one.</p>
-                <p className="muted">Work continues on the server when you close this page.</p>
-              </>
-            ) : state.snapshotSeq >= 0 && !selected ? (
-              <>
-                <p>This session no longer exists.</p>
-                <button type="button" className="btn" onClick={() => dispatch({ type: 'select', id: null })}>
-                  Back to sessions
-                </button>
-              </>
-            ) : (
-              <p className="muted">Loading conversation…</p>
-            )}
+    <AppContext.Provider value={ctx}>
+      <div className={narrow ? 'shell narrow' : 'shell'}>
+        {showRail && (
+          <div className={narrow ? 'rail-drawer' : 'rail-col'}>
+            <Rail
+              projects={state.projects}
+              sessions={state.sessions}
+              selectedId={state.selectedId}
+              actions={actions}
+              theme={theme}
+              onToggleTheme={toggleTheme}
+              authRequired={authRequired}
+              onLogout={() => void logout()}
+              connection={state.connection}
+            />
           </div>
         )}
-      </main>
+        <main className="main">
+          {narrow && (
+            <div className="topbar">
+              <button
+                ref={drawerButton}
+                type="button"
+                className="pill pill-outline pill-sm"
+                aria-expanded={drawerOpen}
+                onClick={() => setDrawerOpen((o) => !o)}
+              >
+                Projects
+              </button>
+              <span className="topbar-title">
+                {selected ? <TaskTitle session={selected} /> : newTaskProject ? 'New task' : 'uam'}
+              </span>
+              {state.connection !== 'connected' && (
+                <span className={`conn conn-${state.connection}`} role="status" title={CONNECTION_TEXT[state.connection]}>
+                  <span className="mark-dot" aria-hidden="true" />
+                  <span className="sr-only">{CONNECTION_TEXT[state.connection]}</span>
+                </span>
+              )}
+            </div>
+          )}
+          <div className="page" ref={scroller}>
+            {page}
+          </div>
+        </main>
 
-      {showChanges && selected && (
-        <aside className="changes" aria-label="Changes">
-          <Changes key={selected.id} session={selected} />
-        </aside>
-      )}
+        {(sheetOpen || (narrow && drawerOpen)) && (
+          <button
+            type="button"
+            className="scrim"
+            aria-label="Close"
+            onClick={() => {
+              setSheetOpen(false);
+              setDrawerOpen(false);
+            }}
+          />
+        )}
 
-      {narrow && drawer && <button type="button" className="backdrop" aria-label="Close panel" onClick={() => setDrawer(null)} />}
-    </div>
+        {dialog?.kind === 'add' && (
+          <AddProjectDialog
+            onAdded={(p) => {
+              dispatch({ type: 'upsert_project', project: p });
+              showProject(p.id);
+            }}
+            onExisting={showProject}
+            onClose={() => setDialog(null)}
+          />
+        )}
+        {dialog?.kind === 'rename' && (
+          <RenameProjectDialog
+            project={dialog.project}
+            onRenamed={(p) => dispatch({ type: 'upsert_project', project: p })}
+            onClose={() => setDialog(null)}
+          />
+        )}
+        {dialog?.kind === 'remove' && (
+          <RemoveProjectDialog
+            project={dialog.project}
+            tasks={tasksOf(state.sessions, dialog.project.id)}
+            onRemoved={(id) => {
+              dispatch({ type: 'remove_project', id });
+              if (newTaskIn === id) setNewTaskIn(null);
+            }}
+            onClose={() => setDialog(null)}
+          />
+        )}
+      </div>
+    </AppContext.Provider>
   );
 }
