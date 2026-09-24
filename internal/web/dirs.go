@@ -82,7 +82,7 @@ func listDirs(p string, showHidden bool, limit int) (DirList, error) {
 		full := filepath.Join(p, name)
 		link := e.Type()&fs.ModeSymlink != 0
 		if link {
-			if info, err := os.Stat(full); err != nil || !info.IsDir() {
+			if info, err := os.Stat(full); err != nil || !info.IsDir() { // #nosec G703 -- browsing host folders is the endpoint's purpose; the caller passed the sign-in and origin checks.
 				continue
 			}
 		} else if !e.IsDir() {
@@ -166,7 +166,7 @@ func checkDir(field, p string) error {
 	if filepath.Clean(p) != p {
 		return newError(http.StatusBadRequest, "%s must be in clean form", field)
 	}
-	info, err := os.Stat(p)
+	info, err := os.Stat(p) // #nosec G703 -- browsing host folders is the endpoint's purpose; p is absolute and clean, and the caller passed the sign-in and origin checks.
 	if err != nil {
 		return dirError(field, err)
 	}
