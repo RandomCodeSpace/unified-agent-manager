@@ -67,6 +67,8 @@ type Config struct {
 	Profiles       map[string]Profile       `json:"profiles"`
 	Sessions       map[string]SessionRecord `json:"sessions"`
 	UI             UISettings               `json:"ui"`
+	// WebProjects holds the web interface's Projects, keyed by Project ID.
+	WebProjects map[string]WebProject `json:"web_projects,omitempty"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -94,6 +96,7 @@ type configAlias struct {
 	Profiles       map[string]Profile       `json:"profiles"`
 	Sessions       map[string]SessionRecord `json:"sessions"`
 	UI             UISettings               `json:"ui"`
+	WebProjects    map[string]WebProject    `json:"web_projects,omitempty"`
 }
 
 // knownConfigFields lists modeled keys and runtime-only keys that must never
@@ -105,6 +108,7 @@ var knownConfigFields = map[string]struct{}{
 	"profiles":                    {},
 	"sessions":                    {},
 	"ui":                          {},
+	"web_projects":                {},
 	"client_id":                   {},
 	"client_ids":                  {},
 	"client_role":                 {},
@@ -137,6 +141,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		Profiles:       c.Profiles,
 		Sessions:       c.Sessions,
 		UI:             c.UI,
+		WebProjects:    c.WebProjects,
 	})
 	if err != nil {
 		return nil, err
@@ -155,6 +160,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.Profiles = alias.Profiles
 	c.Sessions = alias.Sessions
 	c.UI = alias.UI
+	c.WebProjects = alias.WebProjects
 	unknown, err := decodeUnknownJSON(data, knownConfigFields)
 	if err != nil {
 		return err
@@ -327,7 +333,26 @@ type WebState struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 	// Detail is a sanitized, short explanation of the state (usually an error).
 	Detail string `json:"detail,omitempty"`
+	// ProjectID is the WebProject the session (a Task) belongs to.
+	ProjectID string `json:"project_id,omitempty"`
+	// Model is the selected model ID; empty means the provider default.
+	Model string `json:"model,omitempty"`
+	// Title is the provider-generated conversation title, sanitized and
+	// bounded.
+	Title string `json:"title,omitempty"`
 }
+
+// WebProject is a directory the web interface groups Tasks under. There is
+// at most one per Dir.
+type WebProject struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Dir       string    `json:"dir"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// maxWebModelBytes bounds a persisted model ID; longer values are cleared.
+const maxWebModelBytes = 256
 
 type sessionRecordAlias SessionRecord
 
@@ -548,6 +573,7 @@ func (s *Store) loadNoLock() (Config, error) {
 	// Untrusted on-disk records are validated and coerced on every load path,
 	// including the read-only newer-schema one below.
 	dropInvalidRecords(&cfg)
+	dropInvalidProjects(&cfg)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
 	// erroring or clobbering it on the next save (F33).
@@ -628,6 +654,42 @@ func dropInvalidRecords(cfg *Config) {
 			log.Warn("clearing invalid pr url on session record", "key", key)
 			rec.PR = nil
 			cfg.Sessions[key] = rec
+		}
+		// The web references are lookups, never argv; a bad one costs the
+		// record that reference (the web service reassigns a Project), not
+		// the record itself.
+		if web := rec.Web; web != nil && (isUnsafeArgv(web.ProjectID) || hasControlChar(web.Model) || len(web.Model) > maxWebModelBytes) {
+			log.Warn("clearing invalid web project or model on session record", "key", key)
+			clean := *web
+			if isUnsafeArgv(clean.ProjectID) {
+				clean.ProjectID = ""
+			}
+			if hasControlChar(clean.Model) || len(clean.Model) > maxWebModelBytes {
+				clean.Model = ""
+			}
+			rec.Web = &clean
+			cfg.Sessions[key] = rec
+		}
+	}
+}
+
+// dropInvalidProjects removes web projects whose ID or directory fails the
+// same checks as session records, so a bad entry cannot reach a provider as a
+// working directory.
+func dropInvalidProjects(cfg *Config) {
+	for key, p := range cfg.WebProjects {
+		reason := ""
+		switch {
+		case p.ID == "" || p.ID != key || isUnsafeArgv(p.ID):
+			reason = "invalid id"
+		case p.Dir == "" || !filepath.IsAbs(p.Dir):
+			reason = "non-absolute dir"
+		case hasControlChar(p.Dir):
+			reason = "control char in dir"
+		}
+		if reason != "" {
+			log.Warn("dropping invalid web project", "key", key, "reason", reason)
+			delete(cfg.WebProjects, key)
 		}
 	}
 }

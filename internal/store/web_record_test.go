@@ -63,6 +63,117 @@ func TestWebRecordRoundTripKeepsSurfaceStateAndUnknownFields(t *testing.T) {
 	}
 }
 
+func TestOlderWebConfigRoundTripsWithoutProjectFields(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"sessions":{"copilot:0f0e0d0c":{
+		"id":"0f0e0d0c-1111-4222-8333-444455556666","agent":"copilot","name":"web task","mode":"safe","workdir":"/tmp/repo",
+		"tmux_session":"","created_at":"2026-09-01T00:00:00Z","last_seen_at":"2026-09-01T00:00:00Z",
+		"pinned":false,"group":"","sort_index":0,"status":"active","provider_session_id":"conv_1",
+		"surface":"web","web":{"turn":"completed","updated_at":"2026-09-01T00:00:00Z"}}}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebProjects != nil {
+		t.Fatalf("projects appeared from nowhere: %+v", cfg.WebProjects)
+	}
+	if web := cfg.Sessions["copilot:0f0e0d0c"].Web; web == nil || web.ProjectID != "" || web.Model != "" || web.Title != "" || web.Turn != "completed" {
+		t.Fatalf("web state = %+v", web)
+	}
+	if err := s.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"web_projects"`, `"project_id"`, `"model"`, `"title"`} {
+		if strings.Contains(string(data), key) {
+			t.Fatalf("older config gained %s on save: %s", key, data)
+		}
+	}
+}
+
+func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	project := WebProject{ID: "7d0c5a4e-1111-4222-8333-444455556666", Name: "repo", Dir: "/tmp/repo", CreatedAt: now}
+	if err := s.Update(func(cfg *Config) error {
+		cfg.WebProjects = map[string]WebProject{project.ID: project}
+		cfg.Sessions["copilot:0f0e0d0c"] = SessionRecord{
+			ID: "0f0e0d0c-1111-4222-8333-444455556666", Agent: "copilot", Mode: ModeSafe, Workdir: "/tmp/repo",
+			Status: StatusActive, Surface: SurfaceWeb, ProviderSessionID: "conv_1",
+			Web: &WebState{Turn: "idle", UpdatedAt: now, ProjectID: project.ID, Model: "gpt-5-mini", Title: "Fix the build"},
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.WebProjects[project.ID]; got != project {
+		t.Fatalf("project = %+v, want %+v", got, project)
+	}
+	web := cfg.Sessions["copilot:0f0e0d0c"].Web
+	if web == nil || web.ProjectID != project.ID || web.Model != "gpt-5-mini" || web.Title != "Fix the build" {
+		t.Fatalf("web state = %+v", web)
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := top["web_projects"]; !ok || len(cfg.unknown) != 0 {
+		t.Fatalf("web_projects not a modeled top-level field: unknown=%v file=%s", cfg.unknown, data)
+	}
+}
+
+func TestInvalidWebProjectsAndReferencesAreDroppedOnLoad(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},
+		"web_projects":{
+			"good":{"id":"good","name":"ok","dir":"/tmp/ok","created_at":"2026-09-01T00:00:00Z"},
+			"rel":{"id":"rel","name":"x","dir":"relative","created_at":"2026-09-01T00:00:00Z"},
+			"mismatch":{"id":"other","name":"x","dir":"/tmp/x","created_at":"2026-09-01T00:00:00Z"},
+			"bad;id":{"id":"bad;id","name":"x","dir":"/tmp/x","created_at":"2026-09-01T00:00:00Z"}},
+		"sessions":{"copilot:0f0e0d0c":{
+		"id":"0f0e0d0c-1111-4222-8333-444455556666","agent":"copilot","name":"","mode":"safe","workdir":"/tmp/ok",
+		"tmux_session":"","created_at":"2026-09-01T00:00:00Z","last_seen_at":"2026-09-01T00:00:00Z",
+		"pinned":false,"group":"","sort_index":0,"status":"active","provider_session_id":"conv_1",
+		"surface":"web","web":{"turn":"idle","updated_at":"2026-09-01T00:00:00Z","project_id":"x;rm","model":"bad\u001bmodel","title":"t"}}}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.WebProjects) != 1 || cfg.WebProjects["good"].Dir != "/tmp/ok" {
+		t.Fatalf("projects after load = %+v", cfg.WebProjects)
+	}
+	rec, ok := cfg.Sessions["copilot:0f0e0d0c"]
+	if !ok || rec.Web == nil || rec.Web.ProjectID != "" || rec.Web.Model != "" || rec.Web.Title != "t" {
+		t.Fatalf("record after load = %+v web %+v", rec, rec.Web)
+	}
+}
+
 func TestTerminalRecordOmitsWebFields(t *testing.T) {
 	data, err := json.Marshal(SessionRecord{ID: "abc", Agent: "claude"})
 	if err != nil {
