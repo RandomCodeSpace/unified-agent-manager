@@ -2241,3 +2241,5 @@ dialog::backdrop {
 
 .context-usage meter::-webkit-meter-optimum-value { background: var(--accent); }
 .context-usage meter::-moz-meter-bar { background: var(--accent); }
+
+.task-context { flex: none; margin: 0; padding: 4px 16px; background: var(--surface); border-bottom: 1px solid var(--hairline); }

@@ -84,10 +84,6 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
     </div>
     {live && <p className="caption settings-note">Model, effort and context size can change between turns.</p>}
     {routed && <p className="caption mono">Latest turn: {routed}</p>}
-    {session.context && <div className="context-usage">
-      <label htmlFor="context-meter" className="caption num">Context: {session.context.used.toLocaleString()} / {session.context.limit.toLocaleString()} tokens</label>
-      <meter id="context-meter" min={0} max={session.context.limit || 1} value={session.context.used} aria-label="Context used" />
-    </div>}
     <div className="composer-bar">
       <label className="mode-control">Mode
         <select id="composer-mode" className="input" value={session.mode ?? 'safe'} disabled={!!busy || locked}

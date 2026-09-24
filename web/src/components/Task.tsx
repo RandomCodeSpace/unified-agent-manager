@@ -215,6 +215,21 @@ export function Task({
             {stage === 'active' && stageReason && <p className="caption menu-help">{stageReason}</p>}
           </Menu>
         </header>
+        {session.context && (
+          <div className="context-usage task-context">
+            <label htmlFor="context-meter" className="caption num">
+              Context:{' '}
+              <span aria-hidden="true">
+                {session.context.used.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}
+                {' / '}
+                {session.context.limit.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })} tokens
+              </span>
+              <span className="sr-only">{session.context.used.toLocaleString()} of {session.context.limit.toLocaleString()} tokens used</span>
+            </label>
+            <meter id="context-meter" min={0} max={session.context.limit || 1} value={session.context.used}
+              aria-valuetext={`${session.context.used.toLocaleString()} of ${session.context.limit.toLocaleString()} tokens used`} />
+          </div>
+        )}
 
         <div className="pane-body" ref={scroller} onScroll={onScroll}>
           <div className="column" role="log">
