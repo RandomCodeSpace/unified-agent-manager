@@ -1,11 +1,12 @@
+import { FolderOpen } from 'lucide-react';
 import { useRef, useState, type FormEvent } from 'react';
 import { api, describeError, isStatus, resolveTaskDefaults, type Project, type SessionSummary, type TaskDefaults } from '../api';
+import { cn } from '../lib/cn';
 import { Note, useApp } from './common';
-import { Field, TaskDefaultsFields } from './TaskDefaults';
+import { FolderPicker } from './FolderPicker';
+import { Field, TaskDefaultsFields, inputClass } from './TaskDefaults';
 import { Button } from './ui/button';
 import { AlertDialog, Dialog } from './ui/dialog';
-
-const inputClass = 'h-9 w-full rounded-sm border border-hairline-strong bg-raised px-2.5 text-ui text-ink outline-hidden transition-colors placeholder:text-muted focus:border-accent disabled:opacity-45';
 
 /** Add a project by directory. A 409 means the directory already has one: that project is selected instead. */
 /** Shared by the three dialogs: `open` drives the transition, `onClosed` fires after it, then the owner unmounts. */
@@ -19,7 +20,9 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
   const { meta } = useApp();
   const recent = meta?.recent_workdirs ?? [];
   const first = useRef<HTMLInputElement>(null);
+  const browse = useRef<HTMLButtonElement>(null);
   const [dir, setDir] = useState('');
+  const [browsing, setBrowsing] = useState(false);
   const [name, setName] = useState('');
   // Defaults start from what New task would use today; the dialog mounts fresh each time it opens.
   const [defaults, setDefaults] = useState<TaskDefaults | null>(() => resolveTaskDefaults(meta));
@@ -47,27 +50,57 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()} onClosed={onClosed} initialFocus={first} title="Add a project" description="A directory on this host. Tasks run inside it.">
+    <Dialog
+      open={open}
+      onOpenChange={(o) => !o && onClose()}
+      onClosed={onClosed}
+      initialFocus={first}
+      title="Add a project"
+      description="A directory on this host. Tasks run inside it."
+      // The dialog widens while the folder picker is open (DESIGN.md: 560px) and settles back once a folder is chosen.
+      className={cn('transition-[opacity,transform,max-width]', browsing && 'max-w-sheet-wide')}
+    >
       <form id="add-project" className="flex flex-col gap-4" onSubmit={submit}>
         <Field id="add-dir" label="Directory on the host">
-          <input
-            id="add-dir"
-            className={`${inputClass} font-mono text-code-sm`}
-            type="text"
-            list="recent-workdirs"
-            required
-            ref={first}
-            spellCheck={false}
-            placeholder="/path/to/project"
-            value={dir}
-            onChange={(e) => setDir(e.target.value)}
-          />
+          <div className="flex gap-2">
+            <input
+              id="add-dir"
+              className={`${inputClass} font-mono text-code-sm`}
+              type="text"
+              list="recent-workdirs"
+              required
+              ref={first}
+              spellCheck={false}
+              placeholder="/path/to/project"
+              value={dir}
+              onChange={(e) => setDir(e.target.value)}
+            />
+            <Button ref={browse} variant="secondary" size="lg" aria-expanded={browsing} aria-controls={browsing ? 'add-dir-picker' : undefined} onClick={() => setBrowsing(!browsing)}>
+              <FolderOpen />
+              Browse
+            </Button>
+          </div>
           <datalist id="recent-workdirs">
             {recent.map((w) => (
               <option key={w} value={w} />
             ))}
           </datalist>
         </Field>
+        {browsing && (
+          <FolderPicker
+            id="add-dir-picker"
+            start={dir}
+            onUse={(p) => {
+              setDir(p);
+              setBrowsing(false);
+              first.current?.focus();
+            }}
+            onClose={() => {
+              setBrowsing(false);
+              browse.current?.focus();
+            }}
+          />
+        )}
         <Field id="add-name" label="Name">
           <input id="add-name" className={inputClass} type="text" placeholder="Defaults to the folder name" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>

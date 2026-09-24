@@ -66,6 +66,27 @@ export interface FileList {
   reason: string;
 }
 
+/** One folder in a `GET /api/fs/dirs` listing. `name` is sanitised for display; `path` is exact and is what navigation sends back. */
+export interface DirEntry {
+  name: string;
+  path: string;
+  /** Holds `.git` (a directory or, in a linked worktree, a file). */
+  git: boolean;
+  /** The name starts with `.`; the server lists these and the picker filters them. */
+  hidden: boolean;
+  /** A symbolic link to a directory. */
+  link: boolean;
+}
+
+export interface DirList {
+  path: string;
+  /** Absent at `/`. */
+  parent?: string;
+  entries: DirEntry[];
+  /** More than 1,000 folders; only the first 1,000 are listed. */
+  truncated: boolean;
+}
+
 /** An upload of this Task. Without `id` there is no stored copy (a provider record only). */
 export interface Attachment {
   id?: string;
@@ -405,6 +426,9 @@ export const api = {
   createProject: (body: { dir: string; name?: string; defaults?: TaskDefaults }) => call<Project>('POST', '/api/projects', body),
   updateProject: (id: string, body: { name?: string; defaults?: TaskDefaults }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
   deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
+  /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
+  listDirs: (path?: string, hidden = false) => call<DirList>('GET', `/api/fs/dirs${path ? `?path=${enc(path)}${hidden ? '&hidden=1' : ''}` : hidden ? '?hidden=1' : ''}`),
+  makeDir: (parent: string, name: string) => call<{ path: string }>('POST', '/api/fs/dirs', { parent, name }),
 
   createSession: (body: {
     project_id: string;

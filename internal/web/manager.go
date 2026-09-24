@@ -2900,16 +2900,8 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 // canonicalWorkdir validates a requested project directory and returns its
 // canonical path.
 func canonicalWorkdir(p string) (string, error) {
-	if p == "" {
-		return "", newError(http.StatusBadRequest, "dir is required")
-	}
-	if !filepath.IsAbs(p) {
-		return "", newError(http.StatusBadRequest, "dir must be an absolute path")
-	}
-	for _, r := range p {
-		if unicode.IsControl(r) {
-			return "", newError(http.StatusBadRequest, "dir contains control characters")
-		}
+	if err := checkPathText("dir", p); err != nil {
+		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(p)
 	if err != nil {

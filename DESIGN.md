@@ -386,7 +386,23 @@ components:
     rounded: "{rounded.md}"
     padding: "20px"
     maxWidth: 440px
+    maxWidthBrowsing: 560px
     shadow: "0 16px 48px rgba(28, 27, 24, 0.18), 0 2px 6px rgba(28, 27, 24, 0.08)"
+  folder-picker-well:
+    backgroundColor: "{colors.canvas}"
+    rounded: "{rounded.sm}"
+    height: "min(320px, 40dvh)"
+    heightPhone: 55dvh
+  folder-picker-row:
+    textColor: "{colors.body}"
+    typography: "{typography.code}"
+    rounded: "{rounded.sm}"
+    padding: "0 4px 0 8px"
+    height: 32px
+  folder-picker-row-selected:
+    backgroundColor: "{colors.raised}"
+    textColor: "{colors.ink}"
+    shadow: "0 1px 2px rgba(28, 27, 24, 0.05)"
 ---
 
 ## Overview
@@ -572,7 +588,17 @@ User turns are bubbles on the right (`bubble-user`, `lg` radius, 78%/560px max, 
 - Phone: Effort, Context size and Mode drop their value text and keep the glyph (the tooltip, accessible name and menu still carry the value), so the toolbar stays one row; every control is 44px; the textarea is 16px.
 
 ### Menus, context menus, tooltips, selects, dialogs
-All Base UI. Menus: `raised`, `hairline-strong`, `md`, 4px padding, `float` shadow, 30px items (44 on coarse pointers), highlighted item one surface step, destructive item in `error` with `error-wash` highlight, disabled items dimmed with their reason in `caption` beneath. They scale from 0.97 and fade over 100ms from the transform origin. Context menus open at the pointer (long-press on touch) and hold exactly the items of the matching "…" button. An item's action runs once the menu has finished closing, and an action that takes focus itself (inline rename) tells the menu to leave focus alone (`takesFocus`), so the menu's focus return never undoes it. Tooltips are `ink` on `on-primary`, 400ms delay, no delay while another is open; they are hints for sighted users and never the only name of a control. Selects (project dialogs) open below their trigger with a check on the chosen row. Dialogs: `raised`, `md`, 20px padding, 440px max, `modal` shadow on the backdrop; a close button in the title row; on phone they become a bottom sheet with full-width buttons. Confirmations (`AlertDialog`) focus **Cancel** first; Archive and Delete always confirm.
+All Base UI. Menus: `raised`, `hairline-strong`, `md`, 4px padding, `float` shadow, 30px items (44 on coarse pointers), highlighted item one surface step, destructive item in `error` with `error-wash` highlight, disabled items dimmed with their reason in `caption` beneath. They scale from 0.97 and fade over 100ms from the transform origin. Context menus open at the pointer (long-press on touch) and hold exactly the items of the matching "…" button. An item's action runs once the menu has finished closing, and an action that takes focus itself (inline rename) tells the menu to leave focus alone (`takesFocus`), so the menu's focus return never undoes it. Tooltips are `ink` on `on-primary`, 400ms delay, no delay while another is open; they are hints for sighted users and never the only name of a control. Selects (project dialogs) open below their trigger with a check on the chosen row. Dialogs: `raised`, `md`, 20px padding, 440px max (560px, `--spacing-sheet-wide`, while Add project browses folders), `modal` shadow on the backdrop; a close button in the title row; on phone they become a bottom sheet with full-width buttons. A dialog is never taller than the viewport less its 16px gutters: the title row stays and the body scrolls inside. Confirmations (`AlertDialog`) focus **Cancel** first; Archive and Delete always confirm.
+
+### Folder picker
+The Add project dialog's path field keeps a **Browse** button (`FolderOpen`, secondary, `aria-expanded`) beside it. Browse opens the picker inline under the field (`fade-in`), the dialog widens to 560px over `slow` and settles back once a folder is chosen. Nothing floats: the picker is a column of rows in the dialog (`components/FolderPicker.tsx`).
+
+- **Breadcrumb.** The folder being shown as `code-sm` mono segments, root first, each a 24px button (44 on coarse pointers; `muted`, the last `ink` with `aria-current="location"`), `/` separators in `faint`, wrapping when deep. At its right, flush with the well's edge, a **Show hidden** toggle (`EyeOff`/`Eye`, ghost, `aria-pressed`) that lists the folder again with dot-folders (`hidden=1`).
+- **The well.** A `canvas` well (`sm`), fixed at `--spacing-picker` (min(320px, 40dvh)) so moving between folders never changes the dialog's height; on phone `--spacing-picker-phone` (55dvh) fills the sheet. Inside, a `role="listbox"` whose only children are the `role="option"` rows: a `Folder` glyph, the name in `code` mono, and marks in `caption` `muted` for a git repository (`GitBranch` + "git") and a symbolic link (`Link` + "link"); hidden names are `muted`. Rows are 32px (44 on coarse pointers); hover is one step up (`surface`), the selected row is `raised` with `ink` and the 1px shadow, the same as a selected sidebar row. Each row is one button; the `ChevronRight` at its end is a 32px (44 on coarse pointers) hit region of that button, not a control of its own: a press there opens the folder. Status lines (loading, empty, error, "Showing the first 1,000") sit in the well above or below the listbox, never inside it.
+- **Selection is the target.** A click selects, a double-click or the chevron opens. **Use this folder** takes the selected path, else the folder being shown; the path it will take sits beside the button in `code-sm` mono, truncated at its start so the folder's own name stays visible. Navigating clears the selection.
+- **Footer.** **Up** (`FolderUp`, disabled at `/`) and **New folder** (`FolderPlus`) at left, **Use this folder** (secondary; the dialog's primary stays **Add project**) at right; full-width buttons on phone. New folder adds a row at the top of the well, with no rule beneath it: the standard text input in mono and Create/Cancel icon buttons. Enter creates the folder and, if the user is still in that folder, selects it (a dot-name turns Show hidden on); the new path is the target at once, before the list refreshes. Escape cancels; errors sit under the row in `caption` `error`.
+- **Keyboard.** Focus rests on the listbox (`aria-activedescendant`): Up and Down move, Home and End jump, Enter opens the selected folder, Backspace goes up, typing jumps to a name, Ctrl/Cmd+Enter anywhere in the picker means Use this folder. Escape cancels the New folder row first, then closes the picker; the dialog stays open.
+- **Quiet states.** Loading shows three pulsing placeholders only before the first listing; afterwards the previous rows dim while the next folder loads. An empty folder says "No folders here". A folder that cannot be listed keeps its breadcrumb and Up and says why in `caption` `muted`: "You don't have access to this folder" for 403, "This folder does not exist" for 404. A path in the field that is not a folder starts the picker at home instead.
 
 ### Buttons and inputs
 Primary is ink; secondary is `raised` with a `hairline-strong` edge; ghost has no fill; danger is `error` text with `error-wash` hover; icon buttons are 28px (32 in headers) `muted` glyphs. Disabled is 45% opacity. Inputs are 36px `raised` with a `hairline-strong` edge that turns `accent` on focus; labels above in `caption` `muted`.
@@ -618,7 +644,7 @@ No motion library; everything is CSS transitions and keyframes through Tailwind 
 ## Accessibility
 
 - **Focus:** `:focus-visible { outline: 2px solid focus; outline-offset: 2px }` everywhere; inside rows the ring is inset. Base UI traps focus in dialogs and the drawer and returns it to the opener.
-- **Keyboard:** the sidebar as described; Esc closes the topmost popup, then a panel, then the Changes sheet; Enter/Shift+Enter/Ctrl+Enter in the composer; arrow keys on the panel handle.
+- **Keyboard:** the sidebar as described; Esc closes the topmost popup, then a panel, then the Changes sheet; Enter/Shift+Enter/Ctrl+Enter in the composer; arrow keys on the panel handle; in the folder picker, arrows, Enter, Backspace, type-ahead and Ctrl/Cmd+Enter as described.
 - **Names:** every icon button has an `aria-label`; pickers put the value and any reason in theirs; the meter has `aria-valuetext`; the connection dot has `role="status"` text.
 - **Live regions:** the ledger summary is `aria-live="polite"`; the transcript is `role="log"`; errors are `role="alert"`.
 - **Targets:** ≥44×44 on coarse pointers (rows, buttons, menu items, pickers, choice rows).

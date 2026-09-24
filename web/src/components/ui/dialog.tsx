@@ -15,8 +15,9 @@ const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity duratio
 
 const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4 max-sm:items-end max-sm:p-0';
 
+// Capped at the viewport less its 16px gutters: the title row stays and the body scrolls (Dialog) when the content is taller.
 const popupClass =
-  'relative w-full max-w-sheet rounded-md bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,transform] duration-240 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
+  'relative flex max-h-[calc(100dvh-32px)] w-full max-w-sheet flex-col rounded-md bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,transform] duration-240 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
 
 export interface DialogProps {
   open: boolean;
@@ -40,7 +41,7 @@ export function Dialog({ open, onOpenChange, onClosed, initialFocus, title, desc
         <BaseDialog.Backdrop className={backdropClass} />
         <BaseDialog.Viewport className={viewportClass}>
           <BaseDialog.Popup data-popup="" className={cn(popupClass, className)} initialFocus={initialFocus}>
-            <div className="mb-4 flex items-start gap-3">
+            <div className="mb-4 flex shrink-0 items-start gap-3">
               <div className="min-w-0 flex-1">
                 <BaseDialog.Title className="text-display-sm text-ink">{title}</BaseDialog.Title>
                 {description && <BaseDialog.Description className="mt-1 text-ui text-muted">{description}</BaseDialog.Description>}
@@ -49,8 +50,9 @@ export function Dialog({ open, onOpenChange, onClosed, initialFocus, title, desc
                 <X />
               </BaseDialog.Close>
             </div>
-            {children}
-            {footer && <div className="mt-5 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">{footer}</div>}
+            {/* The scrolling body reaches the popup's edges (negative margins, padding back) so focus rings at the edges are not clipped. */}
+            <div className="-mx-5 -my-1 min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-1">{children}</div>
+            {footer && <div className="mt-5 flex shrink-0 flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">{footer}</div>}
           </BaseDialog.Popup>
         </BaseDialog.Viewport>
       </BaseDialog.Portal>
