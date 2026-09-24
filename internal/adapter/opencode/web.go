@@ -840,6 +840,10 @@ func (c *webConversation) Steer(context.Context, string) error {
 	return agentapi.ErrUnsupported
 }
 
+func (c *webConversation) CancelSubagent(context.Context, string) error {
+	return agentapi.ErrUnsupported
+}
+
 func (c *webConversation) Cancel(ctx context.Context) error {
 	client, err := c.client()
 	if err != nil {

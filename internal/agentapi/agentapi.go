@@ -155,6 +155,9 @@ type Conversation interface {
 	Steer(ctx context.Context, prompt string) error
 	// Cancel aborts the current turn. The conversation stays open.
 	Cancel(ctx context.Context) error
+	// CancelSubagent stops only the exact agent instance. Its final status
+	// arrives through EventSubagent; the parent and siblings stay running.
+	CancelSubagent(ctx context.Context, agentID string) error
 	// Respond answers a pending interaction. It returns ErrInteractionGone
 	// when the provider no longer considers the interaction pending.
 	Respond(ctx context.Context, interactionID string, answer Answer) error

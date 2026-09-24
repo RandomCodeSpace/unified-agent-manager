@@ -236,6 +236,10 @@ func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interacti
 // interaction never returns to pending.
 func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction) {
 	ix := clampInteraction(in, m.now())
+	if sa := s.subIdx[ix.AgentID]; ix.AgentID != "" && ix.State == agentapi.InteractionPending &&
+		(s.stoppedSubagents[ix.AgentID] || sa != nil && sa.Status == agentapi.SubagentCancelled) {
+		ix.State, ix.Resolution = agentapi.InteractionExpired, "the subagent was stopped"
+	}
 	cur := s.ixIdx[ix.ID]
 	if cur != nil {
 		if cur.State != agentapi.InteractionPending && ix.State == agentapi.InteractionPending {
@@ -298,6 +302,15 @@ func (m *Manager) expirePendingLocked(s *webSession, reason string) {
 	}
 }
 
+// expireSubagentLocked ends only this subagent's pending interactions.
+func (m *Manager) expireSubagentLocked(s *webSession, agentID string) {
+	for _, ix := range s.interactions {
+		if ix.AgentID == agentID && ix.State == agentapi.InteractionPending {
+			m.expireLocked(s, ix, "the subagent was stopped")
+		}
+	}
+}
+
 // upsertSubagentLocked records a subagent update. A terminal subagent never
 // changes again: providers may report the end more than once (Copilot sends
 // a second, cancelled completion when a client disconnects).
@@ -332,6 +345,9 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent) {
 		}
 	}
 	*cur = in
+	if cur.Status == agentapi.SubagentCancelled {
+		m.expireSubagentLocked(s, cur.ID)
+	}
 	s.trimSubagents()
 	m.publishSubagentLocked(s, cur)
 }

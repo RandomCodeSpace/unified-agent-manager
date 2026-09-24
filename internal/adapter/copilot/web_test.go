@@ -95,17 +95,27 @@ type fakeSession struct {
 	sendErr error
 	// beforeReturn runs with the assigned message ID before Send returns it,
 	// as CLI events can be handled before the send response.
-	beforeReturn  func(id string)
-	models        []string
-	modelErr      error
-	modelRequests []*rpc.ModelSwitchToRequest
-	modelResult   *rpc.ModelSwitchToResult
-	effortResets  int
-	effortErr     error
-	events        []copilot.SessionEvent
-	answers       map[string]rpc.PermissionDecision
-	notPending    map[string]bool
-	disconnected  bool
+	beforeReturn      func(id string)
+	models            []string
+	modelErr          error
+	modelRequests     []*rpc.ModelSwitchToRequest
+	modelResult       *rpc.ModelSwitchToResult
+	effortResets      int
+	effortErr         error
+	events            []copilot.SessionEvent
+	answers           map[string]rpc.PermissionDecision
+	notPending        map[string]bool
+	disconnected      bool
+	subCancels        []string
+	subCancelErr      error
+	subCancelRejected bool
+}
+
+func (s *fakeSession) CancelSubagent(_ context.Context, id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.subCancels = append(s.subCancels, id)
+	return !s.subCancelRejected, s.subCancelErr
 }
 
 func (s *fakeSession) ID() string                  { return s.id }
@@ -1220,5 +1230,110 @@ func TestExitTextDropsWrapperStderr(t *testing.T) {
 	err := errors.New("CLI process exited: signal: killed\nstderr: Error: no platform package found. Reinstall")
 	if got := exitText(err); got != "CLI process exited: signal: killed" {
 		t.Fatalf("exitText = %q", got)
+	}
+}
+
+func TestWebCancelSubagentTargetsExactAgent(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	h.fs.onEvent(agentEv("s1", "agent-1", &rpc.SubagentStartedData{ToolCallID: "parent-call-1"}))
+	h.fs.onEvent(agentEv("s2", "agent-2", &rpc.SubagentStartedData{ToolCallID: "parent-call-2"}))
+	if err := h.conv.CancelSubagent(ctx, "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.fs.subCancels) != 1 || h.fs.subCancels[0] != "agent-1" {
+		t.Fatalf("cancel calls = %v", h.fs.subCancels)
+	}
+	for _, e := range h.sink.all() {
+		if e.Kind == agentapi.EventTurn || e.Kind == agentapi.EventSubagent && e.Subagent.Status != agentapi.SubagentRunning {
+			t.Fatalf("cancel changed state before provider event: %+v", e)
+		}
+	}
+	h.fs.onEvent(agentEv("done", "agent-1", &rpc.SubagentCompletedData{ToolCallID: "parent-call-1", Cancelled: copilot.Bool(true)}))
+	if e := h.sink.last(); e.Subagent == nil || e.Subagent.Status != agentapi.SubagentCancelled {
+		t.Fatalf("cancel event = %+v", e)
+	}
+	if err := h.conv.CancelSubagent(ctx, "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.fs.subCancels) != 1 || len(h.fs.sent) != 0 {
+		t.Fatalf("repeat resent or prompted: cancels %v sends %v", h.fs.subCancels, h.fs.sent)
+	}
+}
+
+func TestWebCancelledSubagentPermissionsStayExpired(t *testing.T) {
+	for _, source := range []string{"response", "event", "history"} {
+		t.Run(source, func(t *testing.T) {
+			h := openWeb(t)
+			ctx := context.Background()
+			started := agentEv("start", "target", &rpc.SubagentStartedData{ToolCallID: "call-target"})
+			ended := agentEv("end", "target", &rpc.SubagentCompletedData{ToolCallID: "call-target", Cancelled: copilot.Bool(true)})
+			h.fs.onEvent(started)
+			h.fs.onEvent(agentEv("p1", "target", shellRequest("target-permission")))
+			h.fs.onEvent(agentEv("p2", "sibling", shellRequest("sibling-permission")))
+			h.fs.onEvent(ev("p3", shellRequest("parent-permission")))
+			switch source {
+			case "response":
+				if err := h.conv.CancelSubagent(ctx, "target"); err != nil {
+					t.Fatal(err)
+				}
+			case "event":
+				h.fs.onEvent(ended)
+			case "history":
+				h.fs.events = []copilot.SessionEvent{started, ended}
+				if _, err := h.conv.History(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if ix := h.sink.interaction("target-permission"); ix.State != agentapi.InteractionExpired {
+				t.Fatalf("target permission = %+v", ix)
+			}
+			// The provider can replay a stale pending permission after cancellation.
+			h.fs.onEvent(agentEv("late", "target", shellRequest("target-permission")))
+			h.fs.onEvent(agentEv("new-late", "target", shellRequest("new-target-permission")))
+			for _, id := range []string{"target-permission", "new-target-permission"} {
+				if err := h.conv.Respond(ctx, id, agentapi.Answer{Decision: "approve_once"}); !errors.Is(err, agentapi.ErrInteractionGone) {
+					t.Fatalf("Respond %s = %v", id, err)
+				}
+			}
+			for _, id := range []string{"sibling-permission", "parent-permission"} {
+				if ix := h.sink.interaction(id); ix.State != agentapi.InteractionPending {
+					t.Fatalf("unrelated permission = %+v", ix)
+				}
+				if err := h.conv.Respond(ctx, id, agentapi.Answer{Decision: "approve_once"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestWebCancelSubagentFailureKeepsPermissionForRetry(t *testing.T) {
+	for _, transport := range []bool{false, true} {
+		t.Run(strconv.FormatBool(transport), func(t *testing.T) {
+			h := openWeb(t)
+			h.fs.onEvent(agentEv("start", "target", &rpc.SubagentStartedData{ToolCallID: "call"}))
+			h.fs.onEvent(agentEv("permission", "target", shellRequest("pending")))
+			h.fs.subCancelRejected = true
+			if transport {
+				h.fs.subCancelErr = errors.New("transport failed")
+			}
+			if err := h.conv.CancelSubagent(context.Background(), "target"); err == nil {
+				t.Fatal("failed stop reported success")
+			}
+			if len(h.fs.subCancels) != 1 || h.sink.interaction("pending").State != agentapi.InteractionPending {
+				t.Fatalf("failure retried or expired request: %v %+v", h.fs.subCancels, h.sink.interaction("pending"))
+			}
+			h.fs.subCancelRejected, h.fs.subCancelErr = false, nil
+			if err := h.conv.CancelSubagent(context.Background(), "target"); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.conv.CancelSubagent(context.Background(), "target"); err != nil {
+				t.Fatal(err)
+			}
+			if len(h.fs.subCancels) != 2 || h.sink.interaction("pending").State != agentapi.InteractionExpired {
+				t.Fatalf("retry = %v %+v", h.fs.subCancels, h.sink.interaction("pending"))
+			}
+		})
 	}
 }

@@ -116,6 +116,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("PATCH /api/sessions/{id}", s.handlePatch)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDelete)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}", s.handleSubagent)
+	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/cancel", s.handleCancelSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/resume", s.handleQueueResume)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/clear", s.handleQueueClear)
@@ -463,6 +464,15 @@ func writeNoContent(w http.ResponseWriter, err error) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleCancelSubagent(w http.ResponseWriter, r *http.Request) {
+	subagent, err := s.m.CancelSubagent(r.PathValue("id"), r.PathValue("agent_id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, subagent)
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {

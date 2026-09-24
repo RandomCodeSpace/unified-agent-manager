@@ -537,3 +537,35 @@ The same is true of a closed Task today.
 `SessionSummary` gains `stage` (omitted while active), `settled_at` and
 `archived_at` (omitted while unset). A stage change moves `updated_at`, is
 written to `sessions.json`, and sends a `session` frame.
+
+## Stop one subagent
+
+- Date: 2026-09-24 (decided in #160)
+
+`Conversation.CancelSubagent(ctx, agentID)` stops the exact agent instance.
+Copilot sends `session.tasks.cancel` with the envelope `agentId`, never the
+parent tool-call ID. It does not abort the parent, send another prompt, or
+suppress a replacement agent that the parent chooses to launch. OpenCode stays
+unregistered and returns `ErrUnsupported` for this operation.
+
+`POST /api/sessions/{id}/subagents/{agent_id}/cancel` takes no body or request
+ID and returns 200 with the current `Subagent` record directly. As with other
+POST controls, it requires `Content-Type: application/json`, authentication,
+and a same-origin request. Unknown Tasks or agents return 404. Only a known
+running agent in an active Task with an open conversation can start a stop;
+otherwise the route returns 409. A known terminal agent returns 200 without
+opening its conversation. Accepted stops are not sent again while the provider
+completion event is pending. A provider failure returns 502 and leaves state
+unchanged for an explicit retry; a completion that races the reply wins.
+
+The record remains running until the provider reports its terminal status.
+Copilot's `subagent.completed` with `cancelled: true` supplies `cancelled`,
+published through the existing subagent event and detail response. Parent and
+sibling status follows their own provider events.
+
+An accepted stop or a provider-confirmed cancellation expires the target's
+pending interactions. Cancelled history and later permission replays cannot
+restore them. Cleanup uses `Interaction.AgentID` and preserves other agents'
+requests. Copilot SDK v1.0.14 supplies an agent ID for permission events but
+its `ask_user` callback supplies only a session ID. Such unattributed questions
+stay pending because UAM cannot safely assign them to the stopped subagent.

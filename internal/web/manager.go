@@ -172,8 +172,9 @@ type webSession struct {
 	interactions []*interaction
 	ixIdx        map[string]*interaction
 
-	subagents []*agentapi.Subagent
-	subIdx    map[string]*agentapi.Subagent
+	subagents        []*agentapi.Subagent
+	subIdx           map[string]*agentapi.Subagent
+	stoppedSubagents map[string]bool // accepted stops awaiting the provider event
 
 	submissions []Submission
 	last        *Submission
@@ -2016,6 +2017,63 @@ func (m *Manager) Cancel(id string) (SessionSummary, error) {
 		return SessionSummary{}, newError(http.StatusBadGateway, "cancel failed: %s", shortError(err))
 	}
 	return m.Summary(id)
+}
+
+// CancelSubagent stops only the selected agent. Successful repeats never
+// resend, and final status is supplied by the provider's subagent event.
+func (m *Manager) CancelSubagent(id, agentID string) (agentapi.Subagent, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return agentapi.Subagent{}, err
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	m.mu.Lock()
+	sa := s.subIdx[agentID]
+	switch {
+	case s.removed:
+		m.mu.Unlock()
+		return agentapi.Subagent{}, newError(http.StatusNotFound, "session not found")
+	case sa == nil:
+		m.mu.Unlock()
+		return agentapi.Subagent{}, newError(http.StatusNotFound, "subagent not found")
+	case sa.Status.Terminal(), s.stoppedSubagents[agentID]:
+		result := *sa
+		m.mu.Unlock()
+		return result, nil
+	case m.closed || s.stage != StageActive || s.conv == nil || s.state() == StateStarting || sa.Status != agentapi.SubagentRunning:
+		m.mu.Unlock()
+		return agentapi.Subagent{}, newError(http.StatusConflict, "the subagent has no active conversation")
+	}
+	conv := s.conv
+	m.mu.Unlock()
+	ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
+	err = conv.CancelSubagent(ctx, agentID)
+	cancel()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Completion can race a provider rejection because the agent already
+	// finished. An accepted stop still expires its abandoned interactions.
+	if err != nil && sa.Status.Terminal() {
+		return *sa, nil
+	}
+	switch {
+	case err == nil:
+		before := m.summaryLocked(s)
+		if s.stoppedSubagents == nil {
+			s.stoppedSubagents = map[string]bool{}
+		}
+		s.stoppedSubagents[agentID] = true
+		m.expireSubagentLocked(s, agentID)
+		m.changedLocked(s, before)
+		return *sa, nil
+	case errors.Is(err, agentapi.ErrUnsupported):
+		return agentapi.Subagent{}, newError(http.StatusConflict, "this provider cannot stop a subagent")
+	case errors.Is(err, agentapi.ErrClosed):
+		return agentapi.Subagent{}, newError(http.StatusConflict, "the provider conversation is closed")
+	default:
+		return agentapi.Subagent{}, newError(http.StatusBadGateway, "could not stop subagent: %s", shortError(err))
+	}
 }
 
 // Close disconnects the conversation and keeps the record.

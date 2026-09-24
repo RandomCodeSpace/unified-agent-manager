@@ -213,23 +213,25 @@ type Conversation struct {
 	history  agentapi.History
 	provider *Provider
 
-	mu          sync.Mutex
-	sendHook    func(ctx context.Context, prompt string) error
-	steerHook   func(ctx context.Context, prompt string) error
-	respondHook func(ctx context.Context, id string, answer agentapi.Answer) error
-	cancelHook  func(ctx context.Context) error
-	cancelErr   error
-	setModelErr error
-	diff        []agentapi.FileDiff
-	diffErr     error
-	sends       []string
-	steers      []string
-	modelSets   []string
-	settings    []agentapi.OpenRequest
-	cancels     int
-	closes      int
-	responds    []Response
-	closed      bool
+	mu            sync.Mutex
+	sendHook      func(ctx context.Context, prompt string) error
+	steerHook     func(ctx context.Context, prompt string) error
+	respondHook   func(ctx context.Context, id string, answer agentapi.Answer) error
+	cancelHook    func(ctx context.Context) error
+	subCancelHook func(ctx context.Context, agentID string) error
+	subCancels    []string
+	cancelErr     error
+	setModelErr   error
+	diff          []agentapi.FileDiff
+	diffErr       error
+	sends         []string
+	steers        []string
+	modelSets     []string
+	settings      []agentapi.OpenRequest
+	cancels       int
+	closes        int
+	responds      []Response
+	closed        bool
 }
 
 func (c *Conversation) ID() string { return c.id }
@@ -298,6 +300,20 @@ func (c *Conversation) SetCancelHook(hook func(ctx context.Context) error) {
 	c.cancelHook = hook
 }
 
+// SetCancelSubagentHook decides how CancelSubagent behaves.
+func (c *Conversation) SetCancelSubagentHook(hook func(context.Context, string) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.subCancelHook = hook
+}
+
+// SubagentCancels returns the exact agent IDs passed to CancelSubagent.
+func (c *Conversation) SubagentCancels() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.subCancels...)
+}
+
 // SetCancelError makes Cancel return err.
 func (c *Conversation) SetCancelError(err error) {
 	c.mu.Lock()
@@ -355,6 +371,21 @@ func (c *Conversation) Cancel(ctx context.Context) error {
 		return hook(ctx)
 	}
 	return err
+}
+
+func (c *Conversation) CancelSubagent(ctx context.Context, agentID string) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return agentapi.ErrClosed
+	}
+	c.subCancels = append(c.subCancels, agentID)
+	hook := c.subCancelHook
+	c.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, agentID)
+	}
+	return nil
 }
 
 func (c *Conversation) Respond(ctx context.Context, id string, answer agentapi.Answer) error {

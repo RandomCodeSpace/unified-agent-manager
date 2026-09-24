@@ -61,6 +61,7 @@ type sdkSession interface {
 	SwitchModel(ctx context.Context, req *rpc.ModelSwitchToRequest) (*rpc.ModelSwitchToResult, error)
 	SetEffort(ctx context.Context, effort string) error
 	Abort(ctx context.Context) error
+	CancelSubagent(ctx context.Context, agentID string) (bool, error)
 	Events(ctx context.Context) ([]copilot.SessionEvent, error)
 	// RespondPermission answers a pending permission request. It reports false
 	// when the CLI no longer considered the request pending.
@@ -120,6 +121,14 @@ func (a sdkSessionAdapter) Abort(ctx context.Context) error { return a.s.Abort(c
 func (a sdkSessionAdapter) Disconnect() error               { return a.s.Disconnect() }
 func (a sdkSessionAdapter) Events(ctx context.Context) ([]copilot.SessionEvent, error) {
 	return a.s.GetEvents(ctx)
+}
+
+func (a sdkSessionAdapter) CancelSubagent(ctx context.Context, agentID string) (bool, error) {
+	result, err := a.s.RPC.Tasks.Cancel(ctx, &rpc.TasksCancelRequest{ID: agentID})
+	if err != nil {
+		return false, err
+	}
+	return result.Cancelled, nil
 }
 
 func (a sdkSessionAdapter) SwitchModel(ctx context.Context, req *rpc.ModelSwitchToRequest) (*rpc.ModelSwitchToResult, error) {
@@ -496,13 +505,14 @@ type conversation struct {
 	id     string
 	sink   agentapi.EventSink
 
-	mu      sync.Mutex
-	closed  bool
-	pending map[string]*interaction
-	tr      *transcript
-	subs    *subagentLog
-	turnErr string
-	idles   int
+	mu               sync.Mutex
+	closed           bool
+	pending          map[string]*interaction
+	stoppedSubagents map[string]bool
+	tr               *transcript
+	subs             *subagentLog
+	turnErr          string
+	idles            int
 	// turnModel is the model of the turn's latest main-agent model call.
 	turnModel string
 	// steers are the accepted steers the CLI has not used yet, oldest first.
@@ -557,6 +567,18 @@ func (c *conversation) History(ctx context.Context) (agentapi.History, error) {
 		c.p.poke()
 		return agentapi.History{}, fmt.Errorf("copilot history: %s", errText(err))
 	}
+	// Reconcile cancelled agents before a resumed CLI can replay abandoned
+	// permission requests. History does not replace newer terminal live state.
+	c.mu.Lock()
+	for _, ev := range evs {
+		c.subs.apply(ev)
+	}
+	for _, sa := range c.subs.byID {
+		if sa.Status == agentapi.SubagentCancelled {
+			c.expireSubagentLocked(sa.ID)
+		}
+	}
+	c.mu.Unlock()
 	return history(evs), nil
 }
 
@@ -710,6 +732,38 @@ func (c *conversation) Cancel(ctx context.Context) error {
 	return nil
 }
 
+func (c *conversation) CancelSubagent(ctx context.Context, agentID string) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return agentapi.ErrClosed
+	}
+	if sa := c.subs.byID[agentID]; c.stoppedSubagents[agentID] || sa != nil && sa.Status.Terminal() {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
+	cancelled, err := c.sess.CancelSubagent(ctx, agentID)
+	if err != nil {
+		c.p.poke()
+		return fmt.Errorf("copilot cancel subagent: %s", errText(err))
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !cancelled {
+		if sa := c.subs.byID[agentID]; sa != nil && sa.Status.Terminal() {
+			return nil
+		}
+		return errors.New("copilot did not cancel the subagent")
+	}
+	if c.stoppedSubagents == nil {
+		c.stoppedSubagents = map[string]bool{}
+	}
+	c.stoppedSubagents[agentID] = true
+	c.expireSubagentLocked(agentID)
+	return nil
+}
+
 func (c *conversation) Diff(context.Context) ([]agentapi.FileDiff, error) {
 	return nil, agentapi.ErrUnsupported
 }
@@ -829,6 +883,22 @@ func (c *conversation) Close(ctx context.Context) error {
 	}
 }
 
+// expireSubagentLocked withdraws only this agent's abandoned interactions.
+// The CLI may leave its permissions pending after a successful stop.
+func (c *conversation) expireSubagentLocked(agentID string) {
+	for id, in := range c.pending {
+		if in.AgentID != agentID {
+			continue
+		}
+		delete(c.pending, id)
+		in.State, in.Resolution = agentapi.InteractionExpired, "the subagent was stopped"
+		c.emitInteractionLocked(in)
+		if in.reply != nil {
+			in.reply <- userReply{err: errNoUser}
+		}
+	}
+}
+
 // expireLocked withdraws every pending interaction that is not being
 // answered: blocked questions get an error, never an answer. It returns the
 // permission request ids the CLI may still be waiting on.
@@ -926,6 +996,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	case *rpc.SubagentStartedData, *rpc.SubagentConfiguredData, *rpc.SubagentCompletedData, *rpc.SubagentFailedData:
 		if sa, ok := c.subs.apply(ev); ok {
+			if sa.Status == agentapi.SubagentCancelled {
+				c.expireSubagentLocked(sa.ID)
+			}
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
 		}
 		return
@@ -1011,6 +1084,9 @@ func quote(text string) string {
 }
 
 func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData, at time.Time, agentID string) {
+	if sa := c.subs.byID[agentID]; agentID != "" && (c.stoppedSubagents[agentID] || sa != nil && sa.Status == agentapi.SubagentCancelled) {
+		return
+	}
 	if d.ResolvedByHook != nil && *d.ResolvedByHook {
 		return
 	}
