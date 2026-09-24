@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from
 import { ApiError, api, describeError, isStatus, type DirList } from '../api';
 import { cn } from '../lib/cn';
 import { breadcrumbs, cleanPath, listingError, matchFrom, parentOf } from '../lib/folders';
-import { Note } from './common';
+import { Loading, Note } from './common';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 
@@ -286,13 +286,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
             )}
           </div>
         )}
-        {loading && !listing && (
-          <div aria-hidden="true" className="flex shrink-0 flex-col gap-1 p-2">
-            <span className="h-6 w-2/3 rounded-sm bg-surface animate-pulse-dot" />
-            <span className="h-6 w-1/2 rounded-sm bg-surface animate-pulse-dot" />
-            <span className="h-6 w-3/5 rounded-sm bg-surface animate-pulse-dot" />
-          </div>
-        )}
+        {loading && !listing && <Loading className="shrink-0 px-2" />}
         {listing?.error && (
           <p role="status" className={statusClass}>
             {listing.error}

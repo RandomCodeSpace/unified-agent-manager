@@ -4,7 +4,7 @@ import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { api, describeError, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { Note } from './common';
+import { Loading, Note } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
@@ -137,9 +137,8 @@ export function ChangesSheet({
           </li>
         )}
         {!data && !error && (
-          <li className="flex flex-col gap-1.5 px-2 py-2" aria-busy="true">
-            <span className="h-3 w-1/2 rounded-xs bg-sunken animate-pulse-dot" />
-            <span className="h-3 w-2/3 rounded-xs bg-sunken animate-pulse-dot" />
+          <li className="px-2">
+            <Loading label="Loading the changes…" />
           </li>
         )}
         {data && !data.supported && (
@@ -233,16 +232,7 @@ function FileView({ sessionId, scope, path }: { sessionId: string; scope: Scope;
       </Note>
     );
   }
-  if (!file) {
-    return (
-      <div className="flex flex-col gap-1.5 p-3" aria-busy="true">
-        <span className="h-3 w-3/5 rounded-xs bg-sunken animate-pulse-dot" />
-        <span className="h-3 w-4/5 rounded-xs bg-sunken animate-pulse-dot" />
-        <span className="h-3 w-1/2 rounded-xs bg-sunken animate-pulse-dot" />
-        <span className="sr-only">Loading diff…</span>
-      </div>
-    );
-  }
+  if (!file) return <Loading label="Loading the diff…" className="px-3" />;
   if (patch instanceof Error) return <Note tone="error" className="p-3">Could not parse diff: {patch.message}</Note>;
   if (!patch || patch.hunks.length === 0) return <Note className="p-3">No textual changes in {file.path}.</Note>;
 

@@ -198,7 +198,8 @@ export function Dot({ tone, className, pulse = false }: { tone: Tone; className?
   return <span aria-hidden="true" className={cn('inline-block size-2 shrink-0 rounded-full', TONE_BG[tone], pulse && 'animate-pulse-dot', className)} />;
 }
 
-export { Spinner } from './ui/spinner';
+import { Spinner } from './ui/spinner';
+export { Spinner };
 
 export function SubagentIdleIcon({ className }: { className?: string }) {
   return <CornerDownLeft aria-hidden="true" className={cn('size-3.5', className)} />;
@@ -479,6 +480,25 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, streaming }: { text: s
     </MdContext.Provider>
   );
 });
+
+/**
+ * The quiet loading indicator: nothing for `delay` ms (a wait that short shows nothing new),
+ * then a spinner and a word. Replaces skeleton placeholders; what was on screen stays.
+ */
+export function Loading({ label = 'Loading…', delay = 300, className }: { label?: string; delay?: number; className?: string }) {
+  const late = useLate(true, delay);
+  return (
+    <div role="status" aria-busy="true" className={cn('flex min-h-8 items-center gap-2 text-caption text-muted', className)}>
+      {late && (
+        <span className="flex items-center gap-2 animate-fade-in">
+          <Spinner className="border-muted" />
+          {label}
+        </span>
+      )}
+      {!late && <span className="sr-only">{label}</span>}
+    </div>
+  );
+}
 
 /** A `caption` line for feedback: `error` and `warn` are the only coloured ones. */
 export function Note({ tone = 'muted', className, children, role, id }: { tone?: 'muted' | 'error' | 'warn' | 'info'; className?: string; children: ReactNode; role?: 'alert' | 'status'; id?: string }) {

@@ -127,7 +127,8 @@ export function reducer(state: State, action: Action): State {
       return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, action.interaction) } };
     }
     case 'agent_loading':
-      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, snapshotSeq: state.agents[action.agentId]?.snapshotSeq ?? -1, items: [], buffered: [] } } };
+      // What was loaded before stays on screen while the fresh copy is on its way (stale while loading).
+      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, snapshotSeq: state.agents[action.agentId]?.snapshotSeq ?? -1, items: state.agents[action.agentId]?.items ?? [], buffered: [] } } };
     case 'agent_loaded': {
       const detail = state.detail;
       const withAgent = detail ? { ...detail, subagents: upsert(detail.subagents, action.subagent) } : detail;

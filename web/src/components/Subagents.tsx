@@ -5,7 +5,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
-import { Markdown, Note, useApp } from './common';
+import { Loading, Markdown, Note, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
 import { EXIT_MS } from './ui/collapse';
@@ -351,14 +351,9 @@ function AgentTranscriptView({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4" ref={scroller} onScroll={onScroll} role="log">
       {subagent.description && <Note>{subagent.description}</Note>}
-      {!transcript || transcript.loading ? (
-        <div className="flex flex-col gap-2" aria-busy="true">
-          <span className="h-3 w-3/5 rounded-xs bg-sunken animate-pulse-dot" />
-          <span className="h-3 w-4/5 rounded-xs bg-sunken animate-pulse-dot" />
-          <span className="h-3 w-2/5 rounded-xs bg-sunken animate-pulse-dot" />
-          <span className="sr-only">Loading transcript…</span>
-        </div>
-      ) : transcript.error ? (
+      {(!transcript || transcript.loading) && items.length === 0 ? (
+        <Loading label="Loading the transcript…" />
+      ) : transcript?.error ? (
         <Note tone="error" role="alert">
           {transcript.error}
         </Note>

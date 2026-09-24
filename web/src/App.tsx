@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
 import { initialState, reducer } from './state';
-import { AppContext, Dot, useLate, useMedia } from './components/common';
+import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog, RemoveProjectDialog } from './components/Projects';
 import { SettingsView } from './components/Settings';
@@ -617,20 +617,12 @@ function EmptyPane({ leading, connection, children }: { leading: React.ReactNode
   );
 }
 
-/** Calm placeholder while the selected Task's detail is on its way: the header holds its height, three quiet lines below once the wait is long. */
+/** Calm placeholder while the selected Task's detail is on its way and nothing was on screen before: the header holds its height, a quiet indicator once the wait is long. */
 function LoadingPane({ leading, placeholder }: { leading: React.ReactNode; placeholder: boolean }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-label="Loading conversation">
-      <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">
-        {leading}
-        {placeholder && <span className="h-3.5 w-40 rounded-xs bg-sunken animate-pulse-dot" />}
-      </header>
-      {placeholder && <div className="flex flex-col gap-3 px-6 pt-8">
-        <span className="ml-auto h-9 w-2/5 rounded-lg bg-raised animate-pulse-dot" />
-        <span className="mt-4 h-3 w-3/5 rounded-xs bg-sunken animate-pulse-dot" />
-        <span className="h-3 w-4/5 rounded-xs bg-sunken animate-pulse-dot" />
-        <span className="h-3 w-1/2 rounded-xs bg-sunken animate-pulse-dot" />
-      </div>}
+      <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">{leading}</header>
+      {placeholder && <Loading label="Loading the conversation…" delay={0} className="flex-1 justify-center" />}
     </div>
   );
 }
