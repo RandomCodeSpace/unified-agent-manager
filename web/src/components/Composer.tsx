@@ -474,8 +474,8 @@ export function Composer({ session, project, fileCount, onChanges, onRename, onS
     await action('execution', async () => {
       const sub = await api.command(session.id, autopilotCommand.name, next === 'autopilot' ? 'on' : 'off', id);
       setOutcome(sub);
+      if (sub.status === 'accepted' || sub.status === 'rejected') pendingExecution.current = null;
       if (sub.status === 'accepted') {
-        pendingExecution.current = null;
         setCommandVersion((v) => v + 1);
         dispatch({ type: 'detail_loaded', detail: await api.session(session.id) });
       }
