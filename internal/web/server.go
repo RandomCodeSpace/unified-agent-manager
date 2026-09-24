@@ -21,6 +21,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // The placeholder keeps source-only checkouts buildable; release tags include dist.
@@ -477,6 +478,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "title_model must map providers to model IDs")
 				return
 			}
+		case "custom_models":
+			// key_present is output only; any other unknown entry key is ignored.
+			var list []store.WebCustomModel
+			if json.Unmarshal(raw, &list) != nil || list == nil {
+				writeError(w, http.StatusBadRequest, "custom_models must be a list of custom models")
+				return
+			}
+			patch.CustomModels = &list
 		default:
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown setting %q", key))
 			return

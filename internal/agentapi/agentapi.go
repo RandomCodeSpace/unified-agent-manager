@@ -113,6 +113,32 @@ type Titler interface {
 	Title(ctx context.Context, req TitleRequest) (string, error)
 }
 
+// CustomModelUser is implemented by a provider that can offer custom
+// models next to its own. SetCustomModels replaces them: Models lists them,
+// and conversations opened or switched afterwards can select them.
+type CustomModelUser interface {
+	SetCustomModels([]CustomModel)
+}
+
+// CustomModel is an OpenAI-compatible model the owner brought. Its model ID
+// is SelectionID. APIKeyEnv names the service environment variable holding
+// the key; the provider reads it when it needs it, and the key goes nowhere
+// else.
+type CustomModel struct {
+	// Name names the provider connection; models with one Name share
+	// BaseURL, WireAPI and APIKeyEnv.
+	Name        string
+	DisplayName string
+	BaseURL     string
+	ModelID     string
+	// WireAPI is "completions" (also for "") or "responses".
+	WireAPI   string
+	APIKeyEnv string
+}
+
+// SelectionID is the model's ID among the provider's models.
+func (m CustomModel) SelectionID() string { return m.Name + "/" + m.ModelID }
+
 // TitleRequest is one Titler call.
 type TitleRequest struct {
 	// Model is a model ID from Provider.Models.

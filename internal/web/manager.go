@@ -396,11 +396,13 @@ const interruptedDetail = "the uam web service stopped while this turn was runni
 // Project without a valid badge one. A provider whose check fails is listed
 // as unavailable; it is not fatal.
 func (m *Manager) Start(ctx context.Context) error {
-	infos := m.checkProviders(ctx)
 	cfg, err := m.store.Load()
 	if err != nil {
 		return fmt.Errorf("load web sessions: %w", err)
 	}
+	// The catalogs include the custom models, so providers get them first.
+	m.setCustomModels(cfg.WebSettings.CustomModels)
+	infos := m.checkProviders(ctx)
 	if needsProject(cfg) || len(badgeless(cfg.WebProjects)) > 0 {
 		now := m.now()
 		err := m.store.Update(func(c *store.Config) error {
@@ -432,7 +434,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	for id, p := range cfg.WebProjects {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Defaults: TaskDefaults(p.Defaults), Badge: Badge(p.Badge)}
 	}
-	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel}
+	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
+		CustomModels: customModelsView(cfg.WebSettings.CustomModels)}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -1137,10 +1140,14 @@ func (m *Manager) Settings() Settings {
 // only those; an empty list hides none of that provider's models. TitleModel
 // sets the title model of each provider it names; an empty ID gives that
 // provider its own title back.
+//
+// CustomModels, when not nil, replaces every custom model; an empty list
+// removes them all.
 type SettingsPatch struct {
 	SendDefault  *string
 	HiddenModels map[string][]string
 	TitleModel   map[string]string
+	CustomModels *[]store.WebCustomModel
 }
 
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
@@ -1170,6 +1177,11 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	for provider := range p.TitleModel {
 		if m.providers[provider] == nil {
 			return Settings{}, newError(http.StatusBadRequest, "unknown provider %q", clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
+		}
+	}
+	if p.CustomModels != nil {
+		if err := store.ValidCustomModels(*p.CustomModels); err != nil {
+			return Settings{}, newError(http.StatusBadRequest, "%s", err.Error())
 		}
 	}
 	m.settingsMu.Lock()
@@ -1206,22 +1218,87 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if len(p.TitleModel) > 0 {
 		next.TitleModel = withProviders(current.TitleModel, p.TitleModel)
 	}
-	if next.SendDefault == current.SendDefault && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) {
+	if p.CustomModels != nil {
+		next.CustomModels = customModelsView(*p.CustomModels)
+	}
+	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
+	if next.SendDefault == current.SendDefault && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged {
 		return current, nil
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		cfg.WebSettings.SendDefault = next.SendDefault
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
 		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, p.TitleModel)
+		if p.CustomModels != nil {
+			cfg.WebSettings.CustomModels = slices.Clone(*p.CustomModels)
+		}
 		return nil
 	}); err != nil {
 		return Settings{}, fmt.Errorf("save web settings: %w", err)
+	}
+	if customChanged {
+		m.setCustomModels(*p.CustomModels)
+		m.reloadCustomCatalogs()
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.settings = next
 	m.broadcastLocked("settings", "", func(seq uint64) any { return settingsEvent{Seq: seq, Settings: next} })
 	return next, nil
+}
+
+// customModelsView is the settings view of stored custom models: each says
+// whether its key variable is set in the service environment, never what it
+// holds.
+func customModelsView(list []store.WebCustomModel) []CustomModel {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]CustomModel, 0, len(list))
+	for _, c := range list {
+		out = append(out, CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv, KeyPresent: os.Getenv(c.APIKeyEnv) != ""})
+	}
+	return out
+}
+
+// setCustomModels gives list to every provider that offers custom models.
+func (m *Manager) setCustomModels(list []store.WebCustomModel) {
+	models := make([]agentapi.CustomModel, 0, len(list))
+	for _, c := range list {
+		models = append(models, agentapi.CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv})
+	}
+	for _, name := range m.order {
+		if u, ok := m.providers[name].(agentapi.CustomModelUser); ok {
+			u.SetCustomModels(models)
+		}
+	}
+}
+
+// reloadCustomCatalogs reloads the catalog of each available provider that
+// offers custom models, so a change is selectable at once. A failed load
+// keeps the old catalog and marks it stale for the next /api/meta.
+func (m *Manager) reloadCustomCatalogs() {
+	for _, name := range m.order {
+		p := m.providers[name]
+		m.mu.Lock()
+		available := m.infos[name].Available
+		m.mu.Unlock()
+		if _, ok := p.(agentapi.CustomModelUser); !ok || !available {
+			continue
+		}
+		models, err := loadModels(m.ctx, p)
+		m.mu.Lock()
+		if err != nil {
+			log.Warn("reload web provider models failed", "provider", name, "error", err)
+			m.modelsAt[name] = time.Time{}
+		} else {
+			info := m.infos[name]
+			info.Models = models
+			m.infos[name] = info
+			m.modelsAt[name] = m.now()
+		}
+		m.mu.Unlock()
+	}
 }
 
 // withProviders returns a copy of current with each provider in change set

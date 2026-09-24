@@ -92,6 +92,9 @@ type sdkSession interface {
 	// InvokeCommand resolves a command; it starts no turn.
 	InvokeCommand(ctx context.Context, name, input string) (rpc.SlashCommandInvocationResult, error)
 	SwitchModel(ctx context.Context, req *rpc.ModelSwitchToRequest) (*rpc.ModelSwitchToResult, error)
+	// AddProviders registers custom providers and models on the open
+	// session through the experimental session.provider.add.
+	AddProviders(ctx context.Context, providers []copilot.NamedProviderConfig, models []copilot.ProviderModelConfig) error
 	SetEffort(ctx context.Context, effort string) error
 	Abort(ctx context.Context) error
 	CancelSubagent(ctx context.Context, agentID string) (bool, error)
@@ -229,6 +232,11 @@ func (a sdkSessionAdapter) SwitchModel(ctx context.Context, req *rpc.ModelSwitch
 	return a.s.RPC.Model.SwitchTo(ctx, req)
 }
 
+func (a sdkSessionAdapter) AddProviders(ctx context.Context, providers []copilot.NamedProviderConfig, models []copilot.ProviderModelConfig) error {
+	_, err := a.s.RPC.Provider.Add(ctx, addProviders(providers, models))
+	return err
+}
+
 func (a sdkSessionAdapter) SetEffort(ctx context.Context, effort string) error {
 	_, err := a.s.RPC.Model.SetReasoningEffort(ctx, &rpc.ModelSetReasoningEffortRequest{ReasoningEffort: effort})
 	return err
@@ -306,6 +314,10 @@ type webProvider struct {
 	shut            bool
 	importSupported bool
 	importProbed    bool
+	// customMu guards custom, the owner's custom models; it is never held
+	// with mu, which a CLI start holds for long.
+	customMu sync.Mutex
+	custom   []agentapi.CustomModel
 }
 
 // NewWebProvider returns the Copilot integration for the web service.
@@ -423,7 +435,7 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 		}
 		out = append(out, mo)
 	}
-	return out, nil
+	return append(out, customCatalog(p.customModels())...), nil
 }
 
 // prices copies the catalog's token prices, preferring cacheReadPrice and
@@ -521,12 +533,18 @@ Rules:
 // Once created, the session is always disconnected and deleted, with a fresh
 // deadline, so neither its directory nor a session-store row outlives it.
 func (p *webProvider) Title(ctx context.Context, req agentapi.TitleRequest) (string, error) {
+	if err := p.customKeyErr(req.Model); err != nil {
+		return "", err
+	}
 	client, err := p.ensureStarted(ctx)
 	if err != nil {
 		return "", err
 	}
+	providers, models := byom(p.customModels())
 	sess, err := client.CreateSession(ctx, &copilot.SessionConfig{
 		ClientName:                         "uam-title",
+		Providers:                          providers,
+		Models:                             models,
 		Model:                              req.Model,
 		ReasoningEffort:                    titleEffort(ctx, client, req.Model),
 		WorkingDirectory:                   req.Workdir,
@@ -615,6 +633,11 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	if req.Events == nil {
 		return nil, errors.New("copilot: OpenRequest.Events is required")
 	}
+	if req.ConversationID == "" {
+		if err := p.customKeyErr(req.Model); err != nil {
+			return nil, err
+		}
+	}
 	client, err := p.ensureStarted(ctx)
 	if err != nil {
 		return nil, err
@@ -624,6 +647,11 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		seen: map[string]bool{}, watch: map[string]time.Time{},
 		reportEmptyTasks: req.ConversationID != "",
 	}
+	// A resumed session keeps its selected model but not its custom
+	// models, so every open supplies them.
+	custom := p.customModels()
+	providers, models := byom(custom)
+	c.byom = newRegistered(custom)
 	// Permission requests are answered through the pending-permission RPC
 	// with the request id from the permission.requested event; the SDK
 	// callback only registers this client as the one that decides.
@@ -638,6 +666,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Model:                 req.Model,
 			ReasoningEffort:       req.Effort,
 			ContextTier:           copilot.ContextTier(req.ContextSize),
+			Providers:             providers,
+			Models:                models,
 			Streaming:             copilot.Bool(true),
 			OnPermissionRequest:   deferPermission,
 			OnUserInputRequest:    c.askUser,
@@ -651,6 +681,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	} else {
 		sess, err = client.ResumeSession(ctx, req.ConversationID, &copilot.ResumeSessionConfig{
 			WorkingDirectory: req.Workdir,
+			Providers:        providers,
+			Models:           models,
 			Streaming:        copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
@@ -997,6 +1029,8 @@ type conversation struct {
 	reportEmptyTasks  bool
 	// turnModel is the model of the turn's latest main-agent model call.
 	turnModel string
+	// byom is what the session has of the custom models.
+	byom registered
 	// usage is the latest main-agent context report, kept so a model call's
 	// cache report can be sent with it.
 	usage agentapi.Context
@@ -1286,6 +1320,12 @@ func (c *conversation) restoreIdle(ctx context.Context, subs []agentapi.Subagent
 func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize string) error {
 	if c.isClosed() {
 		return agentapi.ErrClosed
+	}
+	if err := c.p.customKeyErr(model); err != nil {
+		return err
+	}
+	if err := c.registerCustom(ctx, model); err != nil {
+		return err
 	}
 	tier := rpc.ContextTier(contextSize)
 	req := &rpc.ModelSwitchToRequest{ModelID: model, ContextTier: &tier, RunCompactionPreflight: copilot.Bool(true)}
@@ -2006,6 +2046,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.AssistantUsageData:
 		if agentID == "" && d.Model != "" {
 			c.turnModel = d.Model
+			if d.IsByok != nil && *d.IsByok {
+				c.turnModel = c.p.customSelection(d.Model)
+			}
 		}
 		if agentID == "" && d.InputTokens != nil && *d.InputTokens >= 0 {
 			// Input tokens include those read from and written to the cache.

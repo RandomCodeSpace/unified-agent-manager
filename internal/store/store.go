@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -514,8 +515,99 @@ type WebSettings struct {
 	// TitleModel maps a provider to the model that titles its new Tasks. A
 	// provider without an entry keeps its own title.
 	TitleModel map[string]string `json:"title_model,omitempty"`
+	// CustomModels are the OpenAI-compatible models the owner brought
+	// (BYOM), valid as ValidCustomModels checks. No key is stored: only the
+	// name of the service environment variable that holds it.
+	CustomModels []WebCustomModel `json:"custom_models,omitempty"`
 
 	unknown map[string]json.RawMessage
+}
+
+// WebCustomModel is one OpenAI-compatible model. Name names its provider
+// connection, and models with the same Name share BaseURL, WireAPI and
+// APIKeyEnv; the selection ID is Name + "/" + ModelID.
+type WebCustomModel struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
+	BaseURL     string `json:"base_url"`
+	ModelID     string `json:"model_id"`
+	// WireAPI is "", "completions" (the default) or "responses".
+	WireAPI   string `json:"wire_api,omitempty"`
+	APIKeyEnv string `json:"api_key_env"`
+}
+
+// Custom model limits: models, and bytes per field.
+const (
+	MaxCustomModels         = 32
+	MaxCustomModelNameBytes = 64
+	MaxCustomModelURLBytes  = 512
+)
+
+var (
+	customModelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	envVarName      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
+
+// ValidCustomModel reports why m cannot be stored, or nil. BaseURL is an
+// http or https URL without credentials, query or fragment, so no secret
+// can ride in it.
+func ValidCustomModel(m WebCustomModel) error {
+	switch {
+	case len(m.Name) > MaxCustomModelNameBytes || !customModelName.MatchString(m.Name):
+		return fmt.Errorf("provider name must be 1 to %d letters, digits, '.', '_' or '-', starting with a letter or digit", MaxCustomModelNameBytes)
+	case len(m.DisplayName) > MaxHiddenModelBytes || !utf8.ValidString(m.DisplayName) || hasControlChar(m.DisplayName):
+		return fmt.Errorf("display name must be at most %d bytes without control characters", MaxHiddenModelBytes)
+	case !ValidHiddenModel(m.ModelID) || strings.ContainsFunc(m.ModelID, unicode.IsSpace):
+		return fmt.Errorf("model ID must be 1 to %d bytes without spaces or control characters", MaxHiddenModelBytes)
+	case m.WireAPI != "" && m.WireAPI != "completions" && m.WireAPI != "responses":
+		return errors.New(`wire API must be "completions" or "responses"`)
+	case len(m.APIKeyEnv) > MaxCustomModelNameBytes || !envVarName.MatchString(m.APIKeyEnv):
+		return fmt.Errorf("API key variable must be an environment variable name ([A-Za-z_][A-Za-z0-9_]*, at most %d bytes)", MaxCustomModelNameBytes)
+	}
+	u, err := url.Parse(m.BaseURL)
+	if len(m.BaseURL) > MaxCustomModelURLBytes || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.HasSuffix(m.BaseURL, "?") || hasControlChar(m.BaseURL) {
+		return fmt.Errorf("base URL must be an http or https URL of at most %d bytes, without credentials, query or fragment", MaxCustomModelURLBytes)
+	}
+	return nil
+}
+
+// ValidCustomModels reports why list cannot be stored, or nil: at most
+// MaxCustomModels valid entries, each selection ID once, and one connection
+// (base URL, wire API, key variable) per provider name.
+func ValidCustomModels(list []WebCustomModel) error {
+	if len(list) > MaxCustomModels {
+		return fmt.Errorf("at most %d custom models can be configured", MaxCustomModels)
+	}
+	seen := map[string]bool{}
+	conn := map[string]WebCustomModel{}
+	for _, m := range list {
+		if err := ValidCustomModel(m); err != nil {
+			return err
+		}
+		id := m.Name + "/" + m.ModelID
+		if seen[id] {
+			return fmt.Errorf("custom model %s is configured twice", id)
+		}
+		seen[id] = true
+		if c, ok := conn[m.Name]; ok && (c.BaseURL != m.BaseURL || c.WireAPI != m.WireAPI || c.APIKeyEnv != m.APIKeyEnv) {
+			return fmt.Errorf("models of provider %s must share its base URL, wire API and API key variable", m.Name)
+		}
+		conn[m.Name] = m
+	}
+	return nil
+}
+
+// cleanCustomModels drops loaded custom models that could not be stored now.
+func cleanCustomModels(w *WebSettings) {
+	var keep []WebCustomModel
+	for _, m := range w.CustomModels {
+		if ValidCustomModels(append(slices.Clone(keep), m)) == nil {
+			keep = append(keep, m)
+		} else {
+			log.Warn("dropping invalid stored custom model", "name", m.Name)
+		}
+	}
+	w.CustomModels = keep
 }
 
 // Hidden model limits: IDs per provider, and bytes per ID.
@@ -582,6 +674,7 @@ var knownWebSettingsFields = map[string]struct{}{
 	"send_default":  {},
 	"hidden_models": {},
 	"title_model":   {},
+	"custom_models": {},
 }
 
 func (w WebSettings) MarshalJSON() ([]byte, error) {
@@ -831,6 +924,7 @@ func (s *Store) loadNoLock() (Config, error) {
 	dropInvalidProjects(&cfg)
 	cleanHiddenModels(&cfg.WebSettings)
 	cleanTitleModels(&cfg.WebSettings)
+	cleanCustomModels(&cfg.WebSettings)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
 	// erroring or clobbering it on the next save (F33).

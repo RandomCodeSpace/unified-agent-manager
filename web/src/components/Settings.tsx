@@ -1,7 +1,8 @@
 import { X } from 'lucide-react';
-import { useRef, useState, type ReactNode } from 'react';
-import { api, describeError, type Model, type SendDefault, type Settings } from '../api';
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { api, describeError, type CustomModel, type Model, type SendDefault, type Settings } from '../api';
 import { Note, Spinner, useApp } from './common';
+import { Field, inputClass } from './TaskDefaults';
 import { modelCostLine } from '../lib/cost';
 import { modelChoices } from '../lib/models';
 import { Select } from './ui/select';
@@ -37,6 +38,71 @@ function Row({ id, label, help, children }: { id: string; label: string; help: R
   );
 }
 
+const emptyCustom = { display_name: '', name: '', base_url: '', model_id: '', api_key_env: '' };
+
+/**
+ * Custom (BYOM) models: OpenAI-compatible endpoints offered next to Copilot's models. The key
+ * never passes through here; each model names the service environment variable that holds it.
+ */
+function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; disabled: boolean; onSave: (next: CustomModel[]) => Promise<boolean> }) {
+  const [draft, setDraft] = useState(emptyCustom);
+  const bare = (list: CustomModel[]) => list.map(({ key_present: _, ...m }) => m);
+  const field = (key: keyof typeof emptyCustom, label: string, placeholder: string, mono = false) => (
+    <Field id={`custom-${key}`} label={label}>
+      <input
+        id={`custom-${key}`}
+        className={mono ? `${inputClass} font-mono text-code-sm` : inputClass}
+        type="text"
+        spellCheck={false}
+        autoComplete="off"
+        required={key !== 'display_name'}
+        placeholder={placeholder}
+        disabled={disabled}
+        value={draft[key]}
+        onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
+      />
+    </Field>
+  );
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    const entry: CustomModel = { ...draft, display_name: draft.display_name.trim() || undefined, name: draft.name.trim(), base_url: draft.base_url.trim(), model_id: draft.model_id.trim(), api_key_env: draft.api_key_env.trim() };
+    if (await onSave([...bare(models), entry])) setDraft(emptyCustom);
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-ui font-medium">Custom models</h3>
+      <Note>
+        OpenAI-compatible endpoints, offered with GitHub Copilot's models. The API key stays in the service's environment: name the variable that holds it, export it where the service starts,
+        and restart the service.
+      </Note>
+      {models.map((m, i) => (
+        <div key={`${m.name}/${m.model_id}`} className="flex min-h-12 items-center gap-3 border-b border-hairline py-2">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="text-ui font-medium text-ink">{m.display_name || `${m.name}/${m.model_id}`}</span>
+            <span className="min-w-0 break-all font-mono text-keycap text-muted">
+              {m.name}/{m.model_id} · {m.base_url}
+            </span>
+            <Note tone={m.key_present ? 'muted' : 'warn'}>{m.key_present ? `Key from ${m.api_key_env}` : `${m.api_key_env} is not set in the service's environment`}</Note>
+          </div>
+          <Button size="sm" variant="danger" disabled={disabled} aria-label={`Remove ${m.display_name || `${m.name}/${m.model_id}`}`} onClick={() => void onSave(bare(models.filter((_, j) => j !== i)))}>
+            Remove
+          </Button>
+        </div>
+      ))}
+      <form aria-label="Add a custom model" className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 xl:grid-cols-3" onSubmit={(e) => void add(e)}>
+        {field('display_name', 'Display name', 'Optional')}
+        {field('name', 'Provider name', 'openrouter', true)}
+        {field('base_url', 'Base URL', 'https://openrouter.ai/api/v1', true)}
+        {field('model_id', 'Model ID', 'qwen/qwen3-coder', true)}
+        {field('api_key_env', 'API key variable', 'OPENROUTER_API_KEY', true)}
+        <Button type="submit" variant="secondary" size="lg" disabled={disabled} className="justify-self-start">
+          Add model
+        </Button>
+      </form>
+    </div>
+  );
+}
+
 /**
  * The Settings view (issue #183): a page in the main pane, not a dialog, reached from the
  * sidebar's gear and `#settings`. A change shows at once and is saved through PATCH; a
@@ -62,6 +128,23 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
         dispatch({ type: 'settings', settings: before });
         setError(`Could not save the setting: ${describeError(e)}`);
       }
+    } finally {
+      if (sequence === saveSequence.current) setSaving(false);
+    }
+  }
+
+  /** Custom models are saved without the optimistic step: the model lists reload from what the service stored. */
+  async function saveCustom(custom_models: CustomModel[]) {
+    const sequence = ++saveSequence.current;
+    setError(null);
+    setSaving(true);
+    try {
+      const saved = await api.updateWebSettings({ custom_models });
+      if (sequence === saveSequence.current) dispatch({ type: 'settings', settings: saved });
+      return true;
+    } catch (e) {
+      if (sequence === saveSequence.current) setError(`Could not save the custom models: ${describeError(e)}`);
+      return false;
     } finally {
       if (sequence === saveSequence.current) setSaving(false);
     }
@@ -122,6 +205,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
           </Section>
           <Section id="models" title="Models">
             <Note>Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.</Note>
+            <CustomModels models={settings.custom_models ?? []} disabled={saving} onSave={saveCustom} />
             {(meta?.providers ?? []).map((p) => {
               const hidden = settings.hidden_models?.[p.name] ?? [];
               const models: Model[] = [...p.models, ...hidden.filter((id) => !p.models.some((m) => m.id === id)).map((id) => ({ id, name: id }))];

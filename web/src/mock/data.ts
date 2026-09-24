@@ -106,6 +106,8 @@ export function seed(): MockState {
           { id: 'gpt-5-mini', name: 'GPT-5 mini', efforts: ['low', 'medium', 'high'], media: { images: true, pdf: false, max_images: 4, types: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] } },
           { id: 'mai-code-1.1-flash', name: 'MAI-Code-1.1-Flash', media: { images: false, pdf: false } },
           { id: 'kimi-k3', name: 'Kimi K3', media: { images: false, pdf: false } },
+          // A custom (BYOM) model, as the service lists it after Copilot's own.
+          { id: 'openrouter/qwen/qwen3-coder', name: 'Qwen3 Coder', efforts: [], context_sizes: [], media: { images: false, pdf: false } },
         ],
       },
     ],
@@ -636,5 +638,9 @@ export function seed(): MockState {
     p3: ['templates/post.html', 'templates/list.html', 'templates/feed.xml', 'assets/theme.css', 'content/posts/hello.md', 'scripts/contrast.mjs'],
   };
 
-  return { meta, projects, settings: { send_default: 'steer' }, tasks, changes, commands, files };
+  return { meta, projects, settings: {
+      send_default: 'steer',
+      custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'OPENROUTER_API_KEY', key_present: false }],
+    },
+    tasks, changes, commands, files };
 }

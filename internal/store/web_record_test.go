@@ -514,3 +514,96 @@ func TestWebTitleModelsLoadClean(t *testing.T) {
 		t.Fatalf("only invalid title models loaded as %v, %v", cfg.WebSettings.TitleModel, err)
 	}
 }
+
+// Custom models load without invalid entries and round-trip with keys a
+// newer uam wrote; no field holds a key.
+func TestWebCustomModelsLoadClean(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":{"later_setting":"t","custom_models":[` +
+		`{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"ACME_KEY"},` +
+		`{"name":"acme","base_url":"https://other.example/v1","model_id":"other","api_key_env":"ACME_KEY"},` +
+		`{"name":"bad/name","base_url":"https://llm.example/v1","model_id":"m","api_key_env":"K"},` +
+		`{"name":"acme","display_name":"Dup","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"ACME_KEY"},` +
+		`{"name":"local","base_url":"http://127.0.0.1:8080/v1","model_id":"org/m","wire_api":"responses","api_key_env":"LOCAL_KEY"}]}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.WebSettings.CustomModels
+	if len(got) != 2 || got[0].DisplayName != "Acme Coder" || got[1].Name != "local" || got[1].WireAPI != "responses" || got[1].ModelID != "org/m" {
+		t.Fatalf("loaded custom models = %+v", got)
+	}
+	if err := s.Update(func(cfg *Config) error {
+		cfg.WebSettings.CustomModels = cfg.WebSettings.CustomModels[:1]
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		WebSettings struct {
+			LaterSetting string           `json:"later_setting"`
+			CustomModels []WebCustomModel `json:"custom_models"`
+		} `json:"web_settings"`
+	}
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if w := saved.WebSettings; w.LaterSetting != "t" || len(w.CustomModels) != 1 || w.CustomModels[0] != got[0] {
+		t.Fatalf("saved web_settings = %s", data)
+	}
+}
+
+func TestValidCustomModels(t *testing.T) {
+	ok := WebCustomModel{Name: "acme", BaseURL: "https://llm.example/v1", ModelID: "coder", APIKeyEnv: "ACME_KEY"}
+	if err := ValidCustomModels([]WebCustomModel{ok}); err != nil {
+		t.Fatal(err)
+	}
+	with := func(f func(*WebCustomModel)) WebCustomModel { m := ok; f(&m); return m }
+	for name, m := range map[string]WebCustomModel{
+		"slash name": with(func(m *WebCustomModel) { m.Name = "a/b" }),
+		"empty name": with(func(m *WebCustomModel) { m.Name = "" }),
+		"long name":  with(func(m *WebCustomModel) { m.Name = strings.Repeat("a", MaxCustomModelNameBytes+1) }),
+		"ftp url":    with(func(m *WebCustomModel) { m.BaseURL = "ftp://llm.example/v1" }),
+		"no host":    with(func(m *WebCustomModel) { m.BaseURL = "https:///v1" }),
+		"userinfo":   with(func(m *WebCustomModel) { m.BaseURL = "https://user:pw@llm.example/v1" }),
+		"query":      with(func(m *WebCustomModel) { m.BaseURL = "https://llm.example/v1?key=x" }),
+		"fragment":   with(func(m *WebCustomModel) { m.BaseURL = "https://llm.example/v1#x" }),
+		"long url": with(func(m *WebCustomModel) {
+			m.BaseURL = "https://llm.example/" + strings.Repeat("a", MaxCustomModelURLBytes)
+		}),
+		"empty model":     with(func(m *WebCustomModel) { m.ModelID = "" }),
+		"spaced model":    with(func(m *WebCustomModel) { m.ModelID = "a b" }),
+		"wire api":        with(func(m *WebCustomModel) { m.WireAPI = "chat" }),
+		"env digit":       with(func(m *WebCustomModel) { m.APIKeyEnv = "1KEY" }),
+		"env dash":        with(func(m *WebCustomModel) { m.APIKeyEnv = "MY-KEY" }),
+		"env empty":       with(func(m *WebCustomModel) { m.APIKeyEnv = "" }),
+		"control in name": with(func(m *WebCustomModel) { m.DisplayName = "a\u0007" }),
+	} {
+		if ValidCustomModels([]WebCustomModel{m}) == nil {
+			t.Errorf("%s: %+v accepted", name, m)
+		}
+	}
+	if ValidCustomModels([]WebCustomModel{ok, ok}) == nil {
+		t.Error("duplicate selection ID accepted")
+	}
+	if ValidCustomModels([]WebCustomModel{ok, with(func(m *WebCustomModel) { m.ModelID = "x"; m.APIKeyEnv = "OTHER" })}) == nil {
+		t.Error("one provider with two key variables accepted")
+	}
+	many := make([]WebCustomModel, MaxCustomModels+1)
+	for i := range many {
+		many[i] = with(func(m *WebCustomModel) { m.ModelID = fmt.Sprintf("m%d", i) })
+	}
+	if ValidCustomModels(many) == nil {
+		t.Error("too many custom models accepted")
+	}
+}

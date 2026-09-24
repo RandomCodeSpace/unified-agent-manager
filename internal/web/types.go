@@ -128,6 +128,22 @@ type Settings struct {
 	// TitleModel maps a provider to the model that titles its new Tasks from
 	// their first message; omitted when every provider keeps its own title.
 	TitleModel map[string]string `json:"title_model,omitempty"`
+	// CustomModels are the OpenAI-compatible models the owner brought;
+	// omitted when there are none. Their model IDs are name/model_id.
+	CustomModels []CustomModel `json:"custom_models,omitempty"`
+}
+
+// CustomModel is one custom model in Settings. APIKeyEnv only names the
+// service environment variable holding the key; KeyPresent says whether it
+// is set and non-empty there. No key value is ever sent.
+type CustomModel struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
+	BaseURL     string `json:"base_url"`
+	ModelID     string `json:"model_id"`
+	WireAPI     string `json:"wire_api,omitempty"`
+	APIKeyEnv   string `json:"api_key_env"`
+	KeyPresent  bool   `json:"key_present"`
 }
 
 // AccountUsage is the GET /api/usage response: the account quotas of every
