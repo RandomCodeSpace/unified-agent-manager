@@ -39,7 +39,8 @@ export function DecidedRow({ interaction, className }: { interaction: Interactio
  * carries the attention chip; that is the only orange on the card.
  */
 export function InteractionCard({ session, interaction, onUpdate }: { session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }) {
-  const [busy, setBusy] = useState(false);
+  /** The action in flight: a permission option's id, `answer` or `decline`. */
+  const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const titleId = useId();
   const pending = interaction.state === 'pending';
@@ -47,8 +48,8 @@ export function InteractionCard({ session, interaction, onUpdate }: { session: S
   const permitted = permission ? session.capabilities.permissions : session.capabilities.questions;
   const Icon = permission ? ShieldQuestion : MessageCircleQuestion;
 
-  async function respond(answer: Answer) {
-    setBusy(true);
+  async function respond(answer: Answer, action: string) {
+    setBusy(action);
     setNote(null);
     try {
       onUpdate(await api.respond(session.id, interaction.id, answer));
@@ -57,7 +58,7 @@ export function InteractionCard({ session, interaction, onUpdate }: { session: S
       else if (isStatus(e, 410)) setNote('This request expired before it was answered.');
       else setNote(describeError(e));
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
@@ -91,7 +92,7 @@ export function InteractionCard({ session, interaction, onUpdate }: { session: S
           {permitted && ordered.length > 0 && (
             <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
               {ordered.map((o) => (
-                <Button key={o.id} variant={o.reject ? 'danger' : o === primary ? 'primary' : 'secondary'} disabled={busy} onClick={() => respond({ decision: o.id })}>
+                <Button key={o.id} variant={o.reject ? 'danger' : o === primary ? 'primary' : 'secondary'} loading={busy === o.id} disabled={!!busy} onClick={() => respond({ decision: o.id }, o.id)}>
                   {o.label}
                 </Button>
               ))}
@@ -99,7 +100,7 @@ export function InteractionCard({ session, interaction, onUpdate }: { session: S
           )}
         </>
       ) : (
-        <QuestionForm interactionId={interaction.id} questions={interaction.questions ?? []} disabled={!permitted || busy} onSubmit={(answers) => respond({ answers })} onDecline={() => respond({ reject: true })} />
+        <QuestionForm interactionId={interaction.id} questions={interaction.questions ?? []} disabled={!permitted} sending={busy === 'answer' || busy === 'decline' ? busy : null} onSubmit={(answers) => respond({ answers }, 'answer')} onDecline={() => respond({ reject: true }, 'decline')} />
       )}
       {!permission && !permitted && <Note className="mt-2">This provider does not accept answers from UAM.</Note>}
       {note && (
@@ -115,12 +116,16 @@ function QuestionForm({
   interactionId,
   questions,
   disabled,
+  sending,
   onSubmit,
   onDecline,
 }: {
   interactionId: string;
   questions: Question[];
+  /** The provider takes no answers from UAM. */
   disabled: boolean;
+  /** An answer or a decline is on its way: the buttons stay, disabled, the chosen one spinning. */
+  sending: 'answer' | 'decline' | null;
   onSubmit: (answers: string[][]) => void;
   onDecline: () => void;
 }) {
@@ -147,7 +152,7 @@ function QuestionForm({
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (complete) onSubmit(answers);
+    if (complete && !sending) onSubmit(answers);
   }
 
   if (disabled && questions.length === 0) return null;
@@ -155,7 +160,7 @@ function QuestionForm({
   return (
     <form onSubmit={submit} className="mt-2">
       {questions.map((q, qi) => (
-        <fieldset key={qi} className="mb-3 min-w-0" disabled={disabled}>
+        <fieldset key={qi} className="mb-3 min-w-0" disabled={disabled || !!sending}>
           <legend className="mb-1.5 text-ui text-ink">
             {q.header && <span className="mr-1.5 text-caption text-muted">{q.header}</span>}
             {q.text}
@@ -181,10 +186,10 @@ function QuestionForm({
       ))}
       {!disabled && (
         <div className="flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
-          <Button variant="danger" onClick={onDecline}>
+          <Button variant="danger" loading={sending === 'decline'} disabled={!!sending} onClick={onDecline}>
             Decline
           </Button>
-          <Button type="submit" variant="primary" disabled={!complete}>
+          <Button type="submit" variant="primary" loading={sending === 'answer'} disabled={!complete || !!sending}>
             Answer
           </Button>
         </div>
