@@ -71,10 +71,10 @@ export function AddProjectDialog({
           </p>
         )}
         <div className="actions">
-          <button type="button" className="pill pill-outline" onClick={onClose}>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="pill pill-primary" disabled={busy || !dir.trim()}>
+          <button type="submit" className="btn btn-primary" disabled={busy || !dir.trim()}>
             Add project
           </button>
         </div>
@@ -124,7 +124,7 @@ export function RemoveProjectDialog({
     >
       <p>
         This removes the project and its {tasks.length === 1 ? 'one task' : `${tasks.length} tasks`} from UAM. The directory{' '}
-        <span className="mono">{project.dir}</span> and the provider conversations in it are untouched.
+        <code>{project.dir}</code> and the provider conversations in it are untouched.
       </p>
       {busy > 0 && (
         <p className="warn">

@@ -5,6 +5,7 @@ import {
   describeError,
   isStatus,
   modelCatalog,
+  modelName,
   needsYou,
   newRequestId,
   type SessionDetail,
@@ -37,6 +38,11 @@ function footNote(s: SessionDetail, blocked: string | null): string {
   }
 }
 
+/**
+ * The composer: textarea on top, a 28px control row below with the model select at the
+ * left and Stop/Send at the right. The middle of that row is left free for the steer and
+ * queue controls that are still being designed.
+ */
 export function Composer({ session, onSessionUpdate }: { session: SessionDetail; onSessionUpdate: (s: SessionSummary) => void }) {
   const { meta } = useApp();
   const [text, setText] = useState('');
@@ -49,6 +55,7 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
   const last = session.last_submission;
   const catalog = modelCatalog(meta, session.provider);
   const models = catalog.some((m) => m.id === session.model) ? catalog : [{ id: session.model, name: session.model || 'Default model' }, ...catalog];
+  const routed = session.last_model && session.last_model !== session.model ? modelName(meta, session.provider, session.last_model) : null;
 
   async function send() {
     const t = text.trim();
@@ -103,6 +110,8 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
   }
 
   const note = footNote(session, blocked);
+  const hint = note || (last?.status === 'accepted' && !blocked ? `Last prompt accepted ${new Date(last.time).toLocaleTimeString()}` : '');
+  const canStop = session.capabilities.cancel;
 
   return (
     <form
@@ -132,15 +141,19 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
         className="composer-text"
         rows={2}
         value={text}
-        placeholder={blocked ?? 'Message the agent'}
+        placeholder={blocked ?? `Message ${session.provider}… (Enter to send, Shift+Enter for a new line)`}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
         disabled={busy || !!blocked}
       />
-      <div className="composer-foot">
+      <div className="composer-bar">
         {models.length > 0 && (
-          <span className="control">
-            <label htmlFor="composer-model" className="control-label">
+          <span className="select-wrap">
+            <span className="select-face" aria-hidden="true">
+              {models.find((m) => m.id === session.model)?.name ?? session.model}
+              <span className="chev-down">▾</span>
+            </span>
+            <label htmlFor="composer-model" className="sr-only">
               Model
             </label>
             <select
@@ -148,7 +161,7 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
               className="select"
               value={session.model}
               disabled={live}
-              title={live ? 'The model can change between turns, not during one.' : 'Applies from the next turn.'}
+              title={live ? 'The model can change between turns, not during one.' : 'Model for the next turn'}
               onChange={(e) => void changeModel(e.target.value)}
             >
               {models.map((m) => (
@@ -159,25 +172,33 @@ export function Composer({ session, onSessionUpdate }: { session: SessionDetail;
             </select>
           </span>
         )}
-        {note && <span className="muted small composer-note">{note}</span>}
-        <span className="spacer" />
-        {last?.status === 'accepted' && !blocked && (
-          <span className="muted small composer-hint">Last prompt accepted {new Date(last.time).toLocaleTimeString()}</span>
+        {routed && (
+          <span className="caption mono composer-routed" title="The latest turn reported a different model than the one selected">
+            → {routed}
+          </span>
         )}
-        {!blocked && !last && <span className="muted small composer-hint">Enter to send · Shift+Enter for a new line</span>}
+        <span className="spacer" />
+        {hint && <span className="composer-hint">{hint}</span>}
         {live && !needsYou(session) && (
           <button
             type="button"
-            className="pill pill-outline"
-            disabled={!session.capabilities.cancel}
-            title={session.capabilities.cancel ? undefined : 'This provider cannot cancel a turn'}
+            className="btn btn-secondary btn-square"
+            aria-label="Stop turn"
+            title={canStop ? 'Stop turn' : 'This provider cannot cancel a turn'}
+            disabled={!canStop}
             onClick={() => void stop()}
           >
-            Stop turn
+            <span aria-hidden="true">■</span>
           </button>
         )}
-        <button type="submit" className="pill pill-primary" disabled={busy || !!blocked || !text.trim()}>
-          {busy ? 'Sending…' : 'Send'}
+        <button
+          type="submit"
+          className="btn btn-primary btn-square"
+          aria-label={busy ? 'Sending…' : 'Send'}
+          title="Send (Enter)"
+          disabled={busy || !!blocked || !text.trim()}
+        >
+          <span aria-hidden="true">↑</span>
         </button>
       </div>
     </form>

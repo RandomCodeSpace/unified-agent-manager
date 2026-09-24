@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { UPDATE_EVENTS, api, onUnauthorized, type Meta, type Project, type SessionSummary } from './api';
 import { initialState, reducer } from './state';
-import { AppContext, TaskTitle } from './components/common';
+import { AppContext, useMedia } from './components/common';
 import { Deck } from './components/Deck';
 import { Login } from './components/Login';
 import { NewTask } from './components/NewTask';
@@ -10,11 +10,12 @@ import { CONNECTION_TEXT, Rail, tasksOf, type WorkspaceActions } from './compone
 import { Task } from './components/Task';
 
 type Auth = 'checking' | 'in' | 'out';
-type Theme = 'light' | 'dark';
 type ProjectDialog = { kind: 'add' } | { kind: 'rename'; project: Project } | { kind: 'remove'; project: Project } | null;
 
-const NARROW = '(max-width: 720px)';
-const THEME_KEY = 'uam.theme';
+/** Below this the rail is a drawer (DESIGN.md breakpoints). */
+const NARROW = '(max-width: 959px)';
+/** From this width the Changes sheet sits beside the column instead of over it. */
+const SHEET_INLINE = '(min-width: 1280px)';
 const HIDDEN_KEY = 'uam.hiddenProjects';
 const VIEWED_KEY = 'uam.viewed';
 const HASH_PREFIX = '#task=';
@@ -31,33 +32,6 @@ function readJSON<T>(key: string, fallback: T): T {
   }
 }
 
-function useTheme(): [Theme, () => void] {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem(THEME_KEY);
-    if (stored === 'light' || stored === 'dark') return stored;
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  });
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
-  // Follow the system until the user picks explicitly.
-  useEffect(() => {
-    if (localStorage.getItem(THEME_KEY)) return;
-    const m = window.matchMedia('(prefers-color-scheme: dark)');
-    const on = () => setTheme(m.matches ? 'dark' : 'light');
-    m.addEventListener('change', on);
-    return () => m.removeEventListener('change', on);
-  }, []);
-  const toggle = useCallback(() => {
-    setTheme((t) => {
-      const next = t === 'dark' ? 'light' : 'dark';
-      localStorage.setItem(THEME_KEY, next);
-      return next;
-    });
-  }, []);
-  return [theme, toggle];
-}
-
 function initialSelection(): string | null {
   const h = window.location.hash;
   return h.startsWith(HASH_PREFIX) ? decodeURIComponent(h.slice(HASH_PREFIX.length)) || null : null;
@@ -69,8 +43,8 @@ export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, selectedId: initialSelection() }));
   const [meta, setMeta] = useState<Meta | null>(null);
   const [streamKey, setStreamKey] = useState(0);
-  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW).matches);
-  const [theme, toggleTheme] = useTheme();
+  const narrow = useMedia(NARROW);
+  const sheetInline = useMedia(SHEET_INLINE);
   const [newTaskIn, setNewTaskIn] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -99,13 +73,6 @@ export default function App() {
     if (auth !== 'in') return;
     api.meta().then(setMeta).catch(() => setMeta(null));
   }, [auth]);
-
-  useEffect(() => {
-    const m = window.matchMedia(NARROW);
-    const onChange = () => setNarrow(m.matches);
-    m.addEventListener('change', onChange);
-    return () => m.removeEventListener('change', onChange);
-  }, []);
 
   // Keep the selected task in the URL fragment so a reload lands on it.
   useEffect(() => {
@@ -229,7 +196,7 @@ export default function App() {
     [hidden],
   );
 
-  if (auth === 'checking') return <main className="login muted">Loading…</main>;
+  if (auth === 'checking') return <main className="login caption">Loading…</main>;
   if (auth === 'out') return <Login onLoggedIn={() => setAuth('in')} />;
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
@@ -261,6 +228,20 @@ export default function App() {
     }
   }
 
+  // On narrow screens the header carries the drawer button; the Task pane renders its own header.
+  const menuButton = narrow ? (
+    <button
+      ref={drawerButton}
+      type="button"
+      className="btn btn-icon"
+      aria-label="Projects"
+      aria-expanded={drawerOpen}
+      onClick={() => setDrawerOpen((o) => !o)}
+    >
+      <span aria-hidden="true">☰</span>
+    </button>
+  ) : null;
+
   // The task pane manages its own scrolling; every other view scrolls inside `.page`.
   let page: React.ReactNode;
   let pane: React.ReactNode = null;
@@ -283,6 +264,7 @@ export default function App() {
         agents={state.agents}
         snapshotSeq={state.snapshotSeq}
         sheetOpen={sheetOpen}
+        sidePanelInline={sheetInline}
         onSheet={(open) => {
           setSheetOpen(open);
           if (!open) document.getElementById('changes-link')?.focus();
@@ -290,21 +272,22 @@ export default function App() {
         onSessionUpdate={upsertSession}
         onDeleted={(id) => dispatch({ type: 'remove_session', id })}
         onInteractionUpdate={(sessionId, interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction })}
+        leading={menuButton}
       />
     );
   } else if (state.selectedId && state.snapshotSeq >= 0 && !selected) {
     page = (
-      <div className="column empty">
-        <h1 className="display title">This task no longer exists.</h1>
-        <button type="button" className="pill pill-outline" onClick={actions.onHome}>
+      <div className="page-column empty">
+        <h1 className="display-md">This task no longer exists.</h1>
+        <button type="button" className="btn btn-secondary" onClick={actions.onHome}>
           Back to projects
         </button>
       </div>
     );
   } else if (state.selectedId) {
     page = (
-      <div className="column empty">
-        <p className="muted">Loading conversation…</p>
+      <div className="page-column empty">
+        <p className="caption">Loading conversation…</p>
       </div>
     );
   } else {
@@ -321,8 +304,6 @@ export default function App() {
               sessions={state.sessions}
               selectedId={state.selectedId}
               actions={actions}
-              theme={theme}
-              onToggleTheme={toggleTheme}
               authRequired={authRequired}
               onLogout={() => void logout()}
               connection={state.connection}
@@ -330,32 +311,23 @@ export default function App() {
           </div>
         )}
         <main className="main">
-          {narrow && (
-            <div className="topbar">
-              <button
-                ref={drawerButton}
-                type="button"
-                className="pill pill-outline pill-sm"
-                aria-expanded={drawerOpen}
-                onClick={() => setDrawerOpen((o) => !o)}
-              >
-                Projects
-              </button>
-              <span className="topbar-title">
-                {selected ? <TaskTitle session={selected} /> : newTaskProject ? 'New task' : 'uam'}
-              </span>
+          {narrow && !pane && (
+            <header className="main-header">
+              {menuButton}
+              <h1 className="task-title">{newTaskProject ? 'New task' : 'uam'}</h1>
+              <span className="spacer" />
               {state.connection !== 'connected' && (
                 <span className={`conn conn-${state.connection}`} role="status" title={CONNECTION_TEXT[state.connection]}>
                   <span className="mark-dot" aria-hidden="true" />
                   <span className="sr-only">{CONNECTION_TEXT[state.connection]}</span>
                 </span>
               )}
-            </div>
+            </header>
           )}
           {pane ?? <div className="page">{page}</div>}
         </main>
 
-        {(sheetOpen || (narrow && drawerOpen)) && (
+        {((sheetOpen && !sheetInline) || (narrow && drawerOpen)) && (
           <button
             type="button"
             className="scrim"

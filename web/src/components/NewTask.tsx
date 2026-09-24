@@ -49,34 +49,29 @@ export function NewTask({
   const unavailable = chosen && !chosen.available ? chosen.reason || 'not installed' : null;
 
   return (
-    <div className="column">
-      <div className="kicker">
-        <span>{project.name}</span>
-      </div>
-      <h1 className="display title">New task</h1>
-      <p className="muted lede">
-        Runs in <span className="mono">{project.dir}</span>. Leave the name empty and the provider titles it from your first
-        message.
+    <div className="page-column">
+      <div className="eyebrow">{project.name}</div>
+      <h1 className="display-md">New task</h1>
+      <p className="lede">
+        Runs in <code>{project.dir}</code>. Leave the name empty and the provider titles it from your first message.
       </p>
       <form className="form newtask" onSubmit={submit}>
-        <div className="row wrap controls">
+        <div className="form-row">
           <span className="control">
             <span className="control-label">Provider</span>
             <span className="control-static">{chosen ? chosen.display_name : meta ? 'No providers' : 'Loading…'}</span>
           </span>
           {catalog.length > 0 && (
-            <span className="control">
-              <label htmlFor="nt-model" className="control-label">
-                Model
-              </label>
-              <select id="nt-model" className="select" value={model} onChange={(e) => setModel(e.target.value)}>
+            <label className="control">
+              <span className="control-label">Model</span>
+              <select id="nt-model" className="input mono" value={model} onChange={(e) => setModel(e.target.value)}>
                 {catalog.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name}
                   </option>
                 ))}
               </select>
-            </span>
+            </label>
           )}
         </div>
         {unavailable && (
@@ -110,11 +105,11 @@ export function NewTask({
             {error}
           </p>
         )}
-        <div className="row">
-          <button type="submit" className="pill pill-primary" disabled={busy || !chosen?.available || !prompt.trim()}>
+        <div className="actions actions-start">
+          <button type="submit" className="btn btn-primary" disabled={busy || !chosen?.available || !prompt.trim()}>
             {busy ? 'Starting…' : 'Start task'}
           </button>
-          <button type="button" className="pill pill-text" onClick={onCancel}>
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
             Cancel
           </button>
         </div>

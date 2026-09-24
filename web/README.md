@@ -36,16 +36,19 @@ contain it. `#task=<id>` in the URL opens a task directly.
 - `src/state.ts` — one reducer for server state: projects, sessions, the
   selected session's detail, subagent transcripts (routed by `agent_id`),
   snapshot `seq` gating, connection status.
-- `src/App.tsx` — auth check, the single `EventSource`, theme, narrow
-  layout, navigation (home deck / task / new task), the project dialogs.
-- `src/components/` — Rail (projects and tasks), Deck (home screen with the
-  "Needs you" list), Task (the conversation pane: header, scrolling
-  transcript with a "Jump to latest" pill, pinned composer), Transcript
-  (chat bubbles, markdown everywhere, collapsible Thinking blocks,
-  ledger-folded tool calls, inline subagents), Interactions, Composer,
-  Changes (sheet), NewTask, Projects (dialogs), Login, and shared atoms in
-  `common.tsx`.
-- `src/styles.css` — design tokens (light and dark) and all styling.
+- `src/App.tsx` — auth check, the single `EventSource`, narrow layout,
+  navigation (home deck / task / new task), the project dialogs.
+- `src/components/` — Rail ("Needs you" group, projects and tasks), Deck
+  (home screen rows), Task (the conversation pane: 44px header with the
+  state chip and task menu, scrolling transcript with a "New output"
+  button, pinned composer, the Changes sheet beside or over it), Transcript
+  (user bubbles, flat assistant turns, markdown everywhere, Thinking
+  disclosures, ledger-folded tool calls, one compact row per subagent),
+  Subagents (the side panel: grouped list and one subagent's transcript),
+  Interactions, Composer, Changes (sheet), NewTask, Projects (dialogs),
+  Login, and shared atoms in `common.tsx`.
+- `src/styles.css` — the DESIGN.md tokens (one mid-light theme) and all
+  styling; every colour is a token.
 - `src/mock/` — development-only fake service (see above).
 
 Fonts are self-hosted from `@fontsource/inter` and `@fontsource/eb-garamond`

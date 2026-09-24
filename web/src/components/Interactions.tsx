@@ -10,7 +10,8 @@ const STATE_TEXT: Record<Interaction['state'], string> = {
 
 /**
  * Permission or question card. The first answer from any tab wins: a 409 means someone
- * else answered, a 410 means the provider withdrew the request.
+ * else answered, a 410 means the provider withdrew the request. While pending the header
+ * carries the attention chip; that is the only orange on the card.
  */
 export function InteractionCard({
   session,
@@ -42,35 +43,52 @@ export function InteractionCard({
     }
   }
 
-  const cls = ['card', 'interaction', pending ? `interaction-pending ${permission ? 'bloom-peach' : 'bloom-sky'}` : 'interaction-done'].join(' ');
+  // Footer order: reject at the left, the first (default) option as the primary at the right.
+  const options = interaction.options ?? [];
+  const primary = options.find((o) => !o.reject);
+  const ordered = [...options.filter((o) => o.reject), ...options.filter((o) => !o.reject && o !== primary), ...(primary ? [primary] : [])];
 
   return (
-    <section className={cls} aria-labelledby={titleId}>
-      <div className="label">
-        {permission ? 'Permission' : 'Question'}
-        {!pending && ` · ${STATE_TEXT[interaction.state]}`}
+    <section className={`card interaction ${pending ? 'interaction-pending' : 'interaction-done'}`} role="group" aria-labelledby={titleId}>
+      <div className="card-head">
+        {pending ? (
+          <span className="chip chip-attention">
+            <span className="mark-dot mark-dot-attention" aria-hidden="true" />
+            {permission ? 'Needs permission' : 'Needs answer'}
+          </span>
+        ) : (
+          <span className="chip">
+            {permission ? 'Permission' : 'Question'} · {STATE_TEXT[interaction.state]}
+          </span>
+        )}
       </div>
       <h3 id={titleId} className="card-title">
         {interaction.title}
       </h3>
-      {interaction.detail && <pre className="code">{interaction.detail}</pre>}
+      {interaction.detail && (
+        <pre className="well" translate="no">
+          {interaction.detail}
+        </pre>
+      )}
       {permission ? (
-        <div className="row wrap">
-          {pending && !permitted && <span className="muted small">This provider does not accept decisions from UAM.</span>}
-          {pending &&
-            permitted &&
-            (interaction.options ?? []).map((o, k) => (
-              <button
-                key={o.id}
-                type="button"
-                className={o.reject ? 'pill pill-outline' : k === 0 ? 'pill pill-primary' : 'pill pill-outline'}
-                disabled={busy}
-                onClick={() => respond({ decision: o.id })}
-              >
-                {o.label}
-              </button>
-            ))}
-        </div>
+        <>
+          {pending && !permitted && <p className="caption">This provider does not accept decisions from UAM.</p>}
+          {pending && permitted && ordered.length > 0 && (
+            <div className="card-foot">
+              {ordered.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  className={o.reject ? 'btn btn-danger' : o === primary ? 'btn btn-primary' : 'btn btn-secondary'}
+                  disabled={busy}
+                  onClick={() => respond({ decision: o.id })}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       ) : (
         <QuestionForm
           interactionId={interaction.id}
@@ -80,9 +98,9 @@ export function InteractionCard({
           onDecline={() => respond({ reject: true })}
         />
       )}
-      {pending && !permission && !permitted && <p className="muted small">This provider does not accept answers from UAM.</p>}
+      {pending && !permission && !permitted && <p className="caption">This provider does not accept answers from UAM.</p>}
       {!pending && (
-        <p className="muted small">
+        <p className="caption">
           {STATE_TEXT[interaction.state]}
           {interaction.resolution ? ` · ${interaction.resolution}` : ''}
         </p>
@@ -171,12 +189,12 @@ function QuestionForm({
         </fieldset>
       ))}
       {!disabled && (
-        <div className="row wrap">
-          <button type="submit" className="pill pill-primary" disabled={!complete}>
-            Answer
-          </button>
-          <button type="button" className="pill pill-outline" onClick={onDecline}>
+        <div className="card-foot">
+          <button type="button" className="btn btn-danger" onClick={onDecline}>
             Decline
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={!complete}>
+            Answer
           </button>
         </div>
       )}

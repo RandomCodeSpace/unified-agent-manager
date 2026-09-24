@@ -113,16 +113,22 @@ off, run `uam web stop`, then `uam web` without the flag.
   subscription shows up without restarting the service.
 - **Conversation**: your messages sit on the right, the agent's on the left,
   both rendered as markdown (never as HTML) while they stream. The agent's
-  reasoning, when the provider reports it, is a collapsed "Thinking" block
-  with a live one-line preview; expanding it shows the full text, and the
-  choice is kept per block for the browser session. Runs of tool calls fold
-  into one line that expands in place. If you scroll up while text arrives,
-  the view stays put and offers "Jump to latest".
-- **Subagents**: when the agent delegates work to a subagent, the subagent
-  shows up in the Task under the tool call that started it, with its status
-  (running, completed, failed, or cancelled). Expanding it loads its own
-  prompt, replies, and tool calls, which never appear in the Task's own
-  conversation. Parallel subagents stack.
+  reasoning, when the provider reports it, is a collapsed "Thinking…" row
+  with a live one-line preview while it streams and "Thought for 12s" once
+  done; expanding it shows the full text, and the choice is kept per block
+  for the browser session. Runs of tool calls fold into one line that
+  expands in place. If you scroll up while text arrives, the view stays put
+  and offers "New output".
+- **Subagents**: when the agent delegates work to a subagent, the Task shows
+  one compact row under the tool call that started it (name, status, and
+  the duration once it ended) and a "Subagents" button in the header with
+  the total and how many are running. The button opens a panel beside the
+  conversation that lists the subagents grouped by status (running, failed,
+  completed, cancelled) with their start time and duration; "Spawned by"
+  jumps to the tool call in the conversation. Opening a row, or "Open" on
+  its row in the conversation, shows that subagent's own prompt, replies,
+  and tool calls in the panel, live while it runs. Subagent output never
+  appears in the Task's own conversation.
 - **Approvals and questions**: when the provider asks for permission or asks a
   question, a card appears in the conversation and a "Needs you" mark on the
   Task in the project list and on the home screen. Nothing is approved

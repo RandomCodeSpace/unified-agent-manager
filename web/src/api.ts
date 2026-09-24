@@ -115,6 +115,9 @@ export interface Subagent {
   error?: string;
   started_at?: string;
   ended_at?: string;
+  /** Model id and effort level the subagent runs with, when the provider reports them. */
+  model?: string;
+  effort?: string;
 }
 
 export interface SubagentDetail {

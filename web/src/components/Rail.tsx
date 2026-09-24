@@ -26,10 +26,16 @@ export const CONNECTION_TEXT: Record<Connection, string> = {
   offline: 'Offline, retrying. Work continues on the server.',
 };
 
-/** Attention mark for a task row: "Needs you" beats the new-activity dot. */
+/** Attention mark at the end of a task row: a "Needs you" dot beats the new-activity dot. */
 export function Attention({ session }: { session: SessionSummary }) {
   const { hasNews } = useApp();
-  if (needsYou(session)) return <span className="badge-pill badge-attn">Needs you</span>;
+  if (needsYou(session)) {
+    return (
+      <span className="dot-attention" title="Needs you">
+        <span className="sr-only">Needs you</span>
+      </span>
+    );
+  }
   if (hasNews(session)) {
     return (
       <span className="news" title="New activity">
@@ -40,13 +46,24 @@ export function Attention({ session }: { session: SessionSummary }) {
   return null;
 }
 
+function RailTask({ session, selected, onSelect }: { session: SessionSummary; selected: boolean; onSelect: (id: string) => void }) {
+  return (
+    <li>
+      <button type="button" className="rail-task" aria-current={selected ? 'true' : undefined} onClick={() => onSelect(session.id)}>
+        <StateMark state={session.state} label={false} />
+        <Sep />
+        <TaskTitle session={session} className="rail-item-name" />
+        <Attention session={session} />
+      </button>
+    </li>
+  );
+}
+
 export function Rail({
   projects,
   sessions,
   selectedId,
   actions,
-  theme,
-  onToggleTheme,
   authRequired,
   onLogout,
   connection,
@@ -55,48 +72,59 @@ export function Rail({
   sessions: SessionSummary[];
   selectedId: string | null;
   actions: WorkspaceActions;
-  theme: 'light' | 'dark';
-  onToggleTheme: () => void;
   authRequired: boolean;
   onLogout: () => void;
   connection: Connection;
 }) {
+  const needs = sessions.filter(needsYou).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
   return (
     <nav className="rail" aria-label="Projects">
-      <button type="button" className="rail-brand display" onClick={actions.onHome}>
-        uam
-      </button>
-      {projects.length === 0 && <p className="muted small">No projects yet.</p>}
+      <div className="rail-top">
+        <button type="button" className="wordmark" onClick={actions.onHome}>
+          uam
+        </button>
+      </div>
+      {needs.length > 0 && (
+        <section aria-label="Needs you">
+          <div className="rail-group-label eyebrow">
+            Needs you{' '}
+            <span className="count count-attention num" aria-hidden="true">
+              · {needs.length}
+            </span>
+          </div>
+          <ul className="rail-tasks">
+            {needs.map((t) => (
+              <RailTask key={t.id} session={t} selected={t.id === selectedId} onSelect={actions.onSelect} />
+            ))}
+          </ul>
+        </section>
+      )}
+      <div className="rail-group-label eyebrow">Projects</div>
+      {projects.length === 0 && <p className="caption pad">No projects yet.</p>}
       {projects.map((p) => {
         const tasks = tasksOf(sessions, p.id);
         const hidden = actions.collapsed.has(p.id);
         const attention = tasks.filter(needsYou).length;
         return (
           <section key={p.id} className="rail-section" aria-label={p.name}>
-            <button type="button" className="rail-head" aria-expanded={!hidden} onClick={() => actions.onToggleProject(p.id)}>
-              <span className="label rail-project">{p.name}</span>
-              <span className="rail-count muted">{tasks.length}</span>
-              {hidden && attention > 0 && <span className="badge-pill badge-attn">{attention}</span>}
+            <button type="button" className="rail-project" aria-expanded={!hidden} onClick={() => actions.onToggleProject(p.id)}>
+              <span className="chev" aria-hidden="true" />
+              <span className="rail-project-name">{p.name}</span>
+              <span className="count num">{tasks.length}</span>
+              {hidden && attention > 0 && (
+                <span className="count count-attention num">
+                  {attention}
+                  <span className="sr-only"> need you</span>
+                </span>
+              )}
             </button>
             {!hidden && (
-              <ul className="rail-items">
+              <ul className="rail-tasks">
                 {tasks.map((t) => (
-                  <li key={t.id}>
-                    <button
-                      type="button"
-                      className="rail-item"
-                      aria-current={t.id === selectedId ? 'true' : undefined}
-                      onClick={() => actions.onSelect(t.id)}
-                    >
-                      <StateMark state={t.state} label={false} />
-                      <Sep />
-                      <TaskTitle session={t} className="rail-item-name" />
-                      <Attention session={t} />
-                    </button>
-                  </li>
+                  <RailTask key={t.id} session={t} selected={t.id === selectedId} onSelect={actions.onSelect} />
                 ))}
                 <li>
-                  <button type="button" className="rail-item rail-item-new" onClick={() => actions.onNewTask(p.id)}>
+                  <button type="button" className="rail-task rail-task-new" onClick={() => actions.onNewTask(p.id)}>
                     <span aria-hidden="true">+</span> New task
                   </button>
                 </li>
@@ -105,16 +133,13 @@ export function Rail({
           </section>
         );
       })}
-      <div className="rail-foot">
-        <button type="button" className="pill pill-text pill-sm" onClick={actions.onAddProject}>
-          + Add project
-        </button>
-        <div className="row wrap rail-tools">
-          <button type="button" className="pill pill-text pill-sm" onClick={onToggleTheme} aria-pressed={theme === 'dark'}>
-            {theme === 'dark' ? 'Light' : 'Dark'}
+      <div className="rail-footer">
+        <div className="rail-actions">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={actions.onAddProject}>
+            + Add project
           </button>
           {authRequired && (
-            <button type="button" className="pill pill-text pill-sm" onClick={onLogout}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onLogout}>
               Log out
             </button>
           )}

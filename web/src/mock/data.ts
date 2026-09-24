@@ -147,6 +147,8 @@ export function seed(): MockState {
     description: 'Check every template under templates/ for images without alt text and inputs without labels.',
     status: 'running',
     started_at: ago(11),
+    model: 'claude-haiku-4.5',
+    effort: 'medium',
   };
   const a2: Subagent = {
     id: 'a2',
@@ -155,6 +157,20 @@ export function seed(): MockState {
     description: 'Compute WCAG contrast for the colour tokens in assets/theme.css.',
     status: 'running',
     started_at: ago(11),
+    model: 'gpt-5-mini',
+    effort: 'low',
+  };
+  const a3: Subagent = {
+    id: 'a3',
+    parent_tool_call_id: 'i5',
+    name: 'Run the accessibility linter',
+    description: 'Run axe on the rendered post page and report violations.',
+    status: 'failed',
+    error: 'axe-core is not installed in this project.',
+    started_at: ago(11),
+    ended_at: ago(10),
+    model: 'claude-haiku-4.5',
+    effort: 'high',
   };
 
   const tasks: MockTask[] = [
@@ -342,9 +358,20 @@ export function seed(): MockState {
         { id: 'i2', kind: 'assistant', time: ago(11), text: 'Splitting this into two independent surveys so they can run in parallel: markup and contrast.' },
         tool('i3', 11, { name: 'task', title: 'Survey templates for missing alt text and labels', status: 'running', input: '{"description":"Survey templates for missing alt text and labels"}' }),
         tool('i4', 11, { name: 'task', title: 'Check contrast of the theme tokens', status: 'running', input: '{"description":"Check contrast of the theme tokens"}' }),
+        tool('i5', 11, {
+          name: 'task',
+          title: 'Run the accessibility linter',
+          status: 'failed',
+          input: '{"description":"Run the accessibility linter"}',
+          output: 'axe-core is not installed in this project.',
+        }),
       ],
-      subagents: [a1, a2],
+      subagents: [a1, a2, a3],
       agentItems: {
+        a3: [
+          tool('v1', 11, { name: 'bash', title: 'npx axe http://localhost:4000/post', status: 'failed', output: 'npm ERR! could not determine executable to run' }, 'a3'),
+          { id: 'v2', kind: 'assistant', time: ago(10), agent_id: 'a3', text: '`axe-core` is not installed and I was told not to add dependencies. Stopping here.' },
+        ],
         a1: [
           { id: 's0', kind: 'reasoning', time: ago(10), agent_id: 'a1', text: 'Grep for `<img` first, then read each hit for a missing `alt`.' },
           tool('s1', 10, { name: 'grep', title: 'Search "<img" in templates', status: 'completed', output: 'templates/post.html:13\ntemplates/list.html:22' }, 'a1'),

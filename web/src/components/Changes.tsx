@@ -9,18 +9,21 @@ export function defaultScope(s: SessionSummary): Scope {
 
 /**
  * The Changes sheet: file list plus one unified diff. `changes` for the default scope is
- * owned by the Task view (it feeds the "n files changed" link); other scopes load here.
+ * owned by the Task view (it feeds the header count); other scopes load here. Inline beside
+ * the column on wide screens, an overlay panel otherwise.
  */
 export function ChangesSheet({
   session,
   projectName,
   changes,
+  inline,
   onRefresh,
   onClose,
 }: {
   session: SessionSummary;
   projectName: string;
   changes: ChangesData | null;
+  inline: boolean;
   onRefresh: () => void;
   onClose: () => void;
 }) {
@@ -53,6 +56,9 @@ export function ChangesSheet({
   const data = isDefault ? changes : other;
   const files = data?.supported ? data.files : [];
   const shownPath = path && files.some((f) => f.path === path) ? path : (files[0]?.path ?? null);
+  const adds = files.reduce((n, f) => n + f.additions, 0);
+  const dels = files.reduce((n, f) => n + f.deletions, 0);
+  const label = data ? data.label : `${projectName} vs HEAD`;
 
   function refresh() {
     setTick((t) => t + 1);
@@ -60,44 +66,49 @@ export function ChangesSheet({
   }
 
   return (
-    <section className="sheet" role="dialog" aria-modal="true" aria-label="Changes">
+    <aside className={inline ? 'sheet' : 'sheet sheet-overlay'} role={inline ? undefined : 'dialog'} aria-modal={inline ? undefined : true} aria-label="Changes">
       <div className="sheet-head">
-        <div>
-          <div className="label">Changes</div>
-          <span className="muted small">{data ? data.label : `${projectName} vs HEAD`}</span>
-        </div>
+        <span className="sheet-title">Changes</span>
+        {data?.supported && (
+          <span className="sheet-counts num">
+            {files.length} {files.length === 1 ? 'file' : 'files'} · <span className="add">+{adds}</span> <span className="del">−{dels}</span>
+          </span>
+        )}
         <span className="spacer" />
         {canSession && (
-          <div className="segmented" role="group" aria-label="Scope">
+          <div className="sheet-scope" role="group" aria-label="Scope">
             {(['session', 'workspace'] as const).map((s) => (
-              <button key={s} type="button" aria-pressed={scope === s} onClick={() => setScope(s)}>
+              <button key={s} type="button" className="btn btn-ghost btn-sm" aria-pressed={scope === s} onClick={() => setScope(s)}>
                 {s === 'session' ? 'This task' : 'Workspace'}
               </button>
             ))}
           </div>
         )}
-        <button type="button" className="pill pill-text pill-sm" onClick={refresh}>
-          Refresh
+        <button type="button" className="btn btn-icon" aria-label="Refresh" title="Refresh" onClick={refresh}>
+          <span aria-hidden="true">↻</span>
         </button>
-        <button ref={closeRef} type="button" className="iconbtn" aria-label="Close changes" onClick={onClose}>
-          ×
+        <button ref={closeRef} type="button" className="btn btn-icon" aria-label="Close changes" title="Close" onClick={onClose}>
+          <span aria-hidden="true">×</span>
         </button>
       </div>
+      <p className="caption sheet-sub" title={label}>
+        {label}
+      </p>
       <ul className="files">
         {error && (
           <li className="error pad" role="alert">
             {error}
           </li>
         )}
-        {!data && !error && <li className="muted small pad">Loading…</li>}
-        {data && !data.supported && <li className="muted small pad">{data.reason || 'Not available for this task.'}</li>}
-        {data?.supported && files.length === 0 && <li className="muted small pad">No changes.</li>}
+        {!data && !error && <li className="caption pad">Loading…</li>}
+        {data && !data.supported && <li className="caption pad">{data.reason || 'Not available for this task.'}</li>}
+        {data?.supported && files.length === 0 && <li className="caption pad">No changes.</li>}
         {files.map((f) => (
           <li key={f.path}>
             <button type="button" className="file" aria-pressed={f.path === shownPath} onClick={() => setPath(f.path)} title={f.path}>
-              <span className="file-status mono">{f.status}</span>
-              <span className="file-path mono">{f.path}</span>
-              <span className="file-counts mono">
+              <span className={`file-status file-status-${f.status}`}>{f.status}</span>
+              <span className="file-path">{f.path}</span>
+              <span className="num">
                 <span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span>
               </span>
             </button>
@@ -107,7 +118,7 @@ export function ChangesSheet({
       <div className="sheet-diff">
         {shownPath && <FileView key={`${scope}:${shownPath}:${tick}`} sessionId={session.id} scope={scope} path={shownPath} />}
       </div>
-    </section>
+    </aside>
   );
 }
 
@@ -143,13 +154,13 @@ function FileView({ sessionId, scope, path }: { sessionId: string; scope: Scope;
       </p>
     );
   }
-  if (!file) return <p className="muted small">Loading diff…</p>;
+  if (!file) return <p className="caption">Loading diff…</p>;
   if (patch instanceof Error) return <p className="error">Could not parse diff: {patch.message}</p>;
-  if (!patch || patch.hunks.length === 0) return <p className="muted small">No textual changes in {file.path}.</p>;
+  if (!patch || patch.hunks.length === 0) return <p className="caption">No textual changes in {file.path}.</p>;
 
   return (
-    <table className="diff">
-      <caption className="mono">{file.path}</caption>
+    <table className="diff" translate="no">
+      <caption>{file.path}</caption>
       <tbody>{patch.hunks.flatMap((h, hi) => renderHunk(h, hi))}</tbody>
     </table>
   );

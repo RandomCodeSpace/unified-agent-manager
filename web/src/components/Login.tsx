@@ -23,10 +23,9 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
 
   return (
     <main className="login">
-      <span className="orb orb-peach" aria-hidden="true" />
       <form className="login-card form" onSubmit={submit}>
-        <h1 className="display login-brand">uam</h1>
-        <p className="muted">
+        <h1 className="display-md login-brand">uam</h1>
+        <p className="lede">
           Enter the access token for this server. To see it, run <code>uam web</code> on the server; it prints the token
           whether or not the service is already running.
         </p>
@@ -49,8 +48,8 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
             {error}
           </p>
         )}
-        <div className="actions">
-          <button type="submit" className="pill pill-primary" disabled={busy || !token}>
+        <div className="actions actions-start">
+          <button type="submit" className="btn btn-primary" disabled={busy || !token}>
             Log in
           </button>
         </div>

@@ -1,67 +1,128 @@
-import { memo, useEffect, useState, type ReactNode } from 'react';
-import { api, describeError, type Item, type Subagent, type SubagentStatus, type ToolStatus } from '../api';
-import type { AgentTranscript } from '../state';
-import { Markdown, Sep, useApp } from './common';
+import { memo, useState, type ReactNode } from 'react';
+import { modelName, type Item, type Subagent, type SubagentStatus, type ToolStatus } from '../api';
+import { Markdown, Sep, Spinner, useApp } from './common';
 
 interface Props {
-  sessionId: string;
   items: Item[];
   subagents: Subagent[];
-  agents: Record<string, AgentTranscript>;
-  /** Changes on every fresh snapshot; expanded subagent blocks reload then. */
-  snapshotSeq: number;
   /** The provider still holds the turn, so pending tools may still report. */
   live: boolean;
-  /** A turn is running (not merely waiting for the user): the last text item is still streaming. */
+  /** A turn is running (not merely waiting for the user): the last item is still streaming. */
   working: boolean;
+  /** Provider id and the model of the latest turn, for the provider line above the first reply. */
+  provider: string;
+  model: string;
+  /** Open a subagent's transcript in the side panel; `opener` gets focus back when it closes. */
+  onOpenAgent: (agentId: string, opener: HTMLElement) => void;
 }
 
 /**
- * Main transcript. Text items are chat bubbles (user right, assistant left), consecutive tool
- * calls fold into one ledger line, and a tool call that started a subagent stands on its own
- * with the subagent block under it; consecutive ones (parallel subagents) stack.
+ * Main transcript. User items are bubbles on the right; everything between two user items
+ * is one flat assistant turn: thinking rows, a ledger of folded tool calls, a compact row
+ * for each `task` call that spawned a subagent (its output lives in the panel, never
+ * here), and the prose.
  */
-export function Transcript({ sessionId, items, subagents, agents, snapshotSeq, live, working }: Props) {
+export function Transcript({ items, subagents, live, working, provider, model, onOpenAgent }: Props) {
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
+  const ctx: RenderContext = { live, streamingId: working ? items[items.length - 1]?.id : undefined, thoughtEnd: thoughtEnds(items) };
 
   const out: ReactNode[] = [];
-  let run: Item[] = [];
+  let group: Item[] = [];
+  let first = true;
   const flush = () => {
-    if (!run.length) return;
-    out.push(<Ledger key={`ledger-${run[0].id}`} items={run} live={live} />);
-    run = [];
-  };
-  items.forEach((item, k) => {
-    if (item.kind === 'tool') {
+    if (!group.length) return;
+    const nodes = renderItems(group, ctx, (item) => {
       const agent = byParent.get(item.id);
-      if (!agent) {
-        run.push(item);
-        return;
-      }
-      flush();
-      out.push(
-        <SubagentBlock
-          key={item.id}
-          sessionId={sessionId}
-          item={item}
-          subagent={agent}
-          transcript={agents[agent.id]}
-          snapshotSeq={snapshotSeq}
-        />,
-      );
+      return agent ? <SubagentRow key={item.id} item={item} subagent={agent} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
+    });
+    out.push(
+      <div key={`turn-${group[0].id}`} className="turn turn-assistant">
+        {first && (
+          <div className="provider-line">
+            {provider}
+            {model && (
+              <>
+                {' · '}
+                <code>{model}</code>
+              </>
+            )}
+          </div>
+        )}
+        {nodes}
+      </div>,
+    );
+    first = false;
+    group = [];
+  };
+  items.forEach((item) => {
+    if (item.kind !== 'user') {
+      group.push(item);
       return;
     }
     flush();
-    out.push(<Turn key={item.id} item={item} streaming={working && k === items.length - 1} />);
+    out.push(
+      <div key={item.id} className="turn turn-user">
+        <div className="bubble-user">
+          <span className="sr-only">You: </span>
+          <Markdown text={item.text ?? ''} />
+        </div>
+      </div>,
+    );
   });
   flush();
   return (
-    <div className="transcript">
+    <>
       {out}
       {working && <WorkingIndicator />}
-    </div>
+    </>
   );
+}
+
+interface RenderContext {
+  live: boolean;
+  /** The item still receiving deltas, if any. */
+  streamingId: string | undefined;
+  /** For each reasoning item that was followed by another item: when that next item started. */
+  thoughtEnd: Map<string, string>;
+}
+
+/** A reasoning item ends when the next item begins; both are server timestamps. */
+function thoughtEnds(items: Item[]): Map<string, string> {
+  const m = new Map<string, string>();
+  items.forEach((item, k) => {
+    const next = items[k + 1];
+    if (item.kind === 'reasoning' && next) m.set(item.id, next.time);
+  });
+  return m;
+}
+
+/** Items in order; consecutive tool calls fold into one ledger, `special` may take an item over. */
+function renderItems(items: Item[], ctx: RenderContext, special?: (item: Item) => ReactNode | null): ReactNode[] {
+  const out: ReactNode[] = [];
+  let run: Item[] = [];
+  const flush = () => {
+    if (run.length) out.push(<Ledger key={`ledger-${run[0].id}`} items={run} live={ctx.live} />);
+    run = [];
+  };
+  for (const item of items) {
+    if (item.kind === 'tool') {
+      const node = special?.(item);
+      if (!node) {
+        run.push(item);
+        continue;
+      }
+      flush();
+      out.push(node);
+      continue;
+    }
+    // A reasoning item the provider closed without any text has nothing to disclose.
+    if (item.kind === 'reasoning' && !item.text && item.id !== ctx.streamingId) continue;
+    flush();
+    out.push(<Turn key={item.id} item={item} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} />);
+  }
+  flush();
+  return out;
 }
 
 function WorkingIndicator() {
@@ -76,19 +137,16 @@ function WorkingIndicator() {
 function Ledger({ items, live }: { items: Item[]; live: boolean }) {
   const running = items.filter((i) => isActive(i.tool?.status)).length;
   const failed = items.filter((i) => i.tool?.status === 'failed').length;
-  const summary = [
-    `${items.length} tool call${items.length === 1 ? '' : 's'}`,
-    running && live ? `${running} running` : '',
-    failed ? `${failed} failed` : '',
-  ]
+  const active = running > 0 && live;
+  const summary = [`${items.length} tool call${items.length === 1 ? '' : 's'}`, active ? `${running} running` : '', failed ? `${failed} failed` : '']
     .filter(Boolean)
     .join(' · ');
-  const tone = running && live ? 'running' : failed ? 'failed' : 'completed';
   return (
-    <details className="ledger" open={running > 0 && live}>
-      <summary>
-        <span className={`tool-dot tool-dot-${tone}`} aria-hidden="true" />
-        {summary}
+    <details className="ledger" open={active}>
+      <summary aria-live="polite">
+        <span className="chev" aria-hidden="true" />
+        <span className="num">{summary}</span>
+        {active && <Spinner />}
       </summary>
       <div className="ledger-body">
         {items.map((i) => (
@@ -101,63 +159,79 @@ function Ledger({ items, live }: { items: Item[]; live: boolean }) {
 
 const isActive = (s?: ToolStatus) => s === 'pending' || s === 'running';
 
+const TOOL_GLYPH: Record<string, string> = { completed: '✓', failed: '✕', ended: '–' };
+
+/** One ledger row: glyph, tool name (the first word, weight 500), argument; expands to input and output. */
 export const ToolRow = memo(function ToolRow({ item, live }: { item: Item; live: boolean }) {
   const t = item.tool;
   const status = t?.status ?? 'pending';
   // Display only: a tool still pending/running after the turn ended never reported a result.
   const ended = !live && isActive(status);
-  const shown = ended ? 'ended' : status === 'completed' ? 'done' : status;
+  const tone = ended ? 'ended' : status;
+  const label = t?.title || t?.name || 'Tool';
+  const space = label.indexOf(' ');
+  const head = space > 0 ? label.slice(0, space) : label;
+  const rest = space > 0 ? label.slice(space + 1) : '';
+  const word = ended ? 'no result' : status === 'completed' ? 'done' : status;
   return (
-    <details className={`tool tool-${ended ? 'ended' : status}`}>
-      <summary>
-        <span className={`tool-dot tool-dot-${ended ? 'ended' : status}`} aria-hidden="true" />
-        <span className="tool-title">{t?.title || t?.name || 'Tool'}</span>
-        <Sep />
-        <span className="tool-status" title={ended ? 'The turn ended before this tool reported a result' : undefined}>
-          {shown}
-        </span>
+    <details className={`tool tool-${tone}`} id={`item-${item.id}`}>
+      <summary title={ended ? 'The turn ended before this tool reported a result' : undefined}>
+        {tone === 'running' || tone === 'pending' ? (
+          <Spinner />
+        ) : (
+          <span className="tool-mark" aria-hidden="true">
+            {TOOL_GLYPH[tone]}
+          </span>
+        )}
+        <span className="tool-name">{head}</span>
+        {rest && <span className="tool-title">{rest}</span>}
+        <span className="sr-only">, {word}</span>
       </summary>
       <div className="tool-body">
         {item.text && <Markdown text={item.text} />}
         {t?.input && (
           <>
             <div className="label">Input</div>
-            <pre className="code">{t.input}</pre>
+            <pre className="code" translate="no">
+              {t.input}
+            </pre>
           </>
         )}
         {t?.output && (
           <>
             <div className="label">Output</div>
-            <pre className="code">{t.output}</pre>
+            <pre className="code" translate="no">
+              {t.output}
+            </pre>
           </>
         )}
-        {!item.text && !t?.input && !t?.output && <p className="muted small">No details yet.</p>}
+        {!item.text && !t?.input && !t?.output && <p className="caption">No details yet.</p>}
       </div>
     </details>
   );
 });
 
-/** One text item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, streaming }: { item: Item; streaming: boolean }) {
+/** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
+export const Turn = memo(function Turn({ item, streaming, endedAt }: { item: Item; streaming: boolean; endedAt?: string }) {
   switch (item.kind) {
     case 'user':
       return (
-        <div className="msg msg-user">
+        <div className="bubble-user">
           <span className="sr-only">You: </span>
           <Markdown text={item.text ?? ''} />
         </div>
       );
     case 'assistant':
       return (
-        <div className="msg msg-assistant">
+        <div className="message-assistant">
           <Markdown text={item.text ?? ''} />
         </div>
       );
     case 'reasoning':
-      return <Thinking item={item} streaming={streaming} />;
+      return <Thinking item={item} streaming={streaming} endedAt={endedAt} />;
     case 'notice':
       return (
-        <div className="notice">
+        <div className="notice-line">
           <Markdown text={item.text ?? ''} />
         </div>
       );
@@ -170,23 +244,35 @@ export const Turn = memo(function Turn({ item, streaming }: { item: Item; stream
 
 const THINKING_KEY = 'uam.thinking:';
 
-/** Last non-empty line of the text, with leading markdown marks stripped, for the collapsed preview. */
+/** Last non-empty line of the text, with leading markdown marks stripped, for the live preview. */
 function lastLine(text: string): string {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
   const line = lines[lines.length - 1] ?? '';
   return line.replace(/^[#>*\-\s`]+/, '').replace(/`/g, '');
 }
 
+/** "12s", "1m 4s" or "<1s" between two ISO timestamps; null when they are not in order. */
+export function duration(from: string, to: string): string | null {
+  const ms = new Date(to).getTime() - new Date(from).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return '<1s';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
 /**
- * A reasoning item: a "Thinking" block, collapsed by default. While it streams the summary
- * shows the latest line; expanding shows the full markdown. The choice is remembered per
- * item for the browser session.
+ * A reasoning item: a "Thinking" disclosure, collapsed by default. While it streams the row
+ * reads "Thinking…" with the latest line; done, it reads "Thought for 12s" when the next item's
+ * timestamp is known. The choice is remembered per item for the browser session.
  */
-export function Thinking({ item, streaming }: { item: Item; streaming: boolean }) {
+export function Thinking({ item, streaming, endedAt }: { item: Item; streaming: boolean; endedAt?: string }) {
   const key = THINKING_KEY + item.id;
   const [open, setOpen] = useState(() => sessionStorage.getItem(key) === '1');
   const text = item.text ?? '';
-  const preview = lastLine(text);
+  const took = !streaming && endedAt ? duration(item.time, endedAt) : null;
+  const label = streaming ? 'Thinking…' : took ? `Thought for ${took}` : 'Thought';
+  const preview = streaming && !open ? lastLine(text) : '';
   return (
     <details
       className={streaming ? 'thinking thinking-live' : 'thinking'}
@@ -199,8 +285,9 @@ export function Thinking({ item, streaming }: { item: Item; streaming: boolean }
       }}
     >
       <summary>
-        <span className="thinking-label">{streaming ? 'Thinking…' : 'Thinking'}</span>
-        {!open && preview && (
+        <span className="chev" aria-hidden="true" />
+        <span className="thinking-label num">{label}</span>
+        {preview && (
           <>
             <Sep />
             <span className="thinking-preview">{preview}</span>
@@ -214,111 +301,78 @@ export function Thinking({ item, streaming }: { item: Item; streaming: boolean }
   );
 }
 
-const AGENT_STATUS: Record<SubagentStatus, string> = {
-  running: 'running',
-  completed: 'done',
-  failed: 'failed',
-  cancelled: 'stopped',
-};
+/** Subagent state as a chip: glyph plus the word; only "running" animates. */
+export function AgentChip({ status }: { status: SubagentStatus }) {
+  switch (status) {
+    case 'running':
+      return (
+        <span className="chip">
+          <Spinner />
+          Running
+        </span>
+      );
+    case 'completed':
+      return (
+        <span className="chip chip-success">
+          <span aria-hidden="true">✓</span>Completed
+        </span>
+      );
+    case 'failed':
+      return (
+        <span className="chip chip-error">
+          <span aria-hidden="true">✕</span>Failed
+        </span>
+      );
+    default:
+      return (
+        <span className="chip">
+          <span aria-hidden="true">–</span>Stopped
+        </span>
+      );
+  }
+}
 
 /**
- * A subagent under the `task` tool call that started it. Collapsed by default; expanding
- * loads the transcript from the subagent route, after which live frames tagged with this
- * agent_id keep it current (see state.ts).
+ * The `task` tool call that spawned a subagent, as one compact row: name, state, duration
+ * once ended, and "Open", which shows the transcript in the side panel. Nothing of the
+ * subagent's output renders in the main column.
  */
-function SubagentBlock({
-  sessionId,
+function SubagentRow({
   item,
   subagent,
-  transcript,
-  snapshotSeq,
+  provider,
+  onOpen,
 }: {
-  sessionId: string;
   item: Item;
   subagent: Subagent;
-  transcript: AgentTranscript | undefined;
-  snapshotSeq: number;
+  provider: string;
+  onOpen: (opener: HTMLElement) => void;
 }) {
-  const { dispatch } = useApp();
-  const [open, setOpen] = useState(false);
-  const live = subagent.status === 'running';
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    dispatch({ type: 'agent_loading', agentId: subagent.id });
-    api
-      .subagent(sessionId, subagent.id)
-      .then((d) => !cancelled && dispatch({ type: 'agent_loaded', agentId: subagent.id, subagent: d.subagent, items: d.items }))
-      .catch((e: unknown) => !cancelled && dispatch({ type: 'agent_failed', agentId: subagent.id, error: describeError(e) }));
-    return () => {
-      cancelled = true;
-    };
-    // snapshotSeq: a reconnect replaced the stream, so reload to close any gap.
-  }, [open, sessionId, subagent.id, snapshotSeq, dispatch]);
-
+  const { meta } = useApp();
   const name = subagent.name || item.tool?.title || item.tool?.name || 'Subagent';
+  const took = subagent.started_at && subagent.ended_at ? duration(subagent.started_at, subagent.ended_at) : null;
   return (
-    <details className={`agent agent-${subagent.status}`} open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>
-        <span className={`tool-dot tool-dot-${subagent.status}`} aria-hidden="true" />
-        <span className="agent-name">{name}</span>
-        <span className="badge-pill">subagent</span>
-        <Sep />
-        <span className="tool-status">{AGENT_STATUS[subagent.status] ?? subagent.status}</span>
-        {subagent.description && (
-          <>
-            <Sep />
-            <span className="agent-desc">{subagent.description}</span>
-          </>
-        )}
-      </summary>
-      <div className="agent-body">
-        {!transcript || transcript.loading ? (
-          <p className="muted small">Loading transcript…</p>
-        ) : transcript.error ? (
-          <p className="error" role="alert">
-            {transcript.error}
-          </p>
-        ) : (
-          <>
-            <AgentItems items={transcript.items} live={live} />
-            {transcript.items.length === 0 && <p className="muted small">Nothing recorded yet.</p>}
-          </>
-        )}
-        {subagent.status === 'completed' && item.tool?.output && (
-          <div className="agent-result">
-            <div className="label">Result</div>
-            <Markdown text={item.tool.output} />
-          </div>
-        )}
-        {subagent.status === 'failed' && <p className="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</p>}
-        {subagent.status === 'cancelled' && <p className="muted small">Stopped before it finished.</p>}
-      </div>
-    </details>
+    <div className="agent-chip" id={`item-${item.id}`}>
+      <span className="eyebrow">Subagent</span>
+      <span className="agent-chip-name" title={subagent.description || undefined}>
+        {name}
+      </span>
+      <AgentChip status={subagent.status} />
+      {subagent.model && <span className="caption mono">{modelName(meta, provider, subagent.model)}</span>}
+      {took && <span className="caption num">{took}</span>}
+      <button type="button" className="btn btn-ghost btn-sm" onClick={(e) => onOpen(e.currentTarget)}>
+        Open
+      </button>
+    </div>
   );
 }
 
-/** A subagent's own transcript: same bubbles and thinking blocks; tool calls fold like the main one. */
-function AgentItems({ items, live }: { items: Item[]; live: boolean }) {
-  const out: ReactNode[] = [];
-  let run: Item[] = [];
-  const flush = () => {
-    if (run.length) out.push(<Ledger key={`ledger-${run[0].id}`} items={run} live={live} />);
-    run = [];
-  };
-  items.forEach((item, k) => {
-    if (item.kind === 'tool') {
-      run.push(item);
-      return;
-    }
-    flush();
-    out.push(<Turn key={item.id} item={item} streaming={live && k === items.length - 1} />);
-  });
-  flush();
+/** A subagent's own transcript at 13px: the same rows and bubbles; tool calls fold like the main one. */
+export function AgentItems({ items, live }: { items: Item[]; live: boolean }) {
+  const ctx: RenderContext = { live, streamingId: live ? items[items.length - 1]?.id : undefined, thoughtEnd: thoughtEnds(items) };
   return (
-    <div className="transcript transcript-agent">
-      {out}
+    <div className="transcript transcript-agent turn">
+      {renderItems(items, ctx)}
       {live && <WorkingIndicator />}
     </div>
   );

@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {
   LIVE,
   api,
   describeError,
   isStatus,
-  modelName,
-  providerLabel,
+  taskName,
   type Changes as ChangesData,
   type Interaction,
   type Project,
@@ -14,9 +13,10 @@ import {
 } from '../api';
 import type { AgentTranscript } from '../state';
 import { ChangesSheet } from './Changes';
-import { ConfirmDialog, INTERRUPTED_TEXT, NameDialog, StateMark, TaskTitle, useApp } from './common';
+import { ConfirmDialog, INTERRUPTED_TEXT, Menu, NameDialog, Spinner, StateMark, TaskTitle } from './common';
 import { Composer } from './Composer';
 import { InteractionCard } from './Interactions';
+import { SubagentPanel, type PanelView } from './Subagents';
 import { Transcript } from './Transcript';
 
 interface Props {
@@ -25,23 +25,40 @@ interface Props {
   agents: Record<string, AgentTranscript>;
   snapshotSeq: number;
   sheetOpen: boolean;
+  /** Side panels (Changes, Subagents) sit beside the column (wide) rather than over it. */
+  sidePanelInline: boolean;
   onSheet: (open: boolean) => void;
   onSessionUpdate: (s: SessionSummary) => void;
   onDeleted: (id: string) => void;
   onInteractionUpdate: (sessionId: string, i: Interaction) => void;
+  /** Leading header control (the drawer button on narrow screens). */
+  leading?: ReactNode;
 }
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
 const BOTTOM_SLACK = 32;
 
-/** The conversation pane: header on top, the transcript scrolling in the middle, the composer pinned below. */
-export function Task({ session, project, agents, snapshotSeq, sheetOpen, onSheet, onSessionUpdate, onDeleted, onInteractionUpdate }: Props) {
-  const { meta } = useApp();
+/** The conversation pane: a 44px header, the transcript scrolling in a fixed column, the composer pinned below. */
+export function Task({
+  session,
+  project,
+  agents,
+  snapshotSeq,
+  sheetOpen,
+  sidePanelInline,
+  onSheet,
+  onSessionUpdate,
+  onDeleted,
+  onInteractionUpdate,
+  leading,
+}: Props) {
   const [dialog, setDialog] = useState<'rename' | 'close' | 'delete' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesTick, setChangesTick] = useState(0);
   const [showJump, setShowJump] = useState(false);
+  const [panel, setPanel] = useState<PanelView | null>(null);
+  const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
   const working = session.state === 'working' || session.state === 'starting';
   const scroller = useRef<HTMLDivElement>(null);
@@ -70,6 +87,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, onSheet
   useLayoutEffect(() => {
     atBottom.current = true;
     setShowJump(false);
+    setPanel(null);
   }, [session.id]);
 
   // Follow new content only while the reader is at the bottom; otherwise offer a way back.
@@ -78,7 +96,43 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, onSheet
     if (!el) return;
     if (atBottom.current) el.scrollTop = el.scrollHeight;
     else if (el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setShowJump(true);
-  }, [session.id, session.items, session.interactions, agents]);
+  }, [session.id, session.items, session.interactions]);
+
+  // One side panel at a time: opening the Changes sheet closes the subagent panel and vice versa.
+  useEffect(() => {
+    if (sheetOpen) setPanel(null);
+  }, [sheetOpen]);
+
+  const closePanel = useCallback(() => {
+    setPanel(null);
+    panelOpener.current?.focus();
+    panelOpener.current = null;
+  }, []);
+
+  function openPanel(view: PanelView, opener: HTMLElement) {
+    panelOpener.current = opener;
+    if (sheetOpen) onSheet(false);
+    setPanel(view);
+  }
+
+  // Esc closes the panel; native dialogs handle their own Esc.
+  useEffect(() => {
+    if (!panel) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !document.querySelector('dialog[open]')) closePanel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [panel, closePanel]);
+
+  /** Scroll the transcript to the `task` row that spawned a subagent and flash it. */
+  function locate(toolCallId: string) {
+    const el = document.getElementById(`item-${toolCallId}`);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center' });
+    el.classList.add('flash');
+    window.setTimeout(() => el.classList.remove('flash'), 1400);
+  }
 
   function onScroll() {
     const el = scroller.current;
@@ -96,83 +150,105 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, onSheet
     }
   }
 
-  const model = modelName(meta, session.provider, session.model);
-  const routed = session.last_model && session.last_model !== session.model ? modelName(meta, session.provider, session.last_model) : null;
+  const name = taskName(session);
   const fileCount = changes?.supported ? changes.files.length : null;
+  const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
+  const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
 
   return (
     <div className="pane">
-      <header className="pane-head">
-        <div className="kicker">
-          <span>{project?.name ?? 'Project'}</span>
-          <span aria-hidden="true">·</span>
-          <span>{providerLabel(meta, session.provider)}</span>
-        </div>
-        <h1 className="display title">
-          <TaskTitle session={session} />
-        </h1>
-        <div className="meta">
-          <StateMark state={session.state} />
-          <span className="muted" title={routed ? 'The latest turn reported a different model than the one selected' : undefined}>
-            {routed ? `${model} → ${routed}` : model}
-          </span>
-          {session.subagents_running > 0 && (
-            <span className="muted">
-              {session.subagents_running} subagent{session.subagents_running === 1 ? '' : 's'} running
-            </span>
-          )}
-          <button type="button" id="changes-link" className="link" aria-pressed={sheetOpen} onClick={() => onSheet(!sheetOpen)}>
-            {fileCount === null ? 'Changes' : `${fileCount} ${fileCount === 1 ? 'file' : 'files'} changed`}
-          </button>
-          <button type="button" className="link" onClick={() => setDialog('rename')}>
-            Rename
-          </button>
-          {session.open && (
-            <button type="button" className="link" onClick={() => setDialog('close')}>
-              Close
+      <div className="pane-main">
+        <header className="main-header">
+          {leading}
+          <h1 className="task-title" title={name || undefined}>
+            <TaskTitle session={session} />
+          </h1>
+          <StateMark state={session.state} title={detail} />
+          <span className="spacer" />
+          {session.subagents.length > 0 && (
+            <button
+              type="button"
+              id="subagents-link"
+              className="btn btn-ghost btn-sm"
+              aria-pressed={!!panel}
+              onClick={(e) => (panel ? closePanel() : openPanel({ view: 'list' }, e.currentTarget))}
+            >
+              <span className="changes-label">Subagents</span>
+              <span className="count num">
+                {session.subagents.length}
+                <span className="sr-only"> subagents</span>
+              </span>
+              {agentsRunning > 0 && (
+                <>
+                  <Spinner />
+                  <span className="count num">{agentsRunning} running</span>
+                </>
+              )}
             </button>
           )}
-          <button type="button" className="link" onClick={() => setDialog('delete')}>
-            Delete
+          <button type="button" id="changes-link" className="btn btn-ghost btn-sm" aria-pressed={sheetOpen} onClick={() => onSheet(!sheetOpen)}>
+            <span className={fileCount === null ? 'changes-label changes-label-only' : 'changes-label'}>Changes</span>
+            {fileCount !== null && (
+              <span className="count num">
+                {fileCount}
+                <span className="sr-only"> {fileCount === 1 ? 'file' : 'files'} changed</span>
+              </span>
+            )}
           </button>
-          {session.state_detail && session.state !== 'failed' && <span className="muted">{session.state_detail}</span>}
+          <Menu label="Task actions">
+            <button type="button" role="menuitem" className="menu-item" onClick={() => setDialog('rename')}>
+              Rename
+            </button>
+            {session.open && (
+              <button type="button" role="menuitem" className="menu-item" onClick={() => setDialog('close')}>
+                Close
+              </button>
+            )}
+            <button type="button" role="menuitem" className="menu-item menu-item-danger" onClick={() => setDialog('delete')}>
+              Delete
+            </button>
+          </Menu>
+        </header>
+
+        <div className="pane-body" ref={scroller} onScroll={onScroll}>
+          <div className="column" role="log">
+            {error && (
+              <p className="notice-line notice-error" role="alert">
+                {error}
+              </p>
+            )}
+            {session.history_truncated && <p className="notice-line">Earlier history was truncated; only the most recent part is shown.</p>}
+            <Transcript
+              items={session.items}
+              subagents={session.subagents}
+              live={live}
+              working={working}
+              provider={session.provider}
+              model={session.last_model || session.model}
+              onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
+            />
+            {session.interactions.map((i) => (
+              <InteractionCard key={i.id} session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
+            ))}
+            {session.state === 'interrupted' && <p className="notice-line notice-warning">{INTERRUPTED_TEXT}</p>}
+            {session.state === 'failed' && (
+              <p className="notice-line notice-error" role="alert">
+                Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}
+              </p>
+            )}
+          </div>
         </div>
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-      </header>
 
-      <div className="pane-body" ref={scroller} onScroll={onScroll}>
-        {session.history_truncated && <p className="notice">Earlier history was truncated; only the most recent part is shown.</p>}
-        <Transcript
-          sessionId={session.id}
-          items={session.items}
-          subagents={session.subagents}
-          agents={agents}
-          snapshotSeq={snapshotSeq}
-          live={live}
-          working={working}
-        />
-        {session.interactions.map((i) => (
-          <InteractionCard key={i.id} session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
-        ))}
-        {session.state === 'interrupted' && <p className="notice">{INTERRUPTED_TEXT}</p>}
-        {session.state === 'failed' && (
-          <p className="error" role="alert">
-            Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}
-          </p>
-        )}
-      </div>
-
-      <div className="pane-foot">
-        {showJump && (
-          <button type="button" className="pill pill-outline pill-sm jump" onClick={scrollToBottom}>
-            Jump to latest
-          </button>
-        )}
-        <Composer session={session} onSessionUpdate={onSessionUpdate} />
+        <div className="pane-foot">
+          <div className="column">
+            {showJump && (
+              <button type="button" className="btn btn-secondary btn-sm jump" onClick={scrollToBottom}>
+                ↓ New output
+              </button>
+            )}
+            <Composer session={session} onSessionUpdate={onSessionUpdate} />
+          </div>
+        </div>
       </div>
 
       {sheetOpen && (
@@ -180,8 +256,22 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, onSheet
           session={session}
           projectName={project?.name ?? 'Project'}
           changes={changes}
+          inline={sidePanelInline}
           onRefresh={() => setChangesTick((t) => t + 1)}
           onClose={() => onSheet(false)}
+        />
+      )}
+      {panel && !sidePanelInline && <button type="button" className="scrim" aria-label="Close subagents" onClick={closePanel} />}
+      {panel && (
+        <SubagentPanel
+          session={session}
+          agents={agents}
+          snapshotSeq={snapshotSeq}
+          view={panel}
+          inline={sidePanelInline}
+          onView={setPanel}
+          onClose={closePanel}
+          onLocate={locate}
         />
       )}
       {dialog === 'rename' && (
@@ -207,7 +297,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, onSheet
             Closing disconnects the provider conversation. The task and its conversation ID are kept, so nothing is deleted;
             sending another prompt reopens the same conversation.
           </p>
-          <p className="muted small">To interrupt the current turn without closing, use Stop turn instead.</p>
+          <p className="caption">To interrupt the current turn without closing, use Stop turn instead.</p>
         </ConfirmDialog>
       )}
       {dialog === 'delete' && (

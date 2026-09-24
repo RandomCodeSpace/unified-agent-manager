@@ -17,6 +17,23 @@ export const STATE_LABELS: Record<SessionState, string> = {
   closed: 'Closed',
 };
 
+/** States drawn as a glyph rather than a dot (DESIGN.md, State marks). */
+const STATE_GLYPH: Partial<Record<SessionState, string>> = {
+  completed: '✓',
+  failed: '✕',
+  cancelled: '–',
+  interrupted: '‖',
+};
+
+/** Chip tone per state; only the attention chip has a fill. */
+const STATE_TONE: Partial<Record<SessionState, string>> = {
+  awaiting_permission: 'attention',
+  awaiting_answer: 'attention',
+  completed: 'success',
+  failed: 'error',
+  interrupted: 'warning',
+};
+
 export const INTERRUPTED_TEXT = 'UAM stopped while this turn was running; it was not resumed or resent.';
 
 /** Values shared by most of the tree; avoids threading meta/dispatch through every layer. */
@@ -37,15 +54,52 @@ export const AppContext = createContext<AppContextValue>({
 
 export const useApp = () => useContext(AppContext);
 
-/** State mark: a dot shaped/coloured per state, always with a text label (visible or accessible). */
-export function StateMark({ state, label = true }: { state: SessionState; label?: boolean }) {
+/** True while the media query matches; follows changes. */
+export function useMedia(query: string): boolean {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const on = () => setMatches(m.matches);
+    on();
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
+  }, [query]);
+  return matches;
+}
+
+/**
+ * State mark: an 8px dot or a glyph per state, always with a text label. With `label` the
+ * mark is a chip carrying the word; without it the word is only for assistive tech.
+ */
+export function StateMark({ state, label = true, title }: { state: SessionState; label?: boolean; title?: string }) {
   const text = STATE_LABELS[state] ?? state;
+  const glyph = STATE_GLYPH[state];
+  const mark = glyph ? (
+    <span className="mark-glyph" aria-hidden="true">
+      {glyph}
+    </span>
+  ) : (
+    <span className="mark-dot" aria-hidden="true" />
+  );
+  if (!label) {
+    return (
+      <span className={`mark mark-${state}`} title={title}>
+        {mark}
+        <span className="sr-only">{text}</span>
+      </span>
+    );
+  }
+  const tone = STATE_TONE[state];
   return (
-    <span className={`mark mark-${state}`}>
-      <span className="mark-dot" aria-hidden="true" />
-      {label ? <span className="mark-text">{text}</span> : <span className="sr-only">{text}</span>}
+    <span className={`chip mark mark-${state}${tone ? ` chip-${tone}` : ''}`} title={title}>
+      {mark}
+      <span className="mark-text">{text}</span>
     </span>
   );
+}
+
+export function Spinner() {
+  return <span className="spinner" aria-hidden="true" />;
 }
 
 /** Display name: name, else provider title, else a placeholder that says whether a title is on its way. */
@@ -83,7 +137,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
   }, []);
   return (
     <dialog ref={ref} className="dialog" aria-labelledby={titleId} onClose={onClose}>
-      <h2 id={titleId} className="display dialog-title">
+      <h2 id={titleId} className="display-sm dialog-title">
         {title}
       </h2>
       {children}
@@ -130,10 +184,10 @@ export function ConfirmDialog({
         </p>
       )}
       <div className="actions">
-        <button type="button" className="pill pill-outline" onClick={onClose} autoFocus>
+        <button type="button" className="btn btn-secondary" onClick={onClose} autoFocus>
           Cancel
         </button>
-        <button type="button" className={danger ? 'pill pill-danger' : 'pill pill-primary'} disabled={busy} onClick={() => void confirm()}>
+        <button type="button" className={danger ? 'btn btn-danger' : 'btn btn-primary'} disabled={busy} onClick={() => void confirm()}>
           {confirmLabel}
         </button>
       </div>
@@ -184,22 +238,58 @@ export function NameDialog({
           <span className="control-label">{label}</span>
           <input className="input" type="text" autoFocus value={value} onChange={(e) => setValue(e.target.value)} />
         </label>
-        {hint && <p className="muted small">{hint}</p>}
+        {hint && <p className="caption">{hint}</p>}
         {error && (
           <p className="error" role="alert">
             {error}
           </p>
         )}
         <div className="actions">
-          <button type="button" className="pill pill-outline" onClick={onClose}>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="pill pill-primary" disabled={busy || (!allowEmpty && !value.trim())}>
+          <button type="submit" className="btn btn-primary" disabled={busy || (!allowEmpty && !value.trim())}>
             {submitLabel}
           </button>
         </div>
       </form>
     </Dialog>
+  );
+}
+
+/** An icon button that opens a small menu; closes on a choice, Esc, or a click outside. */
+export function Menu({ label, children }: { label: string; children: ReactNode }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => ref.current?.removeAttribute('open');
+    const onPointer = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close();
+        ref.current?.querySelector('summary')?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+  return (
+    <details ref={ref} className="menu" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="btn btn-icon" aria-label={label} aria-haspopup="menu">
+        …
+      </summary>
+      <div className="menu-list" role="menu" onClick={() => ref.current?.removeAttribute('open')}>
+        {children}
+      </div>
+    </details>
   );
 }
 
@@ -215,6 +305,9 @@ const mdComponents: Components = {
     ) : (
       <span>{children}</span>
     );
+  },
+  pre({ children }) {
+    return <pre translate="no">{children}</pre>;
   },
 };
 
