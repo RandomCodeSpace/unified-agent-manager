@@ -29,11 +29,23 @@ const (
 	StateClosed             = "closed"
 )
 
-// Submission outcomes.
+// Submission outcomes. A queued prompt is "queued" until it is sent, then
+// takes the send's outcome; one removed from the queue unsent is "cancelled".
 const (
 	SubmissionAccepted  = "accepted"
 	SubmissionRejected  = "rejected"
 	SubmissionUncertain = "uncertain"
+	SubmissionQueued    = "queued"
+	SubmissionCancelled = "cancelled"
+)
+
+// Prompt modes. While a turn runs, send is refused, queue holds the prompt
+// until the turn completes, and steer adds it to the running turn. While the
+// Task is idle, all three send it.
+const (
+	ModeSend  = "send"
+	ModeQueue = "queue"
+	ModeSteer = "steer"
 )
 
 // Change scopes.
@@ -96,6 +108,8 @@ type SessionSummary struct {
 	LastModel string `json:"last_model"`
 	// SubagentsRunning counts subagents that have not ended.
 	SubagentsRunning int `json:"subagents_running"`
+	// Queued counts prompts waiting in the Task's queue.
+	Queued int `json:"queued"`
 }
 
 // SessionDetail is a summary plus the retained main-agent transcript,
@@ -107,6 +121,18 @@ type SessionDetail struct {
 	Subagents        []agentapi.Subagent    `json:"subagents"`
 	HistoryTruncated bool                   `json:"history_truncated"`
 	LastSubmission   *Submission            `json:"last_submission"`
+	// Queue holds the prompts waiting for the running turn, oldest first.
+	Queue []QueuedPrompt `json:"queue"`
+	// QueuePaused is set while the queue waits for the user to resume or
+	// clear it; it is never set with an empty queue.
+	QueuePaused bool `json:"queue_paused"`
+}
+
+// QueuedPrompt is one prompt in a Task's queue.
+type QueuedPrompt struct {
+	RequestID string    `json:"request_id"`
+	Text      string    `json:"text"`
+	QueuedAt  time.Time `json:"queued_at"`
 }
 
 // SubagentDetail is one subagent and its retained transcript.

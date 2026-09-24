@@ -287,6 +287,67 @@ func TestSessionRoutes(t *testing.T) {
 	}
 }
 
+func TestPromptModeAndQueueRoutes(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	sum, conv := createSession(t, ts.m, ts.prov)
+	base := "/api/sessions/" + sum.ID
+	prompt := func(text, rid, mode string) *httptest.ResponseRecorder {
+		body := `{"text":"` + text + `","request_id":"` + rid + `"`
+		if mode != "" {
+			body += `,"mode":"` + mode + `"`
+		}
+		return ts.do(http.MethodPost, base+"/prompt", body+"}", auth)
+	}
+	if w := prompt("first", mustUUID(t), ""); w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"status":"accepted"`) {
+		t.Fatalf("prompt without mode = %d %s", w.Code, w.Body)
+	}
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	if w := prompt("x", mustUUID(t), "later"); w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown mode = %d, want 400", w.Code)
+	}
+	if w := prompt("x", mustUUID(t), "send"); w.Code != http.StatusConflict {
+		t.Fatalf("send while busy = %d, want 409", w.Code)
+	}
+	rid := mustUUID(t)
+	w := prompt("queued one", rid, "queue")
+	var sub Submission
+	if err := json.Unmarshal(w.Body.Bytes(), &sub); err != nil || w.Code != http.StatusAccepted || sub.Status != SubmissionQueued || sub.RequestID != rid {
+		t.Fatalf("queue while busy = %d %s", w.Code, w.Body)
+	}
+	if w := prompt("steer it", mustUUID(t), "steer"); w.Code != http.StatusAccepted || !strings.Contains(w.Body.String(), `"status":"accepted"`) || len(conv.Steers()) != 1 {
+		t.Fatalf("steer while busy = %d %s", w.Code, w.Body)
+	}
+	w = ts.do(http.MethodGet, base, "", auth)
+	var d SessionDetail
+	if err := json.Unmarshal(w.Body.Bytes(), &d); err != nil || d.Queued != 1 || len(d.Queue) != 1 || d.Queue[0].RequestID != rid || d.Queue[0].Text != "queued one" || d.QueuePaused {
+		t.Fatalf("detail = %d %s", w.Code, w.Body)
+	}
+	for range 2 {
+		if w := ts.do(http.MethodDelete, base+"/queue/"+rid, "", auth); w.Code != http.StatusNoContent {
+			t.Fatalf("cancel queued = %d %s", w.Code, w.Body)
+		}
+	}
+	if w := ts.do(http.MethodDelete, base+"/queue/"+mustUUID(t), "", auth); w.Code != http.StatusNotFound {
+		t.Fatalf("cancel unknown = %d, want 404", w.Code)
+	}
+	prompt("again", mustUUID(t), "queue")
+	conv.EmitTurn(agentapi.TurnCancelled, "")
+	if w := ts.do(http.MethodPost, base+"/queue/resume", "", auth); w.Code != http.StatusNoContent {
+		t.Fatalf("resume = %d %s", w.Code, w.Body)
+	}
+	waitUntil(t, "resumed queue sent", func() bool { return len(conv.Sends()) == 2 })
+	if w := prompt("more", mustUUID(t), "queue"); !strings.Contains(w.Body.String(), `"status":"queued"`) {
+		t.Fatalf("queue behind the resumed prompt = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodPost, base+"/queue/clear", "", auth); w.Code != http.StatusNoContent || ts.m.List()[0].Queued != 0 {
+		t.Fatalf("clear = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodPost, "/api/sessions/missing/queue/clear", "", auth); w.Code != http.StatusNotFound {
+		t.Fatalf("clear unknown session = %d, want 404", w.Code)
+	}
+}
+
 func TestEventStreamOverHTTP(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	ts.srv.heartbeat = 50 * time.Millisecond

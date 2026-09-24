@@ -117,6 +117,9 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDelete)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}", s.handleSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
+	mux.HandleFunc("POST /api/sessions/{id}/queue/resume", s.handleQueueResume)
+	mux.HandleFunc("POST /api/sessions/{id}/queue/clear", s.handleQueueClear)
+	mux.HandleFunc("DELETE /api/sessions/{id}/queue/{request_id}", s.handleQueueCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/close", s.handleClose)
 	mux.HandleFunc("POST /api/sessions/{id}/interactions/{iid}", s.handleAnswer)
@@ -410,16 +413,38 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text      string `json:"text"`
 		RequestID string `json:"request_id"`
+		Mode      string `json:"mode"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	sub, err := s.m.Submit(r.PathValue("id"), body.Text, body.RequestID)
+	sub, err := s.m.Submit(r.PathValue("id"), body.Text, body.RequestID, body.Mode)
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, sub)
+}
+
+func (s *Server) handleQueueResume(w http.ResponseWriter, r *http.Request) {
+	writeNoContent(w, s.m.ResumeQueue(r.PathValue("id")))
+}
+
+func (s *Server) handleQueueClear(w http.ResponseWriter, r *http.Request) {
+	writeNoContent(w, s.m.ClearQueue(r.PathValue("id")))
+}
+
+func (s *Server) handleQueueCancel(w http.ResponseWriter, r *http.Request) {
+	writeNoContent(w, s.m.CancelQueued(r.PathValue("id"), r.PathValue("request_id")))
+}
+
+// writeNoContent answers 204, or err as a failure.
+func writeNoContent(w http.ResponseWriter, err error) {
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {

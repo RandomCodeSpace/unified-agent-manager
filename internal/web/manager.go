@@ -43,6 +43,7 @@ const (
 	maxNameRunes    = 120
 	maxDetailRunes  = 300
 	maxSubmissions  = 64
+	maxQueue        = 20
 	recentWorkdirsN = 10
 	// modelsMaxAge is how long a model catalog is used before /api/meta
 	// reloads it; entitlements can change while the service runs.
@@ -168,6 +169,16 @@ type webSession struct {
 	submissions []Submission
 	last        *Submission
 	createReq   string
+
+	// queue holds prompts waiting for the running turn, oldest first. It
+	// lives in memory only: stopping the service drops it.
+	queue []QueuedPrompt
+	// queuePaused keeps the queue from draining after a turn that did not
+	// complete or a prompt that was not accepted, until the user resumes or
+	// clears it. It is never set with an empty queue.
+	queuePaused bool
+	// queueChanged tells changedLocked to publish the queue.
+	queueChanged bool
 
 	persisted persistKey
 }
@@ -587,7 +598,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), Workdir: s.workdir, ConversationID: s.convID,
 		State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
-		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities,
+		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
 	}
 }
 
@@ -598,6 +609,8 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		Interactions:     make([]agentapi.Interaction, 0, len(s.interactions)),
 		Subagents:        make([]agentapi.Subagent, 0, len(s.subagents)),
 		HistoryTruncated: s.truncated,
+		Queue:            s.queueSnapshot(),
+		QueuePaused:      s.queuePaused,
 	}
 	for _, ix := range s.interactions {
 		d.Interactions = append(d.Interactions, ix.Interaction)
@@ -919,31 +932,42 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 	return conv
 }
 
-// changedLocked publishes s's summary when it changed since before and
-// schedules a sessions.json write when its durable part changed.
+// changedLocked publishes s's queue when it changed and its summary when it
+// changed since before, and schedules a sessions.json write when its durable
+// part or its queue changed.
 func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	after := m.summaryLocked(s)
 	after.UpdatedAt = before.UpdatedAt
 	key := s.key()
 	durable := key != s.persisted
-	if after == before && !durable {
+	queue := s.queueChanged
+	s.queueChanged = false
+	if after == before && !durable && !queue {
 		return
 	}
 	// updated_at is Task activity, which is what the durable part records:
 	// turn state (including waiting for input), detail, name, title, model
-	// and the last submission. A viewer opening the conversation (open,
-	// starting) and provider capability or catalog changes are not.
-	if durable {
+	// and the last submission. Queue changes are activity too. A viewer
+	// opening the conversation (open, starting) and provider capability or
+	// catalog changes are not.
+	if durable || queue {
 		s.updatedAt = m.now()
 	}
 	if m.sessions[s.id] != s {
 		// Not yet (or no longer) listed; Create publishes it once registered.
 		return
 	}
+	if queue {
+		m.broadcastLocked("queue", s.id, func(seq uint64) any {
+			return queueEvent{Seq: seq, SessionID: s.id, Queue: s.queueSnapshot(), Paused: s.queuePaused}
+		})
+	}
 	summary := m.summaryLocked(s)
 	m.broadcastLocked("session", "", func(seq uint64) any { return sessionEvent{Seq: seq, Session: summary} })
-	if durable {
-		s.persisted = key
+	if durable || queue {
+		if durable {
+			s.persisted = key
+		}
 		m.dirty[s.id] = struct{}{}
 		select {
 		case m.wake <- struct{}{}:
@@ -1088,6 +1112,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		s.gen++
 		m.expirePendingLocked(s, "the provider runtime exited")
 		m.endSubagentsLocked(s)
+		m.pauseQueueLocked(s)
 		s.setBase(StateFailed, detail)
 		log.Warn("web provider conversation exited", "session", s.id, "provider", s.provider)
 	}
@@ -1103,14 +1128,18 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		s.setBase(StateWorking, "")
 	case agentapi.TurnCompleted:
 		s.setBase(StateCompleted, "")
+		// The whole turn is over, steers included: the queue may go on.
+		m.kickDrainLocked(s)
 	case agentapi.TurnCancelled:
 		s.setBase(StateCancelled, "")
+		m.pauseQueueLocked(s)
 	case agentapi.TurnFailed:
 		detail := "the provider reported that the turn failed"
 		if turn.Error != "" {
 			detail = clipRunes(displaytext.Sanitize(turn.Error), maxDetailRunes)
 		}
 		s.setBase(StateFailed, detail)
+		m.pauseQueueLocked(s)
 	}
 }
 
@@ -1209,7 +1238,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	}
 	log.Info("web session created", "session", id, "provider", prov.Name())
 	if hasPrompt {
-		if _, err := m.submit(s, req.Prompt, reqID); err != nil {
+		if _, err := m.submit(s, req.Prompt, reqID, ModeSend); err != nil {
 			log.Warn("initial web prompt not submitted", "session", id, "error", err)
 		}
 	}
@@ -1503,11 +1532,19 @@ var requestIDRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 
 func validRequestID(id string) bool { return requestIDRE.MatchString(id) }
 
-// Submit sends one prompt. A repeated request ID returns the recorded
-// outcome without contacting the provider.
-func (m *Manager) Submit(id, text, requestID string) (Submission, error) {
+// Submit sends one prompt in mode: ModeSend ("" too), ModeQueue or
+// ModeSteer. A repeated request ID returns the recorded outcome, or "queued"
+// while the prompt waits in the queue, without contacting the provider.
+func (m *Manager) Submit(id, text, requestID, mode string) (Submission, error) {
 	if !validRequestID(requestID) {
 		return Submission{}, newError(http.StatusBadRequest, "request_id must be a UUID")
+	}
+	switch mode {
+	case "":
+		mode = ModeSend
+	case ModeSend, ModeQueue, ModeSteer:
+	default:
+		return Submission{}, newError(http.StatusBadRequest, "mode must be send, queue or steer")
 	}
 	if strings.TrimSpace(text) == "" {
 		return Submission{}, newError(http.StatusBadRequest, "prompt text is required")
@@ -1519,16 +1556,22 @@ func (m *Manager) Submit(id, text, requestID string) (Submission, error) {
 	if err != nil {
 		return Submission{}, err
 	}
-	return m.submit(s, text, requestID)
+	return m.submit(s, text, requestID, mode)
 }
 
 var errTurnRunning = newError(http.StatusConflict, "a turn is already running in this session")
 
-func (m *Manager) submit(s *webSession, text, reqID string) (Submission, error) {
+// turnRunning reports whether state is a running turn: working or waiting for
+// the user. Opening a conversation (starting) is not a turn.
+func turnRunning(state string) bool {
+	return state == StateWorking || state == StateAwaitingPermission || state == StateAwaitingAnswer
+}
+
+func (m *Manager) submit(s *webSession, text, reqID, mode string) (Submission, error) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	m.mu.Lock()
-	if sub, ok := s.findSubmission(reqID); ok {
+	if sub, ok := s.findRequest(reqID); ok {
 		m.mu.Unlock()
 		return sub, nil
 	}
@@ -1540,25 +1583,41 @@ func (m *Manager) submit(s *webSession, text, reqID string) (Submission, error) 
 		m.mu.Unlock()
 		return Submission{}, errShuttingDown
 	}
-	if busy(s.state()) {
+	state, conv := s.state(), s.conv
+	switch {
+	// Behind queued prompts that are about to be sent, a queued prompt waits
+	// its turn even when no turn is running.
+	case mode == ModeQueue && (turnRunning(state) || (len(s.queue) > 0 && !s.queuePaused)):
+		defer m.mu.Unlock()
+		return m.enqueueLocked(s, text, reqID)
+	case mode == ModeSteer && turnRunning(state):
+		m.mu.Unlock()
+		return m.steer(s, conv, text, reqID)
+	case busy(state):
 		m.mu.Unlock()
 		return Submission{}, errTurnRunning
 	}
 	m.mu.Unlock()
+	return m.send(s, text, reqID)
+}
 
+// send starts a turn with text. The caller holds s.op. An error means nothing
+// was sent and nothing was recorded; otherwise the outcome is recorded, and a
+// prompt that was not accepted pauses the queue.
+func (m *Manager) send(s *webSession, text, reqID string) (Submission, error) {
 	if err := m.openLocked(s, true); err != nil {
 		if errors.Is(err, errShuttingDown) {
 			return Submission{}, err
 		}
 		_, msg := errorStatus(err)
-		return m.recordSubmission(s, reqID, SubmissionRejected, msg), nil
+		return m.recordSubmission(s, reqID, SubmissionRejected, msg, true), nil
 	}
 
 	m.mu.Lock()
 	conv := s.conv
 	if conv == nil {
 		m.mu.Unlock()
-		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open"), nil
+		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open", true), nil
 	}
 	// Reopening can surface a turn or request the provider still has.
 	if busy(s.state()) {
@@ -1576,7 +1635,7 @@ func (m *Manager) submit(s *webSession, text, reqID string) (Submission, error) 
 	err := conv.Send(ctx, text)
 	cancel()
 	if err == nil {
-		return m.recordSubmission(s, reqID, SubmissionAccepted, ""), nil
+		return m.recordSubmission(s, reqID, SubmissionAccepted, "", false), nil
 	}
 	m.mu.Lock()
 	before = m.summaryLocked(s)
@@ -1592,10 +1651,34 @@ func (m *Manager) submit(s *webSession, text, reqID string) (Submission, error) 
 	case errors.Is(err, agentapi.ErrSubmissionUncertain):
 		// Never resubmit: the provider may already be working on it.
 		return m.recordSubmission(s, reqID, SubmissionUncertain,
-			"the provider may or may not have received this prompt, and uam did not resend it: "+shortError(err)), nil
+			"the provider may or may not have received this prompt, and uam did not resend it: "+shortError(err), true), nil
 	default:
-		return m.recordSubmission(s, reqID, SubmissionRejected, shortError(err)), nil
+		return m.recordSubmission(s, reqID, SubmissionRejected, shortError(err), true), nil
 	}
+}
+
+// steer adds text to the running turn. The turn state does not change: the
+// turn the steer joins reports its own end. The caller holds s.op.
+func (m *Manager) steer(s *webSession, conv agentapi.Conversation, text, reqID string) (Submission, error) {
+	if conv == nil {
+		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open", false), nil
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, sendTimeout)
+	err := conv.Steer(ctx, text)
+	cancel()
+	switch {
+	case err == nil:
+		return m.recordSubmission(s, reqID, SubmissionAccepted, "", false), nil
+	case errors.Is(err, agentapi.ErrUnsupported):
+		return Submission{}, newError(http.StatusConflict, "this provider cannot steer a running turn")
+	}
+	log.Warn("web steer submission failed", "session", s.id, "error", err)
+	if errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		// Never resubmit: the provider may already have folded it in.
+		return m.recordSubmission(s, reqID, SubmissionUncertain,
+			"the provider may or may not have received this steer, and uam did not resend it: "+shortError(err), false), nil
+	}
+	return m.recordSubmission(s, reqID, SubmissionRejected, shortError(err), false), nil
 }
 
 func (s *webSession) findSubmission(reqID string) (Submission, bool) {
@@ -1607,24 +1690,49 @@ func (s *webSession) findSubmission(reqID string) (Submission, bool) {
 	return Submission{}, false
 }
 
+// findRequest returns the recorded outcome of reqID, or "queued" while it
+// waits in the queue.
+func (s *webSession) findRequest(reqID string) (Submission, bool) {
+	if sub, ok := s.findSubmission(reqID); ok {
+		return sub, true
+	}
+	for _, q := range s.queue {
+		if q.RequestID == reqID {
+			return Submission{RequestID: reqID, Status: SubmissionQueued, Time: q.QueuedAt}, true
+		}
+	}
+	return Submission{}, false
+}
+
 func (s *webSession) hasSubmission(reqID string) bool {
-	_, ok := s.findSubmission(reqID)
+	_, ok := s.findRequest(reqID)
 	return ok
 }
 
-func (m *Manager) recordSubmission(s *webSession, reqID, status, msg string) Submission {
-	sub := Submission{RequestID: reqID, Status: status, Error: msg, Time: m.now()}
-	m.mu.Lock()
-	before := m.summaryLocked(s)
+// remember keeps sub for repeated request IDs, within maxSubmissions.
+func (s *webSession) remember(sub Submission) {
 	s.submissions = append(s.submissions, sub)
 	if len(s.submissions) > maxSubmissions {
 		s.submissions = append([]Submission(nil), s.submissions[len(s.submissions)-maxSubmissions:]...)
 	}
+}
+
+// recordSubmission records a prompt's outcome. pauseQueue pauses a non-empty
+// queue when the outcome is not accepted: queued work never follows a prompt
+// that did not start its turn.
+func (m *Manager) recordSubmission(s *webSession, reqID, status, msg string, pauseQueue bool) Submission {
+	sub := Submission{RequestID: reqID, Status: status, Error: msg, Time: m.now()}
+	m.mu.Lock()
+	before := m.summaryLocked(s)
+	s.remember(sub)
 	last := sub
 	s.last = &last
 	m.broadcastLocked("submission", s.id, func(seq uint64) any {
 		return submissionEvent{Seq: seq, SessionID: s.id, Submission: sub}
 	})
+	if pauseQueue && status != SubmissionAccepted {
+		m.pauseQueueLocked(s)
+	}
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 	// The request ID must be durable before the browser hears the outcome,
@@ -1633,6 +1741,170 @@ func (m *Manager) recordSubmission(s *webSession, reqID, status, msg string) Sub
 		log.Warn("persist web submission failed", "session", s.id, "error", err)
 	}
 	return sub
+}
+
+func (s *webSession) queueSnapshot() []QueuedPrompt {
+	return append([]QueuedPrompt{}, s.queue...)
+}
+
+// enqueueLocked adds a prompt to the queue. Nothing reaches the provider
+// before the running turn completes.
+func (m *Manager) enqueueLocked(s *webSession, text, reqID string) (Submission, error) {
+	if len(s.queue) >= maxQueue {
+		return Submission{}, newError(http.StatusConflict, "the queue is full (%d prompts)", maxQueue)
+	}
+	before := m.summaryLocked(s)
+	q := QueuedPrompt{RequestID: reqID, Text: text, QueuedAt: m.now()}
+	s.queue = append(s.queue, q)
+	s.queueChanged = true
+	m.changedLocked(s, before)
+	if !busy(s.state()) {
+		m.kickDrainLocked(s)
+	}
+	return Submission{RequestID: reqID, Status: SubmissionQueued, Time: q.QueuedAt}, nil
+}
+
+// pauseQueueLocked keeps a non-empty queue from draining until the user
+// resumes or clears it. The caller publishes the change.
+func (m *Manager) pauseQueueLocked(s *webSession) {
+	if len(s.queue) > 0 && !s.queuePaused {
+		s.queuePaused = true
+		s.queueChanged = true
+	}
+}
+
+// kickDrainLocked has the queue's head sent once nothing else holds s.op.
+// The drain checks everything again first, so a spare kick is harmless.
+func (m *Manager) kickDrainLocked(s *webSession) {
+	if m.closed || s.removed || len(s.queue) == 0 || s.queuePaused {
+		return
+	}
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.drain(s)
+	}()
+}
+
+// drain sends the queue's head through the normal submit path, with its own
+// request ID, when no turn is running. The head leaves the queue before it is
+// sent: from then on it cannot be cancelled, and it is never resent.
+func (m *Manager) drain(s *webSession) {
+	s.op.Lock()
+	defer s.op.Unlock()
+	m.mu.Lock()
+	if m.closed || s.removed || len(s.queue) == 0 || s.queuePaused || busy(s.state()) {
+		m.mu.Unlock()
+		return
+	}
+	before := m.summaryLocked(s)
+	head := s.queue[0]
+	s.queue = slices.Delete(s.queue, 0, 1)
+	s.queueChanged = true
+	m.changedLocked(s, before)
+	m.mu.Unlock()
+	if _, err := m.send(s, head.Text, head.RequestID); err != nil {
+		// Nothing was sent: a turn is running after all, or the service is
+		// stopping. The prompt waits at the front for the next completed turn.
+		m.mu.Lock()
+		if !m.closed && !s.removed {
+			before := m.summaryLocked(s)
+			s.queue = slices.Insert(s.queue, 0, head)
+			s.queueChanged = true
+			m.changedLocked(s, before)
+		}
+		m.mu.Unlock()
+	}
+}
+
+// CancelQueued removes one prompt from the queue before it is sent. It never
+// contacts the provider. Cancelling it again succeeds; a prompt already sent
+// is refused with 409.
+func (m *Manager) CancelQueued(id, reqID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[id]
+	switch {
+	case s == nil:
+		return newError(http.StatusNotFound, "session not found")
+	case m.closed:
+		return errShuttingDown
+	}
+	i := slices.IndexFunc(s.queue, func(q QueuedPrompt) bool { return q.RequestID == reqID })
+	if i < 0 {
+		sub, ok := s.findSubmission(reqID)
+		switch {
+		case !ok:
+			return newError(http.StatusNotFound, "queued prompt not found")
+		case sub.Status == SubmissionCancelled:
+			return nil
+		default:
+			return newError(http.StatusConflict, "the prompt was already sent")
+		}
+	}
+	before := m.summaryLocked(s)
+	s.queue = slices.Delete(s.queue, i, i+1)
+	m.cancelledLocked(s, reqID)
+	if len(s.queue) == 0 {
+		s.queuePaused = false
+	}
+	s.queueChanged = true
+	m.changedLocked(s, before)
+	return nil
+}
+
+// ClearQueue removes every queued prompt, as CancelQueued does one.
+func (m *Manager) ClearQueue(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[id]
+	switch {
+	case s == nil:
+		return newError(http.StatusNotFound, "session not found")
+	case m.closed:
+		return errShuttingDown
+	case len(s.queue) == 0:
+		return nil
+	}
+	before := m.summaryLocked(s)
+	for _, q := range s.queue {
+		m.cancelledLocked(s, q.RequestID)
+	}
+	s.queue, s.queuePaused = nil, false
+	s.queueChanged = true
+	m.changedLocked(s, before)
+	return nil
+}
+
+// ResumeQueue lets a paused queue drain again: at once when no turn is
+// running, otherwise after the running turn completes.
+func (m *Manager) ResumeQueue(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[id]
+	switch {
+	case s == nil:
+		return newError(http.StatusNotFound, "session not found")
+	case m.closed:
+		return errShuttingDown
+	}
+	if s.queuePaused {
+		before := m.summaryLocked(s)
+		s.queuePaused = false
+		s.queueChanged = true
+		m.changedLocked(s, before)
+	}
+	if !busy(s.state()) {
+		m.kickDrainLocked(s)
+	}
+	return nil
+}
+
+// cancelledLocked remembers that reqID left the queue unsent, so a repeated
+// request reports that instead of queueing it again. It is not a submission:
+// last_submission stays as it was.
+func (m *Manager) cancelledLocked(s *webSession, reqID string) {
+	s.remember(Submission{RequestID: reqID, Status: SubmissionCancelled, Time: m.now()})
 }
 
 // Cancel aborts the running turn. It is distinct from a viewer leaving and
@@ -1686,6 +1958,7 @@ func (m *Manager) Close(id string) (SessionSummary, error) {
 	s.gen++
 	m.expirePendingLocked(s, "the session was closed")
 	m.endSubagentsLocked(s)
+	m.pauseQueueLocked(s)
 	s.setBase(StateClosed, "")
 	m.changedLocked(s, before)
 	m.mu.Unlock()
@@ -1865,6 +2138,8 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		s.gen++
 		m.expirePendingLocked(s, "the uam web service stopped")
 		m.endSubagentsLocked(s)
+		// The queue lives in memory only; the prompts in it are not sent.
+		s.queue, s.queuePaused = nil, false
 		m.changedLocked(s, before)
 	}
 	for sub := range m.subs {

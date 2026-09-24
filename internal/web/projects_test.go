@@ -189,7 +189,7 @@ func TestDeleteTaskRefusedWhileBusyAndNeverDeletesConversation(t *testing.T) {
 	m, prov, st := newTestManager(t)
 	sum, conv := createSession(t, m, prov)
 	rid := mustUUID(t)
-	if _, err := m.Submit(sum.ID, "work", rid); err != nil {
+	if _, err := m.Submit(sum.ID, "work", rid, ModeSend); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Delete(sum.ID); statusOf(err) != http.StatusConflict {
@@ -214,7 +214,7 @@ func TestDeleteTaskRefusedWhileBusyAndNeverDeletesConversation(t *testing.T) {
 	if err := m.Delete(sum.ID); statusOf(err) != http.StatusNotFound {
 		t.Fatalf("delete again = %v, want 404", err)
 	}
-	if _, err := m.Submit(sum.ID, "more", mustUUID(t)); statusOf(err) != http.StatusNotFound {
+	if _, err := m.Submit(sum.ID, "more", mustUUID(t), ModeSend); statusOf(err) != http.StatusNotFound {
 		t.Fatalf("prompt after delete = %v, want 404", err)
 	}
 	if len(conv.Sends()) != 1 || len(prov.Opens()) != 1 {
@@ -389,7 +389,7 @@ func TestProviderThatCannotSwitchNeverRunsOnAnotherModel(t *testing.T) {
 	if _, err := m.SetModel(sum.ID, "b"); err != nil {
 		t.Fatal(err)
 	}
-	sub, err := m.Submit(sum.ID, "go", mustUUID(t))
+	sub, err := m.Submit(sum.ID, "go", mustUUID(t), ModeSend)
 	if err != nil || sub.Status != SubmissionRejected {
 		t.Fatalf("prompt after the stored switch = %+v, %v", sub, err)
 	}
@@ -555,7 +555,7 @@ func TestSetModelBetweenTurns(t *testing.T) {
 	if n := len(conv.ModelSets()); n != 2 {
 		t.Fatalf("closed conversation was switched (%d)", n)
 	}
-	if _, err := m.Submit(sum.ID, "next", mustUUID(t)); err != nil {
+	if _, err := m.Submit(sum.ID, "next", mustUUID(t), ModeSend); err != nil {
 		t.Fatal(err)
 	}
 	reopened := prov.Last()
@@ -586,7 +586,7 @@ func TestReopenAppliesStoredModelOrFails(t *testing.T) {
 	}
 
 	prov.SetOpenSetModelError(errors.New("switch refused"))
-	if _, err := m.Submit(refused, "hello", mustUUID(t)); err != nil {
+	if _, err := m.Submit(refused, "hello", mustUUID(t), ModeSend); err != nil {
 		t.Fatal(err)
 	}
 	failed := prov.Last()

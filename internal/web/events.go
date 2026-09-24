@@ -100,6 +100,13 @@ type submissionEvent struct {
 	Submission Submission `json:"submission"`
 }
 
+type queueEvent struct {
+	Seq       uint64         `json:"seq"`
+	SessionID string         `json:"session_id"`
+	Queue     []QueuedPrompt `json:"queue"`
+	Paused    bool           `json:"paused"`
+}
+
 func encodeFrame(event string, payload any) ([]byte, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
