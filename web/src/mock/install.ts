@@ -366,7 +366,7 @@ export function install(): void {
     } catch {
       return refused;
     }
-    if (/^\ufeff?\s*(?:<\?[\s\S]*?\?>\s*|<!--[\s\S]*?-->\s*|<![^>]*>\s*)*<svg/i.test(text)) return { status: 415, error: 'SVG images cannot be attached' };
+    if (svgRoot(text)) return { status: 415, error: 'SVG images cannot be attached' };
     if (b.length > 256 << 10) return { status: 413, error: 'text files can be at most 256 KiB' };
     return { mime: 'text/plain' };
   }
@@ -733,5 +733,18 @@ export function install(): void {
     t.interactions = t.interactions.map((x) => (x.id === i.id ? next : x));
     broadcast('interaction', { session_id: t.id, interaction: next }, t.id);
     return next;
+  }
+}
+
+/** Mirrors the server's svgRoot: after a BOM, whitespace, `<?…?>`, `<!--…-->` and `<!…>`, does the text start with `<svg`? */
+function svgRoot(text: string): boolean {
+  let rest = text.slice(0, 64 << 10).replace(/^\ufeff/, '');
+  for (;;) {
+    rest = rest.replace(/^[ \t\r\n]+/, '');
+    const end = rest.startsWith('<?') ? '?>' : rest.startsWith('<!--') ? '-->' : rest.startsWith('<!') ? '>' : '';
+    if (!end) return rest.slice(0, 4).toLowerCase() === '<svg';
+    const i = rest.indexOf(end);
+    if (i < 0) return false;
+    rest = rest.slice(i + end.length);
   }
 }
