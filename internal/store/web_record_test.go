@@ -523,11 +523,11 @@ func TestWebCustomModelsLoadClean(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":{"later_setting":"t","custom_models":[` +
-		`{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"ACME_KEY"},` +
-		`{"name":"acme","base_url":"https://other.example/v1","model_id":"other","api_key_env":"ACME_KEY"},` +
-		`{"name":"bad/name","base_url":"https://llm.example/v1","model_id":"m","api_key_env":"K"},` +
-		`{"name":"acme","display_name":"Dup","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"ACME_KEY"},` +
-		`{"name":"local","base_url":"http://127.0.0.1:8080/v1","model_id":"org/m","wire_api":"responses","api_key_env":"LOCAL_KEY"}]}}`
+		`{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_ACME"},` +
+		`{"name":"acme","base_url":"https://other.example/v1","model_id":"other","api_key_env":"UAM_BYOM_ACME"},` +
+		`{"name":"bad/name","base_url":"https://llm.example/v1","model_id":"m","api_key_env":"UAM_BYOM_K"},` +
+		`{"name":"acme","display_name":"Dup","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_ACME"},` +
+		`{"name":"local","base_url":"http://127.0.0.1:8080/v1","model_id":"org/m","wire_api":"responses","api_key_env":"UAM_BYOM_LOCAL"}]}}`
 	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -564,7 +564,7 @@ func TestWebCustomModelsLoadClean(t *testing.T) {
 }
 
 func TestValidCustomModels(t *testing.T) {
-	ok := WebCustomModel{Name: "acme", BaseURL: "https://llm.example/v1", ModelID: "coder", APIKeyEnv: "ACME_KEY"}
+	ok := WebCustomModel{Name: "acme", BaseURL: "https://llm.example/v1", ModelID: "coder", APIKeyEnv: "UAM_BYOM_ACME"}
 	if err := ValidCustomModels([]WebCustomModel{ok}); err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +585,9 @@ func TestValidCustomModels(t *testing.T) {
 		"spaced model":    with(func(m *WebCustomModel) { m.ModelID = "a b" }),
 		"wire api":        with(func(m *WebCustomModel) { m.WireAPI = "chat" }),
 		"env digit":       with(func(m *WebCustomModel) { m.APIKeyEnv = "1KEY" }),
-		"env dash":        with(func(m *WebCustomModel) { m.APIKeyEnv = "MY-KEY" }),
+		"env no prefix":   with(func(m *WebCustomModel) { m.APIKeyEnv = "GITHUB_TOKEN" }),
+		"env bare prefix": with(func(m *WebCustomModel) { m.APIKeyEnv = "UAM_BYOM_" }),
+		"env dash":        with(func(m *WebCustomModel) { m.APIKeyEnv = "UAM_BYOM_MY-KEY" }),
 		"env empty":       with(func(m *WebCustomModel) { m.APIKeyEnv = "" }),
 		"control in name": with(func(m *WebCustomModel) { m.DisplayName = "a\u0007" }),
 	} {
@@ -596,7 +598,7 @@ func TestValidCustomModels(t *testing.T) {
 	if ValidCustomModels([]WebCustomModel{ok, ok}) == nil {
 		t.Error("duplicate selection ID accepted")
 	}
-	if ValidCustomModels([]WebCustomModel{ok, with(func(m *WebCustomModel) { m.ModelID = "x"; m.APIKeyEnv = "OTHER" })}) == nil {
+	if ValidCustomModels([]WebCustomModel{ok, with(func(m *WebCustomModel) { m.ModelID = "x"; m.APIKeyEnv = "UAM_BYOM_OTHER" })}) == nil {
 		t.Error("one provider with two key variables accepted")
 	}
 	many := make([]WebCustomModel, MaxCustomModels+1)

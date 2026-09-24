@@ -640,7 +640,7 @@ export function seed(): MockState {
 
   return { meta, projects, settings: {
       send_default: 'steer',
-      custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'OPENROUTER_API_KEY', key_present: false }],
+      custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'UAM_BYOM_OPENROUTER', key_present: false }],
     },
     tasks, changes, commands, files };
 }

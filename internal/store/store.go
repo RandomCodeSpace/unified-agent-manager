@@ -541,11 +541,15 @@ const (
 	MaxCustomModels         = 32
 	MaxCustomModelNameBytes = 64
 	MaxCustomModelURLBytes  = 512
+	// CustomModelKeyPrefix starts every custom model's key variable name.
+	CustomModelKeyPrefix = "UAM_BYOM_"
 )
 
 var (
 	customModelName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	envVarName      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	// A key variable must be one exported for custom models, so a custom
+	// model can never send another service variable to its endpoint.
+	envVarName = regexp.MustCompile(`^` + CustomModelKeyPrefix + `[A-Za-z0-9_]+$`)
 )
 
 // ValidCustomModel reports why m cannot be stored, or nil. BaseURL is an
@@ -562,7 +566,7 @@ func ValidCustomModel(m WebCustomModel) error {
 	case m.WireAPI != "" && m.WireAPI != "completions" && m.WireAPI != "responses":
 		return errors.New(`wire API must be "completions" or "responses"`)
 	case len(m.APIKeyEnv) > MaxCustomModelNameBytes || !envVarName.MatchString(m.APIKeyEnv):
-		return fmt.Errorf("API key variable must be an environment variable name ([A-Za-z_][A-Za-z0-9_]*, at most %d bytes)", MaxCustomModelNameBytes)
+		return fmt.Errorf("API key variable must be named %s<NAME>, with letters, digits and '_' after the prefix, at most %d bytes; only such variables are sent to custom model endpoints", CustomModelKeyPrefix, MaxCustomModelNameBytes)
 	}
 	u, err := url.Parse(m.BaseURL)
 	if len(m.BaseURL) > MaxCustomModelURLBytes || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.HasSuffix(m.BaseURL, "?") || hasControlChar(m.BaseURL) {

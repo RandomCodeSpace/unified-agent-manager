@@ -1208,6 +1208,10 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		}
 	}
 	m.mu.Unlock()
+	titles := p.TitleModel
+	if p.CustomModels != nil {
+		titles = withoutRemovedCustom(current, *p.CustomModels, hidden, titles)
+	}
 	next := current
 	if p.SendDefault != nil {
 		next.SendDefault = *p.SendDefault
@@ -1215,8 +1219,8 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if len(hidden) > 0 {
 		next.HiddenModels = withProviders(current.HiddenModels, hidden)
 	}
-	if len(p.TitleModel) > 0 {
-		next.TitleModel = withProviders(current.TitleModel, p.TitleModel)
+	if len(titles) > 0 {
+		next.TitleModel = withProviders(current.TitleModel, titles)
 	}
 	if p.CustomModels != nil {
 		next.CustomModels = customModelsView(*p.CustomModels)
@@ -1228,7 +1232,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if err := m.store.Update(func(cfg *store.Config) error {
 		cfg.WebSettings.SendDefault = next.SendDefault
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
-		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, p.TitleModel)
+		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, titles)
 		if p.CustomModels != nil {
 			cfg.WebSettings.CustomModels = slices.Clone(*p.CustomModels)
 		}
@@ -1245,6 +1249,43 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	m.settings = next
 	m.broadcastLocked("settings", "", func(seq uint64) any { return settingsEvent{Seq: seq, Settings: next} })
 	return next, nil
+}
+
+// withoutRemovedCustom extends a settings change that sets the custom models
+// to list: a custom model it removes is no longer hidden (hidden gains the
+// provider's list without it) nor a title model (the returned title change
+// clears it).
+func withoutRemovedCustom(current Settings, list []store.WebCustomModel, hidden map[string][]string, titles map[string]string) map[string]string {
+	removed := func(id string) bool {
+		return slices.ContainsFunc(current.CustomModels, func(c CustomModel) bool { return c.Name+"/"+c.ModelID == id }) &&
+			!slices.ContainsFunc(list, func(c store.WebCustomModel) bool { return c.Name+"/"+c.ModelID == id })
+	}
+	for provider, ids := range current.HiddenModels {
+		if change, ok := hidden[provider]; ok {
+			ids = change
+		}
+		if kept := slices.DeleteFunc(slices.Clone(ids), removed); len(kept) != len(ids) {
+			hidden[provider] = kept
+		}
+	}
+	out := maps.Clone(titles)
+	if out == nil {
+		out = map[string]string{}
+	}
+	for provider, model := range current.TitleModel {
+		if change, ok := titles[provider]; ok {
+			model = change
+		}
+		if removed(model) {
+			out[provider] = ""
+		}
+	}
+	for provider, model := range titles {
+		if removed(model) {
+			out[provider] = ""
+		}
+	}
+	return out
 }
 
 // customModelsView is the settings view of stored custom models: each says

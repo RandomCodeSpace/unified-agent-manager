@@ -72,8 +72,8 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
     <div className="flex flex-col gap-2">
       <h3 className="text-ui font-medium">Custom models</h3>
       <Note>
-        OpenAI-compatible endpoints, offered with GitHub Copilot's models. The API key stays in the service's environment: name the variable that holds it, export it where the service starts,
-        and restart the service.
+        OpenAI-compatible endpoints, offered with GitHub Copilot's models. The API key stays in the service's environment: export it as a variable named UAM_BYOM_&lt;NAME&gt; where the
+        service starts (for example in ~/.bashrc), restart the service, and name that variable here.
       </Note>
       {models.map((m, i) => (
         <div key={`${m.name}/${m.model_id}`} className="flex min-h-12 items-center gap-3 border-b border-hairline py-2">
@@ -94,7 +94,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
         {field('name', 'Provider name', 'openrouter', true)}
         {field('base_url', 'Base URL', 'https://openrouter.ai/api/v1', true)}
         {field('model_id', 'Model ID', 'qwen/qwen3-coder', true)}
-        {field('api_key_env', 'API key variable', 'OPENROUTER_API_KEY', true)}
+        {field('api_key_env', 'API key variable', 'UAM_BYOM_OPENROUTER', true)}
         <Button type="submit" variant="secondary" size="lg" disabled={disabled} className="justify-self-start">
           Add model
         </Button>
