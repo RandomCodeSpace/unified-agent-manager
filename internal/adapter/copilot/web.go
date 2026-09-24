@@ -58,7 +58,8 @@ type sdkSession interface {
 	// Send submits prompt with the given delivery mode and returns the
 	// message ID the CLI assigned to it.
 	Send(ctx context.Context, prompt, mode string) (string, error)
-	SetModel(ctx context.Context, model string) error
+	SwitchModel(ctx context.Context, req *rpc.ModelSwitchToRequest) (*rpc.ModelSwitchToResult, error)
+	SetEffort(ctx context.Context, effort string) error
 	Abort(ctx context.Context) error
 	Events(ctx context.Context) ([]copilot.SessionEvent, error)
 	// RespondPermission answers a pending permission request. It reports false
@@ -121,8 +122,13 @@ func (a sdkSessionAdapter) Events(ctx context.Context) ([]copilot.SessionEvent, 
 	return a.s.GetEvents(ctx)
 }
 
-func (a sdkSessionAdapter) SetModel(ctx context.Context, model string) error {
-	return a.s.SetModel(ctx, model, nil)
+func (a sdkSessionAdapter) SwitchModel(ctx context.Context, req *rpc.ModelSwitchToRequest) (*rpc.ModelSwitchToResult, error) {
+	return a.s.RPC.Model.SwitchTo(ctx, req)
+}
+
+func (a sdkSessionAdapter) SetEffort(ctx context.Context, effort string) error {
+	_, err := a.s.RPC.Model.SetReasoningEffort(ctx, &rpc.ModelSetReasoningEffortRequest{ReasoningEffort: effort})
+	return err
 }
 
 func (a sdkSessionAdapter) Send(ctx context.Context, prompt, mode string) (string, error) {
@@ -214,7 +220,7 @@ func (p *webProvider) Name() string        { return agentapi.ProviderCopilot }
 func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 
 func (p *webProvider) Capabilities() agentapi.Capabilities {
-	return agentapi.Capabilities{Cancel: true, Permissions: true, Questions: true, History: true}
+	return agentapi.Capabilities{Cancel: true, Permissions: true, Questions: true, History: true, ContextSize: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -259,7 +265,20 @@ func (p *webProvider) Models(ctx context.Context) ([]agentapi.Model, error) {
 		if m.ID == "" || (m.Policy != nil && m.Policy.State != rpc.ModelPolicyStateEnabled) {
 			continue
 		}
-		out = append(out, agentapi.Model{ID: m.ID, Name: m.Name})
+		mo := agentapi.Model{ID: m.ID, Name: m.Name, Efforts: append([]string{}, m.SupportedReasoningEfforts...), ContextSizes: []agentapi.ContextSize{}}
+		if m.ID == "auto" {
+			mo.Efforts = []string{}
+		}
+		if m.ID != "auto" && m.Billing != nil && m.Billing.TokenPrices != nil {
+			prices := m.Billing.TokenPrices
+			if prices.MaxPromptTokens != nil && *prices.MaxPromptTokens > 0 {
+				mo.ContextSizes = append(mo.ContextSizes, agentapi.ContextSize{ID: "default", Tokens: *prices.MaxPromptTokens})
+			}
+			if prices.LongContext != nil && prices.LongContext.MaxPromptTokens != nil && *prices.LongContext.MaxPromptTokens > 0 && len(mo.ContextSizes) > 0 {
+				mo.ContextSizes = append(mo.ContextSizes, agentapi.ContextSize{ID: "long_context", Tokens: *prices.LongContext.MaxPromptTokens})
+			}
+		}
+		out = append(out, mo)
 	}
 	return out, nil
 }
@@ -288,6 +307,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			SessionID:           req.SessionID,
 			WorkingDirectory:    req.Workdir,
 			Model:               req.Model,
+			ReasoningEffort:     req.Effort,
+			ContextTier:         copilot.ContextTier(req.ContextSize),
 			Streaming:           copilot.Bool(true),
 			OnPermissionRequest: deferPermission,
 			OnUserInputRequest:  c.askUser,
@@ -539,17 +560,73 @@ func (c *conversation) History(ctx context.Context) (agentapi.History, error) {
 	return history(evs), nil
 }
 
-// SetModel switches the session's model from the next message on. The web
-// service never calls it while a turn runs, so the CLI does not defer it.
-func (c *conversation) SetModel(ctx context.Context, model string) error {
+// SetModel changes all three settings between turns and checks the runtime's
+// result before the manager records success.
+func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize string) error {
 	if c.isClosed() {
 		return agentapi.ErrClosed
 	}
-	if err := c.sess.SetModel(ctx, model); err != nil {
+	tier := rpc.ContextTier(contextSize)
+	req := &rpc.ModelSwitchToRequest{ModelID: model, ContextTier: &tier, RunCompactionPreflight: copilot.Bool(true)}
+	if effort != "" {
+		req.ReasoningEffort = &effort
+	}
+	res, err := c.sess.SwitchModel(ctx, req)
+	if err != nil {
 		c.p.poke()
+		// Only a JSON-RPC rejection proves that nothing changed.
+		if !isRPCError(err) {
+			return c.selectionUncertain(ctx, fmt.Errorf("model switch outcome is unknown: %s", errText(err)))
+		}
 		return fmt.Errorf("copilot model switch: %s", errText(err))
 	}
+	if res == nil {
+		return c.selectionUncertain(ctx, errors.New("model switch returned no result"))
+	}
+	status := ""
+	if res.Status != nil {
+		status = *res.Status
+	}
+	if status == "confirmation_required" || status == "cancelled" {
+		return fmt.Errorf("copilot model switch %s; the selection was not applied", status)
+	}
+	if (res.Deferred != nil && *res.Deferred) || status != "applied" || res.PersistenceError != nil {
+		return c.selectionUncertain(ctx, fmt.Errorf("model switch did not confirm a durable immediate selection (status %q)", status))
+	}
+	if res.ModelID != nil && *res.ModelID != model {
+		return c.selectionUncertain(ctx, errors.New("model switch returned a different model"))
+	}
+	if state := res.ModelState; state != nil {
+		if (state.ModelID != nil && *state.ModelID != model) || (state.ContextTier != nil && *state.ContextTier != tier) || (effort != "" && (state.ReasoningEffort == nil || *state.ReasoningEffort != effort)) {
+			return c.selectionUncertain(ctx, errors.New("model switch returned different settings"))
+		}
+		if contextSize == "long_context" && state.ContextTier == nil {
+			return c.selectionUncertain(ctx, errors.New("model switch did not confirm the context size"))
+		}
+	} else if contextSize == "long_context" || effort != "" {
+		return c.selectionUncertain(ctx, errors.New("model switch did not report the selected settings"))
+	}
+	if effort == "" {
+		// switchTo rejects an empty effort, while omitting it preserves the
+		// current effort on a same-model switch. This RPC explicitly resets it.
+		if err := c.sess.SetEffort(ctx, ""); err != nil {
+			return c.selectionUncertain(ctx, fmt.Errorf("model changed but resetting effort failed: %s", errText(err)))
+		}
+	}
 	return nil
+}
+
+// An uncertain or partial switch must not let the next prompt run with the
+// old displayed settings. Reopening reapplies the Task's durable selection.
+func (c *conversation) selectionUncertain(ctx context.Context, err error) error {
+	reason := clip(displaytext.Sanitize(err.Error()), maxErrorText)
+	c.mu.Lock()
+	if !c.closed {
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventExit, Error: reason})
+	}
+	c.mu.Unlock()
+	_ = c.Close(ctx)
+	return fmt.Errorf("copilot model settings: %s", reason)
 }
 
 // Send uses the "enqueue" mode explicitly: a prompt that reaches a CLI still
@@ -839,10 +916,15 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			c.turnModel = d.Model
 		}
 		return
+	case *rpc.SessionUsageInfoData:
+		if agentID == "" && d.CurrentTokens >= 0 && d.TokenLimit > 0 {
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventContext, Context: &agentapi.Context{Used: d.CurrentTokens, Limit: d.TokenLimit}})
+		}
+		return
 	case *rpc.SessionTitleChangedData:
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTitle, Title: d.Title})
 		return
-	case *rpc.SubagentStartedData, *rpc.SubagentCompletedData, *rpc.SubagentFailedData:
+	case *rpc.SubagentStartedData, *rpc.SubagentConfiguredData, *rpc.SubagentCompletedData, *rpc.SubagentFailedData:
 		if sa, ok := c.subs.apply(ev); ok {
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
 		}
@@ -1092,6 +1174,16 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		it.ID, it.Kind, it.Text = d.MessageID, agentapi.ItemAssistant, d.Content
 	case *rpc.AssistantReasoningData:
 		it.ID, it.Kind, it.Text = reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.Content
+	case *rpc.SessionCompactionCompleteData:
+		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Conversation compacted."
+		if !d.Success {
+			it.Text = "Conversation compaction failed."
+			if d.Error != nil {
+				it.Text += " " + clip(displaytext.Sanitize(*d.Error), maxErrorText)
+			}
+		}
+	case *rpc.SessionTruncationData:
+		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, fmt.Sprintf("Conversation truncated: %d messages and %d tokens removed.", d.MessagesRemovedDuringTruncation, d.TokensRemovedDuringTruncation)
 	case *rpc.SessionErrorData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Error: "+displaytext.Sanitize(d.Message)
 	case *rpc.ToolExecutionStartData:
@@ -1206,7 +1298,24 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		}
 		sa.ParentToolCallID, sa.Name, sa.Description = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), d.AgentDescription
 		sa.Status, sa.StartedAt = agentapi.SubagentRunning, ev.Timestamp
+		if d.Model != nil && sa.Model == "" {
+			sa.Model = *d.Model
+		}
 		l.byCall[d.ToolCallID] = agentID
+		return *sa, true
+	case *rpc.SubagentConfiguredData:
+		if agentID == "" {
+			return agentapi.Subagent{}, false
+		}
+		sa := l.get(agentID)
+		if sa.Status.Terminal() {
+			return agentapi.Subagent{}, false
+		}
+		sa.Model = d.Model
+		sa.Effort = ""
+		if d.ReasoningEffort != nil {
+			sa.Effort = *d.ReasoningEffort
+		}
 		return *sa, true
 	case *rpc.SubagentCompletedData:
 		callID, name, status = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), agentapi.SubagentCompleted

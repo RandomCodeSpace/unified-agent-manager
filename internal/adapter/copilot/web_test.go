@@ -95,13 +95,17 @@ type fakeSession struct {
 	sendErr error
 	// beforeReturn runs with the assigned message ID before Send returns it,
 	// as CLI events can be handled before the send response.
-	beforeReturn func(id string)
-	models       []string
-	modelErr     error
-	events       []copilot.SessionEvent
-	answers      map[string]rpc.PermissionDecision
-	notPending   map[string]bool
-	disconnected bool
+	beforeReturn  func(id string)
+	models        []string
+	modelErr      error
+	modelRequests []*rpc.ModelSwitchToRequest
+	modelResult   *rpc.ModelSwitchToResult
+	effortResets  int
+	effortErr     error
+	events        []copilot.SessionEvent
+	answers       map[string]rpc.PermissionDecision
+	notPending    map[string]bool
+	disconnected  bool
 }
 
 func (s *fakeSession) ID() string                  { return s.id }
@@ -124,14 +128,29 @@ func (s *fakeSession) Send(_ context.Context, prompt, mode string) (string, erro
 	return id, nil
 }
 
-func (s *fakeSession) SetModel(_ context.Context, model string) error {
+func (s *fakeSession) SwitchModel(_ context.Context, req *rpc.ModelSwitchToRequest) (*rpc.ModelSwitchToResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.modelRequests = append(s.modelRequests, req)
 	if s.modelErr != nil {
-		return s.modelErr
+		return nil, s.modelErr
 	}
-	s.models = append(s.models, model)
-	return nil
+	s.models = append(s.models, req.ModelID)
+	if s.modelResult != nil {
+		return s.modelResult, nil
+	}
+	status := "applied"
+	return &rpc.ModelSwitchToResult{Status: &status, ModelID: &req.ModelID, ModelState: &rpc.CurrentModel{ModelID: &req.ModelID, ReasoningEffort: req.ReasoningEffort, ContextTier: req.ContextTier}}, nil
+}
+
+func (s *fakeSession) SetEffort(_ context.Context, effort string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if effort != "" {
+		return fmt.Errorf("unexpected reset effort %q", effort)
+	}
+	s.effortResets++
+	return s.effortErr
 }
 
 func (s *fakeSession) Events(context.Context) ([]copilot.SessionEvent, error) { return s.events, nil }
@@ -934,7 +953,7 @@ func TestWebModelOnCreateOnlyAndSetModel(t *testing.T) {
 	if _, err := p.Open(ctx, agentapi.OpenRequest{ConversationID: "c-1", Model: "ignored", Events: &recSink{}}); err != nil || fc.resume[0].Model != "" {
 		t.Fatalf("resume model = %q, %v", fc.resume[0].Model, err)
 	}
-	if err := conv.SetModel(ctx, "claude-haiku-4.5"); err != nil {
+	if err := conv.SetModel(ctx, "claude-haiku-4.5", "", "default"); err != nil {
 		t.Fatal(err)
 	}
 	fs := fc.sessions[0]
@@ -942,13 +961,13 @@ func TestWebModelOnCreateOnlyAndSetModel(t *testing.T) {
 		t.Fatalf("switched models = %q", fs.models)
 	}
 	fs.modelErr = errors.New("JSON-RPC Error: bad")
-	if err := conv.SetModel(ctx, "x"); err == nil || !strings.Contains(err.Error(), "bad") {
+	if err := conv.SetModel(ctx, "x", "", "default"); err == nil || !strings.Contains(err.Error(), "bad") {
 		t.Fatalf("refused switch err = %v", err)
 	}
 	if err := conv.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := conv.SetModel(ctx, "x"); !errors.Is(err, agentapi.ErrClosed) {
+	if err := conv.SetModel(ctx, "x", "", "default"); !errors.Is(err, agentapi.ErrClosed) {
 		t.Fatalf("SetModel after Close err = %v", err)
 	}
 }

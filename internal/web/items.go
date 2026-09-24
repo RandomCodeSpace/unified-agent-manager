@@ -310,6 +310,8 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent) {
 	}
 	in.Name = clampText(displaytext.Sanitize(in.Name), maxLabelText)
 	in.Description = clampText(displaytext.Sanitize(in.Description), maxLabelText)
+	in.Model = clampText(displaytext.Sanitize(in.Model), maxLabelText)
+	in.Effort = clampText(displaytext.Sanitize(in.Effort), maxLabelText)
 	in.Error = clipRunes(displaytext.Sanitize(in.Error), maxDetailRunes)
 	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
 	cur := s.subIdx[in.ID]
@@ -324,6 +326,7 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent) {
 		in.ParentToolCallID = cmp.Or(in.ParentToolCallID, cur.ParentToolCallID)
 		in.Name = cmp.Or(in.Name, cur.Name)
 		in.Description = cmp.Or(in.Description, cur.Description)
+		in.Model = cmp.Or(in.Model, cur.Model)
 		if in.StartedAt.IsZero() {
 			in.StartedAt = cur.StartedAt
 		}

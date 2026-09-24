@@ -225,6 +225,7 @@ type Conversation struct {
 	sends       []string
 	steers      []string
 	modelSets   []string
+	settings    []agentapi.OpenRequest
 	cancels     int
 	closes      int
 	responds    []Response
@@ -250,13 +251,14 @@ func (c *Conversation) SetModelError(err error) {
 	c.setModelErr = err
 }
 
-func (c *Conversation) SetModel(_ context.Context, model string) error {
+func (c *Conversation) SetModel(_ context.Context, model, effort, contextSize string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return agentapi.ErrClosed
 	}
 	c.modelSets = append(c.modelSets, model)
+	c.settings = append(c.settings, agentapi.OpenRequest{Model: model, Effort: effort, ContextSize: contextSize})
 	return c.setModelErr
 }
 
@@ -466,4 +468,11 @@ func (c *Conversation) Responds() []Response {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]Response(nil), c.responds...)
+}
+
+// ModelSettings returns the complete selections passed to SetModel.
+func (c *Conversation) ModelSettings() []agentapi.OpenRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]agentapi.OpenRequest(nil), c.settings...)
 }

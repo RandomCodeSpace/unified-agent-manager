@@ -113,7 +113,7 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 			ID: "0f0e0d0c-1111-4222-8333-444455556666", Agent: "copilot", Mode: ModeSafe, Workdir: "/tmp/repo",
 			Status: StatusActive, Surface: SurfaceWeb, ProviderSessionID: "conv_1",
 			Web: &WebState{
-				Turn: "idle", UpdatedAt: now, ProjectID: project.ID, Model: "gpt-5-mini", Title: "Fix the build",
+				Turn: "idle", UpdatedAt: now, ProjectID: project.ID, Model: "gpt-5-mini", Effort: "high", ContextSize: "long_context", Title: "Fix the build",
 				Stage: "archived", SettledAt: now.Add(-time.Hour), ArchivedAt: now,
 			},
 		}
@@ -129,7 +129,7 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 		t.Fatalf("project = %+v, want %+v", got, project)
 	}
 	web := cfg.Sessions["copilot:0f0e0d0c"].Web
-	if web == nil || web.ProjectID != project.ID || web.Model != "gpt-5-mini" || web.Title != "Fix the build" ||
+	if web == nil || web.ProjectID != project.ID || web.Model != "gpt-5-mini" || web.Effort != "high" || web.ContextSize != "long_context" || web.Title != "Fix the build" ||
 		web.Stage != "archived" || !web.SettledAt.Equal(now.Add(-time.Hour)) || !web.ArchivedAt.Equal(now) {
 		t.Fatalf("web state = %+v", web)
 	}
@@ -215,7 +215,7 @@ func TestInvalidWebProjectsAndReferencesAreDroppedOnLoad(t *testing.T) {
 		"id":"0f0e0d0c-1111-4222-8333-444455556666","agent":"copilot","name":"","mode":"safe","workdir":"/tmp/ok",
 		"tmux_session":"","created_at":"2026-09-01T00:00:00Z","last_seen_at":"2026-09-01T00:00:00Z",
 		"pinned":false,"group":"","sort_index":0,"status":"active","provider_session_id":"conv_1",
-		"surface":"web","web":{"turn":"idle","updated_at":"2026-09-01T00:00:00Z","project_id":"x;rm","model":"bad\u001bmodel","title":"t"}}}}`
+		"surface":"web","web":{"turn":"idle","updated_at":"2026-09-01T00:00:00Z","project_id":"x;rm","model":"bad\u001bmodel","effort":"high\u001b","context_size":"bogus","title":"t"}}}}`
 	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestInvalidWebProjectsAndReferencesAreDroppedOnLoad(t *testing.T) {
 		t.Fatalf("projects after load = %+v", cfg.WebProjects)
 	}
 	rec, ok := cfg.Sessions["copilot:0f0e0d0c"]
-	if !ok || rec.Web == nil || rec.Web.ProjectID != "" || rec.Web.Model != "" || rec.Web.Title != "t" {
+	if !ok || rec.Web == nil || rec.Web.ProjectID != "" || rec.Web.Model != "" || rec.Web.Effort != "" || rec.Web.ContextSize != "" || rec.Web.Title != "t" {
 		t.Fatalf("record after load = %+v web %+v", rec, rec.Web)
 	}
 }

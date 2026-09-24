@@ -352,19 +352,21 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
-// handlePatch applies {name?, model?, mode?}. The model changes first: it is
+// handlePatch applies Task settings. The model settings change first: this is
 // the part that can be refused, and a refused request should change nothing.
 func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name  *string `json:"name"`
-		Model *string `json:"model"`
-		Mode  *string `json:"mode"`
+		Name        *string `json:"name"`
+		Model       *string `json:"model"`
+		Effort      *string `json:"effort"`
+		ContextSize *string `json:"context_size"`
+		Mode        *string `json:"mode"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.Name == nil && body.Model == nil && body.Mode == nil {
-		writeError(w, http.StatusBadRequest, "name, model or mode is required")
+	if body.Name == nil && body.Model == nil && body.Effort == nil && body.ContextSize == nil && body.Mode == nil {
+		writeError(w, http.StatusBadRequest, "name, model, effort, context_size or mode is required")
 		return
 	}
 	if body.Name != nil {
@@ -382,8 +384,8 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var summary SessionSummary
 	var err error
-	if body.Model != nil {
-		if summary, err = s.m.SetModel(id, *body.Model); err != nil {
+	if body.Model != nil || body.Effort != nil || body.ContextSize != nil {
+		if summary, err = s.m.SetModel(id, body.Model, body.Effort, body.ContextSize); err != nil {
 			writeFailure(w, err)
 			return
 		}

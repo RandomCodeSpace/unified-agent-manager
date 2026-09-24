@@ -336,7 +336,9 @@ type WebState struct {
 	// ProjectID is the WebProject the session (a Task) belongs to.
 	ProjectID string `json:"project_id,omitempty"`
 	// Model is the selected model ID; empty means the provider default.
-	Model string `json:"model,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Effort      string `json:"effort,omitempty"`
+	ContextSize string `json:"context_size,omitempty"`
 	// Title is the provider-generated conversation title, sanitized and
 	// bounded.
 	Title string `json:"title,omitempty"`
@@ -370,6 +372,8 @@ var knownWebStateFields = map[string]struct{}{
 	"detail":         {},
 	"project_id":     {},
 	"model":          {},
+	"effort":         {},
+	"context_size":   {},
 	"title":          {},
 	"stage":          {},
 	"settled_at":     {},
@@ -747,14 +751,20 @@ func dropInvalidRecords(cfg *Config) {
 		// The web references are lookups, never argv; a bad one costs the
 		// record that reference (the web service reassigns a Project), not
 		// the record itself.
-		if web := rec.Web; web != nil && (isUnsafeArgv(web.ProjectID) || hasControlChar(web.Model) || len(web.Model) > maxWebModelBytes) {
-			log.Warn("clearing invalid web project or model on session record", "key", key)
+		if web := rec.Web; web != nil && (isUnsafeArgv(web.ProjectID) || hasControlChar(web.Model) || len(web.Model) > maxWebModelBytes || hasControlChar(web.Effort) || len(web.Effort) > maxWebModelBytes || (web.ContextSize != "" && web.ContextSize != "default" && web.ContextSize != "long_context")) {
+			log.Warn("clearing invalid web selection on session record", "key", key)
 			clean := *web
 			if isUnsafeArgv(clean.ProjectID) {
 				clean.ProjectID = ""
 			}
 			if hasControlChar(clean.Model) || len(clean.Model) > maxWebModelBytes {
 				clean.Model = ""
+			}
+			if hasControlChar(clean.Effort) || len(clean.Effort) > maxWebModelBytes {
+				clean.Effort = ""
+			}
+			if clean.ContextSize != "default" && clean.ContextSize != "long_context" {
+				clean.ContextSize = ""
 			}
 			rec.Web = &clean
 			cfg.Sessions[key] = rec

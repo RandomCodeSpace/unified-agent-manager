@@ -129,13 +129,16 @@ type webSession struct {
 	op sync.Mutex
 
 	// Everything below is guarded by Manager.mu.
-	id        string
-	projectID string
-	provider  string
-	model     string
-	name      string
-	title     string
-	lastModel string
+	id          string
+	projectID   string
+	provider    string
+	model       string
+	effort      string
+	contextSize string
+	context     *agentapi.Context
+	name        string
+	title       string
+	lastModel   string
 	// mode is safe or yolo: a yolo Task's permission requests are allowed
 	// once without asking.
 	mode      store.Mode
@@ -204,9 +207,9 @@ type interaction struct {
 // persistKey is the durable part of a session; sessions.json is written only
 // when it changes, never per streamed token.
 type persistKey struct {
-	turn, detail, name, convID, reqID, reqStatus, projectID, model, title, stage string
-	mode                                                                         store.Mode
-	settledAt, archivedAt                                                        time.Time
+	turn, detail, name, convID, reqID, reqStatus, projectID, model, effort, contextSize, title, stage string
+	mode                                                                                              store.Mode
+	settledAt, archivedAt                                                                             time.Time
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -263,7 +266,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, title: s.title, mode: s.mode,
+	k := persistKey{turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
@@ -436,6 +439,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		}
 		s.detail = web.Detail
 		s.projectID, s.model, s.title = web.ProjectID, web.Model, cleanTitle(web.Title)
+		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
@@ -506,7 +510,10 @@ func loadModels(ctx context.Context, p agentapi.Provider) ([]agentapi.Model, err
 		}
 		seen[mo.ID] = true
 		name := clipRunes(strings.TrimSpace(displaytext.Sanitize(mo.Name)), maxNameRunes)
-		out = append(out, agentapi.Model{ID: mo.ID, Name: cmp.Or(name, mo.ID)})
+		mo.Name = cmp.Or(name, mo.ID)
+		mo.Efforts = append([]string{}, mo.Efforts...)
+		mo.ContextSizes = append([]agentapi.ContextSize{}, mo.ContextSizes...)
+		out = append(out, mo)
 	}
 	return out, nil
 }
@@ -544,11 +551,6 @@ func (m *Manager) RefreshModels() {
 		}()
 	}
 	wg.Wait()
-}
-
-// selectableLocked reports whether model is in provider's catalog.
-func (m *Manager) selectableLocked(provider, model string) bool {
-	return slices.ContainsFunc(m.infos[provider].Models, func(mo agentapi.Model) bool { return mo.ID == model })
 }
 
 // Providers lists every provider with its availability.
@@ -617,6 +619,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	permissions, questions := s.pendingKinds()
 	return SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
+		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), Workdir: s.workdir, ConversationID: s.convID,
 		State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
@@ -1034,7 +1037,7 @@ func (m *Manager) flush() error {
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
 				Turn: key.turn, RequestID: key.reqID, RequestStatus: key.reqStatus, UpdatedAt: s.updatedAt, Detail: s.detail,
-				ProjectID: key.projectID, Model: key.model, Title: key.title,
+				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt,
 			},
 		})
@@ -1121,6 +1124,13 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		if ev.Subagent != nil && ev.Subagent.ID != "" {
 			m.upsertSubagentLocked(s, *ev.Subagent)
 		}
+	case agentapi.EventContext:
+		if ev.Context != nil && ev.Context.Used >= 0 && ev.Context.Limit > 0 {
+			if s.context == nil || *s.context != *ev.Context {
+				usage := *ev.Context
+				s.context = &usage
+			}
+		}
 	case agentapi.EventTitle:
 		if title := cleanTitle(ev.Title); title != "" {
 			s.title = title
@@ -1170,12 +1180,14 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 // CreateRequest is the POST /api/sessions body. Name may be empty; the
 // provider's title is shown until the user names the Task.
 type CreateRequest struct {
-	ProjectID string `json:"project_id"`
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	Name      string `json:"name"`
-	Prompt    string `json:"prompt"`
-	RequestID string `json:"request_id"`
+	ProjectID   string `json:"project_id"`
+	Provider    string `json:"provider"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	ContextSize string `json:"context_size"`
+	Name        string `json:"name"`
+	Prompt      string `json:"prompt"`
+	RequestID   string `json:"request_id"`
 	// Mode is safe (also when empty) or yolo.
 	Mode string `json:"mode"`
 }
@@ -1194,13 +1206,14 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	if project != nil {
 		workdir = project.Dir
 	}
-	selectable := req.Model == "" || m.selectableLocked(prov.Name(), req.Model)
+	req.ContextSize = cmp.Or(req.ContextSize, "default")
+	selectionErr := m.validateSelectionLocked(prov.Name(), req.Model, req.Effort, req.ContextSize)
 	m.mu.Unlock()
 	if project == nil {
 		return SessionSummary{}, newError(http.StatusBadRequest, "unknown project_id %q", req.ProjectID)
 	}
-	if !selectable {
-		return SessionSummary{}, newError(http.StatusBadRequest, "model %q is not offered by %s", req.Model, prov.DisplayName())
+	if selectionErr != nil {
+		return SessionSummary{}, selectionErr
 	}
 	name, err := cleanTaskName(req.Name)
 	if err != nil {
@@ -1243,10 +1256,11 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	now := m.now()
 	s := newSession(id, prov.Name(), name, workdir, "", now)
 	s.projectID, s.model, s.mode = project.ID, req.Model, mode
+	s.effort, s.contextSize = req.Effort, req.ContextSize
 	s.createReq = reqID
 	s.gen = 1
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
-	conv, err := prov.Open(ctx, agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Events: sink{m: m, s: s, gen: 1}})
+	conv, err := prov.Open(ctx, agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}})
 	cancel()
 	if err != nil {
 		log.Warn("open web conversation failed", "provider", prov.Name(), "error", err)
@@ -1262,7 +1276,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: project.ID, Model: req.Model},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: project.ID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize},
 	}
 	if err := m.register(s, conv, rec); err != nil {
 		m.closeConversation(conv)
@@ -1304,7 +1318,7 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 	}
 	s.convID = rec.ProviderSessionID
 	s.conv = conv
-	s.persisted = persistKey{turn: StateIdle, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, mode: s.mode}
+	s.persisted = persistKey{turn: StateIdle, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, mode: s.mode}
 	m.sessions[s.id] = s
 	m.autoAllowPendingLocked(s)
 	// Announce the new session. Events that arrived during Open may have
@@ -1484,13 +1498,22 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	gen := s.gen
 	req := agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}}
 	withHistory := m.infos[s.provider].Capabilities.History
-	model := s.model
+	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
+	s.context = nil
+	var selectionErr error
+	if effort != "" || contextSize != "default" {
+		selectionErr = m.validateSelectionLocked(s.provider, model, effort, contextSize)
+	}
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	defer cancel()
-	conv, err := prov.Open(ctx, req)
+	var conv agentapi.Conversation
+	err := selectionErr
+	if err == nil {
+		conv, err = prov.Open(ctx, req)
+	}
 	if err == nil && conv.ID() != req.ConversationID {
 		// Exactness is the contract: a different conversation is a failure,
 		// not a substitute.
@@ -1502,7 +1525,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	// take it, ErrUnsupported included (a provider with a catalog must
 	// switch), is not used with another model.
 	if err == nil && model != "" {
-		if setErr := conv.SetModel(ctx, model); setErr != nil {
+		if setErr := conv.SetModel(ctx, model, effort, contextSize); setErr != nil {
 			m.closeConversation(conv)
 			err = fmt.Errorf("apply model %s: %w", model, setErr)
 		}
@@ -2172,10 +2195,11 @@ func (m *Manager) Rename(id, name string) (SessionSummary, error) {
 	return m.summaryLocked(s), nil
 }
 
-// SetModel selects the model for the Task's next turns. It is refused while
-// a turn runs. With the conversation open, the stored model changes only once
-// the provider accepted the switch; otherwise the next open applies it.
-func (m *Manager) SetModel(id, model string) (SessionSummary, error) {
+// SetModel changes the supplied settings together for the Task's next turns.
+// An omitted effort or context size survives a model change when supported.
+// With the conversation open, settings are stored only after provider success;
+// otherwise the next open applies them. Changes during a turn are refused.
+func (m *Manager) SetModel(id string, model, effort, contextSize *string) (SessionSummary, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return SessionSummary{}, err
@@ -2183,46 +2207,96 @@ func (m *Manager) SetModel(id, model string) (SessionSummary, error) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	m.mu.Lock()
-	switch {
-	case s.removed:
+	if s.removed {
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
-	case s.stage != StageActive:
+	}
+	if s.stage != StageActive {
 		m.mu.Unlock()
 		return SessionSummary{}, s.readOnlyLocked()
-	case !m.selectableLocked(s.provider, model):
+	}
+	if model != nil && *model == "" {
 		m.mu.Unlock()
-		return SessionSummary{}, newError(http.StatusBadRequest, "model %q is not offered by this provider", model)
-	case s.model == model:
+		return SessionSummary{}, newError(http.StatusBadRequest, "model must be an offered model ID")
+	}
+	nextModel, nextEffort, nextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
+	if model != nil {
+		nextModel = *model
+	}
+	if effort != nil {
+		nextEffort = *effort
+	}
+	if contextSize != nil {
+		nextSize = cmp.Or(*contextSize, "default")
+	}
+	if nextModel != s.model {
+		mo := m.modelLocked(s.provider, nextModel)
+		if effort == nil && !slices.Contains(mo.Efforts, nextEffort) {
+			nextEffort = ""
+		}
+		if contextSize == nil && !slices.ContainsFunc(mo.ContextSizes, func(size agentapi.ContextSize) bool { return size.ID == nextSize }) {
+			nextSize = "default"
+		}
+	}
+	if err := m.validateSelectionLocked(s.provider, nextModel, nextEffort, nextSize); err != nil {
+		m.mu.Unlock()
+		return SessionSummary{}, err
+	}
+	if s.model == nextModel && s.effort == nextEffort && cmp.Or(s.contextSize, "default") == nextSize {
 		m.mu.Unlock()
 		return m.Summary(id)
-	case busy(s.state()):
+	}
+	if busy(s.state()) {
 		m.mu.Unlock()
-		return SessionSummary{}, newError(http.StatusConflict, "the model cannot change while a turn is running")
+		return SessionSummary{}, newError(http.StatusConflict, "the model, effort or context size cannot change while a turn is running")
 	}
 	conv := s.conv
 	m.mu.Unlock()
 	if conv != nil {
 		ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
-		err := conv.SetModel(ctx, model)
+		err := conv.SetModel(ctx, nextModel, nextEffort, nextSize)
 		cancel()
 		switch {
 		case err == nil, errors.Is(err, agentapi.ErrClosed):
-			// A conversation that closed meanwhile takes the model when it
-			// is next opened.
+			// The next open reapplies the selection if the conversation closed.
 		case errors.Is(err, agentapi.ErrUnsupported):
-			return SessionSummary{}, newError(http.StatusConflict, "this provider does not support changing the model")
+			return SessionSummary{}, newError(http.StatusConflict, "this provider does not support changing the model settings")
 		default:
 			log.Warn("web model switch failed", "session", id, "error", err)
-			return SessionSummary{}, newError(http.StatusBadGateway, "could not change the model: %s", shortError(err))
+			return SessionSummary{}, newError(http.StatusBadGateway, "could not change the model settings: %s", shortError(err))
 		}
 	}
 	m.mu.Lock()
 	before := m.summaryLocked(s)
-	s.model = model
+	s.model, s.effort, s.contextSize = nextModel, nextEffort, nextSize
+	s.context = nil
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 	return m.Summary(id)
+}
+
+// modelLocked returns metadata only for an offered model.
+func (m *Manager) modelLocked(provider, model string) agentapi.Model {
+	for _, mo := range m.infos[provider].Models {
+		if mo.ID == model {
+			return mo
+		}
+	}
+	return agentapi.Model{}
+}
+
+func (m *Manager) validateSelectionLocked(provider, model, effort, contextSize string) error {
+	mo := m.modelLocked(provider, model)
+	if model != "" && mo.ID == "" {
+		return newError(http.StatusBadRequest, "model %q is not offered by this provider", model)
+	}
+	if effort != "" && (model == "" || model == "auto" || !slices.Contains(mo.Efforts, effort)) {
+		return newError(http.StatusBadRequest, "effort %q is not offered by model %q", effort, model)
+	}
+	if contextSize != "default" && (!m.infos[provider].Capabilities.ContextSize || model == "" || model == "auto" || !slices.ContainsFunc(mo.ContextSizes, func(size agentapi.ContextSize) bool { return size.ID == contextSize && size.Tokens > 0 })) {
+		return newError(http.StatusBadRequest, "context size %q is not offered by model %q", contextSize, model)
+	}
+	return nil
 }
 
 // Answer forwards the user's answer to a pending interaction. The first

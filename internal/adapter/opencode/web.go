@@ -739,7 +739,7 @@ func (c *webConversation) History(ctx context.Context) (agentapi.History, error)
 
 // SetModel is not offered: the model would have to travel with the next
 // prompt, which this unregistered adapter does not do.
-func (c *webConversation) SetModel(context.Context, string) error {
+func (c *webConversation) SetModel(context.Context, string, string, string) error {
 	return agentapi.ErrUnsupported
 }
 

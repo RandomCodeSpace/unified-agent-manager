@@ -59,6 +59,8 @@ type Capabilities struct {
 	// changes (Conversation.Diff). Workspace Git diffs are separate.
 	SessionDiff bool `json:"session_diff"`
 	History     bool `json:"history"`
+	// ContextSize is the per-Task context-tier exception to provider parity.
+	ContextSize bool `json:"context_size"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
@@ -86,8 +88,22 @@ type Provider interface {
 
 // Model is one selectable model.
 type Model struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID           string        `json:"id"`
+	Name         string        `json:"name"`
+	Efforts      []string      `json:"efforts"`
+	ContextSizes []ContextSize `json:"context_sizes"`
+}
+
+// ContextSize is a selectable provider tier and its prompt token budget.
+type ContextSize struct {
+	ID     string `json:"id"`
+	Tokens int64  `json:"tokens"`
+}
+
+// Context is the provider's latest live usage report, not a token estimate.
+type Context struct {
+	Used  int64 `json:"used"`
+	Limit int64 `json:"limit"`
 }
 
 // OpenRequest identifies the managed session and its project.
@@ -103,6 +119,9 @@ type OpenRequest struct {
 	// Model is the model ID for a new conversation; "" means the provider
 	// default. It is ignored on reopen, so reopening never changes the model.
 	Model string
+	// Effort and ContextSize apply only when creating a conversation.
+	Effort      string
+	ContextSize string
 	// Events receives every event for this conversation until Close returns.
 	Events EventSink
 }
@@ -142,9 +161,10 @@ type Conversation interface {
 	// Diff returns provider-recorded file changes for this conversation, or
 	// ErrUnsupported when Capabilities().SessionDiff is false.
 	Diff(ctx context.Context) ([]FileDiff, error)
-	// SetModel switches the model used from the next turn on. The caller
-	// never switches while a turn is running.
-	SetModel(ctx context.Context, model string) error
+	// SetModel applies the complete selection from the next turn on. Empty
+	// effort means Default; contextSize is default or a catalog tier ID.
+	// The caller validates the selection and never switches during a turn.
+	SetModel(ctx context.Context, model, effort, contextSize string) error
 	// Close disconnects from the conversation without deleting it. Pending
 	// interactions end without an answer being fabricated.
 	Close(ctx context.Context) error
@@ -181,6 +201,8 @@ const (
 	EventTitle EventKind = "title"
 	// EventSubagent upserts a subagent record by Subagent.ID.
 	EventSubagent EventKind = "subagent"
+	// EventContext reports main-agent context usage; it is never persisted.
+	EventContext EventKind = "context"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -191,6 +213,7 @@ type Event struct {
 	Turn        *Turn
 	Interaction *Interaction
 	Subagent    *Subagent
+	Context     *Context
 	// Error is the sanitized reason for EventExit.
 	Error string
 	// Title is the untrusted provider title for EventTitle.
@@ -371,7 +394,9 @@ func (s SubagentStatus) Terminal() bool {
 // Subagent is one agent instance the main agent delegated work to. Its
 // transcript items carry AgentID == ID.
 type Subagent struct {
-	ID string `json:"id"`
+	ID     string `json:"id"`
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 	// ParentToolCallID is the ID of the tool call item that spawned it.
 	ParentToolCallID string         `json:"parent_tool_call_id,omitempty"`
 	Name             string         `json:"name"`

@@ -233,7 +233,7 @@ func TestSettledAndArchivedTasksAreReadOnly(t *testing.T) {
 		wantConflict(t, stage+" clear queue", m.ClearQueue(sum.ID), message)
 		wantConflict(t, stage+" resume queue", m.ResumeQueue(sum.ID), message)
 		wantConflict(t, stage+" cancel queued", m.CancelQueued(sum.ID, mustUUID(t)), message)
-		wantConflict(t, stage+" model", errOf(m.SetModel(sum.ID, "b")), message)
+		wantConflict(t, stage+" model", errOf(m.SetModel(sum.ID, setting("b"), nil, nil)), message)
 		wantConflict(t, stage+" mode", errOf(m.SetMode(sum.ID, "yolo")), message)
 		if err := m.View(context.Background(), sum.ID); err != nil {
 			t.Fatal(err)

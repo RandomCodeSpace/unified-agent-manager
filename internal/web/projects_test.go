@@ -409,7 +409,7 @@ func TestProviderThatCannotSwitchNeverRunsOnAnotherModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.SetModel(sum.ID, "b"); statusOf(err) != http.StatusConflict {
+	if _, err := m.SetModel(sum.ID, setting("b"), nil, nil); statusOf(err) != http.StatusConflict {
 		t.Fatalf("switch on an open conversation = %v, want 409", err)
 	}
 	if got := detail(t, m, sum.ID).Model; got != "a" {
@@ -418,7 +418,7 @@ func TestProviderThatCannotSwitchNeverRunsOnAnotherModel(t *testing.T) {
 	if _, err := m.Close(sum.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.SetModel(sum.ID, "b"); err != nil {
+	if _, err := m.SetModel(sum.ID, setting("b"), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	sub, err := m.Submit(sum.ID, "go", mustUUID(t), ModeSend)
@@ -484,7 +484,7 @@ func TestModelCatalogValidationAndRefresh(t *testing.T) {
 	st := openTestStore(t)
 	m := startManager(t, st, prov)
 	info := m.Providers()[0]
-	if len(info.Models) != 2 || info.Models[0] != (agentapi.Model{ID: "auto", Name: "Auto"}) || info.Models[1] != (agentapi.Model{ID: "fast", Name: "fast"}) {
+	if len(info.Models) != 2 || info.Models[0].ID != "auto" || info.Models[0].Name != "Auto" || info.Models[1].ID != "fast" || info.Models[1].Name != "fast" {
 		t.Fatalf("catalog = %+v", info.Models)
 	}
 	project := addProject(t, m, t.TempDir())
@@ -545,26 +545,26 @@ func TestSetModelBetweenTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	conv := prov.Last()
-	if _, err := m.SetModel(sum.ID, "zzz"); statusOf(err) != http.StatusBadRequest {
+	if _, err := m.SetModel(sum.ID, setting("zzz"), nil, nil); statusOf(err) != http.StatusBadRequest {
 		t.Fatalf("unknown model = %v, want 400", err)
 	}
-	if _, err := m.SetModel("missing", "b"); statusOf(err) != http.StatusNotFound {
+	if _, err := m.SetModel("missing", setting("b"), nil, nil); statusOf(err) != http.StatusNotFound {
 		t.Fatalf("unknown session = %v, want 404", err)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
-	if _, err := m.SetModel(sum.ID, "b"); statusOf(err) != http.StatusConflict {
+	if _, err := m.SetModel(sum.ID, setting("b"), nil, nil); statusOf(err) != http.StatusConflict {
 		t.Fatalf("switch during a turn = %v, want 409", err)
 	}
 	conv.EmitTurn(agentapi.TurnCompleted, "")
 	conv.SetModelError(errors.New("rpc broke"))
-	if _, err := m.SetModel(sum.ID, "b"); statusOf(err) != http.StatusBadGateway {
+	if _, err := m.SetModel(sum.ID, setting("b"), nil, nil); statusOf(err) != http.StatusBadGateway {
 		t.Fatalf("provider refused switch = %v, want 502", err)
 	}
 	if got := detail(t, m, sum.ID).Model; got != "a" {
 		t.Fatalf("model changed although the provider refused: %q", got)
 	}
 	conv.SetModelError(nil)
-	switched, err := m.SetModel(sum.ID, "b")
+	switched, err := m.SetModel(sum.ID, setting("b"), nil, nil)
 	if err != nil || switched.Model != "b" {
 		t.Fatalf("SetModel = %+v, %v", switched, err)
 	}
@@ -581,7 +581,7 @@ func TestSetModelBetweenTurns(t *testing.T) {
 	if _, err := m.Close(sum.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.SetModel(sum.ID, "a"); err != nil {
+	if _, err := m.SetModel(sum.ID, setting("a"), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(conv.ModelSets()); n != 2 {

@@ -107,7 +107,10 @@ type SessionSummary struct {
 	Capabilities agentapi.Capabilities `json:"capabilities"`
 	ProjectID    string                `json:"project_id"`
 	// Model is the selected model; empty means the provider default.
-	Model string `json:"model"`
+	Model       string            `json:"model"`
+	Effort      string            `json:"effort"`
+	ContextSize string            `json:"context_size"`
+	Context     *agentapi.Context `json:"context,omitempty"`
 	// Title is the provider-generated title. Name may be empty; browsers
 	// display name || title || "New task".
 	Title string `json:"title"`
