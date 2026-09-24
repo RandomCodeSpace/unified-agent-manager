@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, Ellipsis, FolderMinus, FolderPlus, GitBranch, ListFilter, LogOut, Settings as SettingsIcon, Settings2, Search, SquarePen, X } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { filteredProject, groupTasks, mostRecentProject, sidebarTasks, visibleProjects } from '../lib/tasks';
@@ -7,6 +7,7 @@ import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, STATE_LABELS, STATE_TONE, StateMark, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
+import { Collapse } from './ui/collapse';
 import { PreviousSessionsEntry, usePreviousCounts } from './PreviousSessions';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
@@ -110,18 +111,6 @@ function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
       return focus(rows.length - 1);
 
   }
-}
-
-/* ---------- Collapsible body with a height transition (grid rows, no measuring) ---------- */
-
-function Collapsible({ open, children, className }: { open: boolean; children: ReactNode; className?: string }) {
-  return (
-    <div className={cn('grid transition-[grid-template-rows] duration-240 ease-app', open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]', className)}>
-      <div className="min-h-0 overflow-hidden" inert={!open} aria-hidden={!open}>
-        {children}
-      </div>
-    </div>
-  );
 }
 
 /* ---------- Task row ---------- */
@@ -236,13 +225,13 @@ function Shelf({ projects, label, tasks, selectedId, open, onToggle }: { project
         <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
         <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
-      <Collapsible open={open}>
+      <Collapse open={open}>
         <ul className="flex flex-col gap-px pt-px">
           {tasks.map((t) => (
             <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />
           ))}
         </ul>
-      </Collapsible>
+      </Collapse>
       {pinned && (
         <ul className="flex flex-col gap-px">
           <TaskRow project={projects.get(pinned.project_id)!} session={pinned} selected />

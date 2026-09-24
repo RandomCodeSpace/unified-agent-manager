@@ -6,6 +6,7 @@ import { popupOpen } from '../App';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
 import { Chip } from './ui/chip';
+import { usePresence } from './ui/collapse';
 import { Composer } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
@@ -133,6 +134,12 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
 
   // One side panel at a time: the Changes sheet wins while it is open; opening the other closes it.
   const shownPanel = sheetOpen ? null : panel;
+  // A closing panel stays mounted, showing its last view, until its exit has run.
+  const panelPresence = usePresence(!!shownPanel);
+  const sheetPresence = usePresence(sheetOpen);
+  const [lastPanel, setLastPanel] = useState<PanelView | null>(null);
+  if (shownPanel && shownPanel !== lastPanel) setLastPanel(shownPanel);
+  const panelView = shownPanel ?? lastPanel;
 
   const closePanel = useCallback(() => {
     setPanel(null);
@@ -295,9 +302,8 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
         </div>
       </div>
 
-      {sheetOpen && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} inline={sidePanelInline} onRefresh={() => { setChangesError(null); setChangesTick((t) => t + 1); }} onClose={() => onSheet(false)} />}
-      {shownPanel && !sidePanelInline && <button type="button" className="fixed inset-0 z-30 bg-backdrop animate-fade-in" aria-label="Close subagents" onClick={closePanel} />}
-      {shownPanel && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={shownPanel} inline={sidePanelInline} onView={setPanel} onClose={closePanel} onLocate={locate} />}
+      {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} inline={sidePanelInline} open={sheetOpen} onRefresh={() => { setChangesError(null); setChangesTick((t) => t + 1); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
+      {panelPresence.mounted && panelView && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
     </div>
   );
 }

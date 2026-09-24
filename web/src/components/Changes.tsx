@@ -29,8 +29,10 @@ export function ChangesSheet({
   changes,
   changesError,
   inline,
+  open,
   onRefresh,
   onClose,
+  onClosed,
 }: {
   session: SessionSummary;
   projectName: string;
@@ -38,8 +40,11 @@ export function ChangesSheet({
   /** Why the default scope's list failed to load; null while it loads or once it has. */
   changesError: string | null;
   inline: boolean;
+  /** False while the sheet leaves; `onClosed` follows, and the owner unmounts it. */
+  open: boolean;
   onRefresh: () => void;
   onClose: () => void;
+  onClosed: () => void;
 }) {
   const canSession = session.capabilities.session_diff;
   const [scope, setScope] = useState<Scope>(defaultScope(session));
@@ -50,7 +55,7 @@ export function ChangesSheet({
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    closeRef.current?.focus();
+    closeRef.current?.focus({ preventScroll: true });
   }, []);
 
   const isDefault = scope === defaultScope(session);
@@ -86,7 +91,7 @@ export function ChangesSheet({
   }
 
   return (
-    <SidePanel id="changes" inline={inline} label="Changes" defaultWidth={440}>
+    <SidePanel id="changes" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Changes" defaultWidth={440}>
       <PanelHeader>
         <FileDiff aria-hidden="true" className="size-4 text-muted" />
         <span className="text-title text-ink">Changes</span>

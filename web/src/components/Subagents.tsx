@@ -1,5 +1,5 @@
 import { ArrowLeft, Bot, Copy, Crosshair, Ellipsis, Square, X } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -8,6 +8,8 @@ import type { AgentTranscript } from '../state';
 import { Markdown, Note, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
+import { EXIT_MS } from './ui/collapse';
+import { Sheet } from './ui/dialog';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -60,28 +62,46 @@ const NO_ITEMS: Item[] = [];
 
 /**
  * A side panel: inline beside the column at ≥1280px with a draggable inner edge (width
- * remembered per panel), an overlay from the right at 960–1279, a full-screen sheet below.
+ * remembered per panel), an overlay sheet from the right at 960–1279, a full-screen sheet
+ * below. The overlay is a Base UI dialog (focus trap, Esc, backdrop) that slides in and
+ * out. Inline, the column commits its width at once and the panel slides over the space it
+ * left; closing slides it out, then `onClosed` lets the owner unmount it.
  */
-export function SidePanel({ id, inline, label, children, className, defaultWidth = 440 }: { id: string; inline: boolean; label: string; children: ReactNode; className?: string; defaultWidth?: number }) {
+export function SidePanel({ id, inline, open, onClose, onClosed, label, children, className, defaultWidth = 440 }: { id: string; inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; label: string; children: ReactNode; className?: string; defaultWidth?: number }) {
   const { narrow } = useApp();
   const { panelRef, handleProps } = useResizable(id, defaultWidth);
+  // The slide starts one frame after mount, so the first paint is off-screen.
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!inline) return;
+    const frame = requestAnimationFrame(() => setShown(open));
+    return () => cancelAnimationFrame(frame);
+  }, [inline, open]);
+  const closed = useEffectEvent(onClosed);
+  useEffect(() => {
+    if (!inline || open) return;
+    const timer = window.setTimeout(closed, EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [inline, open]);
   if (!inline) {
     return (
-      <aside role="dialog" aria-modal="true" aria-label={label} className={cn('fixed inset-y-0 right-0 z-40 flex w-full flex-col bg-canvas shadow-modal animate-slide-in', !narrow && 'w-[min(var(--spacing-panel),100vw)] border-l border-hairline', className)}>
+      <Sheet open={open} onOpenChange={(o) => !o && onClose()} onClosed={onClosed} side="right" label={label} className={cn('w-full max-w-none bg-canvas', !narrow && 'w-[min(var(--spacing-panel),100vw)] border-l border-hairline', className)}>
         {children}
-      </aside>
+      </Sheet>
     );
   }
   return (
-    <aside ref={panelRef} aria-label={label} className={cn('relative flex w-(--panel-w) shrink-0 flex-col border-l border-hairline bg-canvas animate-fade-in', className)}>
-      <div
-        {...handleProps}
-        className="group/handle absolute inset-y-0 -left-1 z-10 flex w-2 cursor-col-resize items-center justify-center outline-hidden focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus"
-        title="Drag to resize · double-click to reset"
-      >
-        <span aria-hidden="true" className="h-full w-px bg-hairline transition-[background-color,width] duration-100 group-hover/handle:w-0.5 group-hover/handle:bg-accent group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-accent group-active/handle:bg-accent" />
+    <aside ref={panelRef} aria-label={label} className={cn('relative flex w-(--panel-w) shrink-0 flex-col border-l border-hairline bg-canvas', className)}>
+      <div className={cn('flex min-h-0 flex-1 flex-col transition-transform duration-240 ease-app', shown && open ? 'translate-x-0' : 'translate-x-full')} inert={!open}>
+        <div
+          {...handleProps}
+          className="group/handle absolute inset-y-0 -left-1 z-10 flex w-2 cursor-col-resize items-center justify-center outline-hidden focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus"
+          title="Drag to resize · double-click to reset"
+        >
+          <span aria-hidden="true" className="h-full w-px bg-hairline transition-[background-color,width] duration-100 group-hover/handle:w-0.5 group-hover/handle:bg-accent group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-accent group-active/handle:bg-accent" />
+        </div>
+        {children}
       </div>
-      {children}
     </aside>
   );
 }
@@ -101,8 +121,10 @@ export function SubagentPanel({
   snapshotSeq,
   view,
   inline,
+  open,
   onView,
   onClose,
+  onClosed,
   onLocate,
 }: {
   session: SessionDetail;
@@ -110,8 +132,11 @@ export function SubagentPanel({
   snapshotSeq: number;
   view: PanelView;
   inline: boolean;
+  /** False while the panel leaves; `onClosed` follows, and the owner unmounts it. */
+  open: boolean;
   onView: (v: PanelView) => void;
   onClose: () => void;
+  onClosed: () => void;
   /** Scroll the main transcript to the `task` tool row that spawned a subagent. */
   onLocate: (toolCallId: string) => void;
 }) {
@@ -122,13 +147,13 @@ export function SubagentPanel({
 
   // Focus the leading control whenever the view changes (open, back, open transcript).
   useEffect(() => {
-    lead.current?.focus();
+    lead.current?.focus({ preventScroll: true });
   }, [view]);
 
   if (view.view === 'agent' && current) {
     const setup = setupOf(meta, session.provider, current);
     return (
-      <SidePanel id="subagents" inline={inline} label={`Subagent ${current.name}`}>
+      <SidePanel id="subagents" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label={`Subagent ${current.name}`}>
         <PanelHeader>
           <Button ref={lead} size="icon-md" aria-label="Back to the subagent list" className="-ml-1 text-muted" onClick={() => onView({ view: 'list' })}>
             <ArrowLeft />
@@ -161,7 +186,7 @@ export function SubagentPanel({
 
   const running = session.subagents.filter((s) => s.status === 'running').length;
   return (
-    <SidePanel id="subagents" inline={inline} label="Subagents">
+    <SidePanel id="subagents" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Subagents">
       <PanelHeader>
         {narrow && (
           <Button ref={lead} size="icon-md" aria-label="Back to the task" className="-ml-1 text-muted" onClick={onClose}>

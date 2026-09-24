@@ -475,8 +475,8 @@ export default function App() {
           <div
             className={
               narrow
-                ? 'grid h-dvh grid-cols-1'
-                : cn('grid h-dvh transition-[grid-template-columns] duration-240 ease-app', sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]')
+                ? 'grid h-dvh grid-cols-1 overflow-x-clip'
+                : cn('grid h-dvh overflow-x-clip transition-[grid-template-columns] duration-240 ease-app', sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]')
             }
           >
             {/* The column animates to 0; the sidebar keeps its width inside so nothing reflows on the way, and is inert once hidden. */}
@@ -504,15 +504,6 @@ export default function App() {
                 {pane}
               </div>
             </main>
-
-            {sheetOpen && !sheetInline && (
-              <button
-                type="button"
-                className="fixed inset-0 z-30 bg-backdrop animate-fade-in"
-                aria-label="Close"
-                onClick={() => setSheetOpen(false)}
-              />
-            )}
 
             {dialog?.kind === 'add' && (
               <AddProjectDialog
