@@ -93,12 +93,30 @@ off, run `uam web stop`, then `uam web` without the flag.
 
 ## Use it
 
-- **New session**: choose the provider (only Copilot for now), a project
-  directory on the Linux host, a name, and optionally a first prompt. A
-  provider that is not installed or not compatible is shown as unavailable
-  with the reason.
+- **Projects**: add a directory on the Linux host as a Project. A directory
+  has one Project; adding it again points you to the existing one. Renaming a
+  Project changes only its name in UAM. Web sessions from before Projects
+  existed are placed in a Project for their directory, named after it, when
+  the service starts.
+- **Tasks**: start a Task (a web session) in a Project. Choose the provider (only Copilot for
+  now), optionally a model, a name, and a first prompt. A provider that is not
+  installed or not compatible is shown as unavailable with the reason. The
+  Task runs in the Project's directory.
+- **Names and titles**: the name is optional. Without one, the Task shows the
+  title the provider gives the conversation (Copilot uses the first prompt),
+  or "New task" until there is one. Clearing a name shows the title again.
+  Renaming a Task does not rename the conversation at the provider.
+- **Models**: the model list shows the models your Copilot account can
+  select; the default is the provider's own choice. You can switch the model
+  between turns, not while a turn runs; the new model applies from the next
+  turn. The list is refreshed at most every five minutes, so a changed
+  subscription shows up without restarting the service.
 - **Conversation**: responses stream in; tool calls appear as expandable rows
   that update in place.
+- **Subagents**: when the agent delegates work to a subagent, the subagent
+  shows up in the Task with its status (running, completed, failed, or
+  cancelled). Its own prompt, replies, and tool calls appear in its own view,
+  not in the Task's conversation.
 - **Approvals and questions**: when the provider asks for permission or asks a
   question, a card appears in the conversation and a badge in the session
   list. Nothing is approved automatically. If no browser is connected, the
@@ -107,6 +125,11 @@ off, run `uam web stop`, then `uam web` without the flag.
 - **Stop turn** cancels the running turn. The conversation stays open.
 - **Close session** disconnects UAM from the provider conversation and keeps
   the record. Sending another prompt reopens the same conversation.
+- **Delete Task** removes the Task from UAM and closes its conversation.
+  **Remove Project** removes the Project and all its Tasks the same way. Both
+  are refused while a Task concerned is working or waiting for you. Neither
+  deletes the provider's copy of the conversation, and neither touches the
+  directory.
 - **Changes**: *Workspace* shows `git` changes in the project versus `HEAD`.
   That includes edits made by anything else in the working tree, not only
   this session.

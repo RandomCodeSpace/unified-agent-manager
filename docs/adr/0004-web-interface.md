@@ -145,3 +145,110 @@ a subscriber.
   download or update it.
 - Older `uam` binaries do not know `surface` and would show web records as
   ordinary stopped sessions.
+
+## Projects, Tasks, models, titles and subagents
+
+- Date: 2026-09-24 (decided in issues #140 and #142)
+
+This section extends the contract above and replaces it where they differ.
+Only Copilot is registered. The provider contract names no provider-specific
+concept, so another provider can be added the same way later.
+
+### Projects and Tasks
+
+A **Project** is a directory the user adds. Its **Tasks** are the web
+sessions (the routes keep the `sessions` name) whose `web.project_id` names it.
+
+- Projects live in a top-level `web_projects` object in `sessions.json`,
+  keyed by a UUID: `{id, name, dir, created_at}`. `dir` is canonical
+  (absolute, symlinks resolved) and must be an existing directory when the
+  Project is added. A directory has at most one Project, and `dir` never
+  changes.
+- A Task's record keeps `workdir` (copied from the Project) and gains
+  `web.project_id`, `web.model` (empty means the provider default) and
+  `web.title` (the provider's title, sanitized and bounded). `name` may be
+  empty; browsers show `name || title || "New task"`.
+- On start, each web record without `web.project_id` is assigned to the
+  Project for its `workdir`, which is created (named after the directory)
+  when missing, in one store update. Only such records are touched, so the
+  migration is idempotent and a removed Project does not come back.
+- Removing a Project deletes it and its Task records. Deleting a Task deletes
+  its record. Both close open conversations but never delete them at the
+  provider, never touch the directory, and are refused with 409 while a
+  Task concerned is starting, working or waiting for input.
+
+### Provider contract additions (`internal/agentapi`)
+
+| Addition | Meaning |
+|---|---|
+| `Provider.Models` → `[]Model{ID, Name}` | The selectable models. Empty or `ErrUnsupported` means the provider default only. |
+| `OpenRequest.Model` | Used only when creating a conversation, never on reopen. |
+| `Conversation.SetModel` | Switches the model from the next turn on. |
+| `Item.AgentID`, `Delta.AgentID`, `Interaction.AgentID` | Empty for the main agent, otherwise the provider's subagent instance ID. |
+| `Turn.Model` | The model the provider reported for the turn. Not persisted. |
+| `EventTitle` (`Event.Title`) | The provider-generated conversation title. |
+| `EventSubagent` (`Event.Subagent`) | Upserts `Subagent{ID, ParentToolCallID, Name, Description, Status, Error, StartedAt, EndedAt}`. Status is `running`, `completed`, `failed` or `cancelled`; once terminal, later updates are ignored. |
+| `History` → `{Items, Subagents}` | Subagent items carry `AgentID`; subagent records are rebuilt from recorded events. |
+
+Copilot mapping: `AgentID` is the event envelope's `agentId`, so a subagent's
+prompt, replies and tool calls never enter the main transcript, live or in
+history. `subagent.started/completed/failed` map to `EventSubagent`, with
+`ParentToolCallID` from `toolCallId`; the second, cancelled completion Copilot
+sends on disconnect is ignored. `session.title_changed` maps to `EventTitle`,
+the last main-agent `assistant.usage.model` of a turn to `Turn.Model`,
+`models.list` entries with no policy or an `enabled` policy to `Models`,
+`SessionConfig.Model` to the model at creation and `Session.SetModel` to
+`SetModel`.
+
+### Models
+
+The catalog is loaded when the service starts and reloaded by `GET /api/meta`
+once it is older than five minutes, because entitlements change. A failed
+reload keeps the previous catalog. A model outside the catalog is refused
+with 400. A model change is refused with 409 while a turn is running; with
+the conversation open, the stored model changes only once the provider
+accepted the switch. With the conversation closed, the model is stored and
+applied by the next open before anything is sent; a conversation that cannot
+take it is not used with another model.
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `GET /api/projects` | – | `{"projects": [Project]}` |
+| `POST /api/projects` | `{"dir", "name"?}` | 201 `Project`; 400 not an absolute, existing directory; 409 `{"error", "project_id"}` when the directory has a Project |
+| `PATCH /api/projects/{id}` | `{"name"}` | `Project` (empty name resets to the directory's base name); 404 |
+| `DELETE /api/projects/{id}` | – | 204; 404; 409 while any of its Tasks is busy |
+| `POST /api/sessions` | `{"project_id", "provider", "model"?, "name"?, "prompt"?, "request_id"?}` | 201 `SessionSummary`; 400 unknown `project_id` or model outside the catalog; 409 when the directory no longer exists. `workdir` is no longer accepted. |
+| `PATCH /api/sessions/{id}` | `{"name"?, "model"?}` | `SessionSummary`; empty `name` shows the title again; 400 nothing to change or model outside the catalog; 409 model change while a turn runs; 502 provider refused the switch |
+| `DELETE /api/sessions/{id}` | – | 204; 404; 409 while busy |
+| `GET /api/sessions/{id}/subagents/{agent_id}` | – | `{"subagent": Subagent, "items": [Item]}`; 404 |
+
+A `DELETE` without a body needs no `Content-Type`; it still passes the
+`Host`, cross-origin and cookie checks.
+
+Shape changes:
+
+- `ProviderInfo` gains `models: [{id, name}]`.
+- `Project`: `id`, `name`, `dir`, `created_at`.
+- `SessionSummary` gains `project_id`, `model`, `title`, `last_model` (from the
+  latest turn that reported one; live only) and `subagents_running`. `name`
+  may be empty.
+- `SessionDetail.items` holds only the main agent's items; it gains
+  `subagents: [Subagent]`.
+- `Item` and `Interaction` gain `agent_id` (omitted for the main agent).
+- `Subagent`: `id`, `parent_tool_call_id`, `name`, `description`, `status`,
+  `error`, `started_at`, `ended_at` (empty fields omitted).
+
+### Event stream additions
+
+| Event | `data` |
+|---|---|
+| `snapshot` | gains `"projects": [Project]` |
+| `item`, `delta` | gain `agent_id` (omitted for the main agent); they stay on the Task's stream |
+| `subagent` | `{"seq", "session_id", "subagent": Subagent}` (selected session) |
+| `project` | `{"seq", "project": Project}` (added or renamed) |
+| `project_removed` | `{"seq", "project_id"}` |
+| `session_removed` | `{"seq", "session_id"}` |
+
+Sequencing, bounded queues and the snapshot rules are unchanged.
