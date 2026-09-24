@@ -369,8 +369,11 @@ func TestUploadsGoWithTheTaskAndExpireUnused(t *testing.T) {
 	}
 
 	conv.EmitTurn(agentapi.TurnCompleted, "")
-	waitUntil(t, "queue drained", func() bool { return len(detail(t, m, sum.ID).Queue) == 0 })
+	// The queue empties before the drained prompt is sent; end that turn only
+	// once the provider has it, so the send cannot mark the Task busy after.
+	waitUntil(t, "queued prompt sent", func() bool { return len(conv.Prompts()) == 2 })
 	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "turn ended", func() bool { return !busy(detail(t, m, sum.ID).State) })
 	if _, err := m.Archive(sum.ID); err != nil {
 		t.Fatal(err)
 	}
