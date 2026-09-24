@@ -412,6 +412,50 @@ are logged only at debug level (`UAM_DEBUG=1`).
   model fails or takes more than 20 s, the provider's title stays, and the
   service log says why. Each title costs AI credits, about 0.002 with
   gpt-6-luna.
+- **Custom models (bring your own model)**: Settings → Models → Custom
+  models adds OpenAI-compatible endpoints to Copilot's model list, next to
+  the account's own models, so a Task can switch between them mid-Task in
+  the composer's model menu. Each entry has a provider name (letters,
+  digits, `.`, `_`, `-`), a base URL (`http` or `https`, no credentials,
+  query or fragment), a model ID, an optional display name, and the *name*
+  of the environment variable that holds the API key. That name must start
+  with `UAM_BYOM_` (e.g. `UAM_BYOM_OPENROUTER`), so a custom model can never
+  send any other variable of the service's environment to its endpoint. The
+  model's ID in UAM is `provider/model_id`, e.g.
+  `openrouter/qwen/qwen3-coder`. Models that share a provider name share its
+  base URL and key variable; at most 100 are kept. `PATCH /api/settings` with
+  `{"custom_models": [...]}` replaces the whole list (fields `name`,
+  `display_name`, `base_url`, `model_id`, `wire_api` (`completions`, the
+  default, or `responses`) and `api_key_env`); `[]` removes them all.
+  Removing a model also takes it out of `hidden_models` and clears a
+  `title_model` set to it. In Settings a provider is added or edited as
+  a whole: name, base URL and key variable, then **Load models** lists what
+  the endpoint serves as a searchable checklist (select all or none), and a
+  model ID the endpoint does not list can be typed in. Saving writes one
+  entry per checked model, named by its ID. The composer's model menu lists
+  custom models under their provider name. **Load models** is
+  `POST /api/settings/custom-models/discover` with
+  `{"base_url", "api_key_env", "wire_api"}` (validated like a custom model);
+  the service sends one `GET {base_url}/models` with the key, follows no
+  redirect, stops after 10 s or 1 MiB, and answers
+  `{"models": [sorted IDs, at most 500], "truncated": true|omitted,
+  "key_present": true}`, or an error with only the upstream status line.
+  This is a request from the service to a URL the browser chose: on an
+  instance without sign-in (`--no-auth`) anyone who reaches it can make the
+  service send such a GET, with a `UAM_BYOM_` key, to any host it can reach,
+  loopback and private addresses included. The key itself never passes through the browser,
+  the API, `sessions.json` or the service log: the service reads the
+  variable from its own environment when it opens a Copilot session, and
+  settings only report `key_present`. Export the variable where the service
+  starts, then restart the service. A service started from a clean shell,
+  such as `env -i HOME=$HOME bash -ic 'uam web …'`, reads only the
+  interactive profile, so put `export UAM_BYOM_<NAME>=…` in `~/.bashrc`. A
+  model whose variable is unset or empty fails when chosen, with the
+  variable's name in the error; Copilot's models are unaffected. A Task left
+  failed that way opens again with its next message, once you switch it to
+  another model or set the variable and restart the service. Custom models
+  report no prices and cost no AI credits; the endpoint bills you directly.
+  This uses the Copilot SDK's experimental multi-provider support.
 - **Paused queue**: the queue pauses when a turn is stopped or fails, when
   the provider process ends, when you close the session, and when the
   provider refuses a message or may not have received it. A paused queue

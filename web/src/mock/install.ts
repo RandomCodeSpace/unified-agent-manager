@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { BADGE_COLORS, LIVE, type Attachment, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { BADGE_COLORS, LIVE, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
@@ -442,8 +442,21 @@ export function install(): void {
     if (path === '/api/meta') return json(200, st.meta);
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
+    if (path === '/api/settings/custom-models/discover' && method === 'POST') {
+      // The mock serves a fixed list, as an OpenAI-compatible /models would; keys are never set.
+      if (!/^UAM_BYOM_[A-Za-z0-9_]+$/.test(String(body.api_key_env ?? ''))) return fail(400, 'API key variable must be named UAM_BYOM_<NAME>');
+      return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
+    }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models') return fail(400, `unknown setting "${key}"`);
+      if (Array.isArray(body.custom_models)) {
+        // The mock sets no key variables; the service lists the models after Copilot's own.
+        const custom = (body.custom_models as CustomModel[]).map((c) => ({ ...c, key_present: false }));
+        const copilot = st.meta.providers[0];
+        copilot.models = [...copilot.models.filter((mo) => !mo.id.includes('/')), ...custom.map((c) => ({ id: `${c.name}/${c.model_id}`, name: c.display_name || `${c.name}/${c.model_id}`, efforts: [], context_sizes: [], media: { images: false, pdf: false } }))];
+        st.settings = { ...st.settings, custom_models: custom.length ? custom : undefined };
+        broadcast('settings', { settings: st.settings });
+      }
       if (body.send_default !== undefined) {
         if (body.send_default !== 'steer' && body.send_default !== 'queue') return fail(400, 'send_default must be steer or queue');
         st.settings = { ...st.settings, send_default: body.send_default };

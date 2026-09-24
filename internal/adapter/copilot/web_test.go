@@ -220,6 +220,23 @@ type fakeSession struct {
 	reply             func(context.Context, copilot.MessageOptions) (string, error)
 	names             []string
 	nameErr           error
+	added             []string // provider and model names AddProviders registered
+	addErr            error
+}
+
+func (s *fakeSession) AddProviders(_ context.Context, providers []copilot.NamedProviderConfig, models []copilot.ProviderModelConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.addErr != nil {
+		return s.addErr
+	}
+	for _, p := range providers {
+		s.added = append(s.added, "provider "+p.Name+" key "+p.APIKey)
+	}
+	for _, m := range models {
+		s.added = append(s.added, "model "+m.Provider+"/"+m.ID)
+	}
+	return nil
 }
 
 func (s *fakeSession) CancelSubagent(_ context.Context, id string) (bool, error) {

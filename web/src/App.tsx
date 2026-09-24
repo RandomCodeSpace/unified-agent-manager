@@ -91,10 +91,12 @@ export default function App() {
       .catch(() => setAuth('out'));
   }, []);
 
+  // Custom models are part of the model lists, so a change to them reloads the catalogs.
+  const customModels = JSON.stringify(state.settings.custom_models ?? []);
   useEffect(() => {
     if (auth !== 'in') return;
     api.meta().then(setMeta).catch(() => setMeta(null));
-  }, [auth]);
+  }, [auth, customModels]);
 
   // Keep the view in the URL fragment so a reload lands on it: `#settings`, else the selected task.
   useEffect(() => {

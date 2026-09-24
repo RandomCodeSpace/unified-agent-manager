@@ -21,6 +21,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // The placeholder keeps source-only checkouts buildable; release tags include dist.
@@ -137,6 +138,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("PATCH /api/settings", s.handleUpdateSettings)
+	mux.HandleFunc("POST /api/settings/custom-models/discover", s.handleDiscoverModels)
 	mux.HandleFunc("GET /api/usage", s.handleUsage)
 	mux.HandleFunc("GET /api/fs/dirs", s.handleListDirs)
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
@@ -477,6 +479,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "title_model must map providers to model IDs")
 				return
 			}
+		case "custom_models":
+			// key_present is output only; any other unknown entry key is ignored.
+			var list []store.WebCustomModel
+			if json.Unmarshal(raw, &list) != nil || list == nil {
+				writeError(w, http.StatusBadRequest, "custom_models must be a list of custom models")
+				return
+			}
+			patch.CustomModels = &list
 		default:
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown setting %q", key))
 			return
@@ -488,6 +498,19 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
+	var req DiscoverRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	res, err := s.m.DiscoverModels(r.Context(), req)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // hiddenModelsBody decodes a hidden_models object, or returns nil when raw is
