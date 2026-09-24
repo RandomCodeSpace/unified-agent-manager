@@ -56,16 +56,9 @@
   --rail-w: 264px;
   --drawer-w: 280px;
   --header-h: 44px;
-  --col-max: 760px;
   --gutter: 24px;
   --sheet-w: 440px;
   --panel-w: 460px;
-}
-
-@media (min-width: 1800px) {
-  :root {
-    --col-max: 800px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -985,8 +978,7 @@ dialog::backdrop {
 
 .column {
   width: 100%;
-  max-width: var(--col-max);
-  margin: 0 auto;
+  margin: 0;
   padding: var(--gutter) var(--gutter) 12px;
 }
 

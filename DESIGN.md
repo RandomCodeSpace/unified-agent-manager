@@ -139,8 +139,7 @@ layout:
   rail-width: 264px
   drawer-width: 280px
   header-height: 44px
-  chat-column-max: 760px
-  chat-column-max-wide: 800px
+  chat-column-width: 100%
   chat-gutter: 24px
   chat-gutter-phone: 12px
   changes-panel-width: 440px
@@ -539,7 +538,7 @@ Rule for new pairs: any text colour must clear 4.5:1 on `canvas`, `rail`, `raise
 - Numbers that line up (counts, durations, line numbers) use `font-variant-numeric: tabular-nums` via the `.num` class.
 - Ligatures are **off** in mono (`font-variant-ligatures: none`): `!=`, `=>` and `->` must read as typed inside diffs and commands.
 - Markdown headings inside assistant messages do not scale up. A chat is not a document; hierarchy inside a message comes from weight and spacing.
-- Line length in the transcript is capped by the column (760px ≈ 90 characters at 15px). Never widen the column to fill a 1920px screen.
+- The transcript and assistant content fill the available main-pane width after the rail, any inline side panel and the existing gutters. Do not impose a fixed chat-column width cap.
 
 ## Layout
 
@@ -553,18 +552,18 @@ Sits on `rail`, one step darker than the canvas. Top row: wordmark `uam` at `ui`
 | Width | Rail | Chat column | Composer | Changes sheet |
 |---|---|---|---|---|
 | ≤480 (phone, 420 target) | Off-canvas drawer, 280px, `backdrop`, slides from left; header shows a menu button | 100% width, 12px gutters | Full width, sticky bottom, `padding-bottom: env(safe-area-inset-bottom)`; textarea 16px | Full-screen sheet from the bottom |
-| 481–959 | Drawer as above | `max-width: 760px`, 16px gutters | Inside column | Overlay panel 100% |
-| 960–1279 | Fixed 264px | `max-width: 760px`, 24px gutters, centred in main | Inside column | Overlay panel 440px from right |
-| 1280–1799 (1440 target) | Fixed 264px | `max-width: 760px` centred | Inside column | Inline 440px panel, pushes column (column re-centres in the remaining width) |
-| ≥1800 (1920 target) | Fixed 264px | `max-width: 800px` centred; surplus is `canvas` margin, not content | Inside column | Inline 440px |
+| 481–959 | Drawer as above | Full available width, 16px gutters | Inside column | Overlay panel 100% |
+| 960–1279 | Fixed 264px | Full available width, 24px gutters | Inside column | Overlay panel 440px from right |
+| 1280–1799 (1440 target) | Fixed 264px | Full available width, 24px gutters | Inside column | Inline 440px panel; column fills the remaining width |
+| ≥1800 (1920 target) | Fixed 264px | Full available width, 24px gutters | Inside column | Inline 440px; column fills the remaining width |
 
-At 1920 the main pane is 1656px wide; the column takes 800px and sits centred. Do not fill the margins with side panels or widgets.
+At 1920 the main pane is 1656px wide with the side panel closed. The transcript column fills that width, with 24px gutters on each side. An inline Changes panel leaves 1216px for the column. Do not add unrelated side widgets.
 
 ### Bubble widths
 - User bubble: `max-width: min(78%, 560px)` of the column; at ≤480px `88%`. Aligned right, `margin-left: auto`.
 - Assistant message: full column width, no max beyond the column.
 - Approval/question cards, subagent blocks, code blocks: full column width.
-- Composer: full column width, same max as the column, so text in the composer lines up with the transcript.
+- Composer: full available column width between the existing gutters, so its edges line up with the transcript. No fixed width cap.
 
 ### Spacing and density
 4px base. Tokens: 2, 4, 6, 8, 12, 16, 20, 24, 32, 48.
@@ -738,7 +737,7 @@ All: `ui` 13/500, radius `sm`, height 32 (28 small, 36 large; 40 on phone). Disa
 - Set every identifier (model, tool, path, command, diff) in JetBrains Mono at 12–13px.
 - Truncate rail and deck rows; wrap nothing there.
 - Collapse thinking by default, collapse the ledger once everything is done, collapse subagents once they complete.
-- Keep the chat column ≤ 800px whatever the screen.
+- Let the transcript, assistant content and composer fill the available main-pane width between the existing gutters.
 - Specify hover as a surface step, press as surface step + `ink`.
 
 ### Don't
@@ -750,7 +749,7 @@ All: `ui` 13/500, radius `sm`, height 32 (28 small, 36 large; 40 on phone). Disa
 - Don't show heuristics or previews in rows (no "probably done", no first-line peeks); rows show server state.
 - Don't animate list rows in or out; don't shimmer skeletons.
 - Don't put the model in the header; it belongs to the composer, where it is changed.
-- Don't widen the column at 1920px or add side widgets to fill space.
+- Don't cap the chat column at desktop widths or add unrelated side widgets.
 - Don't use inline `style` props or `<style>`/`<script>` tags in the app (see CSP).
 
 ## CSP constraints
@@ -769,10 +768,10 @@ The server sends `default-src 'self'; script-src 'self'; style-src 'self'; img-s
 | Name | Width | Key changes |
 |---|---|---|
 | Phone | ≤480px | Rail → drawer; column 100% with 12px gutters; user bubble 88%; composer full width with safe-area; chat body 16px; buttons 40px; Changes → bottom sheet; approval buttons stack |
-| Narrow | 481–959px | Drawer; column ≤760 with 16px gutters; Changes overlay |
-| Laptop | 960–1279px | Fixed rail; column ≤760 centred; Changes overlay 440px |
-| Desktop | 1280–1799px | Fixed rail; Changes inline 440px pushes column |
-| Wide | ≥1800px | Column ≤800; surplus stays empty `canvas` |
+| Narrow | 481–959px | Drawer; column fills available width with 16px gutters; Changes overlay |
+| Laptop | 960–1279px | Fixed rail; column fills available width with 24px gutters; Changes overlay 440px |
+| Desktop | 1280–1799px | Fixed rail; column fills remaining width with 24px gutters; Changes inline 440px |
+| Wide | ≥1800px | Column fills available width with 24px gutters; no fixed width cap |
 
 ## Iteration guide
 
