@@ -1,8 +1,8 @@
 import { X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
+import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
 import { initialState, reducer } from './state';
-import { AppContext, Dot, useMedia } from './components/common';
+import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog, RemoveProjectDialog } from './components/Projects';
 import { SettingsView } from './components/Settings';
@@ -27,6 +27,8 @@ const VIEWED_KEY = 'uam.viewed';
 const SIDEBAR_KEY = 'uam.sidebar';
 const FILTER_KEY = 'uam.projectFilter';
 const HASH_PREFIX = '#task=';
+/** A wait shorter than this shows nothing new: no "Connecting…", no loading placeholder. */
+const QUIET_MS = 600;
 const SETTINGS_HASH = '#settings';
 
 // Older servers omit `required`; treat absent as true.
@@ -65,7 +67,7 @@ export default function App() {
   const [taskDialog, setTaskDialog] = useState<TaskDialog>(null);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [renaming, setRenaming] = useState<Renaming | null>(null);
-  const [busyTask, setBusyTask] = useState<string | null>(null);
+  const [busyTasks, setBusyTasks] = useState<Readonly<Record<string, boolean>>>({});
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
   const [sidebarOpen, setSidebarOpen] = useState(() => readJSON<boolean>(SIDEBAR_KEY, true));
   const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
@@ -179,9 +181,26 @@ export default function App() {
         .catch(later);
     };
     const selected = state.selectedId;
+    // Stream deltas wait for the next animation frame and land in one dispatch; any other
+    // frame (and a snapshot) flushes them first, so the order on the wire is kept.
+    let queue: UpdateData[] = [];
+    let frame = 0;
+    const flush = () => {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      if (!queue.length) return;
+      const data = queue;
+      queue = [];
+      dispatch({ type: 'updates', data });
+    };
     es.addEventListener('snapshot', (e) => {
       const data = JSON.parse((e as MessageEvent).data) as SnapshotData;
-      dispatch({ type: 'snapshot', data });
+      flush();
+      // A snapshot lands the opened Task: the pane cross-fades to it (ViewTransition, type "switch").
+      startTransition(() => {
+        addTransitionType('switch');
+        dispatch({ type: 'snapshot', data });
+      });
       setFilter((current) => {
         if (!current || data.projects.some((p) => p.id === current)) return current;
         localStorage.removeItem(FILTER_KEY);
@@ -192,7 +211,20 @@ export default function App() {
     for (const name of UPDATE_EVENTS) {
       es.addEventListener(name, (e) => {
         const data = { name, ...JSON.parse((e as MessageEvent).data) } as UpdateData;
-        dispatch({ type: 'update', data });
+        // A hidden tab gets no animation frames: apply at once there.
+        if (data.name === 'delta' && !document.hidden) {
+          queue.push(data);
+          frame ||= requestAnimationFrame(flush);
+          return;
+        }
+        flush();
+        if (data.name === 'session' || data.name === 'session_removed') {
+          // Task rows enter, leave and reorder with a view transition (type "sessions"); everything else commits at once.
+          startTransition(() => {
+            addTransitionType('sessions');
+            dispatch({ type: 'update', data });
+          });
+        } else dispatch({ type: 'update', data });
         if (data.name === 'project_removed') {
           setFilter((current) => {
             if (current !== data.project_id) return current;
@@ -206,6 +238,8 @@ export default function App() {
     return () => {
       es.close();
       window.clearTimeout(retry);
+      // Deltas still queued belong to this stream; the next one starts with a snapshot.
+      cancelAnimationFrame(frame);
     };
   }, [auth, state.selectedId, streamKey, markViewed]);
 
@@ -218,6 +252,11 @@ export default function App() {
     [viewed, state.selectedId],
   );
 
+  // Opening a Task reopens the stream; only a disconnect that lasts is shown as one.
+  const late = useLate(state.connection !== 'connected', QUIET_MS);
+  const connection = late ? state.connection : 'connected';
+  const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen, QUIET_MS);
+
   const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage }), [meta, narrow, hasNews, state.settings, state.usage]);
 
   // Focus the composer of a Task that was just created, once its detail is on screen.
@@ -227,6 +266,16 @@ export default function App() {
     focusTask.current = null;
     document.getElementById('composer-text')?.focus();
   }, [detailId]);
+
+  const logout = useCallback(() => {
+    void api.logout().finally(() => setAuth('out'));
+  }, []);
+  const onSheet = useCallback((open: boolean) => {
+    setSheetOpen(open);
+    if (!open) document.getElementById('changes-link')?.focus();
+  }, []);
+  const onSessionUpdate = useCallback((s: SessionSummary) => dispatch({ type: 'upsert_session', session: s }), []);
+  const onInteractionUpdate = useCallback((sessionId: string, interaction: Interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction }), []);
 
   const openDialog = useCallback((d: Exclude<ProjectDialog, null>) => {
     setDialog(d);
@@ -238,7 +287,10 @@ export default function App() {
   }, []);
 
   const select = useCallback((id: string | null) => {
-    dispatch({ type: 'select', id });
+    startTransition(() => {
+      addTransitionType('switch');
+      dispatch({ type: 'select', id });
+    });
     setNotice(null);
     setSheetOpen(false);
     setDrawerOpen(false);
@@ -261,7 +313,10 @@ export default function App() {
         const s = await api.createSession({ project_id: projectId, ...settings, model: settings.model || undefined, request_id: entry.id });
         creating.current.delete(projectId);
         focusTask.current = s.id;
-        dispatch({ type: 'upsert_session', session: s });
+        startTransition(() => {
+          addTransitionType('sessions');
+          dispatch({ type: 'upsert_session', session: s });
+        });
         select(s.id);
       } catch (e) {
         creating.current.set(projectId, { ...entry, busy: false });
@@ -273,7 +328,7 @@ export default function App() {
 
   /** Runs one lifecycle request; the result is dispatched, a failure becomes the notice line. */
   const runTask = useCallback(async (id: string, op: () => Promise<SessionSummary | void>, verb: string) => {
-    setBusyTask(id);
+    setBusyTasks((b) => ({ ...b, [id]: true }));
     setNotice(null);
     try {
       const s = await op();
@@ -282,7 +337,7 @@ export default function App() {
       setNotice(`Could not ${verb}: ${describeError(e)}`);
       throw e;
     } finally {
-      setBusyTask(null);
+      setBusyTasks(({ [id]: _, ...rest }) => rest);
     }
   }, []);
 
@@ -303,9 +358,9 @@ export default function App() {
       archive: (id) => openTaskDialog({ kind: 'archive', id }),
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
-      busy: busyTask,
+      busy: busyTasks,
     }),
-    [renaming, busyTask, select, runTask, state.sessions, openTaskDialog],
+    [renaming, busyTasks, select, runTask, state.sessions, openTaskDialog],
   );
 
   const actions: WorkspaceActions = useMemo(
@@ -340,21 +395,16 @@ export default function App() {
   if (auth === 'out') return <Login onLoggedIn={() => setAuth('in')} />;
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
-  const project = selected ? state.projects.find((p) => p.id === selected.project_id) : undefined;
+  // The Task on screen: the selected one, or the one before it (inert) until the new detail arrives or the wait gets long.
+  const shown = state.detail && selected ? state.detail : state.selectedId && selected && !lateLoad ? state.previous : null;
+  const stale = !!shown && shown !== state.detail;
+  const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   const dialogTask = taskDialog ? state.sessions.find((s) => s.id === taskDialog.id) : undefined;
 
   function showProject(id: string) {
     setFilter(id);
     localStorage.setItem(FILTER_KEY, JSON.stringify(id));
     select(null);
-  }
-
-  async function logout() {
-    try {
-      await api.logout();
-    } finally {
-      setAuth('out');
-    }
   }
 
   async function confirmTaskDialog() {
@@ -365,7 +415,10 @@ export default function App() {
       else if (kind === 'close') await runTask(id, () => api.close(id), 'close the conversation');
       else {
         await runTask(id, () => api.deleteSession(id), 'delete the task');
-        dispatch({ type: 'remove_session', id });
+        startTransition(() => {
+          addTransitionType('sessions');
+          dispatch({ type: 'remove_session', id });
+        });
       }
     } catch {
       // Reported on the notice line.
@@ -380,8 +433,8 @@ export default function App() {
       selectedId={state.selectedId}
       actions={actions}
       authRequired={authRequired}
-      onLogout={() => void logout()}
-      connection={state.connection}
+      onLogout={logout}
+      connection={connection}
       version={meta?.version}
     />
   );
@@ -396,28 +449,25 @@ export default function App() {
   let pane: React.ReactNode;
   if (settingsOpen) {
     pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} />;
-  } else if (state.detail && selected) {
+  } else if (shown) {
     pane = (
       <Task
-        key={state.detail.id}
-        session={state.detail}
+        key={shown.id}
+        session={shown}
         project={project}
         agents={state.agents}
         snapshotSeq={state.snapshotSeq}
         sheetOpen={sheetOpen}
         sidePanelInline={sheetInline}
-        onSheet={(open) => {
-          setSheetOpen(open);
-          if (!open) document.getElementById('changes-link')?.focus();
-        }}
-        onSessionUpdate={(s) => dispatch({ type: 'upsert_session', session: s })}
-        onInteractionUpdate={(sessionId, interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction })}
+        onSheet={onSheet}
+        onSessionUpdate={onSessionUpdate}
+        onInteractionUpdate={onInteractionUpdate}
         leading={leading}
       />
     );
   } else if (state.selectedId && state.snapshotSeq >= 0 && !selected) {
     pane = (
-      <EmptyPane leading={leading} connection={state.connection}>
+      <EmptyPane leading={leading} connection={connection}>
         <h1 className="text-display-md">This task no longer exists.</h1>
         <p className="text-ui text-muted">It was deleted, or its project was removed.</p>
         <Button variant="secondary" onClick={() => select(null)}>
@@ -426,11 +476,11 @@ export default function App() {
       </EmptyPane>
     );
   } else if (state.selectedId) {
-    pane = <LoadingPane leading={leading} />;
+    pane = <LoadingPane leading={leading} placeholder={lateLoad} />;
   } else {
     // A quiet placeholder (issue #185): New task and Add project live in the sidebar.
     pane = (
-      <EmptyPane leading={leading} connection={state.connection}>
+      <EmptyPane leading={leading} connection={connection}>
         <Brand markOnly className="[&_svg]:size-9 opacity-80" />
         <p className="text-ui text-muted">{state.projects.length > 0 ? 'Open a task from the sidebar, or start a new one there.' : 'Add a project in the sidebar to begin.'}</p>
       </EmptyPane>
@@ -444,8 +494,8 @@ export default function App() {
           <div
             className={
               narrow
-                ? 'grid h-dvh grid-cols-1'
-                : cn('grid h-dvh transition-[grid-template-columns] duration-240 ease-app', sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]')
+                ? 'grid h-dvh grid-cols-1 overflow-x-clip'
+                : cn('grid h-dvh overflow-x-clip transition-[grid-template-columns] duration-240 ease-app', sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]')
             }
           >
             {/* The column animates to 0; the sidebar keeps its width inside so nothing reflows on the way, and is inert once hidden. */}
@@ -460,6 +510,12 @@ export default function App() {
               </Sheet>
             )}
             <main className="relative flex min-h-0 min-w-0 flex-col bg-canvas">
+              {connection !== 'connected' && (
+                <p role="status" className={cn('flex items-center gap-2 border-b border-hairline px-4 py-1.5 text-caption', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
+                  <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
+                  {CONNECTION_TEXT[connection]}
+                </p>
+              )}
               {notice && (
                 <p className="flex items-center gap-2 border-b border-hairline bg-error-wash px-4 py-1.5 text-caption text-error" role="alert">
                   <span className="flex-1">{notice}</span>
@@ -468,17 +524,13 @@ export default function App() {
                   </Button>
                 </p>
               )}
-              {pane}
+              {/* One wrapper for every pane, so the Task on screen stays mounted while it turns stale; a switch cross-fades it. */}
+              <ViewTransition name="pane" default="none" update={{ switch: 'vt-pane', default: 'none' }}>
+                <div className="flex min-h-0 flex-1 flex-col" inert={stale}>
+                  {pane}
+                </div>
+              </ViewTransition>
             </main>
-
-            {sheetOpen && !sheetInline && (
-              <button
-                type="button"
-                className="fixed inset-0 z-30 bg-backdrop animate-fade-in"
-                aria-label="Close"
-                onClick={() => setSheetOpen(false)}
-              />
-            )}
 
             {dialog?.kind === 'add' && (
               <AddProjectDialog
@@ -514,7 +566,7 @@ export default function App() {
               description="Archiving makes the task permanently read-only. It stays in the sidebar's Archived shelf with its full conversation. It cannot be reopened."
               confirmLabel="Archive task"
               danger={false}
-              busy={!!busyTask}
+              busy={!!taskDialog && !!busyTasks[taskDialog.id]}
               onConfirm={() => void confirmTaskDialog()}
             />
             <AlertDialog
@@ -524,7 +576,7 @@ export default function App() {
               title={`Delete ${dialogTask ? `“${dialogTask.name || dialogTask.title || 'this task'}”` : 'this task'}?`}
               description="This removes the task record from UAM. The provider conversation on the host is untouched."
               confirmLabel="Delete task"
-              busy={!!busyTask}
+              busy={!!taskDialog && !!busyTasks[taskDialog.id]}
               onConfirm={() => void confirmTaskDialog()}
             />
             <AlertDialog
@@ -535,7 +587,7 @@ export default function App() {
               description="Closing disconnects the provider conversation. The task and its conversation ID are kept, so nothing is deleted; sending another prompt reopens the same conversation. To interrupt the current turn without closing, use Stop instead."
               confirmLabel="Close conversation"
               danger={false}
-              busy={!!busyTask}
+              busy={!!taskDialog && !!busyTasks[taskDialog.id]}
               onConfirm={() => void confirmTaskDialog()}
             />
           </div>
@@ -571,20 +623,12 @@ function EmptyPane({ leading, connection, children }: { leading: React.ReactNode
   );
 }
 
-/** Calm placeholder while the selected Task's detail is on its way: the header holds its height, three quiet lines below. */
-function LoadingPane({ leading }: { leading: React.ReactNode }) {
+/** Calm placeholder while the selected Task's detail is on its way and nothing was on screen before: the header holds its height, a quiet indicator once the wait is long. */
+function LoadingPane({ leading, placeholder }: { leading: React.ReactNode; placeholder: boolean }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-label="Loading conversation">
-      <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">
-        {leading}
-        <span className="h-3.5 w-40 rounded-xs bg-sunken animate-pulse-dot" />
-      </header>
-      <div className="flex flex-col gap-3 px-6 pt-8">
-        <span className="ml-auto h-9 w-2/5 rounded-lg bg-raised animate-pulse-dot" />
-        <span className="mt-4 h-3 w-3/5 rounded-xs bg-sunken animate-pulse-dot" />
-        <span className="h-3 w-4/5 rounded-xs bg-sunken animate-pulse-dot" />
-        <span className="h-3 w-1/2 rounded-xs bg-sunken animate-pulse-dot" />
-      </div>
+      <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">{leading}</header>
+      {placeholder && <Loading label="Loading the conversation…" delay={0} className="flex-1 justify-center" />}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { api, describeError, isStatus } from '../api';
 import { Note } from './common';
 import { Brand } from './Sidebar';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [token, setToken] = useState('');
@@ -44,9 +45,9 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
           <label htmlFor="token" className="text-caption text-muted">
             Access token
           </label>
-          <input
+          <Input
             id="token"
-            className="h-10 w-full rounded-sm border border-hairline-strong bg-raised px-3 font-mono text-code text-ink outline-hidden transition-colors focus:border-accent"
+            className="px-3 font-mono text-code"
             type="password"
             autoComplete="off"
             autoCapitalize="off"
@@ -63,8 +64,8 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
           </Note>
         )}
         <div>
-          <Button type="submit" variant="primary" size="lg" disabled={busy || !token} className="min-w-28">
-            {busy ? 'Signing in…' : 'Sign in'}
+          <Button type="submit" variant="primary" size="lg" loading={busy} disabled={!token} className="min-w-28">
+            Sign in
           </Button>
         </div>
       </form>

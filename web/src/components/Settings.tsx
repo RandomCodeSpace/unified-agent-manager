@@ -2,13 +2,15 @@ import { X } from 'lucide-react';
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, describeError, type CustomModel, type Model, type SendDefault, type Settings } from '../api';
 import { Note, Spinner, useApp } from './common';
-import { Field, inputClass } from './TaskDefaults';
+import { Field } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { modelChoices } from '../lib/models';
 import { Select } from './ui/select';
 import { Switch } from './ui/switch';
 import { Button } from './ui/button';
+import { Chip } from './ui/chip';
+import { Input } from './ui/input';
 import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
 
@@ -90,10 +92,9 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
   }
   const field = (d: ProviderDraft, key: 'name' | 'base_url' | 'api_key_env', label: string, placeholder: string) => (
     <Field id={`custom-${key}`} label={label}>
-      <input
+      <Input
         id={`custom-${key}`}
-        className={`${inputClass} font-mono text-code-sm`}
-        type="text"
+        className="font-mono text-code-sm"
         spellCheck={false}
         autoComplete="off"
         required
@@ -124,7 +125,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
           <div className="flex min-h-8 items-center gap-2">
             <div className="flex min-w-0 flex-1 flex-col">
               <span className="text-ui font-medium text-ink">{p.name}</span>
-              <span className="min-w-0 break-all font-mono text-keycap text-muted">{p.base_url}</span>
+              <span className="min-w-0 break-all font-mono text-meta text-muted">{p.base_url}</span>
               <Note tone={p.key_present ? 'muted' : 'warn'}>{p.key_present ? `Key from ${p.api_key_env}` : `${p.api_key_env} is not set in the service's environment`}</Note>
             </div>
             <Button size="sm" disabled={busy || !!draft} onClick={() => edit(p)}>
@@ -138,7 +139,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
             <div key={m.model_id} className="flex min-h-8 items-center gap-2 pl-3">
               <span className="min-w-0 flex-1 truncate text-ui text-ink" title={`${p.name}/${m.model_id}`}>
                 {m.display_name || m.model_id}
-                {m.display_name && m.display_name !== m.model_id && <span className="ml-2 font-mono text-keycap text-muted">{m.model_id}</span>}
+                {m.display_name && m.display_name !== m.model_id && <span className="ml-2 font-mono text-meta text-muted">{m.model_id}</span>}
               </span>
               <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove ${p.name}/${m.model_id}`} onClick={() => void onSave(withProvider(models, p.name, p, p.models.filter((o) => o !== m).map((o) => o.model_id)))}>
                 Remove
@@ -155,13 +156,13 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
             {field(draft, 'api_key_env', 'API key variable', 'UAM_BYOM_OLLAMA')}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" disabled={busy || !draft.base_url.trim() || !draft.api_key_env.trim()} onClick={() => void load(draft)}>
-              {loading && <Spinner />}
+            <Button size="sm" variant="secondary" loading={loading} disabled={busy || !draft.base_url.trim() || !draft.api_key_env.trim()} onClick={() => void load(draft)}>
               Load models
             </Button>
-            <input
+            <Input
               aria-label="Search models"
-              className={`${inputClass} h-8 w-48 font-mono text-code-sm`}
+              size="md"
+              className="w-48 font-mono text-code-sm"
               type="search"
               placeholder="Search"
               disabled={busy || !draft.ids.length}
@@ -174,7 +175,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
             <Button size="sm" disabled={busy || !draft.selected.length} onClick={() => setDraft({ ...draft, selected: draft.selected.filter((id) => !matchingIds(draft.ids, draft.query).includes(id)) })}>
               None
             </Button>
-            <span className="text-caption text-muted">{draft.selected.length} selected</span>
+            <Chip className="tabular-nums">{draft.selected.length} selected</Chip>
           </div>
           {loadError && <Note tone="warn" role="alert">{loadError}</Note>}
           {draft.ids.length > 0 && (
@@ -195,10 +196,9 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
           )}
           <div className="flex flex-wrap items-end gap-2">
             <Field id="custom-manual" label="Add a model ID the endpoint does not list">
-              <input
+              <Input
                 id="custom-manual"
-                className={`${inputClass} w-64 font-mono text-code-sm`}
-                type="text"
+                className="w-64 font-mono text-code-sm"
                 spellCheck={false}
                 autoComplete="off"
                 disabled={busy}
@@ -279,6 +279,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
   }
 
   const other = settings.send_default === 'steer' ? 'Queue' : 'Steer';
+  const titled = (meta?.providers ?? []).filter((p) => p.capabilities.titles);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
@@ -319,8 +320,8 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               />
             </Row>
           </Section>
-          <Section id="titles" title="Task titles">
-            {(meta?.providers ?? []).filter((p) => p.capabilities.titles).map((p) => {
+          {titled.length > 0 && <Section id="titles" title="Task titles">
+            {titled.map((p) => {
               const current = settings.title_model?.[p.name] ?? '';
               const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current);
               return <Row key={p.name} id={`titles-${p.name}`} label={p.display_name} help="Use the provider's own title, or generate a short title with a chosen model. Applies to new tasks without a name.">
@@ -330,7 +331,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                 ]} onValueChange={(id) => void save({ title_model: { ...settings.title_model, [p.name]: id } })} />
               </Row>;
             })}
-          </Section>
+          </Section>}
           <Section id="models" title="Models">
             <Note>Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.</Note>
             <CustomModels models={settings.custom_models ?? []} disabled={saving} onSave={saveCustom} />
@@ -346,12 +347,12 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                   return <div key={m.id} className="flex min-h-12 items-center gap-3 border-b border-hairline py-2">
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="text-ui font-medium text-ink">{m.name}</span>
-                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-keycap text-muted">
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-meta text-muted">
                         <span className="min-w-0 break-all font-mono">{m.id}{!offered ? ' · not offered now' : ''}</span>
-                        {p.capabilities.usage && <span>{modelCostLine(m)}</span>}
+                        {p.capabilities.usage && <span className="tabular-nums">{modelCostLine(m)}</span>}
                       </div>
                     </div>
-                    <span className="text-keycap text-muted">{shown ? 'Visible' : 'Hidden'}</span>
+                    {!shown && <span className="text-meta text-muted">Hidden</span>}
                     <Switch aria-label={`Show ${m.name}`} checked={shown} disabled={saving} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.name]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
                   </div>;
                 })}

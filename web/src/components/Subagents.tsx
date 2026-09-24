@@ -1,13 +1,15 @@
 import { ArrowLeft, Bot, Copy, Crosshair, Ellipsis, Square, X } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
-import { Markdown, Note, Spinner, useApp } from './common';
+import { Loading, Markdown, Note, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
+import { EXIT_MS } from './ui/collapse';
+import { Sheet } from './ui/dialog';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -26,6 +28,32 @@ const GROUPS: { status: SubagentStatus; label: string }[] = [
   { status: 'cancelled', label: 'Cancelled' },
 ];
 
+/** A stop request for one subagent; the provider's SSE still owns its terminal status. */
+interface StopState {
+  busy: boolean;
+  requested: boolean;
+  error: string | null;
+}
+const NOT_STOPPING: StopState = { busy: false, requested: false, error: null };
+
+/** One record of stop requests per panel, so the list row and the transcript header agree. */
+function useStops(sessionId: string): [Record<string, StopState>, (agentId: string) => void] {
+  const [stops, setStops] = useState<Record<string, StopState>>({});
+  const set = (agentId: string, v: StopState) => setStops((all) => ({ ...all, [agentId]: v }));
+  async function stop(agentId: string) {
+    const current = stops[agentId];
+    if (current?.busy || current?.requested) return;
+    set(agentId, { busy: true, requested: false, error: null });
+    try {
+      await api.cancelSubagent(sessionId, agentId);
+      set(agentId, { busy: false, requested: true, error: null });
+    } catch (e) {
+      set(agentId, { busy: false, requested: false, error: describeError(e) });
+    }
+  }
+  return [stops, (agentId) => void stop(agentId)];
+}
+
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
@@ -34,28 +62,46 @@ const NO_ITEMS: Item[] = [];
 
 /**
  * A side panel: inline beside the column at ≥1280px with a draggable inner edge (width
- * remembered per panel), an overlay from the right at 960–1279, a full-screen sheet below.
+ * remembered per panel), an overlay sheet from the right at 960–1279, a full-screen sheet
+ * below. The overlay is a Base UI dialog (focus trap, Esc, backdrop) that slides in and
+ * out. Inline, the column commits its width at once and the panel slides over the space it
+ * left; closing slides it out, then `onClosed` lets the owner unmount it.
  */
-export function SidePanel({ id, inline, label, children, className, defaultWidth = 440 }: { id: string; inline: boolean; label: string; children: ReactNode; className?: string; defaultWidth?: number }) {
+export function SidePanel({ id, inline, open, onClose, onClosed, label, children, className, defaultWidth = 440 }: { id: string; inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; label: string; children: ReactNode; className?: string; defaultWidth?: number }) {
   const { narrow } = useApp();
   const { panelRef, handleProps } = useResizable(id, defaultWidth);
+  // The slide starts one frame after mount, so the first paint is off-screen.
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!inline) return;
+    const frame = requestAnimationFrame(() => setShown(open));
+    return () => cancelAnimationFrame(frame);
+  }, [inline, open]);
+  const closed = useEffectEvent(onClosed);
+  useEffect(() => {
+    if (!inline || open) return;
+    const timer = window.setTimeout(closed, EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [inline, open]);
   if (!inline) {
     return (
-      <aside role="dialog" aria-modal="true" aria-label={label} className={cn('fixed inset-y-0 right-0 z-40 flex w-full flex-col bg-canvas shadow-modal animate-slide-in', !narrow && 'w-[min(var(--spacing-panel),100vw)] border-l border-hairline', className)}>
+      <Sheet open={open} onOpenChange={(o) => !o && onClose()} onClosed={onClosed} side="right" label={label} className={cn('w-full max-w-none bg-canvas', !narrow && 'w-[min(var(--spacing-panel),100vw)] border-l border-hairline', className)}>
         {children}
-      </aside>
+      </Sheet>
     );
   }
   return (
-    <aside ref={panelRef} aria-label={label} className={cn('relative flex w-(--panel-w) shrink-0 flex-col border-l border-hairline bg-canvas animate-fade-in', className)}>
-      <div
-        {...handleProps}
-        className="group/handle absolute inset-y-0 -left-1 z-10 flex w-2 cursor-col-resize items-center justify-center outline-hidden focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus"
-        title="Drag to resize · double-click to reset"
-      >
-        <span aria-hidden="true" className="h-full w-px bg-hairline transition-[background-color,width] duration-100 group-hover/handle:w-0.5 group-hover/handle:bg-accent group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-accent group-active/handle:bg-accent" />
+    <aside ref={panelRef} aria-label={label} className={cn('relative flex w-(--panel-w) shrink-0 flex-col border-l border-hairline bg-canvas', className)}>
+      <div className={cn('flex min-h-0 flex-1 flex-col transition-transform duration-240 ease-app', shown && open ? 'translate-x-0' : 'translate-x-full')} inert={!open}>
+        <div
+          {...handleProps}
+          className="group/handle absolute inset-y-0 -left-1 z-10 flex w-2 cursor-col-resize items-center justify-center outline-hidden focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus"
+          title="Drag to resize · double-click to reset"
+        >
+          <span aria-hidden="true" className="h-full w-px bg-hairline transition-[background-color,width] duration-100 group-hover/handle:w-0.5 group-hover/handle:bg-accent group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-accent group-active/handle:bg-accent" />
+        </div>
+        {children}
       </div>
-      {children}
     </aside>
   );
 }
@@ -75,8 +121,10 @@ export function SubagentPanel({
   snapshotSeq,
   view,
   inline,
+  open,
   onView,
   onClose,
+  onClosed,
   onLocate,
 }: {
   session: SessionDetail;
@@ -84,24 +132,28 @@ export function SubagentPanel({
   snapshotSeq: number;
   view: PanelView;
   inline: boolean;
+  /** False while the panel leaves; `onClosed` follows, and the owner unmounts it. */
+  open: boolean;
   onView: (v: PanelView) => void;
   onClose: () => void;
+  onClosed: () => void;
   /** Scroll the main transcript to the `task` tool row that spawned a subagent. */
   onLocate: (toolCallId: string) => void;
 }) {
   const { meta, narrow } = useApp();
   const lead = useRef<HTMLButtonElement>(null);
+  const [stops, stop] = useStops(session.id);
   const current = view.view === 'agent' ? session.subagents.find((s) => s.id === view.id) : undefined;
 
   // Focus the leading control whenever the view changes (open, back, open transcript).
   useEffect(() => {
-    lead.current?.focus();
+    lead.current?.focus({ preventScroll: true });
   }, [view]);
 
   if (view.view === 'agent' && current) {
     const setup = setupOf(meta, session.provider, current);
     return (
-      <SidePanel id="subagents" inline={inline} label={`Subagent ${current.name}`}>
+      <SidePanel id="subagents" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label={`Subagent ${current.name}`}>
         <PanelHeader>
           <Button ref={lead} size="icon-md" aria-label="Back to the subagent list" className="-ml-1 text-muted" onClick={() => onView({ view: 'list' })}>
             <ArrowLeft />
@@ -110,10 +162,10 @@ export function SubagentPanel({
             <span className="truncate text-title text-ink" title={current.name}>
               {current.name}
             </span>
-            {setup && <span className="truncate font-mono text-keycap text-muted">{setup}</span>}
+            {setup && <span className="truncate font-mono text-meta text-muted" title={setup}>{setup}</span>}
           </div>
           <AgentChip status={current.status} />
-          <StopSubagent key={current.id} session={session} subagent={current} />
+          <StopSubagent session={session} subagent={current} stopping={stops[current.id] ?? NOT_STOPPING} onStop={() => stop(current.id)} />
           <Button size="icon-md" aria-label="Close subagents" className="text-muted" onClick={onClose}>
             <X />
           </Button>
@@ -134,7 +186,7 @@ export function SubagentPanel({
 
   const running = session.subagents.filter((s) => s.status === 'running').length;
   return (
-    <SidePanel id="subagents" inline={inline} label="Subagents">
+    <SidePanel id="subagents" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Subagents">
       <PanelHeader>
         {narrow && (
           <Button ref={lead} size="icon-md" aria-label="Back to the task" className="-ml-1 text-muted" onClick={onClose}>
@@ -162,12 +214,12 @@ export function SubagentPanel({
             <section key={status} aria-label={label} className="mb-3">
               <div className="flex h-7 items-center gap-2 px-2 text-caption text-muted">
                 <span>{label}</span>
-                <span className="tabular-nums text-faint">{rows.length}</span>
+                <span className="tabular-nums text-muted">{rows.length}</span>
                 <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
               </div>
               <ul className="flex flex-col gap-px">
                 {rows.map((s) => (
-                  <SubagentRow key={s.id} session={session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} />
+                  <SubagentRow key={s.id} session={session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} stopping={stops[s.id] ?? NOT_STOPPING} onStop={() => stop(s.id)} />
                 ))}
               </ul>
             </section>
@@ -184,6 +236,8 @@ function SubagentRow({
   setup,
   onOpen,
   onLocate,
+  stopping,
+  onStop,
 }: {
   session: SessionDetail;
   subagent: Subagent;
@@ -191,28 +245,19 @@ function SubagentRow({
   setup: string;
   onOpen: () => void;
   onLocate: (toolCallId: string) => void;
+  stopping: StopState;
+  onStop: () => void;
 }) {
   const [, copy] = useCopied();
-  const [stopping, setStopping] = useState<{ busy: boolean; requested: boolean; error: string | null }>({ busy: false, requested: false, error: null });
   const meta: string[] = [];
   if (s.started_at) meta.push(`Started ${clock(s.started_at)}`);
   const took = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
   if (took) meta.push(took);
   const canStop = s.status === 'running' && !readOnly(session);
 
-  async function stop() {
-    setStopping({ busy: true, requested: false, error: null });
-    try {
-      await api.cancelSubagent(session.id, s.id);
-      setStopping({ busy: false, requested: true, error: null });
-    } catch (e) {
-      setStopping({ busy: false, requested: false, error: describeError(e) });
-    }
-  }
-
   const items: ActionItem[] = [
     { key: 'open', label: 'Open', icon: <Bot />, onSelect: onOpen },
-    ...(s.status === 'running' ? [{ key: 'stop', label: stopping.requested ? 'Stop requested' : 'Stop', icon: <Square />, disabled: !canStop || stopping.busy || stopping.requested, onSelect: () => void stop() }] : []),
+    ...(s.status === 'running' ? [{ key: 'stop', label: stopping.requested ? 'Stop requested' : 'Stop', icon: <Square />, disabled: !canStop || stopping.busy || stopping.requested, onSelect: onStop }] : []),
     ...(s.parent_tool_call_id ? [{ key: 'locate', label: 'Show where it was spawned', icon: <Crosshair />, onSelect: () => onLocate(s.parent_tool_call_id!) }] : []),
     { key: 'copy', label: 'Copy agent ID', icon: <Copy />, onSelect: () => copy(s.id), separator: true },
   ];
@@ -220,20 +265,20 @@ function SubagentRow({
   return (
     <li>
       <ContextMenu.Root>
-        <ContextMenu.Trigger render={<div className="group/agent relative rounded-sm transition-colors hover:bg-raised" />}>
-          <button type="button" className="flex w-full flex-col items-start gap-0.5 rounded-sm py-2 pr-20 pl-3 text-left focus-visible:-outline-offset-2" onClick={onOpen} title={s.description || undefined}>
+        <ContextMenu.Trigger render={<div className="group/agent relative rounded-sm transition-colors hover:bg-tint-hover" />}>
+          <button type="button" className="flex w-full flex-col items-start gap-0.5 rounded-sm py-2 pr-9 pl-3 text-left focus-visible:-outline-offset-2" onClick={onOpen} title={s.description || undefined}>
             <span className="flex w-full items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-ui font-medium text-ink">{s.name || 'Subagent'}</span>
+              <span className="min-w-0 flex-1 truncate text-ui font-medium text-ink" title={s.name || undefined}>{s.name || 'Subagent'}</span>
+              <AgentChip status={s.status} />
             </span>
             {s.description && <span className="line-clamp-2 text-caption text-muted">{s.description}</span>}
             <span className="flex flex-wrap items-center gap-x-2 text-caption text-muted">
-              {setup && <span className="font-mono text-keycap">{setup}</span>}
+              {setup && <span className="font-mono text-meta">{setup}</span>}
               {meta.length > 0 && <span className="tabular-nums">{meta.join(' · ')}</span>}
             </span>
             {stopping.error && <span className="text-caption text-error">{stopping.error}</span>}
           </button>
-          <span className="absolute top-2 right-1.5 flex items-center gap-0.5">
-            <AgentChip status={s.status} />
+          <span className="absolute top-2 right-1.5 flex items-center">
             <Menu.Root modal={false}>
               <Menu.Trigger render={<Button size="icon" aria-label={`Actions for subagent ${s.name}`} className="text-muted opacity-0 transition-opacity group-hover/agent:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
                 <Ellipsis />
@@ -306,14 +351,9 @@ function AgentTranscriptView({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4" ref={scroller} onScroll={onScroll} role="log">
       {subagent.description && <Note>{subagent.description}</Note>}
-      {!transcript || transcript.loading ? (
-        <div className="flex flex-col gap-2" aria-busy="true">
-          <span className="h-3 w-3/5 rounded-xs bg-sunken animate-pulse-dot" />
-          <span className="h-3 w-4/5 rounded-xs bg-sunken animate-pulse-dot" />
-          <span className="h-3 w-2/5 rounded-xs bg-sunken animate-pulse-dot" />
-          <span className="sr-only">Loading transcript…</span>
-        </div>
-      ) : transcript.error ? (
+      {(!transcript || transcript.loading) && items.length === 0 ? (
+        <Loading label="Loading the transcript…" />
+      ) : transcript?.error ? (
         <Note tone="error" role="alert">
           {transcript.error}
         </Note>
@@ -326,7 +366,7 @@ function AgentTranscriptView({
       {subagent.status === 'failed' && <Note tone="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</Note>}
       {subagent.status === 'cancelled' && <Note>Stopped before it finished.</Note>}
       {result && (
-        <div className="rounded-md bg-sunken/70 px-3 py-2 text-ui">
+        <div className="rounded-md bg-tint-well px-3 py-2 text-ui">
           <div className="mb-1 text-caption text-muted">Result sent to the main agent</div>
           <Markdown text={result} />
         </div>
@@ -397,7 +437,7 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
   return (
     <div className="shrink-0 border-t border-hairline p-3">
       <form
-        className="flex flex-col rounded-md border border-hairline bg-raised transition-[border-color] focus-within:border-hairline-strong"
+        className="flex flex-col rounded-md border border-hairline bg-raised transition-[border-color] focus-within:border-hairline-strong has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-1 has-[textarea:focus-visible]:outline-focus"
         aria-label={`Follow up with subagent ${subagent.name}`}
         onSubmit={(e) => {
           e.preventDefault();
@@ -437,8 +477,8 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
           className="max-h-40 min-h-12 w-full resize-none bg-transparent px-3 py-2 text-ui text-ink outline-hidden [field-sizing:content] max-sm:text-chat-lg"
         />
         <div className="flex justify-end px-2 pb-2">
-          <Button type="submit" size="sm" variant="primary" disabled={cannotSubmit}>
-            {busy ? 'Sending…' : 'Send'}
+          <Button type="submit" size="sm" variant="primary" loading={busy} disabled={cannotSubmit}>
+            Send
           </Button>
         </div>
       </form>
@@ -447,27 +487,13 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
 }
 
 /** Cancellation requests never invent a terminal status; the provider's SSE owns it. */
-function StopSubagent({ session, subagent }: { session: SessionDetail; subagent: Subagent }) {
-  const [busy, setBusy] = useState(false);
-  const [requested, setRequested] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+function StopSubagent({ session, subagent, stopping, onStop }: { session: SessionDetail; subagent: Subagent; stopping: StopState; onStop: () => void }) {
+  const { busy, requested, error } = stopping;
   if (subagent.status !== 'running') return null;
-  async function stop() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.cancelSubagent(session.id, subagent.id);
-      setRequested(true);
-    } catch (e) {
-      setError(describeError(e));
-    } finally {
-      setBusy(false);
-    }
-  }
   return (
     <Tip label={error ?? (requested ? 'Stop requested' : 'Stop this subagent')}>
-      <Button size="sm" variant="secondary" aria-label={`Stop subagent ${subagent.name}`} disabled={busy || requested || readOnly(session)} onClick={() => void stop()}>
-        {busy ? <Spinner /> : <Square className="!size-3" fill="currentColor" />}
+      <Button size="sm" variant="secondary" aria-label={`Stop subagent ${subagent.name}`} loading={busy} disabled={requested || readOnly(session)} onClick={onStop}>
+        <Square className="!size-3" fill="currentColor" />
         {requested ? 'Requested' : 'Stop'}
       </Button>
     </Tip>

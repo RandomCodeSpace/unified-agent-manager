@@ -28,7 +28,7 @@ export function PreviousSessionsEntry({ project, count }: { project: Project; co
   if (!enabled) return null;
   return (
     <>
-      <button type="button" data-nav="" className="flex min-h-8 w-full items-center rounded-sm px-2 text-left text-caption text-muted hover:bg-canvas hover:text-body focus-visible:-outline-offset-2 pointer-coarse:min-h-11" onClick={() => setOpen(true)}>
+      <button type="button" data-nav="" className="flex min-h-8 w-full items-center rounded-sm px-2 text-left text-caption text-muted hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:min-h-11" onClick={() => setOpen(true)}>
         Previous sessions{count === undefined ? "" : ` (${count})`}
       </button>
       {open && <PreviousSessionsDialog project={project} onClose={() => setOpen(false)} />}
@@ -127,7 +127,7 @@ export function HistoryStatus({ session }: { session: SessionDetail }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <Note role="status">{error || session.history_reason || 'Recorded history is unavailable.'}{!ready && !busy && ' You can retry in a minute.'}</Note>
-      <Button size="sm" disabled={busy || !ready} onClick={() => void reload()}>{busy ? 'Retrying…' : 'Retry history'}</Button>
+      <Button size="sm" loading={busy} disabled={!ready} onClick={() => void reload()}>Retry history</Button>
     </div>
   );
 }

@@ -16,7 +16,8 @@
   --color-ink: #25262b;
   --color-body: #494b53;
   --color-muted: #686b77;
-  --color-faint: #686d79;
+  /* Non-text only (glyphs, chevrons, rules): 3:1 on every surface, never under words. Text that read as faint is `muted`. */
+  --color-faint: #858995;
   --color-hairline: #e6e7ec;
   --color-hairline-strong: #c9ccd5;
   --color-primary: #25262b;
@@ -42,6 +43,11 @@
   --color-diff-del-bg: #efd6d2;
   --color-diff-del-text: #7f1d1d;
   --color-backdrop: rgba(28, 27, 24, 0.35);
+  /* The three tint steps between the surfaces: a hover on raised/canvas (1.16:1 on raised, muted text stays 4.57:1),
+     the selected row on the rail (accent-tinted; muted text 4.53:1), and the well under chips, question blocks and uploads. */
+  --color-tint-hover: #eceef2;
+  --color-tint-selected: #e9edf8;
+  --color-tint-well: #f4f5f8;
 
   /* Project badge tones (DESIGN.md Badges): fills under `on-primary` text, every pair at least 4.5:1. */
   --color-badge-red: #b3352a;
@@ -60,12 +66,16 @@
 
   /* Type scale: the DESIGN.md names, used as text-<name>. */
   --text-*: initial;
+  --text-badge: 8px;
+  --text-badge--line-height: 1;
   --text-eyebrow: 11px;
   --text-eyebrow--line-height: 1.2;
   --text-eyebrow--letter-spacing: 0.66px;
   --text-eyebrow--font-weight: 600;
   --text-keycap: 11px;
   --text-keycap--line-height: 1;
+  --text-meta: 11px;
+  --text-meta--line-height: 1.3;
   --text-caption: 12px;
   --text-caption--line-height: 1.4;
   --text-code-sm: 12px;
@@ -120,9 +130,11 @@
   --spacing-sheet: 440px;
   --spacing-sheet-wide: 560px;
   --spacing-panel: 440px;
+  /* The transcript and composer column (DESIGN.md D2): 760px of text inside the 24px desktop gutters, centred, so a wider pane adds margin, not line length. */
+  --spacing-column: 808px;
   /* The folder picker's well: fixed so moving between folders never changes the dialog's height. */
   --spacing-picker: min(320px, 40dvh);
-  --spacing-picker-phone: 55dvh;
+  --spacing-picker-phone: 40dvh;
 
   --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
   --animate-spin: spin 0.9s linear infinite;
@@ -282,10 +294,45 @@
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
-    *::after {
+    *::after,
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) {
       animation: none !important;
       transition: none !important;
       scroll-behavior: auto !important;
+    }
+  }
+
+  /* View transitions (React <ViewTransition>): only the parts React names take part; the page itself
+     never snapshots, so streamed text keeps painting live during one. The classes are React's
+     `view-transition-class` values; the keyframes are the theme's. */
+  :root {
+    view-transition-name: none;
+  }
+  ::view-transition-group(.vt-row) {
+    animation-duration: 240ms;
+    animation-timing-function: var(--ease-app);
+  }
+  ::view-transition-old(.vt-row),
+  ::view-transition-new(.vt-row) {
+    animation-duration: 100ms;
+  }
+  ::view-transition-new(.vt-row-enter) {
+    animation: rise 240ms var(--ease-app);
+  }
+  ::view-transition-old(.vt-row-exit) {
+    animation: fade-out 160ms var(--ease-app);
+  }
+  ::view-transition-group(.vt-pane),
+  ::view-transition-old(.vt-pane),
+  ::view-transition-new(.vt-pane) {
+    animation-duration: 160ms;
+    animation-timing-function: var(--ease-app);
+  }
+  @keyframes fade-out {
+    to {
+      opacity: 0;
     }
   }
 }
@@ -480,7 +527,7 @@
   .diff td.num {
     width: 1%;
     padding-right: 6px;
-    color: var(--color-faint);
+    color: var(--color-muted);
     text-align: right;
     font-variant-numeric: tabular-nums;
     user-select: none;

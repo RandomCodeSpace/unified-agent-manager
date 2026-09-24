@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
+import { Loading } from './common';
 
 export interface PickerItem {
   /** Stable key; also the option's DOM id suffix. */
@@ -55,7 +56,8 @@ export function InlinePicker({
     return () => el.removeEventListener('mousedown', keep);
   }, [popupRef]);
 
-  const rows = items.map((item, i) => ({ item, label: item.group !== items[i - 1]?.group ? item.group : undefined }));
+  // A group label heads each run of a group, unless it only repeats the popover's title.
+  const rows = items.map((item, i) => ({ item, label: item.group !== items[i - 1]?.group && item.group !== title ? item.group : undefined }));
   return (
     <div
       ref={popupRef}
@@ -72,13 +74,7 @@ export function InlinePicker({
         </span>
       </div>
       <div ref={list} id={id} role="listbox" aria-label={title} className="max-h-[min(300px,40dvh)] overflow-y-auto p-1 pt-0">
-        {loading && items.length === 0 && (
-          <div aria-hidden="true" className="flex flex-col gap-1 p-1">
-            <span className="h-6 w-2/3 rounded-sm bg-canvas animate-pulse-dot" />
-            <span className="h-6 w-1/2 rounded-sm bg-canvas animate-pulse-dot" />
-            <span className="h-6 w-3/5 rounded-sm bg-canvas animate-pulse-dot" />
-          </div>
-        )}
+        {loading && items.length === 0 && <Loading className="px-2" />}
         {!loading && items.length === 0 && empty && <div className="px-2 py-2 text-caption text-muted">{empty}</div>}
         {rows.map(({ item, label }, i) => {
           return (

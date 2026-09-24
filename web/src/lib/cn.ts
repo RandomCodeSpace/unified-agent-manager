@@ -6,9 +6,9 @@ import { extendTailwindMerge } from 'tailwind-merge';
 // would survive a `max-w-[...]` override (both stay, and the later rule in the CSS wins).
 const twMerge = extendTailwindMerge({
   extend: {
-    theme: { spacing: ['rail', 'drawer', 'header', 'sheet', 'panel'] },
+    theme: { spacing: ['rail', 'drawer', 'header', 'sheet', 'panel', 'column'] },
     classGroups: {
-      'font-size': [{ text: ['eyebrow', 'keycap', 'caption', 'code-sm', 'ui', 'code', 'title', 'chat', 'chat-lg', 'display-sm', 'display-md'] }],
+      'font-size': [{ text: ['badge', 'eyebrow', 'keycap', 'meta', 'caption', 'code-sm', 'ui', 'code', 'title', 'chat', 'chat-lg', 'display-sm', 'display-md'] }],
       shadow: [{ shadow: ['float', 'modal'] }],
     },
   },

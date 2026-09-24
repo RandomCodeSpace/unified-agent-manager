@@ -2,6 +2,7 @@ import { Select as BaseSelect } from '@base-ui/react/select';
 import { Check, ChevronDown } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '../../lib/cn';
+import { itemClass, popupClass } from './menu';
 
 export interface SelectOption {
   value: string;
@@ -59,10 +60,7 @@ export function Select({
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
         <BaseSelect.Positioner sideOffset={4} alignItemWithTrigger={false} collisionPadding={8} className="z-60 outline-hidden select-none">
-          <BaseSelect.Popup
-            data-popup=""
-            className="max-h-(--available-height) min-w-(--anchor-width) origin-(--transform-origin) overflow-hidden rounded-md border border-hairline-strong bg-raised p-1 text-ink shadow-float outline-hidden transition-[opacity,scale] duration-100 data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0"
-          >
+          <BaseSelect.Popup data-popup="" className={cn(popupClass, 'max-h-(--available-height) min-w-(--anchor-width) overflow-hidden')}>
             <BaseSelect.List className="max-h-[min(320px,var(--available-height))] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {items.map((it) => (
                 <BaseSelect.Item
@@ -70,14 +68,10 @@ export function Select({
                   value={it.value}
                   disabled={it.disabled || it.hidden}
                   hidden={it.hidden}
-                  className={cn(
-                    'relative flex min-h-[30px] cursor-default select-none items-start gap-2 rounded-sm py-1 pr-3 pl-7 text-ui text-body outline-hidden data-highlighted:bg-canvas data-highlighted:text-ink data-disabled:opacity-45 pointer-coarse:min-h-11',
-                    mono && 'font-mono text-code-sm',
-                    it.hidden && 'hidden',
-                  )}
+                  className={cn(itemClass, 'items-start pr-3 pl-7', mono && 'font-mono text-code-sm', it.hidden && 'hidden')}
                 >
-                  <BaseSelect.ItemIndicator className="absolute top-2 left-2 flex text-accent">
-                    <Check className="size-3.5" strokeWidth={2.5} />
+                  <BaseSelect.ItemIndicator className="absolute top-2 left-2 flex text-accent [&_svg]:size-3.5 [&_svg]:text-accent">
+                    <Check strokeWidth={2.5} />
                   </BaseSelect.ItemIndicator>
                   <span className="flex min-w-0 flex-col">
                     <BaseSelect.ItemText>{it.label}</BaseSelect.ItemText>

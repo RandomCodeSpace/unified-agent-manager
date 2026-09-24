@@ -24,6 +24,8 @@ export interface State {
   selectedId: string | null;
   /** Detail of the selected session, from the latest snapshot; null until it arrives. */
   detail: SessionDetail | null;
+  /** The Task that was on screen before the selection changed, kept until the new detail arrives. Frozen: no frames apply to it. */
+  previous: SessionDetail | null;
   /** seq of the latest snapshot; updates with seq <= this are ignored. -1 before any snapshot. */
   snapshotSeq: number;
   /** Newest selected-task frame or detail response, used to reject stale reloads. */
@@ -41,6 +43,7 @@ export const initialState: State = {
   sessions: [],
   selectedId: null,
   detail: null,
+  previous: null,
   snapshotSeq: -1,
   detailSeq: -1,
   connection: 'connecting',
@@ -54,8 +57,11 @@ export type Action =
   | { type: 'connection'; status: Connection }
   | { type: 'snapshot'; data: SnapshotData }
   | { type: 'update'; data: UpdateData }
+  /** Frames batched by the stream handler (deltas, one animation frame's worth), applied in order in one render. */
+  | { type: 'updates'; data: UpdateData[] }
   | { type: 'settings'; settings: Settings }
   | { type: 'detail_loaded'; detail: SessionDetail }
+  /** A session from an HTTP reply; ignored when the live state is already newer (by updated_at). */
   | { type: 'upsert_session'; session: SessionSummary }
   | { type: 'remove_session'; id: string }
   | { type: 'upsert_project'; project: Project }
@@ -69,7 +75,7 @@ export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'select':
       if (action.id === state.selectedId) return state;
-      return { ...state, selectedId: action.id, detail: null, detailSeq: -1, agents: {} };
+      return { ...state, selectedId: action.id, detail: null, previous: action.id ? (state.detail ?? state.previous) : null, detailSeq: -1, agents: {} };
     case 'connection': {
       if (state.connection === action.status) return state;
       const detail = action.status !== 'connected' && state.detail
@@ -87,6 +93,7 @@ export function reducer(state: State, action: Action): State {
         projects: projects ?? [],
         sessions,
         detail,
+        previous: null,
         snapshotSeq: seq,
         detailSeq: seq,
         connection: 'connected',
@@ -100,10 +107,14 @@ export function reducer(state: State, action: Action): State {
     case 'detail_loaded': {
       const detail = action.detail;
       if (detail.id !== state.selectedId || detail.seq === undefined || detail.seq <= state.detailSeq) return state;
-      return { ...withSession(state, detail), detail, detailSeq: detail.seq, agents: {} };
+      return { ...withSession(state, detail), detail, previous: null, detailSeq: detail.seq, agents: {} };
     }
-    case 'upsert_session':
+    case 'upsert_session': {
+      // An HTTP reply can land after live frames that already carry a newer state.
+      const current = state.sessions.find((s) => s.id === action.session.id);
+      if (current && Date.parse(action.session.updated_at) < Date.parse(current.updated_at)) return state;
       return withSession(state, action.session);
+    }
     case 'remove_session':
       return withoutSession(state, action.id);
     case 'upsert_project':
@@ -116,7 +127,8 @@ export function reducer(state: State, action: Action): State {
       return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, action.interaction) } };
     }
     case 'agent_loading':
-      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, snapshotSeq: state.agents[action.agentId]?.snapshotSeq ?? -1, items: [], buffered: [] } } };
+      // What was loaded before stays on screen while the fresh copy is on its way (stale while loading).
+      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, snapshotSeq: state.agents[action.agentId]?.snapshotSeq ?? -1, items: state.agents[action.agentId]?.items ?? [], buffered: [] } } };
     case 'agent_loaded': {
       const detail = state.detail;
       const withAgent = detail ? { ...detail, subagents: upsert(detail.subagents, action.subagent) } : detail;
@@ -130,6 +142,8 @@ export function reducer(state: State, action: Action): State {
         ...state,
         agents: { ...state.agents, [action.agentId]: { loading: false, snapshotSeq: -1, error: action.error, items: [], buffered: [] } },
       };
+    case 'updates':
+      return action.data.reduce((next, data) => reducer(next, { type: 'update', data }), state);
     case 'update': {
       const d = action.data;
       if (d.seq <= state.snapshotSeq) return state;
@@ -228,8 +242,9 @@ function withSession(state: State, s: SessionSummary): State {
 
 function withoutSession(state: State, id: string): State {
   const sessions = state.sessions.filter((s) => s.id !== id);
-  if (state.selectedId === id) return { ...state, sessions, selectedId: null, detail: null, agents: {} };
-  return { ...state, sessions };
+  const previous = state.previous?.id === id ? null : state.previous;
+  if (state.selectedId === id) return { ...state, sessions, selectedId: null, detail: null, previous: null, agents: {} };
+  return { ...state, sessions, previous };
 }
 
 function withoutProject(state: State, id: string): State {

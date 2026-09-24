@@ -30,8 +30,8 @@ export interface TaskActions {
   remove: (id: string) => void;
   /** Opens the close-conversation confirmation (active, open Tasks). */
   close: (id: string) => void;
-  /** Id of the Task with a lifecycle request in flight. */
-  busy: string | null;
+  /** Tasks with a lifecycle request in flight, by id; several may run at once. */
+  busy: Readonly<Record<string, boolean>>;
 }
 
 export const TaskActionsContext = createContext<TaskActions>({
@@ -45,7 +45,7 @@ export const TaskActionsContext = createContext<TaskActions>({
   archive: () => {},
   remove: () => {},
   close: () => {},
-  busy: null,
+  busy: {},
 });
 
 export const useTaskActions = () => useContext(TaskActionsContext);
@@ -59,7 +59,7 @@ export function stageBlocked(s: SessionSummary): boolean {
 
 /** True when a rename may start: not archived and no lifecycle request in flight. Every entry point (menu, double-click, F2, the header pencil) asks this. */
 export function canRename(s: SessionSummary, a: TaskActions): boolean {
-  return s.stage !== 'archived' && a.busy !== s.id;
+  return s.stage !== 'archived' && !a.busy[s.id];
 }
 
 /**
@@ -70,7 +70,7 @@ export function canRename(s: SessionSummary, a: TaskActions): boolean {
 export function taskMenuItems(s: SessionSummary, a: TaskActions, place: Renaming['place']): ActionItem[] {
   const stage = s.stage ?? 'active';
   const blocked = stageBlocked(s);
-  const busy = a.busy === s.id;
+  const busy = !!a.busy[s.id];
   const items: ActionItem[] = [
     { key: 'rename', label: 'Rename', icon: <Pencil />, disabled: !canRename(s, a), takesFocus: true, onSelect: () => a.startRename(s.id, place) },
   ];

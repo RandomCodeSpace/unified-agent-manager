@@ -44,17 +44,32 @@ function parseObject(input: string | undefined): Record<string, unknown> | null 
   }
 }
 
+/** A tool's input object, parsed once per tool call: streaming re-renders the turn many times a second. */
+const parsed = new WeakMap<ToolCall, Record<string, unknown> | null>();
+function inputOf(tool: ToolCall): Record<string, unknown> | null {
+  let v = parsed.get(tool);
+  if (v === undefined) {
+    v = parseObject(tool.input);
+    parsed.set(tool, v);
+  }
+  return v;
+}
+
 /**
  * The tool row's name and main argument. The argument is the shell command, URL, path,
  * pattern, query, skill or subagent name from the input JSON, per tool; failing a known
  * key, the input's first string value; a non-JSON input as is; else the provider's title.
- * Without a name the title's first word stands in, as the ledger showed it.
+ * Without a name the title's first word stands in, as the ledger showed it. A title that
+ * repeats the name as its verb ("Edit cmd/doctor.go" for `edit`) contributes the rest.
  */
 export function toolLabel(tool: ToolCall | undefined): { name: string; arg: string } {
   const name = tool?.name?.trim() ?? '';
   const title = tool?.title?.trim() ?? '';
   const arg = mainArgument(name, tool?.input);
-  if (name) return { name, arg: arg || (title && title !== name ? oneLine(title) : '') };
+  if (name) {
+    const rest = title.toLowerCase().startsWith(`${name.toLowerCase()} `) ? title.slice(name.length + 1) : title;
+    return { name, arg: arg || (rest && rest !== name ? oneLine(rest) : '') };
+  }
   if (title) {
     const space = title.indexOf(' ');
     return space > 0 ? { name: title.slice(0, space), arg: arg || oneLine(title.slice(space + 1)) } : { name: title, arg };
@@ -132,6 +147,22 @@ export interface Links {
  * one call, both are kept, oldest first.
  */
 export function linkInteractions(items: Item[], interactions: Interaction[], agentId = ''): Links {
+  // The same requests over the same tool calls give the same result object, so rows memoised
+  // on their requests hold while text streams into other items.
+  let sig = '';
+  for (const it of items) if (it.kind === 'tool' && (it.agent_id ?? '') === agentId) sig += `${it.id}\u0000${it.tool?.name === ASK_TOOL ? askedText(it.tool) : ''}\u0001`;
+  const byAgent = linkCache.get(interactions) ?? new Map<string, { sig: string; links: Links }>();
+  linkCache.set(interactions, byAgent);
+  const hit = byAgent.get(agentId);
+  if (hit?.sig === sig) return hit.links;
+  const links = placeInteractions(items, interactions, agentId);
+  byAgent.set(agentId, { sig, links });
+  return links;
+}
+
+const linkCache = new WeakMap<Interaction[], Map<string, { sig: string; links: Links }>>();
+
+function placeInteractions(items: Item[], interactions: Interaction[], agentId: string): Links {
   const linked = new Map<string, Interaction[]>();
   const loose: Interaction[] = [];
   const questions: Interaction[] = [];
@@ -168,7 +199,7 @@ export function linkInteractions(items: Item[], interactions: Interaction[], age
 
 /** The question text an `ask_user` call asked, from its input. */
 function askedText(tool: ToolCall | undefined): string {
-  const obj = parseObject(tool?.input) ?? {};
+  const obj = (tool && inputOf(tool)) ?? {};
   return typeof obj.question === 'string' ? obj.question.trim() : '';
 }
 
@@ -222,7 +253,7 @@ export function questionOf(tool: ToolCall | undefined, interaction: Interaction 
   if (interaction?.questions?.length) {
     q.questions = interaction.questions.map((x) => ({ text: x.text, header: x.header || undefined, choices: x.choices ?? [] }));
   } else if (isAsk) {
-    const obj = parseObject(tool.input) ?? {};
+    const obj = inputOf(tool) ?? {};
     const choices = Array.isArray(obj.choices) ? obj.choices.filter((c): c is string => typeof c === 'string' && !!c.trim()) : [];
     q.questions = [{ text: askedText(tool), choices }];
   }
@@ -279,7 +310,7 @@ export function summarizeTools(items: Item[], live: boolean): string {
     if (t?.status !== 'completed') { if (live) active++; else noResult++; continue; }
     const name = t.name.toLowerCase();
     if (['bash', 'shell', 'powershell'].includes(name)) { commands++; continue; }
-    const input = parseObject(t.input);
+    const input = inputOf(t);
     const path = input && [input.path, input.file_path, input.filePath].find((v): v is string => typeof v === 'string' && !!v.trim());
     if (path && ['edit', 'write', 'create'].includes(name)) changed.add(path);
     else if (path && ['read', 'view'].includes(name)) read.add(path);

@@ -85,8 +85,8 @@ export function AlertDialog({ open, onOpenChange, onClosed, title, description, 
               <BaseAlertDialog.Close render={<Button variant="secondary" ref={cancel} />}>
                 {cancelLabel}
               </BaseAlertDialog.Close>
-              <Button variant={danger ? 'danger' : 'primary'} className={danger ? 'border border-error/40 bg-raised' : undefined} disabled={busy || disabled} onClick={onConfirm}>
-                {busy ? 'Working…' : confirmLabel}
+              <Button variant={danger ? 'danger' : 'primary'} className={danger ? 'border border-hairline-strong bg-raised' : undefined} loading={busy} disabled={disabled} onClick={onConfirm}>
+                {confirmLabel}
               </Button>
             </div>
           </BaseAlertDialog.Popup>
@@ -96,18 +96,19 @@ export function AlertDialog({ open, onOpenChange, onClosed, title, description, 
   );
 }
 
-/** A panel sliding in from one edge: the narrow-layout drawer and other full-height sheets. */
+/** A panel sliding in from one edge: the narrow-layout drawer and the overlay side panels. `onClosed` fires after the exit. */
 export function Sheet({
   open,
   onOpenChange,
+  onClosed,
   side = 'left',
   label,
   className,
   children,
   ...props
-}: Omit<ComponentProps<typeof BaseDialog.Popup>, 'render'> & { open: boolean; onOpenChange: (open: boolean) => void; side?: 'left' | 'right'; label: string }) {
+}: Omit<ComponentProps<typeof BaseDialog.Popup>, 'render'> & { open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; side?: 'left' | 'right'; label: string }) {
   return (
-    <BaseDialog.Root open={open} onOpenChange={onOpenChange}>
+    <BaseDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>
       <BaseDialog.Portal>
         <BaseDialog.Backdrop className={backdropClass} />
         <BaseDialog.Popup

@@ -177,3 +177,50 @@ test('foreground timing follows ordered live evidence and survives snapshots whi
   state = reducer(state, { type: 'connection', status: 'offline' });
   assert.deepEqual(state.detail.turn_timings, [ended]);
 });
+
+test('an HTTP reply older than the live session state does not roll it back', () => {
+  let state = loading();
+  // The cancel reply is computed at 12:00:01; the turn end frame (12:00:02) arrives first.
+  state = update(state, { name: 'session', seq: 11, session: { id: 'task', state: 'idle', name: 'Live', updated_at: '2026-09-24T12:00:02.5+02:00' } });
+  const stale = { id: 'task', state: 'cancelled', name: 'Live', updated_at: '2026-09-24T10:00:01.123456789Z' };
+  assert.equal(reducer(state, { type: 'upsert_session', session: stale }), state);
+  assert.equal(state.detail.state, 'idle');
+  // A reply as new as the live state, or newer, still applies (a rename that did not touch updated_at).
+  state = reducer(state, { type: 'upsert_session', session: { id: 'task', state: 'idle', name: 'Renamed', updated_at: '2026-09-24T10:00:02.5Z' } });
+  assert.equal(state.sessions[0].name, 'Renamed');
+  state = reducer(state, { type: 'upsert_session', session: { id: 'task', state: 'completed', name: 'Renamed', updated_at: '2026-09-24T10:00:03Z' } });
+  assert.equal(state.detail.state, 'completed');
+});
+
+test('switching Tasks keeps the previous detail until the next one arrives', () => {
+  let state = loading();
+  const first = state.detail;
+  state = reducer(state, { type: 'select', id: 'next' });
+  assert.equal(state.detail, null);
+  assert.equal(state.previous, first);
+  // A second switch before anything arrived still shows the Task that was on screen.
+  state = reducer(state, { type: 'select', id: 'third' });
+  assert.equal(state.previous, first);
+  // Frames never touch the frozen Task.
+  assert.equal(update(state, { name: 'item', seq: 11, session_id: 'task', item: { ...item('late'), agent_id: undefined } }).previous, first);
+  const arrived = reducer(state, { type: 'snapshot', data: { seq: 12, projects: [], sessions: [], session: { id: 'third', items: [], interactions: [], subagents: [] } } });
+  assert.equal(arrived.detail.id, 'third');
+  assert.equal(arrived.previous, null);
+  assert.equal(reducer(state, { type: 'select', id: null }).previous, null);
+  assert.equal(reducer(state, { type: 'remove_session', id: 'task' }).previous, null);
+});
+
+test('a batch of frames applies in order, exactly as one frame at a time', () => {
+  const frames = [
+    { name: 'delta', seq: 11, session_id: 'task', item_id: 'reply', kind: 'assistant', text: 'a' },
+    { name: 'delta', seq: 12, session_id: 'task', item_id: 'reply', kind: 'assistant', text: 'b' },
+    { name: 'delta', seq: 12, session_id: 'task', item_id: 'reply', kind: 'assistant', text: 'dup' },
+    { name: 'delta', seq: 13, session_id: 'other', item_id: 'reply', kind: 'assistant', text: 'x' },
+    { name: 'delta', seq: 14, session_id: 'task', item_id: 'reply', kind: 'assistant', text: 'c' },
+  ];
+  const oneByOne = frames.reduce(update, loading());
+  const batched = reducer(loading(), { type: 'updates', data: frames });
+  assert.equal(batched.detail.items[0].text, 'abc');
+  assert.deepEqual(batched.detail.items.map((i) => i.text), oneByOne.detail.items.map((i) => i.text));
+  assert.equal(batched.detailSeq, 14);
+});

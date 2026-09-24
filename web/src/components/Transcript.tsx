@@ -1,5 +1,5 @@
 import { Bot, Check, ChevronRight, Copy, Ellipsis, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
-import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -8,6 +8,8 @@ import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, Spinner, SubagentIdleIcon, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
 import { Button } from './ui/button';
+import { Chip } from './ui/chip';
+import { Collapse } from './ui/collapse';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -29,10 +31,10 @@ interface Props {
   onOpenAgent: (agentId: string, opener: HTMLElement) => void;
 }
 
-/** Rows that arrive after mount rise in; rows present at mount appear at once. */
+/** Rows that arrive after mount rise in; rows present at mount appear at once. Stable, so memoised rows hold. */
 function useArrivals(ids: string[]) {
   const [initial] = useState(() => new Set(ids));
-  return (id: string) => (initial.has(id) ? '' : 'animate-rise');
+  return useCallback((id: string) => (initial.has(id) ? '' : 'animate-rise'), [initial]);
 }
 
 /**
@@ -54,11 +56,13 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
   let group: Entry[] = [];
   let showedWorking = false;
   let userItemId: string | undefined;
+  // A turn is keyed by the user message before it, so it keeps its rows when its first entry changes.
+  let after = 'start';
   const flush = (last = false, boundary = true) => {
     const timing = timingForTurn(turnTimings, userItemId);
     const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live });
     if (!group.length) {
-      if (showEnd) out.push(<WorkedIndicator key={`end-${timing!.id}`} timing={timing} />);
+      if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} />);
       return;
     }
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
@@ -66,13 +70,13 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       const agent = byParent.get(item.id);
       return agent ? <SubagentRow key={item.id} item={item} subagent={agent} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
     });
-    const key = (group[0].item ?? group[0].interaction)!.id;
     if (last && working) showedWorking = true;
+    // One status row heads the turn: "Working for 12s" becomes "Worked for 12s" in the same slot, and
+    // streamed content lands below it, so nothing on screen moves at either moment.
     out.push(
-      <div key={`turn-${key}`} className="flex flex-col gap-3">
-        {last && working && <WorkingIndicator start={foregroundStart(turnTimings)} />}
+      <div key={`turn-${after}`} className="flex flex-col gap-3">
+        {last && working ? <TurnStatus working start={foregroundStart(turnTimings)} /> : showEnd && <TurnStatus timing={timing} />}
         {nodes}
-        {showEnd && <WorkedIndicator timing={timing} />}
       </div>,
     );
     group = [];
@@ -83,6 +87,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       return;
     }
     flush(false, !entry.item.delivery);
+    after = entry.item.id;
     if (!entry.item.delivery) userItemId = entry.item.id;
     out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} />);
   });
@@ -90,7 +95,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
   return (
     <>
       {out}
-      {working && !showedWorking && <WorkingIndicator start={foregroundStart(turnTimings)} />}
+      {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
     </>
   );
 }
@@ -121,12 +126,16 @@ function thoughtEnds(items: Item[]): Map<string, string> {
 function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: Item) => ReactNode | null): ReactNode[] {
   const out: ReactNode[] = [];
   let run: Item[] = [];
+  // Runs are keyed by their order: a call taken out of a run (a subagent row) must not remount the rest.
+  let runs = 0;
   const flush = () => {
-    if (run.length) out.push(<ToolRun key={`run-${run[0].id}`} items={run} ctx={ctx} />);
+    if (run.length) out.push(<ToolRun key={`run-${runs++}`} items={run} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals} arrival={ctx.arrival} />);
     run = [];
   };
   for (const entry of entries) {
     if (entry.interaction) {
+      // A pending request is the action card under the transcript; it is not drawn twice.
+      if (entry.interaction.state === 'pending') continue;
       flush();
       const ix = entry.interaction;
       const asked = questionOf(undefined, ix, ctx.live);
@@ -137,7 +146,8 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
     if (item.kind === 'tool') {
       const linked = ctx.approvals.get(item.id);
       const asked = questionOf(item.tool, linked?.filter((ix) => ix.kind === 'question').at(-1), ctx.live);
-      const node = special?.(item) ?? (asked ? <QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} /> : null);
+      // A question still waiting is the action card; its tool row stays in the run until it is answered.
+      const node = special?.(item) ?? (asked && asked.outcome !== 'pending' ? <QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} /> : null);
       if (!node) {
         run.push(item);
         continue;
@@ -155,29 +165,30 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
   return out;
 }
 
-function WorkedIndicator({ timing }: { timing?: TurnTiming }) {
-  const elapsed = completedDuration(timing);
-  return <div className="border-b border-hairline py-2 text-caption text-muted" title={elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>{elapsed ? `Worked for ${elapsed}` : 'Worked'}</div>;
-}
-
-function WorkingIndicator({ start }: { start?: string }) {
+/**
+ * The row that heads a turn (DESIGN.md turn status), in one slot for both states: the
+ * working mark and a live "Working for 12s" while the turn runs, then "Worked for 12s" once
+ * it ended. Without a recorded duration the row stays as the separator, with no label.
+ */
+function TurnStatus({ working = false, start, timing }: { working?: boolean; start?: string; timing?: TurnTiming }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!working) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
-  const elapsed = elapsedSince(start, now);
+  }, [working]);
+  const elapsed = working ? elapsedSince(start, now) : completedDuration(timing);
   return (
-    <div className="flex items-center gap-2 border-b border-hairline py-2 text-caption text-muted">
-      <WorkingMark />
-      <span role="status" className="sr-only">Working</span>
-      <span role="timer" aria-live="off">{elapsed ? `Working for ${elapsed}` : 'Working'}</span>
+    <div className="flex min-h-[34px] items-center gap-2 border-b border-hairline py-2 text-caption tabular-nums text-muted" title={working ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
+      {working && <WorkingMark />}
+      {working && <span role="status" className="sr-only">Working</span>}
+      {working ? <span role="timer" aria-live="off">{elapsed ? `Working for ${elapsed}` : 'Working'}</span> : elapsed && <span className="animate-fade-in">Worked for {elapsed}</span>}
     </div>
   );
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, label, className, children, extra = [] }: { text: string; label: string; className?: string; children: ReactNode; extra?: ActionItem[] }) {
+function Copyable({ text, label, className, side = 'right', children, extra = [] }: { text: string; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; children: ReactNode; extra?: ActionItem[] }) {
   const [copied, copy] = useCopied();
   const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: () => copy(text) }, ...extra];
   return (
@@ -186,10 +197,10 @@ function Copyable({ text, label, className, children, extra = [] }: { text: stri
         {children}
         <Tip label={copied ? 'Copied' : label}>
           <Button
-            size="icon"
+            size="icon-sm"
             variant="ghost"
             aria-label={copied ? 'Copied' : label}
-            className={cn('absolute top-0 -right-1 size-6 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
+            className={cn('absolute top-0 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', side === 'right' ? '-right-1' : '-left-7', copied && 'opacity-100 text-success')}
             onClick={() => copy(text)}
           >
             {copied ? <Check /> : <Copy />}
@@ -204,11 +215,11 @@ function Copyable({ text, label, className, children, extra = [] }: { text: stri
 }
 
 /** The user's turn: a bubble with the text as typed, then its uploads. The item carries no list of its `@path` references, so those stay plain text. */
-function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
+const UserBubble = memo(function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
   const attachments = item.attachments ?? [];
   return (
     <div className={cn('flex justify-end', className)}>
-      <Copyable text={item.text ?? ''} label="Copy message" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
+      <Copyable text={item.text ?? ''} label="Copy message" side="left" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
         <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink">
           <span className="sr-only">You: </span>
           {item.delivery && <span className="block text-caption text-accent">{item.delivery === 'steer' ? 'Steer' : 'Autopilot'}</span>}
@@ -218,25 +229,36 @@ function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: st
       </Copyable>
     </div>
   );
+});
+
+interface ToolRunProps {
+  items: Item[];
+  live: boolean;
+  sessionId?: string;
+  approvals: Map<string, Interaction[]>;
+  arrival: (id: string) => string;
 }
 
-/** Consecutive tools share a compact disclosure; prose and questions stay in time order. */
-function ToolRun({ items, ctx }: { items: Item[]; ctx: RenderContext }) {
+/** Consecutive tools share a compact disclosure; prose and questions stay in time order. Memoised on its calls, which a streamed delta elsewhere leaves alone. */
+const ToolRun = memo(function ToolRun({ items, live, sessionId, approvals, arrival }: ToolRunProps) {
+  const [open, setOpen] = useState(false);
   const failed = items.some((item) => item.tool?.status === 'failed');
-  const active = ctx.live && items.some((item) => isActive(item.tool?.status));
+  const active = live && items.some((item) => isActive(item.tool?.status));
   return (
-    <details className="group/run" data-tool-run="">
-      <summary className={cn('flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-sm text-ui text-muted hover:text-body pointer-coarse:min-h-11 [&::-webkit-details-marker]:hidden', failed && 'text-error')}>
+    <div data-tool-run="">
+      <button type="button" aria-expanded={open} className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm text-left text-ui text-muted transition-colors duration-100 hover:text-body pointer-coarse:min-h-11', failed && 'text-error')} onClick={() => setOpen((o) => !o)}>
         {active ? <WorkingMark /> : <Terminal aria-hidden="true" className="size-4 shrink-0" />}
-        <span>{summarizeTools(items, ctx.live)}</span>
-        <ChevronRight aria-hidden="true" className="size-3 shrink-0 transition-transform group-open/run:rotate-90" />
-      </summary>
-      <div className="mt-1 flex flex-col gap-1 border-l border-hairline pl-3">
-        {items.map((item) => <ToolRow key={item.id} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} className={ctx.arrival(item.id)} />)}
-      </div>
-    </details>
+        <span>{summarizeTools(items, live)}</span>
+        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 transition-transform duration-160 ease-app', open && 'rotate-90')} />
+      </button>
+      <Collapse open={open}>
+        <div className="mt-1 flex flex-col gap-1 border-l border-hairline pl-3">
+          {items.map((item) => <ToolRow key={item.id} item={item} live={live} sessionId={sessionId} approvals={approvals.get(item.id)} className={arrival(item.id)} />)}
+        </div>
+      </Collapse>
+    </div>
   );
-}
+}, (a, b) => a.live === b.live && a.sessionId === b.sessionId && a.approvals === b.approvals && a.arrival === b.arrival && a.items.length === b.items.length && a.items.every((item, i) => item === b.items[i]));
 
 const isActive = (s?: ToolStatus) => s === 'pending' || s === 'running';
 
@@ -270,12 +292,12 @@ function ApprovalMark({ interactions }: { interactions: Interaction[] }) {
   );
   return (
     <Tip label={label}>
-      <span className="ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-xs px-1 font-sans text-caption text-muted transition-colors duration-100 group-hover/tool:text-body">
+      <Chip className="ml-auto gap-1 px-1 font-sans transition-colors duration-100 group-hover/tool:text-body">
         <Icon aria-hidden="true" className="size-3 text-faint" strokeWidth={2} />
         {latest.word}
-        {earlier.length > 0 && <span className="text-faint tabular-nums">+{earlier.length}</span>}
+        {earlier.length > 0 && <span className="tabular-nums">+{earlier.length}</span>}
         <span className="sr-only">: {marks.map((m) => m.full).join('; earlier: ')}</span>
-      </span>
+      </Chip>
     </Tip>
   );
 }
@@ -305,26 +327,31 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger render={<div className={cn('group/tool relative', className)} />}>
-        <details id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')} open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-          <summary
-            className={cn('flex h-6 list-none items-center gap-2 rounded-sm pr-8 pl-1 font-mono text-code-sm text-muted select-none transition-colors hover:bg-canvas pointer-coarse:min-h-11 pointer-coarse:pr-11 [&::-webkit-details-marker]:hidden', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
+        <div id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')}>
+          <button
+            type="button"
+            aria-expanded={open}
+            className={cn('flex h-6 w-full items-center gap-2 rounded-sm pr-8 pl-1 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-hover pointer-coarse:min-h-11 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
             title={ended ? 'The turn ended before this tool reported a result' : undefined}
+            onClick={() => setOpen((o) => !o)}
           >
             <span className="flex size-4 shrink-0 items-center justify-center">
               <ToolMark tone={tone} />
             </span>
             <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
-            {arg && <span className="min-w-0 truncate">{arg}</span>}
+            {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
             <span className="sr-only">, {word}</span>
             {approvals && approvals.filter((ix) => ix.state !== 'pending').length > 0 && <ApprovalMark interactions={approvals.filter((ix) => ix.state !== 'pending')} />}
-          </summary>
-          <div className="my-1 ml-6 flex flex-col gap-1 text-ui">
-            {item.text && <Markdown text={item.text} />}
-            {t?.input && <CodeBlock language="input">{t.input}</CodeBlock>}
-            {t?.output && <CodeBlock language="output">{t.output}</CodeBlock>}
-            {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
-          </div>
-        </details>
+          </button>
+          <Collapse open={open}>
+            <div className="my-1 ml-6 flex flex-col gap-1 text-ui">
+              {item.text && <Markdown text={item.text} />}
+              {t?.input && <CodeBlock language="input">{t.input}</CodeBlock>}
+              {t?.output && <CodeBlock language="output">{t.output}</CodeBlock>}
+              {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
+            </div>
+          </Collapse>
+        </div>
         {(images.length > 0 || item.images_note) && (
           <div className="mt-1 mb-1.5 ml-7 flex flex-col gap-1">
             {sessionId && <ImageThumbs sessionId={sessionId} images={images} />}
@@ -332,7 +359,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
           </div>
         )}
         <Menu.Root modal={false}>
-          <Menu.Trigger render={<Button size="icon" className="absolute top-0 right-0 size-6 text-muted opacity-0 transition-opacity group-hover/tool:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" aria-label={`Actions for ${label}`} />}>
+          <Menu.Trigger render={<Button size="icon-sm" className="absolute top-0 right-0 text-muted opacity-0 transition-opacity group-hover/tool:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" aria-label={`Actions for ${label}`} />}>
             <Ellipsis />
           </Menu.Trigger>
           <Menu.Content align="end" side="bottom">
@@ -354,7 +381,8 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
  * waits, the action card below the transcript takes the answer; a call left open by a
  * restart or a stopped turn reads "No answer".
  */
-function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuestion; className?: string }) {
+// `asked` is rebuilt on every transcript render; equal content means nothing to redraw.
+const QuestionBlock = memo(function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuestion; className?: string }) {
   const [, copy] = useCopied();
   const text = asked.questions.map((q) => q.text).join('\n') || 'The agent asked a question.';
   const items: ActionItem[] = [
@@ -363,7 +391,7 @@ function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuest
   ];
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('flex flex-col gap-1.5 rounded-md bg-sunken/60 px-3 py-2.5 text-ui', className)} />}>
+      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('flex flex-col gap-1.5 rounded-md bg-tint-well px-3 py-2.5 text-ui', className)} />}>
         <div className="flex items-center gap-1.5 text-caption text-muted">
           <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-faint" />
           <span>Question</span>
@@ -412,7 +440,7 @@ function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuest
       </ContextMenu.Content>
     </ContextMenu.Root>
   );
-}
+}, (a, b) => a.id === b.id && a.className === b.className && JSON.stringify(a.asked) === JSON.stringify(b.asked));
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
 export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, className }: { item: Item; sessionId?: string; streaming: boolean; endedAt?: string; className?: string }) {
@@ -443,15 +471,6 @@ export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, cl
 });
 
 const THINKING_KEY = 'uam.thinking:';
-const CLAMP_LINES = 3;
-
-/** The text's non-empty lines with leading markdown marks stripped. */
-function plainLines(text: string): string[] {
-  return text
-    .split('\n')
-    .map((l) => l.trim().replace(/^[#>*\-\s`]+/, '').replace(/`/g, ''))
-    .filter(Boolean);
-}
 
 /** "12s", "1m 4s" or "<1s" between two ISO timestamps; null when they are not in order. */
 export function duration(from: string, to: string): string | null {
@@ -464,98 +483,74 @@ export function duration(from: string, to: string): string | null {
 }
 
 /**
- * A reasoning item: its text inline in `muted` behind a hairline rule, clamped to three
- * lines with Show more / Show less. While it streams the latest lines show under a
- * shimmering "Thinking…"; done, "Thought for 12s" when the next item's timestamp is
- * known. The choice is remembered per item for the browser session.
+ * A reasoning item: one 24px row, "Thinking…" shimmering while it streams and "Thought for
+ * 12s" once the next item's timestamp is known, which opens the text (`muted`, behind a
+ * hairline rule) on click with a height collapse. Nothing of the text shows while it is
+ * closed, so streaming never resizes the row. The choice is remembered per item for the
+ * browser session.
  */
 export function Thinking({ item, streaming, endedAt, className }: { item: Item; streaming: boolean; endedAt?: string; className?: string }) {
   const key = THINKING_KEY + item.id;
   const [expanded, setExpanded] = useState(() => sessionStorage.getItem(key) === '1');
-  const [clamped, setClamped] = useState(false);
-  const body = useRef<HTMLDivElement>(null);
   const text = item.text ?? '';
   const took = !streaming && endedAt ? duration(item.time, endedAt) : null;
-  const lines = plainLines(text);
-  // The clamp is measured, so a long paragraph counts as much as many short lines.
-  useLayoutEffect(() => {
-    const el = body.current;
-    if (el && !expanded) setClamped(el.scrollHeight > el.clientHeight + 1);
-  }, [text, expanded, streaming]);
-  const more = expanded || clamped || (streaming && lines.length > CLAMP_LINES);
   const toggle = () => {
     const next = !expanded;
     setExpanded(next);
     sessionStorage.setItem(key, next ? '1' : '0');
   };
   return (
-    <div className={cn('flex flex-col gap-1 border-l-2 border-hairline pl-3 text-ui text-muted', className)}>
-      {streaming && <span className="text-caption animate-shimmer motion-reduce:animate-none">Thinking…</span>}
-      {expanded ? (
-        <Copyable text={text} label="Copy thinking" className="pr-6">
+    <div className={cn('flex flex-col text-ui text-muted', className)}>
+      <button type="button" aria-expanded={expanded} className="flex h-6 w-fit items-center gap-1.5 rounded-sm pr-1 text-left transition-colors duration-100 hover:text-body pointer-coarse:min-h-11" onClick={toggle}>
+        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />
+        <span className={cn('tabular-nums', streaming && 'animate-shimmer motion-reduce:animate-none')}>{streaming ? 'Thinking…' : took ? `Thought for ${took}` : 'Thought'}</span>
+      </button>
+      <Collapse open={expanded}>
+        <Copyable text={text} label="Copy thinking" className="mt-1 border-l-2 border-hairline pr-6 pl-3">
           <Markdown text={text} className="md-quiet" streaming={streaming} />
         </Copyable>
-      ) : streaming ? (
-        <div ref={body} className="line-clamp-3 whitespace-pre-line">
-          {lines.slice(-CLAMP_LINES).join('\n')}
-        </div>
-      ) : (
-        <div ref={body} className="line-clamp-3">
-          <Markdown text={text} className="md-quiet" streaming={streaming} />
-        </div>
-      )}
-      {(more || took) && (
-        <div className="flex items-center gap-2 text-caption">
-          {more && (
-            <button type="button" aria-expanded={expanded} className="rounded-xs text-muted transition-colors duration-100 hover:text-body pointer-coarse:min-h-11 pointer-coarse:min-w-11" onClick={toggle}>
-              {expanded ? 'Show less' : 'Show more'}
-            </button>
-          )}
-          {took && <span className="text-faint tabular-nums">Thought for {took}</span>}
-        </div>
-      )}
+      </Collapse>
     </div>
   );
 }
 
 /** Subagent state as a chip: glyph plus the word; only "running" moves. */
 export function AgentChip({ status }: { status: SubagentStatus }) {
-  const base = 'inline-flex h-5 shrink-0 items-center gap-1.5 rounded-xs px-1.5 text-caption whitespace-nowrap';
   switch (status) {
     case 'running':
       return (
-        <span className={cn(base, 'text-accent')}>
+        <Chip tone="accent">
           <WorkingMark />
           Running
-        </span>
+        </Chip>
       );
     case 'idle':
       return (
-        <span className={cn(base, 'text-muted')}>
+        <Chip>
           <SubagentIdleIcon />
           Idle
-        </span>
+        </Chip>
       );
     case 'completed':
       return (
-        <span className={cn(base, 'text-success')}>
+        <Chip tone="success">
           <Check aria-hidden="true" className="size-3.5" strokeWidth={2.5} />
           Completed
-        </span>
+        </Chip>
       );
     case 'failed':
       return (
-        <span className={cn(base, 'text-error')}>
+        <Chip tone="error">
           <X aria-hidden="true" className="size-3.5" strokeWidth={2.5} />
           Failed
-        </span>
+        </Chip>
       );
     default:
       return (
-        <span className={cn(base, 'text-muted')}>
+        <Chip>
           <Minus aria-hidden="true" className="size-3.5" strokeWidth={2.5} />
           Stopped
-        </span>
+        </Chip>
       );
   }
 }
@@ -577,14 +572,14 @@ function SubagentRow({ item, subagent, provider, onOpen }: { item: Item; subagen
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger
-        render={<div id={`item-${item.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm bg-sunken/60 py-1.5 pr-1.5 pl-3 text-ui transition-colors" />}
+        render={<div id={`item-${item.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm bg-tint-well py-1.5 pr-1.5 pl-3 text-ui transition-colors" />}
       >
         <Bot aria-hidden="true" className="size-4 shrink-0 text-muted" />
-        <span className="min-w-0 flex-1 truncate font-medium text-ink" title={subagent.description || undefined}>
+        <span className="min-w-0 flex-1 truncate font-medium text-ink max-sm:basis-[calc(100%-28px)]" title={subagent.description || name}>
           {name}
         </span>
         <AgentChip status={subagent.status} />
-        {subagent.model && <span className="font-mono text-code-sm text-muted">{modelName(meta, provider, subagent.model)}</span>}
+        {subagent.model && <span className="min-w-0 truncate font-mono text-code-sm text-muted" title={modelName(meta, provider, subagent.model)}>{modelName(meta, provider, subagent.model)}</span>}
         {took && <span className="text-caption tabular-nums text-muted">{took}</span>}
         <Button size="sm" variant="secondary" className="h-7" onClick={(e) => onOpen(e.currentTarget)}>
           Open
@@ -605,7 +600,7 @@ export function AgentItems({ sessionId, agentId, items, interactions, live }: { 
   return (
     <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
       {renderEntries(mergeByTime(items, [...loose, ...questions]), ctx)}
-      {live && <WorkingIndicator />}
+      {live && <TurnStatus working />}
     </div>
   );
 }

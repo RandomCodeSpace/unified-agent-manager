@@ -1,5 +1,5 @@
 import { Check, CircleDashed, Copy, CornerDownLeft, Minus, Pause, X } from 'lucide-react';
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { LIVE, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
@@ -7,9 +7,12 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed } from '../lib/diagram';
+import { splitBlocks } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
 import { DiagramCard } from './Diagram';
 import { Button } from './ui/button';
+import { Chip } from './ui/chip';
+import { Input } from './ui/input';
 import { ContextMenu, type ActionItem } from './ui/menu';
 
 export const STATE_LABELS: Record<SessionState, string> = {
@@ -48,7 +51,8 @@ export const TONE_TEXT: Record<Tone, string> = {
   error: 'text-error',
   warning: 'text-warning',
   muted: 'text-muted',
-  faint: 'text-faint',
+  // Faint text is muted text: the faint colour is for glyphs only (it is under AA for words).
+  faint: 'text-muted',
 };
 
 const TONE_BG: Record<Tone, string> = {
@@ -117,18 +121,10 @@ export function StateMark({ state, label = false, title, className }: { state: S
     );
   }
   return (
-    <span
-      className={cn(
-        'inline-flex h-5 shrink-0 items-center gap-1.5 rounded-xs px-1.5 text-caption whitespace-nowrap',
-        attention ? 'bg-attention-wash text-attention' : TONE_TEXT[tone],
-        tone === 'faint' && 'text-muted',
-        className,
-      )}
-      title={title}
-    >
+    <Chip tone={attention ? 'attention' : tone === 'faint' ? 'muted' : tone} className={className} title={title}>
       <StateGlyph state={state} />
       {text}
-    </span>
+    </Chip>
   );
 }
 
@@ -191,7 +187,7 @@ const BADGE_BG: Record<BadgeColor, string> = {
 /** A Project's badge: a 16px rounded square in its tone with the two characters. Decorative; the name beside it carries the meaning. */
 export function ProjectBadge({ badge, className }: { badge: Badge; className?: string }) {
   return (
-    <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs font-mono text-[8px] leading-none font-semibold text-on-primary select-none', BADGE_BG[badge.color], className)}>
+    <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs font-mono text-badge font-semibold text-on-primary select-none', BADGE_BG[badge.color], className)}>
       {badge.text}
     </span>
   );
@@ -202,14 +198,8 @@ export function Dot({ tone, className, pulse = false }: { tone: Tone; className?
   return <span aria-hidden="true" className={cn('inline-block size-2 shrink-0 rounded-full', TONE_BG[tone], pulse && 'animate-pulse-dot', className)} />;
 }
 
-export function Spinner({ className }: { className?: string }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn('inline-block size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-accent border-r-transparent motion-reduce:animate-none', className)}
-    />
-  );
-}
+import { Spinner } from './ui/spinner';
+export { Spinner };
 
 export function SubagentIdleIcon({ className }: { className?: string }) {
   return <CornerDownLeft aria-hidden="true" className={cn('size-3.5', className)} />;
@@ -236,6 +226,16 @@ export function relTime(iso: string, now = Date.now()): string {
   const h = Math.round(m / 60);
   if (h < 24) return `${h}h`;
   return `${Math.round(h / 24)}d`;
+}
+
+/** True once `active` has held for `ms`; false again as soon as it ends. Keeps brief waits (a Task switch, a reconnect) from flashing. */
+export function useLate(active: boolean, ms: number): boolean {
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setLate(active), active ? ms : 0);
+    return () => window.clearTimeout(id);
+  }, [active, ms]);
+  return active && late;
 }
 
 /** Re-renders once a minute so relative times stay honest. */
@@ -291,10 +291,11 @@ export function InlineName({
     }
   };
   return (
-    <input
+    <Input
       ref={ref}
+      size="sm"
       aria-label={label}
-      className={cn('h-7 w-full min-w-0 rounded-xs border border-hairline-strong bg-raised px-1.5 text-ink outline-hidden focus:border-accent', className)}
+      className={className}
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={onKeyDown}
@@ -322,14 +323,14 @@ export function CodeBlock({ language, className, text, head, body, foot, childre
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger render={<div className={cn('group/code relative my-2.5 overflow-hidden rounded-md border border-hairline bg-code-bg', className)} />}>
-        <div className="flex h-6 items-center gap-2 border-b border-hairline/70 px-3 text-code-sm text-muted">
+        <div className="flex h-6 items-center gap-2 border-b border-hairline px-3 text-code-sm text-muted">
           <span className="font-mono">{language ?? 'code'}</span>
           {head ?? <span className="flex-1" />}
           <Button
-            size="icon"
+            size="icon-sm"
             variant="subtle"
             aria-label={copied ? 'Copied' : 'Copy code'}
-            className={cn('size-6 text-muted opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
+            className={cn('text-muted opacity-0 transition-opacity group-hover/code:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
             onClick={() => copy(read())}
           >
             {copied ? <Check /> : <Copy />}
@@ -454,17 +455,48 @@ const mdComponents: Components = {
   },
 };
 
-/** Markdown for untrusted provider text: no raw HTML, no images, safe links only. */
+/**
+ * Markdown for untrusted provider text: no raw HTML, no images, safe links only. Rendered
+ * in top-level blocks, so while it streams only the last block is parsed again per delta.
+ */
 export function Markdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
+  const blocks = useMemo(() => splitBlocks(text), [text]);
+  return (
+    <div className={cn('md', className)}>
+      {blocks.map((block, i) => (
+        <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} />
+      ))}
+    </div>
+  );
+}
+
+const MarkdownBlock = memo(function MarkdownBlock({ text, streaming }: { text: string; streaming: boolean }) {
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   return (
     <MdContext.Provider value={source}>
-      <div className={cn('md', className)}>
-        <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents} disallowedElements={['img']} unwrapDisallowed>
-          {text}
-        </ReactMarkdown>
-      </div>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents} disallowedElements={['img']} unwrapDisallowed>
+        {text}
+      </ReactMarkdown>
     </MdContext.Provider>
+  );
+});
+
+/**
+ * The quiet loading indicator: nothing for `delay` ms (a wait that short shows nothing new),
+ * then a spinner and a word. Replaces skeleton placeholders; what was on screen stays.
+ */
+export function Loading({ label = 'Loading…', delay = 300, className }: { label?: string; delay?: number; className?: string }) {
+  const late = useLate(true, delay);
+  return (
+    <div role="status" aria-busy="true" className={cn('flex min-h-8 items-center gap-2 text-caption text-muted', className)}>
+      {late && (
+        <span className="flex items-center gap-2 animate-fade-in">
+          <Spinner className="border-muted" />
+          {label}
+        </span>
+      )}
+      {!late && <span className="sr-only">{label}</span>}
+    </div>
   );
 }
 
