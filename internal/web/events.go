@@ -100,6 +100,12 @@ type subagentEvent struct {
 	Subagent  agentapi.Subagent `json:"subagent"`
 }
 
+type turnTimingEvent struct {
+	Seq        uint64     `json:"seq"`
+	SessionID  string     `json:"session_id"`
+	TurnTiming TurnTiming `json:"turn_timing"`
+}
+
 type backgroundTasksEvent struct {
 	Seq             uint64                   `json:"seq"`
 	SessionID       string                   `json:"session_id"`

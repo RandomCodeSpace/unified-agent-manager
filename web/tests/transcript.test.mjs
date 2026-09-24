@@ -178,10 +178,12 @@ test('tool summaries count successful distinct paths and report failed or missin
   assert.equal(summarizeTools([row('edit')], false), 'Used 1 tool');
 });
 
-test('foreground elapsed uses the original user item across steer and rejects unknown times', async () => {
+test('foreground elapsed uses recorded turn evidence across steer and rejects unknown times', async () => {
   const { foregroundStart, elapsedSince } = await import('../src/lib/transcript.ts');
   const start = '2026-09-24T12:00:00Z';
-  assert.equal(foregroundStart([{ kind: 'user', time: start }, { kind: 'user', delivery: 'steer', time: '2026-09-24T12:02:00Z' }]), start);
+  const timings = [{ id: 'turn', user_item_id: 'user', started_at: start, state: 'working' }];
+  assert.equal(foregroundStart(timings), start);
+  assert.equal(foregroundStart([]), undefined);
   assert.equal(elapsedSince(start, Date.parse('2026-09-24T12:13:00Z')), '13m');
   assert.equal(elapsedSince(undefined, Date.now()), null);
   assert.equal(elapsedSince('invalid', Date.now()), null);
@@ -194,4 +196,44 @@ test('all current turn segments stay live across steer, while earlier turns stay
   const history = [{ id: 'old-user', kind: 'user' }, { id: 'old-tool', kind: 'tool' }, { id: 'user', kind: 'user' }, { id: 'pending-tool', kind: 'tool' }, { id: 'steer', kind: 'user', delivery: 'steer' }, { id: 'progress', kind: 'assistant' }];
   assert.deepEqual(foregroundItems(history).map((item) => item.id), ['user', 'pending-tool', 'steer', 'progress']);
   assert.deepEqual(foregroundItems([{ id: 'orphan', kind: 'tool' }]).map((item) => item.id), ['orphan']);
+});
+
+test('recorded final duration is stable and unknown history has no invented interval', async () => {
+  const { foregroundStart, completedDuration, timingForTurn } = await import('../src/lib/transcript.ts');
+  const working = { id: 'turn', user_item_id: 'user', started_at: '2026-09-24T12:00:00Z', state: 'working' };
+  assert.equal(foregroundStart([working]), working.started_at);
+  assert.equal(completedDuration(working), null);
+  for (const state of ['completed', 'cancelled', 'failed']) {
+    const ended = { ...working, ended_at: '2026-09-24T12:00:42Z', state };
+    assert.equal(completedDuration(ended), '42s');
+    assert.equal(foregroundStart([ended]), undefined);
+    assert.deepEqual(timingForTurn([ended], 'user'), ended);
+  }
+  assert.equal(timingForTurn([working], 'imported-user'), undefined);
+  assert.equal(completedDuration(undefined), null);
+  assert.equal(completedDuration({ ...working, state: 'unknown' }), null);
+  assert.equal(foregroundStart([{ ...working, state: 'unknown' }]), undefined);
+  assert.equal(completedDuration({ ...working, state: 'completed', ended_at: 'invalid' }), null);
+  assert.equal(completedDuration({ ...working, state: 'completed', ended_at: '2026-09-24T11:59:00Z' }), null);
+});
+
+test('autopilot user continuations retain the original foreground across prose segments', async () => {
+  const { foregroundItems, foregroundStart, timingForTurn } = await import('../src/lib/transcript.ts');
+  const items = [{ id: 'old-user', kind: 'user' }, { id: 'old-reply', kind: 'assistant' }, { id: 'user', kind: 'user' }, { id: 'progress', kind: 'assistant' }, { id: 'auto', kind: 'user', delivery: 'autopilot' }, { id: 'later', kind: 'assistant' }, { id: 'steer', kind: 'user', delivery: 'steer' }, { id: 'final', kind: 'assistant' }];
+  const timing = { id: 'turn', user_item_id: 'user', state: 'working', started_at: '2026-09-24T12:00:00Z' };
+  const foreground = foregroundItems(items);
+  assert.deepEqual(foreground.map((item) => item.id), ['user', 'progress', 'auto', 'later', 'steer', 'final']);
+  assert.equal(timingForTurn([timing], foreground[0].id), timing);
+  assert.equal(foregroundStart([timing]), timing.started_at);
+});
+
+test('an empty response keeps its recorded duration after the next ordinary prompt arrives', async () => {
+  const { showTurnEnd } = await import('../src/lib/transcript.ts');
+  const cancelled = { id: 'turn1', user_item_id: 'user1', started_at: '2026-09-24T12:00:00Z', ended_at: '2026-09-24T12:00:02Z', state: 'cancelled' };
+  const latestEmpty = { hasContent: false, boundary: true, last: true, live: false };
+  assert.equal(showTurnEnd(cancelled, latestEmpty), true);
+  assert.equal(showTurnEnd(cancelled, { ...latestEmpty, last: false, live: true }), true);
+  assert.equal(showTurnEnd(cancelled, { ...latestEmpty, last: false, boundary: false }), false);
+  assert.equal(showTurnEnd(undefined, latestEmpty), false);
+  assert.equal(showTurnEnd({ ...cancelled, ended_at: undefined, state: 'working' }, { ...latestEmpty, live: true }), false);
 });

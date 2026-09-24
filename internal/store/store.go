@@ -326,13 +326,24 @@ type SessionRecord struct {
 // SurfaceWeb marks records owned by the `uam web` service.
 const SurfaceWeb = "web"
 
+// TurnTiming records foreground boundaries observed by the web service. An
+// unfinished observation becomes unknown after its runtime connection is lost.
+type TurnTiming struct {
+	ID         string    `json:"id"`
+	UserItemID string    `json:"user_item_id,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	EndedAt    time.Time `json:"ended_at,omitzero"`
+	State      string    `json:"state"`
+}
+
 // WebState is the small durable part of a web session. Transcripts stay with
 // the provider; only the last known turn state and the last prompt request
 // outcome are kept so a restarted service can report them.
 type WebState struct {
 	// Turn is the last known session state (for example "working" or
 	// "completed").
-	Turn string `json:"turn,omitempty"`
+	Turn        string       `json:"turn,omitempty"`
+	TurnTimings []TurnTiming `json:"turn_timings,omitempty"`
 	// RequestID is the client-generated ID of the last prompt submission.
 	RequestID string `json:"request_id,omitempty"`
 	// RequestStatus is that submission's outcome: accepted, rejected or
@@ -382,6 +393,7 @@ type webStateAlias WebState
 
 var knownWebStateFields = map[string]struct{}{
 	"turn":                {},
+	"turn_timings":        {},
 	"request_id":          {},
 	"request_status":      {},
 	"command_result":      {},

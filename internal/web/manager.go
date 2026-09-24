@@ -215,7 +215,11 @@ type webSession struct {
 	settledAt, archivedAt time.Time
 	// turnSeq increments whenever base changes, so a failed Send only
 	// restores the previous state when nothing else changed it meanwhile.
-	turnSeq uint64
+	turnSeq           uint64
+	turnTimings       []TurnTiming
+	activeTiming      int
+	pendingTimingUser string
+	timingRevision    uint64
 
 	conv agentapi.Conversation
 	// gen identifies the current conversation; events from an older one are
@@ -300,6 +304,7 @@ type interaction struct {
 // persistKey is the durable part of a session; sessions.json is written only
 // when it changes, never per streamed token.
 type persistKey struct {
+	timingRevision                                                                                                   uint64
 	commandResult                                                                                                    *agentapi.CommandResult
 	turn, detail, name, convID, reqID, reqStatus, commandLedger, projectID, model, effort, contextSize, title, stage string
 	mode                                                                                                             store.Mode
@@ -309,7 +314,7 @@ type persistKey struct {
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
 	return &webSession{
 		id: id, provider: provider, name: name, workdir: workdir, convID: convID,
-		createdAt: created, updatedAt: created, base: StateIdle, mode: store.ModeSafe,
+		createdAt: created, updatedAt: created, base: StateIdle, mode: store.ModeSafe, activeTiming: -1,
 		itemIdx: map[string]int{}, ixIdx: map[string]*interaction{}, subIdx: map[string]*agentapi.Subagent{},
 	}
 }
@@ -360,7 +365,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
+	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
@@ -555,6 +560,15 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.mode = store.ModeYolo
 	}
 	if web := rec.Web; web != nil {
+		s.turnTimings = slices.Clone(web.TurnTimings)
+		if len(s.turnTimings) > maxTurnTimings {
+			s.turnTimings = s.turnTimings[len(s.turnTimings)-maxTurnTimings:]
+		}
+		for i := range s.turnTimings {
+			if s.turnTimings[i].State == StateWorking {
+				s.turnTimings[i].State = "unknown"
+			}
+		}
 		_ = json.Unmarshal(web.CommandSubmissions, &s.commandSubmissions)
 		s.commandLedger = string(web.CommandSubmissions)
 		if knownStates[web.Turn] {
@@ -774,6 +788,7 @@ func (m *Manager) detailLocked(s *webSession, terminal bool) SessionDetail {
 	d := SessionDetail{
 		SessionSummary:   m.summaryLocked(s),
 		Seq:              m.seq,
+		TurnTimings:      append([]TurnTiming{}, s.turnTimings...),
 		Items:            s.agentItems(""),
 		Interactions:     make([]agentapi.Interaction, 0, len(s.interactions)),
 		Subagents:        s.subagentList(),
@@ -1371,7 +1386,7 @@ func (m *Manager) flush() error {
 		patches = append(patches, recordPatch{
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
-				Turn: key.turn, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
+				Turn: key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 			},
@@ -1537,6 +1552,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		if ev.Item != nil && ev.Item.ID != "" {
 			it := clampItem(*ev.Item, m.now())
 			s.linkUploadsLocked(&it)
+			m.linkTurnTimingLocked(s, it)
 			m.upsertItemLocked(s, it, true)
 		}
 	case agentapi.EventDelta:
@@ -1600,6 +1616,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 }
 
 func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
+	m.observeTurnTimingLocked(s, turn.State)
 	if model := clipRunes(strings.TrimSpace(displaytext.Sanitize(turn.Model)), maxNameRunes); model != "" {
 		s.lastModel = model
 	}

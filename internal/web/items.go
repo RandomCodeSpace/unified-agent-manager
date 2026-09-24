@@ -452,6 +452,7 @@ func (m *Manager) backgroundTasksLocked(s *webSession, snapshot agentapi.Backgro
 }
 
 func (m *Manager) forgetBackgroundTaskStateLocked(s *webSession) {
+	m.forgetTurnTimingLocked(s)
 	if s.execution != nil {
 		state := *s.execution
 		state.Known = false

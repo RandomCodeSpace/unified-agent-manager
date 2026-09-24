@@ -51,6 +51,13 @@ provider events and exact reopen. Objective state is `active`, `paused`, or
 `completed`; credits are the provider's current credit-window usage and limit.
 A reported zero is preserved. Missing values are not inferred.
 
+The transcript shows elapsed foreground time while working and the recorded
+duration after completion, cancellation, or failure. It includes permission
+waits and autopilot continuations, but excludes time waiting in the queue and
+independent background work. Completed durations survive reloads and service
+restarts. Imported history without timing evidence and unfinished turns after a
+lost runtime connection have no claimed duration.
+
 An assistant idle or explicit autopilot session-idle boundary does not complete
 an autopilot foreground turn. A final session-idle event, with no autopilot mode
 or with an abort, ends it. Interactive assistant idle still ends the foreground

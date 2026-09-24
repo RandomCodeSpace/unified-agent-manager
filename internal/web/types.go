@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // Session states reported to browsers.
@@ -208,7 +209,10 @@ type SessionSummary struct {
 
 // SessionDetail is a summary plus the retained main-agent transcript,
 // interactions and subagents.
+type TurnTiming = store.TurnTiming
+
 type SessionDetail struct {
+	TurnTimings []TurnTiming `json:"turn_timings"`
 	SessionSummary
 	// Seq orders this snapshot against events on the same service.
 	Seq              uint64                    `json:"seq"`
