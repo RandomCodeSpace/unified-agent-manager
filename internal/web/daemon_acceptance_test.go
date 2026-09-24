@@ -1,0 +1,186 @@
+package web
+
+import (
+	"context"
+	"errors"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
+)
+
+func TestAcceptanceSpawnReadinessProtocol(t *testing.T) {
+	for _, tc := range []struct {
+		name, script, want string
+		cancel             bool
+	}{
+		{"ready", "printf 'ok\\n' >&3", "", false},
+		{"refused", "printf 'error: address in use\\n' >&3", "address in use", false},
+		{"early exit", "exit 0", "exited before it was ready", false},
+		{"invalid reply", "printf 'almost ready\\n' >&3", "unexpected response", false},
+		{"cancelled", "exec sleep 30", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exe := filepath.Join(t.TempDir(), "ready-helper")
+			if err := os.WriteFile(exe, []byte("#!/bin/sh\n"+tc.script+"\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if tc.cancel {
+				cancel()
+			}
+			err := Spawn(ctx, exe, nil)
+			switch {
+			case tc.cancel:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancelled startup = %v", err)
+				}
+			case tc.want == "":
+				if err != nil {
+					t.Fatal(err)
+				}
+			case err == nil || !strings.Contains(err.Error(), tc.want):
+				t.Fatalf("startup = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if err := Spawn(context.Background(), filepath.Join(t.TempDir(), "missing"), nil); err == nil {
+		t.Fatal("missing executable reported readiness")
+	}
+}
+
+func TestAcceptanceDaemonStartupFailureLeavesNoRunningState(t *testing.T) {
+	for _, failure := range []string{"listen syntax", "public origin", "token", "store", "occupied port", "state publication"} {
+		t.Run(failure, func(t *testing.T) {
+			runtimeDir, configDir := t.TempDir(), t.TempDir()
+			t.Setenv("UAM_SESSION_DIR", runtimeDir)
+			t.Setenv("UAM_CONFIG_DIR", configDir)
+			t.Setenv(readyEnv, "")
+			prov := agenttest.NewProvider("fake", allCaps)
+			cfg := DaemonConfig{Listen: "127.0.0.1:0", Providers: []agentapi.Provider{prov}}
+			want := ""
+			switch failure {
+			case "listen syntax":
+				cfg.Listen = "not-an-address"
+				want = "invalid --listen"
+			case "public origin":
+				cfg.PublicOrigins = []string{"ftp://example.com"}
+				want = "invalid public origin"
+			case "token":
+				want = "malformed"
+				if err := os.WriteFile(filepath.Join(configDir, tokenFileName), []byte("bad token"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "store":
+				want = "load web sessions"
+				if err := os.Mkdir(filepath.Join(configDir, "sessions.json"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "occupied port":
+				want = "listen on"
+				ln, err := net.Listen("tcp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer ln.Close()
+				cfg.Listen = ln.Addr().String()
+			case "state publication":
+				want = "write web.json"
+				if err := os.Mkdir(statePath(runtimeDir), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := RunDaemon(cfg); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("startup failure = %v, want %q", err, want)
+			}
+			if _, running := ReadRunning(runtimeDir); running {
+				t.Fatal("failed startup published a running service")
+			}
+			if !lockFree(runtimeDir) {
+				t.Fatal("failed startup retained the daemon lock")
+			}
+			if (failure == "occupied port" || failure == "state publication") && prov.ShutdownCalls() != 1 {
+				t.Fatalf("provider cleanup calls = %d", prov.ShutdownCalls())
+			}
+		})
+	}
+}
+
+func TestAcceptanceStaleDaemonIdentityDoesNotStopAnotherProcess(t *testing.T) {
+	child := exec.Command("sleep", "30")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
+	start := session.ProcStartTime(child.Process.Pid)
+	if start == 0 {
+		t.Skip("process start identity is unavailable")
+	}
+	dir := t.TempDir()
+	if err := writeStateFile(dir, DaemonState{PID: child.Process.Pid, StartTime: start + 1, Listen: "127.0.0.1:8260"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, running := ReadRunning(dir); running {
+		t.Fatal("stale start identity was trusted")
+	}
+	if running, err := Stop(context.Background(), dir); running || err != nil {
+		t.Fatalf("stale service stop = %v, %v", running, err)
+	}
+	if !session.ProcAlive(child.Process.Pid) {
+		t.Fatal("stale service state stopped an unrelated process")
+	}
+	if _, err := os.Stat(statePath(dir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale state was not removed: %v", err)
+	}
+}
+
+func TestAcceptanceTokenFileRefusesReplacementAndRepairsPermissions(t *testing.T) {
+	for _, tc := range []struct{ name, data string }{{"short", "bad"}, {"invalid hex", strings.Repeat("z", 64)}} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), tokenFileName)
+			if err := os.WriteFile(path, []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadOrCreateToken(path); err == nil {
+				t.Fatal("malformed token accepted")
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != tc.data {
+				t.Fatalf("malformed token silently replaced: %q, %v", data, err)
+			}
+		})
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, tokenFileName)
+	if err := os.WriteFile(path, []byte(testToken+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := LoadOrCreateToken(path); err != nil || got != testToken {
+		t.Fatalf("existing token = %q, %v", got, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("token permissions = %v, %v", info, err)
+	}
+	link := filepath.Join(dir, "token-link")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreateToken(link); err == nil {
+		t.Fatal("token symlink accepted")
+	}
+	if _, err := LoadOrCreateToken(filepath.Join(path, "token")); err == nil {
+		t.Fatal("token with a non-directory parent accepted")
+	}
+}
