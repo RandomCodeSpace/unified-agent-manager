@@ -340,6 +340,14 @@ type WebState struct {
 	// Title is the provider-generated conversation title, sanitized and
 	// bounded.
 	Title string `json:"title,omitempty"`
+	// Stage is the Task's lifecycle stage: "" (active), "settled" or
+	// "archived". Records written before stages existed are active.
+	Stage string `json:"stage,omitempty"`
+	// SettledAt is when the Task was settled; zero unless it is settled, or
+	// was settled before it was archived.
+	SettledAt time.Time `json:"settled_at,omitzero"`
+	// ArchivedAt is when the Task was archived.
+	ArchivedAt time.Time `json:"archived_at,omitzero"`
 
 	unknown map[string]json.RawMessage
 }
@@ -363,6 +371,9 @@ var knownWebStateFields = map[string]struct{}{
 	"project_id":     {},
 	"model":          {},
 	"title":          {},
+	"stage":          {},
+	"settled_at":     {},
+	"archived_at":    {},
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {

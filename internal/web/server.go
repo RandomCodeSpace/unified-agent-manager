@@ -122,6 +122,9 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}/queue/{request_id}", s.handleQueueCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/close", s.handleClose)
+	mux.HandleFunc("POST /api/sessions/{id}/settle", s.handleStage((*Manager).Settle))
+	mux.HandleFunc("POST /api/sessions/{id}/reopen", s.handleStage((*Manager).Reopen))
+	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleStage((*Manager).Archive))
 	mux.HandleFunc("POST /api/sessions/{id}/interactions/{iid}", s.handleAnswer)
 	mux.HandleFunc("GET /api/sessions/{id}/changes", s.handleChanges)
 	mux.HandleFunc("GET /api/sessions/{id}/changes/file", s.handleFileChange)
@@ -476,6 +479,18 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// handleStage serves a Task stage change, answering with the summary.
+func (s *Server) handleStage(move func(*Manager, string) (SessionSummary, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		summary, err := move(s.m, r.PathValue("id"))
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, summary)
+	}
 }
 
 func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {

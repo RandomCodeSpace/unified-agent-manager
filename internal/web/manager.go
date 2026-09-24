@@ -148,6 +148,9 @@ type webSession struct {
 	// removed is set once the session was deleted; operations waiting on op
 	// must not act on it.
 	removed bool
+	// stage is StageActive, StageSettled or StageArchived.
+	stage                 string
+	settledAt, archivedAt time.Time
 	// turnSeq increments whenever base changes, so a failed Send only
 	// restores the previous state when nothing else changed it meanwhile.
 	turnSeq uint64
@@ -201,8 +204,9 @@ type interaction struct {
 // persistKey is the durable part of a session; sessions.json is written only
 // when it changes, never per streamed token.
 type persistKey struct {
-	turn, detail, name, convID, reqID, reqStatus, projectID, model, title string
-	mode                                                                  store.Mode
+	turn, detail, name, convID, reqID, reqStatus, projectID, model, title, stage string
+	mode                                                                         store.Mode
+	settledAt, archivedAt                                                        time.Time
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -259,7 +263,8 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, title: s.title, mode: s.mode}
+	k := persistKey{turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, title: s.title, mode: s.mode,
+		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 	}
@@ -431,6 +436,10 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		}
 		s.detail = web.Detail
 		s.projectID, s.model, s.title = web.ProjectID, web.Model, cleanTitle(web.Title)
+		// An unknown stage loads as active, as an unknown turn state is ignored.
+		if web.Stage == StageSettled || web.Stage == StageArchived {
+			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
+		}
 		if !web.UpdatedAt.IsZero() {
 			s.updatedAt = web.UpdatedAt
 		}
@@ -611,7 +620,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), Workdir: s.workdir, ConversationID: s.convID,
 		State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
-		Mode: string(s.mode),
+		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt,
 	}
 }
 
@@ -826,9 +835,9 @@ func (m *Manager) RenameProject(id, name string) (Project, error) {
 
 var errProjectNotFound = newError(http.StatusNotFound, "project not found")
 
-// RemoveProject deletes a Project and its Task records. Open conversations
-// are closed, never deleted, and the directory is not touched. It is refused
-// while any of its Tasks is starting, working or waiting for input.
+// RemoveProject deletes a Project and its Task records. It is refused unless
+// every Task in it is archived. Conversations are never deleted at the
+// provider, and the directory is not touched.
 func (m *Manager) RemoveProject(id string) error {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
@@ -853,13 +862,13 @@ func (m *Manager) RemoveProject(id string) error {
 	}
 	m.mu.Lock()
 	closed := m.closed
-	running := slices.ContainsFunc(tasks, func(s *webSession) bool { return !s.removed && busy(s.state()) })
+	unarchived := slices.ContainsFunc(tasks, func(s *webSession) bool { return !s.removed && s.stage != StageArchived })
 	m.mu.Unlock()
 	switch {
 	case closed:
 		return errShuttingDown
-	case running:
-		return newError(http.StatusConflict, "a task in this project is running or waiting for input; stop it first")
+	case unarchived:
+		return newError(http.StatusConflict, "archive every task in this project first")
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		delete(cfg.WebProjects, id)
@@ -889,9 +898,8 @@ func (m *Manager) RemoveProject(id string) error {
 	return nil
 }
 
-// Delete deletes a Task's record. Its conversation is closed, never deleted
-// at the provider. It is refused while the Task is starting, working or
-// waiting for input.
+// Delete deletes an archived Task's record. It is refused for any other
+// stage. The conversation is never deleted at the provider.
 func (m *Manager) Delete(id string) error {
 	s, err := m.lookup(id)
 	if err != nil {
@@ -900,15 +908,15 @@ func (m *Manager) Delete(id string) error {
 	s.op.Lock()
 	defer s.op.Unlock()
 	m.mu.Lock()
-	gone, closed, running := s.removed, m.closed, busy(s.state())
+	gone, closed, archived := s.removed, m.closed, s.stage == StageArchived
 	m.mu.Unlock()
 	switch {
 	case gone:
 		return newError(http.StatusNotFound, "session not found")
 	case closed:
 		return errShuttingDown
-	case running:
-		return newError(http.StatusConflict, "the task is running or waiting for input; stop it first")
+	case !archived:
+		return newError(http.StatusConflict, "only an archived task can be deleted; archive it first")
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		key := store.Key(s.provider, s.id)
@@ -1027,6 +1035,7 @@ func (m *Manager) flush() error {
 			web: store.WebState{
 				Turn: key.turn, RequestID: key.reqID, RequestStatus: key.reqStatus, UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Title: key.title,
+				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt,
 			},
 		})
 	}
@@ -1419,10 +1428,11 @@ func (m *Manager) viewOpen(s *webSession) <-chan struct{} {
 }
 
 // autoOpenableLocked reports whether merely viewing s may open its
-// conversation. Failed and closed sessions stay as they are until the user
-// acts on them, so their reported outcome is not replaced by a page load.
+// conversation. Failed, closed, settled and archived sessions stay as they
+// are until the user acts on them, so their reported outcome is not replaced
+// by a page load.
 func (m *Manager) autoOpenableLocked(s *webSession) bool {
-	return !s.removed && s.conv == nil && s.convID != "" && s.base != StateFailed && s.base != StateClosed &&
+	return !s.removed && s.stage == StageActive && s.conv == nil && s.convID != "" && s.base != StateFailed && s.base != StateClosed &&
 		m.providers[s.provider] != nil && m.infos[s.provider].Available
 }
 
@@ -1607,6 +1617,10 @@ func (m *Manager) submit(s *webSession, text, reqID, mode string) (Submission, e
 	if m.closed {
 		m.mu.Unlock()
 		return Submission{}, errShuttingDown
+	}
+	if err := s.readOnlyLocked(); err != nil {
+		m.mu.Unlock()
+		return Submission{}, err
 	}
 	state, conv := s.state(), s.conv
 	switch {
@@ -1857,6 +1871,8 @@ func (m *Manager) CancelQueued(id, reqID string) error {
 		return newError(http.StatusNotFound, "session not found")
 	case m.closed:
 		return errShuttingDown
+	case s.stage != StageActive:
+		return s.readOnlyLocked()
 	}
 	i := slices.IndexFunc(s.queue, func(q QueuedPrompt) bool { return q.RequestID == reqID })
 	if i < 0 {
@@ -1894,6 +1910,8 @@ func (m *Manager) ClearQueue(id string) error {
 		return newError(http.StatusNotFound, "session not found")
 	case m.closed:
 		return errShuttingDown
+	case s.stage != StageActive:
+		return s.readOnlyLocked()
 	case len(s.queue) == 0:
 		return nil
 	}
@@ -1918,6 +1936,8 @@ func (m *Manager) ResumeQueue(id string) error {
 		return newError(http.StatusNotFound, "session not found")
 	case m.closed:
 		return errShuttingDown
+	case s.stage != StageActive:
+		return s.readOnlyLocked()
 	}
 	if s.queuePaused {
 		before := m.summaryLocked(s)
@@ -1989,13 +2009,7 @@ func (m *Manager) Close(id string) (SessionSummary, error) {
 		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
 	}
 	before := m.summaryLocked(s)
-	conv := s.conv
-	s.conv = nil
-	s.gen++
-	m.expirePendingLocked(s, "the session was closed")
-	m.endSubagentsLocked(s)
-	m.pauseQueueLocked(s)
-	s.setBase(StateClosed, "")
+	conv := m.disconnectLocked(s)
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 	if conv != nil {
@@ -2005,6 +2019,135 @@ func (m *Manager) Close(id string) (SessionSummary, error) {
 		log.Warn("persist closed web session failed", "session", id, "error", err)
 	}
 	return m.Summary(id)
+}
+
+// disconnectLocked detaches s from its conversation, as Close does, and
+// returns the conversation for the caller to close.
+func (m *Manager) disconnectLocked(s *webSession) agentapi.Conversation {
+	conv := s.conv
+	s.conv = nil
+	s.gen++
+	m.expirePendingLocked(s, "the session was closed")
+	m.endSubagentsLocked(s)
+	m.pauseQueueLocked(s)
+	s.setBase(StateClosed, "")
+	return conv
+}
+
+// Settle marks an active Task complete and closes its conversation. It is
+// refused while the Task is busy, has queued prompts or waits for an answer.
+func (m *Manager) Settle(id string) (SessionSummary, error) {
+	return m.moveStage(id, StageSettled, StageActive)
+}
+
+// Reopen makes a settled Task active again. Its next prompt reopens the same
+// conversation.
+func (m *Manager) Reopen(id string) (SessionSummary, error) {
+	return m.moveStage(id, StageActive, StageSettled)
+}
+
+// Archive moves an active or settled Task to its final stage; nothing moves
+// it back. An active Task must meet the same conditions as for Settle.
+func (m *Manager) Archive(id string) (SessionSummary, error) {
+	return m.moveStage(id, StageArchived, StageActive, StageSettled)
+}
+
+// moveStage moves a Task from one of the stages in from to stage to. Leaving
+// the active stage closes the conversation. Holding s.op keeps prompts, drains
+// and opens out while the preconditions are checked.
+func (m *Manager) moveStage(id, to string, from ...string) (SessionSummary, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	m.mu.Lock()
+	switch {
+	case s.removed:
+		m.mu.Unlock()
+		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+	case m.closed:
+		m.mu.Unlock()
+		return SessionSummary{}, errShuttingDown
+	case !slices.Contains(from, s.stage):
+		m.mu.Unlock()
+		return SessionSummary{}, newError(http.StatusConflict, "a task that is %s cannot be %s", stageName(s.stage), stageVerb(to))
+	}
+	before := m.summaryLocked(s)
+	var conv agentapi.Conversation
+	if s.stage == StageActive {
+		if err := s.settleableLocked(); err != nil {
+			m.mu.Unlock()
+			return SessionSummary{}, err
+		}
+		if s.conv != nil {
+			conv = m.disconnectLocked(s)
+		}
+	}
+	now := m.now()
+	switch to {
+	case StageSettled:
+		s.settledAt = now
+	case StageArchived:
+		s.archivedAt = now
+	case StageActive:
+		s.settledAt = time.Time{}
+	}
+	s.stage = to
+	m.changedLocked(s, before)
+	m.mu.Unlock()
+	if conv != nil {
+		m.closeConversation(conv)
+	}
+	if err := m.flush(); err != nil {
+		log.Warn("persist web task stage failed", "session", id, "error", err)
+	}
+	log.Info("web task stage changed", "session", id, "stage", stageName(to))
+	return m.Summary(id)
+}
+
+// settleableLocked reports why an active Task cannot be settled or archived
+// now, or nil. A pending interaction that does not make the Task busy is a
+// yolo approval still on its way to the provider.
+func (s *webSession) settleableLocked() error {
+	switch {
+	case busy(s.state()):
+		return newError(http.StatusConflict, "the task is running or waiting for input; stop the turn first")
+	case slices.ContainsFunc(s.interactions, func(ix *interaction) bool { return ix.State == agentapi.InteractionPending }):
+		return newError(http.StatusConflict, "a permission request is still being answered; try again")
+	case len(s.queue) > 0:
+		return newError(http.StatusConflict, "the task has queued prompts; send or clear them first")
+	}
+	return nil
+}
+
+// readOnlyLocked refuses changes to a settled or archived Task.
+func (s *webSession) readOnlyLocked() error {
+	switch s.stage {
+	case StageSettled:
+		return newError(http.StatusConflict, "the task is settled; reopen it first")
+	case StageArchived:
+		return newError(http.StatusConflict, "the task is archived")
+	}
+	return nil
+}
+
+func stageName(stage string) string {
+	if stage == StageActive {
+		return "active"
+	}
+	return stage
+}
+
+func stageVerb(stage string) string {
+	switch stage {
+	case StageSettled:
+		return "settled"
+	case StageArchived:
+		return "archived"
+	}
+	return "reopened"
 }
 
 // Rename sets the Task's typed name. An empty name shows the provider title
@@ -2019,6 +2162,9 @@ func (m *Manager) Rename(id, name string) (SessionSummary, error) {
 	s := m.sessions[id]
 	if s == nil {
 		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+	}
+	if s.stage == StageArchived {
+		return SessionSummary{}, s.readOnlyLocked()
 	}
 	before := m.summaryLocked(s)
 	s.name = clean
@@ -2041,6 +2187,9 @@ func (m *Manager) SetModel(id, model string) (SessionSummary, error) {
 	case s.removed:
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+	case s.stage != StageActive:
+		m.mu.Unlock()
+		return SessionSummary{}, s.readOnlyLocked()
 	case !m.selectableLocked(s.provider, model):
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusBadRequest, "model %q is not offered by this provider", model)
@@ -2210,6 +2359,9 @@ func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
 	s := m.sessions[id]
 	if s == nil {
 		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+	}
+	if err := s.readOnlyLocked(); err != nil {
+		return SessionSummary{}, err
 	}
 	before := m.summaryLocked(s)
 	s.mode = md

@@ -39,6 +39,14 @@ const (
 	SubmissionCancelled = "cancelled"
 )
 
+// Task stages. A Task is active until the user settles or archives it;
+// archived is final.
+const (
+	StageActive   = ""
+	StageSettled  = "settled"
+	StageArchived = "archived"
+)
+
 // Prompt modes. While a turn runs, send is refused, queue holds the prompt
 // until the turn completes, and steer adds it to the running turn. While the
 // Task is idle, all three send it.
@@ -113,6 +121,11 @@ type SessionSummary struct {
 	// Mode is safe or yolo. A yolo Task's permission requests are allowed
 	// once without asking; questions still wait for the user.
 	Mode string `json:"mode"`
+	// Stage is omitted for an active Task, otherwise StageSettled or
+	// StageArchived; SettledAt and ArchivedAt say when.
+	Stage      string    `json:"stage,omitempty"`
+	SettledAt  time.Time `json:"settled_at,omitzero"`
+	ArchivedAt time.Time `json:"archived_at,omitzero"`
 }
 
 // SessionDetail is a summary plus the retained main-agent transcript,

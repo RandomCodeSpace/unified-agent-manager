@@ -103,7 +103,7 @@ func TestProjectsAddRenameAndOnePerDirectory(t *testing.T) {
 	}
 }
 
-func TestRemoveProjectRefusedWhileBusyThenRemovesTasksOnly(t *testing.T) {
+func TestRemoveProjectRefusedUntilEveryTaskArchivedThenRemovesTasksOnly(t *testing.T) {
 	m, prov, st := newTestManager(t)
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "keep.txt")
@@ -136,6 +136,21 @@ func TestRemoveProjectRefusedWhileBusyThenRemovesTasksOnly(t *testing.T) {
 		t.Fatalf("remove with a task awaiting permission = %v, want 409", err)
 	}
 	if _, err := m.Answer(busyTask.ID, "p1", agentapi.Answer{Decision: "deny"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Archive(idleTask.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RemoveProject(project); statusOf(err) != http.StatusConflict {
+		t.Fatalf("remove with an active task = %v, want 409", err)
+	}
+	if _, err := m.Settle(busyTask.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RemoveProject(project); statusOf(err) != http.StatusConflict {
+		t.Fatalf("remove with a settled task = %v, want 409", err)
+	}
+	if _, err := m.Archive(busyTask.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,7 +200,7 @@ func TestRemoveProjectRefusedWhileBusyThenRemovesTasksOnly(t *testing.T) {
 	}
 }
 
-func TestDeleteTaskRefusedWhileBusyAndNeverDeletesConversation(t *testing.T) {
+func TestDeleteTaskOnlyOnceArchivedAndNeverDeletesConversation(t *testing.T) {
 	m, prov, st := newTestManager(t)
 	sum, conv := createSession(t, m, prov)
 	rid := mustUUID(t)
@@ -196,6 +211,18 @@ func TestDeleteTaskRefusedWhileBusyAndNeverDeletesConversation(t *testing.T) {
 		t.Fatalf("delete while working = %v, want 409", err)
 	}
 	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if err := m.Delete(sum.ID); statusOf(err) != http.StatusConflict {
+		t.Fatalf("delete an active task = %v, want 409", err)
+	}
+	if _, err := m.Settle(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(sum.ID); statusOf(err) != http.StatusConflict {
+		t.Fatalf("delete a settled task = %v, want 409", err)
+	}
+	if _, err := m.Archive(sum.ID); err != nil {
+		t.Fatal(err)
+	}
 	sub, _, err := m.Subscribe("")
 	if err != nil {
 		t.Fatal(err)
@@ -297,6 +324,11 @@ func TestStartAssignsLegacyTasksToProjectsOnce(t *testing.T) {
 
 	// Removing a Project removes its Tasks, so a restart has nothing to
 	// reassign and the Project stays gone. A second start changes nothing.
+	for _, id := range []string{c, orphan} {
+		if _, err := m.Archive(id); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := m.RemoveProject(byDir[lone].ID); err != nil {
 		t.Fatal(err)
 	}
@@ -872,6 +904,15 @@ func TestProjectAndTaskRoutes(t *testing.T) {
 	}
 	if w := ts.do(http.MethodDelete, patch, `{"x":1}`, auth, withHeader("Content-Type", "text/plain")); w.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("DELETE with a text body = %d, want 415", w.Code)
+	}
+	if code := del(patch, auth); code != http.StatusConflict {
+		t.Fatalf("DELETE an active task = %d, want 409", code)
+	}
+	if code := del("/api/projects/"+project.ID, auth); code != http.StatusConflict {
+		t.Fatalf("DELETE a project with an active task = %d, want 409", code)
+	}
+	if w := ts.do(http.MethodPost, patch+"/archive", "", auth); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"stage":"archived"`) {
+		t.Fatalf("archive = %d %s", w.Code, w.Body)
 	}
 	if code := del(patch, auth); code != http.StatusNoContent {
 		t.Fatalf("DELETE task = %d, want 204", code)

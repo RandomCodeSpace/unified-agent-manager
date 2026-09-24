@@ -83,7 +83,7 @@ func TestOlderWebConfigRoundTripsWithoutProjectFields(t *testing.T) {
 	if cfg.WebProjects != nil {
 		t.Fatalf("projects appeared from nowhere: %+v", cfg.WebProjects)
 	}
-	if web := cfg.Sessions["copilot:0f0e0d0c"].Web; web == nil || web.ProjectID != "" || web.Model != "" || web.Title != "" || web.Turn != "completed" {
+	if web := cfg.Sessions["copilot:0f0e0d0c"].Web; web == nil || web.ProjectID != "" || web.Model != "" || web.Title != "" || web.Turn != "completed" || web.Stage != "" || !web.SettledAt.IsZero() {
 		t.Fatalf("web state = %+v", web)
 	}
 	if err := s.Save(cfg); err != nil {
@@ -93,7 +93,7 @@ func TestOlderWebConfigRoundTripsWithoutProjectFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"web_projects"`, `"project_id"`, `"model"`, `"title"`} {
+	for _, key := range []string{`"web_projects"`, `"project_id"`, `"model"`, `"title"`, `"stage"`, `"settled_at"`, `"archived_at"`} {
 		if strings.Contains(string(data), key) {
 			t.Fatalf("older config gained %s on save: %s", key, data)
 		}
@@ -112,7 +112,10 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 		cfg.Sessions["copilot:0f0e0d0c"] = SessionRecord{
 			ID: "0f0e0d0c-1111-4222-8333-444455556666", Agent: "copilot", Mode: ModeSafe, Workdir: "/tmp/repo",
 			Status: StatusActive, Surface: SurfaceWeb, ProviderSessionID: "conv_1",
-			Web: &WebState{Turn: "idle", UpdatedAt: now, ProjectID: project.ID, Model: "gpt-5-mini", Title: "Fix the build"},
+			Web: &WebState{
+				Turn: "idle", UpdatedAt: now, ProjectID: project.ID, Model: "gpt-5-mini", Title: "Fix the build",
+				Stage: "archived", SettledAt: now.Add(-time.Hour), ArchivedAt: now,
+			},
 		}
 		return nil
 	}); err != nil {
@@ -126,7 +129,8 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 		t.Fatalf("project = %+v, want %+v", got, project)
 	}
 	web := cfg.Sessions["copilot:0f0e0d0c"].Web
-	if web == nil || web.ProjectID != project.ID || web.Model != "gpt-5-mini" || web.Title != "Fix the build" {
+	if web == nil || web.ProjectID != project.ID || web.Model != "gpt-5-mini" || web.Title != "Fix the build" ||
+		web.Stage != "archived" || !web.SettledAt.Equal(now.Add(-time.Hour)) || !web.ArchivedAt.Equal(now) {
 		t.Fatalf("web state = %+v", web)
 	}
 	data, err := os.ReadFile(s.Path())
