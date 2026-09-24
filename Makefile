@@ -5,7 +5,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 
-.PHONY: all build install run test test-e2e test-e2e-real cover lint tidy clean test-e2e-dashboard
+.PHONY: all build install run test test-e2e test-e2e-real cover lint tidy clean test-e2e-dashboard web
 
 all: build
 
@@ -15,6 +15,12 @@ build:
 install:
 	mkdir -p $(GOBIN)
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w $(LDFLAGS)" -o $(GOBIN)/$(BINARY) $(CMD)
+
+# The web interface is a Vite build embedded into the binary from
+# internal/web/dist. Node.js is needed only to rebuild it, never to run uam.
+web:
+	npm --prefix web ci
+	npm --prefix web run build
 
 run: build
 	./bin/$(BINARY)

@@ -190,6 +190,12 @@ func (s *Service) liveSessions(ctx context.Context) (map[string]adapter.Session,
 
 func (s *Service) mergeStoredSessions(live map[string]adapter.Session, cfg store.Config, now time.Time) {
 	for key, rec := range cfg.Sessions {
+		// Records owned by another surface (the web service) have no terminal
+		// host; listing them here would let attach/resume/stop take over a
+		// conversation the other owner drives.
+		if rec.Surface != "" {
+			continue
+		}
 		if sess, ok := live[key]; ok {
 			live[key] = mergeStoredMetadata(sess, rec)
 			continue
@@ -779,7 +785,32 @@ func (s *Service) Find(ctx context.Context, id string) (adapter.Session, store.C
 	if match.ID != "" {
 		return match, cfg, nil
 	}
+	if surfaceRecordMatches(cfg, id) {
+		return adapter.Session{}, cfg, fmt.Errorf("session %q is managed by the web interface; open it with \"uam web\"", id)
+	}
 	return adapter.Session{}, cfg, fmt.Errorf("session %q not found", id)
+}
+
+// surfaceRecordMatches reports whether id names, exactly or as a unique
+// prefix, a record owned by another surface. Find uses it to explain why such
+// an id is not a terminal session instead of reporting it as missing.
+func surfaceRecordMatches(cfg store.Config, id string) bool {
+	if id == "" {
+		return false
+	}
+	matches := 0
+	for _, rec := range cfg.Sessions {
+		if rec.Surface == "" || rec.ID == "" {
+			continue
+		}
+		if rec.ID == id {
+			return true
+		}
+		if strings.HasPrefix(rec.ID, id) {
+			matches++
+		}
+	}
+	return matches == 1
 }
 
 // FindExact resolves the unique provider/session pair used by the TUI. Unlike
@@ -1116,6 +1147,9 @@ func retainedSessionCount(cfg store.Config, agentName, workdir string) int {
 	want := normalizedWorkspace(workdir)
 	count := 0
 	for _, candidate := range cfg.Sessions {
+		if candidate.Surface != "" {
+			continue
+		}
 		if strings.EqualFold(candidate.Agent, agentName) && normalizedWorkspace(candidate.Workdir) == want {
 			count++
 		}

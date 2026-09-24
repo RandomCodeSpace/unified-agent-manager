@@ -298,8 +298,35 @@ type SessionRecord struct {
 	PR               *PRRecord                `json:"pr,omitempty"`
 	Profile          string                   `json:"profile,omitempty"`
 	ProfileOverrides *SessionProfileOverrides `json:"profile_overrides,omitempty"`
+	// Surface names the owner of a record. Empty means a terminal session host;
+	// SurfaceWeb means the web service. Terminal commands never list, attach,
+	// resume or prune records with a non-empty Surface, and the web service
+	// only opens its own, so neither takes over the other's conversations.
+	Surface string `json:"surface,omitempty"`
+	// Web is the web service's durable state for a SurfaceWeb record.
+	Web *WebState `json:"web,omitempty"`
 
 	unknown map[string]json.RawMessage
+}
+
+// SurfaceWeb marks records owned by the `uam web` service.
+const SurfaceWeb = "web"
+
+// WebState is the small durable part of a web session. Transcripts stay with
+// the provider; only the last known turn state and the last prompt request
+// outcome are kept so a restarted service can report them.
+type WebState struct {
+	// Turn is the last known session state (for example "working" or
+	// "completed").
+	Turn string `json:"turn,omitempty"`
+	// RequestID is the client-generated ID of the last prompt submission.
+	RequestID string `json:"request_id,omitempty"`
+	// RequestStatus is that submission's outcome: accepted, rejected or
+	// uncertain.
+	RequestStatus string    `json:"request_status,omitempty"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	// Detail is a sanitized, short explanation of the state (usually an error).
+	Detail string `json:"detail,omitempty"`
 }
 
 type sessionRecordAlias SessionRecord
@@ -324,6 +351,8 @@ var knownSessionRecordFields = map[string]struct{}{
 	"pr":                          {},
 	"profile":                     {},
 	"profile_overrides":           {},
+	"surface":                     {},
+	"web":                         {},
 	"client_id":                   {},
 	"controller_id":               {},
 	"requested_role":              {},
@@ -934,9 +963,15 @@ func (s *Store) TryRecordSessionExit(exit SessionExit) (bool, error) {
 	return matched, err
 }
 
+// PruneOld drops long-stale terminal records whose session is gone. Records
+// owned by another surface are never pruned here: their liveness is not a
+// terminal session host, so the probe cannot speak for them.
 func PruneOld(cfg *Config, maxAge time.Duration, exists func(string) bool) {
 	cutoff := time.Now().Add(-maxAge)
 	for key, rec := range cfg.Sessions {
+		if rec.Surface != "" {
+			continue
+		}
 		if rec.LastSeenAt.Before(cutoff) && !exists(rec.SessionName) {
 			delete(cfg.Sessions, key)
 		}

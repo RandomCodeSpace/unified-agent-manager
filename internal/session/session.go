@@ -273,6 +273,11 @@ func ProcAlive(pid int) bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
+// ProcStartTime returns a stable identity for pid derived from its kernel
+// start time, or 0 when it cannot be read. Other detached uam services use it
+// to tell their own process apart from a recycled PID.
+func ProcStartTime(pid int) int64 { return procStartTime(pid) }
+
 // procAliveWithStart is ProcAlive hardened against PID reuse: when a start
 // identity was recorded AND the live process's identity is readable, they
 // must match. This intentionally remains permissive for display compatibility:

@@ -1,0 +1,91 @@
+package store
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestWebRecordRoundTripKeepsSurfaceStateAndUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(filepath.Join(dir, "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"sessions":{"copilot:0f0e0d0c":{
+		"id":"0f0e0d0c-1111-4222-8333-444455556666","agent":"copilot","name":"web task","mode":"safe","workdir":"/tmp/repo",
+		"tmux_session":"","created_at":"` + now.Format(time.RFC3339) + `","last_seen_at":"` + now.Format(time.RFC3339) + `",
+		"pinned":false,"group":"","sort_index":0,"status":"active","provider_session_id":"conv_1",
+		"surface":"web","web":{"turn":"working","request_id":"req-1","request_status":"accepted","updated_at":"` + now.Format(time.RFC3339) + `","detail":"short"},
+		"future_field":{"kept":true}}}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := cfg.Sessions["copilot:0f0e0d0c"]
+	if rec.Surface != SurfaceWeb || rec.Web == nil {
+		t.Fatalf("web fields not loaded: %+v", rec)
+	}
+	if rec.Web.Turn != "working" || rec.Web.RequestID != "req-1" || rec.Web.RequestStatus != "accepted" || rec.Web.Detail != "short" || !rec.Web.UpdatedAt.Equal(now) {
+		t.Fatalf("web state = %+v", *rec.Web)
+	}
+	if err := s.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Sessions map[string]map[string]json.RawMessage `json:"sessions"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	fields := decoded.Sessions["copilot:0f0e0d0c"]
+	if string(fields["surface"]) != `"web"` {
+		t.Fatalf("surface not persisted: %s", data)
+	}
+	var web WebState
+	if err := json.Unmarshal(fields["web"], &web); err != nil || web.RequestStatus != "accepted" || web.Turn != "working" {
+		t.Fatalf("web state not persisted: %s (%v)", fields["web"], err)
+	}
+	var future map[string]bool
+	if err := json.Unmarshal(fields["future_field"], &future); err != nil || !future["kept"] {
+		t.Fatalf("unknown record field did not round-trip: %s", data)
+	}
+}
+
+func TestTerminalRecordOmitsWebFields(t *testing.T) {
+	data, err := json.Marshal(SessionRecord{ID: "abc", Agent: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"surface"`) || strings.Contains(string(data), `"web"`) {
+		t.Fatalf("terminal record gained web keys: %s", data)
+	}
+}
+
+func TestPruneOldNeverDeletesSurfaceRecords(t *testing.T) {
+	old := time.Now().Add(-365 * 24 * time.Hour)
+	cfg := DefaultConfig()
+	cfg.Sessions["claude:dead0001"] = SessionRecord{ID: "dead0001", Agent: "claude", SessionName: "uam-claude-dead0001", LastSeenAt: old}
+	cfg.Sessions["copilot:web00001"] = SessionRecord{ID: "web00001", Agent: "copilot", Surface: SurfaceWeb, LastSeenAt: old}
+	cfg.Sessions["opencode:future01"] = SessionRecord{ID: "future01", Agent: "opencode", Surface: "future", LastSeenAt: old}
+	PruneOld(&cfg, time.Hour, func(string) bool { return false })
+	if _, ok := cfg.Sessions["claude:dead0001"]; ok {
+		t.Fatal("stale terminal record should be pruned")
+	}
+	for _, key := range []string{"copilot:web00001", "opencode:future01"} {
+		if _, ok := cfg.Sessions[key]; !ok {
+			t.Fatalf("record %s with a surface was pruned", key)
+		}
+	}
+}

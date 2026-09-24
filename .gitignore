@@ -16,3 +16,4 @@ coverage.*
 *.local.md
 graphify_out/
 graphify-out/
+web/node_modules/

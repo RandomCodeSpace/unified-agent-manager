@@ -1,0 +1,756 @@
+package copilot
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+)
+
+type fakeClient struct {
+	mu        sync.Mutex
+	started   int
+	stopped   int
+	forced    int
+	pingErr   error
+	resumeErr error
+	sessions  []*fakeSession
+	create    []*copilot.SessionConfig
+	resume    []*copilot.ResumeSessionConfig
+}
+
+func (f *fakeClient) Start(context.Context) error {
+	f.mu.Lock()
+	f.started++
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeClient) Stop() error { f.mu.Lock(); f.stopped++; f.mu.Unlock(); return nil }
+func (f *fakeClient) ForceStop()  { f.mu.Lock(); f.forced++; f.mu.Unlock() }
+
+func (f *fakeClient) Ping(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pingErr
+}
+
+func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig) (sdkSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := &fakeSession{id: cfg.SessionID, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest}
+	f.create = append(f.create, cfg)
+	f.sessions = append(f.sessions, s)
+	return s, nil
+}
+
+func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.ResumeSessionConfig) (sdkSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.resumeErr != nil {
+		return nil, f.resumeErr
+	}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest}
+	f.resume = append(f.resume, cfg)
+	f.sessions = append(f.sessions, s)
+	return s, nil
+}
+
+func (f *fakeClient) counts() (started, forced int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.started, f.forced
+}
+
+type fakeSession struct {
+	id      string
+	onEvent copilot.SessionEventHandler
+	askUser copilot.UserInputHandler
+	perm    copilot.PermissionHandlerFunc
+
+	mu           sync.Mutex
+	sent         []string
+	sendErr      error
+	events       []copilot.SessionEvent
+	answers      map[string]rpc.PermissionDecision
+	notPending   map[string]bool
+	disconnected bool
+}
+
+func (s *fakeSession) ID() string                  { return s.id }
+func (s *fakeSession) Abort(context.Context) error { return nil }
+
+func (s *fakeSession) Send(_ context.Context, prompt string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sendErr != nil {
+		return s.sendErr
+	}
+	s.sent = append(s.sent, prompt)
+	return nil
+}
+
+func (s *fakeSession) Events(context.Context) ([]copilot.SessionEvent, error) { return s.events, nil }
+
+func (s *fakeSession) RespondPermission(_ context.Context, id string, d rpc.PermissionDecision) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.answers == nil {
+		s.answers = map[string]rpc.PermissionDecision{}
+	}
+	s.answers[id] = d
+	return !s.notPending[id], nil
+}
+
+func (s *fakeSession) Disconnect() error {
+	s.mu.Lock()
+	s.disconnected = true
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *fakeSession) answer(id string) rpc.PermissionDecision {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.answers[id]
+}
+
+type recSink struct {
+	mu  sync.Mutex
+	evs []agentapi.Event
+}
+
+func (r *recSink) Emit(e agentapi.Event) {
+	r.mu.Lock()
+	r.evs = append(r.evs, e)
+	r.mu.Unlock()
+}
+
+func (r *recSink) all() []agentapi.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]agentapi.Event(nil), r.evs...)
+}
+
+func (r *recSink) last() agentapi.Event {
+	evs := r.all()
+	if len(evs) == 0 {
+		return agentapi.Event{}
+	}
+	return evs[len(evs)-1]
+}
+
+// interaction returns the latest emitted state of interaction id.
+func (r *recSink) interaction(id string) *agentapi.Interaction {
+	var got *agentapi.Interaction
+	for _, e := range r.all() {
+		if e.Kind == agentapi.EventInteraction && e.Interaction.ID == id {
+			got = e.Interaction
+		}
+	}
+	return got
+}
+
+func (r *recSink) question() *agentapi.Interaction {
+	var got *agentapi.Interaction
+	for _, e := range r.all() {
+		if e.Kind == agentapi.EventInteraction && e.Interaction.Kind == agentapi.InteractionQuestion {
+			got = e.Interaction
+		}
+	}
+	return got
+}
+
+func ev(id string, data rpc.SessionEventData) copilot.SessionEvent {
+	return copilot.SessionEvent{ID: id, Timestamp: time.Unix(100, 0), Data: data}
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+type webHarness struct {
+	p    *webProvider
+	fc   *fakeClient
+	fs   *fakeSession
+	conv agentapi.Conversation
+	sink *recSink
+}
+
+func openWeb(t *testing.T) webHarness {
+	t.Helper()
+	fc := &fakeClient{}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	sink := &recSink{}
+	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: sink})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	return webHarness{p: p, fc: fc, fs: fc.sessions[0], conv: conv, sink: sink}
+}
+
+func TestWebOpenCreatesStreamingSessionWithoutApproveAll(t *testing.T) {
+	h := openWeb(t)
+	cfg := h.fc.create[0]
+	if h.conv.ID() != "s-1" || cfg.SessionID != "s-1" || cfg.WorkingDirectory != "/work" || cfg.Streaming == nil || !*cfg.Streaming {
+		t.Fatalf("create config = %+v, id %q", cfg, h.conv.ID())
+	}
+	if cfg.Model != "" || cfg.OnUserInputRequest == nil {
+		t.Fatalf("model %q / question handler %v", cfg.Model, cfg.OnUserInputRequest != nil)
+	}
+	d, err := cfg.OnPermissionRequest(&rpc.PermissionRequestShell{FullCommandText: "rm -rf /"}, copilot.PermissionInvocation{})
+	if _, ok := d.(*rpc.PermissionDecisionNoResult); !ok || err != nil {
+		t.Fatalf("SDK permission callback decided %T %v, want no result", d, err)
+	}
+	if caps := h.p.Capabilities(); !caps.Cancel || !caps.Permissions || !caps.Questions || !caps.History || caps.SessionDiff {
+		t.Fatalf("capabilities = %+v", caps)
+	}
+	if _, err := h.conv.Diff(context.Background()); !errors.Is(err, agentapi.ErrUnsupported) {
+		t.Fatalf("Diff err = %v", err)
+	}
+}
+
+func TestWebDeltasAndFinalMessageShareOneItem(t *testing.T) {
+	h := openWeb(t)
+	h.fs.onEvent(ev("e1", &rpc.AssistantMessageDeltaData{MessageID: "m1", DeltaContent: "Hel"}))
+	h.fs.onEvent(ev("e2", &rpc.AssistantMessageDeltaData{MessageID: "m1", DeltaContent: "lo"}))
+	h.fs.onEvent(ev("e3", &rpc.AssistantMessageData{MessageID: "m1", Content: "Hello"}))
+	evs := h.sink.all()
+	if len(evs) != 3 {
+		t.Fatalf("events = %+v", evs)
+	}
+	for i, text := range []string{"Hel", "lo"} {
+		if d := evs[i].Delta; evs[i].Kind != agentapi.EventDelta || d.ItemID != "m1" || d.Kind != agentapi.ItemAssistant || d.Text != text {
+			t.Fatalf("delta %d = %+v", i, evs[i])
+		}
+	}
+	if it := evs[2].Item; evs[2].Kind != agentapi.EventItem || it.ID != "m1" || it.Kind != agentapi.ItemAssistant || it.Text != "Hello" {
+		t.Fatalf("final = %+v", evs[2])
+	}
+}
+
+func TestWebToolEventsUpsertOneItem(t *testing.T) {
+	h := openWeb(t)
+	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash", Arguments: map[string]any{"command": "ls"}}))
+	h.fs.onEvent(ev("e2", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "a"}))
+	h.fs.onEvent(ev("e3", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: strings.Repeat("b", maxToolText)}))
+	h.fs.onEvent(ev("e4", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "done"}}))
+	h.fs.onEvent(ev("e5", &rpc.ToolExecutionStartData{ToolCallID: "t2", ToolName: "view"}))
+	h.fs.onEvent(ev("e6", &rpc.ToolExecutionCompleteData{ToolCallID: "t2", Error: &rpc.ToolExecutionCompleteError{Message: "no such file"}}))
+	evs := h.sink.all()
+	if len(evs) != 6 {
+		t.Fatalf("events = %d", len(evs))
+	}
+	want := []agentapi.ToolCall{
+		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`},
+		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`, Output: "a"},
+		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`, Output: "a" + strings.Repeat("b", maxToolText-1)},
+		{Name: "bash", Status: agentapi.ToolCompleted, Input: `{"command":"ls"}`, Output: "done"},
+		{Name: "view", Status: agentapi.ToolRunning},
+		{Name: "view", Status: agentapi.ToolFailed, Output: "no such file"},
+	}
+	for i, w := range want {
+		it := evs[i].Item
+		id := "t1"
+		if i >= 4 {
+			id = "t2"
+		}
+		if evs[i].Kind != agentapi.EventItem || it.ID != id || it.Kind != agentapi.ItemTool || *it.Tool != w {
+			t.Fatalf("event %d = %+v tool %+v, want %+v", i, it, it.Tool, w)
+		}
+	}
+}
+
+func TestWebTurnStates(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	turn := func() agentapi.Turn {
+		t.Helper()
+		e := h.sink.last()
+		if e.Kind != agentapi.EventTurn {
+			t.Fatalf("last event = %+v, want turn", e)
+		}
+		return *e.Turn
+	}
+	if err := h.conv.Send(ctx, "hi"); err != nil || turn().State != agentapi.TurnWorking {
+		t.Fatalf("Send err %v", err)
+	}
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
+	if turn().State != agentapi.TurnCancelled {
+		t.Fatalf("aborted idle = %+v", turn())
+	}
+	_ = h.conv.Send(ctx, "again")
+	h.fs.onEvent(ev("err1", &rpc.SessionErrorData{ErrorType: "rate_limit", Message: "rate\x1b[31m limited\nretry later"}))
+	notice := h.sink.last()
+	if notice.Kind != agentapi.EventItem || notice.Item.ID != "err1" || notice.Item.Kind != agentapi.ItemNotice {
+		t.Fatalf("error notice = %+v", notice)
+	}
+	h.fs.onEvent(ev("i2", &rpc.SessionIdleData{}))
+	if got := turn(); got.State != agentapi.TurnFailed || got.Error != "rate limited retry later" {
+		t.Fatalf("failed turn = %+v", got)
+	}
+	_ = h.conv.Send(ctx, "third")
+	h.fs.onEvent(ev("i3", &rpc.SessionIdleData{}))
+	if got := turn(); got.State != agentapi.TurnCompleted || got.Error != "" {
+		t.Fatalf("completed turn = %+v", got)
+	}
+	if strings.Join(h.fs.sent, ",") != "hi,again,third" {
+		t.Fatalf("sent = %v", h.fs.sent)
+	}
+}
+
+func TestWebSendFailureClassification(t *testing.T) {
+	h := openWeb(t)
+	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}
+	err := h.conv.Send(context.Background(), "p")
+	if err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		t.Fatalf("rejected send err = %v, want definite", err)
+	}
+	h.fs.sendErr = errors.New("CLI process exited: signal: killed")
+	if err := h.conv.Send(context.Background(), "p"); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		t.Fatalf("send after CLI exit err = %v, want uncertain", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := h.conv.Send(ctx, "p"); !errors.Is(err, context.Canceled) || errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		t.Fatalf("cancelled send err = %v", err)
+	}
+	for _, e := range h.sink.all() {
+		if e.Kind == agentapi.EventTurn {
+			t.Fatalf("failed sends reported a turn: %+v", e.Turn)
+		}
+	}
+}
+
+func shellRequest(id string) *rpc.PermissionRequestedData {
+	return &rpc.PermissionRequestedData{
+		RequestID:         id,
+		PermissionRequest: &rpc.PermissionRequestShell{FullCommandText: "rm -rf build"},
+		PromptRequest:     &rpc.PermissionPromptRequestCommands{FullCommandText: "rm -rf build", CanOfferSessionApproval: true, CommandIdentifiers: []string{"rm"}},
+	}
+}
+
+func TestWebPermissionWaitsForRespond(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	h.fs.onEvent(ev("e1", shellRequest("p1")))
+	in := h.sink.interaction("p1")
+	if in == nil || in.Kind != agentapi.InteractionPermission || in.State != agentapi.InteractionPending || !strings.Contains(in.Detail, "rm -rf build") {
+		t.Fatalf("interaction = %+v", in)
+	}
+	var ids []string
+	for _, o := range in.Options {
+		ids = append(ids, o.ID)
+	}
+	if strings.Join(ids, ",") != "approve_once,approve_session,reject" || !in.Options[2].Reject {
+		t.Fatalf("options = %+v", in.Options)
+	}
+	if h.fs.answer("p1") != nil {
+		t.Fatal("permission answered before Respond")
+	}
+	if err := h.conv.Respond(ctx, "p1", agentapi.Answer{Decision: "bogus"}); err == nil || errors.Is(err, agentapi.ErrInteractionGone) {
+		t.Fatalf("unknown decision err = %v", err)
+	}
+	if err := h.conv.Respond(ctx, "p1", agentapi.Answer{Decision: "approve_session"}); err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	d, ok := h.fs.answer("p1").(*rpc.PermissionDecisionApproveForSession)
+	if !ok {
+		t.Fatalf("decision = %T", h.fs.answer("p1"))
+	}
+	if a, ok := d.Approval.(*rpc.PermissionDecisionApproveForSessionApprovalCommands); !ok || strings.Join(a.CommandIdentifiers, ",") != "rm" {
+		t.Fatalf("session approval = %+v", d.Approval)
+	}
+	if in := h.sink.interaction("p1"); in.State != agentapi.InteractionAnswered || in.Resolution != "Allow for this session" {
+		t.Fatalf("answered interaction = %+v", in)
+	}
+	if err := h.conv.Respond(ctx, "p1", agentapi.Answer{Decision: "approve_once"}); !errors.Is(err, agentapi.ErrInteractionGone) {
+		t.Fatalf("second Respond err = %v", err)
+	}
+
+	// The CLI no longer waits: Respond reports gone and the interaction expires.
+	h.fs.onEvent(ev("e2", shellRequest("p2")))
+	h.fs.notPending = map[string]bool{"p2": true}
+	if err := h.conv.Respond(ctx, "p2", agentapi.Answer{Decision: "reject"}); !errors.Is(err, agentapi.ErrInteractionGone) {
+		t.Fatalf("stale Respond err = %v", err)
+	}
+	if in := h.sink.interaction("p2"); in.State != agentapi.InteractionExpired {
+		t.Fatalf("stale interaction = %+v", in)
+	}
+
+	// Resolved elsewhere (a hook or policy) ends the interaction here too.
+	h.fs.onEvent(ev("e3", shellRequest("p3")))
+	h.fs.onEvent(ev("e4", &rpc.PermissionCompletedData{RequestID: "p3", Result: &rpc.PermissionDeniedByRules{}}))
+	if in := h.sink.interaction("p3"); in.State != agentapi.InteractionRejected || in.Resolution != "Denied by rules" {
+		t.Fatalf("completed elsewhere = %+v", in)
+	}
+	if err := h.conv.Respond(ctx, "p3", agentapi.Answer{Decision: "approve_once"}); !errors.Is(err, agentapi.ErrInteractionGone) {
+		t.Fatalf("Respond after completion err = %v", err)
+	}
+
+	// Hook-resolved requests never reach the user; URL prompts get no session option.
+	h.fs.onEvent(ev("e5", &rpc.PermissionRequestedData{RequestID: "p4", ResolvedByHook: copilot.Bool(true), PromptRequest: &rpc.PermissionPromptRequestRead{Path: "/x"}}))
+	h.fs.onEvent(ev("e6", &rpc.PermissionRequestedData{RequestID: "p5", PromptRequest: &rpc.PermissionPromptRequestURL{URL: "https://example.com"}}))
+	if h.sink.interaction("p4") != nil || len(h.sink.interaction("p5").Options) != 2 {
+		t.Fatalf("hook/url interactions = %+v %+v", h.sink.interaction("p4"), h.sink.interaction("p5"))
+	}
+}
+
+func askAsync(fs *fakeSession, req copilot.UserInputRequest) <-chan userReply {
+	done := make(chan userReply, 1)
+	go func() {
+		resp, err := fs.askUser(req, copilot.UserInputInvocation{})
+		done <- userReply{resp: resp, err: err}
+	}()
+	return done
+}
+
+func TestWebQuestionAnswers(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	cases := []struct {
+		name     string
+		freeform *bool
+		answer   string
+		want     copilot.UserInputResponse
+	}{
+		{"choice", nil, "blue", copilot.UserInputResponse{Answer: "blue", WasFreeform: false}},
+		{"custom", copilot.Bool(true), "teal", copilot.UserInputResponse{Answer: "teal", WasFreeform: true}},
+	}
+	for _, tc := range cases {
+		done := askAsync(h.fs, copilot.UserInputRequest{Question: "Colour?", Choices: []string{"red", "blue"}, AllowFreeform: tc.freeform})
+		waitFor(t, "question", func() bool { q := h.sink.question(); return q != nil && q.State == agentapi.InteractionPending })
+		q := h.sink.question()
+		if q.Questions[0].Text != "Colour?" || !q.Questions[0].Custom || len(q.Questions[0].Choices) != 2 {
+			t.Fatalf("%s: question = %+v", tc.name, q)
+		}
+		if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{tc.answer}}}); err != nil {
+			t.Fatalf("%s: Respond: %v", tc.name, err)
+		}
+		if r := <-done; r.err != nil || r.resp != tc.want {
+			t.Fatalf("%s: handler got %+v %v, want %+v", tc.name, r.resp, r.err, tc.want)
+		}
+		if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"red"}}}); !errors.Is(err, agentapi.ErrInteractionGone) {
+			t.Fatalf("%s: second Respond err = %v", tc.name, err)
+		}
+	}
+
+	done := askAsync(h.fs, copilot.UserInputRequest{Question: "Pick", Choices: []string{"a"}, AllowFreeform: copilot.Bool(false)})
+	waitFor(t, "strict question", func() bool { q := h.sink.question(); return q.Questions[0].Text == "Pick" })
+	q := h.sink.question()
+	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"zzz"}}}); err == nil {
+		t.Fatal("free-form answer accepted for a choice-only question")
+	}
+	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Reject: true}); err != nil {
+		t.Fatalf("reject: %v", err)
+	}
+	if r := <-done; r.err == nil || r.resp.Answer != "" {
+		t.Fatalf("rejected question handler got %+v %v, want error", r.resp, r.err)
+	}
+	if h.sink.question().State != agentapi.InteractionRejected {
+		t.Fatalf("rejected question = %+v", h.sink.question())
+	}
+}
+
+func TestWebCloseReleasesPendingInteractions(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	h.fs.onEvent(ev("e1", shellRequest("p1")))
+	done := askAsync(h.fs, copilot.UserInputRequest{Question: "Continue?"})
+	waitFor(t, "question", func() bool { return h.sink.question() != nil })
+
+	if err := h.conv.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if r := <-done; r.err == nil || r.resp.Answer != "" {
+		t.Fatalf("question handler got %+v %v, want error", r.resp, r.err)
+	}
+	if _, ok := h.fs.answer("p1").(*rpc.PermissionDecisionUserNotAvailable); !ok {
+		t.Fatalf("permission decision on close = %T", h.fs.answer("p1"))
+	}
+	if h.sink.interaction("p1").State != agentapi.InteractionExpired || h.sink.question().State != agentapi.InteractionExpired {
+		t.Fatalf("interactions after close = %+v %+v", h.sink.interaction("p1"), h.sink.question())
+	}
+	if !h.fs.disconnected {
+		t.Fatal("session not disconnected")
+	}
+	n := len(h.sink.all())
+	h.fs.onEvent(ev("late", &rpc.AssistantMessageDeltaData{MessageID: "m", DeltaContent: "x"}))
+	if len(h.sink.all()) != n {
+		t.Fatal("event emitted after Close")
+	}
+	if err := h.conv.Send(ctx, "p"); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("Send after Close err = %v", err)
+	}
+	if err := h.conv.Close(ctx); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+func TestWebWatchdogFailureEndsConversationsAndResetsClient(t *testing.T) {
+	var mu sync.Mutex
+	var clients []*fakeClient
+	p := newWebProvider(func() (sdkClient, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		c := &fakeClient{}
+		clients = append(clients, c)
+		return c, nil
+	}, 5*time.Millisecond)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	ctx := context.Background()
+	s1, s2 := &recSink{}, &recSink{}
+	c1, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "a", Events: s1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Open(ctx, agentapi.OpenRequest{ConversationID: "b", Events: s2}); err != nil {
+		t.Fatal(err)
+	}
+	first := clients[0]
+	fs1 := first.sessions[0]
+	fs1.onEvent(ev("e1", shellRequest("p1")))
+	done := askAsync(fs1, copilot.UserInputRequest{Question: "Q"})
+	waitFor(t, "question", func() bool { return s1.question() != nil })
+
+	first.mu.Lock()
+	first.pingErr = errors.New("CLI process exited: exit status 1\nstderr: \x1b[31mboom")
+	first.mu.Unlock()
+
+	for _, s := range []*recSink{s1, s2} {
+		waitFor(t, "exit event", func() bool { return s.last().Kind == agentapi.EventExit })
+		if msg := s.last().Error; !strings.Contains(msg, "Copilot CLI stopped") || strings.ContainsAny(msg, "\x1b\n") {
+			t.Fatalf("exit reason = %q", msg)
+		}
+	}
+	if r := <-done; r.err == nil {
+		t.Fatalf("question released with answer %+v", r.resp)
+	}
+	if s1.interaction("p1").State != agentapi.InteractionExpired || fs1.answer("p1") != nil {
+		t.Fatalf("permission after failure = %+v decision %v", s1.interaction("p1"), fs1.answer("p1"))
+	}
+	waitFor(t, "force stop", func() bool { _, forced := first.counts(); return forced == 1 })
+	if err := c1.Send(ctx, "p"); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("Send after failure err = %v", err)
+	}
+
+	if _, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "c", Events: &recSink{}}); err != nil {
+		t.Fatalf("Open after failure: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(clients) != 2 || clients[1].started != 1 || len(first.sessions) != 2 {
+		t.Fatalf("clients %d, second started %d, first sessions %d", len(clients), clients[1].started, len(first.sessions))
+	}
+	for _, s := range append(first.sessions, clients[1].sessions...) {
+		if len(s.sent) != 0 {
+			t.Fatalf("prompt resent: %v", s.sent)
+		}
+	}
+}
+
+func TestWebReopen(t *testing.T) {
+	fc := &fakeClient{resumeErr: errors.New("failed to resume session: JSON-RPC Error -32603: Request session.resume failed with message: Failed to load session events: Session not found: gone")}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	ctx := context.Background()
+	if _, err := p.Open(ctx, agentapi.OpenRequest{ConversationID: "gone", Events: &recSink{}}); !errors.Is(err, agentapi.ErrConversationNotFound) {
+		t.Fatalf("missing conversation err = %v", err)
+	}
+	if len(fc.create) != 0 {
+		t.Fatal("missing conversation was replaced by a new one")
+	}
+	fc.resumeErr = nil
+	conv, err := p.Open(ctx, agentapi.OpenRequest{ConversationID: "c-7", Workdir: "/w", Events: &recSink{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := fc.resume[0]
+	if conv.ID() != "c-7" || cfg.WorkingDirectory != "/w" || cfg.ContinuePendingWork == nil || *cfg.ContinuePendingWork || cfg.Streaming == nil || !*cfg.Streaming || cfg.Model != "" {
+		t.Fatalf("resume config = %+v", cfg)
+	}
+	if cfg.OnPermissionRequest == nil || cfg.OnUserInputRequest == nil || cfg.OnEvent == nil {
+		t.Fatal("resume lost its handlers")
+	}
+}
+
+func TestWebHistory(t *testing.T) {
+	h := openWeb(t)
+	eph := func(e copilot.SessionEvent) copilot.SessionEvent { e.Ephemeral = copilot.Bool(true); return e }
+	msgID := "u1"
+	h.fs.events = []copilot.SessionEvent{
+		ev("e1", &rpc.UserMessageData{Content: "fix it", MessageID: &msgID}),
+		ev("e2", &rpc.AssistantReasoningData{ReasoningID: "r1", Content: "thinking"}),
+		eph(ev("e3", &rpc.AssistantMessageDeltaData{MessageID: "m1", DeltaContent: "Do"})),
+		ev("e4", &rpc.AssistantMessageData{MessageID: "m1", Content: "Done."}),
+		ev("e5", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "edit"}),
+		eph(ev("e6", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "…"})),
+		ev("e7", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "ok"}}),
+		ev("e8", &rpc.AssistantMessageData{MessageID: "m2"}),
+		ev("e9", &rpc.SessionErrorData{Message: "quota"}),
+		ev("e10", &rpc.SessionIdleData{}),
+	}
+	items, err := h.conv.History(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, it := range items {
+		s := string(it.Kind) + ":" + it.ID + ":" + it.Text
+		if it.Tool != nil {
+			s += string(it.Tool.Status) + "/" + it.Tool.Output
+		}
+		got = append(got, s)
+	}
+	want := "user:u1:fix it|reasoning:reasoning:r1:thinking|assistant:m1:Done.|tool:t1:completed/ok|notice:e9:Error: quota"
+	if strings.Join(got, "|") != want {
+		t.Fatalf("history =\n%s\nwant\n%s", strings.Join(got, "|"), want)
+	}
+	if len(h.sink.all()) != 0 {
+		t.Fatal("History emitted events")
+	}
+}
+
+func TestWebCheck(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	p := newWebProvider(nil, time.Hour)
+	ctx := context.Background()
+	if err := p.Check(ctx); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("missing CLI err = %v", err)
+	}
+	script := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "copilot"), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script("#!/bin/sh\necho 'GitHub Copilot CLI 1.0.88.'\n")
+	if err := p.Check(ctx); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	script("#!/bin/sh\necho 'something else'\n")
+	if err := p.Check(ctx); err == nil {
+		t.Fatal("Check accepted output without a version")
+	}
+	script("#!/bin/sh\necho 'bad flag' >&2; exit 2\n")
+	if err := p.Check(ctx); err == nil || !strings.Contains(err.Error(), "bad flag") {
+		t.Fatalf("failing CLI err = %v", err)
+	}
+	script("#!/usr/bin/env node\n")
+	if err := p.Check(ctx); err == nil || !strings.Contains(err.Error(), "node is not on PATH") {
+		t.Fatalf("node shim without node err = %v", err)
+	}
+}
+
+// TestWebRealCopilotCreateWithoutPrompt starts the installed CLI and opens a
+// conversation without sending anything, so no model call is made.
+func TestWebRealCopilotCreateWithoutPrompt(t *testing.T) {
+	if os.Getenv("UAM_WEB_REAL_COPILOT") != "1" {
+		t.Skip("set UAM_WEB_REAL_COPILOT=1 to start the installed copilot CLI")
+	}
+	// A private COPILOT_HOME keeps the test's session out of ~/.copilot.
+	t.Setenv("COPILOT_HOME", t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	p := NewWebProvider()
+	if err := p.Check(ctx); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	id := testUUID(t)
+	sink := &recSink{}
+	conv, err := p.Open(ctx, agentapi.OpenRequest{SessionID: id, Workdir: t.TempDir(), Title: "uam web test", Events: sink})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if conv.ID() != id {
+		t.Fatalf("conversation id %q, want %q", conv.ID(), id)
+	}
+	if _, err := p.Open(ctx, agentapi.OpenRequest{ConversationID: testUUID(t), Workdir: t.TempDir(), Events: &recSink{}}); !errors.Is(err, agentapi.ErrConversationNotFound) {
+		t.Fatalf("reopen of unknown id err = %v", err)
+	}
+	procs := cliProcesses(t)
+	if len(procs) != 2 { // npm node shim and the native CLI it runs
+		t.Logf("CLI processes before shutdown: %v", procs)
+	}
+	if err := conv.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := p.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	for _, pid := range procs {
+		waitFor(t, fmt.Sprintf("CLI process %d to exit", pid), func() bool { return syscall.Kill(pid, 0) != nil })
+	}
+	for _, e := range sink.all() {
+		if e.Kind == agentapi.EventExit {
+			t.Fatalf("unexpected exit event: %+v", e)
+		}
+	}
+}
+
+func testUUID(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// cliProcesses lists the headless CLI processes this test process started,
+// including the native binary the npm shim runs as its child.
+func cliProcesses(t *testing.T) []int {
+	t.Helper()
+	out, err := exec.Command("ps", "-eo", "pid=,ppid=,args=").Output()
+	if err != nil {
+		t.Fatalf("ps: %v", err)
+	}
+	parents := map[int]bool{os.Getpid(): true}
+	var pids []int
+	for range 2 {
+		for _, line := range strings.Split(string(out), "\n") {
+			f := strings.Fields(line)
+			if len(f) < 3 || !strings.Contains(line, "--headless --no-auto-update --stdio") {
+				continue
+			}
+			pid, _ := strconv.Atoi(f[0])
+			ppid, _ := strconv.Atoi(f[1])
+			if parents[ppid] && !parents[pid] {
+				parents[pid] = true
+				pids = append(pids, pid)
+			}
+		}
+	}
+	return pids
+}
+
+func TestExitTextDropsWrapperStderr(t *testing.T) {
+	err := errors.New("CLI process exited: signal: killed\nstderr: Error: no platform package found. Reinstall")
+	if got := exitText(err); got != "CLI process exited: signal: killed" {
+		t.Fatalf("exitText = %q", got)
+	}
+}

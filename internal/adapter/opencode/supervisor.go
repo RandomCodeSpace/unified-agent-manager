@@ -47,6 +47,9 @@ type supervisorOptions struct {
 	Yolo              bool
 	RuntimeDir        string
 	InitialPrompt     string
+	// ParentDeathSignal asks the kernel to signal the server when uam dies
+	// (Linux only). The web provider sets it; the terminal supervisor does not.
+	ParentDeathSignal bool
 }
 
 func validOpenCodeSessionID(id string) bool {
@@ -530,6 +533,9 @@ func startOpenCodeServerAttempt(opts supervisorOptions, env []string, password s
 	command.Env = env
 	command.Stdout = logs
 	command.Stderr = logs
+	if opts.ParentDeathSignal {
+		setParentDeathSignal(command)
+	}
 	process, err := startManagedProcess(command)
 	if err != nil {
 		return nil, true, sanitizedSupervisorError("start OpenCode server", err, password)
@@ -622,19 +628,28 @@ func selectRootSession(ctx context.Context, opts supervisorOptions, client *apiC
 	if err != nil {
 		return sessionInfo{}, err
 	}
-	if !validOpenCodeSessionID(root.ID) {
-		return sessionInfo{}, fmt.Errorf("OpenCode returned an invalid session ID")
-	}
-	if opts.ProviderSessionID != "" && root.ID != opts.ProviderSessionID {
-		return sessionInfo{}, fmt.Errorf("OpenCode exact resume returned a different session ID")
-	}
-	if root.ParentID != "" {
-		return sessionInfo{}, fmt.Errorf("OpenCode session %s is not a root session", root.ID)
-	}
-	if root.Directory != opts.Directory {
-		return sessionInfo{}, fmt.Errorf("OpenCode session %s belongs to a different directory", root.ID)
+	if err := validateRootSession(root, opts.ProviderSessionID, opts.Directory); err != nil {
+		return sessionInfo{}, err
 	}
 	return root, nil
+}
+
+// validateRootSession checks that root is the exact requested root session
+// (any root when requestedID is empty) of directory.
+func validateRootSession(root sessionInfo, requestedID, directory string) error {
+	if !validOpenCodeSessionID(root.ID) {
+		return fmt.Errorf("OpenCode returned an invalid session ID")
+	}
+	if requestedID != "" && root.ID != requestedID {
+		return fmt.Errorf("OpenCode exact resume returned a different session ID")
+	}
+	if root.ParentID != "" {
+		return fmt.Errorf("OpenCode session %s is not a root session", root.ID)
+	}
+	if root.Directory != directory {
+		return fmt.Errorf("OpenCode session %s belongs to a different directory", root.ID)
+	}
+	return nil
 }
 
 func terminateAndReap(processes ...*managedProcess) {
