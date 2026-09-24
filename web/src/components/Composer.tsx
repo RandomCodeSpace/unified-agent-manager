@@ -220,7 +220,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const noContext = contextReason(selectedModel, !!session.capabilities.context_size);
   // Neither can change (the Auto model): the picker shows one word and says why, instead of "Default · Default".
   const fixedTuning = !!noEffort && !!noContext;
-  const tuningLabel = fixedTuning ? 'Default' : `${effort || 'Default'} · ${contextLabel}`;
+  const tuningLabel = fixedTuning ? 'Default' : [noEffort ? '' : effort || 'Default', noContext ? '' : contextLabel].filter(Boolean).join(' · ');
   const settingsLocked = live || !!busy || locked;
   const autopilot = session.execution?.mode === 'autopilot' || session.execution?.objective?.status === 'active';
   const mode = session.mode ?? 'safe';

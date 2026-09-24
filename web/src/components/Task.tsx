@@ -4,6 +4,7 @@ import { LIVE, api, describeError, readOnly, stageLabel, taskName, type Backgrou
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
+import { foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
 import { Chip } from './ui/chip';
@@ -203,6 +204,10 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
   }
   const cards = [...session.interactions.filter((i) => i.state === 'pending'), ...lingering.filter((i) => !session.interactions.some((x) => x.id === i.id && x.state === 'pending'))];
 
+  // The provider's own notice about a failure already stands in the transcript: the failed line is not repeated under it.
+  const failure = session.state === 'failed' ? session.state_detail?.toLowerCase() ?? '' : '';
+  const noticed = !!failure && foregroundItems(session.items).some((i) => i.kind === 'notice' && (i.text ?? '').toLowerCase().includes(failure));
+
   const name = taskName(session);
   const fileCount = changes?.supported ? changes.files.length : null;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
@@ -228,13 +233,6 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
                 >
                   <TaskTitle session={session} />
                 </h1>
-                {renamable && (
-                  <Tip label="Rename">
-                    <Button size="icon" aria-label="Rename task" className="text-muted opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
-                      <Pencil />
-                    </Button>
-                  </Tip>
-                )}
               </>
             )}
             {readOnly(session) ? (
@@ -243,6 +241,14 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               <StateMark state={session.state} label title={detail} className="shrink-0" />
             )}
             {busy && <Spinner className="shrink-0" />}
+            {/* The pencil takes no room until the title is hovered or it is focused, so the state chip sits by the title. */}
+            {renamable && !renaming && (
+              <Tip label="Rename">
+                <Button size="icon" aria-label="Rename task" className="-ml-1.5 w-0 min-w-0 overflow-hidden px-0 text-muted opacity-0 transition-[width,opacity,margin] duration-100 group-hover/title:ml-0 group-hover/title:w-7 group-hover/title:opacity-100 focus-visible:ml-0 focus-visible:w-7 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
+                  <Pencil />
+                </Button>
+              </Tip>
+            )}
           </div>
           {/* The project strip (DESIGN.md D3): the branch, then Changes, beside the title. */}
           {project?.branch && (
@@ -313,7 +319,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               </Collapse>
             ))}
             {session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
-            {session.state === 'failed' && (
+            {session.state === 'failed' && !noticed && (
               <Note tone="error" role="alert">
                 Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}
               </Note>

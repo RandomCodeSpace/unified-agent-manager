@@ -266,9 +266,10 @@ function SubagentRow({
     <li>
       <ContextMenu.Root>
         <ContextMenu.Trigger render={<div className="group/agent relative rounded-sm transition-colors hover:bg-tint-hover" />}>
-          <button type="button" className="flex w-full flex-col items-start gap-0.5 rounded-sm py-2 pr-20 pl-3 text-left focus-visible:-outline-offset-2" onClick={onOpen} title={s.description || undefined}>
+          <button type="button" className="flex w-full flex-col items-start gap-0.5 rounded-sm py-2 pr-9 pl-3 text-left focus-visible:-outline-offset-2" onClick={onOpen} title={s.description || undefined}>
             <span className="flex w-full items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-ui font-medium text-ink" title={s.name || undefined}>{s.name || 'Subagent'}</span>
+              <AgentChip status={s.status} />
             </span>
             {s.description && <span className="line-clamp-2 text-caption text-muted">{s.description}</span>}
             <span className="flex flex-wrap items-center gap-x-2 text-caption text-muted">
@@ -277,8 +278,7 @@ function SubagentRow({
             </span>
             {stopping.error && <span className="text-caption text-error">{stopping.error}</span>}
           </button>
-          <span className="absolute top-2 right-1.5 flex items-center gap-0.5">
-            <AgentChip status={s.status} />
+          <span className="absolute top-2 right-1.5 flex items-center">
             <Menu.Root modal={false}>
               <Menu.Trigger render={<Button size="icon" aria-label={`Actions for subagent ${s.name}`} className="text-muted opacity-0 transition-opacity group-hover/agent:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
                 <Ellipsis />

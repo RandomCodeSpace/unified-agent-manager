@@ -134,6 +134,8 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
   };
   for (const entry of entries) {
     if (entry.interaction) {
+      // A pending request is the action card under the transcript; it is not drawn twice.
+      if (entry.interaction.state === 'pending') continue;
       flush();
       const ix = entry.interaction;
       const asked = questionOf(undefined, ix, ctx.live);
@@ -144,7 +146,8 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
     if (item.kind === 'tool') {
       const linked = ctx.approvals.get(item.id);
       const asked = questionOf(item.tool, linked?.filter((ix) => ix.kind === 'question').at(-1), ctx.live);
-      const node = special?.(item) ?? (asked ? <QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} /> : null);
+      // A question still waiting is the action card; its tool row stays in the run until it is answered.
+      const node = special?.(item) ?? (asked && asked.outcome !== 'pending' ? <QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} /> : null);
       if (!node) {
         run.push(item);
         continue;
@@ -185,7 +188,7 @@ function TurnStatus({ working = false, start, timing }: { working?: boolean; sta
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, label, className, children, extra = [] }: { text: string; label: string; className?: string; children: ReactNode; extra?: ActionItem[] }) {
+function Copyable({ text, label, className, side = 'right', children, extra = [] }: { text: string; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; children: ReactNode; extra?: ActionItem[] }) {
   const [copied, copy] = useCopied();
   const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: () => copy(text) }, ...extra];
   return (
@@ -197,7 +200,7 @@ function Copyable({ text, label, className, children, extra = [] }: { text: stri
             size="icon-sm"
             variant="ghost"
             aria-label={copied ? 'Copied' : label}
-            className={cn('absolute top-0 -right-1 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', copied && 'opacity-100 text-success')}
+            className={cn('absolute top-0 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', side === 'right' ? '-right-1' : '-left-7', copied && 'opacity-100 text-success')}
             onClick={() => copy(text)}
           >
             {copied ? <Check /> : <Copy />}
@@ -216,7 +219,7 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className }: { it
   const attachments = item.attachments ?? [];
   return (
     <div className={cn('flex justify-end', className)}>
-      <Copyable text={item.text ?? ''} label="Copy message" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
+      <Copyable text={item.text ?? ''} label="Copy message" side="left" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
         <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink">
           <span className="sr-only">You: </span>
           {item.delivery && <span className="block text-caption text-accent">{item.delivery === 'steer' ? 'Steer' : 'Autopilot'}</span>}
@@ -572,11 +575,11 @@ function SubagentRow({ item, subagent, provider, onOpen }: { item: Item; subagen
         render={<div id={`item-${item.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm bg-tint-well py-1.5 pr-1.5 pl-3 text-ui transition-colors" />}
       >
         <Bot aria-hidden="true" className="size-4 shrink-0 text-muted" />
-        <span className="min-w-0 flex-1 truncate font-medium text-ink" title={subagent.description || undefined}>
+        <span className="min-w-0 flex-1 truncate font-medium text-ink max-sm:basis-[calc(100%-28px)]" title={subagent.description || name}>
           {name}
         </span>
         <AgentChip status={subagent.status} />
-        {subagent.model && <span className="font-mono text-code-sm text-muted">{modelName(meta, provider, subagent.model)}</span>}
+        {subagent.model && <span className="min-w-0 truncate font-mono text-code-sm text-muted" title={modelName(meta, provider, subagent.model)}>{modelName(meta, provider, subagent.model)}</span>}
         {took && <span className="text-caption tabular-nums text-muted">{took}</span>}
         <Button size="sm" variant="secondary" className="h-7" onClick={(e) => onOpen(e.currentTarget)}>
           Open

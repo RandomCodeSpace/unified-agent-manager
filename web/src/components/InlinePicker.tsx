@@ -56,7 +56,8 @@ export function InlinePicker({
     return () => el.removeEventListener('mousedown', keep);
   }, [popupRef]);
 
-  const rows = items.map((item, i) => ({ item, label: item.group !== items[i - 1]?.group ? item.group : undefined }));
+  // A group label heads each run of a group, unless it only repeats the popover's title.
+  const rows = items.map((item, i) => ({ item, label: item.group !== items[i - 1]?.group && item.group !== title ? item.group : undefined }));
   return (
     <div
       ref={popupRef}

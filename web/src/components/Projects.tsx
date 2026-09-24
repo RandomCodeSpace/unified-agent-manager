@@ -7,7 +7,9 @@ import { FolderPicker } from './FolderPicker';
 import { Field, TaskDefaultsFields } from './TaskDefaults';
 import { Button } from './ui/button';
 import { AlertDialog, Dialog } from './ui/dialog';
+import { Collapse, usePresence } from './ui/collapse';
 import { Input } from './ui/input';
+import { Select } from './ui/select';
 
 /** Add a project by directory. A 409 means the directory already has one: that project is selected instead. */
 /** Shared by the three dialogs: `open` drives the transition, `onClosed` fires after it, then the owner unmounts. */
@@ -29,6 +31,8 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
   const [defaults, setDefaults] = useState<TaskDefaults | null>(() => resolveTaskDefaults(meta));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The picker collapses in and out (grid rows) so the dialog's height glides instead of jumping.
+  const picker = usePresence(browsing);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -60,6 +64,16 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
       description="A directory on this host. Tasks run inside it."
       // The dialog widens while the folder picker is open (DESIGN.md: 560px) and settles back once a folder is chosen.
       className={cn('transition-[opacity,transform,max-width]', browsing && 'max-w-sheet-wide')}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="add-project" variant="primary" loading={busy} disabled={!dir.trim()}>
+            Add project
+          </Button>
+        </>
+      }
     >
       <form id="add-project" className="flex flex-col gap-4" onSubmit={submit}>
         <Field id="add-dir" label="Directory on the host">
@@ -67,7 +81,6 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
             <Input
               id="add-dir"
               className="font-mono text-code-sm"
-              list="recent-workdirs"
               required
               ref={first}
               spellCheck={false}
@@ -80,26 +93,33 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
               Browse
             </Button>
           </div>
-          <datalist id="recent-workdirs">
-            {recent.map((w) => (
-              <option key={w} value={w} />
-            ))}
-          </datalist>
+          {recent.length > 0 && (
+            <Select
+              aria-label="Recent folders"
+              mono
+              value=""
+              className="mt-2"
+              items={[{ value: '', label: 'Recent folders…', hidden: true }, ...recent.map((w) => ({ value: w, label: w }))]}
+              onValueChange={(w) => w && setDir(w)}
+            />
+          )}
         </Field>
-        {browsing && (
-          <FolderPicker
-            id="add-dir-picker"
-            start={dir}
-            onUse={(p) => {
-              setDir(p);
-              setBrowsing(false);
-              first.current?.focus();
-            }}
-            onClose={() => {
-              setBrowsing(false);
-              browse.current?.focus();
-            }}
-          />
+        {picker.mounted && (
+          <Collapse open={browsing} appear onClosed={picker.onClosed} className="-mt-4" inner="pt-4">
+            <FolderPicker
+              id="add-dir-picker"
+              start={dir}
+              onUse={(p) => {
+                setDir(p);
+                setBrowsing(false);
+                first.current?.focus();
+              }}
+              onClose={() => {
+                setBrowsing(false);
+                browse.current?.focus();
+              }}
+            />
+          </Collapse>
         )}
         <Field id="add-name" label="Name" hint="The project gets a two-letter badge from this name, on a colour of its own.">
           <Input id="add-name" placeholder="Defaults to the folder name" aria-describedby="add-name-hint" value={name} onChange={(e) => setName(e.target.value)} />
@@ -118,14 +138,6 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
             {error}
           </Note>
         )}
-        <div className="flex flex-wrap justify-end gap-2 pt-1 max-sm:[&>button]:flex-1">
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" loading={busy} disabled={!dir.trim()}>
-            Add project
-          </Button>
-        </div>
       </form>
     </Dialog>
   );

@@ -97,7 +97,7 @@ export function ChangesSheet({
         <span className="text-title text-ink">Changes</span>
         {data?.supported && (
           <span className="text-caption tabular-nums text-muted">
-            {files.length} {files.length === 1 ? 'file' : 'files'} · <span className="text-success">+{adds}</span> <span className="text-error">−{dels}</span>
+            {files.length} {files.length === 1 ? 'file' : 'files'}{adds > 0 && <> · <span className="text-success">+{adds}</span></>}{dels > 0 && <> <span className="text-error">−{dels}</span></>}
           </span>
         )}
         <span className="flex-1" />
@@ -180,7 +180,7 @@ function FileRow({ file: f, selected, onOpen }: { file: ChangeFile; selected: bo
             <span className={cn('text-center', STATUS_TONE[f.status] ?? 'text-muted')}>{f.status}</span>
             <span className="truncate [direction:rtl] text-left [unicode-bidi:plaintext]">{f.path}</span>
             <span className="tabular-nums">
-              <span className="text-success">+{f.additions}</span> <span className="text-error">−{f.deletions}</span>
+              <span className={f.additions ? 'text-success' : 'text-muted'}>+{f.additions}</span> <span className={f.deletions ? 'text-error' : 'text-muted'}>−{f.deletions}</span>
             </span>
           </button>
           <Menu.Root modal={false}>

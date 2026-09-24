@@ -510,6 +510,12 @@ export default function App() {
               </Sheet>
             )}
             <main className="relative flex min-h-0 min-w-0 flex-col bg-canvas">
+              {connection !== 'connected' && (
+                <p role="status" className={cn('flex items-center gap-2 border-b border-hairline px-4 py-1.5 text-caption', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
+                  <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
+                  {CONNECTION_TEXT[connection]}
+                </p>
+              )}
               {notice && (
                 <p className="flex items-center gap-2 border-b border-hairline bg-error-wash px-4 py-1.5 text-caption text-error" role="alert">
                   <span className="flex-1">{notice}</span>

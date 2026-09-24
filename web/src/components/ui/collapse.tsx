@@ -20,15 +20,21 @@ export function usePresence(open: boolean): { mounted: boolean; onClosed: () => 
  * rows track goes 0fr ↔ 1fr over `slow`, so nothing is measured and nothing snaps. Closed
  * content is inert. `onClosed` fires once the exit is over, so the owner can unmount.
  */
-export function Collapse({ open, onClosed, className, inner, children }: { open: boolean; onClosed?: () => void; className?: string; inner?: string; children: ReactNode }) {
+export function Collapse({ open, appear = false, onClosed, className, inner, children }: { open: boolean; /** Mounted open, grow from nothing (the first paint is at 0fr). */ appear?: boolean; onClosed?: () => void; className?: string; inner?: string; children: ReactNode }) {
   const closed = useEffectEvent(() => onClosed?.());
   useEffect(() => {
     if (open) return;
     const timer = window.setTimeout(closed, EXIT_MS);
     return () => window.clearTimeout(timer);
   }, [open]);
+  const [appeared, setAppeared] = useState(!appear);
+  useEffect(() => {
+    if (appeared) return;
+    const frame = requestAnimationFrame(() => setAppeared(true));
+    return () => cancelAnimationFrame(frame);
+  }, [appeared]);
   return (
-    <div className={cn('grid transition-[grid-template-rows] duration-240 ease-app', open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]', className)}>
+    <div className={cn('grid transition-[grid-template-rows] duration-240 ease-app', open && appeared ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]', className)}>
       <div className={cn('min-h-0 overflow-hidden', inner)} inert={!open} aria-hidden={!open}>
         {children}
       </div>

@@ -279,6 +279,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
   }
 
   const other = settings.send_default === 'steer' ? 'Queue' : 'Steer';
+  const titled = (meta?.providers ?? []).filter((p) => p.capabilities.titles);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
@@ -319,8 +320,8 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               />
             </Row>
           </Section>
-          <Section id="titles" title="Task titles">
-            {(meta?.providers ?? []).filter((p) => p.capabilities.titles).map((p) => {
+          {titled.length > 0 && <Section id="titles" title="Task titles">
+            {titled.map((p) => {
               const current = settings.title_model?.[p.name] ?? '';
               const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current);
               return <Row key={p.name} id={`titles-${p.name}`} label={p.display_name} help="Use the provider's own title, or generate a short title with a chosen model. Applies to new tasks without a name.">
@@ -330,7 +331,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                 ]} onValueChange={(id) => void save({ title_model: { ...settings.title_model, [p.name]: id } })} />
               </Row>;
             })}
-          </Section>
+          </Section>}
           <Section id="models" title="Models">
             <Note>Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.</Note>
             <CustomModels models={settings.custom_models ?? []} disabled={saving} onSave={saveCustom} />
@@ -351,7 +352,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                         {p.capabilities.usage && <span className="tabular-nums">{modelCostLine(m)}</span>}
                       </div>
                     </div>
-                    <span className="text-meta text-muted">{shown ? 'Visible' : 'Hidden'}</span>
+                    {!shown && <span className="text-meta text-muted">Hidden</span>}
                     <Switch aria-label={`Show ${m.name}`} checked={shown} disabled={saving} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.name]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
                   </div>;
                 })}

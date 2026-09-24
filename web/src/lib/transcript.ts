@@ -59,13 +59,17 @@ function inputOf(tool: ToolCall): Record<string, unknown> | null {
  * The tool row's name and main argument. The argument is the shell command, URL, path,
  * pattern, query, skill or subagent name from the input JSON, per tool; failing a known
  * key, the input's first string value; a non-JSON input as is; else the provider's title.
- * Without a name the title's first word stands in, as the ledger showed it.
+ * Without a name the title's first word stands in, as the ledger showed it. A title that
+ * repeats the name as its verb ("Edit cmd/doctor.go" for `edit`) contributes the rest.
  */
 export function toolLabel(tool: ToolCall | undefined): { name: string; arg: string } {
   const name = tool?.name?.trim() ?? '';
   const title = tool?.title?.trim() ?? '';
   const arg = mainArgument(name, tool?.input);
-  if (name) return { name, arg: arg || (title && title !== name ? oneLine(title) : '') };
+  if (name) {
+    const rest = title.toLowerCase().startsWith(`${name.toLowerCase()} `) ? title.slice(name.length + 1) : title;
+    return { name, arg: arg || (rest && rest !== name ? oneLine(rest) : '') };
+  }
   if (title) {
     const space = title.indexOf(' ');
     return space > 0 ? { name: title.slice(0, space), arg: arg || oneLine(title.slice(space + 1)) } : { name: title, arg };

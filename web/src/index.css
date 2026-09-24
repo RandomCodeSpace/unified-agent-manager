@@ -134,7 +134,7 @@
   --spacing-column: 808px;
   /* The folder picker's well: fixed so moving between folders never changes the dialog's height. */
   --spacing-picker: min(320px, 40dvh);
-  --spacing-picker-phone: 55dvh;
+  --spacing-picker-phone: 40dvh;
 
   --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
   --animate-spin: spin 0.9s linear infinite;

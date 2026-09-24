@@ -29,7 +29,8 @@ test('non-JSON input shows as is, on one line, clipped', () => {
 
 test('the row label is the tool name and its argument, with the title as the fallback', () => {
   assert.deepEqual(toolLabel(tool('view', '{"path":"a.go"}', { title: 'Read a.go' })), { name: 'view', arg: 'a.go' });
-  assert.deepEqual(toolLabel(tool('edit', undefined, { title: 'Edit cmd/doctor.go' })), { name: 'edit', arg: 'Edit cmd/doctor.go' });
+  assert.deepEqual(toolLabel(tool('edit', undefined, { title: 'Edit cmd/doctor.go' })), { name: 'edit', arg: 'cmd/doctor.go' });
+  assert.deepEqual(toolLabel(tool('bash', undefined, { title: 'go test ./cmd/...' })), { name: 'bash', arg: 'go test ./cmd/...' });
   assert.deepEqual(toolLabel({ name: '', status: 'completed', title: 'Read templates/post.html' }), { name: 'Read', arg: 'templates/post.html' });
   assert.deepEqual(toolLabel({ name: 'bash', status: 'running' }), { name: 'bash', arg: '' });
   assert.deepEqual(toolLabel(undefined), { name: 'Tool', arg: '' });
