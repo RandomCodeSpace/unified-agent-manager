@@ -228,7 +228,6 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               live={live}
               working={working}
               provider={session.provider}
-              model={session.last_model || session.model}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
             />
             {session.interactions

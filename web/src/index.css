@@ -55,7 +55,7 @@
   --color-badge-violet: #6c4fc6;
   --color-badge-pink: #b0347c;
 
-  --font-sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 
   /* Type scale: the DESIGN.md names, used as text-<name>. */

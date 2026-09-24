@@ -1,7 +1,7 @@
 ---
 version: 4
 name: uam-web-workbench
-description: Design system for `uam web`, the browser workbench for running coding agents. A dense, calm, borderless tool used for hours at a time, on a laptop over SSH and at 420px on a phone. One cool, near-white canvas (a single theme, no dark scheme), one ink ladder for every piece of chrome, hairlines instead of boxes, a single restrained accent (blue) for focus, motion and links, and one warm "needs you" colour (orange) that is the only thing allowed to shout. Inter for UI and chat, JetBrains Mono for identifiers, code and diffs. No serif, no pills, no gradients. Everything is a row or a column of text; surfaces step by one shade, never by borders inside borders. Built with Tailwind v4 (this file's tokens are the `@theme`) and Base UI primitives (menus, context menus, dialogs, tooltips, selects) under a strict CSP.
+description: Design system for `uam web`, the browser workbench for running coding agents. A dense, calm, borderless tool used for hours at a time, on a laptop over SSH and at 420px on a phone. One cool, near-white canvas (a single theme, no dark scheme), one ink ladder for every piece of chrome, hairlines instead of boxes, a single restrained accent (blue) for focus, motion and links, and one warm "needs you" colour (orange) that is the only thing allowed to shout. Geist Sans for UI and chat, JetBrains Mono for identifiers, code and diffs. No serif, no pills, no gradients. Everything is a row or a column of text; surfaces step by one shade, never by borders inside borders. Built with Tailwind v4 (this file's tokens are the `@theme`) and Base UI primitives (menus, context menus, dialogs, tooltips, selects) under a strict CSP.
 
 colors:
   rail: "#f7f8fa"
@@ -52,55 +52,55 @@ colors:
 
 typography:
   display-md:
-    fontFamily: "'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+    fontFamily: "'Geist Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
     fontSize: 20px
     fontWeight: 600
     lineHeight: 1.3
     letterSpacing: -0.2px
   display-sm:
-    fontFamily: "'Inter Variable', system-ui, sans-serif"
+    fontFamily: "'Geist Variable', system-ui, sans-serif"
     fontSize: 17px
     fontWeight: 600
     lineHeight: 1.35
     letterSpacing: -0.1px
   title:
-    fontFamily: "'Inter Variable', system-ui, sans-serif"
+    fontFamily: "'Geist Variable', system-ui, sans-serif"
     fontSize: 14px
     fontWeight: 600
     lineHeight: 1.4
     letterSpacing: 0
   ui:
-    fontFamily: "'Inter Variable', system-ui, sans-serif"
+    fontFamily: "'Geist Variable', system-ui, sans-serif"
     fontSize: 13px
     fontWeight: 500
     lineHeight: 1.4
     letterSpacing: 0
   ui-regular:
-    fontFamily: "'Inter Variable', system-ui, sans-serif"
+    fontFamily: "'Geist Variable', system-ui, sans-serif"
     fontSize: 13px
     fontWeight: 400
     lineHeight: 1.4
     letterSpacing: 0
   chat-body:
-    fontFamily: "'Inter Variable', system-ui, sans-serif"
+    fontFamily: "'Geist Variable', system-ui, sans-serif"
     fontSize: 14px
     fontWeight: 400
     lineHeight: 1.7
     letterSpacing: 0
   chat-strong:
-    fontFamily: "'Inter Variable', system-ui, sans-serif"
+    fontFamily: "'Geist Variable', system-ui, sans-serif"
     fontSize: 14px
     fontWeight: 600
     lineHeight: 1.7
     letterSpacing: 0
   caption:
-    fontFamily: "'Inter Variable', system-ui, sans-serif"
+    fontFamily: "'Geist Variable', system-ui, sans-serif"
     fontSize: 12px
     fontWeight: 400
     lineHeight: 1.4
     letterSpacing: 0
   eyebrow:
-    fontFamily: "'Inter Variable', system-ui, sans-serif"
+    fontFamily: "'Geist Variable', system-ui, sans-serif"
     fontSize: 11px
     fontWeight: 600
     lineHeight: 1.2
@@ -536,7 +536,7 @@ Every text colour clears AA (≥4.5:1) on every ground it can sit on; `faint` is
 
 ## Typography
 
-- **UI and chat:** Inter Variable (`@fontsource-variable/inter`, SIL OFL 1.1), family `'Inter Variable'`.
+- **UI and chat:** Geist Variable (`@fontsource-variable/geist`, SIL OFL 1.1), family `'Geist Variable'`.
 - **Code, identifiers, diffs:** JetBrains Mono Variable (`@fontsource-variable/jetbrains-mono`, SIL OFL 1.1), family `'JetBrains Mono Variable'`, ligatures off.
 - Both are imported once in `web/src/main.tsx` and served from the same origin (`font-src 'self'`). No CDN.
 
@@ -608,7 +608,7 @@ Sits on `rail`, 264px, no border to the main pane (the `rail` → `canvas` step 
 
 **Flat Task list.** No project group headings or collapse controls. Tasks across the visible Projects are newest first. Choose a Project in the filter to reveal its action menu (New task, Edit project, Remove project) and Previous sessions/import entry. Adding a Project selects its filter. Project membership appears once per Task card, not as a repeated group heading.
 
-**Task card (56px minimum).** Two compact lines: provider icon and Task title at 12px, with truthful status or relative last activity at right; Project badge/name and real branch on the secondary line at 11px. Copilot uses the official 14px Primer Octicon with a GitHub Copilot accessible label and native tooltip; other providers keep their real names. The vendored SVG carries its pinned source and complete MIT notice. There is no invented PR count, model logo or elapsed-working duration from `updated_at`. The branch describes the Project checkout, not a per-Task worktree. Cards use a subtle `hairline-strong/60` border. Selected cards use `raised` and a full `hairline-strong` border; hover uses that border and a quiet neutral wash. Task-card actions live only in the context menu, opened by right-click, Shift+F10/Menu key or supported touch long-press. No visible action dots occupy the card. All lifecycle/context menu actions, F2/double-click rename, keyboard navigation and the pinned selected Task remain available. Search results label settled/archived state.
+**Task card (56px minimum).** Two compact lines: provider icon and Task title at 12px, with truthful status or relative last activity at right; Project badge/name and real branch on the secondary line at 11px. Copilot uses the official 14px Primer Octicon with a GitHub Copilot accessible label and native tooltip; other providers keep their real names. The vendored SVG carries its pinned source and complete MIT notice. There is no invented PR count, model logo or elapsed-working duration from `updated_at`. The branch describes the Project checkout, not a per-Task worktree. Cards use a soft `raised/75` fill without a border. Selected cards use `accent-wash/65`; hover uses `sunken`. Keyboard focus retains its visible outline. Task-card actions live only in the context menu, opened by right-click, Shift+F10/Menu key or supported touch long-press. No visible action dots occupy the card. All lifecycle/context menu actions, F2/double-click rename, keyboard navigation and the pinned selected Task remain available. Search results label settled/archived state.
 
 **Shelves.** Under the flat active Task list come **Settled** and **Archived** shelf headers (28px): the word and count in `caption` `muted`, a hairline, a chevron. Collapsed by default; the state persists per shelf (`uam.shelves`). A collapsed shelf still shows the open Task pinned beneath its header. Shelf state is scoped to All projects or the selected Project. Archived Tasks open like any other, read-only.
 
@@ -620,7 +620,7 @@ Sits on `rail`, 264px, no border to the main pane (the `rail` → `canvas` step 
 With no Task open the main pane is a quiet placeholder: the mark at 36px and one `ui` `muted` line ("Open a task from the sidebar, or start a new one there."; without a Project, "Add a project in the sidebar to begin."). There are no buttons: New task and Add project live in the sidebar, and there is no empty-state screen (#185). When the sidebar is hidden or is a drawer, a 44px header above it carries the sidebar toggle, the brand and the connection dot. While a Task's detail loads, the header keeps its height with a quiet placeholder bar and three placeholder lines pulse below (static under reduced motion). A deleted Task explains itself and offers **Back to projects**.
 
 ### Settings view
-Not a dialog: a view in the main pane, `#settings` in the URL, opened from the sidebar footer's gear and closed by its **×**, by opening a Task, or by the gear again. Its header matches the Task header (44px, `display-sm` "Settings", the sidebar toggle first when the sidebar is hidden, a spinner while a change saves). The body is a 672px column with one `muted` line ("Kept by the service, so they apply in every browser.") and then **sections**: a `title` heading, rows separated by 20px, a hairline between sections. A **row** is the label (`ui` 500 `ink`) with its help in `caption` `muted` on the left and the control on the right (stacked on a phone). The **Composer** section has one row, "While a task is running, Enter…", a **segmented control** (`Steer` | `Queue`, Steer the default) whose help names the other action's shortcut and button. **Task titles** offers the provider title or a visible model for each provider with title support. **Models** lists names, IDs, reported costs and visible/hidden switches. Hidden current selections keep their label with "hidden in Settings" but do not appear as choices. Unknown hidden IDs stay removable. Controls disable while saving; stale responses cannot overwrite a newer save. A change shows at once and is saved through `PATCH /api/settings`; a refusal puts the old value back and an `error` Note says why.
+Not a dialog: a view in the main pane, `#settings` in the URL, opened from the sidebar footer's gear and closed by its **×**, by opening a Task, or by the gear again. Its header matches the Task header (44px, `display-sm` "Settings", the sidebar toggle first when the sidebar is hidden, a spinner while a change saves). The body fills the available pane with 16–24px gutters and one compact `muted` line ("Kept by the service, so they apply in every browser.") followed by **sections**: a `title` heading, 12px gaps within sections, 16px spacing at section boundaries, and a hairline between sections. Models use compact rows in one column on narrow screens, two at 1280px and three at 1800px; provider headings span the grid. Names, IDs, costs, visibility state and 44px touch targets remain available. The header stays fixed while the body scrolls. A **row** is the label (`ui` 500 `ink`) with its help in `caption` `muted` on the left and the control on the right (stacked on a phone). The **Composer** section has one row, "While a task is running, Enter…", a **segmented control** (`Steer` | `Queue`, Steer the default) whose help names the other action's shortcut and button. **Task titles** offers the provider title or a visible model for each provider with title support. **Models** lists names, IDs, reported costs and visible/hidden switches. Hidden current selections keep their label with "hidden in Settings" but do not appear as choices. Unknown hidden IDs stay removable. Controls disable while saving; stale responses cannot overwrite a newer save. A change shows at once and is saved through `PATCH /api/settings`; a refusal puts the old value back and an `error` Note says why.
 
 **Segmented control** (`ui/segmented`, Base UI radio group): a 32px `sunken` track with 2px padding and `sm` radius; segments are `xs`, at least 64px wide, `ui` 500 `muted`; the chosen one is `raised` with `ink` text and the 1px shadow. Arrow keys move the choice; the group is named by the row label and described by its help.
 

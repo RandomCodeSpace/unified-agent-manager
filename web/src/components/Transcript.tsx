@@ -22,9 +22,8 @@ interface Props {
   live: boolean;
   /** A turn is running (not merely waiting for the user): the last item is still streaming. */
   working: boolean;
-  /** Provider id and the model of the latest turn, for the provider line above the first reply. */
+  /** Provider id used to resolve subagent model names. */
   provider: string;
-  model: string;
   /** Open a subagent's transcript in the side panel; `opener` gets focus back when it closes. */
   onOpenAgent: (agentId: string, opener: HTMLElement) => void;
 }
@@ -42,8 +41,7 @@ function useArrivals(ids: string[]) {
  * spawned a subagent (its output lives in the panel, never here), and the prose. A decided
  * request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, items, interactions, subagents, live, working, provider, model, onOpenAgent }: Props) {
-  const { meta } = useApp();
+export function Transcript({ sessionId, items, interactions, subagents, live, working, provider, onOpenAgent }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)]);
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
@@ -53,7 +51,6 @@ export function Transcript({ sessionId, items, interactions, subagents, live, wo
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
   const out: ReactNode[] = [];
   let group: Entry[] = [];
-  let first = true;
   let showedWorking = false;
   const flush = (last = false, boundary = true) => {
     if (!group.length) return;
@@ -66,23 +63,11 @@ export function Transcript({ sessionId, items, interactions, subagents, live, wo
     if (last && working) showedWorking = true;
     out.push(
       <div key={`turn-${key}`} className="flex flex-col gap-3">
-        {first && (
-          <div className="text-caption text-muted">
-            {provider}
-            {model && (
-              <>
-                {' · '}
-                <span className="font-mono">{modelName(meta, provider, model)}</span>
-              </>
-            )}
-          </div>
-        )}
         {last && working && <WorkingIndicator start={foregroundStart(items)} />}
         {nodes}
         {boundary && (!last || !live) && <div className="border-b border-hairline py-2 text-caption text-muted" title="The provider does not supply a turn completion timestamp.">Worked</div>}
       </div>,
     );
-    first = false;
     group = [];
   };
   mergeByTime(items, [...loose, ...questions]).forEach((entry) => {

@@ -162,8 +162,8 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
   const meta = rowMeta(s, unread);
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   const rowClass = cn(
-    'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md border border-hairline-strong/60 px-2.5 py-2 text-left text-caption transition-colors duration-100 focus-visible:-outline-offset-2',
-    selected ? 'border-hairline-strong bg-raised text-ink' : 'hover:border-hairline-strong hover:bg-sunken/60',
+    'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised/75 px-2.5 py-2 text-left text-caption transition-colors duration-100 focus-visible:-outline-offset-2',
+    selected ? 'bg-accent-wash/65 text-ink' : 'hover:bg-sunken',
     readOnly(s) && !selected && 'text-muted',
     strong ? 'font-medium text-ink' : 'text-body',
   );

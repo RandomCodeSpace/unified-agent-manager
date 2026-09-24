@@ -13,7 +13,7 @@ import { Tip } from './ui/tooltip';
 /** One titled group of settings; a new group is another `Section` below the last. */
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
-    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-5 border-t border-hairline py-6 first:border-t-0 first:pt-0">
+    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-3 border-t border-hairline py-4 first:border-t-0 first:pt-0">
       <h2 id={`${id}-title`} className="text-title text-ink">
         {title}
       </h2>
@@ -25,8 +25,8 @@ function Section({ id, title, children }: { id: string; title: string; children:
 /** A label and its help on the left, the control on the right; stacked on a phone. */
 function Row({ id, label, help, children }: { id: string; label: string; help: ReactNode; children: ReactNode }) {
   return (
-    <div className="grid items-start gap-x-8 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-      <div className="flex min-w-0 flex-col gap-1">
+    <div className="grid items-start gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="flex min-w-0 max-w-3xl flex-col gap-1">
         <span id={`${id}-label`} className="text-ui font-medium text-ink">
           {label}
         </span>
@@ -82,8 +82,8 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
         </Tip>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto flex w-full max-w-2xl flex-col px-3 py-6 sm:px-4 md:px-6">
-          <p className="mb-6 text-ui text-muted">Kept by the service, so they apply in every browser.</p>
+        <div className="flex w-full min-w-0 flex-col px-4 py-4 md:px-6">
+          <p className="mb-4 text-caption text-muted">Kept by the service, so they apply in every browser.</p>
           <Section id="composer" title="Composer">
             <Row
               id="send-default"
@@ -126,20 +126,24 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               const hidden = settings.hidden_models?.[p.name] ?? [];
               const models: Model[] = [...p.models, ...hidden.filter((id) => !p.models.some((m) => m.id === id)).map((id) => ({ id, name: id }))];
               return <div key={p.name} className="flex flex-col gap-1">
-                <h3 className="mb-2 text-ui font-medium">{p.display_name}</h3>
+                <h3 className="mb-1 text-ui font-medium">{p.display_name}</h3>
+                <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2 xl:grid-cols-3">
                 {models.map((m) => {
                   const shown = !hidden.includes(m.id);
                   const offered = p.models.some((v) => v.id === m.id);
-                  return <div key={m.id} className="flex min-h-14 items-center gap-3 border-b border-hairline py-2 last:border-0">
+                  return <div key={m.id} className="flex min-h-12 items-center gap-3 border-b border-hairline py-2">
                     <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="text-ui text-ink">{m.name}</span>
-                      <span className="break-all font-mono text-code-sm text-muted">{m.id}{!offered ? ' · not offered now' : ''}</span>
-                      {p.capabilities.usage && <span className="text-caption text-muted">{modelCostLine(m)}</span>}
+                      <span className="text-ui font-medium text-ink">{m.name}</span>
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-keycap text-muted">
+                        <span className="min-w-0 break-all font-mono">{m.id}{!offered ? ' · not offered now' : ''}</span>
+                        {p.capabilities.usage && <span>{modelCostLine(m)}</span>}
+                      </div>
                     </div>
-                    <span className="text-caption text-muted">{shown ? 'Visible' : 'Hidden'}</span>
+                    <span className="text-keycap text-muted">{shown ? 'Visible' : 'Hidden'}</span>
                     <Switch aria-label={`Show ${m.name}`} checked={shown} disabled={saving} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.name]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
                   </div>;
                 })}
+                </div>
               </div>;
             })}
           </Section>
