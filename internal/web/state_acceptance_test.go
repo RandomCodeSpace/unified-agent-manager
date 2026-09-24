@@ -186,6 +186,10 @@ func TestAcceptancePersistenceFailureRetriesAndNeverRecreatesRemovedRecord(t *te
 	restored := false
 	restore := func() {
 		if !restored {
+			// Keep the background writer from treating the temporary gap
+			// between Remove and Rename as an intentionally empty store.
+			m.persistMu.Lock()
+			defer m.persistMu.Unlock()
 			_ = os.Remove(st.Path())
 			if err := os.Rename(backup, st.Path()); err != nil {
 				t.Errorf("restore test store: %v", err)
