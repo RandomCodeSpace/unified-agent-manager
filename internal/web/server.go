@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -123,7 +125,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
 	mux.HandleFunc("GET /api/projects", s.handleProjects)
 	mux.HandleFunc("POST /api/projects", s.handleAddProject)
-	mux.HandleFunc("PATCH /api/projects/{id}", s.handleRenameProject)
+	mux.HandleFunc("PATCH /api/projects/{id}", s.handleUpdateProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
 	mux.HandleFunc("GET /api/sessions", s.handleList)
 	mux.HandleFunc("POST /api/sessions", s.handleCreate)
@@ -134,6 +136,11 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/cancel", s.handleCancelSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/prompt", s.handlePromptSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
+	mux.HandleFunc("POST /api/sessions/{id}/command", s.handleCommand)
+	mux.HandleFunc("GET /api/sessions/{id}/commands", s.handleCommands)
+	mux.HandleFunc("GET /api/sessions/{id}/files", s.handleFiles)
+	mux.HandleFunc("POST /api/sessions/{id}/attachments", s.handleUpload)
+	mux.HandleFunc("GET /api/sessions/{id}/attachments/{attachment_id}", s.handleAttachment)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/resume", s.handleQueueResume)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/clear", s.handleQueueClear)
 	mux.HandleFunc("DELETE /api/sessions/{id}/queue/{request_id}", s.handleQueueCancel)
@@ -183,13 +190,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// A DELETE without a body has no content to type; every other
-		// state change must be JSON.
+		// state change must be JSON, except an attachment upload, whose body
+		// is the file. Its type, like JSON, is not one a cross-site form can
+		// send, and it gets its own size cap.
 		bodyless := r.Method == http.MethodDelete && r.ContentLength == 0
-		if !bodyless && !jsonContentType(r.Header.Get("Content-Type")) {
+		limit := int64(maxBodyBytes)
+		switch {
+		case r.Method == http.MethodPost && uploadPath(r.URL.Path):
+			if !hasMediaType(r.Header.Get("Content-Type"), "application/octet-stream") {
+				s.refuse(w, r, http.StatusUnsupportedMediaType, "attachment uploads must use Content-Type: application/octet-stream")
+				return
+			}
+			limit = maxUploadBytes
+		case !bodyless && !jsonContentType(r.Header.Get("Content-Type")):
 			s.refuse(w, r, http.StatusUnsupportedMediaType, "requests must use Content-Type: application/json")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 	if api && r.URL.Path != "/api/auth" && r.URL.Path != "/api/login" && !s.authenticated(r) {
 		s.refuse(w, r, http.StatusUnauthorized, "authentication required")
@@ -271,9 +288,17 @@ func (s *Server) allowedHost(hostport string) bool {
 	return ip != nil && (ip.IsLoopback() || s.ipHosts)
 }
 
-func jsonContentType(value string) bool {
+func jsonContentType(value string) bool { return hasMediaType(value, "application/json") }
+
+func hasMediaType(value, want string) bool {
 	mediaType, _, err := mime.ParseMediaType(value)
-	return err == nil && mediaType == "application/json"
+	return err == nil && mediaType == want
+}
+
+// uploadPath matches exactly POST /api/sessions/{id}/attachments.
+func uploadPath(p string) bool {
+	ok, _ := path.Match("/api/sessions/*/attachments", p)
+	return ok
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -362,13 +387,14 @@ func (s *Server) handleProjects(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Dir  string `json:"dir"`
-		Name string `json:"name"`
+		Dir      string        `json:"dir"`
+		Name     string        `json:"name"`
+		Defaults *TaskDefaults `json:"defaults"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	p, err := s.m.AddProject(body.Dir, body.Name)
+	p, err := s.m.AddProject(body.Dir, body.Name, body.Defaults)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -376,14 +402,19 @@ func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, p)
 }
 
-func (s *Server) handleRenameProject(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name     *string       `json:"name"`
+		Defaults *TaskDefaults `json:"defaults"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	p, err := s.m.RenameProject(r.PathValue("id"), body.Name)
+	if body.Name == nil && body.Defaults == nil {
+		writeError(w, http.StatusBadRequest, "name or defaults is required")
+		return
+	}
+	p, err := s.m.UpdateProject(r.PathValue("id"), body.Name, body.Defaults)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -506,20 +537,104 @@ func (s *Server) handleSubagent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Text      string `json:"text"`
-		RequestID string `json:"request_id"`
-		Mode      string `json:"mode"`
-	}
+	var body PromptRequest
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	sub, err := s.m.Submit(r.PathValue("id"), body.Text, body.RequestID, body.Mode)
+	sub, err := s.m.Submit(r.PathValue("id"), body)
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, sub)
+}
+
+func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
+	var body CommandRequest
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	sub, err := s.m.Command(r.PathValue("id"), body)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, sub)
+}
+
+func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
+	commands, err := s.m.Commands(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]agentapi.Command{"commands": commands})
+}
+
+func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit := defaultFileLimit
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > maxFileLimit {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", maxFileLimit))
+			return
+		}
+		limit = n
+	}
+	files, err := s.m.Files(r.Context(), r.PathValue("id"), q.Get("q"), limit)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, files)
+}
+
+// handleUpload stores the request body as one attachment named by the name
+// query parameter.
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "attachments can be at most 10 MiB")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "could not read the upload")
+		return
+	}
+	att, err := s.m.Upload(r.PathValue("id"), r.URL.Query().Get("name"), data)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, att)
+}
+
+// handleAttachment serves a stored upload with the type UAM sniffed, never
+// as HTML. Images are shown inline; other files download.
+func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {
+	att, data, modified, err := s.m.Attachment(r.PathValue("id"), r.PathValue("attachment_id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	h := w.Header()
+	contentType, disposition := att.MIME, "attachment"
+	if att.MIME == mimeText {
+		contentType = "text/plain; charset=utf-8"
+	}
+	if isImage(att.MIME) {
+		disposition = "inline"
+	}
+	h.Set("Content-Type", contentType)
+	h.Set("X-Content-Type-Options", "nosniff")
+	if value := mime.FormatMediaType(disposition, map[string]string{"filename": att.Name}); value != "" {
+		h.Set("Content-Disposition", value)
+	} else {
+		h.Set("Content-Disposition", disposition)
+	}
+	http.ServeContent(w, r, "", modified, bytes.NewReader(data))
 }
 
 func (s *Server) handleQueueResume(w http.ResponseWriter, r *http.Request) {

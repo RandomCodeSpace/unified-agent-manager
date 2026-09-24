@@ -29,12 +29,49 @@ export interface Capabilities {
   context_size?: boolean;
 }
 
+/** What a model accepts as uploads; absent on the model means it reports nothing and is not gated. */
+export interface Media {
+  images: boolean;
+  pdf: boolean;
+  /** Most images one prompt may carry; absent or 0 means no reported limit. */
+  max_images?: number;
+  types?: string[];
+}
+
 /** One selectable model of the signed-in account. */
 export interface Model {
   id: string;
   name: string;
   efforts?: string[];
   context_sizes?: { id: string; tokens: number }[];
+  media?: Media;
+}
+
+/** A command the Task can run from the composer (`/name`). */
+export interface Command {
+  name: string;
+  description: string;
+  kind: 'skill' | 'command';
+  input_hint: string;
+}
+
+export interface FileEntry {
+  path: string;
+  type: 'file' | 'directory';
+}
+
+export interface FileList {
+  files: FileEntry[];
+  /** Why the list is empty or short (not a git tree, too many files); empty otherwise. */
+  reason: string;
+}
+
+/** An upload of this Task. Without `id` there is no stored copy (a provider record only). */
+export interface Attachment {
+  id?: string;
+  name: string;
+  mime: string;
+  size?: number;
 }
 
 export interface ProviderInfo {
@@ -53,11 +90,24 @@ export interface Meta {
   recent_workdirs: string[];
 }
 
+/** Settings a new Task starts with. `context_size` is `default` when unset; `effort` may be empty. */
+export interface TaskDefaults {
+  provider: string;
+  model: string;
+  effort: string;
+  context_size: string;
+  mode: 'safe' | 'yolo';
+}
+
 export interface Project {
   id: string;
   name: string;
   dir: string;
   created_at: string;
+  /** Defaults for new Tasks; absent when the Project has none. */
+  defaults?: TaskDefaults;
+  /** Current git branch of the directory; absent unless it is a checkout on a named branch. May change between `project` frames. */
+  branch?: string;
 }
 
 export interface SessionSummary {
@@ -110,6 +160,8 @@ export interface Item {
   time: string;
   /** Subagent instance that produced the item; absent for the main agent. */
   agent_id?: string;
+  /** Uploads a user item carried; never their bytes. */
+  attachments?: Attachment[];
 }
 
 /** `idle` is not terminal: the subagent finished and accepts a follow-up (see promptSubagent). */
@@ -176,7 +228,21 @@ export interface Answer {
 
 export type PromptMode = 'send' | 'steer' | 'queue';
 export type SubmissionStatus = 'accepted' | 'rejected' | 'uncertain' | 'queued' | 'cancelled';
-export interface QueuedPrompt { request_id: string; text: string; queued_at: string }
+export interface QueuedPrompt {
+  request_id: string;
+  text: string;
+  queued_at: string;
+  files?: string[];
+  attachments?: Attachment[];
+}
+
+/** Structured parts of a prompt beside its text. */
+export interface PromptExtras {
+  /** Project paths relative to the Task's directory (at most 20). */
+  files?: string[];
+  /** Upload IDs from `api.upload` (at most 5). */
+  attachments?: string[];
+}
 
 export interface Submission {
   request_id: string;
@@ -336,8 +402,8 @@ export const api = {
   meta: () => call<Meta>('GET', '/api/meta'),
 
   projects: async () => (await call<{ projects: Project[] }>('GET', '/api/projects')).projects,
-  createProject: (body: { dir: string; name?: string }) => call<Project>('POST', '/api/projects', body),
-  renameProject: (id: string, name: string) => call<Project>('PATCH', `/api/projects/${enc(id)}`, { name }),
+  createProject: (body: { dir: string; name?: string; defaults?: TaskDefaults }) => call<Project>('POST', '/api/projects', body),
+  updateProject: (id: string, body: { name?: string; defaults?: TaskDefaults }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
   deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
 
   createSession: (body: {
@@ -363,8 +429,15 @@ export const api = {
   promptSubagent: (id: string, agentId: string, text: string, request_id: string) =>
     call<Submission>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/prompt`, { text, request_id }),
   deleteSession: (id: string) => call<void>('DELETE', `/api/sessions/${enc(id)}`),
-  prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send') =>
-    call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id, mode }),
+  prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras = {}) =>
+    call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id, mode, ...extras }),
+  /** Runs a listed command; the rules of a send (409 while a turn runs, no queue or steer). */
+  command: (id: string, name: string, args: string, request_id: string, extras: PromptExtras = {}) =>
+    call<Submission>('POST', `/api/sessions/${enc(id)}/command`, { request_id, name, arguments: args, ...extras }),
+  commands: async (id: string) => (await call<{ commands: Command[] }>('GET', `/api/sessions/${enc(id)}/commands`)).commands,
+  files: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
+  upload: uploadFile,
+  attachmentUrl: (id: string, attachmentId: string) => `/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`,
   cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
   close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),
   respond: (id: string, iid: string, answer: Answer) =>
@@ -376,6 +449,46 @@ export const api = {
     call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`),
   eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}` : '/api/events'),
 };
+
+export interface Upload {
+  done: Promise<Attachment & { id: string }>;
+  abort: () => void;
+}
+
+/**
+ * Uploads one file as the raw body (`application/octet-stream`, the name in the query).
+ * XMLHttpRequest, not fetch: it is the only same-origin transport that reports upload
+ * progress over HTTP/1.1. `onProgress` gets 0…1.
+ */
+function uploadFile(id: string, file: File, onProgress: (fraction: number) => void): Upload {
+  const xhr = new XMLHttpRequest();
+  const done = new Promise<Attachment & { id: string }>((resolve, reject) => {
+    xhr.open('POST', `/api/sessions/${enc(id)}/attachments?name=${enc(file.name)}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total));
+    };
+    xhr.onload = () => {
+      let body: Record<string, unknown> = {};
+      try {
+        body = JSON.parse(xhr.responseText) as Record<string, unknown>;
+      } catch {
+        // not JSON
+      }
+      if (xhr.status === 401) unauthorized();
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const message = typeof body.error === 'string' && body.error ? body.error : `${xhr.status} ${xhr.statusText}`.trim();
+        reject(new ApiError(xhr.status, message, body));
+        return;
+      }
+      resolve(body as unknown as Attachment & { id: string });
+    };
+    xhr.onerror = () => reject(new ApiError(0, 'Could not reach the server'));
+    xhr.onabort = () => reject(new ApiError(0, 'Upload cancelled'));
+    xhr.send(file);
+  });
+  return { done, abort: () => xhr.abort() };
+}
 
 /** UUID v4; crypto.randomUUID needs a secure context, which a plain-HTTP tunnel host may not be. */
 export function newRequestId(): string {
@@ -416,6 +529,35 @@ export function providerLabel(meta: Meta | null, name: string): string {
 export function modelCatalog(meta: Meta | null, providerName: string): Model[] {
   // `?? []` tolerates a server older than the catalog.
   return provider(meta, providerName)?.models ?? [];
+}
+
+/**
+ * What a new Task starts with, from a Project's defaults checked against the live catalog:
+ * the default provider if listed and available, else the first available one; the default
+ * model if offered, keeping its effort and context size only where still offered; a model
+ * no longer offered falls back to `auto` (else the first model) with effort cleared and
+ * context size `default`. Without defaults: `auto`, no effort, `default`, safe. Null until
+ * the provider list has loaded.
+ */
+export function resolveTaskDefaults(meta: Meta | null, defaults?: TaskDefaults): TaskDefaults | null {
+  const providers = meta?.providers ?? [];
+  const chosen =
+    (defaults && providers.find((p) => p.name === defaults.provider && p.available)) ?? providers.find((p) => p.available) ?? providers[0];
+  if (!chosen) return null;
+  const mode = defaults?.mode ?? 'safe';
+  const model = defaults && chosen.models.find((m) => m.id === defaults.model);
+  if (!defaults || !model) {
+    const first = chosen.models.some((m) => m.id === 'auto') ? 'auto' : (chosen.models[0]?.id ?? '');
+    return { provider: chosen.name, model: first, effort: '', context_size: 'default', mode };
+  }
+  const contextOffered = !!chosen.capabilities.context_size && !!model.context_sizes?.some((s) => s.id === defaults.context_size);
+  return {
+    provider: chosen.name,
+    model: model.id,
+    effort: model.efforts?.includes(defaults.effort) ? defaults.effort : '',
+    context_size: contextOffered ? defaults.context_size : 'default',
+    mode,
+  };
 }
 
 export function modelName(meta: Meta | null, providerName: string, id: string): string {

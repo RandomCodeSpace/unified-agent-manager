@@ -1,13 +1,14 @@
 // Package agenttest provides a scriptable agentapi.Provider for tests of the
-// web service. Tests drive events explicitly and decide how the model catalog
-// and each Send, Steer, Respond, Cancel, SetModel or Diff call behave; every
-// call is recorded so a test can prove what the service did (and did not) ask
-// the provider to do.
+// web service. Tests drive events explicitly and decide how the model catalog,
+// the command list and each Send, RunCommand, Steer, Respond, Cancel, SetModel
+// or Diff call behave; every call is recorded so a test can prove what the
+// service did (and did not) ask the provider to do.
 package agenttest
 
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,8 @@ type Provider struct {
 	models      []agentapi.Model
 	modelsErr   error
 	modelsCalls int
+	commands    []agentapi.Command
+	commandsErr error
 	known       map[string]agentapi.History
 	convs       []*Conversation
 	opens       []agentapi.OpenRequest
@@ -65,6 +68,13 @@ func (p *Provider) Models(context.Context) ([]agentapi.Model, error) {
 	defer p.mu.Unlock()
 	p.modelsCalls++
 	return append([]agentapi.Model(nil), p.models...), p.modelsErr
+}
+
+// SetCommands decides what every conversation's Commands returns.
+func (p *Provider) SetCommands(commands []agentapi.Command, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.commands, p.commandsErr = append([]agentapi.Command(nil), commands...), err
 }
 
 // ModelsCalls reports how often Models ran.
@@ -227,6 +237,8 @@ type Conversation struct {
 	diff          []agentapi.FileDiff
 	diffErr       error
 	sends         []string
+	prompts       []agentapi.Prompt
+	runs          []CommandRun
 	steers        []string
 	modelSets     []string
 	settings      []agentapi.OpenRequest
@@ -351,17 +363,47 @@ func (c *Conversation) SetDiff(files []agentapi.FileDiff, err error) {
 	c.diff, c.diffErr = files, err
 }
 
-func (c *Conversation) Send(ctx context.Context, prompt string) error {
+func (c *Conversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return agentapi.ErrClosed
 	}
-	c.sends = append(c.sends, prompt)
+	c.sends = append(c.sends, prompt.Text)
+	c.prompts = append(c.prompts, prompt)
 	hook := c.sendHook
 	c.mu.Unlock()
 	if hook != nil {
-		return hook(ctx, prompt)
+		return hook(ctx, prompt.Text)
+	}
+	return nil
+}
+
+func (c *Conversation) Commands(context.Context) ([]agentapi.Command, error) {
+	c.provider.mu.Lock()
+	defer c.provider.mu.Unlock()
+	return append([]agentapi.Command(nil), c.provider.commands...), c.provider.commandsErr
+}
+
+// CommandRun is one recorded RunCommand call.
+type CommandRun struct {
+	Name string
+	Args agentapi.Prompt
+}
+
+// RunCommand behaves like Send: the send hook decides the outcome, called
+// with "/name arguments".
+func (c *Conversation) RunCommand(ctx context.Context, name string, args agentapi.Prompt) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return agentapi.ErrClosed
+	}
+	c.runs = append(c.runs, CommandRun{Name: name, Args: args})
+	hook := c.sendHook
+	c.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, strings.TrimSpace("/"+name+" "+args.Text))
 	}
 	return nil
 }
@@ -509,6 +551,20 @@ func (c *Conversation) Sends() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.sends...)
+}
+
+// Prompts returns every prompt passed to Send, with its references.
+func (c *Conversation) Prompts() []agentapi.Prompt {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]agentapi.Prompt(nil), c.prompts...)
+}
+
+// CommandRuns returns every RunCommand call, oldest first.
+func (c *Conversation) CommandRuns() []CommandRun {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CommandRun(nil), c.runs...)
 }
 
 // Steers returns every prompt passed to Steer, oldest first.

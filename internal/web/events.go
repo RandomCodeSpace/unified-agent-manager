@@ -124,6 +124,7 @@ func encodeFrame(event string, payload any) ([]byte, error) {
 // Registration and snapshot happen under one lock, so the subscriber sees
 // every later event exactly once and nothing between the two.
 func (m *Manager) Subscribe(sessionID string) (*Subscriber, []byte, error) {
+	m.refreshBranches(m.ctx, false)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {

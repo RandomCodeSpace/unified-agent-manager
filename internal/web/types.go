@@ -80,6 +80,23 @@ type Project struct {
 	Name      string    `json:"name"`
 	Dir       string    `json:"dir"`
 	CreatedAt time.Time `json:"created_at"`
+	// Defaults are omitted when the Project has none.
+	Defaults TaskDefaults `json:"defaults,omitzero"`
+	// Branch is the branch checked out in Dir's git work tree, read from git
+	// and never stored. It is empty when Dir is not in a work tree, HEAD is
+	// detached, or git cannot tell.
+	Branch string `json:"branch,omitempty"`
+}
+
+// TaskDefaults are the settings a Project's new Tasks start with. The
+// browser resolves them against the live models when it creates a Task.
+// ContextSize is "default" unless a tier is chosen; Mode is safe or yolo.
+type TaskDefaults struct {
+	Provider    string `json:"provider"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	ContextSize string `json:"context_size"`
+	Mode        string `json:"mode"`
 }
 
 // Meta is the /api/meta response.
@@ -152,6 +169,34 @@ type QueuedPrompt struct {
 	RequestID string    `json:"request_id"`
 	Text      string    `json:"text"`
 	QueuedAt  time.Time `json:"queued_at"`
+	// Files are the project paths the prompt references; they are checked
+	// again when it is sent.
+	Files []string `json:"files,omitempty"`
+	// Attachments are the uploads the prompt carries.
+	Attachments []agentapi.Attachment `json:"attachments,omitempty"`
+}
+
+// PromptRequest is the POST /api/sessions/{id}/prompt body.
+type PromptRequest struct {
+	Text      string `json:"text"`
+	RequestID string `json:"request_id"`
+	Mode      string `json:"mode"`
+	// Files are project paths relative to the Task's directory, sent as
+	// structured references. A steer takes none.
+	Files []string `json:"files"`
+	// Attachments are IDs from POST /api/sessions/{id}/attachments. A steer
+	// takes none.
+	Attachments []string `json:"attachments"`
+}
+
+// CommandRequest is the POST /api/sessions/{id}/command body. Name is a
+// command from GET /api/sessions/{id}/commands, without the slash.
+type CommandRequest struct {
+	RequestID   string   `json:"request_id"`
+	Name        string   `json:"name"`
+	Arguments   string   `json:"arguments"`
+	Files       []string `json:"files"`
+	Attachments []string `json:"attachments"`
 }
 
 // SubagentDetail is one subagent and its retained transcript.

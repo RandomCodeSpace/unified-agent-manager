@@ -117,10 +117,10 @@ func TestFinalAcceptanceProjectPersistenceFailureKeepsPublishedState(t *testing.
 	id := addProject(t, m, t.TempDir())
 	original := m.Projects()[0]
 	restore := blockAcceptanceStore(t, st)
-	if _, err := m.AddProject(t.TempDir(), "unsaved"); err == nil {
+	if _, err := m.AddProject(t.TempDir(), "unsaved", nil); err == nil {
 		t.Fatal("unsaved project reported success")
 	}
-	if _, err := m.RenameProject(id, "unsaved rename"); err == nil {
+	if _, err := m.UpdateProject(id, setting("unsaved rename"), nil); err == nil {
 		t.Fatal("unsaved rename reported success")
 	}
 	if got := m.Projects(); len(got) != 1 || got[0] != original {
@@ -133,7 +133,7 @@ func TestFinalAcceptanceProjectPersistenceFailureKeepsPublishedState(t *testing.
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.RenameProject(id, "must not resurrect"); statusOf(err) != http.StatusNotFound {
+	if _, err := m.UpdateProject(id, setting("must not resurrect"), nil); statusOf(err) != http.StatusNotFound {
 		t.Fatalf("rename removed project = %v", err)
 	}
 	cfg, err := st.Load()
@@ -146,11 +146,11 @@ func TestFinalAcceptanceProjectCreatedByAnotherManagerIsNotDuplicated(t *testing
 	st := openTestStore(t)
 	first, second := startManager(t, st), startManager(t, st)
 	dir := t.TempDir()
-	p, err := first.AddProject(dir, "existing")
+	p, err := first.AddProject(dir, "existing", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = second.AddProject(dir, "duplicate")
+	_, err = second.AddProject(dir, "duplicate", nil)
 	var conflict *Error
 	if !errors.As(err, &conflict) || conflict.Status != http.StatusConflict || conflict.ProjectID != p.ID {
 		t.Fatalf("concurrent project identity = %v", err)
@@ -176,7 +176,7 @@ func TestFinalAcceptanceRestoredTaskCannotReplaceMissingProviderIdentity(t *test
 				providers = append(providers, prov)
 			}
 			m := startManager(t, st, providers...)
-			sub, err := m.Submit(id, "resume", mustUUID(t), ModeSend)
+			sub, err := m.Submit(id, PromptRequest{Text: "resume", RequestID: mustUUID(t), Mode: ModeSend})
 			if err != nil || sub.Status != SubmissionRejected {
 				t.Fatalf("resume = %+v, %v", sub, err)
 			}
@@ -242,10 +242,10 @@ func TestFinalAcceptanceCreateInputFailureNeverOpensProvider(t *testing.T) {
 	project := addProject(t, m, t.TempDir())
 	original := m.Projects()[0]
 	invalidName := strings.Repeat("n", maxNameRunes+1)
-	if _, err := m.AddProject(t.TempDir(), invalidName); statusOf(err) != http.StatusBadRequest {
+	if _, err := m.AddProject(t.TempDir(), invalidName, nil); statusOf(err) != http.StatusBadRequest {
 		t.Fatalf("invalid project name = %v", err)
 	}
-	if _, err := m.RenameProject(project, invalidName); statusOf(err) != http.StatusBadRequest {
+	if _, err := m.UpdateProject(project, setting(invalidName), nil); statusOf(err) != http.StatusBadRequest {
 		t.Fatalf("invalid project rename = %v", err)
 	}
 	if got := m.Projects(); len(got) != 1 || got[0] != original {
@@ -273,7 +273,7 @@ func TestFinalAcceptanceCreateInputFailureNeverOpensProvider(t *testing.T) {
 	if _, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project}); statusOf(err) != http.StatusServiceUnavailable {
 		t.Fatalf("create after shutdown = %v", err)
 	}
-	if _, err := m.AddProject(t.TempDir(), ""); statusOf(err) != http.StatusServiceUnavailable {
+	if _, err := m.AddProject(t.TempDir(), "", nil); statusOf(err) != http.StatusServiceUnavailable {
 		t.Fatalf("add project after shutdown = %v", err)
 	}
 	if len(prov.Opens()) != 0 || len(m.List()) != 0 {

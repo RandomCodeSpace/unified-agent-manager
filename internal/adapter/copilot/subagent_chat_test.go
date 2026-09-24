@@ -124,7 +124,7 @@ func TestWebSubagentIdleOnlyFromTheExactSyncTaskListEntry(t *testing.T) {
 func TestWebSubagentFollowUpRunsAndReturnsToIdle(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	_ = h.conv.Send(ctx, "delegate")
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "delegate"})
 	h.fs.onEvent(ev("call", &rpc.ToolExecutionStartData{ToolCallID: "call_1", ToolName: "task"}))
 	finish(t, h, agentTaskInfo("agent-1", rpc.TaskStatusIdle, rpc.TaskExecutionModeSync))
 	h.fs.onEvent(ev("returned", &rpc.ToolExecutionCompleteData{ToolCallID: "call_1", Success: true}))

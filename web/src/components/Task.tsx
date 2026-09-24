@@ -1,25 +1,19 @@
+import { ArrowDown, Bot, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import {
-  LIVE,
-  api,
-  describeError,
-  needsYou,
-  readOnly,
-  stageLabel,
-  taskName,
-  type Changes as ChangesData,
-  type Interaction,
-  type Project,
-  type SessionDetail,
-  type SessionSummary,
-} from '../api';
+import { LIVE, api, modelName, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Project, type SessionDetail, type SessionSummary } from '../api';
+import { cn } from '../lib/cn';
 import type { AgentTranscript } from '../state';
+import { popupOpen } from '../App';
 import { ChangesSheet } from './Changes';
-import { ConfirmDialog, INTERRUPTED_TEXT, Menu, NameDialog, Spinner, StateMark, TaskTitle } from './common';
+import { INTERRUPTED_TEXT, InlineName, Note, Spinner, StateMark, TaskTitle, useApp } from './common';
 import { Composer } from './Composer';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
+import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript } from './Transcript';
+import { Button } from './ui/button';
+import { Menu } from './ui/menu';
+import { Tip } from './ui/tooltip';
 
 interface Props {
   session: SessionDetail;
@@ -31,7 +25,6 @@ interface Props {
   sidePanelInline: boolean;
   onSheet: (open: boolean) => void;
   onSessionUpdate: (s: SessionSummary) => void;
-  onDeleted: (id: string) => void;
   onInteractionUpdate: (sessionId: string, i: Interaction) => void;
   /** Leading header control (the drawer button on narrow screens). */
   leading?: ReactNode;
@@ -40,35 +33,45 @@ interface Props {
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
 const BOTTOM_SLACK = 32;
 
+const compact = (n: number) => n.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 });
+
+/** Context usage as a quiet bar: the fill is a CSS custom property set through CSSOM. */
+function ContextMeter({ used, limit }: { used: number; limit: number }) {
+  const fill = useRef<HTMLSpanElement>(null);
+  const pct = Math.max(0, Math.min(100, limit > 0 ? (used / limit) * 100 : 0));
+  useLayoutEffect(() => {
+    fill.current?.style.setProperty('--fill', `${pct.toFixed(1)}%`);
+  }, [pct]);
+  const text = `${used.toLocaleString()} of ${limit.toLocaleString()} tokens used`;
+  return (
+    <Tip label={text}>
+      <span role="meter" aria-valuemin={0} aria-valuemax={limit || 1} aria-valuenow={used} aria-valuetext={text} aria-label="Context" className="flex items-center gap-2 text-caption tabular-nums text-muted">
+        <span className="relative h-1 w-16 overflow-hidden rounded-xs bg-sunken">
+          <span ref={fill} className={cn('absolute inset-y-0 left-0 w-(--fill) rounded-xs transition-[width] duration-240 ease-app', pct >= 90 ? 'bg-warning' : 'bg-accent')} />
+        </span>
+        <span aria-hidden="true">
+          {compact(used)} / {compact(limit)}
+        </span>
+      </span>
+    </Tip>
+  );
+}
+
 /** The conversation pane: a 44px header, the transcript scrolling in a fixed column, the composer pinned below. */
-export function Task({
-  session,
-  project,
-  agents,
-  snapshotSeq,
-  sheetOpen,
-  sidePanelInline,
-  onSheet,
-  onSessionUpdate,
-  onDeleted,
-  onInteractionUpdate,
-  leading,
-}: Props) {
-  const [dialog, setDialog] = useState<'rename' | 'close' | 'archive' | 'delete' | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
+  const { meta } = useApp();
+  const actions = useTaskActions();
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesTick, setChangesTick] = useState(0);
   const [showJump, setShowJump] = useState(false);
   const [panel, setPanel] = useState<PanelView | null>(null);
   const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
-  const stage = session.stage || 'active';
-  const stageBlocked = live || needsYou(session) || (session.queued ?? 0) > 0;
-  const stageReason = stageBlocked ? 'Stop the turn, resolve pending requests and clear queued prompts before settling or archiving.' : '';
   const working = session.state === 'working' || session.state === 'starting';
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
+  const busy = actions.busy === session.id;
 
   // The "n files changed" count: fetched on open, again when a turn starts or ends, and on Refresh.
   useEffect(() => {
@@ -90,12 +93,6 @@ export function Task({
     setShowJump(false);
   }, []);
 
-  useLayoutEffect(() => {
-    atBottom.current = true;
-    setShowJump(false);
-    setPanel(null);
-  }, [session.id]);
-
   // Follow new content only while the reader is at the bottom; otherwise offer a way back.
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -104,10 +101,8 @@ export function Task({
     else if (el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setShowJump(true);
   }, [session.id, session.items, session.interactions]);
 
-  // One side panel at a time: opening the Changes sheet closes the subagent panel and vice versa.
-  useEffect(() => {
-    if (sheetOpen) setPanel(null);
-  }, [sheetOpen]);
+  // One side panel at a time: the Changes sheet wins while it is open; opening the other closes it.
+  const shownPanel = sheetOpen ? null : panel;
 
   const closePanel = useCallback(() => {
     setPanel(null);
@@ -121,23 +116,23 @@ export function Task({
     setPanel(view);
   }
 
-  // Esc closes the panel; native dialogs handle their own Esc.
+  // Esc closes the panel when no popup owns the key.
   useEffect(() => {
-    if (!panel) return;
+    if (!shownPanel) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !document.querySelector('dialog[open]')) closePanel();
+      if (e.key === 'Escape' && !popupOpen()) closePanel();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [panel, closePanel]);
+  }, [shownPanel, closePanel]);
 
   /** Scroll the transcript to the `task` row that spawned a subagent and flash it. */
   function locate(toolCallId: string) {
     const el = document.getElementById(`item-${toolCallId}`);
     if (!el) return;
     el.scrollIntoView({ block: 'center' });
-    el.classList.add('flash');
-    window.setTimeout(() => el.classList.remove('flash'), 1400);
+    el.classList.add('animate-flash');
+    window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
   }
 
   function onScroll() {
@@ -147,100 +142,113 @@ export function Task({
     if (atBottom.current) setShowJump(false);
   }
 
-  async function run(op: () => Promise<SessionSummary>) {
-    setError(null);
-    setBusy(true);
-    try {
-      onSessionUpdate(await op());
-    } catch (e) {
-      setError(describeError(e));
-    } finally { setBusy(false); }
-  }
-
   const name = taskName(session);
   const fileCount = changes?.supported ? changes.files.length : null;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
+  const model = modelName(meta, session.provider, session.last_model || session.model);
+  const items = taskMenuItems(session, actions, 'header');
+  const renamable = canRename(session, actions);
 
   return (
-    <div className="pane">
-      <div className="pane-main">
-        <header className="main-header">
+    <div className="flex min-h-0 flex-1 animate-rise">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3">
           {leading}
-          <h1 className="task-title" title={name || undefined}>
-            <TaskTitle session={session} />
-          </h1>
-          {readOnly(session) ? <span className="chip">{stageLabel(session)}</span> : <StateMark state={session.state} title={detail} />}
-          <span className="spacer" />
+          <div className="group/title flex min-w-0 flex-1 items-center gap-1.5">
+            {renaming ? (
+              <InlineName initial={session.name} label="Task name" className="h-8 max-w-md text-display-sm font-semibold" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
+            ) : (
+              <>
+                <h1
+                  className="min-w-0 truncate text-display-sm text-ink"
+                  title={name || undefined}
+                  onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
+                >
+                  <TaskTitle session={session} />
+                </h1>
+                {renamable && (
+                  <Tip label="Rename">
+                    <Button size="icon" aria-label="Rename task" className="text-muted opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
+                      <Pencil />
+                    </Button>
+                  </Tip>
+                )}
+              </>
+            )}
+            {readOnly(session) ? (
+              <span className="inline-flex h-5 shrink-0 items-center rounded-xs border border-hairline-strong px-1.5 text-caption text-muted">{stageLabel(session)}</span>
+            ) : (
+              <StateMark state={session.state} label title={detail} className="shrink-0" />
+            )}
+            {busy && <Spinner className="shrink-0" />}
+          </div>
           {session.subagents.length > 0 && (
-            <button
-              type="button"
-              id="subagents-link"
-              className="btn btn-ghost btn-sm"
-              aria-pressed={!!panel}
-              onClick={(e) => (panel ? closePanel() : openPanel({ view: 'list' }, e.currentTarget))}
-            >
-              <span className="changes-label">Subagents</span>
-              <span className="count num">
-                {session.subagents.length}
-                <span className="sr-only"> subagents</span>
-              </span>
-              {agentsRunning > 0 && (
-                <>
-                  <Spinner />
-                  <span className="count num">{agentsRunning} running</span>
-                </>
-              )}
-            </button>
+            <Tip label="Subagents">
+              <Button
+                id="subagents-link"
+                size="md"
+                aria-pressed={!!shownPanel}
+                aria-label={`Subagents, ${session.subagents.length}${agentsRunning ? `, ${agentsRunning} running` : ''}`}
+                className="px-2 text-muted"
+                onClick={(e) => (shownPanel ? closePanel() : openPanel({ view: 'list' }, e.currentTarget))}
+              >
+                <Bot />
+                <span className="max-sm:hidden">Subagents</span>
+                <span className="tabular-nums text-ink">{session.subagents.length}</span>
+                {agentsRunning > 0 && <Spinner />}
+              </Button>
+            </Tip>
           )}
-          <button type="button" id="changes-link" className="btn btn-ghost btn-sm" aria-pressed={sheetOpen} onClick={() => onSheet(!sheetOpen)}>
-            <span className={fileCount === null ? 'changes-label changes-label-only' : 'changes-label'}>Changes</span>
-            {fileCount !== null && (
-              <span className="count num">
-                {fileCount}
-                <span className="sr-only"> {fileCount === 1 ? 'file' : 'files'} changed</span>
+          <Tip label="Changes in the working tree">
+            <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={`Changes${fileCount !== null ? `, ${fileCount} ${fileCount === 1 ? 'file' : 'files'}` : ''}`} className="px-2 text-muted" onClick={() => {
+                setPanel(null);
+                onSheet(!sheetOpen);
+              }}>
+              <FileDiff />
+              <span className="max-sm:hidden">Changes</span>
+              {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
+            </Button>
+          </Tip>
+          <Menu.Root modal={false}>
+            <Menu.Trigger render={<Button size="icon-md" aria-label="Task actions" className="text-muted" />}>
+              <Ellipsis />
+            </Menu.Trigger>
+            <Menu.Content align="end">
+              <Menu.Actions items={items} />
+            </Menu.Content>
+          </Menu.Root>
+        </header>
+
+        {(project?.branch || model || session.context) && (
+          <div className="flex h-7 shrink-0 items-center gap-3 overflow-hidden border-b border-hairline/60 px-3 text-caption text-muted sm:px-4">
+            {project?.branch && (
+              <span className="flex min-w-0 max-w-[40%] items-center gap-1" title={project.branch}>
+                <GitBranch aria-hidden="true" className="size-3 shrink-0 text-faint" />
+                <span className="truncate font-mono text-keycap">{project.branch}</span>
               </span>
             )}
-          </button>
-          <Menu label="Task actions">
-            <button type="button" role="menuitem" className="menu-item" disabled={busy || stage === 'archived'} onClick={() => setDialog('rename')}>Rename</button>
-            {stage === 'active' && session.open && <button type="button" role="menuitem" className="menu-item" disabled={busy} onClick={() => setDialog('close')}>Close</button>}
-            {stage === 'active' && <button type="button" role="menuitem" className="menu-item" disabled={busy || stageBlocked} title={stageReason}
-              onClick={() => void run(() => api.stage(session.id, 'settle'))}>Settle task</button>}
-            {stage === 'settled' && <button type="button" role="menuitem" className="menu-item" disabled={busy}
-              onClick={() => void run(() => api.stage(session.id, 'reopen'))}>Reopen task</button>}
-            {stage !== 'archived' && <button type="button" role="menuitem" className="menu-item" disabled={busy || (stage === 'active' && stageBlocked)} title={stageReason}
-              onClick={() => setDialog('archive')}>Archive task</button>}
-            {stage === 'archived' && <button type="button" role="menuitem" className="menu-item menu-item-danger" onClick={() => setDialog('delete')}>Delete task</button>}
-            {stage === 'active' && stageReason && <p className="caption menu-help">{stageReason}</p>}
-          </Menu>
-        </header>
-        {session.context && (
-          <div className="context-usage task-context">
-            <label htmlFor="context-meter" className="caption num">
-              Context:{' '}
-              <span aria-hidden="true">
-                {session.context.used.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })}
-                {' / '}
-                {session.context.limit.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })} tokens
+            {model && (
+              <span className="flex min-w-0 items-center gap-1 truncate" title={session.last_model && session.last_model !== session.model ? `Latest turn ran on ${model}` : undefined}>
+                <span className="truncate font-mono text-keycap">{model}</span>
               </span>
-              <span className="sr-only">{session.context.used.toLocaleString()} of {session.context.limit.toLocaleString()} tokens used</span>
-            </label>
-            <meter id="context-meter" min={0} max={session.context.limit || 1} value={session.context.used}
-              aria-valuetext={`${session.context.used.toLocaleString()} of ${session.context.limit.toLocaleString()} tokens used`} />
+            )}
+            <span className="flex-1" />
+            {session.context && <ContextMeter used={session.context.used} limit={session.context.limit} />}
           </div>
         )}
 
-        <div className="pane-body" ref={scroller} onScroll={onScroll}>
-          <div className="column" role="log">
-            {busy && <p className="caption" role="status">Updating task…</p>}
-            {error && (
-              <p className="notice-line notice-error" role="alert">
-                {error}
-              </p>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll}>
+          <div className="mx-auto flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
+            {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
+            {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && (
+              <div className="flex flex-col items-center gap-1 py-10 text-center animate-rise">
+                <p className="text-title text-ink">New task in {project?.name ?? 'this project'}</p>
+                <p className="text-ui text-muted">Your first message gives this task its title.</p>
+              </div>
             )}
-            {session.history_truncated && <p className="notice-line">Earlier history was truncated; only the most recent part is shown.</p>}
             <Transcript
+              sessionId={session.id}
               items={session.items}
               subagents={session.subagents}
               live={live}
@@ -252,95 +260,29 @@ export function Task({
             {session.interactions.map((i) => (
               <InteractionCard key={i.id} session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
             ))}
-            {session.state === 'interrupted' && <p className="notice-line notice-warning">{INTERRUPTED_TEXT}</p>}
+            {session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
             {session.state === 'failed' && (
-              <p className="notice-line notice-error" role="alert">
+              <Note tone="error" role="alert">
                 Turn failed{session.state_detail ? `: ${session.state_detail}` : '.'}
-              </p>
+              </Note>
             )}
           </div>
         </div>
 
-        <div className="pane-foot">
-          <div className="column">
-            {showJump && (
-              <button type="button" className="btn btn-secondary btn-sm jump" onClick={scrollToBottom}>
-                ↓ New output
-              </button>
-            )}
-            <Composer key={session.id} session={session} onSessionUpdate={onSessionUpdate} />
-          </div>
+        <div className="relative shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-4 md:px-6">
+          {showJump && (
+            <Button variant="secondary" size="sm" className="absolute -top-10 left-1/2 -translate-x-1/2 shadow-float animate-rise" onClick={scrollToBottom}>
+              <ArrowDown />
+              New output
+            </Button>
+          )}
+          <Composer key={session.id} session={session} onSessionUpdate={onSessionUpdate} />
         </div>
       </div>
 
-      {sheetOpen && (
-        <ChangesSheet
-          session={session}
-          projectName={project?.name ?? 'Project'}
-          changes={changes}
-          inline={sidePanelInline}
-          onRefresh={() => setChangesTick((t) => t + 1)}
-          onClose={() => onSheet(false)}
-        />
-      )}
-      {panel && !sidePanelInline && <button type="button" className="scrim" aria-label="Close subagents" onClick={closePanel} />}
-      {panel && (
-        <SubagentPanel
-          session={session}
-          agents={agents}
-          snapshotSeq={snapshotSeq}
-          view={panel}
-          inline={sidePanelInline}
-          onView={setPanel}
-          onClose={closePanel}
-          onLocate={locate}
-        />
-      )}
-      {dialog === 'rename' && (
-        <NameDialog
-          title="Rename task"
-          label="Name"
-          initial={session.name}
-          hint="Leave it empty to show the provider's title again."
-          allowEmpty
-          onSubmit={async (name) => onSessionUpdate(await api.rename(session.id, name))}
-          onClose={() => setDialog(null)}
-        />
-      )}
-      {dialog === 'close' && (
-        <ConfirmDialog
-          title="Close this task?"
-          confirmLabel="Close task"
-          danger={false}
-          onConfirm={async () => onSessionUpdate(await api.close(session.id))}
-          onClose={() => setDialog(null)}
-        >
-          <p>
-            Closing disconnects the provider conversation. The task and its conversation ID are kept, so nothing is deleted;
-            sending another prompt reopens the same conversation.
-          </p>
-          <p className="caption">To interrupt the current turn without closing, use Stop turn instead.</p>
-        </ConfirmDialog>
-      )}
-      {dialog === 'archive' && (
-        <ConfirmDialog title="Archive this task?" confirmLabel="Archive task" danger={false}
-          onConfirm={async () => onSessionUpdate(await api.stage(session.id, 'archive'))} onClose={() => setDialog(null)}>
-          <p>Archiving makes this task permanently read-only. It stays visible with its recorded conversation. It cannot be reopened.</p>
-        </ConfirmDialog>
-      )}
-      {dialog === 'delete' && (
-        <ConfirmDialog
-          title="Delete this task?"
-          confirmLabel="Delete task"
-          onConfirm={async () => {
-            await api.deleteSession(session.id);
-            onDeleted(session.id);
-          }}
-          onClose={() => setDialog(null)}
-        >
-          <p>This removes the task record from UAM. The provider conversation on the host is untouched.</p>
-        </ConfirmDialog>
-      )}
+      {sheetOpen && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} inline={sidePanelInline} onRefresh={() => setChangesTick((t) => t + 1)} onClose={() => onSheet(false)} />}
+      {shownPanel && !sidePanelInline && <button type="button" className="fixed inset-0 z-30 bg-backdrop animate-fade-in" aria-label="Close subagents" onClick={closePanel} />}
+      {shownPanel && <SubagentPanel session={session} agents={agents} snapshotSeq={snapshotSeq} view={shownPanel} inline={sidePanelInline} onView={setPanel} onClose={closePanel} onLocate={locate} />}
     </div>
   );
 }

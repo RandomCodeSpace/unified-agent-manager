@@ -116,23 +116,39 @@ beyond loopback, anyone who can reach that address. To turn it back off, run
 ## Use it
 
 - **Projects**: add a directory on the Linux host as a Project. A directory
-  has one Project; adding it again points you to the existing one. Renaming a
-  Project changes only its name in UAM. Web sessions from before Projects
-  existed are placed in a Project for their directory, named after it, when
-  the service starts.
-- **Tasks**: start a Task (a web session) in a Project. Choose the provider
-  (only Copilot for now), optionally a model, effort, context size, a name,
-  and a first prompt. A provider that is not installed or not compatible is
-  shown as unavailable with the reason. The Task runs in the Project's directory.
+  has one Project; adding it again points you to the existing one. A Project
+  can carry defaults for new Tasks: model, effort, context size (where the
+  provider allows it) and mode. Set them when you add the Project, or later
+  with "Edit project", which also renames it. Editing a Project changes only
+  its record in UAM. Web sessions from before Projects existed are placed in
+  a Project for their directory, named after it, when the service starts.
+- **Tasks**: "New task" in a Project opens an empty conversation at once,
+  with the Project's defaults applied, and puts the cursor in the composer.
+  There is no form and no required first prompt: type the first message when
+  you are ready. The pickers in the composer's toolbar still change the model,
+  effort, context size and mode for that Task alone. A Project without
+  defaults starts a Task with `auto`, default effort, default context size and
+  safe mode. A default model the provider no longer offers is replaced by
+  `auto` (or the first model), with default effort and context size, so New
+  task does not fail on a stale default. A provider that is not installed or
+  not compatible is reported with the reason. The Task runs in the Project's
+  directory.
 - **Names and titles**: the name is optional. Without one, the Task shows the
   title the provider gives the conversation (Copilot uses the first prompt),
   or "New task" until there is one. Clearing a name shows the title again.
-  Renaming a Task does not rename the conversation at the provider.
+  Rename from the Task's row menu (hover "…" or right-click), the header
+  menu, F2 on a row, or a double-click on the name; the name is edited in
+  place. Renaming a Task does not rename the conversation at the provider.
 - **Models**: the model list shows the models your Copilot account can
   select; the default is the provider's own choice. You can switch the model
   between turns, not while a turn runs; the new model applies from the next
   turn. The list is refreshed at most every five minutes, so a changed
   subscription shows up without restarting the service.
+- **Copilot configuration**: Copilot Tasks load what the terminal CLI loads
+  for the directory: your and the project's skills, the project's custom
+  agents, custom instructions, hooks in `.github/hooks/`, and the built-in
+  GitHub MCP server. Hooks run their commands without asking, as they do in
+  the terminal.
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is
@@ -176,8 +192,8 @@ beyond loopback, anyone who can reach that address. To turn it back off, run
   not see that conversation, and a follow-up whose delivery is uncertain is
   never resent.
 - **Approvals and questions**: when the provider asks for permission or asks a
-  question, a card appears in the conversation and a "Needs you" mark on the
-  Task in the project list and on the home screen. Nothing is approved
+  question, a card appears in the conversation and the Task's row in the
+  sidebar says Approval or Input. Nothing is approved
   automatically unless you turned on yolo for that Task, and questions always
   wait for you. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused.
@@ -198,6 +214,36 @@ beyond loopback, anyone who can reach that address. To turn it back off, run
   > on everything anyway. With `--no-auth` behind a public reverse proxy or
   > on an address beyond loopback, anyone who can reach the page can start a
   > yolo Task.
+- **Commands**: type `/` as the first character of a message to list the
+  Task's commands: Copilot's `/init` and `/review`, and the skills your account
+  and the project provide. The list filters as you type; Up and Down move,
+  Enter or Tab picks, Esc closes. Sending `/name arguments` runs the command
+  with the rest of the text as its arguments and shows `/name arguments` in
+  the conversation. A command runs only between turns; it is not queued or
+  steered. A `/word` that is not on the list is sent as plain text, and so is
+  anything that starts with `$`, `!`, `#` or `@agent`.
+- **File references**: type `@` at the start of a message or after a space to search the project's
+  files: what `git ls-files` sees, including untracked files that are not
+  ignored, and their directories. Picking one inserts `@path` and adds a chip;
+  removing the chip removes the token, and deleting the token drops the chip.
+  A message references at most 20 paths, each a regular file or a directory
+  inside the project (no symbolic links, nothing binary). Copilot receives the
+  reference and reads the file with its tools, which asks for a read
+  permission in safe mode. A directory that is not a Git working tree offers
+  no list. A steer takes text only.
+- **Attachments**: the paper-clip button, pasting, and dropping files onto the
+  composer upload them at once. A chip shows the upload's progress, then its
+  size and type, or why it was refused. Allowed: png, jpeg, gif and webp
+  images up to 3 MiB, PDF up to 10 MiB, and UTF-8 text up to 256 KiB, at most
+  5 per message; the type is taken from the file's bytes, not its name. SVG,
+  HEIC, audio, video, archives and everything else are refused. Images and
+  PDFs need a model that accepts them: Copilot reports this per model, `auto`
+  is not checked, and the button says so when the Task's model takes text
+  only. Attachments go with the message; a queued message keeps them, and a
+  steer takes none. In the conversation, images show as thumbnails that open
+  larger on click and other files as chips that open the stored copy, also
+  after a reload. UAM keeps the files outside the project (see Settle,
+  archive, and delete).
 - **Messages while a turn runs**: you can queue a message or steer the turn
   with it.
   - **Queue** holds the message until the turn completes, then sends it as
@@ -221,13 +267,17 @@ beyond loopback, anyone who can reach that address. To turn it back off, run
   yet are dropped, each with a notice.
 - **Close session** disconnects UAM from the provider conversation and keeps
   the record. Sending another prompt reopens the same conversation.
-- **Settle, archive, and delete**: when a Task is done, settle it. A settled
+- **Settle, archive, and delete**: when a Task is done, settle it from its
+  row menu (hover "…" or right-click) or the header menu. A settled
   Task is read-only and its conversation is closed; reopen it to continue,
   and your next message picks up the same conversation. Archive a Task, settled
   or not, to put it away for good; an archived Task cannot be reopened. Only
   an archived Task can be deleted, and a Project can be removed only once
   every Task in it is archived. Deleting or removing never deletes the
-  provider's copy of the conversation and never touches the directory.
+  provider's copy of the conversation and never touches the directory. It does
+  delete the files you attached to the Task's prompts, which UAM keeps in
+  `~/.config/uam/web-attachments/` (or `$UAM_CONFIG_DIR/web-attachments/`).
+  An attachment you upload but never send is deleted after 24 hours.
 
   | Action | Allowed on | Also needs | Result |
   |---|---|---|---|
@@ -242,14 +292,26 @@ beyond loopback, anyone who can reach that address. To turn it back off, run
   running turn, answer what waits for you, and send or clear the queue before
   you settle or archive. After the service restarts, a settled or archived Task shows no
   conversation, the same as a closed one.
-- **Changes**: the Task's meta line shows how many files differ from `HEAD`
-  in the project directory and opens them as a sheet with the diff. That
+- **Changes**: the "Changes" button in the Task header shows how many files
+  differ from `HEAD` in the project directory and opens them beside the
+  conversation with the diff (a full-screen sheet on a narrow window). That
   includes edits made by anything else in the working tree, not only this
-  session.
-- **Home screen**: with no Task open, the page lists Tasks that need you or
-  have new activity since you last looked, then every Project with its
-  Tasks. On a narrow window the project list opens as a drawer. The theme
-  follows the system and can be toggled from the project list.
+  session. On a wide window this panel and the Subagents panel can be
+  resized by dragging their inner edge (the handle also takes the arrow
+  keys; double-click resets); the width is kept per browser.
+- **Sidebar**: the sidebar is the only list of Tasks. Each Project shows its
+  active Tasks, then collapsed "Settled" and "Archived" shelves; a settled or
+  archived Task opens read-only. A row shows the name or title, a state
+  mark, and the time of the last activity, or a short word (Approval, Input,
+  Working, Failed, …) while something is happening or new. Hover a row for
+  "…" or right-click it for Rename, Close conversation, Settle or Reopen,
+  Archive and Delete; a Project row offers New task, Edit project and Remove
+  project. Arrow keys move between rows, Left and Right collapse and expand
+  a Project, Enter opens, F2 renames. A Project on a named git branch shows
+  the branch under its name and in the Task header. With no Task open, the
+  main pane offers only New task and Add project. On a narrow window the
+  sidebar opens as a drawer. There is one theme; it does not follow the
+  system.
 
 States shown for each session:
 

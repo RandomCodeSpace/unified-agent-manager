@@ -164,6 +164,9 @@ type webPart struct {
 	Time      *webPartTime  `json:"time"`
 	Tool      string        `json:"tool"`
 	State     *webToolState `json:"state"`
+	Mime      string        `json:"mime"`
+	Filename  string        `json:"filename"`
+	URL       string        `json:"url"`
 }
 
 type webSessionStatus struct {
@@ -272,15 +275,16 @@ func (c *apiClient) webUserMessageExists(ctx context.Context, sessionID, message
 
 // webPrompt posts one prompt and returns the HTTP status. The body is never
 // read into errors because OpenCode may quote the prompt.
-func (c *apiClient) webPrompt(ctx context.Context, sessionID, messageID, prompt string) (int, error) {
+func (c *apiClient) webPrompt(ctx context.Context, sessionID, messageID string, parts []map[string]any) (int, error) {
 	path, err := webSessionPath(sessionID, "/prompt_async")
 	if err != nil {
 		return 0, err
 	}
-	payload := map[string]any{
-		"messageID": messageID,
-		"parts":     []map[string]string{{"type": "text", "text": prompt}},
-	}
+	return c.webPost(ctx, path, map[string]any{"messageID": messageID, "parts": parts})
+}
+
+// webPost posts payload and returns the HTTP status, discarding the body.
+func (c *apiClient) webPost(ctx context.Context, path string, payload any) (int, error) {
 	resp, err := c.doQuery(ctx, http.MethodPost, path, "", nil, payload, "")
 	if err != nil {
 		return 0, err
@@ -288,6 +292,29 @@ func (c *apiClient) webPrompt(ctx context.Context, sessionID, messageID, prompt 
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBodyBytes))
 	_ = resp.Body.Close()
 	return resp.StatusCode, nil
+}
+
+type webCommand struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Source      string   `json:"source"`
+	Hints       []string `json:"hints"`
+}
+
+func (c *apiClient) webCommands(ctx context.Context) ([]webCommand, error) {
+	var commands []webCommand
+	_, err := c.webJSON(ctx, http.MethodGet, "/command", nil, nil, &commands)
+	return commands, err
+}
+
+// webCommand runs a command. OpenCode answers only when the turn it starts
+// ends; the body (the assistant message) is discarded.
+func (c *apiClient) webCommand(ctx context.Context, sessionID, messageID, name, arguments string, parts []map[string]any) (int, error) {
+	path, err := webSessionPath(sessionID, "/command")
+	if err != nil {
+		return 0, err
+	}
+	return c.webPost(ctx, path, map[string]any{"messageID": messageID, "command": name, "arguments": arguments, "parts": parts})
 }
 
 func (c *apiClient) webAbort(ctx context.Context, sessionID string) error {

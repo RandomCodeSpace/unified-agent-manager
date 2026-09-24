@@ -153,7 +153,7 @@ func TestAcceptanceReopenRejectsWrongOrAlreadyExitedConversation(t *testing.T) {
 			if _, err := m.Close(sum.ID); err != nil {
 				t.Fatal(err)
 			}
-			sub, err := m.Submit(sum.ID, "must not reach a replacement", mustUUID(t), ModeSend)
+			sub, err := m.Submit(sum.ID, PromptRequest{Text: "must not reach a replacement", RequestID: mustUUID(t), Mode: ModeSend})
 			if err != nil || sub.Status != SubmissionRejected {
 				t.Fatalf("failed reopen submission = %+v, %v", sub, err)
 			}

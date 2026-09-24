@@ -76,6 +76,9 @@ type Manager struct {
 	// Project removal, each of which checks and then writes the store. It is
 	// taken before any session.op and never while holding mu.
 	projectMu sync.Mutex
+	// branchMu orders Project branch reads, so an older read never replaces
+	// a newer one. It is never taken while holding mu.
+	branchMu sync.Mutex
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo
@@ -89,6 +92,8 @@ type Manager struct {
 	subs     map[*Subscriber]struct{}
 	closed   bool
 	now      func() time.Time
+	// branchAt is when each Project's branch was last read.
+	branchAt map[string]time.Time
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -109,6 +114,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		creating:  map[string]chan struct{}{},
 		subs:      map[*Subscriber]struct{}{},
 		now:       time.Now,
+		branchAt:  map[string]time.Time{},
 	}
 	for _, p := range providers {
 		if p == nil {
@@ -194,6 +200,9 @@ type webSession struct {
 	queuePaused bool
 	// queueChanged tells changedLocked to publish the queue.
 	queueChanged bool
+
+	// uploads are the Task's stored attachments by ID.
+	uploads map[string]*upload
 
 	persisted persistKey
 }
@@ -330,7 +339,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	for id, p := range cfg.WebProjects {
-		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt}
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Defaults: TaskDefaults(p.Defaults)}
 	}
 	for _, rec := range cfg.Sessions {
 		if rec.Surface != store.SurfaceWeb || rec.ID == "" {
@@ -348,8 +357,11 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.sessions[s.id] = s
 	}
 	m.mu.Unlock()
-	m.wg.Add(1)
+	m.loadUploads()
+	m.sweepUploads()
+	m.wg.Add(2)
 	go m.persistLoop()
+	go m.sweepLoop()
 	if err := m.flush(); err != nil {
 		log.Warn("persist interrupted web sessions failed", "error", err)
 	}
@@ -517,6 +529,11 @@ func loadModels(ctx context.Context, p agentapi.Provider) ([]agentapi.Model, err
 		mo.Name = cmp.Or(name, mo.ID)
 		mo.Efforts = append([]string{}, mo.Efforts...)
 		mo.ContextSizes = append([]agentapi.ContextSize{}, mo.ContextSizes...)
+		if mo.Media != nil {
+			media := *mo.Media
+			media.Types = slices.Clone(media.Types)
+			mo.Media = &media
+		}
 		out = append(out, mo)
 	}
 	return out, nil
@@ -728,6 +745,7 @@ func (m *Manager) projectsLocked() []Project {
 
 // Projects returns every Project, oldest first.
 func (m *Manager) Projects() []Project {
+	m.refreshBranches(m.ctx, false)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.projectsLocked()
@@ -737,9 +755,10 @@ func (m *Manager) publishProjectLocked(p Project) {
 	m.broadcastLocked("project", "", func(seq uint64) any { return projectEvent{Seq: seq, Project: p} })
 }
 
-// AddProject adds the directory dir as a Project. A directory has at most
-// one Project; adding it again reports the existing one with 409.
-func (m *Manager) AddProject(dir, name string) (Project, error) {
+// AddProject adds the directory dir as a Project, with defaults for its new
+// Tasks unless defaults is nil. A directory has at most one Project; adding
+// it again reports the existing one with 409.
+func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project, error) {
 	canonical, err := canonicalWorkdir(dir)
 	if err != nil {
 		return Project{}, err
@@ -748,10 +767,17 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
+	var d TaskDefaults
+	if defaults != nil {
+		if d, err = m.taskDefaults(*defaults); err != nil {
+			return Project{}, err
+		}
+	}
 	id, err := newUUID()
 	if err != nil {
 		return Project{}, fmt.Errorf("generate project id: %w", err)
 	}
+	branch := readBranch(m.ctx, canonical)
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -769,7 +795,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	if existing != "" {
 		return Project{}, projectExists(existing)
 	}
-	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now()}
+	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Defaults: d, Branch: branch}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		for _, other := range cfg.WebProjects {
 			if other.Dir == canonical {
@@ -780,7 +806,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 		if cfg.WebProjects == nil {
 			cfg.WebProjects = map[string]store.WebProject{}
 		}
-		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt}
+		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt, Defaults: store.WebTaskDefaults(d)}
 		return nil
 	}); err != nil {
 		if existing != "" {
@@ -790,6 +816,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	}
 	m.mu.Lock()
 	m.projects[id] = &p
+	m.branchAt[id] = time.Now()
 	m.publishProjectLocked(p)
 	m.mu.Unlock()
 	log.Info("web project added", "project", id)
@@ -800,31 +827,44 @@ func projectExists(id string) *Error {
 	return &Error{Status: http.StatusConflict, Message: "this directory already has a project", ProjectID: id}
 }
 
-// RenameProject renames a Project. An empty name resets it to the
+// UpdateProject renames a Project, sets the defaults for its new Tasks, or
+// both; a nil argument leaves that part alone. An empty name resets it to the
 // directory's base name.
-func (m *Manager) RenameProject(id, name string) (Project, error) {
+func (m *Manager) UpdateProject(id string, name *string, defaults *TaskDefaults) (Project, error) {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
 	p := m.projects[id]
-	var dir string
+	var next Project
 	if p != nil {
-		dir = p.Dir
+		next = *p
 	}
 	m.mu.Unlock()
 	if p == nil {
 		return Project{}, errProjectNotFound
 	}
-	clean, err := cleanName(name, filepath.Base(dir))
-	if err != nil {
-		return Project{}, err
+	var err error
+	if name != nil {
+		if next.Name, err = cleanName(*name, filepath.Base(next.Dir)); err != nil {
+			return Project{}, err
+		}
+	}
+	if defaults != nil {
+		if next.Defaults, err = m.taskDefaults(*defaults); err != nil {
+			return Project{}, err
+		}
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		stored, ok := cfg.WebProjects[id]
 		if !ok {
 			return errProjectNotFound
 		}
-		stored.Name = clean
+		if name != nil {
+			stored.Name = next.Name
+		}
+		if defaults != nil {
+			stored.Defaults = store.WebTaskDefaults(next.Defaults)
+		}
 		cfg.WebProjects[id] = stored
 		return nil
 	}); err != nil {
@@ -835,9 +875,30 @@ func (m *Manager) RenameProject(id, name string) (Project, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p.Name = clean
+	*p = next
 	m.publishProjectLocked(*p)
 	return *p, nil
+}
+
+// taskDefaults checks a Project's defaults for new Tasks the way Create
+// checks a Task's selection and mode, and returns them with an empty context
+// size made "default". The provider need only be registered.
+func (m *Manager) taskDefaults(d TaskDefaults) (TaskDefaults, error) {
+	d.ContextSize = cmp.Or(d.ContextSize, "default")
+	m.mu.Lock()
+	registered := m.providers[d.Provider] != nil
+	selectionErr := m.validateSelectionLocked(d.Provider, d.Model, d.Effort, d.ContextSize)
+	m.mu.Unlock()
+	if !registered {
+		return TaskDefaults{}, newError(http.StatusBadRequest, "unknown provider %q", d.Provider)
+	}
+	if selectionErr != nil {
+		return TaskDefaults{}, selectionErr
+	}
+	if _, err := parseMode(d.Mode); err != nil {
+		return TaskDefaults{}, err
+	}
+	return d, nil
 }
 
 var errProjectNotFound = newError(http.StatusNotFound, "project not found")
@@ -896,17 +957,22 @@ func (m *Manager) RemoveProject(id string) error {
 		}
 	}
 	delete(m.projects, id)
+	delete(m.branchAt, id)
 	m.broadcastLocked("project_removed", "", func(seq uint64) any { return projectRemovedEvent{Seq: seq, ProjectID: id} })
 	m.mu.Unlock()
 	for _, conv := range convs {
 		m.closeConversation(conv)
 	}
+	for _, s := range tasks {
+		removeUploads(m.taskUploadDir(s.id))
+	}
 	log.Info("web project removed", "project", id, "tasks", len(tasks))
 	return nil
 }
 
-// Delete deletes an archived Task's record. It is refused for any other
-// stage. The conversation is never deleted at the provider.
+// Delete deletes an archived Task's record and its stored attachments. It
+// is refused for any other stage. The conversation is never deleted at the
+// provider.
 func (m *Manager) Delete(id string) error {
 	s, err := m.lookup(id)
 	if err != nil {
@@ -940,6 +1006,7 @@ func (m *Manager) Delete(id string) error {
 	if conv != nil {
 		m.closeConversation(conv)
 	}
+	removeUploads(m.taskUploadDir(s.id))
 	log.Info("web session deleted", "session", id)
 	return nil
 }
@@ -1110,7 +1177,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	switch ev.Kind {
 	case agentapi.EventItem:
 		if ev.Item != nil && ev.Item.ID != "" {
-			m.upsertItemLocked(s, clampItem(*ev.Item, m.now()), true)
+			it := clampItem(*ev.Item, m.now())
+			s.linkUploadsLocked(&it)
+			m.upsertItemLocked(s, it, true)
 		}
 	case agentapi.EventDelta:
 		if ev.Delta != nil && ev.Delta.ItemID != "" {
@@ -1178,6 +1247,10 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		}
 		s.setBase(StateFailed, detail)
 		m.pauseQueueLocked(s)
+	}
+	if turn.State != agentapi.TurnWorking {
+		// The agent may have switched branches during the turn.
+		m.kickBranchLocked(s.projectID)
 	}
 }
 
@@ -1288,7 +1361,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	}
 	log.Info("web session created", "session", id, "provider", prov.Name())
 	if hasPrompt {
-		if _, err := m.submit(s, req.Prompt, reqID, ModeSend); err != nil {
+		if _, err := m.submit(s, turnInput{text: req.Prompt}, reqID, ModeSend); err != nil {
 			log.Warn("initial web prompt not submitted", "session", id, "error", err)
 		}
 	}
@@ -1594,13 +1667,22 @@ var requestIDRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 
 func validRequestID(id string) bool { return requestIDRE.MatchString(id) }
 
+// turnInput is what a submission sends: a prompt, or, when command is set,
+// that command with text as its arguments. Files are relative project
+// paths; attachments are upload IDs of the Task.
+type turnInput struct {
+	text, command      string
+	files, attachments []string
+}
+
 // Submit sends one prompt in mode: ModeSend ("" too), ModeQueue or
 // ModeSteer. A repeated request ID returns the recorded outcome, or "queued"
 // while the prompt waits in the queue, without contacting the provider.
-func (m *Manager) Submit(id, text, requestID, mode string) (Submission, error) {
-	if !validRequestID(requestID) {
+func (m *Manager) Submit(id string, req PromptRequest) (Submission, error) {
+	if !validRequestID(req.RequestID) {
 		return Submission{}, newError(http.StatusBadRequest, "request_id must be a UUID")
 	}
+	mode := req.Mode
 	switch mode {
 	case "":
 		mode = ModeSend
@@ -1608,17 +1690,118 @@ func (m *Manager) Submit(id, text, requestID, mode string) (Submission, error) {
 	default:
 		return Submission{}, newError(http.StatusBadRequest, "mode must be send, queue or steer")
 	}
-	if strings.TrimSpace(text) == "" {
+	if strings.TrimSpace(req.Text) == "" {
 		return Submission{}, newError(http.StatusBadRequest, "prompt text is required")
 	}
-	if len(text) > maxPromptBytes {
+	if len(req.Text) > maxPromptBytes {
 		return Submission{}, newError(http.StatusRequestEntityTooLarge, "prompt is too large")
 	}
 	s, err := m.lookup(id)
 	if err != nil {
 		return Submission{}, err
 	}
-	return m.submit(s, text, requestID, mode)
+	return m.submit(s, turnInput{text: req.Text, files: req.Files, attachments: req.Attachments}, req.RequestID, mode)
+}
+
+// Command runs one of the provider's listed commands. It follows the rules
+// of a send: a repeated request ID returns the recorded outcome, a running
+// turn refuses it, and there is no queue or steer.
+func (m *Manager) Command(id string, req CommandRequest) (Submission, error) {
+	if !validRequestID(req.RequestID) {
+		return Submission{}, newError(http.StatusBadRequest, "request_id must be a UUID")
+	}
+	if !validCommandName(req.Name) {
+		return Submission{}, newError(http.StatusBadRequest, "name must be a command name without the slash or spaces")
+	}
+	if len(req.Arguments) > maxPromptBytes {
+		return Submission{}, newError(http.StatusRequestEntityTooLarge, "arguments are too large")
+	}
+	s, err := m.lookup(id)
+	if err != nil {
+		return Submission{}, err
+	}
+	m.mu.Lock()
+	provider := s.provider
+	m.mu.Unlock()
+	// OpenCode puts the arguments into the command's template and then runs
+	// every !`cmd` in the result as a shell command, without asking.
+	if provider == agentapi.ProviderOpenCode && strings.Contains(req.Arguments, "!`") {
+		return Submission{}, newError(http.StatusBadRequest, "command arguments must not contain !`")
+	}
+	return m.submit(s, turnInput{text: req.Arguments, command: req.Name, files: req.Files, attachments: req.Attachments}, req.RequestID, ModeSend)
+}
+
+const maxCommandName = 200
+
+func validCommandName(name string) bool {
+	if name == "" || len(name) > maxCommandName || strings.HasPrefix(name, "/") || !utf8.ValidString(name) {
+		return false
+	}
+	return !strings.ContainsFunc(name, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
+}
+
+// Commands lists the Task's slash commands. It opens the conversation as a
+// viewer does; a Task whose conversation is not open has none to list.
+func (m *Manager) Commands(ctx context.Context, id string) ([]agentapi.Command, error) {
+	if err := m.View(ctx, id); err != nil {
+		return nil, err
+	}
+	s, err := m.lookup(id)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	conv := s.conv
+	m.mu.Unlock()
+	if conv == nil {
+		return nil, newError(http.StatusConflict, "the provider conversation is not open")
+	}
+	commands, err := m.listCommands(conv)
+	if errors.Is(err, agentapi.ErrUnsupported) {
+		return []agentapi.Command{}, nil
+	}
+	return commands, err
+}
+
+// listCommands reads conv's commands, made safe to show. A name a user
+// could not type after a slash is left out.
+func (m *Manager) listCommands(conv agentapi.Conversation) ([]agentapi.Command, error) {
+	ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
+	defer cancel()
+	listed, err := conv.Commands(ctx)
+	if errors.Is(err, agentapi.ErrUnsupported) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, newError(http.StatusBadGateway, "could not list the provider's commands: %s", shortError(err))
+	}
+	out := make([]agentapi.Command, 0, len(listed))
+	for _, c := range listed {
+		if !validCommandName(c.Name) || slices.ContainsFunc(out, func(o agentapi.Command) bool { return o.Name == c.Name }) {
+			continue
+		}
+		if c.Kind != agentapi.CommandSkill {
+			c.Kind = agentapi.CommandPrompt
+		}
+		c.Description = clipRunes(strings.TrimSpace(displaytext.Sanitize(c.Description)), maxDetailRunes)
+		c.InputHint = clipRunes(strings.TrimSpace(displaytext.Sanitize(c.InputHint)), maxDetailRunes)
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// commandOffered checks name against conv's listed commands.
+func (m *Manager) commandOffered(conv agentapi.Conversation, name string) error {
+	commands, err := m.listCommands(conv)
+	switch {
+	case errors.Is(err, agentapi.ErrUnsupported):
+		return newError(http.StatusConflict, "this provider has no commands")
+	case err != nil:
+		return err
+	case !slices.ContainsFunc(commands, func(c agentapi.Command) bool { return c.Name == name }):
+		return newError(http.StatusNotFound, "/%s is not one of this task's commands", name)
+	}
+	return nil
 }
 
 var errTurnRunning = newError(http.StatusConflict, "a turn is already running in this session")
@@ -1629,7 +1812,7 @@ func turnRunning(state string) bool {
 	return state == StateWorking || state == StateAwaitingPermission || state == StateAwaitingAnswer
 }
 
-func (m *Manager) submit(s *webSession, text, reqID, mode string) (Submission, error) {
+func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submission, error) {
 	s.op.Lock()
 	defer s.op.Unlock()
 	m.mu.Lock()
@@ -1649,28 +1832,44 @@ func (m *Manager) submit(s *webSession, text, reqID, mode string) (Submission, e
 		m.mu.Unlock()
 		return Submission{}, err
 	}
+	workdir := s.workdir
+	m.mu.Unlock()
+	// Checked before anything is queued or sent; a queued prompt's files are
+	// checked again when it is sent.
+	if _, err := checkFiles(workdir, in.files); err != nil {
+		return Submission{}, err
+	}
+	m.mu.Lock()
+	uploads, err := m.checkUploadsLocked(s, in.attachments)
+	if err != nil {
+		m.mu.Unlock()
+		return Submission{}, err
+	}
 	state, conv := s.state(), s.conv
 	switch {
 	// Behind queued prompts that are about to be sent, a queued prompt waits
 	// its turn even when no turn is running.
 	case mode == ModeQueue && (turnRunning(state) || (len(s.queue) > 0 && !s.queuePaused)):
 		defer m.mu.Unlock()
-		return m.enqueueLocked(s, text, reqID)
+		return m.enqueueLocked(s, in, uploads, reqID)
 	case mode == ModeSteer && turnRunning(state):
 		m.mu.Unlock()
-		return m.steer(s, conv, text, reqID)
+		if len(in.files) > 0 || len(uploads) > 0 {
+			return Submission{}, newError(http.StatusBadRequest, "a steer takes text only; send files and attachments with a prompt")
+		}
+		return m.steer(s, conv, in.text, reqID)
 	case busy(state):
 		m.mu.Unlock()
 		return Submission{}, errTurnRunning
 	}
 	m.mu.Unlock()
-	return m.send(s, text, reqID)
+	return m.send(s, in, reqID)
 }
 
-// send starts a turn with text. The caller holds s.op. An error means nothing
+// send starts a turn with in. The caller holds s.op. An error means nothing
 // was sent and nothing was recorded; otherwise the outcome is recorded, and a
 // prompt that was not accepted pauses the queue.
-func (m *Manager) send(s *webSession, text, reqID string) (Submission, error) {
+func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, error) {
 	if err := m.openLocked(s, true); err != nil {
 		if errors.Is(err, errShuttingDown) {
 			return Submission{}, err
@@ -1680,8 +1879,32 @@ func (m *Manager) send(s *webSession, text, reqID string) (Submission, error) {
 	}
 
 	m.mu.Lock()
-	conv := s.conv
+	conv, workdir := s.conv, s.workdir
+	uploads, err := m.checkUploadsLocked(s, in.attachments)
+	m.mu.Unlock()
 	if conv == nil {
+		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open", true), nil
+	}
+	var files []agentapi.File
+	var blobs []agentapi.Blob
+	if err == nil {
+		files, err = checkFiles(workdir, in.files)
+	}
+	if err == nil {
+		blobs, err = m.readBlobs(s.id, uploads)
+	}
+	if err != nil {
+		_, msg := errorStatus(err)
+		return m.recordSubmission(s, reqID, SubmissionRejected, msg, true), nil
+	}
+	if in.command != "" {
+		if err := m.commandOffered(conv, in.command); err != nil {
+			return Submission{}, err
+		}
+	}
+
+	m.mu.Lock()
+	if s.conv != conv {
 		m.mu.Unlock()
 		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open", true), nil
 	}
@@ -1698,8 +1921,16 @@ func (m *Manager) send(s *webSession, text, reqID string) (Submission, error) {
 	m.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(m.ctx, sendTimeout)
-	err := conv.Send(ctx, text)
+	prompt := agentapi.Prompt{Text: in.text, Files: files, Attachments: blobs}
+	if in.command == "" {
+		err = conv.Send(ctx, prompt)
+	} else {
+		err = conv.RunCommand(ctx, in.command, prompt)
+	}
 	cancel()
+	if err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		m.markUsed(s, uploads)
+	}
 	if err == nil {
 		return m.recordSubmission(s, reqID, SubmissionAccepted, "", false), nil
 	}
@@ -1714,6 +1945,8 @@ func (m *Manager) send(s *webSession, text, reqID string) (Submission, error) {
 	switch {
 	case errors.Is(err, agentapi.ErrBusy):
 		return Submission{}, newError(http.StatusConflict, "the provider is still running a turn")
+	case errors.Is(err, agentapi.ErrUnsupported):
+		return Submission{}, newError(http.StatusConflict, "this provider has no commands")
 	case errors.Is(err, agentapi.ErrSubmissionUncertain):
 		// Never resubmit: the provider may already be working on it.
 		return m.recordSubmission(s, reqID, SubmissionUncertain,
@@ -1815,12 +2048,12 @@ func (s *webSession) queueSnapshot() []QueuedPrompt {
 
 // enqueueLocked adds a prompt to the queue. Nothing reaches the provider
 // before the running turn completes.
-func (m *Manager) enqueueLocked(s *webSession, text, reqID string) (Submission, error) {
+func (m *Manager) enqueueLocked(s *webSession, in turnInput, uploads []*upload, reqID string) (Submission, error) {
 	if len(s.queue) >= maxQueue {
 		return Submission{}, newError(http.StatusConflict, "the queue is full (%d prompts)", maxQueue)
 	}
 	before := m.summaryLocked(s)
-	q := QueuedPrompt{RequestID: reqID, Text: text, QueuedAt: m.now()}
+	q := QueuedPrompt{RequestID: reqID, Text: in.text, QueuedAt: m.now(), Files: in.files, Attachments: uploadInfos(uploads)}
 	s.queue = append(s.queue, q)
 	s.queueChanged = true
 	m.changedLocked(s, before)
@@ -1870,7 +2103,11 @@ func (m *Manager) drain(s *webSession) {
 	s.queueChanged = true
 	m.changedLocked(s, before)
 	m.mu.Unlock()
-	_, err := m.send(s, head.Text, head.RequestID)
+	in := turnInput{text: head.Text, files: head.Files}
+	for _, a := range head.Attachments {
+		in.attachments = append(in.attachments, a.ID)
+	}
+	_, err := m.send(s, in, head.RequestID)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s.queueSending = ""

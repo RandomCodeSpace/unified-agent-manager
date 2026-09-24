@@ -1,7 +1,7 @@
 // Development-only seed for the in-browser mock service (see install.ts).
 // Shapes are the wire shapes from src/api.ts. Paths and names are fictional.
 
-import type { Interaction, Item, Meta, Project, SessionDetail, Subagent } from '../api';
+import type { Command, Interaction, Item, Meta, Project, SessionDetail, Subagent } from '../api';
 
 export interface MockTask extends SessionDetail {
   /** Subagent transcripts keyed by agent id (served by the subagent route). */
@@ -21,12 +21,20 @@ export interface MockState {
   projects: Project[];
   tasks: MockTask[];
   changes: Record<string, MockChange[]>;
+  /** What every open Task lists for `/`. */
+  commands: Command[];
+  /** Git-visible paths per project; a project without an entry is not a Git tree. */
+  files: Record<string, string[]>;
 }
 
 const NOW = Date.now();
 const ago = (min: number) => new Date(NOW - min * 60000).toISOString();
 
-const CAPS = { cancel: true, permissions: true, questions: true, session_diff: false, history: true };
+const CAPS = { cancel: true, permissions: true, questions: true, session_diff: false, history: true, context_size: true };
+const SIZES = [
+  { id: 'default', tokens: 200_000 },
+  { id: 'long_context', tokens: 1_000_000 },
+];
 
 const EDIT_DIFF = `--- a/internal/vterm/redraw.go
 +++ b/internal/vterm/redraw.go
@@ -90,21 +98,37 @@ export function seed(): MockState {
         available: true,
         capabilities: CAPS,
         models: [
+          // `auto` reports no media and is not gated; kimi-k3 and the flash model take text only.
           { id: 'auto', name: 'Auto' },
-          { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5' },
-          { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' },
-          { id: 'gpt-5-mini', name: 'GPT-5 mini' },
-          { id: 'mai-code-1.1-flash', name: 'MAI-Code-1.1-Flash' },
-          { id: 'kimi-k3', name: 'Kimi K3' },
+          { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', efforts: ['low', 'medium', 'high'], context_sizes: SIZES, media: { images: true, pdf: true, max_images: 20, types: ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf'] } },
+          { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', efforts: ['low', 'medium', 'high', 'xhigh'], context_sizes: SIZES, media: { images: true, pdf: true, max_images: 10 } },
+          { id: 'gpt-5-mini', name: 'GPT-5 mini', efforts: ['low', 'medium', 'high'], media: { images: true, pdf: false, max_images: 4, types: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] } },
+          { id: 'mai-code-1.1-flash', name: 'MAI-Code-1.1-Flash', media: { images: false, pdf: false } },
+          { id: 'kimi-k3', name: 'Kimi K3', media: { images: false, pdf: false } },
         ],
       },
     ],
   };
 
+  // p1 has defaults and a long branch, p2 none of either, p3 a default model the provider no longer offers.
   const projects: Project[] = [
-    { id: 'p1', name: 'unified-agent-manager', dir: '/home/user/projects/unified-agent-manager', created_at: ago(60 * 24 * 9) },
+    {
+      id: 'p1',
+      name: 'unified-agent-manager',
+      dir: '/home/user/projects/unified-agent-manager',
+      created_at: ago(60 * 24 * 9),
+      defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
+      branch: 'feat/web-project-defaults-and-sidebar-revamp',
+    },
     { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4) },
-    { id: 'p3', name: 'notes-site', dir: '/home/user/projects/notes-site', created_at: ago(60 * 24 * 2) },
+    {
+      id: 'p3',
+      name: 'notes-site',
+      dir: '/home/user/projects/notes-site',
+      created_at: ago(60 * 24 * 2),
+      defaults: { provider: 'copilot', model: 'gpt-5.5-nova', effort: 'high', context_size: 'long_context', mode: 'yolo' },
+      branch: 'main',
+    },
   ];
 
   const p = (id: string) => projects.find((x) => x.id === id)!.dir;
@@ -183,6 +207,16 @@ export function seed(): MockState {
       name: 'Fix re-attach redraw regression',
       title: '',
       state: 'working',
+      queued: 1,
+      queue: [
+        {
+          request_id: 'q-seed-1',
+          text: 'Then describe the new behaviour in @docs/terminal.md, matching the flow in the screenshot.',
+          queued_at: ago(1),
+          files: ['docs/terminal.md'],
+          attachments: [{ id: 'att-png-seed2', name: 'attach-flow.png', mime: 'image/png', size: 20480 }],
+        },
+      ],
       created_at: ago(9),
       updated_at: ago(1),
       items: [
@@ -190,7 +224,7 @@ export function seed(): MockState {
           id: 'i1',
           kind: 'user',
           time: ago(9),
-          text: 'After detaching and re-attaching, focus events stop arriving in the provider. The first attach is fine. Find the cause in internal/vterm and fix it with a regression test.',
+          text: 'After detaching and re-attaching, focus events stop arriving in the provider. The first attach is fine. Find the cause in @internal/vterm and fix it with a regression test.',
         },
         {
           id: 'r1',
@@ -267,7 +301,17 @@ export function seed(): MockState {
           time: ago(42),
           text: 'Done. `uam doctor` now prints a `terminal` row with the name and the glyph set the probe chose:\n\n```text\nshell     zsh 5.9\nterminal  Windows Terminal · wide glyphs\n```\n\nThe existing doctor tests pass; I added one that fakes a narrow terminal.',
         },
-        { id: 'i5', kind: 'user', time: ago(44), text: 'Does it handle `TERM=dumb`?' },
+        {
+          id: 'i5',
+          kind: 'user',
+          time: ago(44),
+          text: 'Does it handle `TERM=dumb`? This is what @cmd/doctor.go printed on the dumb terminal; the log is attached too.',
+          attachments: [
+            { id: 'att-png-seed1', name: 'dumb-terminal.png', mime: 'image/png', size: 48213 },
+            { id: 'att-txt-seed1', name: 'doctor-output.txt', mime: 'text/plain', size: 1320 },
+            { name: 'earlier-run.png', mime: 'image/png' },
+          ],
+        },
         {
           id: 'i6',
           kind: 'assistant',
@@ -397,7 +441,7 @@ export function seed(): MockState {
       id: 't9',
       project_id: 'p3',
       workdir: p('p3'),
-      model: 'auto',
+      model: 'kimi-k3',
       name: 'Draft release notes',
       title: '',
       state: 'cancelled',
@@ -422,6 +466,62 @@ export function seed(): MockState {
       items: [
         { id: 'i1', kind: 'user', time: ago(60 * 31), text: 'Bump the dev dependencies and run the build.' },
         { id: 'i2', kind: 'assistant', time: ago(60 * 30), text: 'Bumped 6 packages; build passes.' },
+      ],
+    }),
+    task({
+      id: 't11',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'claude-haiku-4.5',
+      last_model: 'claude-haiku-4.5',
+      name: '',
+      title: 'Explain the attach status bar design',
+      state: 'closed',
+      stage: 'settled',
+      created_at: ago(60 * 50),
+      updated_at: ago(60 * 48),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(60 * 50), text: 'Explain why the attach status bar sits on a reserved row and never on codex.' },
+        {
+          id: 'i2',
+          kind: 'assistant',
+          time: ago(60 * 48),
+          text: 'The bar takes one reserved terminal row so it never overwrites provider output. Codex and omp draw their own bottom line in cooked mode, so the bar is disabled for them; alt-screen providers keep it.',
+        },
+      ],
+    }),
+    task({
+      id: 't12',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'auto',
+      last_model: 'mai-code-1.1-flash',
+      name: 'Pin GitHub Actions to Node 24',
+      title: '',
+      state: 'closed',
+      stage: 'archived',
+      created_at: ago(60 * 24 * 3),
+      updated_at: ago(60 * 24 * 3 - 20),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(60 * 24 * 3), text: 'Move every workflow to the Node 24 action releases and keep the SHA pins.' },
+        tool('i2', 60 * 24 * 3 - 5, { name: 'edit', title: 'Edit .github/workflows/ci.yml', status: 'completed', output: '@@ -30,2 +30,2 @@\n-        uses: actions/setup-node@v4\n+        uses: actions/setup-node@v5' }),
+        { id: 'i3', kind: 'assistant', time: ago(60 * 24 * 3 - 20), text: 'Done. Seven workflows now pin the Node 24 releases; CI is green on the branch.' },
+      ],
+    }),
+    task({
+      id: 't13',
+      project_id: 'p3',
+      workdir: p('p3'),
+      model: 'gpt-5-mini',
+      name: '',
+      title: 'Migrate the RSS template to Atom',
+      state: 'closed',
+      stage: 'archived',
+      created_at: ago(60 * 24 * 6),
+      updated_at: ago(60 * 24 * 6 - 30),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(60 * 24 * 6), text: 'Replace the RSS 2.0 feed template with Atom and keep the same URL.' },
+        { id: 'i2', kind: 'assistant', time: ago(60 * 24 * 6 - 30), text: 'Switched `templates/feed.xml` to Atom 1.0. The URL is unchanged and the validator passes.' },
       ],
     }),
   ];
@@ -498,5 +598,35 @@ export function seed(): MockState {
     ],
   };
 
-  return { meta, projects, tasks, changes };
+  const commands: Command[] = [
+    { name: 'init', description: 'Create a copilot-instructions.md for this project', kind: 'command', input_hint: '' },
+    { name: 'review', description: 'Review the uncommitted changes and report problems', kind: 'command', input_hint: '' },
+    { name: 'commit', description: 'Write a conventional commit for the staged changes', kind: 'skill', input_hint: '[scope]' },
+    { name: 'release-notes', description: 'Draft release notes from recent commits', kind: 'skill', input_hint: '<range>' },
+    { name: 'diagnosing-bugs', description: 'Reproduce, isolate and fix a bug from its symptom', kind: 'skill', input_hint: '<symptom>' },
+    { name: 'tdd', description: 'Build the next change test-first', kind: 'skill', input_hint: '' },
+  ];
+
+  // p2 (dotfiles) has no entry: it is not a Git tree, so `@` explains itself there.
+  const files: Record<string, string[]> = {
+    p1: [
+      '.github/workflows/ci.yml',
+      'Makefile',
+      'go.mod',
+      'cmd/uam/main.go',
+      'cmd/doctor.go',
+      'internal/vterm/redraw.go',
+      'internal/vterm/redraw_test.go',
+      'internal/vterm/modes.go',
+      'internal/web/server.go',
+      'docs/web.md',
+      'docs/terminal.md',
+      'docs/adr/0004-web-interface.md',
+      'web/src/App.tsx',
+      'web/src/components/Composer.tsx',
+    ],
+    p3: ['templates/post.html', 'templates/list.html', 'templates/feed.xml', 'assets/theme.css', 'content/posts/hello.md', 'scripts/contrast.mjs'],
+  };
+
+  return { meta, projects, tasks, changes, commands, files };
 }

@@ -2,14 +2,17 @@ package opencode
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
@@ -692,6 +695,9 @@ func newWebConversation(server *webServer, id string, sink agentapi.EventSink) *
 		parts:    map[string]webPartState{},
 		pending:  map[string]agentapi.Interaction{},
 		resolved: map[string]struct{}{},
+
+		commandText: map[string]string{},
+		commandPart: map[string]string{},
 	}
 }
 
@@ -717,6 +723,12 @@ type webConversation struct {
 	lastUserID       string
 	pending          map[string]agentapi.Interaction
 	resolved         map[string]struct{}
+	// commandText holds "/name arguments" per command message this
+	// conversation sent, shown instead of the expanded template; commandPart
+	// is the one text part that shows it. Both last as long as the
+	// conversation is open.
+	commandText map[string]string
+	commandPart map[string]string
 }
 
 func (c *webConversation) ID() string { return c.id }
@@ -788,8 +800,10 @@ func (c *webConversation) historyItems(ctx context.Context) ([]agentapi.Item, er
 	return items, nil
 }
 
-func (c *webConversation) Send(ctx context.Context, prompt string) error {
-	if strings.TrimSpace(prompt) == "" {
+// Send posts the text part, then one file part per referenced file, which
+// OpenCode reads into the prompt itself.
+func (c *webConversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
+	if strings.TrimSpace(prompt.Text) == "" {
 		return fmt.Errorf("prompt is empty")
 	}
 	c.sendMu.Lock()
@@ -798,21 +812,16 @@ func (c *webConversation) Send(ctx context.Context, prompt string) error {
 	if err != nil {
 		return err
 	}
-	statusCtx, cancelStatus := context.WithTimeout(ctx, webRequestTimeout)
-	statuses, err := client.webStatuses(statusCtx)
-	cancelStatus()
-	if err != nil {
-		return fmt.Errorf("check OpenCode session status: %w", err)
-	}
-	if status, ok := statuses[c.id]; ok && (status.Type == "busy" || status.Type == "retry") {
-		return agentapi.ErrBusy
+	if err := c.checkIdle(ctx, client); err != nil {
+		return err
 	}
 	messageID, err := newAscendingMessageID()
 	if err != nil {
 		return err
 	}
+	parts := append([]map[string]any{{"type": "text", "text": prompt.Text}}, webFileParts(prompt)...)
 	postCtx, cancelPost := context.WithTimeout(ctx, webRequestTimeout)
-	status, postErr := client.webPrompt(postCtx, c.id, messageID, prompt)
+	status, postErr := client.webPrompt(postCtx, c.id, messageID, parts)
 	cancelPost()
 	if postErr == nil {
 		switch {
@@ -832,6 +841,160 @@ func (c *webConversation) Send(ctx context.Context, prompt string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", agentapi.ErrSubmissionUncertain, client.safeText(postErr.Error()))
+}
+
+// checkIdle refuses a prompt while OpenCode runs a turn in the session.
+func (c *webConversation) checkIdle(ctx context.Context, client *apiClient) error {
+	statusCtx, cancel := context.WithTimeout(ctx, webRequestTimeout)
+	defer cancel()
+	statuses, err := client.webStatuses(statusCtx)
+	if err != nil {
+		return fmt.Errorf("check OpenCode session status: %w", err)
+	}
+	if webBusy(statuses, c.id) {
+		return agentapi.ErrBusy
+	}
+	return nil
+}
+
+// webFileParts maps referenced files and uploads to OpenCode file parts. A
+// file's source links it to its @path in the text, in UTF-16 offsets as
+// OpenCode's own clients count. An upload goes inline as a data: URL;
+// OpenCode inlines text/plain into the prompt and passes images and PDFs to
+// models that take them.
+func webFileParts(prompt agentapi.Prompt) []map[string]any {
+	parts := []map[string]any{}
+	for _, f := range prompt.Files {
+		mime := "text/plain"
+		if f.Dir {
+			mime = "application/x-directory"
+		}
+		part := map[string]any{"type": "file", "mime": mime, "filename": f.Rel, "url": (&url.URL{Scheme: "file", Path: f.Path}).String()}
+		token := "@" + f.Rel
+		if start := strings.Index(prompt.Text, token); start >= 0 {
+			from := len(utf16.Encode([]rune(prompt.Text[:start])))
+			part["source"] = map[string]any{"type": "file", "path": f.Rel, "text": map[string]any{
+				"value": token, "start": from, "end": from + len(utf16.Encode([]rune(token))),
+			}}
+		}
+		parts = append(parts, part)
+	}
+	for _, b := range prompt.Attachments {
+		parts = append(parts, map[string]any{"type": "file", "mime": b.MIME, "filename": b.Name,
+			"url": "data:" + b.MIME + ";base64," + base64.StdEncoding.EncodeToString(b.Data)})
+	}
+	return parts
+}
+
+// Commands lists every command OpenCode offers: init, review, custom and
+// MCP commands, and skills.
+func (c *webConversation) Commands(ctx context.Context) ([]agentapi.Command, error) {
+	client, err := c.client()
+	if err != nil {
+		return nil, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, webRequestTimeout)
+	defer cancel()
+	listed, err := client.webCommands(callCtx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentapi.Command, 0, len(listed))
+	for _, cmd := range listed {
+		kind := agentapi.CommandPrompt
+		if cmd.Source == "skill" {
+			kind = agentapi.CommandSkill
+		}
+		out = append(out, agentapi.Command{Name: cmd.Name, Description: cmd.Description, Kind: kind, InputHint: strings.Join(cmd.Hints, " ")})
+	}
+	return out, nil
+}
+
+// webCommandWait bounds how long RunCommand waits for OpenCode to take the
+// command; the turn itself runs on.
+const webCommandWait = webRequestTimeout
+
+// RunCommand posts the command in the background, because OpenCode answers
+// only when the turn ends. The command is accepted once its user message
+// exists; the call is never repeated. OpenCode stores the expanded
+// template as the user message; this conversation shows "/name arguments"
+// for it instead.
+func (c *webConversation) RunCommand(ctx context.Context, name string, args agentapi.Prompt) error {
+	// OpenCode runs every !`cmd` in the expanded template without asking,
+	// and the arguments are expanded into it.
+	if strings.Contains(args.Text, "!`") {
+		return fmt.Errorf("command arguments must not contain !`")
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	client, err := c.client()
+	if err != nil {
+		return err
+	}
+	if err := c.checkIdle(ctx, client); err != nil {
+		return err
+	}
+	messageID, err := newAscendingMessageID()
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.commandText[messageID] = strings.TrimSpace("/" + name + " " + args.Text)
+	c.mu.Unlock()
+	type result struct {
+		status int
+		err    error
+	}
+	done := make(chan result, 1)
+	serverCtx := c.server.ctx
+	go func() {
+		status, err := client.webCommand(serverCtx, c.id, messageID, name, args.Text, webFileParts(args))
+		done <- result{status, err}
+	}()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.NewTimer(webCommandWait)
+	defer deadline.Stop()
+	for {
+		select {
+		case r := <-done:
+			switch {
+			case r.err == nil && successfulStatus(r.status), c.sawUserMessage(messageID):
+				return nil
+			case r.err != nil:
+				return c.commandUncertain(ctx, client, messageID, r.err)
+			case r.status == 404:
+				return fmt.Errorf("%w: OpenCode session %s", agentapi.ErrConversationNotFound, c.id)
+			default:
+				return fmt.Errorf("OpenCode rejected /%s with HTTP %d", name, r.status)
+			}
+		case <-tick.C:
+			if c.sawUserMessage(messageID) {
+				return nil
+			}
+		case <-deadline.C:
+			return c.commandUncertain(ctx, client, messageID, errors.New("OpenCode did not confirm the command in time"))
+		case <-ctx.Done():
+			return c.commandUncertain(ctx, client, messageID, ctx.Err())
+		}
+	}
+}
+
+func (c *webConversation) sawUserMessage(messageID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.roles[messageID] == "user"
+}
+
+// commandUncertain looks for the command's user message once; it never
+// resends.
+func (c *webConversation) commandUncertain(ctx context.Context, client *apiClient, messageID string, cause error) error {
+	checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), webRequestTimeout)
+	defer cancel()
+	if present, err := client.webUserMessageExists(checkCtx, c.id, messageID); err == nil && present {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", agentapi.ErrSubmissionUncertain, client.safeText(cause.Error()))
 }
 
 // Steer is not offered: this unregistered adapter refuses prompts while a

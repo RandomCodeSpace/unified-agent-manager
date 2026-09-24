@@ -44,7 +44,7 @@ func TestPromptSubagentRouteSendsOnceAndLeavesTheTaskAlone(t *testing.T) {
 	auth := withCookie(ts)
 	sum, conv := createSession(t, ts.m, ts.prov)
 	// A paused queue beside an idle Task: the follow-up must not drain it.
-	if sub, err := ts.m.Submit(sum.ID, "first", mustUUID(t), ModeSend); err != nil || sub.Status != SubmissionAccepted {
+	if sub, err := ts.m.Submit(sum.ID, PromptRequest{Text: "first", RequestID: mustUUID(t), Mode: ModeSend}); err != nil || sub.Status != SubmissionAccepted {
 		t.Fatalf("first prompt = %+v, %v", sub, err)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")

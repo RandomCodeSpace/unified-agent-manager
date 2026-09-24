@@ -249,3 +249,118 @@ func TestWorkspaceDiffTreatsGitReportedNamesAsPaths(t *testing.T) {
 		})
 	}
 }
+
+// gitIn runs git in dir without the user's configuration.
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	git, err := execpath.Resolve("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	cmd := exec.Command(git, append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// branchRepo is a repository with one commit on branch main.
+func branchRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "init")
+	return dir
+}
+
+func TestProjectBranchFromGit(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	repo := branchRepo(t)
+	gitIn(t, repo, "switch", "-q", "-c", "feature/x")
+	sub := filepath.Join(repo, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(t.TempDir(), "linked")
+	gitIn(t, repo, "worktree", "add", "-q", "-b", "topic", linked)
+	if info, err := os.Lstat(filepath.Join(linked, ".git")); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("linked worktree .git should be a file: %v, %v", info, err)
+	}
+	detached := branchRepo(t)
+	gitIn(t, detached, "switch", "-q", "--detach")
+	want := map[string]string{repo: "feature/x", sub: "feature/x", linked: "topic", detached: "", t.TempDir(): ""}
+	for dir, branch := range want {
+		if p, err := m.AddProject(dir, "", nil); err != nil || p.Branch != branch {
+			t.Fatalf("AddProject(%s) = %+v, %v; want branch %q", dir, p, err, branch)
+		}
+	}
+	_, snapRaw, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []struct {
+		Dir    string  `json:"dir"`
+		Branch *string `json:"branch"`
+	}
+	decodeField(t, parseFrame(t, snapRaw), "projects", &listed)
+	if len(listed) != len(want) {
+		t.Fatalf("snapshot projects = %+v", listed)
+	}
+	for _, p := range listed {
+		switch branch := want[p.Dir]; {
+		case branch == "" && p.Branch != nil:
+			t.Fatalf("%s lists branch %q, want none", p.Dir, *p.Branch)
+		case branch != "" && (p.Branch == nil || *p.Branch != branch):
+			t.Fatalf("%s lists branch %v, want %q", p.Dir, p.Branch, branch)
+		}
+	}
+}
+
+func TestProjectBranchRereadAtTurnEndChangesAndListing(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	repo := branchRepo(t)
+	project := addProject(t, m, repo)
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	sub, _, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect := func(branch string) {
+		t.Helper()
+		var announced Project
+		decodeField(t, frameOf(t, sub, "project"), "project", &announced)
+		if announced.ID != project || announced.Branch != branch {
+			t.Fatalf("project frame = %+v, want branch %q", announced, branch)
+		}
+	}
+
+	gitIn(t, repo, "switch", "-q", "-c", "agent-work")
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	expect("agent-work")
+
+	gitIn(t, repo, "switch", "-q", "--detach")
+	if _, err := m.Changes(t.Context(), sum.ID, ScopeWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	expect("")
+
+	// Listing reuses a fresh read and re-reads a stale one.
+	gitIn(t, repo, "switch", "-q", "main")
+	m.mu.Lock()
+	m.branchAt[project] = time.Now()
+	m.mu.Unlock()
+	if got := m.Projects()[0].Branch; got != "" {
+		t.Fatalf("listing re-read a fresh branch: %q", got)
+	}
+	m.mu.Lock()
+	m.branchAt[project] = time.Time{}
+	m.mu.Unlock()
+	if got := m.Projects()[0].Branch; got != "main" {
+		t.Fatalf("listing kept a stale branch: %q", got)
+	}
+	expect("main")
+}
