@@ -238,3 +238,102 @@ func checkFile(root *os.Root, rel string) (dir bool, reason string) {
 	}
 	return false, ""
 }
+
+// maxServedImageBytes caps an image served from a Task's directory.
+const maxServedImageBytes = 20 << 20
+
+// imageExtensions maps the file extensions the raw route serves to the type
+// the bytes must sniff as. SVG is left out: DetectContentType cannot tell it
+// apart from other XML, and opened as a document it runs script.
+var imageExtensions = map[string]string{
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+}
+
+// ServedImage is an image file of a Task's directory, open for reading.
+type ServedImage struct {
+	File *os.File
+	Info fs.FileInfo
+	MIME string
+}
+
+// RawImage opens the image at p, absolute or relative to the Task's
+// directory, for the raw file route. Symbolic links are resolved first and
+// the real file must lie inside the Task's real directory; anything else,
+// missing files included, is a 404 that says nothing more. Only a regular
+// file whose extension and bytes agree on png, jpeg, gif or webp, at most
+// maxServedImageBytes, is served.
+func (m *Manager) RawImage(id, p string) (*ServedImage, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	workdir := s.workdir
+	m.mu.Unlock()
+	return openImage(workdir, p)
+}
+
+func openImage(workdir, p string) (*ServedImage, error) {
+	notFound := newError(http.StatusNotFound, "file not found")
+	if p == "" || len(p) > 4096 || !utf8.ValidString(p) || strings.ContainsRune(p, 0) {
+		return nil, newError(http.StatusBadRequest, "path is required")
+	}
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(workdir, p)
+	}
+	realDir, err := filepath.EvalSymlinks(workdir)
+	if err != nil {
+		return nil, notFound
+	}
+	real, err := filepath.EvalSymlinks(filepath.Clean(p))
+	if err != nil {
+		return nil, notFound
+	}
+	rel, err := filepath.Rel(realDir, real)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return nil, notFound
+	}
+	// os.Root confines the open itself, so a link swapped in after the
+	// resolution above still cannot leave the directory.
+	root, err := os.OpenRoot(realDir)
+	if err != nil {
+		return nil, notFound
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, notFound
+	}
+	img, err := checkImage(f, filepath.Ext(real))
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return img, nil
+}
+
+func checkImage(f *os.File, ext string) (*ServedImage, error) {
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, newError(http.StatusNotFound, "file not found")
+	}
+	want, ok := imageExtensions[strings.ToLower(ext)]
+	if !ok {
+		return nil, newError(http.StatusUnsupportedMediaType, "only png, jpeg, gif and webp images are served")
+	}
+	if info.Size() > maxServedImageBytes {
+		return nil, newError(http.StatusUnsupportedMediaType, "images larger than 20 MiB are not served")
+	}
+	head := make([]byte, 512)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, newError(http.StatusNotFound, "file not found")
+	}
+	if got := http.DetectContentType(head[:n]); got != want {
+		return nil, newError(http.StatusUnsupportedMediaType, "the file is not a %s image", strings.TrimPrefix(want, "image/"))
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, newError(http.StatusNotFound, "file not found")
+	}
+	return &ServedImage{File: f, Info: info, MIME: want}, nil
+}
