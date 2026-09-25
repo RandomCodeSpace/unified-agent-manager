@@ -1000,15 +1000,24 @@ func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string)
 	switch name {
 	case "index.html":
 		w.Header().Set("Cache-Control", "no-cache")
+	case "manifest.webmanifest":
+		// The web app manifest: its type is not in Go's built-in table, and it is
+		// revalidated so a changed name or icon reaches installed apps.
+		w.Header().Set("Content-Type", "application/manifest+json")
+		w.Header().Set("Cache-Control", "no-cache")
 	case frameDocument:
 		h := w.Header()
 		h.Set("Content-Security-Policy", frameSecurity)
 		h.Set("X-Frame-Options", "SAMEORIGIN")
 		h.Set("Cache-Control", "no-cache")
 	default:
-		// Vite names every file under assets/ by its content hash.
-		if strings.HasPrefix(name, "assets/") {
+		switch ext := path.Ext(name); {
+		case strings.HasPrefix(name, "assets/"):
+			// Vite names every file under assets/ by its content hash.
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		case path.Dir(name) == "." && (ext == ".png" || ext == ".svg"):
+			// App icons keep their names: cached for a day, not for good.
+			w.Header().Set("Cache-Control", "public, max-age=86400")
 		}
 	}
 	http.ServeContent(w, r, name, info.ModTime(), content)
