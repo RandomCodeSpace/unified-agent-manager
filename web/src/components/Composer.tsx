@@ -1,14 +1,14 @@
-import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, ListPlus, Paperclip, Shield, ShieldOff, Square, X, Zap } from 'lucide-react';
+import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, ListPlus, Paperclip, RotateCcw, Shield, ShieldOff, Square, X, Zap } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type SessionDetail, type SessionSummary, type Submission } from '../api';
-import { LIMITS, acceptFor, checkUpload, fileKind, mediaNote, type Kind } from '../lib/attachments';
+import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
 import { ComposerUsage } from './ComposerUsage';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { draftKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
-import { historyEntries, historyKey, type Browsing } from '../lib/history';
+import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Markdown, Note, Spinner, useApp } from './common';
 import { ExecutionItems, ExecutionStatus } from './ExecutionStatus';
@@ -51,6 +51,11 @@ function writeDraft(key: string, draft: Draft) {
 }
 
 const sentence = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+/** A stored upload back as a done chip (a draft's, or a past prompt's); an image shows its stored copy. */
+const storedUpload = (sessionId: string, a: { id: string; name: string; size: number; kind: Kind }): Pending => ({
+  key: a.id, name: a.name, size: a.size, kind: a.kind, progress: 1, status: 'done', id: a.id, ...(a.kind === 'image' ? { preview: api.attachmentUrl(sessionId, a.id) } : {}),
+});
 
 interface Choice {
   value: string;
@@ -395,9 +400,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
 
   const fileInput = useRef<HTMLInputElement>(null);
   // Finished uploads come back from the draft as done chips; an image shows its stored copy.
-  const [uploads, setUploads] = useState<Pending[]>(() =>
-    (draft?.attachments ?? []).map((a) => ({ key: a.id, name: a.name, size: a.size, kind: a.kind, progress: 1, status: 'done', id: a.id, ...(a.kind === 'image' ? { preview: api.attachmentUrl(session.id, a.id) } : {}) })),
-  );
+  const [uploads, setUploads] = useState<Pending[]>(() => (draft?.attachments ?? []).map((a) => storedUpload(session.id, a)));
   const [dragging, setDragging] = useState(0);
   const media = selectedModel?.media;
   const gateNote = mediaNote(media, modelLabel);
@@ -469,6 +472,19 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   useEffect(() => () => writeDraft(storageKey, latestDraft.current), [storageKey]);
 
   /* ---------- Sending ---------- */
+
+  // After a turn that failed, was stopped or was interrupted, the last prompt can come back into an empty
+  // composer: its text and its stored uploads (file references are not recorded on the item). Never sent by itself.
+  const failedTurn = session.state === 'failed' || session.state === 'interrupted' || session.state === 'cancelled';
+  const resendable = failedTurn && !locked && !text.trim() && !files.length && !uploads.length ? lastPrompt(session.items) : null;
+  function resend() {
+    if (!resendable) return;
+    const t = resendable.text ?? '';
+    pendingCaret.current = t.length;
+    updateText(t, t.length);
+    setUploads((resendable.attachments ?? []).flatMap((a) => (a.id ? [storedUpload(session.id, { id: a.id, name: a.name, size: a.size ?? 0, kind: kindOf(a.mime) })] : [])));
+    textarea.current?.focus();
+  }
 
   const cmd = commands ? parseCommand(text, commands) : null;
   const descriptor = commands?.find((c) => c.name === cmd?.name);
@@ -714,7 +730,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           popupRef={popup}
         />
       )}
-      {(locked || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked)) && (
+      {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked)) && (
         <div className="flex flex-col gap-1 border-b border-hairline px-3.5 py-2">
           {locked && <Note>{session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.'}</Note>}
           {last?.status === 'uncertain' && (
@@ -735,6 +751,14 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           {commandBlocked && <Note role="status">{commandBlocked}</Note>}
           {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
           {live && steerUnavailable && !cmd && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
+          {resendable && (
+            <Tip label="Puts the last prompt back here to edit or send again. Nothing is sent until you do.">
+              <Button size="sm" variant="secondary" className="self-start" onClick={resend}>
+                <RotateCcw />
+                Resend last prompt
+              </Button>
+            </Tip>
+          )}
         </div>
       )}
       {commandResult && commandResult.kind !== 'action' && (

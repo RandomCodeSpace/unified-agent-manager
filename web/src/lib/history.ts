@@ -36,6 +36,15 @@ export function historyEntries(items: readonly HistoryItem[] | undefined, queue:
   return entries;
 }
 
+/** The newest user message with text (the one a failed, stopped or interrupted turn ran on), for Resend; null when there is none. */
+export function lastPrompt<T extends HistoryItem>(items: readonly T[] | undefined): T | null {
+  for (let i = (items?.length ?? 0) - 1; i >= 0; i--) {
+    const it = items![i];
+    if (it.kind === 'user' && it.text?.trim()) return it;
+  }
+  return null;
+}
+
 /** The caret sits before the first line break, so a native Up would leave the text. */
 export function onFirstLine(text: string, caret: number): boolean {
   return !text.slice(0, caret).includes('\n');
