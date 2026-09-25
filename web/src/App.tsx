@@ -4,8 +4,8 @@ import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provid
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
-import { AddProjectDialog, EditProjectDialog, RemoveProjectDialog } from './components/Projects';
-import { PreviousSessionsDialog, canImport } from './components/PreviousSessions';
+import { AddProjectDialog, EditProjectDialog } from './components/Projects';
+import { NewTaskPalette } from './components/ProjectPicker';
 import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
@@ -20,7 +20,7 @@ import { AlertDialog, Sheet } from './components/ui/dialog';
 import { TooltipProvider } from './components/ui/tooltip';
 
 type Auth = 'checking' | 'in' | 'out';
-type ProjectDialog = { kind: 'add' } | { kind: 'edit'; project: Project } | { kind: 'remove'; project: Project } | null;
+type ProjectDialog = { kind: 'add' } | { kind: 'edit'; project: Project } | null;
 type TaskDialog = { kind: 'archive' | 'delete' | 'close'; id: string } | null;
 
 /** Below this the sidebar is a drawer (DESIGN.md breakpoints). */
@@ -81,8 +81,8 @@ export default function App() {
   const [taskDialog, setTaskDialog] = useState<TaskDialog>(null);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [renaming, setRenaming] = useState<Renaming | null>(null);
-  // The Project whose previous CLI sessions are open to import (from the filter menu or a Task's menu).
-  const [previous, setPrevious] = useState<Project | null>(null);
+  // The New task palette (the pen, or Alt+N); it chooses the draft's Project.
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [busyTasks, setBusyTasks] = useState<Readonly<Record<string, boolean>>>({});
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
   const [sidebarOpen, setSidebarOpen] = useState(() => readJSON<boolean>(SIDEBAR_KEY, true));
@@ -403,6 +403,25 @@ export default function App() {
     if (draftTick !== undefined && !window.matchMedia(COARSE).matches) document.getElementById('composer-text')?.focus();
   }, [draftTick]);
 
+  /** New task: the palette chooses the Project, unless there is only one. */
+  const projectCount = state.projects.length;
+  const onlyProject = projectCount === 1 ? state.projects[0].id : null;
+  const openNewTask = useCallback(() => {
+    if (onlyProject) startTask(onlyProject);
+    else if (projectCount > 0) setPaletteOpen(true);
+  }, [onlyProject, projectCount, startTask]);
+  // Alt+N opens it from anywhere but a menu or dialog (Ctrl+N is the browser's); the pen's own tooltip, which names the shortcut, does not stand in the way.
+  useEffect(() => {
+    if (auth !== 'in') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== 'KeyN' || e.defaultPrevented || document.querySelector('[data-popup]:not([role="tooltip"])')) return;
+      e.preventDefault();
+      openNewTask();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [auth, openNewTask]);
+
   /**
    * A new Task's first Send: create the Task with the chosen settings, upload the held
    * attachments to it, send the message, then open it. A failed create throws, so the draft
@@ -488,27 +507,15 @@ export default function App() {
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
       busy: busyTasks,
-      previousSessions: (projectId) => setPrevious(state.projects.find((p) => p.id === projectId) ?? null),
-      canImport: canImport(meta),
-      editProject: (projectId) => {
-        const project = state.projects.find((p) => p.id === projectId);
-        if (project) openDialog({ kind: 'edit', project });
-      },
-      removeProject: (projectId) => {
-        const project = state.projects.find((p) => p.id === projectId);
-        if (project) openDialog({ kind: 'remove', project });
-      },
     }),
-    [renaming, busyTasks, select, runTask, state.sessions, state.projects, meta, openTaskDialog, openDialog],
+    [renaming, busyTasks, select, runTask, state.sessions, openTaskDialog],
   );
 
   const actions: WorkspaceActions = useMemo(
     () => ({
-      onNewTask: startTask,
+      onNewTask: openNewTask,
       onAddProject: () => openDialog({ kind: 'add' }),
       onEditProject: (project) => openDialog({ kind: 'edit', project }),
-      onRemoveProject: (project) => openDialog({ kind: 'remove', project }),
-      onPreviousSessions: setPrevious,
       filter,
       onFilter: (id) => {
         setFilter(id);
@@ -523,7 +530,7 @@ export default function App() {
         setNewTask(null);
       },
     }),
-    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, startTask, openDialog, toggleSidebar],
+    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar],
   );
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
@@ -698,7 +705,7 @@ export default function App() {
               </ViewTransition>
             </main>
 
-            {previous && <PreviousSessionsDialog project={previous} onClose={() => setPrevious(null)} />}
+            <NewTaskPalette open={paletteOpen} onOpenChange={setPaletteOpen} projects={state.projects} sessions={state.sessions} selectedId={state.selectedId} filter={filter} onPick={startTask} />
             {dialog?.kind === 'add' && (
               <AddProjectDialog
                 open={dialogOpen}
@@ -712,15 +719,13 @@ export default function App() {
               />
             )}
             {dialog?.kind === 'edit' && (
-              <EditProjectDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onClosed={() => setDialog(null)} project={dialog.project} onUpdated={(p) => dispatch({ type: 'upsert_project', project: p })} />
-            )}
-            {dialog?.kind === 'remove' && (
-              <RemoveProjectDialog
+              <EditProjectDialog
                 open={dialogOpen}
                 onClose={() => setDialogOpen(false)}
                 onClosed={() => setDialog(null)}
                 project={dialog.project}
                 tasks={tasksOf(state.sessions, dialog.project.id)}
+                onUpdated={(p) => dispatch({ type: 'upsert_project', project: p })}
                 onRemoved={(id) => dispatch({ type: 'remove_project', id })}
               />
             )}

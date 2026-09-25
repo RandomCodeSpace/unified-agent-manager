@@ -85,3 +85,28 @@ test('the needs-you count follows the sidebar rows: attention states and pending
   assert.equal(pageTitle(2, 'Fix redraw'), '(2) Fix redraw · UAM');
   assert.equal(pageTitle(1, ''), '(1) New task · UAM');
 });
+
+test('project search matches every word in the name or directory, names first', async () => {
+  const { searchProjects } = await import('../src/lib/tasks.ts');
+  const projects = [
+    { id: 'a', name: 'dotfiles', dir: '/home/dev/dotfiles' },
+    { id: 'b', name: 'notes-site', dir: '/home/dev/projects/notes-site' },
+    { id: 'c', name: 'uam', dir: '/home/dev/projects/unified-agent-manager' },
+  ];
+  assert.deepEqual(searchProjects(projects, '').map((p) => p.id), ['a', 'b', 'c']);
+  assert.deepEqual(searchProjects(projects, 'Notes').map((p) => p.id), ['b']);
+  // A directory-only hit ranks after a name hit.
+  assert.deepEqual(searchProjects(projects, 'projects').map((p) => p.id), ['b', 'c']);
+  assert.deepEqual(searchProjects(projects, 'unified manager').map((p) => p.id), ['c']);
+  assert.deepEqual(searchProjects(projects, 'missing'), []);
+});
+
+test('the palette starts on the filtered project, else the most recently active one', async () => {
+  const { newTaskProject } = await import('../src/lib/tasks.ts');
+  const sessions = [s('x', 'p1', '2026-09-24T00:00:00Z')];
+  assert.equal(newTaskProject([p1, p2], sessions, 'p2', null)?.id, 'p2');
+  assert.equal(newTaskProject([p1, p2], sessions, null, null)?.id, 'p1');
+  // A filter naming a removed Project counts as none.
+  assert.equal(newTaskProject([p1, p2], sessions, 'gone', null)?.id, 'p1');
+  assert.equal(newTaskProject([p1, p2], sessions, null, 'x')?.id, 'p1');
+});

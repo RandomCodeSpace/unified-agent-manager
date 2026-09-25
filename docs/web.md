@@ -149,8 +149,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   has one Project; adding it again points you to the existing one. A Project
   can carry defaults for new Tasks: model, effort, context size (where the
   provider allows it) and mode. Set them when you add the Project, or later
-  with "Edit project", which also renames it. Editing a Project changes only
-  its record in UAM. Web sessions from before Projects existed are placed in
+  with "Edit project" (the gear beside the Project in the sidebar's filter
+  list), which also renames it and offers "Previous sessions" and "Remove
+  project". Editing a Project changes only its record in UAM. Web sessions from before Projects existed are placed in
   a Project for their directory, named after it, when the service starts.
   Each Project has a badge of two characters on a colour: the first letter or
   digit of its name and the last one (`CG` for config), then a random remaining
@@ -159,7 +160,12 @@ are logged only at debug level (`UAM_DEBUG=1`).
   no other Project uses while one is left. UAM picks it when you add the
   Project and keeps it when you rename it; Projects from before badges
   existed get one when the service starts.
-- **Tasks**: "New task" in a Project opens a new, empty Task pane with the
+- **Tasks**: "New task" (the pen in the sidebar, or Alt+N) opens a list of
+  your Projects to pick from: type to search by name or directory, use the
+  arrow keys and Enter, click one, or press Alt+1 to Alt+9 for the first
+  nine. The Project the sidebar is filtered to starts highlighted, otherwise
+  the one you worked in last; with a single Project the pen skips the list.
+  Picking one opens a new, empty Task pane with the
   Project's defaults applied and puts the cursor in the composer. The Task
   itself, and its Copilot conversation, is created only when you send the
   first message: until then nothing appears in the sidebar, and leaving the
@@ -574,14 +580,15 @@ are logged only at debug level (`UAM_DEBUG=1`).
   Right-click a card, press Shift+F10 or the Menu key, or long-press on touch
   for Rename, Close conversation, Settle or Reopen, Archive and Delete.
   Arrow keys move between cards,
-  Enter opens a Task and F2 renames it. Selecting a Project in the filter
-  exposes its New task, Edit project, Remove project and Previous sessions
-  controls; there are no collapsible Project headings.
-  - **Filter**: the control at the top of the sidebar shows "All projects"
-    or the chosen Project's badge and name, and lists every Project. Choosing
-    one shows only that Project's Tasks, shelves included, and New task then
-    targets it; the × beside it clears the filter. The choice is kept per
-    browser.
+  Enter opens a Task and F2 renames it. There are no collapsible Project
+  headings.
+  - **Filter**: the badge button beside Search shows the chosen Project's
+    badge, or a stacked-layers icon for all Projects. It opens a list with a
+    search box, "All projects" and every Project; choosing one shows only that
+    Project's Tasks, shelves included, and New task starts on it. The choice
+    is kept per browser. The gear at the right of each Project opens "Edit
+    project", where its name and Task defaults live together with "Previous
+    sessions" and "Remove project".
   - **Hide the sidebar**: the UAM icon beside Search in the sidebar header, or
     Ctrl+B (⌘+B on a Mac), hides the sidebar and the conversation takes the
     width; the same icon then sits at the start of the main pane's header.

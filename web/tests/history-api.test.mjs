@@ -20,17 +20,16 @@ test('history and discovery use read-only routes; importing posts only an empty 
   };
   try {
     await api.session('task/id');
-    await api.previousCounts();
     await api.previous('project/id');
     assert.ok(requests.every((r) => r.method === 'GET' && r.body === undefined));
     await api.importPrevious('project/id', 'conversation/id');
     assert.deepEqual(requests.map((r) => r.path), [
-      '/api/sessions/task%2Fid', '/api/previous/counts', '/api/projects/project%2Fid/previous',
+      '/api/sessions/task%2Fid', '/api/projects/project%2Fid/previous',
       '/api/projects/project%2Fid/previous/conversation%2Fid/import',
     ]);
-    assert.equal(requests[3].method, 'POST');
-    assert.equal(requests[3].body, '{}');
-    assert.equal(requests[3].headers['Content-Type'], 'application/json');
+    assert.equal(requests[2].method, 'POST');
+    assert.equal(requests[2].body, '{}');
+    assert.equal(requests[2].headers['Content-Type'], 'application/json');
     assert.ok(UPDATE_EVENTS.includes('history'));
   } finally {
     globalThis.fetch = original;

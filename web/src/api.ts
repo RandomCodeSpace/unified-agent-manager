@@ -618,7 +618,6 @@ export const api = {
   meta: () => call<Meta>('GET', '/api/meta'),
 
   session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}`),
-  previousCounts: () => call<Record<string, number>>('GET', '/api/previous/counts'),
   previous: (id: string) => call<PreviousSession[]>('GET', `/api/projects/${enc(id)}/previous`),
   importPrevious: (id: string, conversationId: string) => call<SessionSummary>('POST', `/api/projects/${enc(id)}/previous/${enc(conversationId)}/import`),
 
