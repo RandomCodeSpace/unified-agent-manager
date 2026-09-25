@@ -575,6 +575,31 @@ the same request ID, and the service answers a repeated request ID with the
 recorded result instead of sending again. If the provider may or may not have
 received a prompt, the page says so and nothing is resent.
 
+## Install as an app
+
+The web interface is an installable web app: it opens in its own window with
+the UAM icon, without the browser's address bar, and sits in the dock, taskbar
+or home screen.
+
+- **Desktop Chrome or Edge:** open the URL, then use the install icon at the
+  right end of the address bar (or the browser menu → *Install UAM*).
+- **Android (Chrome):** open the URL and choose *Install app* from the menu,
+  or accept the prompt.
+- **iOS and iPadOS (Safari):** open the URL, tap *Share*, then *Add to Home
+  Screen*.
+
+The URL must be a secure context: `http://127.0.0.1:<port>` and `https://`
+qualify; a plain `http://` address on another host does not offer install.
+
+Updates apply on their own. The installed app keeps no copy of the interface:
+after a new `uam web` is deployed, an open window notices the new version when
+its event stream reconnects (or when it comes back into view) and reloads
+itself, unless a draft, an upload or an open dialog would be lost; then it
+shows *UAM was updated* with a **Reload** button above the pane and waits.
+
+There is no offline mode. The app is a live view of the service and needs it
+reachable, exactly as a browser tab does.
+
 ## Disconnect and reconnect
 
 Close the browser, VS Code, or the SSH window whenever you like. The turn

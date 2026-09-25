@@ -611,6 +611,8 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
 
   return (
     <form
+      // `data-draft` marks unsent work (text, picked files, uploads); an update waits while it is set.
+      data-draft={text.trim() || files.length || uploads.length ? '' : undefined}
       className={cn(
         'relative flex flex-col rounded-md border border-hairline bg-raised shadow-raised transition-[border-color,box-shadow] duration-160 focus-within:border-hairline-strong focus-within:shadow-float has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-1 has-[textarea:focus-visible]:outline-focus',
         locked && 'bg-surface',
