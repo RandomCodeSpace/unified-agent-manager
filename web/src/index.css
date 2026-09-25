@@ -4,6 +4,16 @@
 
 @import 'tailwindcss';
 
+/* `motion-reduce:` yields to the Motion setting like the global rule below: it applies only under
+   "Match system" (`data-motion="system"` on <html>, lib/motion.ts). */
+@custom-variant motion-reduce {
+  @media (prefers-reduced-motion: reduce) {
+    &:where([data-motion='system'], [data-motion='system'] *) {
+      @slot;
+    }
+  }
+}
+
 @theme {
   /* Surfaces and text: only the DESIGN.md ladder exists; Tailwind's palette is removed. */
   --color-*: initial;
@@ -289,13 +299,15 @@
   summary::-webkit-details-marker {
     display: none;
   }
+  /* Reduced motion only when the Motion setting is "Match system" (lib/motion.ts); by default everything animates. */
   @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after,
-    ::view-transition-group(*),
-    ::view-transition-old(*),
-    ::view-transition-new(*) {
+    :root[data-motion='system'],
+    :root[data-motion='system'] *,
+    :root[data-motion='system'] *::before,
+    :root[data-motion='system'] *::after,
+    :root[data-motion='system']::view-transition-group(*),
+    :root[data-motion='system']::view-transition-old(*),
+    :root[data-motion='system']::view-transition-new(*) {
       animation: none !important;
       transition: none !important;
       scroll-behavior: auto !important;
