@@ -1,5 +1,5 @@
 import { Tooltip as BaseTooltip } from '@base-ui/react/tooltip';
-import type { ReactElement, ReactNode } from 'react';
+import { useRef, type ReactElement, type ReactNode } from 'react';
 
 export const TooltipProvider = BaseTooltip.Provider;
 
@@ -8,9 +8,21 @@ export const TooltipProvider = BaseTooltip.Provider;
  * hold a second, muted line (pass a fragment). Opens after 400ms, 0 when another tip is up.
  */
 export function Tip({ label, children, side = 'top', disabled = false }: { label: ReactNode; children: ReactElement; side?: 'top' | 'bottom' | 'left' | 'right'; disabled?: boolean }) {
+  const shown = useRef(false);
   if (disabled || !label) return children;
   return (
-    <BaseTooltip.Root>
+    <BaseTooltip.Root
+      onOpenChange={(open, details) => {
+        // A view transition puts a snapshot over the page, so the browser reports the pointer leaving a
+        // hovered trigger and Base UI closes on its hover path, which flushes synchronously and cancels
+        // the transition (the pane and the Task list would snap). A tip that is not open has nothing to close.
+        if (!open && !shown.current && details.reason === 'trigger-hover') {
+          details.cancel();
+          return;
+        }
+        shown.current = open;
+      }}
+    >
       <BaseTooltip.Trigger render={children} />
       <BaseTooltip.Portal>
         <BaseTooltip.Positioner side={side} sideOffset={6} collisionPadding={8} className="z-60">
