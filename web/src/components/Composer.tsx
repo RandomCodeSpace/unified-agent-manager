@@ -171,7 +171,9 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
   const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
   keys.delete('items');
   for (const k of keys) if (a.session[k] !== b.session[k]) return false;
-  return true;
+  // Streamed text changes items in place and is ignored; a new item (a sent or steered prompt)
+  // re-renders, so Up-arrow history sees it.
+  return a.session.items?.length === b.session.items?.length;
 }
 
 export const Composer = memo(ComposerView, sameComposerProps);
