@@ -313,6 +313,8 @@ export function install(): void {
     const method = (init?.method ?? 'GET').toUpperCase();
     const body: Json = typeof init?.body === 'string' ? (JSON.parse(init.body) as Json) : {};
     await wait(60);
+    // An import reads history on the host: slow enough here to watch "Import all" progress.
+    if (/\/previous\/[^/]+\/import$/.test(url.pathname)) await wait(500);
     return route(method, url, body);
   };
 
@@ -538,6 +540,7 @@ export function install(): void {
       const s = p && notLinked(p).find((x) => x.conversation_id === decodeURIComponent(r![2]));
       if (!p || !s) return fail(404, 'previous session not found');
       if (s.in_use) return fail(409, 'the conversation is open in another client');
+      if (s.conversation_id.endsWith('-broken')) return fail(500, 'the recorded history could not be read');
       const t: MockTask = {
         id: nextId('t'),
         project_id: p.id,

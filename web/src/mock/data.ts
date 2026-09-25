@@ -744,7 +744,10 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       prev('cli-p1-1', 'Explain the vterm replay order', 60 * 3),
       prev('cli-p1-2', 'Why does golangci-lint ignore the build tag?', 60 * 9),
       prev('cli-p1-3', 'Rename the tmux package', 60 * 30, true),
-      prev('cli-p1-4', 'Sketch the web attach flow', 60 * 50),
+      // `-broken`: the mock refuses to import it, so a failure in "Import all" can be seen.
+      prev('cli-p1-broken', 'Sketch the web attach flow', 60 * 50),
+      prev('cli-p1-5', 'Doctor: colour probe timing', 60 * 70),
+      prev('cli-p1-6', 'Split the attach status bar', 60 * 90),
     ],
     p2: [prev('cli-p2-1', 'Trim the zsh prompt', 60 * 24 * 3)],
     p3: [prev('cli-p3-1', 'Feed validator errors', 60 * 24), prev('cli-p3-2', 'Dark cover images', 60 * 26)],
