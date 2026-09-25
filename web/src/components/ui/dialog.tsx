@@ -1,7 +1,7 @@
 import { AlertDialog as BaseAlertDialog } from '@base-ui/react/alert-dialog';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { X } from 'lucide-react';
-import { useRef, type ComponentProps, type ReactNode, type RefObject } from 'react';
+import { useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import { cn } from '../../lib/cn';
 import { Button } from './button';
 
@@ -120,6 +120,25 @@ export interface AlertDialogProps extends Omit<DialogProps, 'footer' | 'initialF
   disabled?: boolean;
   onConfirm: () => void;
   cancelLabel?: string;
+}
+
+/**
+ * The state of one confirmation over a target (DESIGN.md Confirmations): `ask(target)` opens
+ * it, `close()` starts its exit, and the target stays until the exit has run, so the copy
+ * never changes while the dialog is still on screen. Spread `props` onto the AlertDialog.
+ */
+export function useConfirm<T>() {
+  const [target, setTarget] = useState<T | null>(null);
+  const [open, setOpen] = useState(false);
+  return {
+    target,
+    ask: (t: T) => {
+      setTarget(t);
+      setOpen(true);
+    },
+    close: () => setOpen(false),
+    props: { open, onOpenChange: (o: boolean) => !o && setOpen(false), onClosed: () => setTarget(null) },
+  };
 }
 
 /** Confirmation with the safe action focused first (DESIGN.md: initial focus on the least destructive button). */

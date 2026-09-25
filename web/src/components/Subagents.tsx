@@ -9,7 +9,7 @@ import { Markdown, Note, Skeleton, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
 import { EXIT_MS } from './ui/collapse';
-import { Sheet } from './ui/dialog';
+import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -142,8 +142,27 @@ export function SubagentPanel({
 }) {
   const { meta, narrow } = useApp();
   const lead = useRef<HTMLButtonElement>(null);
-  const [stops, stop] = useStops(session.id);
+  const [stops, stopNow] = useStops(session.id);
   const current = view.view === 'agent' ? session.subagents.find((s) => s.id === view.id) : undefined;
+  // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations); one dialog serves the list and the transcript header.
+  const stopConfirm = useConfirm<Subagent>();
+  const stop = (id: string) => {
+    const s = session.subagents.find((x) => x.id === id);
+    if (s) stopConfirm.ask(s);
+  };
+  const stopDialog = (
+    <AlertDialog
+      {...stopConfirm.props}
+      title={`Stop subagent ${stopConfirm.target ? `“${stopConfirm.target.name}”` : ''}?`}
+      description="It stops where it is. What it has done so far stays in its transcript; the main agent gets no result from it."
+      confirmLabel="Stop subagent"
+      onConfirm={() => {
+        const id = stopConfirm.target?.id;
+        stopConfirm.close();
+        if (id) stopNow(id);
+      }}
+    />
+  );
 
   // Focus the leading control whenever the view changes (open, back, open transcript).
   useEffect(() => {
@@ -181,6 +200,7 @@ export function SubagentPanel({
           result={current.status === 'completed' || current.status === 'idle' ? session.items.find((i) => i.id === current.parent_tool_call_id)?.tool?.output : undefined}
         />
         <SubagentComposer key={`composer-${current.id}`} session={session} subagent={current} />
+        {stopDialog}
       </SidePanel>
     );
   }
@@ -227,6 +247,7 @@ export function SubagentPanel({
           );
         })}
       </div>
+      {stopDialog}
     </SidePanel>
   );
 }

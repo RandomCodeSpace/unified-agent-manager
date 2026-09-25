@@ -17,6 +17,7 @@ import { SubagentPanel, type PanelView } from './Subagents';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript } from './Transcript';
 import { Button } from './ui/button';
+import { AlertDialog, useConfirm } from './ui/dialog';
 import { Menu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -53,6 +54,8 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
     setWasRunning(running);
     if (wasRunning === 0 && running > 0) setOpen(true);
   }
+  // A stop kills the shell, so it is confirmed first (DESIGN.md Confirmations).
+  const stopConfirm = useConfirm<{ id: string; description: string; command: string }>();
   if (!shown?.tasks.length) return null;
   async function stop(id: string) {
     if (requests[id]?.pending || locked || !shown?.known) return;
@@ -88,7 +91,7 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
                 <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
               )}
               {task.status === 'running' && <Tip label={locked ? 'This task is read-only.' : !shown.known ? 'Refresh the connection to check this task before stopping it.' : 'Stop this background shell'}>
-                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => void stop(task.id)}>
+                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => stopConfirm.ask({ id: task.id, description: task.description || 'Shell task', command: task.command })}>
                   {requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
                 </Button>
               </Tip>}
@@ -99,6 +102,23 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
         ))}
       </ul>
       </Collapse>
+      <AlertDialog
+        {...stopConfirm.props}
+        title={`Stop ${stopConfirm.target ? `“${stopConfirm.target.description}”` : 'this background task'}?`}
+        description="This kills the process. Output it has not written yet is lost, and the agent is not told."
+        confirmLabel="Stop task"
+        onConfirm={() => {
+          const id = stopConfirm.target?.id;
+          stopConfirm.close();
+          if (id) void stop(id);
+        }}
+      >
+        {stopConfirm.target && (
+          <code className="mt-3 block truncate rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink" title={stopConfirm.target.command}>
+            {stopConfirm.target.command}
+          </code>
+        )}
+      </AlertDialog>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { customProviders, matchingIds, withProvider, type CustomProvider } from 
 import { modelCostLine } from '../lib/cost';
 import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
+import { AlertDialog, useConfirm } from './ui/dialog';
 import { Select } from './ui/select';
 import { Switch } from './ui/switch';
 import { Button } from './ui/button';
@@ -80,6 +81,15 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
   const [loadError, setLoadError] = useState<string | null>(null);
   const providers = customProviders(models);
   const busy = disabled || loading;
+  // Removing a provider or one of its models is confirmed first (DESIGN.md Confirmations).
+  const removal = useConfirm<{ provider: CustomProvider; model?: string }>();
+  const pending = removal.target;
+  function remove() {
+    const r = removal.target;
+    if (!r) return;
+    removal.close();
+    void onSave(withProvider(models, r.provider.name, r.provider, r.model ? r.provider.models.filter((o) => o.model_id !== r.model).map((o) => o.model_id) : []));
+  }
 
   function edit(p?: CustomProvider) {
     setLoadError(null);
@@ -144,7 +154,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
             <Button size="sm" disabled={busy || !!draft} onClick={() => edit(p)}>
               Edit
             </Button>
-            <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove provider ${p.name}`} onClick={() => void onSave(withProvider(models, p.name, p, []))}>
+            <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove provider ${p.name}`} onClick={() => removal.ask({ provider: p })}>
               Remove
             </Button>
           </div>
@@ -154,13 +164,26 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
                 {m.display_name || m.model_id}
                 {m.display_name && m.display_name !== m.model_id && <span className="ml-2 text-meta text-muted">{m.model_id}</span>}
               </span>
-              <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove ${p.name}/${m.model_id}`} onClick={() => void onSave(withProvider(models, p.name, p, p.models.filter((o) => o !== m).map((o) => o.model_id)))}>
+              <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove ${p.name}/${m.model_id}`} onClick={() => removal.ask({ provider: p, model: m.model_id })}>
                 Remove
               </Button>
             </div>
           ))}
         </section>
       ))}
+      <AlertDialog
+        {...removal.props}
+        title={pending ? (pending.model ? `Remove ${pending.provider.name}/${pending.model}?` : `Remove provider ${pending.provider.name}?`) : 'Remove?'}
+        description={
+          pending?.model
+            ? 'It leaves the model menus. Tasks already using it keep it until their model is changed.'
+            : pending
+              ? `${pending.provider.models.length === 1 ? 'Its one model leaves' : `Its ${pending.provider.models.length} models leave`} the model menus. Tasks already using one keep it until their model is changed.`
+              : undefined
+        }
+        confirmLabel={pending?.model ? 'Remove model' : 'Remove provider'}
+        onConfirm={remove}
+      />
       {draft && (
         <form aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={(e) => void save(e, draft)}>
           <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
