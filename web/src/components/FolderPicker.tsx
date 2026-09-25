@@ -213,7 +213,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
     <div ref={root} id={id} className="flex flex-col gap-2 animate-fade-in" onKeyDown={onRootKey}>
       <div className="flex items-start gap-2">
         <nav aria-label="Folder path" className="min-w-0 flex-1 pt-0.5">
-          <ol className="flex flex-wrap items-center gap-y-0.5 font-mono text-code-sm">
+          <ol className="flex flex-wrap items-center gap-y-0.5 text-caption">
             {crumbs.map((c, i) => {
               const last = i === crumbs.length - 1;
               return (
@@ -254,7 +254,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
                 aria-label="New folder name"
                 aria-invalid={createError ? true : undefined}
                 aria-describedby={createError ? `${id}-create-error` : undefined}
-                className="min-w-0 flex-1 font-mono text-code"
+                className="min-w-0 flex-1 text-ui"
                 placeholder="Folder name"
                 spellCheck={false}
                 autoComplete="off"
@@ -325,7 +325,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
                 onDoubleClick={() => open(e.path)}
               >
                 <Folder aria-hidden="true" className="size-4 shrink-0 text-muted" />
-                <span className="min-w-0 flex-1 truncate font-mono text-code" title={e.name}>{e.name}</span>
+                <span className="min-w-0 flex-1 truncate text-ui" title={e.name}>{e.name}</span>
                 {e.git && (
                   <span className={markClass}>
                     <GitBranch aria-hidden="true" className="size-3" />
@@ -362,7 +362,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
           New folder
         </Button>
         {/* The folder "Use this folder" takes. RTL direction puts the ellipsis at the start, so the folder's own name stays visible; <bdi> keeps the path itself left-to-right. */}
-        <span dir="rtl" className="min-w-0 flex-1 truncate font-mono text-code-sm text-muted max-sm:order-first max-sm:basis-full max-sm:text-left" title={target}>
+        <span dir="rtl" className="min-w-0 flex-1 truncate text-caption text-muted max-sm:order-first max-sm:basis-full max-sm:text-left" title={target}>
           <bdi>{target}</bdi>
         </span>
         <Button variant="secondary" disabled={!target} onClick={choose}>

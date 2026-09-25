@@ -269,7 +269,7 @@ function PaletteBody({ projects, start, input, onClose, onPick }: { projects: Pr
               <ProjectBadge badge={p.badge} />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-ink">{p.name}</span>
-                <span className="truncate font-mono text-meta text-muted" title={p.dir}>{p.dir}</span>
+                <span className="truncate text-meta text-muted" title={p.dir}>{p.dir}</span>
               </span>
               {i < 9 && <Key>Alt+{i + 1}</Key>}
             </button>

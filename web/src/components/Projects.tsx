@@ -79,7 +79,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
           <div className="flex gap-2">
             <Input
               id="add-dir"
-              className="font-mono text-code-sm"
+              className="text-ui"
               required
               ref={first}
               spellCheck={false}
@@ -95,7 +95,6 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
           {recent.length > 0 && (
             <Select
               aria-label="Recent folders"
-              mono
               value=""
               className="mt-2"
               items={[{ value: '', label: 'Recent folders…', hidden: true }, ...recent.map((w) => ({ value: w, label: w }))]}
@@ -174,7 +173,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
           Edit project
         </span>
       }
-      description={<span className="font-mono text-code-sm">{project.dir}</span>}
+      description={<span className="text-caption">{project.dir}</span>}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
@@ -265,7 +264,7 @@ export function RemoveProjectDialog({ open, onClose, onClosed, project, tasks, o
       title={`Remove ${project.name}?`}
       description={
         <>
-          This removes the project and its {tasks.length === 1 ? 'one task' : `${tasks.length} tasks`} from UAM. The directory <code className="rounded-xs bg-sunken px-1 font-mono text-code-sm">{project.dir}</code> and the
+          This removes the project and its {tasks.length === 1 ? 'one task' : `${tasks.length} tasks`} from UAM. The directory <code className="rounded-xs bg-sunken px-1 font-sans text-caption">{project.dir}</code> and the
           provider conversations in it are untouched.
         </>
       }

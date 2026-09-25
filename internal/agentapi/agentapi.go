@@ -383,12 +383,19 @@ type Prompt struct {
 }
 
 // Blob is uploaded content sent inline. MIME is image/png, image/jpeg,
-// image/gif, image/webp, application/pdf or text/plain.
+// image/gif, image/webp, application/pdf or text/plain. Path, set for a PDF,
+// is the absolute path of a copy of Data under the file's own name
+// (UploadsDir/<task>/<id>.d/<name>), for a provider that reads documents
+// from disk.
 type Blob struct {
 	Name string
 	MIME string
 	Data []byte
+	Path string
 }
+
+// UploadsDir names the directory the web service keeps uploads in.
+const UploadsDir = "web-attachments"
 
 // Attachment describes uploaded content: an upload's metadata, or content a
 // user item carried. ID names the web service's stored copy and is empty
@@ -398,6 +405,9 @@ type Attachment struct {
 	Name string `json:"name"`
 	MIME string `json:"mime"`
 	Size int64  `json:"size,omitempty"`
+	// NotNative is set on a document the provider did not pass to the model
+	// as a document: the agent got its path, to read with its own tools.
+	NotNative bool `json:"not_native,omitempty"`
 	// SHA256 is the hex digest of the content, when the provider's record
 	// has it; the web service matches it to its stored copy. It is never
 	// sent to browsers.

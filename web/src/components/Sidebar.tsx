@@ -155,7 +155,7 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
       {renaming ? (
         // Not a button while the input is inside: interactive content cannot nest in one.
         <div className={rowClass}>
-          <span className="flex w-full min-w-0 items-center gap-1.5 text-meta text-muted"><ProjectBadge badge={project.badge} /><span className="truncate" title={project.name}>{project.name}</span></span>
+          <span className="flex w-full min-w-0 items-center gap-1.5 text-meta text-muted"><ProjectBadge badge={project.badge} /><span className="truncate text-caption" title={project.name}>{project.name}</span></span>
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
         </div>
       ) : (
@@ -177,21 +177,21 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
             }
           }}
         >
+          <span className="flex w-full min-w-0 items-center gap-1.5 text-meta font-normal text-muted">
+            <ProjectBadge badge={project.badge} />
+            <span className={cn('min-w-0 flex-1 truncate text-caption', selected && 'font-semibold')} title={project.dir}>{project.name}</span>
+            {project.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
+            {readOnly(s) && <span className="shrink-0">{s.stage === 'archived' ? 'Archived' : 'Settled'}</span>}
+          </span>
           <span className="flex w-full min-w-0 items-center gap-1.5">
-            {s.provider && <span className="shrink-0 text-meta font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
-              {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
-            </span>}
-            <TaskTitle session={s} className="min-w-0 flex-1 truncate text-caption" />
-            <span className={cn('flex shrink-0 items-center gap-1 text-meta font-normal tabular-nums whitespace-nowrap transition-colors duration-160', meta.tone)}>
+            <span className={cn('flex shrink-0 items-center gap-1 text-caption font-normal tabular-nums whitespace-nowrap transition-colors duration-160', meta.tone)}>
               {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
               {meta.text}
             </span>
-          </span>
-          <span className="flex w-full min-w-0 items-center gap-1.5 text-meta font-normal text-muted">
-            <ProjectBadge badge={project.badge} />
-            <span className="min-w-0 flex-1 truncate" title={project.dir}>{project.name}</span>
-            {project.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
-            {readOnly(s) && <span className="shrink-0">{s.stage === 'archived' ? 'Archived' : 'Settled'}</span>}
+            <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
+            {s.provider && <span className="shrink-0 text-meta font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
+              {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
+            </span>}
           </span>
         </button>
       )}
@@ -368,7 +368,7 @@ export const Sidebar = memo(function Sidebar({
             <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
           </span>
         </Tip>
-        {version && <span className="truncate font-mono text-meta" title={version}>{version}</span>}
+        {version && <span className="truncate text-meta" title={version}>{version}</span>}
         <span className="flex-1" />
         {authRequired && (
           <Button size="sm" className="-mr-2 text-muted" onClick={onLogout}>

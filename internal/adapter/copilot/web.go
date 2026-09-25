@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -1434,8 +1435,11 @@ func (c *conversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
 	return c.send(ctx, copilot.MessageOptions{Prompt: prompt.Text, Attachments: attachments(prompt)})
 }
 
-// attachments maps a prompt's references to Copilot attachments; uploads go
-// inline as blobs, so no file is needed on the host.
+// attachments maps a prompt's references to Copilot attachments. Uploads go
+// inline as blobs, except one with a named copy on the host (a PDF), which
+// goes as that file: the CLI passes a document to the model natively only
+// where the model client supports it, and otherwise gives the agent the
+// file's path, which a blob does not have.
 func attachments(p agentapi.Prompt) []copilot.Attachment {
 	var out []copilot.Attachment
 	for _, f := range p.Files {
@@ -1446,18 +1450,32 @@ func attachments(p agentapi.Prompt) []copilot.Attachment {
 		}
 	}
 	for _, b := range p.Attachments {
+		if b.Path != "" {
+			out = append(out, &rpc.AttachmentFile{Path: b.Path, DisplayName: b.Name})
+			continue
+		}
 		data, name := base64.StdEncoding.EncodeToString(b.Data), b.Name
 		out = append(out, &rpc.AttachmentBlob{Data: &data, MIMEType: b.MIME, DisplayName: &name})
 	}
 	return out
 }
 
-// blobAttachments describes the blobs a user message carried, without their
-// bytes. A live message has the data; a recorded one has the asset ID, the
-// SHA-256 of the bytes, instead.
-func blobAttachments(atts []copilot.Attachment) []agentapi.Attachment {
+// blobAttachments describes the uploads a user message carried, without
+// their bytes. A live blob has the data; a recorded one has the asset ID, the
+// SHA-256 of the bytes, instead. An upload sent as its named copy is a file
+// under the web service's upload store, hashed from disk; it is NotNative
+// unless the message lists its type among those the CLI sent natively and
+// its path is not among those that fell back to the path flow.
+func blobAttachments(atts []copilot.Attachment, native, fallback []string) []agentapi.Attachment {
 	var out []agentapi.Attachment
 	for _, a := range atts {
+		if f, ok := a.(*rpc.AttachmentFile); ok {
+			if att, ok := uploadFile(f); ok {
+				att.NotNative = !slices.Contains(native, att.MIME) || slices.Contains(fallback, f.Path)
+				out = append(out, att)
+			}
+			continue
+		}
 		b, ok := a.(*rpc.AttachmentBlob)
 		if !ok {
 			continue
@@ -1483,6 +1501,26 @@ func blobAttachments(atts []copilot.Attachment) []agentapi.Attachment {
 		out = append(out, att)
 	}
 	return out
+}
+
+// uploadFile describes a file attachment that is an upload's named copy,
+// <UploadsDir>/<task>/<id>.d/<name>; any other file is a reference, not an
+// upload. A copy no longer on disk keeps its name and type, without a hash.
+func uploadFile(f *rpc.AttachmentFile) (agentapi.Attachment, bool) {
+	if filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(f.Path)))) != agentapi.UploadsDir || !strings.HasSuffix(filepath.Base(filepath.Dir(f.Path)), ".d") {
+		return agentapi.Attachment{}, false
+	}
+	att := agentapi.Attachment{Name: f.DisplayName, MIME: "application/pdf"}
+	file, err := os.Open(f.Path) // #nosec G304 -- a path under the web service's own upload store, checked above.
+	if err != nil {
+		return att, true
+	}
+	defer func() { _ = file.Close() }()
+	h := sha256.New()
+	if n, err := io.Copy(h, file); err == nil {
+		att.SHA256, att.Size = hex.EncodeToString(h.Sum(nil)), n
+	}
+	return att, true
 }
 
 func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) error {
@@ -2568,7 +2606,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		if d.MessageID != nil && *d.MessageID != "" {
 			it.ID = *d.MessageID
 		}
-		it.Attachments = blobAttachments(d.Attachments)
+		it.Attachments = blobAttachments(d.Attachments, d.SupportedNativeDocumentMIMETypes, d.NativeDocumentPathFallbackPaths)
 		if d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliverySteering {
 			it.Delivery = agentapi.DeliverySteer
 		} else if d.IsAutopilotContinuation != nil && *d.IsAutopilotContinuation {

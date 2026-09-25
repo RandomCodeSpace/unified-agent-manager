@@ -24,7 +24,6 @@ export function Select({
   onValueChange,
   items,
   disabled,
-  mono = false,
   className,
   'aria-label': ariaLabel,
   'aria-describedby': describedBy,
@@ -34,8 +33,6 @@ export function Select({
   onValueChange: (value: string) => void;
   items: SelectOption[];
   disabled?: boolean;
-  /** Identifiers (models, sizes) are set in mono. */
-  mono?: boolean;
   className?: string;
   'aria-label'?: string;
   'aria-describedby'?: string;
@@ -49,7 +46,6 @@ export function Select({
         aria-describedby={describedBy}
         className={cn(
           'flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-sm border border-hairline-strong bg-raised px-2.5 text-ui text-ink select-none hover:not-data-disabled:bg-surface data-disabled:opacity-45 data-disabled:cursor-not-allowed pointer-coarse:min-h-11',
-          mono && 'font-mono text-code-sm',
           className,
         )}
       >
@@ -68,7 +64,7 @@ export function Select({
                   value={it.value}
                   disabled={it.disabled || it.hidden}
                   hidden={it.hidden}
-                  className={cn(itemClass, 'items-start pr-3 pl-7', mono && 'font-mono text-code-sm', it.hidden && 'hidden')}
+                  className={cn(itemClass, 'items-start pr-3 pl-7', it.hidden && 'hidden')}
                 >
                   <BaseSelect.ItemIndicator className="absolute top-2 left-2 flex text-accent [&_svg]:size-3.5 [&_svg]:text-accent">
                     <Check strokeWidth={2.5} />

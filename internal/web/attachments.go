@@ -33,7 +33,7 @@ const (
 	// uploadExpiry is how long an upload no prompt used is kept.
 	uploadExpiry  = 24 * time.Hour
 	sweepInterval = time.Hour
-	uploadsDir    = "web-attachments"
+	uploadsDir    = agentapi.UploadsDir
 	mimePDF       = "application/pdf"
 	mimeText      = "text/plain"
 	// Limits for the images tools return, kept beside the uploads.
@@ -373,8 +373,8 @@ func (m *Manager) sweepUploads() {
 	}
 	m.mu.Unlock()
 	for _, e := range gone {
-		for _, name := range []string{e.id, e.id + ".json"} {
-			if err := os.Remove(filepath.Join(e.dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		for _, name := range []string{e.id, e.id + ".json", e.id + ".d"} {
+			if err := os.RemoveAll(filepath.Join(e.dir, name)); err != nil {
 				log.Warn("remove expired web attachment failed", "error", err)
 			}
 		}
@@ -468,9 +468,50 @@ func (m *Manager) readBlobs(taskID string, uploads []*upload) ([]agentapi.Blob, 
 		if err != nil || int64(len(data)) != u.Size {
 			return nil, newError(http.StatusConflict, "attachment %s is no longer stored", u.Name)
 		}
-		out = append(out, agentapi.Blob{Name: u.Name, MIME: u.MIME, Data: data})
+		b := agentapi.Blob{Name: u.Name, MIME: u.MIME, Data: data}
+		if u.MIME == mimePDF {
+			if b.Path, err = namedCopy(m.taskUploadDir(taskID), u, data); err != nil {
+				log.Warn("name web attachment failed", "session", taskID, "error", err)
+			}
+		}
+		out = append(out, b)
 	}
 	return out, nil
+}
+
+// namedCopy links an upload to <id>.d/<name> beside it, the name ending in
+// .pdf, and returns that absolute path: Copilot passes a PDF to the model
+// only as a file it reads, recognised by its name, or failing that gives the
+// agent the path, which inline bytes do not have.
+func namedCopy(dir string, u *upload, data []byte) (string, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = root.Close() }()
+	name := u.Name
+	if !strings.EqualFold(filepath.Ext(name), ".pdf") {
+		name += ".pdf"
+	}
+	sub := u.ID + ".d"
+	if err := root.MkdirAll(sub, 0o700); err != nil {
+		return "", err
+	}
+	rel := filepath.Join(sub, name)
+	if info, err := root.Lstat(rel); err == nil && info.Mode().IsRegular() && info.Size() == u.Size {
+		return filepath.Join(dir, rel), nil
+	}
+	_ = root.Remove(rel)
+	if err := root.Link(u.ID, rel); err != nil {
+		if err := root.WriteFile(rel, data, 0o600); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(dir, rel), nil
 }
 
 // markUsed keeps uploads a prompt carried for as long as the Task exists.

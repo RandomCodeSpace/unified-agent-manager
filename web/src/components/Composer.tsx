@@ -84,7 +84,6 @@ function Picker({
   disabled,
   reason,
   hint,
-  mono = false,
   compact = false,
   className,
   onChange,
@@ -99,7 +98,6 @@ function Picker({
   reason?: string;
   /** A second tooltip line (the model the latest turn was routed to). */
   hint?: string;
-  mono?: boolean;
   compact?: boolean;
   className?: string;
   onChange: (value: string) => void;
@@ -107,12 +105,12 @@ function Picker({
   const face = (
     <>
       {icon}
-      <span className={cn('max-w-36 truncate max-sm:max-w-16', mono && 'font-mono text-code-sm', compact && 'max-sm:hidden')}>{display}</span>
+      <span className={cn('max-w-36 truncate max-sm:max-w-16', compact && 'max-sm:hidden')}>{display}</span>
       <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
     </>
   );
   const item = (c: Choice) => (
-    <Menu.RadioItem key={c.value} value={c.value} description={c.description} className={mono ? 'font-mono text-code-sm [&_.text-caption]:font-sans' : undefined}>
+    <Menu.RadioItem key={c.value} value={c.value} description={c.description}>
       {c.label}
     </Menu.RadioItem>
   );
@@ -151,9 +149,9 @@ function Picker({
 function CommandRow({ c }: { c: Command }) {
   return (
     <>
-      <span className="shrink-0 font-mono text-code-sm font-medium text-ink">/{c.name}</span>
-      {c.aliases?.length ? <span className="truncate font-mono text-code-sm text-muted" title={c.aliases.map((name) => `/${name}`).join(', ')}>{c.aliases.map((name) => `/${name}`).join(', ')}</span> : null}
-      {c.input_hint && <span className="min-w-0 truncate font-mono text-code-sm text-muted" title={c.input_hint}>{c.input_hint}</span>}
+      <span className="shrink-0 text-caption font-medium text-ink">/{c.name}</span>
+      {c.aliases?.length ? <span className="truncate text-caption text-muted" title={c.aliases.map((name) => `/${name}`).join(', ')}>{c.aliases.map((name) => `/${name}`).join(', ')}</span> : null}
+      {c.input_hint && <span className="min-w-0 truncate text-caption text-muted" title={c.input_hint}>{c.input_hint}</span>}
       {c.description && <span className="min-w-0 flex-1 truncate text-caption text-muted" title={c.description}>{c.description}</span>}
     </>
   );
@@ -166,7 +164,7 @@ function FileRow({ f }: { f: FileEntry }) {
   return (
     <>
       {f.type === 'directory' ? <Folder aria-hidden="true" className="text-faint" /> : <File aria-hidden="true" className="text-faint" />}
-      <span className="flex min-w-0 font-mono text-code-sm">
+      <span className="flex min-w-0 text-caption">
         {dir && <span className="min-w-0 truncate text-muted" title={f.path}>{dir}</span>}
         <span className="shrink-0 text-ink">
           {base}
@@ -356,7 +354,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
     if (!trigger) return [];
     if (argument) {
       return (argument.command.input_choices ?? []).filter((c) => c.name.toLowerCase().includes(trigger.query.toLowerCase())).map((c) => ({
-        key: c.name, label: `${c.name}. ${c.description}`, render: <><span className="font-mono text-code-sm">{c.name}</span><span className="min-w-0 text-caption text-muted">{c.description}</span></>,
+        key: c.name, label: `${c.name}. ${c.description}`, render: <><span className="text-caption">{c.name}</span><span className="min-w-0 text-caption text-muted">{c.description}</span></>,
       }));
     }
     if (trigger.kind === '/' || trigger.kind === '$') {
@@ -831,7 +829,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
               {commandResult.options.map((choice) => <Button key={choice.name} size="sm" variant="subtle" disabled={!!busy || locked} className="h-auto min-h-8 w-full justify-start whitespace-normal text-left pointer-coarse:min-h-11" onClick={() => {
                 const next = `/${commandResult.command} ${choice.name} `;
                 updateText(next, next.length); pendingCaret.current = next.length; dismissResult(); textarea.current?.focus();
-              }}><span className="font-mono">{choice.name}</span><span className="text-caption text-muted">{choice.description}</span></Button>)}
+              }}><span>{choice.name}</span><span className="text-caption text-muted">{choice.description}</span></Button>)}
             </div>
           </> : commandResult.kind === 'text' && commandResult.markdown ? <Markdown text={commandResult.text} /> : <p className="whitespace-pre-wrap" role="status">{commandResult.text || 'Command completed.'}</p>}
         </div>
@@ -957,7 +955,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           label="Model"
           value={session.model}
           display={modelLabel}
-          mono
           choices={models.map((m) => {
             const estimate = estimateTurnCost(m, session.context, contextSize);
             const prices = session.capabilities.usage ? modelCostLine(m) : '';

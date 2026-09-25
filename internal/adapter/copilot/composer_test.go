@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -140,6 +142,56 @@ func TestWebModelsReportTheMediaGate(t *testing.T) {
 		if !reflect.DeepEqual(m.Media, want[i]) {
 			t.Fatalf("%s media = %+v, want %+v", m.ID, m.Media, want[i])
 		}
+	}
+}
+
+// A PDF with a named copy goes as that file, and the message shows it as the
+// upload it is, hashed from disk; other files stay references.
+func TestWebSendCarriesANamedPDFAsAFile(t *testing.T) {
+	h := openWeb(t)
+	dir := filepath.Join(t.TempDir(), agentapi.UploadsDir, "task-1", "up-1.d")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pdf, path := []byte("%PDF-1.4\n%%EOF\n"), filepath.Join(dir, "Forms.pdf")
+	if err := os.WriteFile(path, pdf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blobs := []agentapi.Blob{{Name: "Forms.pdf", MIME: "application/pdf", Data: pdf, Path: path}}
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "read it", Files: composerFiles[:1], Attachments: blobs}); err != nil {
+		t.Fatal(err)
+	}
+	want := append(wantFileAttachments()[:1], &rpc.AttachmentFile{Path: path, DisplayName: "Forms.pdf"})
+	if got := h.fs.msgs[0].Attachments; !reflect.DeepEqual(got, want) {
+		t.Fatalf("attachments = %+v", got)
+	}
+
+	// Sent natively, it is a plain upload; not listed as native, or listed
+	// but fallen back to its path, the agent reads it with its tools.
+	sum := sha256.Sum256(pdf)
+	wantItem := []agentapi.Attachment{{Name: "Forms.pdf", MIME: "application/pdf", Size: int64(len(pdf)), SHA256: hex.EncodeToString(sum[:])}}
+	live := userMessage("msg-1", rpc.UserMessageDeliveryIdle, "read it")
+	live.Attachments = h.fs.msgs[0].Attachments
+	for _, c := range []struct {
+		native, fallback []string
+		notNative        bool
+	}{{[]string{"application/pdf"}, nil, false}, {nil, nil, true}, {[]string{"application/pdf"}, []string{path}, true}} {
+		live.SupportedNativeDocumentMIMETypes, live.NativeDocumentPathFallbackPaths = c.native, c.fallback
+		h.fs.onEvent(ev("u1", live))
+		wantItem[0].NotNative = c.notNative
+		if it := h.sink.last().Item; it == nil || !reflect.DeepEqual(it.Attachments, wantItem) {
+			t.Fatalf("native %v, fallback %v: live item = %+v", c.native, c.fallback, it)
+		}
+	}
+
+	// Removed from disk, it keeps its name and type.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.events = []copilot.SessionEvent{ev("u1", live)}
+	history, err := h.conv.History(context.Background())
+	if err != nil || len(history.Items) != 1 || !reflect.DeepEqual(history.Items[0].Attachments, []agentapi.Attachment{{Name: "Forms.pdf", MIME: "application/pdf", NotNative: true}}) {
+		t.Fatalf("history = %+v, %v", history.Items, err)
 	}
 }
 

@@ -162,7 +162,7 @@ export function SubagentPanel({
             <span className="truncate text-title text-ink" title={current.name}>
               {current.name}
             </span>
-            {setup && <span className="truncate font-mono text-meta text-muted" title={setup}>{setup}</span>}
+            {setup && <span className="truncate text-meta text-muted" title={setup}>{setup}</span>}
           </div>
           <AgentChip status={current.status} />
           <StopSubagent session={session} subagent={current} stopping={stops[current.id] ?? NOT_STOPPING} onStop={() => stop(current.id)} />
@@ -274,7 +274,7 @@ function SubagentRow({
             </span>
             {s.description && <span className="line-clamp-2 text-caption text-muted">{s.description}</span>}
             <span className="flex flex-wrap items-center gap-x-2 text-caption text-muted">
-              {setup && <span className="font-mono text-meta">{setup}</span>}
+              {setup && <span className="text-meta">{setup}</span>}
               {meta.length > 0 && <span className="tabular-nums">{meta.join(' · ')}</span>}
             </span>
             {stopping.error && <span className="text-caption text-error">{stopping.error}</span>}

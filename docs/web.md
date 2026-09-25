@@ -790,12 +790,12 @@ private and rotate it if it leaks. With `--no-auth` it is not protected at all
   after its first message. A session created without a prompt cannot be
   reopened after the service restarts.
 - **Diagrams.** Only fenced ` ```mermaid ` blocks render; other diagram
-  languages stay code. Mermaid draws with the system font, not the interface
-  font, and a diagram wider than the pane is scaled down; open it for full
-  size. The first diagram on a page fetches a 3.4 MB script, once.
+  languages stay code. Mermaid draws with the interface font (Figtree, embedded
+  in each diagram), and a diagram wider than the pane is scaled down; open it
+  for full size. The first diagram on a page fetches a 3.4 MB script, once.
 - **Late steers (Copilot).** A steer that arrives while Copilot writes the
-  last reply of a turn is answered right after that reply, in the same turn,
-  and shows as an ordinary message without the steer mark. One that arrives
+  last reply of a turn is answered right after that reply, in the same turn.
+  Steered messages look like any other message. One that arrives
   just after the turn ended starts a new turn.
 - **Selection changes (Copilot).** UAM does not force compaction to make a
   smaller context size fit. If Copilot requires consent or cancels a switch,

@@ -95,7 +95,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
     <Field id={`custom-${key}`} label={label}>
       <Input
         id={`custom-${key}`}
-        className="font-mono text-code-sm"
+        className="text-ui"
         spellCheck={false}
         autoComplete="off"
         required
@@ -126,7 +126,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
           <div className="flex min-h-8 items-center gap-2">
             <div className="flex min-w-0 flex-1 flex-col">
               <span className="text-ui font-medium text-ink">{p.name}</span>
-              <span className="min-w-0 break-all font-mono text-meta text-muted">{p.base_url}</span>
+              <span className="min-w-0 break-all text-meta text-muted">{p.base_url}</span>
               <Note tone={p.key_present ? 'muted' : 'warn'}>{p.key_present ? `Key from ${p.api_key_env}` : `${p.api_key_env} is not set in the service's environment`}</Note>
             </div>
             <Button size="sm" disabled={busy || !!draft} onClick={() => edit(p)}>
@@ -140,7 +140,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
             <div key={m.model_id} className="flex min-h-8 items-center gap-2 pl-3">
               <span className="min-w-0 flex-1 truncate text-ui text-ink" title={`${p.name}/${m.model_id}`}>
                 {m.display_name || m.model_id}
-                {m.display_name && m.display_name !== m.model_id && <span className="ml-2 font-mono text-meta text-muted">{m.model_id}</span>}
+                {m.display_name && m.display_name !== m.model_id && <span className="ml-2 text-meta text-muted">{m.model_id}</span>}
               </span>
               <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove ${p.name}/${m.model_id}`} onClick={() => void onSave(withProvider(models, p.name, p, p.models.filter((o) => o !== m).map((o) => o.model_id)))}>
                 Remove
@@ -163,7 +163,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
             <Input
               aria-label="Search models"
               size="md"
-              className="w-48 font-mono text-code-sm"
+              className="w-48"
               type="search"
               placeholder="Search"
               disabled={busy || !draft.ids.length}
@@ -182,7 +182,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
           {draft.ids.length > 0 && (
             <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto rounded-sm border border-hairline px-2 py-1">
               {matchingIds(draft.ids, draft.query).map((id) => (
-                <label key={id} className="flex min-h-7 items-center gap-2 font-mono text-code-sm text-ink">
+                <label key={id} className="flex min-h-7 items-center gap-2 text-ui text-ink">
                   <input
                     type="checkbox"
                     className="size-3.5 accent-accent"
@@ -199,7 +199,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
             <Field id="custom-manual" label="Add a model ID the endpoint does not list">
               <Input
                 id="custom-manual"
-                className="w-64 font-mono text-code-sm"
+                className="w-64"
                 spellCheck={false}
                 autoComplete="off"
                 disabled={busy}
@@ -364,7 +364,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="text-ui font-medium text-ink">{m.name}</span>
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-meta text-muted">
-                        <span className="min-w-0 break-all font-mono">{m.id}{!offered ? ' · not offered now' : ''}</span>
+                        <span className="min-w-0 break-all">{m.id}{!offered ? ' · not offered now' : ''}</span>
                         {p.capabilities.usage && <span className="tabular-nums">{modelCostLine(m)}</span>}
                       </div>
                     </div>
