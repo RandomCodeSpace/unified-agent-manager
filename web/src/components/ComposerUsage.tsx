@@ -42,7 +42,7 @@ export function ComposerUsage({ session, model }: { session: SessionDetail; mode
   const quotaLabel = quota ? `${quotaFace(quota)}${usage?.stale ? ' · stale' : ''}` : 'Usage unavailable';
   const reset = quota?.reset_at && Date.parse(quota.reset_at) > now ? new Date(quota.reset_at).toLocaleString() : null;
   // The ring waits for a reported value; on a phone the credits are a glyph. The per-turn estimate lives in the credits
-  // popover at every width, so the control row stays one row inside the capped column.
+  // popover at every width, so the control row stays one row.
   return (
     <>
       {context && context.limit > 0 && <Value id="composer-context-usage" label={contextLabel} title="Context usage" className={tones[ringTone(fraction)]} face={

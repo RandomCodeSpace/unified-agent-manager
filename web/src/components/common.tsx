@@ -113,17 +113,23 @@ export function StateMark({ state, label = false, title, className }: { state: S
   const text = STATE_LABELS[state] ?? state;
   const tone = STATE_TONE[state];
   const attention = tone === 'attention';
+  // Keyed on the state, so a change fades the new glyph in (`base`) in the same 16px slot; the chip's colour transitions with it.
+  const glyph = (
+    <span key={state} className="flex animate-fade-in">
+      <StateGlyph state={state} />
+    </span>
+  );
   if (!label) {
     return (
       <span className={cn('inline-flex size-4 shrink-0 items-center justify-center', className)} title={title}>
-        <StateGlyph state={state} />
+        {glyph}
         <span className="sr-only">{text}</span>
       </span>
     );
   }
   return (
     <Chip tone={attention ? 'attention' : tone === 'faint' ? 'muted' : tone} className={className} title={title}>
-      <StateGlyph state={state} />
+      {glyph}
       {text}
     </Chip>
   );
@@ -605,7 +611,7 @@ export function Loading({ label = 'Loading…', delay = 300, className }: { labe
 /** A `caption` line for feedback: `error` and `warn` are the only coloured ones. */
 export function Note({ tone = 'muted', className, children, role, id }: { tone?: 'muted' | 'error' | 'warn' | 'info'; className?: string; children: ReactNode; role?: 'alert' | 'status'; id?: string }) {
   return (
-    <p id={id} role={role} className={cn('text-caption', tone === 'error' && 'text-error', tone === 'warn' && 'text-warning', tone === 'info' && 'text-info', tone === 'muted' && 'text-muted', className)}>
+    <p id={id} role={role} className={cn('text-caption animate-fade-in', tone === 'error' && 'text-error', tone === 'warn' && 'text-warning', tone === 'info' && 'text-info', tone === 'muted' && 'text-muted', className)}>
       {children}
     </p>
   );

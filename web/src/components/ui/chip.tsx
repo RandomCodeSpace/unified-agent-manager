@@ -7,7 +7,7 @@ import { cn } from '../../lib/cn';
  * `attention` is the one filled chip, `well` sits a file name on the well, `outline` is
  * the read-only stage tag.
  */
-export const chipVariants = cva('inline-flex h-5 shrink-0 items-center gap-1.5 rounded-xs px-1.5 text-caption whitespace-nowrap', {
+export const chipVariants = cva('inline-flex h-5 shrink-0 items-center gap-1.5 rounded-xs px-1.5 text-caption whitespace-nowrap transition-[color,background-color] duration-160', {
   variants: {
     tone: {
       muted: 'text-muted',

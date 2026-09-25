@@ -1,14 +1,16 @@
 import { X } from 'lucide-react';
 import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
+import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog, RemoveProjectDialog } from './components/Projects';
+import { PreviousSessionsDialog, canImport } from './components/PreviousSessions';
 import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
-import { tasksOf } from './lib/tasks';
+import { staleDraftKeys } from './lib/drafts';
+import { needsYouCount, pageTitle, tasksOf } from './lib/tasks';
 import { checkDue, decideUpdate } from './lib/update';
 import { Task } from './components/Task';
 import { TaskActionsContext, type Renaming, type TaskActions } from './components/taskActions';
@@ -24,6 +26,8 @@ type TaskDialog = { kind: 'archive' | 'delete' | 'close'; id: string } | null;
 const NARROW = '(max-width: 959px)';
 /** From this width the Changes sheet sits beside the column instead of over it. */
 const SHEET_INLINE = '(min-width: 1280px)';
+/** A touch screen: focusing the composer would raise the keyboard over the conversation just opened. */
+const COARSE = '(pointer: coarse)';
 const VIEWED_KEY = 'uam.viewed';
 const SIDEBAR_KEY = 'uam.sidebar';
 const FILTER_KEY = 'uam.projectFilter';
@@ -76,6 +80,8 @@ export default function App() {
   const [taskDialog, setTaskDialog] = useState<TaskDialog>(null);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [renaming, setRenaming] = useState<Renaming | null>(null);
+  // The Project whose previous CLI sessions are open to import (from the filter menu or a Task's menu).
+  const [previous, setPrevious] = useState<Project | null>(null);
   const [busyTasks, setBusyTasks] = useState<Readonly<Record<string, boolean>>>({});
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
   const [sidebarOpen, setSidebarOpen] = useState(() => readJSON<boolean>(SIDEBAR_KEY, true));
@@ -85,8 +91,10 @@ export default function App() {
   const loadedAt = useRef(new Date().toISOString());
   // One create per project at a time; the request ID survives a failure so a retry is idempotent.
   const creating = useRef(new Map<string, { id: string; busy: boolean }>());
-  // Task whose composer takes focus once its detail arrives (a Task just created).
+  // Task whose composer takes focus once its detail arrives (a Task just created, or one chosen
+  // from the list on a fine pointer); `selectTick` re-runs the focus when the open Task is chosen again.
   const focusTask = useRef<string | null>(null);
+  const [selectTick, setSelectTick] = useState(0);
   // The service version this page loaded with, the time of the last version check, whether the
   // stream has been down since it last opened, and whether a newer version waits for a Reload.
   const loadedVersion = useRef<string | null>(null);
@@ -257,6 +265,12 @@ export default function App() {
         return null;
       });
       if (data.session && data.session.id === selected) markViewed(selected, data.session.updated_at);
+      // Composer drafts of Tasks that no longer exist go with them.
+      try {
+        for (const key of staleDraftKeys(Object.keys(localStorage), data.sessions.map((s) => s.id))) localStorage.removeItem(key);
+      } catch {
+        // Storage unavailable: nothing to sweep.
+      }
     });
     for (const name of UPDATE_EVENTS) {
       es.addEventListener(name, (e) => {
@@ -309,13 +323,14 @@ export default function App() {
 
   const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage }), [meta, narrow, hasNews, state.settings, state.usage]);
 
-  // Focus the composer of a Task that was just created, once its detail is on screen.
+  // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
   const detailId = state.detail?.id;
+  const detailLocked = !!state.detail && readOnly(state.detail);
   useEffect(() => {
     if (!detailId || detailId !== focusTask.current) return;
     focusTask.current = null;
-    document.getElementById('composer-text')?.focus();
-  }, [detailId]);
+    if (!detailLocked) document.getElementById('composer-text')?.focus();
+  }, [detailId, detailLocked, selectTick]);
 
   const logout = useCallback(() => {
     void api.logout().finally(() => setAuth('out'));
@@ -337,6 +352,11 @@ export default function App() {
   }, []);
 
   const select = useCallback((id: string | null) => {
+    // Choosing a Task is an invitation to type: its composer takes focus, except on a touch screen, where a keyboard would rise over the conversation.
+    if (id && !window.matchMedia(COARSE).matches) {
+      focusTask.current = id;
+      setSelectTick((t) => t + 1);
+    }
     startTransition(() => {
       addTransitionType('switch');
       dispatch({ type: 'select', id });
@@ -419,8 +439,18 @@ export default function App() {
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
       busy: busyTasks,
+      previousSessions: (projectId) => setPrevious(state.projects.find((p) => p.id === projectId) ?? null),
+      canImport: canImport(meta),
+      editProject: (projectId) => {
+        const project = state.projects.find((p) => p.id === projectId);
+        if (project) openDialog({ kind: 'edit', project });
+      },
+      removeProject: (projectId) => {
+        const project = state.projects.find((p) => p.id === projectId);
+        if (project) openDialog({ kind: 'remove', project });
+      },
     }),
-    [renaming, busyTasks, select, runTask, state.sessions, openTaskDialog],
+    [renaming, busyTasks, select, runTask, state.sessions, state.projects, meta, openTaskDialog, openDialog],
   );
 
   const actions: WorkspaceActions = useMemo(
@@ -429,6 +459,7 @@ export default function App() {
       onAddProject: () => openDialog({ kind: 'add' }),
       onEditProject: (project) => openDialog({ kind: 'edit', project }),
       onRemoveProject: (project) => openDialog({ kind: 'remove', project }),
+      onPreviousSessions: setPrevious,
       filter,
       onFilter: (id) => {
         setFilter(id);
@@ -445,6 +476,17 @@ export default function App() {
     [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, startTask, openDialog, toggleSidebar],
   );
 
+  const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
+
+  // The tab title and the installed app's badge carry how many Tasks wait for the user; the title names the open Task.
+  const attention = useMemo(() => needsYouCount(state.sessions), [state.sessions]);
+  const openName = selected ? taskName(selected) : null;
+  useEffect(() => {
+    document.title = pageTitle(attention, openName);
+    if (attention > 0) navigator.setAppBadge?.(attention).catch(() => {});
+    else navigator.clearAppBadge?.().catch(() => {});
+  }, [attention, openName]);
+
   if (auth === 'checking') {
     return (
       <main className="grid h-dvh place-items-center text-caption text-muted" aria-busy="true">
@@ -454,7 +496,6 @@ export default function App() {
   }
   if (auth === 'out') return <Login onLoggedIn={() => setAuth('in')} />;
 
-  const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
   // The Task on screen: the selected one, or the one before it (inert) until the new detail arrives or the wait gets long.
   const shown = state.detail && selected ? state.detail : state.selectedId && selected && !lateLoad ? state.previous : null;
   const stale = !!shown && shown !== state.detail;
@@ -572,13 +613,13 @@ export default function App() {
             )}
             <main className="relative flex min-h-0 min-w-0 flex-col bg-canvas">
               {connection !== 'connected' && (
-                <p role="status" className={cn('flex items-center gap-2 border-b border-hairline px-4 py-1.5 text-caption', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
+                <p role="status" className={cn('flex items-center gap-2 border-b border-hairline px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
                   <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
                   {CONNECTION_TEXT[connection]}
                 </p>
               )}
               {updated && (
-                <p role="status" className="flex items-center gap-2 border-b border-hairline bg-surface px-4 py-1 text-caption text-body">
+                <p role="status" className="flex items-center gap-2 border-b border-hairline bg-surface px-4 py-1 text-caption text-body animate-fade-in">
                   <Dot tone="accent" />
                   <span className="flex-1">UAM was updated.</span>
                   <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
@@ -587,7 +628,7 @@ export default function App() {
                 </p>
               )}
               {notice && (
-                <p className="flex items-center gap-2 border-b border-hairline bg-error-wash px-4 py-1.5 text-caption text-error" role="alert">
+                <p className="flex items-center gap-2 border-b border-hairline bg-error-wash px-4 py-1.5 text-caption text-error animate-fade-in" role="alert">
                   <span className="flex-1">{notice}</span>
                   <Button size="icon" variant="ghost" aria-label="Dismiss" className="text-error hover:bg-error-wash hover:text-error" onClick={() => setNotice(null)}>
                     <X />
@@ -602,6 +643,7 @@ export default function App() {
               </ViewTransition>
             </main>
 
+            {previous && <PreviousSessionsDialog project={previous} onClose={() => setPrevious(null)} />}
             {dialog?.kind === 'add' && (
               <AddProjectDialog
                 open={dialogOpen}

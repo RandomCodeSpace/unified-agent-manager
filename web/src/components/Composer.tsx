@@ -1,18 +1,21 @@
-import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, ListPlus, Paperclip, Shield, ShieldOff, Square, X, Zap } from 'lucide-react';
+import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, Shield, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type SessionDetail, type SessionSummary, type Submission } from '../api';
-import { LIMITS, acceptFor, checkUpload, fileKind, mediaNote, type Kind } from '../lib/attachments';
+import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
 import { ComposerUsage } from './ComposerUsage';
-import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
-import { historyEntries, historyKey, type Browsing } from '../lib/history';
+import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
+import { draftKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
+import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Markdown, Note, Spinner, useApp } from './common';
 import { ExecutionItems, ExecutionStatus } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
+import { Appear } from './ui/appear';
 import { Button } from './ui/button';
+import { Collapse, usePresence } from './ui/collapse';
 import { Menu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -35,8 +38,26 @@ export function contextReason(model: Model | undefined, supported: boolean): str
 const MAX_FILE_REFS = 20;
 const LIST_ID = 'composer-picker';
 const LIMITS_TEXT = 'Images up to 3 MiB, PDF up to 10 MiB, text up to 256 KiB · 5 per message';
+/** Typing pauses this long before the draft is written. */
+const DRAFT_DELAY = 250;
+
+// Storage may be unavailable (private mode, quota): the composer works without a draft then.
+function readDraft(key: string): Draft | null {
+  try { return parseDraft(localStorage.getItem(key)); }
+  catch { return null; }
+}
+function writeDraft(key: string, draft: Draft) {
+  const raw = serializeDraft(draft);
+  try { if (raw) localStorage.setItem(key, raw); else localStorage.removeItem(key); }
+  catch { /* The draft lives in state until the next write. */ }
+}
 
 const sentence = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+/** A stored upload back as a done chip (a draft's, or a past prompt's); an image shows its stored copy. */
+const storedUpload = (sessionId: string, a: { id: string; name: string; size: number; kind: Kind }): Pending => ({
+  key: a.id, name: a.name, size: a.size, kind: a.kind, progress: 1, status: 'done', id: a.id, ...(a.kind === 'image' ? { preview: api.attachmentUrl(sessionId, a.id) } : {}),
+});
 
 interface Choice {
   value: string;
@@ -99,7 +120,7 @@ function Picker({
   if (disabled) {
     return (
       <Tip label={tip(reason ?? `${label} cannot change now`)}>
-        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hint ? ` ${hint}.` : ''}`} className={cn('text-muted', className)}>
+        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hint ? ` ${hint}.` : ''}`} className={cn('min-w-0 shrink text-muted', className)}>
           {face}
         </Button>
       </Tip>
@@ -108,7 +129,7 @@ function Picker({
   return (
     <Menu.Root modal={false}>
       <Tip label={tip(compact ? `${label}: ${display}` : label)}>
-        <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} className={cn('text-body', className)} />}>{face}</Menu.Trigger>
+        <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} className={cn('min-w-0 shrink text-body', className)} />}>{face}</Menu.Trigger>
       </Tip>
       <Menu.Content side="top" align="start" sideOffset={6} className="min-w-52">
         <Menu.RadioGroup value={value} onValueChange={(v) => onChange(v as string)}>
@@ -180,8 +201,11 @@ export const Composer = memo(ComposerView, sameComposerProps);
 
 function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const { meta, settings: appSettings, dispatch } = useApp();
-  const [text, setText] = useState('');
-  const [caret, setCaret] = useState(0);
+  // The draft this Task left behind (text, `@` files, finished uploads); read once, on mount.
+  const storageKey = draftKey(session.id);
+  const [draft] = useState(() => readDraft(storageKey));
+  const [text, setText] = useState(draft?.text ?? '');
+  const [caret, setCaret] = useState(draft?.text.length ?? 0);
   /** Prompt history browsing (Up/Down/Escape); null until Up recalls an entry. */
   const [browsing, setBrowsing] = useState<Browsing | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -216,6 +240,12 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const modelLabel = modelName(meta, session.provider, session.model);
   const routed = session.last_model && session.last_model !== session.model ? modelName(meta, session.provider, session.last_model) : null;
   const queue = session.queue ?? [];
+  // The queue strip opens and closes through the shared height collapse: it stays mounted through its
+  // exit, showing the last queue, and a strip present when the composer mounts (a Task switch) does not grow in.
+  const queueStrip = usePresence(queue.length > 0);
+  const [shownQueue, setShownQueue] = useState(queue);
+  if (queue.length > 0 && queue !== shownQueue) setShownQueue(queue);
+  const [queueAtMount] = useState(queue.length > 0);
   const effort = session.effort ?? '';
   const contextSize = session.context_size || 'default';
   const sizes = selectedModel?.context_sizes ?? [];
@@ -237,7 +267,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const pendingCaret = useRef<number | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
-  const [files, setFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<string[]>(draft?.files ?? []);
   const [commandVersion, setCommandVersion] = useState(0);
   const [executionOpen, setExecutionOpen] = useState(false);
   const pendingExecution = useRef<{ mode: 'interactive' | 'autopilot'; id: string } | null>(null);
@@ -377,7 +407,8 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   /* ---------- Attachments ---------- */
 
   const fileInput = useRef<HTMLInputElement>(null);
-  const [uploads, setUploads] = useState<Pending[]>([]);
+  // Finished uploads come back from the draft as done chips; an image shows its stored copy.
+  const [uploads, setUploads] = useState<Pending[]>(() => (draft?.attachments ?? []).map((a) => storedUpload(session.id, a)));
   const [dragging, setDragging] = useState(0);
   const media = selectedModel?.media;
   const gateNote = mediaNote(media, modelLabel);
@@ -437,7 +468,31 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const attachmentIds = uploads.flatMap((u) => (u.status === 'done' && u.id ? [u.id] : []));
   const extras = { ...(files.length ? { files } : {}), ...(attachmentIds.length ? { attachments: attachmentIds } : {}) };
 
+  // The draft follows the text, the picked files and the finished uploads once typing pauses;
+  // leaving the Task writes it at once. An accepted send clears it (see `send`).
+  const draftNow = useMemo<Draft>(() => ({ text, files, attachments: uploads.flatMap((u) => (u.status === 'done' && u.id ? [{ id: u.id, name: u.name, size: u.size, kind: u.kind }] : [])) }), [text, files, uploads]);
+  const latestDraft = useRef(draftNow);
+  useEffect(() => {
+    latestDraft.current = draftNow;
+    const timer = window.setTimeout(() => writeDraft(storageKey, draftNow), DRAFT_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [draftNow, storageKey]);
+  useEffect(() => () => writeDraft(storageKey, latestDraft.current), [storageKey]);
+
   /* ---------- Sending ---------- */
+
+  // After a turn that failed, was stopped or was interrupted, the last prompt can come back into an empty
+  // composer: its text and its stored uploads (file references are not recorded on the item). Never sent by itself.
+  const failedTurn = session.state === 'failed' || session.state === 'interrupted' || session.state === 'cancelled';
+  const resendable = failedTurn && !locked && !text.trim() && !files.length && !uploads.length ? lastPrompt(session.items) : null;
+  function resend() {
+    if (!resendable) return;
+    const t = resendable.text ?? '';
+    pendingCaret.current = t.length;
+    updateText(t, t.length);
+    setUploads((resendable.attachments ?? []).flatMap((a) => (a.id ? [storedUpload(session.id, { id: a.id, name: a.name, size: a.size ?? 0, kind: kindOf(a.mime) })] : [])));
+    textarea.current?.focus();
+  }
 
   const cmd = commands ? parseCommand(text, commands) : null;
   const descriptor = commands?.find((c) => c.name === cmd?.name);
@@ -453,11 +508,9 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           : commandBlocked;
   const steerBlocked = steerUnavailable;
   const cannotSubmit = !!busy || locked || session.state === 'starting' || !text.trim() || !!blocked;
-  // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The primary button is Enter's;
-  // the secondary is the other's, and stays Steer, disabled with its reason, while a steer is impossible.
+  // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The one send button is Enter's.
   const steerDefault = appSettings.send_default === 'steer';
   const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
-  const other: PromptMode = steerBlocked ? 'steer' : modified;
 
   async function send(promptMode: PromptMode) {
     const t = text.trim();
@@ -488,6 +541,8 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
         setFiles([]);
         setUploads([]);
         setDismissed(null);
+        // Gone at once, not after the debounce: a reload right after sending must not bring the prompt back.
+        writeDraft(storageKey, { text: prefill, files: [], attachments: [] });
       }
     } catch (e) {
       if (!cmd && promptMode === 'steer' && isStatus(e, 409) && e.message.includes('cannot steer a running turn')) {
@@ -554,6 +609,12 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           return;
         }
       }
+      // An empty list (no match, a reason, still loading): Enter closes it rather than sending a half-typed token.
+      if (e.key === 'Enter' && !e.shiftKey && enterInPicker(items.length, !!argument) === 'close') {
+        e.preventDefault();
+        setDismissed(triggerKey);
+        return;
+      }
     }
     // Terminal-style history: Up from the first line recalls earlier prompts, Down from the last
     // line comes back, Escape restores the draft. Only the text changes; chips and uploads stay.
@@ -584,7 +645,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
         : commands && commands.length === 0
         ? 'This task has no commands.'
         : trigger.query
-          ? `No command matches “/${trigger.query}”. Enter sends it as text.`
+          ? `No command matches “/${trigger.query}”. Enter closes the list; Enter again sends it as text.`
           : null
       : trigger?.kind === '@'
         ? trigger.query
@@ -675,7 +736,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           popupRef={popup}
         />
       )}
-      {(locked || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked)) && (
+      {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked)) && (
         <div className="flex flex-col gap-1 border-b border-hairline px-3.5 py-2">
           {locked && <Note>{session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.'}</Note>}
           {last?.status === 'uncertain' && (
@@ -696,6 +757,14 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           {commandBlocked && <Note role="status">{commandBlocked}</Note>}
           {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
           {live && steerUnavailable && !cmd && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
+          {resendable && (
+            <Tip label="Puts the last prompt back here to edit or send again. Nothing is sent until you do.">
+              <Button size="sm" variant="secondary" className="self-start animate-rise" onClick={resend}>
+                <RotateCcw />
+                Resend last prompt
+              </Button>
+            </Tip>
+          )}
         </div>
       )}
       {commandResult && commandResult.kind !== 'action' && (
@@ -712,11 +781,12 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           </> : commandResult.kind === 'text' && commandResult.markdown ? <Markdown text={commandResult.text} /> : <p className="whitespace-pre-wrap" role="status">{commandResult.text || 'Command completed.'}</p>}
         </div>
       )}
-      {queue.length > 0 && (
+      {queueStrip.mounted && (
+        <Collapse open={queue.length > 0} appear={!queueAtMount} onClosed={queueStrip.onClosed}>
         <details className="group/queue border-b border-hairline px-3.5 py-1.5" open>
           <summary className="flex h-6 list-none items-center gap-2 text-caption text-muted select-none [&::-webkit-details-marker]:hidden">
             <ListEnd aria-hidden="true" className="size-3.5" />
-            <span className="tabular-nums">{queue.length} queued</span>
+            <span className="tabular-nums">{shownQueue.length} queued</span>
             <span aria-hidden="true">·</span>
             <span>{session.queue_paused ? 'Paused' : 'Waiting for the current turn'}</span>
             <span className="flex-1" />
@@ -730,7 +800,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
             </Button>
           </summary>
           <ol className="flex flex-col gap-0.5 pb-1">
-            {queue.map((q, i) => (
+            {shownQueue.map((q, i) => (
               <li key={q.request_id} className="flex items-start gap-2 text-ui text-body">
                 <span className="mt-0.5 w-4 shrink-0 text-right text-caption tabular-nums text-muted">{i + 1}</span>
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
@@ -744,6 +814,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
             ))}
           </ol>
         </details>
+        </Collapse>
       )}
 
       {(uploads.length > 0 || files.length > 0) && (
@@ -785,8 +856,8 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
       />
 
       {/* One control row (DESIGN.md D3): Attach and the pickers at left, the actions at right. On a phone the effort,
-          context, permissions and execution pickers fold into a More menu, so the row never wraps. */}
-      <div className="flex flex-wrap items-center gap-0.5 px-2 pt-1 pb-2">
+          context, permissions and execution pickers fold into a More menu. The row never wraps. */}
+      <div className="flex items-center gap-0.5 px-2 pt-1 pb-2">
         {!locked && (
           <>
             <input
@@ -905,32 +976,16 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
             </Menu.Content>
           </Menu.Root>
         )}
-        {/* The actions: the primary keeps the far right, so Stop and the other action rise in beside it and nothing else moves. */}
-        <span className="ml-auto flex items-center gap-0.5">
+        {/* The actions: the send button keeps the far right, so Stop rises in beside it and nothing else moves. */}
+        <span className="ml-auto flex shrink-0 items-center gap-0.5">
         {busy === 'settings' && <Spinner className="mr-1" />}
-        {(live || session.execution?.objective?.status === 'active') && (
+        <Appear show={live || session.execution?.objective?.status === 'active'}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop execution and pause queued follow-ups'}>
-            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="animate-rise rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
+            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
               <Square className="!size-3" fill="currentColor" />
             </Button>
           </Tip>
-        )}
-        {live && !cmd && other === 'steer' && (
-          <Tip label={steerBlocked || 'Steer this turn (Ctrl+Enter)'}>
-            <Button size="md" variant="secondary" className="animate-rise" loading={busy === 'steer'} disabled={cannotSubmit || !!steerBlocked} onClick={() => void send('steer')}>
-              <Zap />
-              Steer
-            </Button>
-          </Tip>
-        )}
-        {live && !cmd && other === 'queue' && (
-          <Tip label="Queue for the next turn (Ctrl+Enter)">
-            <Button size="md" variant="secondary" className="animate-rise" loading={busy === 'queue'} disabled={cannotSubmit} onClick={() => void send('queue')}>
-              <ListPlus />
-              Queue
-            </Button>
-          </Tip>
-        )}
+        </Appear>
         {!locked && (
           <Tip
             label={
@@ -949,13 +1004,8 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
               )
             }
           >
-            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full transition-transform duration-100 active:scale-95" loading={busy === enter} disabled={cannotSubmit}>
-              {/* The glyph cross-fades in place as Enter's action changes. */}
-              <span className="grid *:[grid-area:1/1] *:transition-opacity *:duration-100">
-                <ArrowUp aria-hidden="true" strokeWidth={2.25} className={cn(live && 'opacity-0')} />
-                <Zap aria-hidden="true" className={cn(!(live && enter === 'steer') && 'opacity-0')} />
-                <ListPlus aria-hidden="true" className={cn(!(live && enter === 'queue') && 'opacity-0')} />
-              </span>
+            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === enter} disabled={cannotSubmit}>
+              <ArrowUp aria-hidden="true" strokeWidth={2.25} />
             </Button>
           </Tip>
         )}

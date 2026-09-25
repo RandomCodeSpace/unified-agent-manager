@@ -128,3 +128,11 @@ test('argument choices follow aliases and replace only the argument token', () =
   assert.equal(argumentTrigger('/goal', 5, list), null);
   assert.equal(argumentTrigger('plain text', 10, list), null);
 });
+
+test('Enter in an open picker picks a row, closes an empty list, and runs a command whose argument list has no match', async () => {
+  const { enterInPicker } = await import('../src/lib/composer.ts');
+  assert.equal(enterInPicker(3, false), 'pick');
+  assert.equal(enterInPicker(1, true), 'pick');
+  assert.equal(enterInPicker(0, false), 'close');
+  assert.equal(enterInPicker(0, true), 'submit');
+});

@@ -6,6 +6,7 @@ import { Field } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { modelChoices } from '../lib/models';
+import { loadMotion, saveMotion, type Motion } from '../lib/motion';
 import { Select } from './ui/select';
 import { Switch } from './ui/switch';
 import { Button } from './ui/button';
@@ -241,6 +242,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
   const saveSequence = useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [motion, setMotion] = useState(loadMotion);
 
   async function save(patch: Partial<Settings>) {
     const sequence = ++saveSequence.current;
@@ -295,7 +297,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="flex w-full min-w-0 flex-col px-4 py-4 md:px-6">
-          <p className="mb-4 text-caption text-muted">Kept by the service, so they apply in every browser.</p>
+          <p className="mb-4 text-caption text-muted">Kept by the service, so they apply in every browser. This browser's own settings are at the end.</p>
           <Section id="composer" title="Composer">
             <Row
               id="send-default"
@@ -358,6 +360,23 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                 </div>
               </div>;
             })}
+          </Section>
+          <Section id="browser" title="This browser">
+            <Row id="motion" label="Motion" help="Always on animates even when the OS asks for reduced motion; Match system follows your OS setting.">
+              <Segmented
+                aria-labelledby="motion-label"
+                aria-describedby="motion-help"
+                value={motion}
+                onValueChange={(v) => {
+                  setMotion(v as Motion);
+                  saveMotion(v as Motion);
+                }}
+                items={[
+                  { value: 'on', label: 'Always on' },
+                  { value: 'system', label: 'Match system' },
+                ]}
+              />
+            </Row>
           </Section>
           {error && (
             <Note tone="error" role="alert">

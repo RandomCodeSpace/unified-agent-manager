@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Ellipsis, FolderMinus, FolderPlus, GitBranch, ListFilter, LogOut, Settings as SettingsIcon, Settings2, Search, SquarePen, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Ellipsis, FolderMinus, FolderPlus, GitBranch, History, ListFilter, LogOut, Settings as SettingsIcon, Settings2, Search, SquarePen, X } from 'lucide-react';
 import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -8,7 +8,7 @@ import { Dot, InlineName, ProjectBadge, STATE_LABELS, STATE_TONE, StateMark, TON
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
-import { PreviousSessionsEntry, usePreviousCounts } from './PreviousSessions';
+import { PreviousSessionsEntry, canImport, usePreviousCounts } from './PreviousSessions';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 import copilotIcon from '../assets/copilot.svg';
@@ -19,6 +19,8 @@ export interface WorkspaceActions {
   onAddProject: () => void;
   onEditProject: (p: Project) => void;
   onRemoveProject: (p: Project) => void;
+  /** Opens a Project's previous CLI sessions to import, leaving the filter alone. */
+  onPreviousSessions: (p: Project) => void;
   /** The Project the sidebar is filtered to; null shows every Project. Remembered per browser. */
   filter: string | null;
   onFilter: (id: string | null) => void;
@@ -181,7 +183,7 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
               {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
             </span>}
             <TaskTitle session={s} className="min-w-0 flex-1 truncate text-caption" />
-            <span className={cn('flex shrink-0 items-center gap-1 text-meta font-normal tabular-nums whitespace-nowrap', meta.tone)}>
+            <span className={cn('flex shrink-0 items-center gap-1 text-meta font-normal tabular-nums whitespace-nowrap transition-colors duration-160', meta.tone)}>
               {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
               {meta.text}
             </span>
@@ -265,7 +267,8 @@ function ProjectActions({ project, actions }: { project: Project; actions: Works
 /* ---------- Project filter ---------- */
 
 /** "All projects" or the chosen Project's badge and name; the menu lists every Project. Active, it sits raised with a one-click clear. */
-function ProjectFilter({ projects, filter, onFilter, actions }: { projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; actions: WorkspaceActions }) {
+function ProjectFilter({ projects, filter, onFilter, actions, previousCounts }: { projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; actions: WorkspaceActions; previousCounts: Record<string, number> }) {
+  const { meta } = useApp();
   const chosen = filteredProject(projects, filter);
   return (
     <div className="flex shrink-0 items-center gap-0.5 px-2 pb-1">
@@ -299,6 +302,20 @@ function ProjectFilter({ projects, filter, onFilter, actions }: { projects: Proj
               </Menu.RadioItem>
             ))}
           </Menu.RadioGroup>
+          {/* Each Project's own actions (previous CLI sessions, Edit, Remove), so none of them needs the filter. */}
+          <Menu.Group>
+            <Menu.Separator />
+            <Menu.Label>Projects</Menu.Label>
+            {projects.map((p) => (
+              <Menu.Submenu key={p.id} label={p.name} icon={<ProjectBadge badge={p.badge} />}>
+                <Menu.Actions items={[
+                  ...(canImport(meta) ? [{ key: 'previous', label: `Previous sessions${previousCounts[p.id] === undefined ? '' : ` (${previousCounts[p.id]})`}`, icon: <History />, onSelect: () => actions.onPreviousSessions(p) }] : []),
+                  { key: 'edit', label: 'Edit project', icon: <Settings2 />, onSelect: () => actions.onEditProject(p) },
+                  { key: 'remove', label: 'Remove project', icon: <FolderMinus />, danger: true, onSelect: () => actions.onRemoveProject(p) },
+                ]} />
+              </Menu.Submenu>
+            ))}
+          </Menu.Group>
         </Menu.Content>
       </Menu.Root>
       {chosen && <ProjectActions project={chosen} actions={actions} />}
@@ -338,6 +355,7 @@ export const Sidebar = memo(function Sidebar({
   const previousCounts = usePreviousCounts(projects, sessions);
   const [query, setQuery] = useState('');
   const [shelves, setShelves] = useState<Record<string, boolean>>(readShelves);
+  const target = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   // Under a filter, New task targets the filtered Project.
   const visible = useMemo(() => visibleProjects(projects, actions.filter), [projects, actions.filter]);
@@ -376,23 +394,41 @@ export const Sidebar = memo(function Sidebar({
           </Button>
         </Tip>
         {recent && (
-          <Tip
-            label={
-              <>
-                New task
-                <span className="block text-on-primary/70">in {recent.name}</span>
-              </>
-            }
-          >
-            <Button size="icon" aria-label={`New task in ${recent.name}`} className="text-muted" onClick={() => actions.onNewTask(recent.id)}>
-              <SquarePen />
-            </Button>
-          </Tip>
+          // The pen creates in the target Project, whose badge sits beside it; the badge (or Shift+click on the pen)
+          // opens a list to create in another Project this once, leaving the filter alone.
+          <Menu.Root modal={false}>
+            <span className="flex items-center">
+              <Tip
+                label={
+                  <>
+                    New task
+                    <span className="block text-on-primary/70">in {recent.name} · Shift+click to choose</span>
+                  </>
+                }
+              >
+                <Button size="icon" aria-label={`New task in ${recent.name}`} className="text-muted" onClick={(e) => { if (!e.shiftKey) { actions.onNewTask(recent.id); return; } target.current?.focus(); target.current?.click(); }}>
+                  <SquarePen />
+                </Button>
+              </Tip>
+              <Tip label="New task in another project">
+                <Menu.Trigger ref={target} render={<Button size="sm" aria-label={`New task in another project (now ${recent.name})`} className="-ml-1 gap-0.5 px-1 text-muted" />}>
+                  <ProjectBadge badge={recent.badge} />
+                  <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+                </Menu.Trigger>
+              </Tip>
+            </span>
+            <Menu.Content align="end" className="min-w-56">
+              <Menu.Group>
+                <Menu.Label>New task in</Menu.Label>
+                <Menu.Actions items={projects.map((p) => ({ key: p.id, label: p.name, icon: <ProjectBadge badge={p.badge} />, onSelect: () => actions.onNewTask(p.id) }))} />
+              </Menu.Group>
+            </Menu.Content>
+          </Menu.Root>
         )}
 
       </header>
 
-      {projects.length > 0 && <ProjectFilter projects={projects} filter={actions.filter} onFilter={actions.onFilter} actions={actions} />}
+      {projects.length > 0 && <ProjectFilter projects={projects} filter={actions.filter} onFilter={actions.onFilter} actions={actions} previousCounts={previousCounts} />}
       {chosen && <div className="px-2"><PreviousSessionsEntry key={chosen.id} project={chosen} count={previousCounts[chosen.id]} /></div>}
 
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
@@ -408,11 +444,11 @@ export const Sidebar = memo(function Sidebar({
         ) : query.trim() ? (
           <>
             <p className="px-2 py-2 text-caption text-muted" role="status">{tasks.length} matching tasks</p>
-            <ul className="flex flex-col gap-1">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+            <ul className="flex flex-col gap-1 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
           </>
         ) : (
           <>
-            <ul className="flex flex-col gap-1">{active.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+            <ul className="flex flex-col gap-1 animate-fade-in">{active.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
             {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
             <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${shelfScope}:settled`]} onToggle={() => toggleShelf(`${shelfScope}:settled`)} />
             <Shelf projects={projectMap} label="Archived" tasks={archived} selectedId={selectedId} open={!!shelves[`${shelfScope}:archived`]} onToggle={() => toggleShelf(`${shelfScope}:archived`)} />

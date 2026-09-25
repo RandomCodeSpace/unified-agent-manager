@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, describeError, providerLabel, type PreviousSession, type Project, type SessionDetail, type SessionSummary } from '../api';
+import { api, describeError, providerLabel, type Meta, type PreviousSession, type Project, type SessionDetail, type SessionSummary } from '../api';
 import { Note, Spinner, useApp } from './common';
 import { useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 
+/** An available provider can import its recorded conversations. */
+export const canImport = (meta: Meta | null): boolean => !!meta?.providers.some((p) => p.available && p.capabilities.import);
+
 /** One discovery request for the rail, independent of live task output and project count. */
 export function usePreviousCounts(projects: Project[], sessions: SessionSummary[]) {
   const { meta } = useApp();
-  const enabled = !!meta?.providers.some((p) => p.available && p.capabilities.import);
+  const enabled = canImport(meta);
   const projectKey = projects.map((p) => `${p.id}:${p.dir}`).sort((a, b) => a.localeCompare(b)).join("\n");
   const linkedKey = sessions.map((s) => `${s.provider}:${s.conversation_id}`).sort((a, b) => a.localeCompare(b)).join("\n");
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -24,8 +27,7 @@ export function usePreviousCounts(projects: Project[], sessions: SessionSummary[
 export function PreviousSessionsEntry({ project, count }: { project: Project; count?: number }) {
   const { meta } = useApp();
   const [open, setOpen] = useState(false);
-  const enabled = !!meta?.providers.some((p) => p.available && p.capabilities.import);
-  if (!enabled) return null;
+  if (!canImport(meta)) return null;
   return (
     <>
       <button type="button" data-nav="" className="flex min-h-8 w-full items-center rounded-sm px-2 text-left text-caption text-muted hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:min-h-11" onClick={() => setOpen(true)}>
@@ -36,13 +38,17 @@ export function PreviousSessionsEntry({ project, count }: { project: Project; co
   );
 }
 
-function PreviousSessionsDialog({ project, onClose }: { project: Project; onClose: () => void }) {
+export function PreviousSessionsDialog({ project, onClose }: { project: Project; onClose: () => void }) {
   const { meta, dispatch } = useApp();
   const actions = useTaskActions();
   const [sessions, setSessions] = useState<PreviousSession[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  /** "Import all" progress: how many are done of how many, while it runs. */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const stop = useRef(false);
   const pending = useRef(false);
   const alive = useRef(true);
   useEffect(() => {
@@ -75,9 +81,47 @@ function PreviousSessionsDialog({ project, onClose }: { project: Project; onClos
     }
   }
 
+  // The rows Import is enabled for, one after another (the host checks each conversation's holder); a failure
+  // is noted and the rest go on, Cancel stops after the current one. Nothing opens; the list reloads at the end.
+  const importable = (sessions ?? []).filter((s) => !s.in_use);
+  async function importAll() {
+    if (pending.current || !importable.length) return;
+    pending.current = true;
+    stop.current = false;
+    setStopping(false);
+    setBusy('all');
+    setError("");
+    const failed: string[] = [];
+    let done = 0;
+    for (const s of importable) {
+      if (stop.current) break;
+      setProgress({ done, total: importable.length });
+      try {
+        dispatch({ type: "upsert_session", session: await api.importPrevious(project.id, s.conversation_id) });
+      } catch (e) {
+        failed.push(`${s.title || 'Untitled session'}: ${describeError(e)}`);
+      }
+      done++;
+    }
+    pending.current = false;
+    if (!alive.current) return;
+    setProgress(null);
+    setBusy(null);
+    setError(failed.length ? `${failed.length} of ${done} could not be imported. ${failed.join(' · ')}` : "");
+    setSessions(null);
+    setRefresh((n) => n + 1);
+  }
+
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }} title={`Previous sessions in ${project.name}`} description="Import a recorded conversation as a task. Importing reads its history without sending a message."
-      footer={<Button variant="secondary" disabled={!!busy || (sessions === null && !error)} onClick={() => { setSessions(null); setError(""); setRefresh((n) => n + 1); }}>Refresh</Button>}>
+      footer={<>
+        {progress && <Note role="status" className="mr-auto">Importing {progress.done + 1} of {progress.total}…</Note>}
+        {progress && <Button variant="secondary" disabled={stopping} onClick={() => { stop.current = true; setStopping(true); }}>Cancel</Button>}
+        {(progress || importable.length > 1) && (
+          <Button variant="secondary" loading={!!progress} disabled={!!busy} onClick={() => void importAll()}>Import all ({progress?.total ?? importable.length})</Button>
+        )}
+        <Button variant="secondary" disabled={!!busy || (sessions === null && !error)} onClick={() => { setSessions(null); setError(""); setRefresh((n) => n + 1); }}>Refresh</Button>
+      </>}>
       {error && <Note role="alert" tone="error" className="mb-3">{error}</Note>}
       {sessions === null && !error && <Note role="status"><Spinner /> Loading previous sessions…</Note>}
       {sessions?.length === 0 && <Note>No previous sessions are available to import in this project.</Note>}

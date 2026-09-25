@@ -4,10 +4,11 @@ import { LIVE, api, describeError, readOnly, stageLabel, taskName, type Backgrou
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
-import { awaitsUser, foregroundItems } from '../lib/transcript';
+import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
 import { Chip } from './ui/chip';
+import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
 import { Composer } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
@@ -92,7 +93,7 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
   );
 }
 
-/** The conversation pane: a 44px header, the transcript scrolling in a fixed column, the composer pinned below. */
+/** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
 export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
   const actions = useTaskActions();
   const [changes, setChanges] = useState<ChangesData | null>(null);
@@ -108,9 +109,13 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
 
-  // The "n files changed" count: fetched on open, again when a turn starts or ends, and on Refresh.
+  // The "n files changed" count: fetched on open, again when a turn starts or ends, on Refresh, and a
+  // second after a file-changing tool call completes; one request at a time, a rise during one queues another.
+  const fetching = useRef(false);
+  const again = useRef(false);
   useEffect(() => {
     let alive = true;
+    fetching.current = true;
     api
       .changes(session.id, session.capabilities.session_diff ? 'session' : 'workspace')
       .then((c) => {
@@ -122,11 +127,30 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
         if (!alive) return;
         setChanges(null);
         setChangesError(describeError(e));
+      })
+      .finally(() => {
+        if (!alive) return;
+        fetching.current = false;
+        if (again.current) {
+          again.current = false;
+          setChangesTick((t) => t + 1);
+        }
       });
     return () => {
       alive = false;
     };
   }, [session.id, session.capabilities.session_diff, live, changesTick]);
+  const edits = completedChanges(session.items);
+  const seenEdits = useRef(edits);
+  useEffect(() => {
+    if (edits <= seenEdits.current) return;
+    seenEdits.current = edits;
+    const timer = window.setTimeout(() => {
+      if (fetching.current) again.current = true;
+      else setChangesTick((t) => t + 1);
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [edits]);
 
   const scrollToBottom = useCallback(() => {
     const el = scroller.current;
@@ -299,7 +323,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll}>
-          <div className="mx-auto flex w-full max-w-column flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
+          <div className="flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
             <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />
             {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
@@ -335,13 +359,13 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
           </div>
         </div>
 
-        <div className="relative mx-auto w-full max-w-column shrink-0 px-3 pb-3 sm:px-4 md:px-6">
-          {showJump && (
-            <Button variant="secondary" size="sm" className="absolute -top-10 left-1/2 -translate-x-1/2 shadow-float animate-rise" onClick={scrollToBottom}>
+        <div className="relative w-full shrink-0 px-3 pb-3 sm:px-4 md:px-6">
+          <Appear show={showJump} className="absolute -top-10 left-1/2 -translate-x-1/2">
+            <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
               <ArrowDown />
               New output
             </Button>
-          )}
+          </Appear>
           <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
         </div>

@@ -5,6 +5,10 @@ import '@fontsource-variable/geist';
 import '@fontsource-variable/jetbrains-mono';
 import './index.css';
 import App from './App';
+import { applyMotion, loadMotion } from './lib/motion';
+
+// The Motion setting applies before the first render, so nothing animates that should not.
+applyMotion(loadMotion());
 
 function render() {
   createRoot(document.getElementById('root')!).render(

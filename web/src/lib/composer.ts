@@ -91,6 +91,16 @@ export function commandReason(command: Command | undefined, live: boolean): stri
   return command.disabled_reason || (live && !command.allow_during_turn ? `/${command.name} runs between turns; wait for this turn to finish.` : '');
 }
 
+/**
+ * What Enter does while a picker is open: picks the highlighted row; with no row, closes the
+ * list, so a half-typed `@path` or `/name` is not sent as text (the next Enter sends). An
+ * argument list with nothing to pick stands aside: Enter runs the command as typed.
+ */
+export function enterInPicker(items: number, argumentList: boolean): 'pick' | 'close' | 'submit' {
+  if (items > 0) return 'pick';
+  return argumentList ? 'submit' : 'close';
+}
+
 /** Literal argument choices replace only the argument before the caret. */
 export function argumentTrigger(text: string, caret: number, commands: readonly Command[]): { trigger: Trigger; command: Command } | null {
   const before = text.slice(0, caret);
