@@ -3,7 +3,7 @@ import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { approvalMark, elapsedSince, foregroundItems, foregroundStart, completedDuration, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
+import { approvalMark, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, segmentActivity, summarizeActivity, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
@@ -122,8 +122,41 @@ function thoughtEnds(items: Item[]): Map<string, string> {
   return m;
 }
 
-/** Entries in order; consecutive tool calls form one run of rows, `special` may take an item over. */
+/**
+ * Entries in order. Each contiguous run of work between two messages (thinking, tool calls,
+ * decided requests) folds into one activity row; prose, questions and the rows `special`
+ * takes over (subagents, whose controls must stay in view) stand on their own between them.
+ */
 function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: Item) => ReactNode | null): ReactNode[] {
+  // A pending request is the action card under the transcript; it is not drawn twice.
+  const drawn = entries.filter((entry) => entry.interaction?.state !== 'pending');
+  // Tool calls that are a block of their own: a subagent row, or a question once it is answered.
+  const own = new Map<string, ReactNode>();
+  for (const { item } of drawn) {
+    if (item?.kind !== 'tool') continue;
+    const asked = questionOf(item.tool, ctx.approvals.get(item.id)?.filter((ix) => ix.kind === 'question').at(-1), ctx.live);
+    // A question still waiting is the action card; its tool row stays in the run until it is answered.
+    const node = special?.(item) ?? (asked && asked.outcome !== 'pending' ? <QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} /> : null);
+    if (node) own.set(item.id, node);
+  }
+  const out: ReactNode[] = [];
+  let pos = 0;
+  for (const segment of segmentActivity(drawn, (entry) => isWork(entry) && !(entry.item && own.has(entry.item.id)))) {
+    pos += segment.entries.length;
+    if (!segment.work) {
+      out.push(...renderRows(segment.entries, ctx, own));
+      continue;
+    }
+    // The run ended when the next item began; the same clock as a thought's.
+    let endedAt: string | undefined;
+    for (let k = pos; k < drawn.length && !endedAt; k++) endedAt = drawn[k].item?.time;
+    out.push(<ActivityRun key={segment.key} entries={segment.entries} ctx={ctx} endedAt={endedAt} className={ctx.arrival(segment.key)} />);
+  }
+  return out;
+}
+
+/** The rows themselves: consecutive tool calls form one run of rows, `own` holds the blocks that take a tool call over. */
+function renderRows(entries: Entry[], ctx: RenderContext, own: Map<string, ReactNode>): ReactNode[] {
   const out: ReactNode[] = [];
   let run: Item[] = [];
   // Runs are keyed by their order: a call taken out of a run (a subagent row) must not remount the rest.
@@ -134,8 +167,6 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
   };
   for (const entry of entries) {
     if (entry.interaction) {
-      // A pending request is the action card under the transcript; it is not drawn twice.
-      if (entry.interaction.state === 'pending') continue;
       flush();
       const ix = entry.interaction;
       const asked = questionOf(undefined, ix, ctx.live);
@@ -144,10 +175,7 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
     }
     const item = entry.item;
     if (item.kind === 'tool') {
-      const linked = ctx.approvals.get(item.id);
-      const asked = questionOf(item.tool, linked?.filter((ix) => ix.kind === 'question').at(-1), ctx.live);
-      // A question still waiting is the action card; its tool row stays in the run until it is answered.
-      const node = special?.(item) ?? (asked && asked.outcome !== 'pending' ? <QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} /> : null);
+      const node = own.get(item.id);
       if (!node) {
         run.push(item);
         continue;
@@ -165,10 +193,47 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
   return out;
 }
 
+const NO_OWN = new Map<string, ReactNode>();
+
+/** The streaming item's id when it is in `entries`; the row only cares about its own. */
+const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries.some((e) => e.item?.id === id) ? id : undefined);
+
+/**
+ * One run of work as a 24px `caption` row (DESIGN.md activity row): a chevron, or the
+ * working mark while a call runs or thinking streams, and the summary, which updates in
+ * place as the run grows and truncates rather than wraps, so streaming never moves the
+ * page. Failures turn it `error`, a call waiting for permission `attention`. It opens
+ * through the shared height collapse onto the rows themselves, indented, each with its own
+ * disclosure. Memoised on its entries: text streaming into another item leaves it alone.
+ */
+const ActivityRun = memo(function ActivityRun({ entries, ctx, endedAt, className }: { entries: Entry[]; ctx: RenderContext; endedAt?: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const { label, tone, active } = summarizeActivity(entries, { live: ctx.live, streamingId: ctx.streamingId, approvals: ctx.approvals, endedAt });
+  if (!label) return null;
+  return (
+    <div data-activity="" className={cn('flex flex-col', className)}>
+      <button type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-full items-center gap-2 rounded-sm text-left text-caption text-muted transition-colors duration-100 hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => setOpen((o) => !o)}>
+        <span className="flex size-3.5 shrink-0 items-center justify-center">
+          {active ? <WorkingMark /> : <ChevronRight aria-hidden="true" className={cn('size-3 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />}
+        </span>
+        <span className="min-w-0 truncate tabular-nums">{label}</span>
+      </button>
+      <Collapse open={open}>
+        <div className="mt-1 flex flex-col gap-1 pl-5.5">{renderRows(entries, ctx, NO_OWN)}</div>
+      </Collapse>
+    </div>
+  );
+}, (a, b) => {
+  const same = (x: Entry, y: Entry) => (x.item ?? x.interaction) === (y.item ?? y.interaction);
+  // `thoughtEnd` is rebuilt every render; what it says about these entries changes only with them or with `endedAt`.
+  return a.endedAt === b.endedAt && a.className === b.className && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.approvals === b.ctx.approvals && a.ctx.arrival === b.ctx.arrival
+    && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]));
+});
+
 /**
  * The row that heads a turn (DESIGN.md turn status), in one slot for both states: the
  * working mark and a live "Working for 12s" while the turn runs, then "Worked for 12s" once
- * it ended. Without a recorded duration the row stays as the separator, with no label.
+ * it ended. Without a recorded duration the row keeps its slot, with no label and no rule.
  */
 function TurnStatus({ working = false, start, timing }: { working?: boolean; start?: string; timing?: TurnTiming }) {
   const [now, setNow] = useState(() => Date.now());
@@ -179,7 +244,7 @@ function TurnStatus({ working = false, start, timing }: { working?: boolean; sta
   }, [working]);
   const elapsed = working ? elapsedSince(start, now) : completedDuration(timing);
   return (
-    <div className="flex min-h-[34px] items-center gap-2 border-b border-hairline py-2 text-caption tabular-nums text-muted" title={working ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
+    <div className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
       {working && <WorkingMark />}
       {working && <span role="status" className="sr-only">Working</span>}
       {working ? <span role="timer" aria-live="off">{elapsed ? `Working for ${elapsed}` : 'Working'}</span> : elapsed && <span className="animate-fade-in">Worked for {elapsed}</span>}
@@ -472,15 +537,7 @@ export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, cl
 
 const THINKING_KEY = 'uam.thinking:';
 
-/** "12s", "1m 4s" or "<1s" between two ISO timestamps; null when they are not in order. */
-export function duration(from: string, to: string): string | null {
-  const ms = new Date(to).getTime() - new Date(from).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return null;
-  if (ms < 1000) return '<1s';
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
-}
+export { duration };
 
 /**
  * A reasoning item: one 24px row, "Thinking…" shimmering while it streams and "Thought for
