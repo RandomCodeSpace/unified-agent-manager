@@ -5,7 +5,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { approvalMark, elapsedSince, foregroundItems, foregroundStart, completedDuration, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, Markdown, Spinner, SubagentIdleIcon, WorkingMark, useApp } from './common';
+import { CodeBlock, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -93,10 +93,10 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
   });
   flush(true);
   return (
-    <>
+    <SessionContext.Provider value={sessionId}>
       {out}
       {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
-    </>
+    </SessionContext.Provider>
   );
 }
 
@@ -598,9 +598,11 @@ export function AgentItems({ sessionId, agentId, items, interactions, live }: { 
   const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
   const ctx: RenderContext = { sessionId, live, streamingId: live ? items[items.length - 1]?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked };
   return (
-    <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
-      {renderEntries(mergeByTime(items, [...loose, ...questions]), ctx)}
-      {live && <TurnStatus working />}
-    </div>
+    <SessionContext.Provider value={sessionId}>
+      <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
+        {renderEntries(mergeByTime(items, [...loose, ...questions]), ctx)}
+        {live && <TurnStatus working />}
+      </div>
+    </SessionContext.Provider>
   );
 }

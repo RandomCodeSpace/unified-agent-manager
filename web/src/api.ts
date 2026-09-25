@@ -664,6 +664,8 @@ export const api = {
   files: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
   upload: uploadFile,
   attachmentUrl: (id: string, attachmentId: string) => `/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`,
+  /** An image file of the Task's directory, by absolute path or one relative to it. */
+  rawFileUrl: (id: string, path: string) => `/api/sessions/${enc(id)}/files/raw?path=${enc(path)}`,
   cancelBackgroundTask: (id: string, taskId: string) => call<{ accepted: true; background_tasks: BackgroundTasks }>('POST', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/cancel`),
   cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
   close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),

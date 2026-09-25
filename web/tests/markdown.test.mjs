@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { splitBlocks } from '../src/lib/markdown.ts';
+import { isImagePath, localPath, splitBlocks } from '../src/lib/markdown.ts';
 
 const html = (text) => renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, text));
 
@@ -50,4 +50,16 @@ test('blocks split at blank lines outside fences, never inside a list or a fence
   assert.deepEqual(splitBlocks('- a\n\n- b\n\nc'), ['- a\n\n- b', 'c']);
   assert.deepEqual(splitBlocks('```\nx\n\ny\n```\n\nz'), ['```\nx\n\ny\n```', 'z']);
   assert.deepEqual(splitBlocks('[a]: https://x\n\ntext'), ['[a]: https://x\n\ntext']);
+});
+
+test('a src or href is a host path unless it has a web scheme', () => {
+  assert.equal(localPath('/home/dev/projects/config/sky-dodge.png'), '/home/dev/projects/config/sky-dodge.png');
+  assert.equal(localPath('sky-dodge.png'), 'sky-dodge.png');
+  assert.equal(localPath('./shots/a.png'), './shots/a.png');
+  assert.equal(localPath('file:///home/dev/shots/a%20b.png'), '/home/dev/shots/a b.png');
+  for (const web of ['https://example.com/a.png', 'http://h/a.png', 'data:image/png;base64,AAAA', 'blob:http://h/x', 'mailto:a@b', 'javascript:alert(1)', '', undefined]) {
+    assert.equal(localPath(web), null, String(web));
+  }
+  assert.ok(isImagePath('/x/shot.PNG') && isImagePath('a.jpeg') && isImagePath('b.webp') && isImagePath('c.gif'));
+  assert.ok(!isImagePath('/x/logo.svg') && !isImagePath('notes.txt') && !isImagePath('shot.png.txt'));
 });

@@ -259,6 +259,20 @@ export function seed(): MockState {
           text: 'Confirmed: `focusEvents` is recorded in `modes.go` but `Redraw` never replays it. Adding `replayFocusEvents` after the private-mode replay so the order matches the attach client.',
         },
         tool('i6', 4, { name: 'edit', title: 'Edit internal/vterm/redraw.go', status: 'completed', input: '{"path":"internal/vterm/redraw.go"}', output: EDIT_DIFF }),
+        {
+          id: 'i6b',
+          kind: 'assistant',
+          time: ago(3),
+          text: `Before and after, from the PTY harness (the first is in the project, the second one level up, which the service does not serve):
+
+![Focus events after re-attach](${p('p1')}/docs/assets/attach-flow.png)
+
+![Missing capture](file://${p('p1')}/shots/missing.png)
+
+![Outside the project](/home/dev/private/secret.png)
+
+The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the upstream tracker has the [original report](https://example.com/issue/56.png).`,
+        },
         tool('i7', 1, { name: 'bash', title: 'go test ./internal/vterm/...', status: 'running', input: 'go test ./internal/vterm/... -run Redraw -count=1' }),
       ],
       interactions: [

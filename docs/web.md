@@ -267,6 +267,14 @@ are logged only at debug level (`UAM_DEBUG=1`).
   Diagrams render in the browser inside a sandboxed frame that cannot read
   your session or call the service (ADR 0004); the first diagram of a page
   load fetches Mermaid (3.4 MB).
+- **Images in replies**: an image the agent refers to by path, as
+  `![Screenshot](/home/you/project/shot.png)` or `![](./shots/a.png)`, is
+  served from the Task's folder by the service, so it shows on any machine
+  the browser runs on. A link to such a file opens it the same way. Only png,
+  jpeg, gif and webp files inside the Task's folder are served, up to 20 MiB;
+  a file outside it, reached directly or through a symbolic link, is not.
+  An image at a web address stays a link, as the page loads nothing from
+  other origins.
 - **Subagents**: when the agent delegates work to a subagent, the Task shows
   one compact row under the tool call that started it (name, status, and
   the duration once it ended) and a "Subagents" button in the header with
