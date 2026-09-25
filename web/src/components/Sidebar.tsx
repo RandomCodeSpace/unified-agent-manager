@@ -338,6 +338,7 @@ export const Sidebar = memo(function Sidebar({
   const previousCounts = usePreviousCounts(projects, sessions);
   const [query, setQuery] = useState('');
   const [shelves, setShelves] = useState<Record<string, boolean>>(readShelves);
+  const target = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   // Under a filter, New task targets the filtered Project.
   const visible = useMemo(() => visibleProjects(projects, actions.filter), [projects, actions.filter]);
@@ -376,18 +377,36 @@ export const Sidebar = memo(function Sidebar({
           </Button>
         </Tip>
         {recent && (
-          <Tip
-            label={
-              <>
-                New task
-                <span className="block text-on-primary/70">in {recent.name}</span>
-              </>
-            }
-          >
-            <Button size="icon" aria-label={`New task in ${recent.name}`} className="text-muted" onClick={() => actions.onNewTask(recent.id)}>
-              <SquarePen />
-            </Button>
-          </Tip>
+          // The pen creates in the target Project, whose badge sits beside it; the badge (or Shift+click on the pen)
+          // opens a list to create in another Project this once, leaving the filter alone.
+          <Menu.Root modal={false}>
+            <span className="flex items-center">
+              <Tip
+                label={
+                  <>
+                    New task
+                    <span className="block text-on-primary/70">in {recent.name} · Shift+click to choose</span>
+                  </>
+                }
+              >
+                <Button size="icon" aria-label={`New task in ${recent.name}`} className="text-muted" onClick={(e) => { if (!e.shiftKey) { actions.onNewTask(recent.id); return; } target.current?.focus(); target.current?.click(); }}>
+                  <SquarePen />
+                </Button>
+              </Tip>
+              <Tip label="New task in another project">
+                <Menu.Trigger ref={target} render={<Button size="sm" aria-label={`New task in another project (now ${recent.name})`} className="-ml-1 gap-0.5 px-1 text-muted" />}>
+                  <ProjectBadge badge={recent.badge} />
+                  <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+                </Menu.Trigger>
+              </Tip>
+            </span>
+            <Menu.Content align="end" className="min-w-56">
+              <Menu.Group>
+                <Menu.Label>New task in</Menu.Label>
+                <Menu.Actions items={projects.map((p) => ({ key: p.id, label: p.name, icon: <ProjectBadge badge={p.badge} />, onSelect: () => actions.onNewTask(p.id) }))} />
+              </Menu.Group>
+            </Menu.Content>
+          </Menu.Root>
         )}
 
       </header>
