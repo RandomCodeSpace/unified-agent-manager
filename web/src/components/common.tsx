@@ -113,17 +113,23 @@ export function StateMark({ state, label = false, title, className }: { state: S
   const text = STATE_LABELS[state] ?? state;
   const tone = STATE_TONE[state];
   const attention = tone === 'attention';
+  // Keyed on the state, so a change fades the new glyph in (`base`) in the same 16px slot; the chip's colour transitions with it.
+  const glyph = (
+    <span key={state} className="flex animate-fade-in">
+      <StateGlyph state={state} />
+    </span>
+  );
   if (!label) {
     return (
       <span className={cn('inline-flex size-4 shrink-0 items-center justify-center', className)} title={title}>
-        <StateGlyph state={state} />
+        {glyph}
         <span className="sr-only">{text}</span>
       </span>
     );
   }
   return (
     <Chip tone={attention ? 'attention' : tone === 'faint' ? 'muted' : tone} className={className} title={title}>
-      <StateGlyph state={state} />
+      {glyph}
       {text}
     </Chip>
   );

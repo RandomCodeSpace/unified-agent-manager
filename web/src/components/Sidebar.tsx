@@ -183,7 +183,7 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
               {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
             </span>}
             <TaskTitle session={s} className="min-w-0 flex-1 truncate text-caption" />
-            <span className={cn('flex shrink-0 items-center gap-1 text-meta font-normal tabular-nums whitespace-nowrap', meta.tone)}>
+            <span className={cn('flex shrink-0 items-center gap-1 text-meta font-normal tabular-nums whitespace-nowrap transition-colors duration-160', meta.tone)}>
               {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
               {meta.text}
             </span>
