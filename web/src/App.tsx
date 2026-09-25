@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
+import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -9,7 +9,7 @@ import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { staleDraftKeys } from './lib/drafts';
-import { tasksOf } from './lib/tasks';
+import { needsYouCount, pageTitle, tasksOf } from './lib/tasks';
 import { checkDue, decideUpdate } from './lib/update';
 import { Task } from './components/Task';
 import { TaskActionsContext, type Renaming, type TaskActions } from './components/taskActions';
@@ -452,6 +452,17 @@ export default function App() {
     [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, startTask, openDialog, toggleSidebar],
   );
 
+  const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
+
+  // The tab title and the installed app's badge carry how many Tasks wait for the user; the title names the open Task.
+  const attention = useMemo(() => needsYouCount(state.sessions), [state.sessions]);
+  const openName = selected ? taskName(selected) : null;
+  useEffect(() => {
+    document.title = pageTitle(attention, openName);
+    if (attention > 0) navigator.setAppBadge?.(attention).catch(() => {});
+    else navigator.clearAppBadge?.().catch(() => {});
+  }, [attention, openName]);
+
   if (auth === 'checking') {
     return (
       <main className="grid h-dvh place-items-center text-caption text-muted" aria-busy="true">
@@ -461,7 +472,6 @@ export default function App() {
   }
   if (auth === 'out') return <Login onLoggedIn={() => setAuth('in')} />;
 
-  const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
   // The Task on screen: the selected one, or the one before it (inert) until the new detail arrives or the wait gets long.
   const shown = state.detail && selected ? state.detail : state.selectedId && selected && !lateLoad ? state.previous : null;
   const stale = !!shown && shown !== state.detail;

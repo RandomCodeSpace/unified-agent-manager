@@ -2,6 +2,17 @@ import type { Project, SessionSummary } from '../api';
 
 const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
 
+/** The sidebar's "Needs permission/answer" rows (`needsYou` in api.ts, minus the shelves): the count the tab title and app badge carry. */
+export function needsYouCount(sessions: readonly SessionSummary[]): number {
+  return sessions.filter((s) => !readOnly(s) && (s.state === 'awaiting_permission' || s.state === 'awaiting_answer' || (typeof s.pending === 'number' ? s.pending : s.pending ? 1 : 0) > 0)).length;
+}
+
+/** The document title: the needs-you count first, then the open Task's name, then the app. */
+export function pageTitle(needsYou: number, taskName: string | null): string {
+  const count = needsYou > 0 ? `(${needsYou}) ` : '';
+  return taskName === null ? `${count}UAM` : `${count}${taskName || 'New task'} · UAM`;
+}
+
 /** A project's Tasks, newest first. */
 export function tasksOf(sessions: SessionSummary[], projectId: string): SessionSummary[] {
   return sessions.filter((s) => s.project_id === projectId).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));

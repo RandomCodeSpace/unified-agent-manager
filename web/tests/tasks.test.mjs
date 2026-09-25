@@ -65,3 +65,23 @@ test('flat sidebar retains every lifecycle, filters projects and searches withou
   assert.deepEqual(sidebarTasks(projects, sessions, 'deleted').map((t) => t.id), ['new', 'archived', 'old']);
   assert.equal(sessions[0].id, 'old');
 });
+
+test('the needs-you count follows the sidebar rows: attention states and pending requests, never the shelves', async () => {
+  const { needsYouCount, pageTitle } = await import('../src/lib/tasks.ts');
+  const list = [
+    s('a', 'p1', '1', { state: 'awaiting_permission' }),
+    s('b', 'p1', '2', { state: 'awaiting_answer' }),
+    s('c', 'p1', '3', { state: 'working', pending: 2 }),
+    s('d', 'p1', '4', { state: 'working', pending: true }),
+    s('e', 'p1', '5', { state: 'working', pending: 0 }),
+    s('f', 'p1', '6', { state: 'awaiting_permission', stage: 'archived' }),
+    s('g', 'p1', '7', { state: 'completed' }),
+  ];
+  assert.equal(needsYouCount(list), 4);
+  assert.equal(needsYouCount([]), 0);
+  assert.equal(pageTitle(0, null), 'UAM');
+  assert.equal(pageTitle(3, null), '(3) UAM');
+  assert.equal(pageTitle(0, 'Fix redraw'), 'Fix redraw · UAM');
+  assert.equal(pageTitle(2, 'Fix redraw'), '(2) Fix redraw · UAM');
+  assert.equal(pageTitle(1, ''), '(1) New task · UAM');
+});
