@@ -120,14 +120,14 @@
 
   /* Elevation (DESIGN.md Elevation & Depth): surfaces float on cool ink shadows instead of drawn borders.
      Every level is two layers at most: a near-invisible 1px ring (0 blur, the crisp edge) and one soft
-     shadow. `well` is the inset ring of a sunken surface; `focus` is the one glow ring for fields and the composer. */
+     shadow. `well` is the inset ring of a sunken surface; `focus` is the 1px ring of a focused field; `focus-float` the composer's deeper neutral shadow. */
   --shadow-*: initial;
   --shadow-raised: 0 0 0 1px rgba(20, 28, 45, 0.05), 0 2px 6px rgba(20, 28, 45, 0.07);
   --shadow-float: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 6px 20px rgba(20, 28, 45, 0.1);
   --shadow-modal: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 20px 48px rgba(20, 28, 45, 0.18);
   --shadow-well: inset 0 0 0 1px rgba(20, 28, 45, 0.05);
-  --shadow-focus: 0 0 0 1px var(--color-focus), 0 0 0 4px rgba(42, 85, 189, 0.18);
-  --shadow-focus-float: 0 0 0 1px var(--color-focus), 0 0 0 4px rgba(42, 85, 189, 0.18), 0 10px 28px rgba(20, 28, 45, 0.12);
+  --shadow-focus: 0 0 0 1px var(--color-focus);
+  --shadow-focus-float: 0 0 0 1px rgba(20, 28, 45, 0.1), 0 10px 28px rgba(20, 28, 45, 0.14);
 
   /* Durations are the bare duration-100/160/240 utilities (DESIGN.md fast/base/slow); only the easing is a token. */
   --ease-app: cubic-bezier(0.2, 0, 0, 1);
@@ -269,17 +269,10 @@
     background: var(--color-selection);
     color: var(--color-ink);
   }
-  /* Keyboard focus: the 2px ring (≥3:1 on every surface) with a soft halo just outside it. A surface
-     with its own shadow utility keeps its shadow and shows the ring alone. */
+  /* Keyboard focus: the 2px ring (≥3:1 on every surface), no halo. */
   :focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 1px;
-    box-shadow: 0 0 0 5px rgba(42, 85, 189, 0.18);
-  }
-  /* Text fields take no halo: a bare one inside a larger control (the composer, a palette's
-     search) is shown focused by that control and its caret; the shared Input draws its own glow. */
-  :is(input, textarea):focus-visible {
-    box-shadow: none;
   }
   button,
   [role='button'],

@@ -757,7 +757,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       data-draft={text.trim() || files.length || uploads.length ? '' : undefined}
       className={cn(
         // The floating control plane (DESIGN.md Composer): `lg` corners on the float shadow; focus-within fades in
-        // (opacity only) a pseudo-element carrying the deeper shadow and the accent glow, so no shadow is ever animated.
+        // (opacity only) a pseudo-element carrying a deeper neutral shadow (no glow), so no shadow is ever animated.
         "relative isolate flex flex-col rounded-lg bg-raised shadow-float before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:opacity-0 before:shadow-focus-float before:transition-opacity before:duration-160 before:content-[''] focus-within:before:opacity-100",
         locked && 'bg-surface',
       )}

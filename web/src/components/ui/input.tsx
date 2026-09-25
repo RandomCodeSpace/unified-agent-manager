@@ -5,7 +5,7 @@ import { cn } from '../../lib/cn';
 /**
  * DESIGN.md text input: a filled `sunken` surface with the inset `well` ring, 6px corners,
  * `ink` text, no drawn edge (its label, placeholder and caret identify it). Focus is the
- * `focus` glow (a 1px `focus` edge and a soft halo, no outline); `aria-invalid` turns the
+ * `focus` edge (a 1px `focus` ring, no halo, no outline); `aria-invalid` turns the
  * ring `error`. Sizes follow Button: sm 28 (in-place rename), md 32,
  * lg 36 (forms, the DESIGN.md default); md and lg reach 44px on a coarse pointer.
  */
