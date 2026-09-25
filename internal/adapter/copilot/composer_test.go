@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -44,7 +45,7 @@ func TestWebSendAttachesReferencedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := h.fs.msgs[0]
-	if msg.Prompt != "see @src/a.go and @docs" || msg.DisplayPrompt != "" || msg.Mode != string(rpc.SendModeEnqueue) || !reflect.DeepEqual(msg.Attachments, wantFileAttachments()) {
+	if msg.Prompt != "see @src/a.go and @docs" || msg.DisplayPrompt != "" || msg.Mode != "" || !reflect.DeepEqual(msg.Attachments, wantFileAttachments()) {
 		t.Fatalf("sent %+v", msg)
 	}
 	if err := h.conv.Steer(context.Background(), "steer"); err != nil || h.fs.msgs[1].Attachments != nil {
@@ -88,12 +89,16 @@ func TestWebRunCommandSendsPromptAndRejectsUnsupportedBeforeInvoke(t *testing.T)
 	}
 	msg := h.fs.msgs[0]
 	if h.fs.invoked[0] != "probe-skill alpha" || msg.Prompt != "<skill-context>probe</skill-context>\nARGUMENTS: alpha" || msg.DisplayPrompt != "/probe-skill alpha" ||
-		msg.Mode != string(rpc.SendModeEnqueue) || !reflect.DeepEqual(msg.Attachments, wantFileAttachments()) {
+		msg.Mode != "" || !reflect.DeepEqual(msg.Attachments, wantFileAttachments()) {
 		t.Fatalf("invoked %q, sent %+v", h.fs.invoked, msg)
 	}
 	if last := h.sink.last(); last.Kind != agentapi.EventTurn || last.Turn.State != agentapi.TurnWorking {
 		t.Fatalf("last event = %+v", last)
 	}
+	if err := h.conv.RunCommand(context.Background(), "review", agentapi.Prompt{}); !errors.Is(err, agentapi.ErrBusy) || len(h.fs.invoked) != 1 {
+		t.Fatalf("prompt command during a turn: %v, invoked %q", err, h.fs.invoked)
+	}
+	h.fs.onEvent(ev("idle", &rpc.AssistantIdleData{}))
 	h.fs.invoke = &rpc.SlashCommandAgentPromptResult{Prompt: "review this", DisplayPrompt: "/review"}
 	if err := h.conv.RunCommand(context.Background(), "review", agentapi.Prompt{}); err != nil || h.fs.msgs[1].DisplayPrompt != "/review" {
 		t.Fatalf("no-argument command: %v, %+v", err, h.fs.msgs[1])

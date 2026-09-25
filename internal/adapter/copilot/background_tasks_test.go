@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	copilot "github.com/github/copilot-sdk/go"
@@ -46,6 +47,37 @@ func TestWebAssistantIdleEndsForegroundWithBackgroundShell(t *testing.T) {
 	h.fs.onEvent(ev("cancelled", &rpc.AssistantIdleData{Aborted: copilot.Bool(true)}))
 	if got := h.sink.last(); got.Turn == nil || got.Turn.State != agentapi.TurnCancelled {
 		t.Fatalf("foreground abort = %+v", got)
+	}
+}
+
+// The CLI holds a prompt sent with an explicit "enqueue", or during a turn,
+// until session.idle, which it withholds while a background shell runs. A
+// prompt after the foreground idle goes without a mode so the CLI delivers it
+// now; one during a running turn is refused, so nothing is held.
+func TestWebSendWithBackgroundShellIsDeliveredNotHeld(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "start a server"}); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.setTasks(&rpc.TaskShellInfo{ID: "server", Command: "python3 -m http.server 8000", Status: rpc.TaskStatusRunning})
+	h.fs.onEvent(ev("background", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 1)
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "too early"}); !errors.Is(err, agentapi.ErrBusy) {
+		t.Fatalf("Send during a running turn = %v, want ErrBusy", err)
+	}
+	h.fs.onEvent(ev("main-idle", &rpc.AssistantIdleData{}))
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "follow-up"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.sink.last(); got.Turn == nil || got.Turn.State != agentapi.TurnWorking {
+		t.Fatalf("follow-up did not start a turn: %+v", got)
+	}
+	if strings.Join(h.fs.sent, ",") != "start a server,follow-up" || strings.Join(h.fs.modes, ",") != "," {
+		t.Fatalf("sent %q with modes %q, want both without a mode and nothing during the turn", h.fs.sent, h.fs.modes)
+	}
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "again"}); !errors.Is(err, agentapi.ErrBusy) || len(h.fs.sent) != 2 {
+		t.Fatalf("Send during the follow-up turn = %v, sent %q", err, h.fs.sent)
 	}
 }
 

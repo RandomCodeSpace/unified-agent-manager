@@ -238,6 +238,13 @@ func (c *conversation) ExecuteCommand(ctx context.Context, name string, args age
 	if !promptCommand && (len(args.Files) > 0 || len(args.Attachments) > 0) {
 		return nil, errors.New("this command does not accept attachments")
 	}
+	// Its prompt could not start a turn: refuse before the invocation.
+	c.mu.Lock()
+	running := c.turnRunning
+	c.mu.Unlock()
+	if promptCommand && running {
+		return nil, agentapi.ErrBusy
+	}
 	if (name == "context" || name == "usage" || name == "list-dirs" || name == "env" || name == "skills") && strings.TrimSpace(args.Text) != "" {
 		return nil, errors.New("this read-only command takes no arguments")
 	}

@@ -375,9 +375,12 @@ provider can offer the same way.
 callers and different turn semantics, and a separate method leaves `Send` and
 its callers unchanged.
 
-Copilot mapping: `Send` passes `Mode: "enqueue"` explicitly, so a prompt that
-reaches a CLI still busy with a turn runs after that turn instead of joining
-it. `Steer` passes `Mode: "immediate"` and keeps the returned `messageId`. A
+Copilot mapping: `Send` passes no mode and returns `ErrBusy` while a
+foreground turn runs. With no mode the CLI delivers the prompt at once when
+its main agent is idle, even while a background shell runs. An explicit
+`Mode: "enqueue"`, or any prompt sent during a turn, is held until
+`session.idle`, which CLI 1.0.88 withholds while a background shell runs, so
+such a prompt could wait forever. `Steer` passes `Mode: "immediate"` and keeps the returned `messageId`. A
 main-agent `user.message` with that `messageId` marks the steer as used, and
 `delivery: "steering"` sets `Item.Delivery`. A steer that arrives during the
 turn's final model call gets a follow-up call in the same turn, with

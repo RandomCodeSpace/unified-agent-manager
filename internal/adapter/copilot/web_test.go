@@ -1192,7 +1192,7 @@ func notices(evs []agentapi.Event) []string {
 	return out
 }
 
-func TestWebSendEnqueuesAndSteerInterjects(t *testing.T) {
+func TestWebSendOmitsModeAndSteerInterjects(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
 	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "start"}); err != nil {
@@ -1202,7 +1202,7 @@ func TestWebSendEnqueuesAndSteerInterjects(t *testing.T) {
 	if err := h.conv.Steer(ctx, "also this"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(h.fs.modes, ","); got != "enqueue,immediate" || strings.Join(h.fs.sent, ",") != "start,also this" {
+	if got := strings.Join(h.fs.modes, ","); got != ",immediate" || strings.Join(h.fs.sent, ",") != "start,also this" {
 		t.Fatalf("modes = %s, sent = %v", got, h.fs.sent)
 	}
 	if evs := h.sink.all()[before:]; len(evs) != 0 {

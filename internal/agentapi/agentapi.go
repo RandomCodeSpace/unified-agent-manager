@@ -323,7 +323,8 @@ type Conversation interface {
 	// provider accepted or rejected it. The turn continues asynchronously and
 	// is reported through events. Ambiguous failures wrap
 	// ErrSubmissionUncertain. A provider that would otherwise fold a prompt
-	// sent during a turn into that turn must run it after the turn instead.
+	// sent during a turn into that turn must run it after the turn or refuse
+	// it with ErrBusy instead.
 	Send(ctx context.Context, prompt Prompt) error
 	// Commands lists the slash commands that become a prompt: skills and
 	// the provider's prompt commands. Nothing else is offered.
