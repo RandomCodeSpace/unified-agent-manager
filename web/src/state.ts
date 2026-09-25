@@ -32,6 +32,8 @@ export interface State {
   detailSeq: number;
   connection: Connection;
   agents: Record<string, AgentTranscript>;
+  /** Each subagent's latest step, kept from live frames even while its transcript is not open: kind and call only, never output. */
+  agentSteps: Record<string, Item>;
   /** The service's settings, from the snapshot and `settings` frames; the defaults until the first snapshot. */
   settings: Settings;
   /** The account quotas, from the snapshot and `usage` frames; null until a snapshot carries them (#188). */
@@ -48,6 +50,7 @@ export const initialState: State = {
   detailSeq: -1,
   connection: 'connecting',
   agents: {},
+  agentSteps: {},
   settings: DEFAULT_SETTINGS,
   usage: null,
 };
@@ -75,7 +78,7 @@ export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'select':
       if (action.id === state.selectedId) return state;
-      return { ...state, selectedId: action.id, detail: null, previous: action.id ? (state.detail ?? state.previous) : null, detailSeq: -1, agents: {} };
+      return { ...state, selectedId: action.id, detail: null, previous: action.id ? (state.detail ?? state.previous) : null, detailSeq: -1, agents: {}, agentSteps: {} };
     case 'connection': {
       if (state.connection === action.status) return state;
       const detail = action.status !== 'connected' && state.detail
@@ -98,6 +101,7 @@ export function reducer(state: State, action: Action): State {
         detailSeq: seq,
         connection: 'connected',
         agents: {},
+        agentSteps: {},
         settings: settings ?? DEFAULT_SETTINGS,
         usage: usage ?? null,
       };
@@ -107,7 +111,7 @@ export function reducer(state: State, action: Action): State {
     case 'detail_loaded': {
       const detail = action.detail;
       if (detail.id !== state.selectedId || detail.seq === undefined || detail.seq <= state.detailSeq) return state;
-      return { ...withSession(state, detail), detail, previous: null, detailSeq: detail.seq, agents: {} };
+      return { ...withSession(state, detail), detail, previous: null, detailSeq: detail.seq, agents: {}, agentSteps: {} };
     }
     case 'upsert_session': {
       // An HTTP reply can land after live frames that already carry a newer state.
@@ -170,7 +174,7 @@ export function reducer(state: State, action: Action): State {
       state = { ...state, detailSeq: d.seq };
       switch (d.name) {
         case 'history':
-          return { ...state, detail: { ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents }, agents: {} };
+          return { ...state, detail: { ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents }, agents: {}, agentSteps: {} };
         case 'item':
           if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
           return { ...state, detail: { ...detail, items: upsert(detail.items, d.item) } };
@@ -213,9 +217,25 @@ function withAgentFrame(state: State, agentId: string, frame: Buffered): State {
   if (frame.name === 'subagent' && state.detail) {
     state = { ...state, detail: { ...state.detail, subagents: upsert(state.detail.subagents, frame.subagent) } };
   }
+  state = withAgentStep(state, agentId, frame);
   if (!a) return state;
   if (a.loading) return { ...state, agents: { ...state.agents, [agentId]: { ...a, buffered: [...a.buffered, frame] } } };
   return { ...state, agents: { ...state.agents, [agentId]: { ...a, items: applyFrame(a.items, frame, agentId) } } };
+}
+
+/** Records what a subagent is doing now: a new item, or a streamed one whose kind changed. Deltas of the same item change nothing. */
+function withAgentStep(state: State, agentId: string, frame: Buffered): State {
+  const prev = state.agentSteps[agentId];
+  let step: Item | undefined;
+  if (frame.name === 'item') {
+    const { id, kind, time, tool } = frame.item;
+    step = { id, kind, time, agent_id: agentId, ...(tool ? { tool: { name: tool.name, title: tool.title, status: tool.status, input: tool.input?.slice(0, 500) } } : {}) };
+    if (prev && prev.id === id && prev.kind === kind && prev.tool?.status === step.tool?.status) return state;
+  } else if (frame.name === 'delta') {
+    if (prev && prev.id === frame.item_id && prev.kind === frame.kind) return state;
+    step = { id: frame.item_id, kind: frame.kind, time: new Date().toISOString(), agent_id: agentId };
+  }
+  return step ? { ...state, agentSteps: { ...state.agentSteps, [agentId]: step } } : state;
 }
 
 function applyFrame(items: Item[], frame: Buffered, agentId: string): Item[] {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, foldWindow, linkInteractions, mainArgument, mergeByTime, questionOf, summarizeTools, toolLabel } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, firstLine, foldWindow, linkInteractions, mainArgument, mergeByTime, questionOf, subagentSummary, summarizeTools, toolLabel } from '../src/lib/transcript.ts';
 
 const tool = (name, input, extra = {}) => ({ name, status: 'completed', input, ...extra });
 
@@ -404,4 +404,32 @@ test('completed edit, write and create calls are counted for the live Changes co
   const t = (name, status) => ({ id: `${name}-${status}`, kind: 'tool', time: '2026-09-25T00:00:00Z', tool: { name, status, input: '{"path":"a.go"}' } });
   assert.equal(completedChanges([t('edit', 'completed'), t('Write', 'completed'), t('create', 'completed'), t('edit', 'running'), t('write', 'failed'), t('bash', 'completed'), t('read', 'completed'), { id: 'u', kind: 'user', time: '', text: 'edit' }]), 3);
   assert.equal(completedChanges([]), 0);
+});
+
+test('the first line of a report reads as plain text, whatever markdown it wore', () => {
+  assert.equal(firstLine('## Heading order\n\nBody'), 'Body');
+  assert.equal(firstLine('## Only a heading\n'), 'Only a heading');
+  assert.equal(firstLine('\n\n- **Fixed** the `alt` text in [post.html](templates/post.html).\n- More'), 'Fixed the alt text in post.html.');
+  assert.equal(firstLine('```sh\nnpm test\n```\n> _Quoted_ line with ~~struck~~ words'), 'Quoted line with struck words');
+  assert.equal(firstLine('---\n1) `parent_tool_call_id` stays snake_case, *and* so does __this__'), 'parent_tool_call_id stays snake_case, and so does this');
+  assert.equal(firstLine('   \n\n'), '');
+  assert.equal(firstLine(undefined), '');
+});
+
+test('a subagent row summarises its current step, its error, or the first line of its report', () => {
+  const running = { id: 'a1', name: 'Survey', status: 'running' };
+  const shell = { id: 's1', kind: 'tool', time: 't', tool: tool('bash', '{"command":"npx html-validate templates/"}', { status: 'running' }) };
+  assert.equal(subagentSummary(running, undefined, undefined), '');
+  assert.equal(subagentSummary(running, [], undefined), '');
+  assert.equal(subagentSummary(running, [shell], undefined), 'Running: bash npx html-validate templates/');
+  assert.equal(subagentSummary(running, [shell, { id: 's2', kind: 'reasoning', time: 't', text: 'Grep first.' }], undefined), 'Thinking…');
+  assert.equal(subagentSummary(running, [shell, { id: 's3', kind: 'assistant', time: 't', text: 'Done.' }], undefined), '');
+  // The report is the parent `task` call's output; the row never reads the subagent's own items for it.
+  const report = { name: 'task', status: 'completed', output: '**Two templates changed.**\n\n- `templates/post.html`' };
+  assert.equal(subagentSummary({ ...running, status: 'completed' }, [shell], report), 'Two templates changed.');
+  assert.equal(subagentSummary({ ...running, status: 'idle' }, [shell], report), 'Two templates changed.');
+  assert.equal(subagentSummary({ ...running, status: 'cancelled' }, [shell], undefined), '');
+  assert.equal(subagentSummary({ ...running, status: 'cancelled' }, [shell], { ...report, output: 'Stopped after step 2.' }), 'Stopped after step 2.');
+  assert.equal(subagentSummary({ ...running, status: 'failed', error: 'axe-core is not installed.' }, [shell], { ...report, status: 'failed', output: 'other' }), 'axe-core is not installed.');
+  assert.equal(subagentSummary({ ...running, status: 'failed' }, [shell], { ...report, status: 'failed', output: 'npm ERR! could not determine executable to run\nstack…' }), 'npm ERR! could not determine executable to run');
 });

@@ -3,7 +3,9 @@ import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { approvalMark, askedOn, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, segmentActivity, summarizeActivity, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
+import { approvalMark, askedOn, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, segmentActivity, summarizeActivity, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
+import { turnVerb } from '../lib/verbs';
+import type { AgentTranscript } from '../state';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkdirContext, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
@@ -21,6 +23,10 @@ interface Props {
   /** The Task's requests; the decided ones join the turns, the pending ones stay cards. */
   interactions: Interaction[];
   subagents: Subagent[];
+  /** Subagent transcripts the browser holds (fetched once their panel opened); a running row's step comes from them. */
+  agents?: Record<string, AgentTranscript>;
+  /** Each subagent's latest step from live frames; stands in for its items until its transcript is open. */
+  agentSteps?: Record<string, Item>;
   /** The provider still holds the turn, so pending tools may still report. */
   live: boolean;
   /** A turn is running (not merely waiting for the user): the last item is still streaming. */
@@ -46,7 +52,7 @@ function useArrivals(ids: string[]) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, live, working, provider, workdir, onOpenAgent }: Props) {
+export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)]);
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
@@ -70,10 +76,10 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
     const nodes = renderEntries(group, { ...ctx, live: groupLive }, (item) => {
       const agent = byParent.get(item.id);
-      return agent ? <SubagentRow key={item.id} item={item} subagent={agent} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
+      return agent ? <SubagentRow key={item.id} item={item} subagent={agent} agentItems={agents[agent.id]?.items ?? (agentSteps[agent.id] ? [agentSteps[agent.id]] : undefined)} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
     });
     if (last && working) showedWorking = true;
-    // One status row heads the turn: "Working for 12s" becomes "Worked for 12s" in the same slot, and
+    // One status row heads the turn: "Busy for 12s" becomes "Took 12s" in the same slot, and
     // streamed content lands below it, so nothing on screen moves at either moment.
     out.push(
       <div key={`turn-${after}`} className="flex flex-col gap-3">
@@ -99,7 +105,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       <WorkdirContext.Provider value={workdir}>
         {out}
         {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
-        <WorkingTail working={working && !liveAtFoot(items, byParent)} />
+        <WorkingTail working={working && !liveAtFoot(items, byParent)} turnId={userItemId ?? 'start'} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
@@ -119,18 +125,20 @@ function liveAtFoot(items: Item[], byParent: Map<string, Subagent>): boolean {
 
 /**
  * The live line at the foot of a running turn, where new output lands: the working mark and a
- * shimmering "Working…" while prose streams or the agent is between steps. It steps aside while the
- * last row is already live, grows in when the turn starts and folds away when it ends or waits for
- * the user; the turn's status row already announces the state, so this one is not read out again.
+ * shimmering gerund ("Untangling…") while prose streams or the agent is between steps. The verb
+ * is picked from the id of the user message that began the turn, so it holds for the whole turn
+ * and comes back the same after a reload. It steps aside while the last row is already live,
+ * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
+ * status row already announces the state, so this one is not read out again.
  */
-function WorkingTail({ working }: { working: boolean }) {
+function WorkingTail({ working, turnId }: { working: boolean; turnId: string }) {
   const { mounted, onClosed } = usePresence(working);
   if (!mounted) return null;
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
       <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
         <WorkingMark />
-        <span className="animate-shimmer motion-reduce:animate-none">Working…</span>
+        <span className="animate-shimmer motion-reduce:animate-none">{turnVerb(turnId)}…</span>
       </div>
     </Collapse>
   );
@@ -272,8 +280,8 @@ const ActivityRun = memo(function ActivityRun({ entries, ctx, endedAt, className
 
 /**
  * The row that heads a turn (DESIGN.md turn status), in one slot for both states: the
- * working mark and a live "Working for 12s" while the turn runs, then "Worked for 12s" once
- * it ended. Without a recorded duration the row keeps its slot, with no label and no rule.
+ * working mark and a live "Busy for 12s" while the turn runs, then "Took 12s" once it
+ * ended. Without a recorded duration the row keeps its slot, with no label and no rule.
  */
 function TurnStatus({ working = false, start, timing }: { working?: boolean; start?: string; timing?: TurnTiming }) {
   const [now, setNow] = useState(() => Date.now());
@@ -286,8 +294,8 @@ function TurnStatus({ working = false, start, timing }: { working?: boolean; sta
   return (
     <div className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
       {working && <WorkingMark />}
-      {working && <span role="status" className="sr-only">Working</span>}
-      {working ? <span role="timer" aria-live="off">{elapsed ? `Working for ${elapsed}` : 'Working'}</span> : elapsed && <span className="animate-fade-in">Worked for {elapsed}</span>}
+      {working && <span role="status" className="sr-only">Busy</span>}
+      {working ? <span role="timer" aria-live="off">{elapsed ? `Busy for ${elapsed}` : 'Busy'}</span> : elapsed && <span className="animate-fade-in">Took {elapsed}</span>}
     </div>
   );
 }
@@ -654,14 +662,21 @@ export function AgentChip({ status }: { status: SubagentStatus }) {
 
 /**
  * The `task` tool call that spawned a subagent, as one compact row: name, state, duration
- * once ended, and "Open", which shows the transcript in the side panel. Nothing of the
- * subagent's output renders in the main column.
+ * once ended, and "Open", which shows the transcript in the side panel. Under the name, one
+ * caption line says what it is doing (its latest step, once its transcript is held) or what
+ * it reported (the first line of the `task` result, or its error); it grows in through the
+ * height collapse and keeps its last text while it folds. Nothing else of the subagent's
+ * output renders in the main column.
  */
-function SubagentRow({ item, subagent, provider, onOpen }: { item: Item; subagent: Subagent; provider: string; onOpen: (opener: HTMLElement) => void }) {
+function SubagentRow({ item, subagent, agentItems, provider, onOpen }: { item: Item; subagent: Subagent; agentItems?: Item[]; provider: string; onOpen: (opener: HTMLElement) => void }) {
   const { meta } = useApp();
   const [, copy] = useCopied();
   const name = subagent.name || item.tool?.title || item.tool?.name || 'Subagent';
   const took = subagent.started_at && subagent.ended_at ? duration(subagent.started_at, subagent.ended_at) : null;
+  const summary = subagentSummary(subagent, agentItems, item.tool);
+  // The last text stays while the line folds, as usePresence keeps a row through its exit.
+  const [shown, setShown] = useState(summary);
+  if (summary && summary !== shown) setShown(summary);
   const items: ActionItem[] = [
     { key: 'open', label: 'Open subagent', icon: <Bot />, onSelect: () => onOpen(document.getElementById(`item-${item.id}`) ?? document.body) },
     { key: 'copy', label: 'Copy agent ID', icon: <Copy />, onSelect: () => copy(subagent.id), separator: true },
@@ -672,9 +687,16 @@ function SubagentRow({ item, subagent, provider, onOpen }: { item: Item; subagen
         render={<div id={`item-${item.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm bg-tint-well py-1.5 pr-1.5 pl-3 text-ui transition-colors" />}
       >
         <Bot aria-hidden="true" className="size-4 shrink-0 text-muted" />
-        <span className="min-w-0 flex-1 truncate font-medium text-ink max-sm:basis-[calc(100%-28px)]" title={subagent.description || name}>
-          {name}
-        </span>
+        <div className="flex min-w-0 flex-1 flex-col max-sm:basis-[calc(100%-28px)]">
+          <span className="truncate font-medium text-ink" title={subagent.description || name}>
+            {name}
+          </span>
+          <Collapse open={!!summary}>
+            <span className="block truncate text-caption text-muted" title={shown}>
+              {shown}
+            </span>
+          </Collapse>
+        </div>
         <AgentChip status={subagent.status} />
         {subagent.model && <span className="min-w-0 truncate font-mono text-code-sm text-muted" title={modelName(meta, provider, subagent.model)}>{modelName(meta, provider, subagent.model)}</span>}
         {took && <span className="text-caption tabular-nums text-muted">{took}</span>}

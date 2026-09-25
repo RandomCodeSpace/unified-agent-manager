@@ -3,7 +3,7 @@
 // sits on which tool row, and what a question asked and got. No DOM, so the unit tests
 // run in node.
 
-import type { Interaction, InteractionState, Item, ToolCall, TurnTiming } from '../api';
+import type { Interaction, InteractionState, Item, Subagent, ToolCall, TurnTiming } from '../api';
 
 /** Argument keys per tool name, most telling first; `GENERIC` serves every other tool. */
 const KEYS: Record<string, string[]> = {
@@ -492,4 +492,58 @@ export function elapsedSince(start: string | undefined, now: number): string | n
   if (ms < 1000) return '<1s';
   const seconds = Math.floor(ms / 1000);
   return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
+}
+
+/**
+ * The line under a subagent's name in its row. Running: its current step from its own latest
+ * item, which the browser holds only once its transcript was opened ("Running: bash npm test",
+ * "Thinking…"), else nothing. Failed: its error. Otherwise the first line of its report, the
+ * parent `task` call's output, as plain text; nothing when there is none yet.
+ */
+export function subagentSummary(subagent: Subagent, items: readonly Item[] | undefined, parent: ToolCall | undefined): string {
+  if (subagent.status === 'running') {
+    const last = items?.at(-1);
+    if (last?.kind === 'reasoning') return 'Thinking…';
+    if (last?.kind === 'tool') {
+      const { name, arg } = toolLabel(last.tool);
+      return `Running: ${name}${arg ? ` ${arg}` : ''}`;
+    }
+    return '';
+  }
+  if (subagent.status === 'failed') return firstLine(subagent.error) || firstLine(parent?.output);
+  return firstLine(parent?.output);
+}
+
+/**
+ * The first line of a markdown report that says something, as plain text: fences skipped,
+ * heading marks, bullets, quotes, emphasis, code ticks and link syntax dropped, so it reads
+ * in a caption. A heading ("## Summary") only stands in when nothing follows it. Underscores
+ * inside words stay, so identifiers survive.
+ */
+export function firstLine(text: string | undefined): string {
+  if (!text) return '';
+  let fenced = false;
+  let heading = '';
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (/^(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || /^[-*_=]{3,}$/.test(line)) continue;
+    const plain = line
+      .replace(/^(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)+/, '')
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/(\*\*|__)(.+?)\1/g, '$2')
+      .replace(/(^|[^\w])[*_](.+?)[*_](?=[^\w]|$)/g, '$1$2')
+      .replace(/~~(.+?)~~/g, '$1')
+      .replace(/`+([^`]*)`+/g, '$1');
+    if (!plain.trim()) continue;
+    if (/^#{1,6}\s/.test(line)) {
+      heading ||= oneLine(plain);
+      continue;
+    }
+    return oneLine(plain);
+  }
+  return heading;
 }
