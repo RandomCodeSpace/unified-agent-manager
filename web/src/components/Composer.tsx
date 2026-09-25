@@ -7,6 +7,7 @@ import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '.
 import { visibleModels } from '../lib/models';
 import { ComposerUsage } from './ComposerUsage';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
+import { draftKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Markdown, Note, Spinner, useApp } from './common';
@@ -35,6 +36,19 @@ export function contextReason(model: Model | undefined, supported: boolean): str
 const MAX_FILE_REFS = 20;
 const LIST_ID = 'composer-picker';
 const LIMITS_TEXT = 'Images up to 3 MiB, PDF up to 10 MiB, text up to 256 KiB · 5 per message';
+/** Typing pauses this long before the draft is written. */
+const DRAFT_DELAY = 250;
+
+// Storage may be unavailable (private mode, quota): the composer works without a draft then.
+function readDraft(key: string): Draft | null {
+  try { return parseDraft(localStorage.getItem(key)); }
+  catch { return null; }
+}
+function writeDraft(key: string, draft: Draft) {
+  const raw = serializeDraft(draft);
+  try { if (raw) localStorage.setItem(key, raw); else localStorage.removeItem(key); }
+  catch { /* The draft lives in state until the next write. */ }
+}
 
 const sentence = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
@@ -180,8 +194,11 @@ export const Composer = memo(ComposerView, sameComposerProps);
 
 function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const { meta, settings: appSettings, dispatch } = useApp();
-  const [text, setText] = useState('');
-  const [caret, setCaret] = useState(0);
+  // The draft this Task left behind (text, `@` files, finished uploads); read once, on mount.
+  const storageKey = draftKey(session.id);
+  const [draft] = useState(() => readDraft(storageKey));
+  const [text, setText] = useState(draft?.text ?? '');
+  const [caret, setCaret] = useState(draft?.text.length ?? 0);
   /** Prompt history browsing (Up/Down/Escape); null until Up recalls an entry. */
   const [browsing, setBrowsing] = useState<Browsing | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -237,7 +254,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const pendingCaret = useRef<number | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
-  const [files, setFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<string[]>(draft?.files ?? []);
   const [commandVersion, setCommandVersion] = useState(0);
   const [executionOpen, setExecutionOpen] = useState(false);
   const pendingExecution = useRef<{ mode: 'interactive' | 'autopilot'; id: string } | null>(null);
@@ -377,7 +394,10 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   /* ---------- Attachments ---------- */
 
   const fileInput = useRef<HTMLInputElement>(null);
-  const [uploads, setUploads] = useState<Pending[]>([]);
+  // Finished uploads come back from the draft as done chips; an image shows its stored copy.
+  const [uploads, setUploads] = useState<Pending[]>(() =>
+    (draft?.attachments ?? []).map((a) => ({ key: a.id, name: a.name, size: a.size, kind: a.kind, progress: 1, status: 'done', id: a.id, ...(a.kind === 'image' ? { preview: api.attachmentUrl(session.id, a.id) } : {}) })),
+  );
   const [dragging, setDragging] = useState(0);
   const media = selectedModel?.media;
   const gateNote = mediaNote(media, modelLabel);
@@ -437,6 +457,17 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const attachmentIds = uploads.flatMap((u) => (u.status === 'done' && u.id ? [u.id] : []));
   const extras = { ...(files.length ? { files } : {}), ...(attachmentIds.length ? { attachments: attachmentIds } : {}) };
 
+  // The draft follows the text, the picked files and the finished uploads once typing pauses;
+  // leaving the Task writes it at once. An accepted send clears it (see `send`).
+  const draftNow = useMemo<Draft>(() => ({ text, files, attachments: uploads.flatMap((u) => (u.status === 'done' && u.id ? [{ id: u.id, name: u.name, size: u.size, kind: u.kind }] : [])) }), [text, files, uploads]);
+  const latestDraft = useRef(draftNow);
+  useEffect(() => {
+    latestDraft.current = draftNow;
+    const timer = window.setTimeout(() => writeDraft(storageKey, draftNow), DRAFT_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [draftNow, storageKey]);
+  useEffect(() => () => writeDraft(storageKey, latestDraft.current), [storageKey]);
+
   /* ---------- Sending ---------- */
 
   const cmd = commands ? parseCommand(text, commands) : null;
@@ -488,6 +519,8 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
         setFiles([]);
         setUploads([]);
         setDismissed(null);
+        // Gone at once, not after the debounce: a reload right after sending must not bring the prompt back.
+        writeDraft(storageKey, { text: prefill, files: [], attachments: [] });
       }
     } catch (e) {
       if (!cmd && promptMode === 'steer' && isStatus(e, 409) && e.message.includes('cannot steer a running turn')) {

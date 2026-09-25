@@ -8,6 +8,7 @@ import { AddProjectDialog, EditProjectDialog, RemoveProjectDialog } from './comp
 import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
+import { staleDraftKeys } from './lib/drafts';
 import { tasksOf } from './lib/tasks';
 import { checkDue, decideUpdate } from './lib/update';
 import { Task } from './components/Task';
@@ -257,6 +258,12 @@ export default function App() {
         return null;
       });
       if (data.session && data.session.id === selected) markViewed(selected, data.session.updated_at);
+      // Composer drafts of Tasks that no longer exist go with them.
+      try {
+        for (const key of staleDraftKeys(Object.keys(localStorage), data.sessions.map((s) => s.id))) localStorage.removeItem(key);
+      } catch {
+        // Storage unavailable: nothing to sweep.
+      }
     });
     for (const name of UPDATE_EVENTS) {
       es.addEventListener(name, (e) => {
