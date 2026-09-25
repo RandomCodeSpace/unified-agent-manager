@@ -557,6 +557,7 @@ export default function App() {
         session={shown}
         project={project}
         agents={state.agents}
+        agentSteps={state.agentSteps}
         snapshotSeq={state.snapshotSeq}
         sheetOpen={sheetOpen}
         sidePanelInline={sheetInline}

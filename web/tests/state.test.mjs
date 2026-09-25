@@ -224,3 +224,20 @@ test('a batch of frames applies in order, exactly as one frame at a time', () =>
   assert.deepEqual(batched.detail.items.map((i) => i.text), oneByOne.detail.items.map((i) => i.text));
   assert.equal(batched.detailSeq, 14);
 });
+
+test("a subagent's latest step is kept from live frames before its transcript is open, without its output", () => {
+  let state = reducer(initialState, { type: 'select', id: 'task' });
+  state = reducer(state, { type: 'snapshot', data: { seq: 10, projects: [], sessions: [], session: { id: 'task', items: [], interactions: [], subagents: [running] } } });
+  state = update(state, { name: 'item', seq: 11, session_id: 'task', agent_id: 'helper', item: { ...tool('running'), tool: { name: 'read', status: 'running', input: 'x'.repeat(2000), output: 'secret' } } });
+  assert.equal(state.agents.helper, undefined);
+  assert.equal(state.agentSteps.helper.kind, 'tool');
+  assert.equal(state.agentSteps.helper.tool.input.length, 500);
+  assert.equal(state.agentSteps.helper.tool.output, undefined);
+  state = update(state, delta(12, 'a'));
+  assert.equal(state.agentSteps.helper.kind, 'assistant');
+  const steps = state.agentSteps;
+  state = update(state, delta(13, 'b'));
+  assert.equal(state.agentSteps, steps, 'more deltas of the same item leave the step alone');
+  state = reducer(state, { type: 'select', id: 'other' });
+  assert.deepEqual(state.agentSteps, {});
+});

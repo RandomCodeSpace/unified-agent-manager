@@ -25,6 +25,8 @@ interface Props {
   subagents: Subagent[];
   /** Subagent transcripts the browser holds (fetched once their panel opened); a running row's step comes from them. */
   agents?: Record<string, AgentTranscript>;
+  /** Each subagent's latest step from live frames; stands in for its items until its transcript is open. */
+  agentSteps?: Record<string, Item>;
   /** The provider still holds the turn, so pending tools may still report. */
   live: boolean;
   /** A turn is running (not merely waiting for the user): the last item is still streaming. */
@@ -50,7 +52,7 @@ function useArrivals(ids: string[]) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, agents = {}, live, working, provider, workdir, onOpenAgent }: Props) {
+export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)]);
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
@@ -74,7 +76,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
     const nodes = renderEntries(group, { ...ctx, live: groupLive }, (item) => {
       const agent = byParent.get(item.id);
-      return agent ? <SubagentRow key={item.id} item={item} subagent={agent} agentItems={agents[agent.id]?.items} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
+      return agent ? <SubagentRow key={item.id} item={item} subagent={agent} agentItems={agents[agent.id]?.items ?? (agentSteps[agent.id] ? [agentSteps[agent.id]] : undefined)} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
     });
     if (last && working) showedWorking = true;
     // One status row heads the turn: "Busy for 12s" becomes "Took 12s" in the same slot, and

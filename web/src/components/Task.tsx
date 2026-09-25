@@ -1,6 +1,6 @@
 import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { LIVE, api, describeError, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Project, type SessionDetail, type SessionSummary } from '../api';
+import { LIVE, api, describeError, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary } from '../api';
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
@@ -24,6 +24,8 @@ interface Props {
   session: SessionDetail;
   project: Project | undefined;
   agents: Record<string, AgentTranscript>;
+  /** Each subagent's latest step from live frames, for its row's summary before its transcript is open. */
+  agentSteps: Record<string, Item>;
   snapshotSeq: number;
   sheetOpen: boolean;
   /** Side panels (Changes, Subagents) sit beside the column (wide) rather than over it. */
@@ -102,7 +104,7 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
 }
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
   const actions = useTaskActions();
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesError, setChangesError] = useState<string | null>(null);
@@ -348,6 +350,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               interactions={session.interactions}
               subagents={session.subagents}
               agents={agents}
+              agentSteps={agentSteps}
               live={live}
               working={working}
               provider={session.provider}
