@@ -1,9 +1,10 @@
-import { Bot, Check, ChevronRight, Copy, Ellipsis, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, PanelRight, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { approvalMark, askedOn, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, segmentActivity, summarizeActivity, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
+import type { Density } from '../lib/density';
+import { approvalMark, askedOn, changedFiles, currentStep, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { turnVerb } from '../lib/verbs';
 import type { AgentTranscript } from '../state';
 import { ImageThumbs, ItemAttachments } from './Attachments';
@@ -37,6 +38,12 @@ interface Props {
   workdir: string;
   /** Open a subagent's transcript in the side panel; `opener` gets focus back when it closes. */
   onOpenAgent: (agentId: string, opener: HTMLElement) => void;
+  /** Compact folds a turn's work into its head row (DESIGN.md turn line); detailed draws one activity row per run. */
+  density?: Density;
+  /** Open the Activity panel from an expanded turn; `opener` gets focus back when it closes. */
+  onOpenActivity?: (opener: HTMLElement) => void;
+  /** Open the Changes sheet from a turn's "Changed n files" line. */
+  onOpenChanges?: () => void;
 }
 
 /** Rows that arrive after mount rise in; rows present at mount appear at once. Stable, so memoised rows hold. */
@@ -52,12 +59,18 @@ function useArrivals(ids: string[]) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent }: Props) {
+export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenActivity, onOpenChanges }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)]);
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
   const { linked, loose, questions } = linkInteractions(items, interactions);
   const ctx: RenderContext = { sessionId, live, streamingId: working ? items[items.length - 1]?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked };
+  const compact = density === 'compact';
+  const special = (item: Item) => {
+    const agent = byParent.get(item.id);
+    return agent ? <SubagentRow key={item.id} item={item} subagent={agent} agentItems={agents[agent.id]?.items ?? (agentSteps[agent.id] ? [agentSteps[agent.id]] : undefined)} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
+  };
+  const own = (item: Item) => byParent.has(item.id);
 
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
   const out: ReactNode[] = [];
@@ -74,23 +87,36 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       return;
     }
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
-    const nodes = renderEntries(group, { ...ctx, live: groupLive }, (item) => {
-      const agent = byParent.get(item.id);
-      return agent ? <SubagentRow key={item.id} item={item} subagent={agent} agentItems={agents[agent.id]?.items ?? (agentSteps[agent.id] ? [agentSteps[agent.id]] : undefined)} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
-    });
+    const gctx = { ...ctx, live: groupLive };
     if (last && working) showedWorking = true;
     // One status row heads the turn: "Busy for 12s" becomes "Took 12s" in the same slot, and
     // streamed content lands below it, so nothing on screen moves at either moment.
-    out.push(
-      <div key={`turn-${after}`} className="flex flex-col gap-3">
-        {last && working ? <TurnStatus working start={foregroundStart(turnTimings)} /> : showEnd && <TurnStatus timing={timing} />}
-        {nodes}
-      </div>,
-    );
+    if (compact) {
+      // Compact: the head row carries the turn's counts and opens its timeline; only promoted
+      // entries stand in the answer, and a steer bubble sits in the turn at its place.
+      const summary = summarizeTurn(group, { live: groupLive, streamingId: gctx.streamingId, approvals: linked });
+      const changed = changedFiles(group);
+      const id = userItemId ?? 'start';
+      out.push(
+        <div key={`turn-${id}`} className="flex flex-col gap-3">
+          {(last && working) || showEnd || summary.count > 0 ? <TurnHead id={id} working={last && working} start={foregroundStart(turnTimings)} timing={timing} summary={summary} entries={group} ctx={gctx} onOpenActivity={onOpenActivity} /> : null}
+          {renderCompact(group, gctx, special, own)}
+          {changed.length > 0 && <ChangedLine files={changed} onOpen={onOpenChanges} />}
+        </div>,
+      );
+    } else {
+      const nodes = renderEntries(group, gctx, special);
+      out.push(
+        <div key={`turn-${after}`} className="flex flex-col gap-3">
+          {last && working ? <TurnStatus working start={foregroundStart(turnTimings)} /> : showEnd && <TurnStatus timing={timing} />}
+          {nodes}
+        </div>,
+      );
+    }
     group = [];
   };
   mergeByTime(items, [...loose, ...questions]).forEach((entry) => {
-    if (entry.item?.kind !== 'user') {
+    if (entry.item?.kind !== 'user' || (compact && entry.item.delivery)) {
       group.push(entry);
       return;
     }
@@ -100,14 +126,173 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
     out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} />);
   });
   flush(true);
+  // Compact draws no live activity row, so the foot line names the current step itself.
+  const step = compact && working ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
   return (
     <SessionContext.Provider value={sessionId}>
       <WorkdirContext.Provider value={workdir}>
         {out}
         {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
-        <WorkingTail working={working && !liveAtFoot(items, byParent)} turnId={userItemId ?? 'start'} />
+        <WorkingTail working={working && (compact || !liveAtFoot(items, byParent))} turnId={userItemId ?? 'start'} step={step} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
+  );
+}
+
+/**
+ * Compact (DESIGN.md turn line): the entries that stand in the answer, in order. Prose,
+ * notices and steer bubbles; the promoted work, that is a failed call, a question that no
+ * longer waits, a call that returned images (each as its own row, the same row as inside a
+ * run) and a subagent row. Everything else is in the turn line and its timeline.
+ */
+function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Item) => ReactNode | null, own: (item: Item) => boolean): ReactNode[] {
+  const out: ReactNode[] = [];
+  for (const entry of entries) {
+    // A pending request is the action card under the transcript; it is not drawn twice.
+    if (entry.interaction?.state === 'pending' || !promoted(entry, { live: ctx.live, approvals: ctx.approvals }, own)) continue;
+    if (entry.interaction) {
+      const ix = entry.interaction;
+      out.push(<QuestionBlock key={ix.id} id={ix.id} asked={questionOf(undefined, ix, ctx.live)!} className={ctx.arrival(ix.id)} />);
+      continue;
+    }
+    const item = entry.item;
+    if (item.kind === 'user') {
+      out.push(<UserBubble key={item.id} item={item} sessionId={ctx.sessionId} className={ctx.arrival(item.id)} />);
+      continue;
+    }
+    if (item.kind !== 'tool') {
+      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} className={ctx.arrival(item.id)} />);
+      continue;
+    }
+    const node = special(item);
+    if (node) {
+      out.push(node);
+      continue;
+    }
+    const asked = askedOn(item, ctx.approvals, ctx.live);
+    if (asked && asked.outcome !== 'pending') out.push(<QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} />);
+    else out.push(<ToolRow key={item.id} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} className={ctx.arrival(item.id)} />);
+  }
+  return out;
+}
+
+/**
+ * The row that heads a compact turn (DESIGN.md turn line), in the turn status row's slot:
+ * the working mark and "Busy for 12s" while it runs, "Took 12s" once it ended, then the
+ * turn's counts, "5 thoughts (42s) · 3 commands · 2 files read", updating in place as items
+ * append. With anything folded it is a button that opens the turn's whole timeline in place,
+ * mounted on the first open only; the counts turn `error` after a failure and `attention`
+ * while a call waits for the user.
+ */
+function TurnHead({ id, working, start, timing, summary, entries, ctx, onOpenActivity }: { id: string; working: boolean; start?: string; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; onOpenActivity?: (opener: HTMLElement) => void }) {
+  const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!working) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [working]);
+  const elapsed = working ? elapsedSince(start, now) : completedDuration(timing);
+  const head = working ? (elapsed ? `Busy for ${elapsed}` : 'Busy') : elapsed ? `Took ${elapsed}` : '';
+  const text = [head, ...summary.parts.map((p) => p.text)].filter(Boolean).join(' · ');
+  const timelineId = `turn-${id}-timeline`;
+  const toggle = () => {
+    setOpened(true);
+    setOpen((o) => !o);
+  };
+  return (
+    <div id={`turn-${id}`} className="flex flex-col rounded-sm">
+      <div className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
+        {working && <WorkingMark />}
+        {working && <span role="status" className="sr-only">Busy</span>}
+        {summary.count > 0 ? (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={opened ? timelineId : undefined}
+            title={text}
+            className={cn('-mx-1.5 flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11', summary.tone === 'attention' && 'text-attention')}
+            onClick={toggle}
+          >
+            <span role={working ? 'timer' : undefined} aria-live={working ? 'off' : undefined} className="min-w-0 truncate">
+              {head}
+              {summary.parts.map((p, k) => (
+                <span key={k} className={cn(p.tone === 'error' && 'text-error')}>
+                  {(head || k > 0) && ' · '}
+                  {p.text}
+                </span>
+              ))}
+            </span>
+            <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
+            <span className="sr-only">, activity of this turn</span>
+          </button>
+        ) : working ? (
+          <span role="timer" aria-live="off">{head}</span>
+        ) : (
+          head && <span className="animate-fade-in">{head}</span>
+        )}
+      </div>
+      {opened && (
+        <Collapse open={open} appear>
+          <Timeline id={timelineId} entries={entries} ctx={ctx} onOpenActivity={onOpenActivity} />
+        </Collapse>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A turn's whole timeline, in order, under its head row: each thought (its text `muted` on
+ * its own click), each tool call as its row with its approval, details and images, each
+ * question block and each decided request; then "Open in panel".
+ */
+function Timeline({ id, entries, ctx, onOpenActivity }: { id: string; entries: Entry[]; ctx: RenderContext; onOpenActivity?: (opener: HTMLElement) => void }) {
+  const rows: ReactNode[] = [];
+  for (const entry of entries) {
+    if (!isWork(entry)) continue;
+    if (entry.interaction) {
+      const ix = entry.interaction;
+      const asked = questionOf(undefined, ix, ctx.live);
+      rows.push(asked ? <QuestionBlock key={ix.id} id={`timeline-${ix.id}`} asked={asked} /> : <DecidedRow key={ix.id} interaction={ix} />);
+      continue;
+    }
+    const item = entry.item;
+    if (item.kind === 'reasoning') {
+      if (item.text?.trim()) rows.push(<Thinking key={item.id} item={item} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} />);
+      continue;
+    }
+    const asked = askedOn(item, ctx.approvals, ctx.live);
+    if (asked && asked.outcome !== 'pending') rows.push(<QuestionBlock key={item.id} id={`timeline-${item.id}`} asked={asked} />);
+    else rows.push(<ToolRow key={item.id} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} />);
+  }
+  return (
+    <div id={id} className="relative mb-2 ml-1.5 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-px before:fade-rule-y before:content-['']">
+      {rows}
+      {onOpenActivity && (
+        <Button size="sm" className="w-fit text-caption text-muted" onClick={(e) => onOpenActivity(e.currentTarget)}>
+          <PanelRight />
+          Open in panel
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The one line a compact turn keeps for its edits: "Changed 2 files", with the paths in its tooltip, and the way to the Changes sheet. */
+function ChangedLine({ files, onOpen }: { files: string[]; onOpen?: () => void }) {
+  return (
+    <div className="flex h-6 items-center gap-2 text-caption text-muted" title={files.join('\n')}>
+      <FileDiff aria-hidden="true" className="size-3.5 shrink-0 text-faint" />
+      <span>
+        Changed {files.length} {files.length === 1 ? 'file' : 'files'}
+      </span>
+      {onOpen && (
+        <button type="button" className="rounded-xs text-accent hover:underline" onClick={onOpen}>
+          View changes
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -131,14 +316,16 @@ function liveAtFoot(items: Item[], byParent: Map<string, Subagent>): boolean {
  * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
  * status row already announces the state, so this one is not read out again.
  */
-function WorkingTail({ working, turnId }: { working: boolean; turnId: string }) {
+function WorkingTail({ working, turnId, step }: { working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null }) {
   const { mounted, onClosed } = usePresence(working);
   if (!mounted) return null;
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
       <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
         <WorkingMark />
-        <span className="animate-shimmer motion-reduce:animate-none">{turnVerb(turnId)}…</span>
+        <span className={cn('min-w-0 truncate', (!step || step.shimmer) && 'animate-shimmer motion-reduce:animate-none', step?.tone === 'attention' && 'text-attention')} title={step?.label}>
+          {step ? step.label : `${turnVerb(turnId)}…`}
+        </span>
       </div>
     </Collapse>
   );
@@ -256,19 +443,23 @@ const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries
  */
 const ActivityRun = memo(function ActivityRun({ entries, ctx, endedAt, className }: { entries: Entry[]; ctx: RenderContext; endedAt?: string; className?: string }) {
   const [open, setOpen] = useState(false);
+  // The rows are mounted on the first open only: a closed run costs one button.
+  const [opened, setOpened] = useState(false);
   const { label, tone, active } = summarizeActivity(entries, { live: ctx.live, streamingId: ctx.streamingId, approvals: ctx.approvals, endedAt });
   if (!label) return null;
   return (
     <div data-activity="" className={cn('flex flex-col', className)}>
-      <button type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => setOpen((o) => !o)}>
+      <button type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
         <span className="flex size-3.5 shrink-0 items-center justify-center">
           {active ? <WorkingMark /> : <ChevronRight aria-hidden="true" className={cn('size-3 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />}
         </span>
         <span className="min-w-0 truncate tabular-nums">{label}</span>
       </button>
-      <Collapse open={open}>
-        <div className="mt-1 flex flex-col gap-1 pl-5.5">{renderRows(entries, ctx, NO_OWN)}</div>
-      </Collapse>
+      {opened && (
+        <Collapse open={open} appear>
+          <div className="mt-1 flex flex-col gap-1 pl-5.5">{renderRows(entries, ctx, NO_OWN)}</div>
+        </Collapse>
+      )}
     </div>
   );
 }, (a, b) => {
@@ -355,31 +546,48 @@ interface ToolRunProps {
 /** Consecutive tools share a compact disclosure; prose and questions stay in time order. Memoised on its calls, which a streamed delta elsewhere leaves alone. */
 const ToolRun = memo(function ToolRun({ items, live, sessionId, approvals, arrival }: ToolRunProps) {
   const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false);
   const failed = items.some((item) => item.tool?.status === 'failed');
   const active = live && items.some((item) => isActive(item.tool?.status));
   return (
     <div data-tool-run="">
-      <button type="button" aria-expanded={open} className={cn('flex min-h-7 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-ui text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', failed && 'text-error')} onClick={() => setOpen((o) => !o)}>
+      <button type="button" aria-expanded={open} className={cn('flex min-h-7 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-ui text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', failed && 'text-error')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
         {active ? <WorkingMark /> : <Terminal aria-hidden="true" className="size-4 shrink-0" />}
         <span>{summarizeTools(items, live)}</span>
         <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
-      <Collapse open={open}>
-        <div className="relative mt-1 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-px before:fade-rule-y before:content-['']">
-          {items.map((item) => <ToolRow key={item.id} item={item} live={live} sessionId={sessionId} approvals={approvals.get(item.id)} className={arrival(item.id)} />)}
-        </div>
-      </Collapse>
+      {opened && (
+        <Collapse open={open} appear>
+          <div className="relative mt-1 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-px before:fade-rule-y before:content-['']">
+            {items.map((item) => <ToolRow key={item.id} item={item} live={live} sessionId={sessionId} approvals={approvals.get(item.id)} className={arrival(item.id)} />)}
+          </div>
+        </Collapse>
+      )}
     </div>
   );
 }, (a, b) => a.live === b.live && a.sessionId === b.sessionId && a.approvals === b.approvals && a.arrival === b.arrival && a.items.length === b.items.length && a.items.every((item, i) => item === b.items[i]));
 
 const isActive = (s?: ToolStatus) => s === 'pending' || s === 'running';
 
-function ToolMark({ tone }: { tone: string }) {
+/** A call's state as a glyph: the spinner while it is open, a check, a cross, or a dash for a call that never reported. */
+export function ToolMark({ tone }: { tone: string }) {
   if (tone === 'running' || tone === 'pending') return <Spinner />;
-  if (tone === 'completed') return <Check aria-hidden="true" className="size-3.5 text-success" strokeWidth={2.5} />;
+  if (tone === 'completed' || tone === 'decided') return <Check aria-hidden="true" className="size-3.5 text-success" strokeWidth={2.5} />;
   if (tone === 'failed') return <X aria-hidden="true" className="size-3.5 text-error" strokeWidth={2.5} />;
   return <Minus aria-hidden="true" className="size-3.5 text-faint" strokeWidth={2.5} />;
+}
+
+/** A tool call's details: its text, then the input and output as code blocks; "No details yet." with none of them. */
+export function ToolDetails({ item, className }: { item: Item; className?: string }) {
+  const t = item.tool;
+  return (
+    <div className={cn('my-1 flex flex-col gap-1 text-ui', className)}>
+      {item.text && <Markdown text={item.text} />}
+      {t?.input && <CodeBlock language="input">{t.input}</CodeBlock>}
+      {t?.output && <CodeBlock language="output">{t.output}</CodeBlock>}
+      {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
+    </div>
+  );
 }
 
 /**
@@ -422,6 +630,12 @@ function ApprovalMark({ interactions }: { interactions: Interaction[] }) {
  */
 export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals, className }: { item: Item; live: boolean; sessionId?: string; approvals?: Interaction[]; className?: string }) {
   const [open, setOpen] = useState(false);
+  // The details (code blocks) are mounted on the first open only.
+  const [opened, setOpened] = useState(false);
+  const toggle = () => {
+    setOpened(true);
+    setOpen((o) => !o);
+  };
   const [, copy] = useCopied();
   const t = item.tool;
   const status = t?.status ?? 'pending';
@@ -433,7 +647,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   const word = ended ? 'no result' : status === 'completed' ? 'done' : status;
   const images = item.images ?? [];
   const items: ActionItem[] = [
-    { key: 'toggle', label: open ? 'Collapse' : 'Expand', icon: <ChevronRight />, onSelect: () => setOpen((o) => !o) },
+    { key: 'toggle', label: open ? 'Collapse' : 'Expand', icon: <ChevronRight />, onSelect: toggle },
     { key: 'cmd', label: 'Copy command', icon: <Copy />, disabled: !t?.input, onSelect: () => copy(t?.input ?? ''), separator: true },
     { key: 'out', label: 'Copy output', icon: <Copy />, disabled: !t?.output, onSelect: () => copy(t?.output ?? '') },
   ];
@@ -446,7 +660,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
             aria-expanded={open}
             className={cn('flex h-6 w-full items-center gap-2 rounded-full pr-8 pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
             title={ended ? 'The turn ended before this tool reported a result' : undefined}
-            onClick={() => setOpen((o) => !o)}
+            onClick={toggle}
           >
             <span className="flex size-4 shrink-0 items-center justify-center">
               <ToolMark tone={tone} />
@@ -456,14 +670,11 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
             <span className="sr-only">, {word}</span>
             {approvals && approvals.filter((ix) => ix.state !== 'pending').length > 0 && <ApprovalMark interactions={approvals.filter((ix) => ix.state !== 'pending')} />}
           </button>
-          <Collapse open={open}>
-            <div className="my-1 ml-6 flex flex-col gap-1 text-ui">
-              {item.text && <Markdown text={item.text} />}
-              {t?.input && <CodeBlock language="input">{t.input}</CodeBlock>}
-              {t?.output && <CodeBlock language="output">{t.output}</CodeBlock>}
-              {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
-            </div>
-          </Collapse>
+          {opened && (
+            <Collapse open={open} appear>
+              <ToolDetails item={item} className="ml-6" />
+            </Collapse>
+          )}
         </div>
         {(images.length > 0 || item.images_note) && (
           <div className="mt-1 mb-1.5 ml-7 flex flex-col gap-1">
@@ -495,7 +706,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
  * restart or a stopped turn reads "No answer".
  */
 // `asked` is rebuilt on every transcript render; equal content means nothing to redraw.
-const QuestionBlock = memo(function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuestion; className?: string }) {
+export const QuestionBlock = memo(function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuestion; className?: string }) {
   const [, copy] = useCopied();
   const text = asked.questions.map((q) => q.text).join('\n') || 'The agent asked a question.';
   const items: ActionItem[] = [
