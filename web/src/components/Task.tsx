@@ -4,7 +4,7 @@ import { LIVE, api, describeError, readOnly, stageLabel, taskName, type Backgrou
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
-import { awaitsUser, foregroundItems } from '../lib/transcript';
+import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
 import { Chip } from './ui/chip';
@@ -108,9 +108,13 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
 
-  // The "n files changed" count: fetched on open, again when a turn starts or ends, and on Refresh.
+  // The "n files changed" count: fetched on open, again when a turn starts or ends, on Refresh, and a
+  // second after a file-changing tool call completes; one request at a time, a rise during one queues another.
+  const fetching = useRef(false);
+  const again = useRef(false);
   useEffect(() => {
     let alive = true;
+    fetching.current = true;
     api
       .changes(session.id, session.capabilities.session_diff ? 'session' : 'workspace')
       .then((c) => {
@@ -122,11 +126,30 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
         if (!alive) return;
         setChanges(null);
         setChangesError(describeError(e));
+      })
+      .finally(() => {
+        if (!alive) return;
+        fetching.current = false;
+        if (again.current) {
+          again.current = false;
+          setChangesTick((t) => t + 1);
+        }
       });
     return () => {
       alive = false;
     };
   }, [session.id, session.capabilities.session_diff, live, changesTick]);
+  const edits = completedChanges(session.items);
+  const seenEdits = useRef(edits);
+  useEffect(() => {
+    if (edits <= seenEdits.current) return;
+    seenEdits.current = edits;
+    const timer = window.setTimeout(() => {
+      if (fetching.current) again.current = true;
+      else setChangesTick((t) => t + 1);
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [edits]);
 
   const scrollToBottom = useCallback(() => {
     const el = scroller.current;

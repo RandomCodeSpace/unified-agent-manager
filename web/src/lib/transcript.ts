@@ -311,6 +311,16 @@ const sentence = (parts: string[]) => {
   return s && s[0].toUpperCase() + s.slice(1);
 };
 
+/** The tools that write to the tree, by the names providers report; the Changes count follows their completions. */
+const CHANGE_TOOLS: readonly string[] = ['edit', 'write', 'create'];
+
+/** Completed calls of a tool that changes files, so far in the Task; a rise means the Changes count may be stale. */
+export function completedChanges(items: readonly Item[]): number {
+  let n = 0;
+  for (const it of items) if (it.kind === 'tool' && it.tool?.status === 'completed' && CHANGE_TOOLS.includes(it.tool.name.toLowerCase())) n++;
+  return n;
+}
+
 /** What a run of tool calls did: the successful, recognizable operations as phrases, and the counts that stay explicit. */
 function toolCounts(items: Item[], live: boolean): { done: string[]; active: number; failed: number; noResult: number } {
   let commands = 0, other = 0, failed = 0, active = 0, noResult = 0;
@@ -324,7 +334,7 @@ function toolCounts(items: Item[], live: boolean): { done: string[]; active: num
     if (['bash', 'shell', 'powershell'].includes(name)) { commands++; continue; }
     const input = inputOf(t);
     const path = input && [input.path, input.file_path, input.filePath].find((v): v is string => typeof v === 'string' && !!v.trim());
-    if (path && ['edit', 'write', 'create'].includes(name)) changed.add(path);
+    if (path && CHANGE_TOOLS.includes(name)) changed.add(path);
     else if (path && ['read', 'view'].includes(name)) read.add(path);
     else other++;
   }

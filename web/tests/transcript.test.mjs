@@ -398,3 +398,10 @@ test('the activity label counts questions by outcome, never as tool calls', asyn
   const pending = new Map([['a5', [q('q1', 'Which?', { state: 'pending', tool_call_id: 'a5' })]]]);
   assert.deepEqual(summarizeActivity([{ item: waiting }], { live: true, approvals: pending }), { label: 'Waiting for your answer: ask_user Which?', tone: 'attention', active: true });
 });
+
+test('completed edit, write and create calls are counted for the live Changes count; running, failed and other tools are not', async () => {
+  const { completedChanges } = await import('../src/lib/transcript.ts');
+  const t = (name, status) => ({ id: `${name}-${status}`, kind: 'tool', time: '2026-09-25T00:00:00Z', tool: { name, status, input: '{"path":"a.go"}' } });
+  assert.equal(completedChanges([t('edit', 'completed'), t('Write', 'completed'), t('create', 'completed'), t('edit', 'running'), t('write', 'failed'), t('bash', 'completed'), t('read', 'completed'), { id: 'u', kind: 'user', time: '', text: 'edit' }]), 3);
+  assert.equal(completedChanges([]), 0);
+});
