@@ -382,6 +382,13 @@ are logged only at debug level (`UAM_DEBUG=1`).
     and their tooltips follow the setting. A message that carries files or
     attachments always queues, since a steer takes text only, and the
     composer says so.
+  - **History**: with the caret on the first line (or an empty message), Up
+    recalls the previous prompt from this Task, newest first, as in a shell;
+    Up again goes further back. Down from the last line comes forward, and
+    one step past the newest brings your unsent draft back, as does Esc.
+    Editing a recalled prompt makes it the new draft. Only the text changes;
+    picked files and uploads stay. When a `/`, `$` or `@` list is open, Up
+    and Down move through the list instead.
 - **Settings**: the gear at the bottom of the sidebar opens the Settings view
   in the main pane (`#settings` in the address bar). UAM keeps the web
   interface's settings in `sessions.json`, so they apply in every browser.

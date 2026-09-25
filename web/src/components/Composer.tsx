@@ -7,6 +7,7 @@ import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '.
 import { visibleModels } from '../lib/models';
 import { ComposerUsage } from './ComposerUsage';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
+import { historyEntries, historyKey, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Markdown, Note, Spinner, useApp } from './common';
 import { ExecutionItems, ExecutionStatus } from './ExecutionStatus';
@@ -170,7 +171,9 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
   const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
   keys.delete('items');
   for (const k of keys) if (a.session[k] !== b.session[k]) return false;
-  return true;
+  // Streamed text changes items in place and is ignored; a new item (a sent or steered prompt)
+  // re-renders, so Up-arrow history sees it.
+  return a.session.items?.length === b.session.items?.length;
 }
 
 export const Composer = memo(ComposerView, sameComposerProps);
@@ -179,6 +182,8 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const { meta, settings: appSettings, dispatch } = useApp();
   const [text, setText] = useState('');
   const [caret, setCaret] = useState(0);
+  /** Prompt history browsing (Up/Down/Escape); null until Up recalls an entry. */
+  const [browsing, setBrowsing] = useState<Browsing | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [steerUnavailable, setSteerUnavailable] = useState('');
@@ -549,6 +554,19 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           pick(items[hi]);
           return;
         }
+      }
+    }
+    // Terminal-style history: Up from the first line recalls earlier prompts, Down from the last
+    // line comes back, Escape restores the draft. Only the text changes; chips and uploads stay.
+    if (!e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      const step = historyKey(browsing, historyEntries(session.items, queue), text, caret, e.key);
+      if (step) {
+        e.preventDefault();
+        setBrowsing(step.browsing);
+        pendingCaret.current = step.text.length;
+        setText(step.text);
+        setCaret(step.text.length);
+        return;
       }
     }
     if (e.key === 'Enter' && !e.shiftKey) {
