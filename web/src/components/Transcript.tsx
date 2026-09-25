@@ -4,6 +4,7 @@ import { modelName, type Interaction, type Item, type Subagent, type SubagentSta
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { approvalMark, askedOn, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, segmentActivity, summarizeActivity, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
+import { turnVerb } from '../lib/verbs';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkdirContext, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
@@ -73,7 +74,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       return agent ? <SubagentRow key={item.id} item={item} subagent={agent} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
     });
     if (last && working) showedWorking = true;
-    // One status row heads the turn: "Working for 12s" becomes "Worked for 12s" in the same slot, and
+    // One status row heads the turn: "Busy for 12s" becomes "Took 12s" in the same slot, and
     // streamed content lands below it, so nothing on screen moves at either moment.
     out.push(
       <div key={`turn-${after}`} className="flex flex-col gap-3">
@@ -99,7 +100,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       <WorkdirContext.Provider value={workdir}>
         {out}
         {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
-        <WorkingTail working={working && !liveAtFoot(items, byParent)} />
+        <WorkingTail working={working && !liveAtFoot(items, byParent)} turnId={userItemId ?? 'start'} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
@@ -119,18 +120,20 @@ function liveAtFoot(items: Item[], byParent: Map<string, Subagent>): boolean {
 
 /**
  * The live line at the foot of a running turn, where new output lands: the working mark and a
- * shimmering "Working…" while prose streams or the agent is between steps. It steps aside while the
- * last row is already live, grows in when the turn starts and folds away when it ends or waits for
- * the user; the turn's status row already announces the state, so this one is not read out again.
+ * shimmering gerund ("Untangling…") while prose streams or the agent is between steps. The verb
+ * is picked from the id of the user message that began the turn, so it holds for the whole turn
+ * and comes back the same after a reload. It steps aside while the last row is already live,
+ * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
+ * status row already announces the state, so this one is not read out again.
  */
-function WorkingTail({ working }: { working: boolean }) {
+function WorkingTail({ working, turnId }: { working: boolean; turnId: string }) {
   const { mounted, onClosed } = usePresence(working);
   if (!mounted) return null;
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
       <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
         <WorkingMark />
-        <span className="animate-shimmer motion-reduce:animate-none">Working…</span>
+        <span className="animate-shimmer motion-reduce:animate-none">{turnVerb(turnId)}…</span>
       </div>
     </Collapse>
   );
@@ -272,8 +275,8 @@ const ActivityRun = memo(function ActivityRun({ entries, ctx, endedAt, className
 
 /**
  * The row that heads a turn (DESIGN.md turn status), in one slot for both states: the
- * working mark and a live "Working for 12s" while the turn runs, then "Worked for 12s" once
- * it ended. Without a recorded duration the row keeps its slot, with no label and no rule.
+ * working mark and a live "Busy for 12s" while the turn runs, then "Took 12s" once it
+ * ended. Without a recorded duration the row keeps its slot, with no label and no rule.
  */
 function TurnStatus({ working = false, start, timing }: { working?: boolean; start?: string; timing?: TurnTiming }) {
   const [now, setNow] = useState(() => Date.now());
@@ -286,8 +289,8 @@ function TurnStatus({ working = false, start, timing }: { working?: boolean; sta
   return (
     <div className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
       {working && <WorkingMark />}
-      {working && <span role="status" className="sr-only">Working</span>}
-      {working ? <span role="timer" aria-live="off">{elapsed ? `Working for ${elapsed}` : 'Working'}</span> : elapsed && <span className="animate-fade-in">Worked for {elapsed}</span>}
+      {working && <span role="status" className="sr-only">Busy</span>}
+      {working ? <span role="timer" aria-live="off">{elapsed ? `Busy for ${elapsed}` : 'Busy'}</span> : elapsed && <span className="animate-fade-in">Took {elapsed}</span>}
     </div>
   );
 }
