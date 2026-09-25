@@ -395,9 +395,9 @@ export interface ActivitySummary {
  * The activity row's label for one run of work. Finished thoughts are counted ("Thought",
  * "Thought 4×") with what the tools did and the questions answered or declined, then what
  * stays explicit: failures (a failed question too), calls without a result, questions
- * without an answer, images returned, the call waiting for permission or still running (the last
- * one, by name and argument), thinking still streaming; and, once the run ended and the
- * next item's time is known, how long it took from the first item.
+ * without an answer, images returned, the call waiting for permission or an answer or
+ * still running (the last one, by name and argument), thinking still streaming; and, once
+ * the run ended and the next item's time is known, how long it took from the first item.
  */
 export function summarizeActivity(entries: Entry[], { live, streamingId, approvals, endedAt }: { live: boolean; streamingId?: string; approvals?: Map<string, Interaction[]>; endedAt?: string }): ActivitySummary {
   const items = entries.flatMap((e) => (e.item ? [e.item] : []));
@@ -423,12 +423,13 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
   const { done, noResult } = counts;
   const failed = counts.failed + asked('failed');
   const running = live ? tools.filter(isActiveTool).at(-1) : undefined;
-  const waiting = !!running && !!approvals?.get(running.id)?.some(awaitsUser);
+  const pending = running && approvals?.get(running.id)?.find(awaitsUser);
+  const waiting = !!pending;
   const images = tools.reduce((n, it) => n + (it.images?.length ?? 0), 0);
   const active = !!running || thinking;
   const took = !active && endedAt && items[0] ? duration(items[0].time, endedAt) : null;
   const call = running && toolLabel(running.tool);
-  const now = running ? `${waiting ? 'Waiting for your approval' : 'Running'}: ${call!.arg ? `${call!.name} ${call!.arg}` : call!.name}` : thinking ? 'Thinking…' : '';
+  const now = running ? `${waiting ? `Waiting for your ${pending.kind === 'question' ? 'answer' : 'approval'}` : 'Running'}: ${call!.arg ? `${call!.name} ${call!.arg}` : call!.name}` : thinking ? 'Thinking…' : '';
   const label = [
     sentence([thoughts && (thoughts === 1 ? 'thought' : `thought ${thoughts}×`), ...done, answeredQs && `answered ${noun(answeredQs, 'question')}`, declinedQs && `declined ${noun(declinedQs, 'question')}`, decided && `decided ${noun(decided, 'request')}`].filter(Boolean) as string[]),
     failed && `${failed} failed`,
