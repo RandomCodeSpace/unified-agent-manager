@@ -61,6 +61,38 @@ export function Dialog({ open, onOpenChange, onClosed, initialFocus, title, desc
 }
 
 /**
+ * An image viewer: no surface, the content on a dark see-through scrim, the title and close
+ * in light text above it and `footer` right-aligned under it. A press outside the content closes it.
+ */
+export function ViewerDialog({ open, onOpenChange, onClosed, title, description, children, footer }: Omit<DialogProps, 'initialFocus' | 'className'>) {
+  return (
+    <BaseDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className={cn(backdropClass, 'bg-scrim')} />
+        <BaseDialog.Viewport className="fixed inset-0 z-50 grid place-items-center p-4">
+          <BaseDialog.Popup
+            data-popup=""
+            className="flex max-h-[calc(100dvh-32px)] max-w-[min(94vw,1400px)] min-w-0 flex-col gap-3 outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0"
+          >
+            <div className="flex min-w-0 items-start gap-3 text-on-primary">
+              <div className="min-w-0 flex-1">
+                <BaseDialog.Title className="truncate text-title">{title}</BaseDialog.Title>
+                {description && <BaseDialog.Description className="truncate text-caption text-on-primary/70">{description}</BaseDialog.Description>}
+              </div>
+              <BaseDialog.Close render={<Button size="icon" aria-label="Close" className="-mt-1 -mr-1 text-on-primary hover:bg-on-primary/15 active:bg-on-primary/25" />}>
+                <X />
+              </BaseDialog.Close>
+            </div>
+            {children}
+            {footer && <div className="flex justify-end">{footer}</div>}
+          </BaseDialog.Popup>
+        </BaseDialog.Viewport>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
+  );
+}
+
+/**
  * A command palette: the modal surface near the top of the screen, without the title row
  * or padding, so the body lays out its own search row, list and footer. `label` names it.
  * `finalFocus` follows Base UI: `false` leaves focus where the chosen action put it.

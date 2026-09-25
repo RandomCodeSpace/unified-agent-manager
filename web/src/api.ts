@@ -180,6 +180,8 @@ export interface Attachment {
   name: string;
   mime: string;
   size?: number;
+  /** A document the provider did not pass to the model as a document: the agent read it from disk with its own tools. */
+  not_native?: boolean;
 }
 
 export interface ProviderInfo {

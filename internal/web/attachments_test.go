@@ -287,6 +287,36 @@ func TestPromptAttachmentsSendOnceAndStay(t *testing.T) {
 	}
 }
 
+// A PDF also goes as a named copy on disk: Copilot reads a document it can
+// pass natively by its name, and otherwise gives the agent the path.
+func TestPromptPDFCarriesANamedCopy(t *testing.T) {
+	m, _, sum, conv, dirs := uploadTask(t, "docs")
+	for i, name := range []string{"Forms.pdf", "scan"} {
+		a := mustUpload(t, m, sum.ID, name, pdfBytes)
+		if _, err := m.Submit(sum.ID, PromptRequest{Text: "read it", RequestID: mustUUID(t), Attachments: []string{a.ID}}); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, "prompt sent", func() bool { return len(conv.Prompts()) == i+1 })
+		p := conv.Prompts()[i]
+		want := filepath.Join(dirs.task(sum.ID), a.ID+".d", strings.TrimSuffix(name, ".pdf")+".pdf")
+		if len(p.Attachments) != 1 || p.Attachments[0].Path != want || !bytes.Equal(p.Attachments[0].Data, pdfBytes) {
+			t.Fatalf("%s sent %+v, want path %s", name, p.Attachments, want)
+		}
+		if data, err := os.ReadFile(want); err != nil || !bytes.Equal(data, pdfBytes) {
+			t.Fatalf("named copy = %q, %v", data, err)
+		}
+		conv.EmitTurn(agentapi.TurnCompleted, "")
+	}
+	img := mustUpload(t, m, sum.ID, "shot.png", pngBytes(t))
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "and this", RequestID: mustUUID(t), Attachments: []string{img.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "image sent", func() bool { return len(conv.Prompts()) == 3 })
+	if p := conv.Prompts()[2]; len(p.Attachments) != 1 || p.Attachments[0].Path != "" {
+		t.Fatalf("an image has a path: %+v", p.Attachments)
+	}
+}
+
 // prov returns the only provider of a test manager.
 func (m *Manager) prov() *agenttest.Provider {
 	return m.providers[m.order[0]].(*agenttest.Provider)

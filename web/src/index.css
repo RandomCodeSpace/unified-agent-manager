@@ -53,6 +53,7 @@
   --color-diff-del-bg: #efd6d2;
   --color-diff-del-text: #7f1d1d;
   --color-backdrop: rgba(28, 27, 24, 0.35);
+  --color-scrim: rgba(16, 17, 20, 0.8);
   /* The three tint steps between the surfaces: a hover on raised/canvas (1.16:1 on raised, muted text stays 4.57:1),
      the selected row on the rail (accent-tinted; muted text 4.53:1), and the well under chips, question blocks and uploads. */
   --color-tint-hover: #eceef2;
@@ -71,7 +72,7 @@
   --color-badge-violet: #6c4fc6;
   --color-badge-pink: #b0347c;
 
-  --font-sans: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Figtree Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 
   /* Type scale: the DESIGN.md names, used as text-<name>. */
@@ -272,8 +273,7 @@
     font-weight: 600;
   }
   code,
-  pre,
-  kbd {
+  pre {
     font-family: var(--font-mono);
     font-variant-ligatures: none;
   }

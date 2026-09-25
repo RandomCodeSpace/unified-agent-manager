@@ -37,7 +37,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
           <Brand markOnly className="[&_svg]:size-8" />
           <h1 className="text-display-md">Sign in to uam</h1>
           <p className="text-ui text-muted">
-            Enter the access token for this server. To see it, run <code className="rounded-xs bg-sunken px-1 font-mono text-code-sm text-ink">uam web</code> on the server; it prints the token whether or not the service is already
+            Enter the access token for this server. To see it, run <code className="rounded-xs bg-sunken px-1 font-sans text-caption text-ink">uam web</code> on the server; it prints the token whether or not the service is already
             running.
           </p>
         </div>
@@ -47,7 +47,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
           </label>
           <Input
             id="token"
-            className="px-3 font-mono text-code"
+            className="px-3 text-ui"
             type="password"
             autoComplete="off"
             autoCapitalize="off"

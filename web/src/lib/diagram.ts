@@ -206,11 +206,11 @@ const THEME_TOKENS: Record<string, string> = {
 };
 
 /**
- * The frame cannot load the page's fonts (font fetches need CORS, which an opaque origin never
- * passes) and an SVG shown as an image cannot either, so both measure and draw with the system
- * sans stack.
+ * The page's sans. The frame cannot fetch the page's fonts (font fetches need CORS, which an
+ * opaque origin never passes) and an SVG shown as an image cannot either, so the frame bundles
+ * Figtree, measures with it and embeds it in each SVG; the system stack is the fallback.
  */
-export const DIAGRAM_FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+export const DIAGRAM_FONT = "'Figtree Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
 let theme: Record<string, string> | null = null;
 

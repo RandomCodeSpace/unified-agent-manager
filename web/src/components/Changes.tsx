@@ -174,7 +174,7 @@ function FileRow({ file: f, selected, onOpen }: { file: ChangeFile; selected: bo
             type="button"
             aria-pressed={selected}
             title={f.path}
-            className={cn('grid h-8 w-full grid-cols-[max-content_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-9 pl-2 text-left font-mono text-code-sm transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-11 pointer-coarse:pr-12', selected ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-tint-hover')}
+            className={cn('grid h-8 w-full grid-cols-[max-content_minmax(0,1fr)_auto] items-center gap-2 rounded-sm pr-9 pl-2 text-left text-caption transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-11 pointer-coarse:pr-12', selected ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-tint-hover')}
             onClick={onOpen}
           >
             <span className={cn('text-center', STATUS_TONE[f.status] ?? 'text-muted')}>{f.status}</span>

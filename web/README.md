@@ -79,7 +79,7 @@ contain it. `#task=<id>` in the URL opens a task directly.
   markdown and diff component styles. There is one cool light theme, matching the owner's screenshot references.
 - `src/mock/` — development-only fake service (see above).
 
-Fonts are self-hosted from `@fontsource-variable/geist` and
+Fonts are self-hosted from `@fontsource-variable/figtree` and
 `@fontsource-variable/jetbrains-mono` (OFL-1.1) and bundled into
 `dist/assets`. The bundle runs under a strict CSP (`script-src 'self';
 style-src 'self'; font-src 'self'`): no inline scripts, no `<style>`

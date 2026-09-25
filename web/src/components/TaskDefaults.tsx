@@ -33,7 +33,6 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: { pref
           <Field id={`${prefix}-model`} label="Model">
             <Select
               id={`${prefix}-model`}
-              mono
               value={value.model}
               disabled={disabled}
               items={choices.map(({ model: m, note }) => ({ value: m.id, label: `${m.name}${note ? ` (${note.toLowerCase()})` : ''}`, hidden: !!note }))}
@@ -53,7 +52,6 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: { pref
       <Field id={`${prefix}-effort`} label="Effort" hint={noEffort || undefined}>
         <Select
           id={`${prefix}-effort`}
-          mono
           value={value.effort}
           disabled={disabled || !!noEffort}
           aria-describedby={noEffort ? `${prefix}-effort-hint` : undefined}
@@ -64,7 +62,6 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: { pref
       <Field id={`${prefix}-context-size`} label="Context size" hint={noContext || (value.context_size === 'long_context' ? 'Long context may cost more.' : undefined)}>
         <Select
           id={`${prefix}-context-size`}
-          mono
           value={value.context_size || 'default'}
           disabled={disabled || !!noContext}
           aria-describedby={noContext ? `${prefix}-context-size-hint` : undefined}

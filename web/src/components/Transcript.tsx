@@ -335,7 +335,7 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className }: { it
       <Copyable text={item.text ?? ''} label="Copy message" side="left" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
         <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink">
           <span className="sr-only">You: </span>
-          {item.delivery && <span className="block text-caption text-accent">{item.delivery === 'steer' ? 'Steer' : 'Autopilot'}</span>}
+          {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
           {item.text && <Markdown text={item.text} />}
           {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
         </div>
@@ -698,7 +698,7 @@ function SubagentRow({ item, subagent, agentItems, provider, onOpen }: { item: I
           </Collapse>
         </div>
         <AgentChip status={subagent.status} />
-        {subagent.model && <span className="min-w-0 truncate font-mono text-code-sm text-muted" title={modelName(meta, provider, subagent.model)}>{modelName(meta, provider, subagent.model)}</span>}
+        {subagent.model && <span className="min-w-0 truncate text-caption text-muted" title={modelName(meta, provider, subagent.model)}>{modelName(meta, provider, subagent.model)}</span>}
         {took && <span className="text-caption tabular-nums text-muted">{took}</span>}
         <Button size="sm" variant="secondary" className="h-7" onClick={(e) => onOpen(e.currentTarget)}>
           Open

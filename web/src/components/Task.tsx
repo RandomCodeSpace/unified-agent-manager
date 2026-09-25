@@ -93,7 +93,7 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
                 </Button>
               </Tip>}
             </div>
-            <code className="block truncate font-mono text-code-sm" title={task.command}>{task.command}</code>
+            <code className="block truncate font-sans text-caption" title={task.command}>{task.command}</code>
             {requests[task.id]?.error && <p role="alert" className="pt-1 text-error">{requests[task.id].error}</p>}
           </li>
         ))}
@@ -293,7 +293,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
           </div>
           {/* The project strip (DESIGN.md D3): the branch, then Changes, beside the title. */}
           {project?.branch && (
-            <span className="flex min-w-0 max-w-40 items-center gap-1 font-mono text-meta text-muted max-sm:hidden" title={`Project branch: ${project.branch}\nProject folder: ${session.workdir}`}>
+            <span className="flex min-w-0 max-w-40 items-center gap-1 text-meta text-muted max-sm:hidden" title={`Project branch: ${project.branch}\nProject folder: ${session.workdir}`}>
               <GitBranch aria-hidden="true" className="size-3 shrink-0" />
               <span className="truncate">{project.branch}</span>
             </span>

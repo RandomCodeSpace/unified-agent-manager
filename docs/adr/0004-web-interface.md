@@ -966,12 +966,24 @@ No request carries base64 in JSON.
   submission that pauses the queue. A retried `request_id` returns the
   recorded outcome, so nothing is uploaded or sent twice. Copilot receives each
   upload as an `AttachmentBlob` with base64 data, the MIME type and the name as
-  display name. OpenCode receives a `file` part with a `data:` URL after the
-  text and file-reference parts.
+  display name, except a PDF: UAM hard-links it to `<id>.d/<name>.pdf` beside
+  the stored copy (through `os.Root`) and Copilot receives that path as an
+  `AttachmentFile`. Copilot CLI passes a document to the model natively only
+  where its model client supports the type (it reported none for GPT-6 Luna,
+  and a PDF blob then reached the model as a bare name); for a file it
+  otherwise gives the agent the path, to read with whatever tools the host
+  has (UAM ships none; `pdftotext` is poppler-utils). The
+  sweep removes the `.d` directory with its upload. OpenCode receives a `file`
+  part with a `data:` URL after the text and file-reference parts.
 - **Transcript.** User items carry `attachments: [{"id"?, "name", "mime",
   "size"?}]`. Copilot's live `user.message` holds the blob data, and its
-  recorded event holds `assetId: "sha256:<hex>"` and `byteLength` instead.
-  OpenCode's user `file` part keeps its `data:` URL. The adapters report the
+  recorded event holds `assetId: "sha256:<hex>"` and `byteLength` instead; a
+  PDF is a file attachment under `web-attachments/<task>/<id>.d/`, which the
+  adapter hashes from disk, and any other file attachment is a reference, not
+  an upload. Such a PDF is `not_native` unless the message's
+  `supportedNativeDocumentMimeTypes` lists its type and
+  `nativeDocumentPathFallbackPaths` does not list its path; the browser then
+  warns under it that the agent had to read the file with host tools. OpenCode's user `file` part keeps its `data:` URL. The adapters report the
   SHA-256 of the content, and UAM gives each item attachment the ID of this
   Task's stored upload with the same content. Matching on content works for
   both providers after a reload or a restart, and needs no message ID from the
@@ -990,8 +1002,8 @@ No request carries base64 in JSON.
 | Addition | Meaning |
 |---|---|
 | `Model.Media *Media` | `Media{Images, PDF, MaxImages, Types}`; nil means the model reports nothing and is not gated. `MaxImages` 0 means no limit; empty `Types` means any type `Images` and `PDF` allow. |
-| `Prompt.Attachments []Blob` | `Blob{Name, MIME, Data}`: checked upload bytes to send inline. |
-| `Item.Attachments []Attachment` | `Attachment{ID, Name, MIME, Size, SHA256}`. Adapters fill `Name`, `MIME`, `Size` and `SHA256`; UAM sets `ID`. `SHA256` never reaches a browser. |
+| `Prompt.Attachments []Blob` | `Blob{Name, MIME, Data, Path}`: checked upload bytes to send inline; `Path`, set for a PDF, is a copy under the file's own name for a provider that reads documents from disk. |
+| `Item.Attachments []Attachment` | `Attachment{ID, Name, MIME, Size, NotNative, SHA256}`. Adapters fill `Name`, `MIME`, `Size` and `SHA256`; UAM sets `ID`. `SHA256` never reaches a browser. |
 
 ### HTTP additions and changes
 
@@ -1452,7 +1464,10 @@ bundle grew from 748.0 to 756.5 kB (gzip 232.1 to 235.4 kB).
   ESM frame would need `Access-Control-Allow-Origin` on `/assets/*` (public
   files, but a header the service has never sent) or a slimmer Mermaid
   registration; both are possible follow-ups.
-- Diagrams use the system font, not Inter.
+- Diagrams use Figtree: the frame bundles its Latin file as a data URL (about
+  20 KB), builds the face from bytes (no fetch, so no CORS) and embeds it in
+  each SVG, which as an image loads nothing else; other scripts fall back to
+  the system font.
 - Mermaid's error text appears as a quiet note under the code; the code
   block stays usable either way.
 

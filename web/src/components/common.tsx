@@ -197,7 +197,7 @@ const BADGE_BG: Record<BadgeColor, string> = {
 /** A Project's badge: a 16px rounded square in its tone with the two characters. Decorative; the name beside it carries the meaning. */
 export function ProjectBadge({ badge, className }: { badge: Badge; className?: string }) {
   return (
-    <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs font-mono text-badge font-semibold text-on-primary select-none', BADGE_BG[badge.color], className)}>
+    <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs text-badge font-bold text-on-primary select-none', BADGE_BG[badge.color], className)}>
       {badge.text}
     </span>
   );

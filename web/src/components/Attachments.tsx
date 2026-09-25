@@ -1,11 +1,11 @@
-import { AtSign, ExternalLink, FileText, FileType, Image as ImageIcon, Paperclip, X } from 'lucide-react';
+import { AtSign, ExternalLink, FileText, FileType, Image as ImageIcon, Paperclip, TriangleAlert, X } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { api, type Attachment } from '../api';
 import { formatSize, kindOf, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { Button, buttonVariants } from './ui/button';
 import { Chip } from './ui/chip';
-import { Dialog } from './ui/dialog';
+import { ViewerDialog } from './ui/dialog';
 
 /** One upload in the composer, from the moment it is chosen until it is sent or removed. */
 export interface Pending {
@@ -75,7 +75,7 @@ export function UploadChip({ item, onRemove }: { item: Pending; onRemove: () => 
 /** A referenced project path in the composer. */
 export function FileRefChip({ path, onRemove }: { path: string; onRemove: () => void }) {
   return (
-    <span className="inline-flex h-7 max-w-full min-w-0 items-center gap-1 rounded-sm bg-tint-well pl-1.5 font-mono text-code-sm text-ink animate-rise">
+    <span className="inline-flex h-7 max-w-full min-w-0 items-center gap-1 rounded-sm bg-tint-well pl-1.5 text-caption text-ink animate-rise">
       <AtSign aria-hidden="true" className="size-3 shrink-0 text-faint" />
       <span className="truncate" title={path}>{path}</span>
       <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Remove file reference ${path}`} onClick={onRemove}>
@@ -98,13 +98,13 @@ export function DropOverlay({ note }: { note: string }) {
   );
 }
 
-/** Small mono chips for a queued prompt's files and uploads. */
+/** Small chips for a queued prompt's files and uploads. */
 export function QueuedExtras({ files = [], attachments = [] }: { files?: string[]; attachments?: Attachment[] }) {
   if (!files.length && !attachments.length) return null;
   return (
     <span className="flex flex-wrap gap-1">
       {files.map((f) => (
-        <Chip key={`f-${f}`} fill="well" className="gap-1 font-mono text-meta">
+        <Chip key={`f-${f}`} fill="well" className="gap-1 text-meta">
           <AtSign aria-hidden="true" className="size-2.5" />
           {f}
         </Chip>
@@ -155,15 +155,21 @@ export function ImageThumbs({ sessionId, images, className }: { sessionId: strin
         ))}
       </div>
       {shown && (
-        <Dialog open={open} onOpenChange={setOpen} onClosed={() => setShown(null)} title={nameOf(shown)} description={`${KIND_LABEL[kindOf(shown.mime)]}${shown.size ? ` · ${formatSize(shown.size)}` : ''}`} className="max-w-[min(92vw,1100px)]">
-          <img src={api.attachmentUrl(sessionId, shown.id)} alt={nameOf(shown)} className="mx-auto block max-h-[72dvh] w-auto max-w-full rounded-sm bg-sunken" />
-          <div className="mt-4 flex justify-end">
+        <Lightbox
+          open={open}
+          onOpenChange={setOpen}
+          onClosed={() => setShown(null)}
+          title={nameOf(shown)}
+          description={`${KIND_LABEL[kindOf(shown.mime)]}${shown.size ? ` · ${formatSize(shown.size)}` : ''}`}
+          src={api.attachmentUrl(sessionId, shown.id)}
+          alt={nameOf(shown)}
+          footer={
             <a href={api.attachmentUrl(sessionId, shown.id)} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: 'secondary', size: 'md' })}>
               <ExternalLink />
               Open original
             </a>
-          </div>
-        </Dialog>
+          }
+        />
       )}
     </>
   );
@@ -172,7 +178,8 @@ export function ImageThumbs({ sessionId, images, className }: { sessionId: strin
 /**
  * A user item's uploads in the transcript: images as thumbnails from the serve route
  * (click opens the lightbox), other files as chips that open the stored copy. Without a
- * stored copy the chip has no link.
+ * stored copy the chip has no link. A document the model did not receive as a document
+ * gets a warning line saying how it was read instead.
  */
 export function ItemAttachments({ sessionId, attachments }: { sessionId: string; attachments: Attachment[] }) {
   const images = attachments.filter((a): a is Attachment & { id: string } => kindOf(a.mime) === 'image' && !!a.id);
@@ -187,17 +194,25 @@ export function ItemAttachments({ sessionId, attachments }: { sessionId: string;
           ))}
         </div>
       )}
+      {rest.filter((a) => a.not_native).map((a, i) => (
+        <p key={`nn-${a.id ?? i}`} className="flex items-start gap-1.5 text-caption text-warning">
+          <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            This model can’t take {a.name} as a PDF. The agent got the file to read with the tools on this machine instead,
+            which can miss scanned pages, images and layout, or fail without a PDF text tool.
+          </span>
+        </p>
+      ))}
     </>
   );
 }
 
-/** The image lightbox (DESIGN.md): a dialog up to 92vw by 1100px, the image up to 72dvh, `footer` right-aligned under it. */
+/** The image lightbox (DESIGN.md): the image up to 94vw by 1400px and 78dvh on a see-through scrim, `footer` right-aligned under it. */
 export function Lightbox({ open, onOpenChange, onClosed, title, description, src, alt, footer }: { open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; title: ReactNode; description?: ReactNode; src: string; alt: string; footer?: ReactNode }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} onClosed={onClosed} title={title} description={description} className="max-w-[min(92vw,1100px)]">
-      <img src={src} alt={alt} className="mx-auto block max-h-[72dvh] w-auto max-w-full rounded-sm bg-sunken" />
-      {footer && <div className="mt-4 flex justify-end">{footer}</div>}
-    </Dialog>
+    <ViewerDialog open={open} onOpenChange={onOpenChange} onClosed={onClosed} title={title} description={description} footer={footer}>
+      <img src={src} alt={alt} className="mx-auto block max-h-[78dvh] w-auto max-w-full min-h-0 rounded-sm bg-sunken shadow-modal" />
+    </ViewerDialog>
   );
 }
 
