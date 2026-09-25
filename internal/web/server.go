@@ -811,7 +811,7 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 	} else if !s.noAuth {
 		key := fileKey(s.token, r.Host, id, time.Now().Add(fileKeyTTL).Unix())
 		// The id segment is escaped, so the first /files/view/ is the route's.
-		http.Redirect(w, r, strings.Replace(r.URL.EscapedPath(), "/files/view/", "/files/key/"+key+"/", 1), http.StatusFound)
+		http.Redirect(w, r, strings.Replace(r.URL.EscapedPath(), "/files/view/", "/files/key/"+key+"/", 1), http.StatusFound) // #nosec G710 -- the request's own path, which this route matched under /api/sessions/; never another host.
 		return
 	}
 	f, err := s.m.ViewFile(id, r.PathValue("path"))
