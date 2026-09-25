@@ -3,7 +3,7 @@ import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { approvalMark, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, segmentActivity, summarizeActivity, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
+import { approvalMark, askedOn, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, segmentActivity, summarizeActivity, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
@@ -40,9 +40,9 @@ function useArrivals(ids: string[]) {
 /**
  * Main transcript. User items are bubbles on the right; everything between two user items
  * is one flat assistant turn: thinking inline, one row per tool call with its approval on
- * it, a question block for each `ask_user` call, a compact row for each `task` call that
- * spawned a subagent (its output lives in the panel, never here), and the prose. A decided
- * request without a tool row joins the turn at its time.
+ * it, a question block for each `ask_user` call once it no longer waits, a compact row for
+ * each `task` call that spawned a subagent (its output lives in the panel, never here), and
+ * the prose. A decided request without a tool row joins the turn at its time.
  */
 export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, live, working, provider, onOpenAgent }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)]);
@@ -124,19 +124,18 @@ function thoughtEnds(items: Item[]): Map<string, string> {
 
 /**
  * Entries in order. Each contiguous run of work between two messages (thinking, tool calls,
- * decided requests) folds into one activity row; prose, questions and the rows `special`
- * takes over (subagents, whose controls must stay in view) stand on their own between them.
+ * decided requests, questions that no longer wait) folds into one activity row; prose and
+ * the rows `special` takes over (subagents, whose controls must stay in view) stand on
+ * their own between them.
  */
 function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: Item) => ReactNode | null): ReactNode[] {
   // A pending request is the action card under the transcript; it is not drawn twice.
   const drawn = entries.filter((entry) => entry.interaction?.state !== 'pending');
-  // Tool calls that are a block of their own: a subagent row, or a question once it is answered.
+  // Tool calls that are a block of their own: a subagent row.
   const own = new Map<string, ReactNode>();
   for (const { item } of drawn) {
     if (item?.kind !== 'tool') continue;
-    const asked = questionOf(item.tool, ctx.approvals.get(item.id)?.filter((ix) => ix.kind === 'question').at(-1), ctx.live);
-    // A question still waiting is the action card; its tool row stays in the run until it is answered.
-    const node = special?.(item) ?? (asked && asked.outcome !== 'pending' ? <QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} /> : null);
+    const node = special?.(item);
     if (node) own.set(item.id, node);
   }
   const out: ReactNode[] = [];
@@ -155,7 +154,11 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
   return out;
 }
 
-/** The rows themselves: consecutive tool calls form one run of rows, `own` holds the blocks that take a tool call over. */
+/**
+ * The rows themselves: consecutive tool calls form one run of rows, `own` holds the blocks
+ * that take a tool call over, and a question that no longer waits is its question block. A
+ * question still waiting is the action card; its tool row stays until it is answered.
+ */
 function renderRows(entries: Entry[], ctx: RenderContext, own: Map<string, ReactNode>): ReactNode[] {
   const out: ReactNode[] = [];
   let run: Item[] = [];
@@ -175,7 +178,8 @@ function renderRows(entries: Entry[], ctx: RenderContext, own: Map<string, React
     }
     const item = entry.item;
     if (item.kind === 'tool') {
-      const node = own.get(item.id);
+      const asked = own.has(item.id) ? null : askedOn(item, ctx.approvals, ctx.live);
+      const node = own.get(item.id) ?? (asked && asked.outcome !== 'pending' ? <QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} /> : null);
       if (!node) {
         run.push(item);
         continue;

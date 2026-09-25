@@ -290,6 +290,11 @@ export function questionOf(tool: ToolCall | undefined, interaction: Interaction 
   return q;
 }
 
+/** What a tool row asked: Copilot's `ask_user` call, or any call a question request names; null for every other call. */
+export function askedOn(item: Item, approvals: Map<string, Interaction[]> | undefined, live: boolean): AskedQuestion | null {
+  return questionOf(item.tool, approvals?.get(item.id)?.filter((ix) => ix.kind === 'question').at(-1), live);
+}
+
 function answered(q: AskedQuestion, answer: string): AskedQuestion {
   q.outcome = 'answered';
   q.answer = answer;
@@ -348,9 +353,9 @@ export const awaitsUser = (ix: Interaction) => ix.state === 'pending' && !ix.aut
 
 const isActiveTool = (item: Item) => item.tool?.status === 'pending' || item.tool?.status === 'running';
 
-/** Work between two messages: thinking, tool calls and the quiet row of a decided request. Prose, the user's bubbles, questions and notices bound it. */
+/** Work between two messages: thinking, tool calls, decided requests and questions that no longer wait. Prose, the user's bubbles and notices bound it. */
 export function isWork(entry: Entry): boolean {
-  if (entry.interaction) return entry.interaction.kind === 'permission' && entry.interaction.state !== 'pending';
+  if (entry.interaction) return entry.interaction.state !== 'pending';
   return entry.item.kind === 'reasoning' || entry.item.kind === 'tool';
 }
 
@@ -378,7 +383,7 @@ export function segmentActivity(entries: Entry[], work: (entry: Entry) => boolea
 }
 
 export interface ActivitySummary {
-  /** "Thought 4×, ran 4 commands and read 2 files · 1 failed · 12s"; empty when the run has nothing to show. */
+  /** "Thought 4×, ran 4 commands and answered 2 questions · 1 failed · 12s"; empty when the run has nothing to show. */
   label: string;
   /** `error` when a call failed, `attention` while a call waits for the user's permission. */
   tone: 'muted' | 'error' | 'attention';
@@ -388,8 +393,9 @@ export interface ActivitySummary {
 
 /**
  * The activity row's label for one run of work. Finished thoughts are counted ("Thought",
- * "Thought 4×") with what the tools did, then what stays explicit: failures, calls without
- * a result, images returned, the call waiting for permission or still running (the last
+ * "Thought 4×") with what the tools did and the questions answered or declined, then what
+ * stays explicit: failures (a failed question too), calls without a result, questions
+ * without an answer, images returned, the call waiting for permission or still running (the last
  * one, by name and argument), thinking still streaming; and, once the run ended and the
  * next item's time is known, how long it took from the first item.
  */
@@ -398,8 +404,24 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
   const tools = items.filter((it) => it.kind === 'tool');
   const thinking = items.some((it) => it.kind === 'reasoning' && it.id === streamingId);
   const thoughts = items.filter((it) => it.kind === 'reasoning' && it.id !== streamingId && it.text?.trim()).length;
-  const decided = entries.length - items.length;
-  const { done, failed, noResult } = toolCounts(tools, live);
+  // A question that no longer waits counts as a question, never as a tool call; one still waiting stays a call.
+  const outcomes: AskedQuestion['outcome'][] = [];
+  const calls = tools.filter((it) => {
+    const q = askedOn(it, approvals, live);
+    if (!q || q.outcome === 'pending') return true;
+    outcomes.push(q.outcome);
+    return false;
+  });
+  let decided = 0;
+  for (const { interaction } of entries) {
+    if (interaction?.kind === 'question') outcomes.push(questionOf(undefined, interaction, live)!.outcome);
+    else if (interaction) decided++;
+  }
+  const asked = (outcome: AskedQuestion['outcome']) => outcomes.filter((o) => o === outcome).length;
+  const [answeredQs, declinedQs, unanswered] = [asked('answered'), asked('declined'), asked('none')];
+  const counts = toolCounts(calls, live);
+  const { done, noResult } = counts;
+  const failed = counts.failed + asked('failed');
   const running = live ? tools.filter(isActiveTool).at(-1) : undefined;
   const waiting = !!running && !!approvals?.get(running.id)?.some(awaitsUser);
   const images = tools.reduce((n, it) => n + (it.images?.length ?? 0), 0);
@@ -408,9 +430,10 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
   const call = running && toolLabel(running.tool);
   const now = running ? `${waiting ? 'Waiting for your approval' : 'Running'}: ${call!.arg ? `${call!.name} ${call!.arg}` : call!.name}` : thinking ? 'Thinking…' : '';
   const label = [
-    sentence([thoughts && (thoughts === 1 ? 'thought' : `thought ${thoughts}×`), ...done, decided && `decided ${noun(decided, 'request')}`].filter(Boolean) as string[]),
+    sentence([thoughts && (thoughts === 1 ? 'thought' : `thought ${thoughts}×`), ...done, answeredQs && `answered ${noun(answeredQs, 'question')}`, declinedQs && `declined ${noun(declinedQs, 'question')}`, decided && `decided ${noun(decided, 'request')}`].filter(Boolean) as string[]),
     failed && `${failed} failed`,
     noResult && `${noResult} without a result`,
+    unanswered && `${noun(unanswered, 'question')} unanswered`,
     images && noun(images, 'image'),
     now,
     took,
