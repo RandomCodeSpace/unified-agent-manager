@@ -7,7 +7,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed } from '../lib/diagram';
-import { isImagePath, localPath, splitBlocks } from '../lib/markdown';
+import { localPath, splitBlocks, taskFile } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
 import { Lightbox } from './Attachments';
 import { DiagramCard } from './Diagram';
@@ -406,6 +406,9 @@ const MdContext = createContext<MdSource>({ text: '', streaming: false });
 /** The Task whose transcript is rendering: markdown images and links by file path are served from its directory. */
 export const SessionContext = createContext<string | undefined>(undefined);
 
+/** That Task's directory, so a link by absolute path inside it opens and one outside stays text. */
+export const WorkdirContext = createContext<string | undefined>(undefined);
+
 /** Natural sizes of local images that loaded, by URL, so a block parsed again reserves the same box before the bytes arrive. */
 const imageSizes = new Map<string, { width: number; height: number }>();
 
@@ -490,11 +493,12 @@ function MdImage({ src, alt }: { src?: string; alt?: string }) {
   return <ImageNote alt={text} detail={src ?? ''} href={src && /^https?:/i.test(src) ? src : undefined} />;
 }
 
-/** A markdown link: web addresses open in a new tab; a path to an image file opens it from the raw file route; anything else is text. */
+/** A markdown link: web addresses and files of the Task's directory (the view route) open in a new tab; anything else is text. */
 function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
   const sessionId = useContext(SessionContext);
-  const path = localPath(href);
-  const target = path ? (sessionId && isImagePath(path) ? api.rawFileUrl(sessionId, path) : undefined) : typeof href === 'string' && /^(https?:|mailto:)/i.test(href) ? href : undefined;
+  const workdir = useContext(WorkdirContext);
+  const file = taskFile(href, workdir);
+  const target = localPath(href) ? (sessionId && file ? api.viewFileUrl(sessionId, file.path) + file.hash : undefined) : typeof href === 'string' && /^(https?:|mailto:)/i.test(href) ? href : undefined;
   return target ? (
     <a href={target} rel="noopener noreferrer" target="_blank">
       {children}
@@ -521,7 +525,7 @@ function MermaidBlock({ source, position, children }: { source: string; position
 
 const languageOf = (className: unknown): string | undefined => /language-([\w+-]+)/.exec(Array.isArray(className) ? className.join(' ') : String(className ?? ''))?.[1];
 
-/** react-markdown drops `file:` URLs as unsafe; here they are paths for the raw file route, which MdImage and MdLink decide on. */
+/** react-markdown drops `file:` URLs as unsafe; here they are paths for the file routes, which MdImage and MdLink decide on. */
 const mdUrl = (url: string): string => (/^file:\/\//i.test(url) ? url : defaultUrlTransform(url));
 
 const mdComponents: Components = {

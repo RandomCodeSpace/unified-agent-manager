@@ -173,6 +173,7 @@ export function SubagentPanel({
         <AgentTranscriptView
           key={current.id}
           sessionId={session.id}
+          workdir={session.workdir}
           subagent={current}
           interactions={session.interactions}
           transcript={agents[current.id]}
@@ -304,6 +305,7 @@ function SubagentRow({
  */
 function AgentTranscriptView({
   sessionId,
+  workdir,
   subagent,
   interactions,
   transcript,
@@ -311,6 +313,7 @@ function AgentTranscriptView({
   result,
 }: {
   sessionId: string;
+  workdir: string;
   subagent: Subagent;
   /** The Task's requests; this subagent's are those with its agent_id. */
   interactions: Interaction[];
@@ -359,7 +362,7 @@ function AgentTranscriptView({
         </Note>
       ) : (
         <>
-          <AgentItems sessionId={sessionId} agentId={subagent.id} items={items} interactions={interactions} live={live} />
+          <AgentItems sessionId={sessionId} workdir={workdir} agentId={subagent.id} items={items} interactions={interactions} live={live} />
           {items.length === 0 && <Note>Nothing recorded yet.</Note>}
         </>
       )}

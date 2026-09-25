@@ -45,6 +45,15 @@ const (
 	// inline styles are allowed because Mermaid's SVG needs them.
 	frameDocument = "diagram-frame.html"
 	frameSecurity = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+	// viewSecurity replaces the policy for a file of a Task's directory opened
+	// in its own tab, such as an HTML report the agent wrote: its scripts run
+	// and it loads what it likes, but without allow-same-origin its origin is
+	// opaque, so it holds no cookie, cannot read this service's responses and
+	// cannot reach the opener or navigate the top level.
+	viewSecurity = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+	// fileKeyRoute is the view route under a file key (fileKey), the one
+	// route that checks its own credential instead of the cookie.
+	fileKeyRoute = "GET /api/sessions/{id}/files/key/{key}/{path...}"
 )
 
 // ServerConfig configures the HTTP interface.
@@ -159,6 +168,8 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.handleCommands)
 	mux.HandleFunc("GET /api/sessions/{id}/files", s.handleFiles)
 	mux.HandleFunc("GET /api/sessions/{id}/files/raw", s.handleRawImage)
+	mux.HandleFunc("GET /api/sessions/{id}/files/view/{path...}", s.handleViewFile)
+	mux.HandleFunc(fileKeyRoute, s.handleViewFile)
 	mux.HandleFunc("POST /api/sessions/{id}/attachments", s.handleUpload)
 	mux.HandleFunc("GET /api/sessions/{id}/attachments/{attachment_id}", s.handleAttachment)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/resume", s.handleQueueResume)
@@ -228,12 +239,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
-	if api && r.URL.Path != "/api/auth" && r.URL.Path != "/api/login" && !s.authenticated(r) {
+	if api && r.URL.Path != "/api/auth" && r.URL.Path != "/api/login" && !s.authenticated(r) && !s.fileKeyRequest(r) {
 		s.refuse(w, r, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	s.logRequest(r, "allowed", 0)
 	s.mux.ServeHTTP(w, r)
+}
+
+// fileKeyRequest reports whether r is for the file key route, whose handler
+// checks the key.
+func (s *Server) fileKeyRequest(r *http.Request) bool {
+	_, pattern := s.mux.Handler(r)
+	return pattern == fileKeyRoute
 }
 
 // refuse answers a request the checks turn away.
@@ -774,6 +792,49 @@ func (s *Server) handleRawImage(w http.ResponseWriter, r *http.Request) {
 		h.Set("Content-Disposition", "inline")
 	}
 	http.ServeContent(w, r, "", img.Info.ModTime(), img.File)
+}
+
+// handleViewFile serves any file of the Task's directory, named by the path
+// after view/ so that a page's relative links resolve to its siblings. Every
+// response is sandboxed (viewSecurity), which Chromium's PDF viewer renders
+// under too; a type the route does not display is a download. Files change,
+// so each load revalidates. With authentication on, the cookie-checked view
+// route redirects to the same path under a file key, which the sandboxed
+// page's own requests then carry.
+func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if key := r.PathValue("key"); key != "" {
+		if !s.noAuth && !s.validFileKey(key, r.Host, id) {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+	} else if !s.noAuth {
+		key := fileKey(s.token, r.Host, id, time.Now().Add(fileKeyTTL).Unix())
+		// The id segment is escaped, so the first /files/view/ is the route's.
+		http.Redirect(w, r, strings.Replace(r.URL.EscapedPath(), "/files/view/", "/files/key/"+key+"/", 1), http.StatusFound)
+		return
+	}
+	f, err := s.m.ViewFile(id, r.PathValue("path"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	defer func() { _ = f.File.Close() }()
+	h := w.Header()
+	h.Set("Content-Type", f.MIME)
+	h.Set("Cache-Control", "private, no-cache")
+	h.Set("ETag", fmt.Sprintf(`"%x-%x"`, f.Info.Size(), f.Info.ModTime().UnixNano()))
+	h.Set("Content-Security-Policy", viewSecurity)
+	disposition := "inline"
+	if f.MIME == "application/octet-stream" {
+		disposition = "attachment"
+	}
+	if value := mime.FormatMediaType(disposition, map[string]string{"filename": f.Info.Name()}); value != "" {
+		h.Set("Content-Disposition", value)
+	} else {
+		h.Set("Content-Disposition", disposition)
+	}
+	http.ServeContent(w, r, "", f.Info.ModTime(), f.File)
 }
 
 // handleUpload stores the request body as one attachment named by the name

@@ -5,7 +5,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { approvalMark, askedOn, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, segmentActivity, summarizeActivity, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry } from '../lib/transcript';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkingMark, useApp } from './common';
+import { CodeBlock, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkdirContext, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -27,6 +27,8 @@ interface Props {
   working: boolean;
   /** Provider id used to resolve subagent model names. */
   provider: string;
+  /** The Task's directory, for links to its files. */
+  workdir: string;
   /** Open a subagent's transcript in the side panel; `opener` gets focus back when it closes. */
   onOpenAgent: (agentId: string, opener: HTMLElement) => void;
 }
@@ -44,7 +46,7 @@ function useArrivals(ids: string[]) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, live, working, provider, onOpenAgent }: Props) {
+export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, live, working, provider, workdir, onOpenAgent }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)]);
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
@@ -94,8 +96,10 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
   flush(true);
   return (
     <SessionContext.Provider value={sessionId}>
-      {out}
-      {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
+      <WorkdirContext.Provider value={workdir}>
+        {out}
+        {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
+      </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
 }
@@ -654,16 +658,18 @@ function SubagentRow({ item, subagent, provider, onOpen }: { item: Item; subagen
 }
 
 /** A subagent's own transcript at 13px: the same rows, blocks and bubbles as the main one, with its own requests. */
-export function AgentItems({ sessionId, agentId, items, interactions, live }: { sessionId: string; agentId: string; items: Item[]; interactions: Interaction[]; live: boolean }) {
+export function AgentItems({ sessionId, workdir, agentId, items, interactions, live }: { sessionId: string; workdir: string; agentId: string; items: Item[]; interactions: Interaction[]; live: boolean }) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)]);
   const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
   const ctx: RenderContext = { sessionId, live, streamingId: live ? items[items.length - 1]?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked };
   return (
     <SessionContext.Provider value={sessionId}>
-      <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
-        {renderEntries(mergeByTime(items, [...loose, ...questions]), ctx)}
-        {live && <TurnStatus working />}
-      </div>
+      <WorkdirContext.Provider value={workdir}>
+        <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
+          {renderEntries(mergeByTime(items, [...loose, ...questions]), ctx)}
+          {live && <TurnStatus working />}
+        </div>
+      </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
 }

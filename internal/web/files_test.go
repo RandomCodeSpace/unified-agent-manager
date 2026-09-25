@@ -6,8 +6,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // rawImageTask makes a Task whose directory holds test images, a symbolic
@@ -177,5 +179,165 @@ func TestRawImageRefusesEverythingElse(t *testing.T) {
 	other, _ := createSession(t, ts.m, ts.prov)
 	if w := ts.do(http.MethodGet, rawURL(other.ID, filepath.Join(real, "sky-dodge.png")), "", auth); w.Code != http.StatusNotFound {
 		t.Fatalf("another task = %d", w.Code)
+	}
+}
+
+// viewTask makes a Task whose directory holds a page with sibling assets,
+// files of other kinds, a directory and links leading out of it.
+func viewTask(t *testing.T, ts *testServer) (SessionSummary, string) {
+	t.Helper()
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{filepath.Join(real, "out"), filepath.Join(real, "assets"), outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string][]byte{
+		"out/report.html":     []byte(`<link rel="stylesheet" href="style.css"><script src="app.js"></script><img src="../shot.png">`),
+		"out/style.css":       []byte("h1 { color: red }"),
+		"out/app.js":          []byte("document.title = 'ran'"),
+		"assets/x.css":        []byte("body { margin: 0 }"),
+		"shot.png":            pngBytes(t),
+		"logo.svg":            []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`),
+		"doc.pdf":             []byte("%PDF-1.4\n"),
+		"notes.md":            []byte("# Notes"),
+		"Makefile":            []byte("all:\n\techo hi\n"),
+		"blob.bin":            []byte("head\x00tail"),
+		"a b.txt":             []byte("spaced"),
+		"../outside/secret.x": []byte("secret"),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(real, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for link, target := range map[string]string{
+		"inside-link.md": filepath.Join(real, "notes.md"),
+		"outside-link.x": filepath.Join(outside, "secret.x"),
+		"outside-dir":    outside,
+	} {
+		if err := os.Symlink(target, filepath.Join(real, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sum, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: addProject(t, ts.m, real), Name: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sum, real
+}
+
+func viewURL(id, p string) string { return "/api/sessions/" + id + "/files/view/" + p }
+
+func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{NoAuth: true})
+	sum, real := viewTask(t, ts)
+
+	served := map[string]struct{ mime, disposition string }{
+		"out/report.html": {"text/html; charset=utf-8", "inline"},
+		"out/style.css":   {"text/css; charset=utf-8", "inline"},
+		"out/app.js":      {"text/javascript; charset=utf-8", "inline"},
+		"assets/x.css":    {"text/css; charset=utf-8", "inline"},
+		"shot.png":        {"image/png", "inline"},
+		"logo.svg":        {"image/svg+xml", "inline"},
+		"doc.pdf":         {"application/pdf", "inline"},
+		"notes.md":        {"text/plain; charset=utf-8", "inline"},
+		"inside-link.md":  {"text/plain; charset=utf-8", "inline"},
+		"Makefile":        {"text/plain; charset=utf-8", "inline"},
+		"a%20b.txt":       {"text/plain; charset=utf-8", "inline"},
+		"blob.bin":        {"application/octet-stream", "attachment"},
+	}
+	for p, want := range served {
+		w := ts.do(http.MethodGet, viewURL(sum.ID, p), "")
+		h := w.Header()
+		name, _ := url.PathUnescape(p)
+		body, _ := os.ReadFile(filepath.Join(real, name))
+		if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), body) || h.Get("Content-Type") != want.mime ||
+			h.Get("Content-Security-Policy") != viewSecurity || h.Get("X-Content-Type-Options") != "nosniff" ||
+			h.Get("Referrer-Policy") != "no-referrer" || h.Get("Cache-Control") != "private, no-cache" ||
+			!strings.HasPrefix(h.Get("Content-Disposition"), want.disposition+"; filename=") {
+			t.Errorf("GET %s = %d %v %q", p, w.Code, h, w.Body.String()[:min(w.Body.Len(), 80)])
+		}
+	}
+	if w := ts.do(http.MethodGet, viewURL(sum.ID, "notes.md"), "", withHeader("Range", "bytes=2-")); w.Code != http.StatusPartialContent || w.Body.String() != "Notes" {
+		t.Fatalf("range = %d %q", w.Code, w.Body)
+	}
+
+	for _, p := range []string{
+		"", "out", "out/", "missing.html", "outside-link.x", "outside-dir/secret.x",
+		"..%2Foutside%2Fsecret.x", "out%2F..%2F..%2Foutside%2Fsecret.x", "%2Fetc%2Fpasswd", "%00",
+	} {
+		w := ts.do(http.MethodGet, viewURL(sum.ID, p), "")
+		if w.Code != http.StatusNotFound && w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), real) {
+			t.Errorf("GET %q = %d %s", p, w.Code, w.Body)
+		}
+	}
+	// A literal .. is cleaned away by the mux before any handler runs.
+	if w := ts.do(http.MethodGet, viewURL(sum.ID, "../../../../etc/passwd"), ""); w.Code == http.StatusOK && strings.Contains(w.Body.String(), "root:") {
+		t.Fatalf("dot-dot = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, viewURL("nope", "notes.md"), ""); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown task = %d", w.Code)
+	}
+}
+
+func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	sum, _ := viewTask(t, ts)
+	other, _ := createSession(t, ts.m, ts.prov)
+
+	if w := ts.do(http.MethodGet, viewURL(sum.ID, "out/report.html"), ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("without cookie = %d", w.Code)
+	}
+	w := ts.do(http.MethodGet, viewURL(sum.ID, "a%20b.txt"), "", auth)
+	loc := w.Header().Get("Location")
+	prefix := "/api/sessions/" + sum.ID + "/files/key/"
+	if w.Code != http.StatusFound || !strings.HasPrefix(loc, prefix) || !strings.HasSuffix(loc, "/a%20b.txt") {
+		t.Fatalf("with cookie = %d %q", w.Code, loc)
+	}
+	key := strings.TrimSuffix(strings.TrimPrefix(loc, prefix), "/a%20b.txt")
+	keyURL := func(id, key, p string) string { return "/api/sessions/" + id + "/files/key/" + key + "/" + p }
+
+	// The key stands in for the cookie, for the page and its siblings.
+	for _, p := range []string{"a%20b.txt", "out/report.html", "assets/x.css", "shot.png"} {
+		if w := ts.do(http.MethodGet, keyURL(sum.ID, key, p), ""); w.Code != http.StatusOK || w.Header().Get("Content-Security-Policy") != viewSecurity {
+			t.Errorf("keyed %s = %d", p, w.Code)
+		}
+	}
+	if w := ts.do(http.MethodHead, keyURL(sum.ID, key, "notes.md"), ""); w.Code != http.StatusOK {
+		t.Fatalf("keyed HEAD = %d", w.Code)
+	}
+	// Confinement still applies under a key.
+	if w := ts.do(http.MethodGet, keyURL(sum.ID, key, "outside-link.x"), ""); w.Code != http.StatusNotFound {
+		t.Fatalf("keyed outside link = %d", w.Code)
+	}
+
+	expired := fileKey(testToken, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Minute).Unix())
+	valid := time.Now().Add(time.Hour).Unix()
+	refused := map[string]string{
+		"expired":      keyURL(sum.ID, expired, "notes.md"),
+		"other task":   keyURL(other.ID, key, "notes.md"),
+		"tampered":     keyURL(sum.ID, key[:len(key)-1]+"0", "notes.md"),
+		"extended":     keyURL(sum.ID, strconv.FormatInt(valid, 10)+key[strings.IndexByte(key, '.'):], "notes.md"),
+		"no mac":       keyURL(sum.ID, strconv.FormatInt(valid, 10), "notes.md"),
+		"other secret": keyURL(sum.ID, fileKey("another-token-of-24-chars-plus", "127.0.0.1:8260", sum.ID, valid), "notes.md"),
+	}
+	for name, target := range refused {
+		if w := ts.do(http.MethodGet, target, ""); w.Code != http.StatusUnauthorized {
+			t.Errorf("%s = %d", name, w.Code)
+		}
+	}
+	if w := ts.do(http.MethodGet, keyURL(sum.ID, key, "notes.md"), "", withHost("localhost:8260")); w.Code != http.StatusUnauthorized {
+		t.Fatalf("other host = %d", w.Code)
+	}
+	// The key opens only this GET route: not another method, not another route.
+	if w := ts.do(http.MethodPost, keyURL(sum.ID, key, "notes.md"), "{}"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("keyed POST = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/files/raw?path=shot.png&key="+key, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("key on the raw route = %d", w.Code)
 	}
 }

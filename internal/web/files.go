@@ -249,8 +249,9 @@ var imageExtensions = map[string]string{
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
 }
 
-// ServedImage is an image file of a Task's directory, open for reading.
-type ServedImage struct {
+// ServedFile is a file of a Task's directory, open for reading, with the
+// type it is served as.
+type ServedFile struct {
 	File *os.File
 	Info fs.FileInfo
 	MIME string
@@ -262,7 +263,7 @@ type ServedImage struct {
 // missing files included, is a 404 that says nothing more. Only a regular
 // file whose extension and bytes agree on png, jpeg, gif or webp, at most
 // maxServedImageBytes, is served.
-func (m *Manager) RawImage(id, p string) (*ServedImage, error) {
+func (m *Manager) RawImage(id, p string) (*ServedFile, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return nil, err
@@ -273,46 +274,60 @@ func (m *Manager) RawImage(id, p string) (*ServedImage, error) {
 	return openImage(workdir, p)
 }
 
-func openImage(workdir, p string) (*ServedImage, error) {
+// resolveTaskFile resolves p, absolute or relative to workdir, to a regular
+// file inside workdir's real directory, and returns that directory opened as
+// a root with the file's path in it. Anything else, missing files included,
+// is a 404 that says nothing more.
+func resolveTaskFile(workdir, p string) (*os.Root, string, error) {
 	notFound := newError(http.StatusNotFound, "file not found")
 	if p == "" || len(p) > 4096 || !utf8.ValidString(p) || strings.ContainsRune(p, 0) {
-		return nil, newError(http.StatusBadRequest, "path is required")
+		return nil, "", newError(http.StatusBadRequest, "path is required")
 	}
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(workdir, p)
 	}
 	realDir, err := filepath.EvalSymlinks(workdir)
 	if err != nil {
-		return nil, notFound
+		return nil, "", notFound
 	}
 	real, err := filepath.EvalSymlinks(filepath.Clean(p))
 	if err != nil {
-		return nil, notFound
+		return nil, "", notFound
 	}
 	rel, err := filepath.Rel(realDir, real)
 	if err != nil || rel == "." || !filepath.IsLocal(rel) {
-		return nil, notFound
+		return nil, "", notFound
 	}
 	// os.Root confines every call below, so a link swapped in after the
 	// resolution above still cannot leave the directory.
 	root, err := os.OpenRoot(realDir)
 	if err != nil {
-		return nil, notFound
+		return nil, "", notFound
+	}
+	// Only a regular file is opened, so a name linked to a device or FIFO
+	// never reaches open(2).
+	if info, err := root.Stat(rel); err != nil || !info.Mode().IsRegular() {
+		_ = root.Close()
+		return nil, "", notFound
+	}
+	return root, rel, nil
+}
+
+func openImage(workdir, p string) (*ServedFile, error) {
+	root, rel, err := resolveTaskFile(workdir, p)
+	if err != nil {
+		return nil, err
 	}
 	defer func() { _ = root.Close() }()
-	// Nothing that is not a regular file with an image name is opened, so a
-	// name linked to a device or FIFO never reaches open(2).
-	if info, err := root.Stat(rel); err != nil || !info.Mode().IsRegular() {
-		return nil, notFound
-	}
+	// Nothing without an image name is opened.
 	if _, ok := imageExtensions[strings.ToLower(filepath.Ext(rel))]; !ok {
 		return nil, newError(http.StatusUnsupportedMediaType, "only png, jpeg, gif and webp images are served")
 	}
 	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, notFound
+		return nil, newError(http.StatusNotFound, "file not found")
 	}
-	img, err := checkImage(f, filepath.Ext(real))
+	img, err := checkImage(f, filepath.Ext(rel))
 	if err != nil {
 		_ = f.Close()
 		return nil, err
@@ -320,7 +335,7 @@ func openImage(workdir, p string) (*ServedImage, error) {
 	return img, nil
 }
 
-func checkImage(f *os.File, ext string) (*ServedImage, error) {
+func checkImage(f *os.File, ext string) (*ServedFile, error) {
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, newError(http.StatusNotFound, "file not found")
@@ -343,5 +358,74 @@ func checkImage(f *os.File, ext string) (*ServedImage, error) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return nil, newError(http.StatusNotFound, "file not found")
 	}
-	return &ServedImage{File: f, Info: info, MIME: want}, nil
+	return &ServedFile{File: f, Info: info, MIME: want}, nil
+}
+
+// viewTypes maps the file extensions the view route serves inline to their
+// type. Style sheets and scripts keep theirs so a page's own assets load
+// under nosniff. Any other file is text when its first bytes hold no NUL,
+// otherwise a download.
+var viewTypes = map[string]string{
+	".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".svg": "image/svg+xml",
+	".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+	".pdf": "application/pdf",
+	".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+}
+
+// ViewFile opens the file at rel, relative to the Task's directory, for the
+// view route, with the confinement of RawImage. Its type comes from the
+// extension (viewTypes), else text/plain or application/octet-stream.
+func (m *Manager) ViewFile(id, rel string) (*ServedFile, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	workdir := s.workdir
+	m.mu.Unlock()
+	return openView(workdir, rel)
+}
+
+func openView(workdir, rel string) (*ServedFile, error) {
+	// Joined, never taken as absolute: the route names a path inside the
+	// directory.
+	root, rel, err := resolveTaskFile(workdir, filepath.Join(workdir, filepath.FromSlash(rel)))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, newError(http.StatusNotFound, "file not found")
+	}
+	served, err := viewType(f, rel)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return served, nil
+}
+
+func viewType(f *os.File, rel string) (*ServedFile, error) {
+	notFound := newError(http.StatusNotFound, "file not found")
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, notFound
+	}
+	if mime, ok := viewTypes[strings.ToLower(filepath.Ext(rel))]; ok {
+		return &ServedFile{File: f, Info: info, MIME: mime}, nil
+	}
+	head, err := io.ReadAll(io.LimitReader(f, binarySniffBytes))
+	if err != nil {
+		return nil, notFound
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, notFound
+	}
+	mime := "text/plain; charset=utf-8"
+	if bytes.IndexByte(head, 0) >= 0 {
+		mime = "application/octet-stream"
+	}
+	return &ServedFile{File: f, Info: info, MIME: mime}, nil
 }

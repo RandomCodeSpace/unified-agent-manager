@@ -25,6 +25,8 @@ const (
 	tokenBytes    = 32
 	cookieName    = "uam_web"
 	cookieMaxAge  = 30 * 24 * 60 * 60
+	// fileKeyTTL bounds how long a file key (fileKey) opens a Task's files.
+	fileKeyTTL = 12 * time.Hour
 
 	// An owner-set token (uam web token set) must fall within these bounds.
 	minTokenLen = 24
@@ -169,6 +171,34 @@ func cookieMAC(token, host, exp string) string {
 	mac := hmac.New(sha256.New, []byte(token))
 	mac.Write([]byte("uam-web-session-v2|" + strings.ToLower(host) + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// fileKey derives the key the file key route takes in place of the cookie,
+// for one Task on the request host until exp (Unix seconds). A page opened
+// from the Task's directory is sandboxed, so its requests for its sibling
+// files carry no cookie; under a key in the path its relative links still
+// resolve, and the key opens no other route and no other Task.
+func fileKey(token, host, id string, exp int64) string {
+	e := strconv.FormatInt(exp, 10)
+	return e + "." + fileKeyMAC(token, host, id, e)
+}
+
+func fileKeyMAC(token, host, id, exp string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	mac.Write([]byte("uam-web-file-v1|" + strings.ToLower(host) + "|" + id + "|" + exp))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Server) validFileKey(key, host, id string) bool {
+	exp, mac, ok := strings.Cut(key, ".")
+	if !ok {
+		return false
+	}
+	until, err := strconv.ParseInt(exp, 10, 64)
+	if err != nil || time.Now().Unix() >= until {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(mac), []byte(fileKeyMAC(s.token, host, id, exp))) == 1
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
