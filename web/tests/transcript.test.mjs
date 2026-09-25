@@ -279,7 +279,7 @@ const reasoning = (id, time, text = 'because') => ({ id, kind: 'reasoning', time
 const prose = (id, time, kind = 'assistant') => ({ id, kind, time, text: 'hello' });
 const at = (s) => `2026-09-24T10:00:${String(s).padStart(2, '0')}Z`;
 
-test('work between two messages is one segment; prose, questions and notices stand alone', async () => {
+test('work between two messages is one segment; prose and notices stand alone', async () => {
   const { segmentActivity } = await import('../src/lib/transcript.ts');
   const decided = ix('p1', { time: at(3) });
   const question = q('q1', 'Which?', { time: at(6) });
@@ -289,14 +289,29 @@ test('work between two messages is one segment; prose, questions and notices sta
     ['u1', false, ['u1']],
     ['r1', true, ['r1', 'c1', 'p1', 'c2']],
     ['m1', false, ['m1']],
-    ['q1', false, ['q1']],
-    ['c3', true, ['c3']],
+    ['q1', true, ['q1', 'c3']],
     ['n1', false, ['n1']],
     ['r2', true, ['r2']],
   ]);
   // The caller can keep a tool call out of the run (a subagent row): it splits the run and stands alone.
   const split = segmentActivity(entries, (e) => e.item?.id !== 'c1' && (e.item?.kind === 'reasoning' || e.item?.kind === 'tool' || (e.interaction && e.interaction.kind === 'permission')));
   assert.deepEqual(split.slice(1, 4).map((s) => [s.key, s.work]), [['r1', true], ['c1', false], ['p1', true]]);
+});
+
+test('a question that no longer waits is work: it joins its run and merges the runs around it', async () => {
+  const { isWork, segmentActivity } = await import('../src/lib/transcript.ts');
+  // Copilot's ask_user calls are tool items; other providers' questions are interactions.
+  const items = [prose('u1', at(0), 'user'), reasoning('r1', at(1)), item('c1', undefined, at(2)), asked('a1', 'Which?', at(3)), item('c2', undefined, at(4)), asked('a2', 'Then?', at(5)), reasoning('r2', at(7)), prose('m1', at(9))];
+  const opencode = q('q1', 'And?', { time: at(6) });
+  const segments = segmentActivity(mergeByTime(items, [opencode]));
+  assert.deepEqual(segments.map((s) => [s.key, s.work, s.entries.map((e) => e.item?.id ?? e.interaction.id)]), [
+    ['u1', false, ['u1']],
+    ['r1', true, ['r1', 'c1', 'a1', 'c2', 'a2', 'q1', 'r2']],
+    ['m1', false, ['m1']],
+  ]);
+  for (const state of ['answered', 'rejected', 'expired']) assert.equal(isWork({ interaction: q('q1', 'And?', { state }) }), true);
+  // A question still waiting is the action card, not work.
+  assert.equal(isWork({ interaction: q('q1', 'And?', { state: 'pending' }) }), false);
 });
 
 test('segment keys hold while a run grows, so the row keeps its state as items stream in', async () => {
@@ -359,4 +374,24 @@ test('the activity label keeps what needs attention: the running call, a waiting
   const thinking = summarizeActivity([{ item: reasoning('r1', at(1)) }, { item: reasoning('r2', at(3)) }], { live: true, streamingId: 'r2', endedAt: at(9) });
   assert.deepEqual(thinking, { label: 'Thought · Thinking…', tone: 'muted', active: true });
   assert.equal(summarizeActivity([{ item: reasoning('r2', at(3), '') }], { live: true, streamingId: 'r2' }).label, 'Thinking…');
+});
+
+test('the activity label counts questions by outcome, never as tool calls', async () => {
+  const { summarizeActivity } = await import('../src/lib/transcript.ts');
+  const run = [{ item: item('c1', undefined, at(2)) }, { item: asked('a1', 'Which?', at(3)) }, { item: item('c2', undefined, at(4)) }, { interaction: q('q1', 'Then?', { time: at(5), resolution: 'Answered: red' }) }];
+  assert.deepEqual(summarizeActivity(run, { live: false, endedAt: at(9) }), { label: 'Ran 2 commands and answered 2 questions · 7s', tone: 'muted', active: false });
+  const declined = asked('a2', 'Which?', at(3), { output: `User responded: ${DECLINED_OUTPUT}` });
+  assert.equal(summarizeActivity([{ item: asked('a1', 'Which?', at(3)) }, { item: declined }, { interaction: q('q1', 'Then?', { state: 'rejected' }) }], { live: false }).label, 'Answered 1 question and declined 2 questions');
+  // A call left open by a stopped turn got no answer; an expired request neither.
+  const open = asked('a3', 'Which?', at(3), { status: 'running', output: undefined });
+  assert.equal(summarizeActivity([{ item: open }, { interaction: q('q1', 'Then?', { state: 'expired' }) }], { live: false }).label, '2 questions unanswered');
+  // A failed question counts with the failures and turns the row to error.
+  const failed = asked('a4', 'Which?', at(3), { status: 'failed', output: 'boom' });
+  assert.deepEqual(summarizeActivity([{ item: item('c1', undefined, at(2)) }, { item: failed }], { live: false }), { label: 'Ran 1 command · 1 failed', tone: 'error', active: false });
+  // The question request on the call is the one read: declined there means declined.
+  const approvals = new Map([['a1', [q('q1', 'Which?', { state: 'rejected', tool_call_id: 'a1' })]]]);
+  assert.equal(summarizeActivity([{ item: asked('a1', 'Which?', at(3), { output: '' }) }], { live: false, approvals }).label, 'Declined 1 question');
+  // A question still waiting stays the running call.
+  const waiting = asked('a5', 'Which?', at(3), { status: 'running', output: undefined });
+  assert.deepEqual(summarizeActivity([{ item: item('c1', undefined, at(2)) }, { item: waiting }], { live: true }), { label: 'Ran 1 command · Running: ask_user Which?', tone: 'muted', active: true });
 });

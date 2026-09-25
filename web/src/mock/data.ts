@@ -549,7 +549,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       ],
     }),
     // t14: long runs of thinking and tool calls between short messages, with a running tool,
-    // a failed one and a permission still waiting; the activity rows fold these.
+    // a failed one, two answered questions and a permission still waiting; the activity rows fold these.
     task({
       id: 't14',
       project_id: 'p3',
@@ -575,11 +575,14 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         const read = (id: string, path: string, gap = 0.05) => tool(id, step(gap), { name: 'view', title: `Read ${path}`, status: 'completed', input: JSON.stringify({ path }), output: '40 lines' });
         const think = (id: string, text: string, gap = 0.01) => ({ id, kind: 'reasoning' as const, time: ago(step(gap)), text });
         const say = (id: string, text: string, gap = 0.1) => ({ id, kind: 'assistant' as const, time: ago(step(gap)), text });
+        const ask = (id: string, question: string, choices: string[], output: string, gap = 0.1) => tool(id, step(gap), { name: 'ask_user', title: 'Ask user', status: 'completed', input: JSON.stringify({ question, choices }), output });
         return [
           { id: 'i1', kind: 'user' as const, time: ago(min), text: 'Launch Sky Dodge in the browser and save a screenshot of the game.' },
           think('r1', 'Find the game, start a static server, open it headless and capture the page.'),
           bash('c1', 'ls ~/projects/sky-dodge'),
+          ask('q-port', 'Which port should the local server use?', ['8000', '8080'], 'User selected: 8000'),
           bash('c2', 'python3 -m http.server 8000 --directory ~/projects/sky-dodge &', {}, 0.01),
+          ask('q-shot', 'Capture the whole page or only the viewport?', ['Whole page', 'Viewport only'], 'User selected: Viewport only'),
           tool('c3', step(0.1), { name: 'web_fetch', title: 'Fetch http://localhost:8000', status: 'completed', input: '{"url":"http://localhost:8000"}', output: '<!doctype html>…' }),
           think('r2', 'The page came back; try a headless capture.'),
           say('m1', 'The browser needs `--no-sandbox` in this environment, and the earlier local server is no longer accepting connections. I will restart the server and capture the page.'),
