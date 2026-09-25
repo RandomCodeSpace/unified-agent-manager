@@ -70,8 +70,9 @@ opening it for a Task whose conversation is not open (see Task lifecycle).
 The service binds to a loopback address only. Access is by SSH local
 forwarding or a same-host reverse proxy. Every API request must carry a
 session cookie obtained by presenting the access token stored owner-only next
-to `sessions.json`. Requests are rejected when the `Host` header is not
-loopback or a configured public origin's host, and state-changing requests are
+to `sessions.json`; the cookie is bound to the `Host` it was issued for.
+With `--no-auth`, requests are rejected when the `Host` header is not
+loopback or a configured public origin's host. State-changing requests are
 rejected unless they are same-origin (`net/http.CrossOriginProtection`) and
 JSON. There is no CORS. `uam web --no-auth`, off by default, treats every
 request as authenticated; the other checks stay, but it removes the only
@@ -766,7 +767,10 @@ web UI sends, for debugging, and to set a static token.
   `127.0.0.1`; other host names are refused. The default stays
   `127.0.0.1:8260`. The service binds exactly the literal's address family,
   so `0.0.0.0` does not become a dual-stack `[::]` listener.
-- **Rebinding rule.** With a loopback bind the accepted `Host`s do not
+- **Rebinding rule.** With sign-in on, any `Host` is accepted: a rebound
+  website holds no cookie for its own name, so it reaches only the sign-in
+  page and static assets. The rest of this rule applies with `--no-auth`.
+  With a loopback bind the accepted `Host`s do not
   change: `localhost`, loopback IPs and the configured public origins. With a
   non-loopback bind, a `Host` that is an IP literal, such as the LAN address,
   is accepted as well. A domain name that is not a configured public origin
