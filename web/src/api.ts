@@ -323,7 +323,10 @@ export interface Item {
   delivery?: 'steer' | 'autopilot';
   text?: string;
   tool?: ToolCall;
+  /** When it began: a tool call's start, a thought's model call start. */
   time: string;
+  /** When a tool call or thought finished, from the provider's record; absent while it runs or when unknown. */
+  ended_at?: string;
   /** Subagent instance that produced the item; absent for the main agent. */
   agent_id?: string;
   /** Uploads a user item carried; never their bytes. */

@@ -4,6 +4,7 @@ import { LIVE, api, describeError, provider, readOnly, stageLabel, taskName, typ
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
+import { useDensity } from '../lib/density';
 import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
@@ -134,6 +135,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
   const working = session.state === 'working' || session.state === 'starting';
+  const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const [scrolled, sentinel] = useScrolled();
@@ -377,6 +379,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
               provider={session.provider}
               workdir={session.workdir}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
+              density={density}
+              onOpenChanges={openChanges}
             />
             {cards.map((i) => (
               <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && awaitsUser(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>

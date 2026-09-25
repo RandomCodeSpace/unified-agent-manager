@@ -6,6 +6,7 @@ import { Field, TaskDefaultsFields } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
+import { loadDensity, saveDensity, type Density } from '../lib/density';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Select } from './ui/select';
@@ -280,6 +281,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [motion, setMotion] = useState(loadMotion);
+  const [density, setDensity] = useState(loadDensity);
   const [scrolled, sentinel] = useScrolled();
 
   async function save(patch: Partial<Settings>) {
@@ -446,6 +448,21 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                 items={[
                   { value: 'on', label: 'Always on' },
                   { value: 'system', label: 'Match system' },
+                ]}
+              />
+            </Row>
+            <Row id="density" label="Activity" help="Compact folds a turn's thinking and tool calls into its head row, which opens the timeline; Detailed keeps one activity row for every run of work between paragraphs.">
+              <Segmented
+                aria-labelledby="density-label"
+                aria-describedby="density-help"
+                value={density}
+                onValueChange={(v) => {
+                  setDensity(v as Density);
+                  saveDensity(v as Density);
+                }}
+                items={[
+                  { value: 'compact', label: 'Compact' },
+                  { value: 'detailed', label: 'Detailed' },
                 ]}
               />
             </Row>

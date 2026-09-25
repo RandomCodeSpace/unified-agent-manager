@@ -1971,3 +1971,56 @@ func TestWebCancelSubagentFailureKeepsPermissionForRetry(t *testing.T) {
 		})
 	}
 }
+
+func TestWebStepTimesComeFromTheRecord(t *testing.T) {
+	at := func(id string, sec int64, data rpc.SessionEventData) copilot.SessionEvent {
+		return copilot.SessionEvent{ID: id, Timestamp: time.Unix(sec, 0), Data: data}
+	}
+	thought := "Look for the file."
+	evs := []copilot.SessionEvent{
+		at("s1", 100, &rpc.AssistantTurnStartData{TurnID: "0"}),
+		at("m1", 109, &rpc.AssistantMessageData{MessageID: "m1", ReasoningText: &thought}),
+		at("t1", 109, &rpc.ToolExecutionStartData{ToolCallID: "c1", ToolName: "glob"}),
+		at("t2", 121, &rpc.ToolExecutionCompleteData{ToolCallID: "c1", Success: true}),
+		// A completion without its start (attached mid-call) has no known span.
+		at("t3", 125, &rpc.ToolExecutionCompleteData{ToolCallID: "c2", Success: true}),
+	}
+	check := func(what string, items []agentapi.Item) {
+		t.Helper()
+		byID := map[string]agentapi.Item{}
+		for _, it := range items {
+			byID[it.ID] = it
+		}
+		want := map[string][2]int64{reasoningItemID("m1"): {100, 109}, "c1": {109, 121}}
+		for id, w := range want {
+			it := byID[id]
+			if it.Time.Unix() != w[0] || it.EndedAt.Unix() != w[1] {
+				t.Errorf("%s %s = %v..%v, want %d..%d", what, id, it.Time.Unix(), it.EndedAt.Unix(), w[0], w[1])
+			}
+		}
+		if c2, ok := byID["c2"]; ok && !c2.EndedAt.IsZero() {
+			t.Errorf("%s c2 ended_at = %v, want zero", what, c2.EndedAt)
+		}
+	}
+	check("history", history(evs).Items)
+
+	h := openWeb(t)
+	for _, e := range evs {
+		h.fs.onEvent(e)
+	}
+	// Live, each event is its own upsert; the web store keeps the start.
+	last := map[string]agentapi.Item{}
+	for _, e := range h.sink.all() {
+		if e.Kind == agentapi.EventItem {
+			if prev, ok := last[e.Item.ID]; ok && prev.Time.Before(e.Item.Time) {
+				e.Item.Time = prev.Time
+			}
+			last[e.Item.ID] = *e.Item
+		}
+	}
+	var live []agentapi.Item
+	for _, it := range last {
+		live = append(live, it)
+	}
+	check("live", live)
+}

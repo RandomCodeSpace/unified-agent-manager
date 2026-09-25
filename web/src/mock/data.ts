@@ -616,6 +616,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           bash('c7', 'ss -ltnp | grep 8000'),
           read('c8', 'index.html'),
           read('c9', 'game.js'),
+          // Two edits: the turn's "Changed 2 files" line; the first was allowed by yolo mode (its mark sits on the row).
+          tool('c9b', step(0.05), { name: 'edit', title: 'Edit notes/sky-dodge.md', status: 'completed', input: '{"path":"notes/sky-dodge.md"}', output: '@@ -1,2 +1,4 @@\n # Sky Dodge\n+\n+The server root now serves Machine Monitor; open /sky-dodge/ directly.' }),
+          tool('c9c', step(0.05), { name: 'write', title: 'Write notes/capture.sh', status: 'completed', input: '{"path":"notes/capture.sh","content":"chromium --headless --no-sandbox --screenshot=sky-dodge.png http://localhost:8000/sky-dodge/"}', output: 'Wrote 1 line' }),
           think('r4', 'The root is now a different app.'),
           think('r5', 'Open the Sky Dodge assets directly instead.'),
           think('r6', 'The screenshot path stays the same.'),
@@ -623,7 +626,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           tool('c10', step(0.05), { name: 'web_fetch', title: 'Fetch http://localhost:8000/sky-dodge/', status: 'completed', input: '{"url":"http://localhost:8000/sky-dodge/"}', output: '<!doctype html>…' }),
           think('r7', 'The assets load from the subfolder; capture that URL.'),
           bash('c11', 'chromium --headless --no-sandbox --screenshot=sky-dodge.png http://localhost:8000/sky-dodge/', {}, 0.05),
-          read('c12', 'sky-dodge.png'),
+          // The capture, read back: a tool image, which stays in the answer.
+          { ...read('c12', 'sky-dodge.png'), images: [{ id: 'img-sky-dodge', mime: 'image/png', size: 20480, name: 'sky-dodge.png' }] },
           say('m3', 'Launched Sky Dodge in the browser and saved a screenshot to `sky-dodge.png`.\n\nThe server\'s root page had changed to a different app, so I loaded Sky Dodge directly without altering the current `index.html`.'),
           { id: 'u2', kind: 'user' as const, time: ago(step(1)), text: 'can you share inline image' },
           think('r8', 'Provide the markdown inline image path for the user, `![Sky Dodge](sky-dodge.png)`; no tools needed.'),
@@ -638,6 +642,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         ];
       })(),
       interactions: [
+        { id: 'perm-c9b', kind: 'permission', title: 'Write file', detail: 'notes/sky-dodge.md', state: 'answered', resolution: 'allowed (yolo)', time: ago(20), tool_call_id: 'c9b' },
         {
           id: 'perm-c14',
           kind: 'permission',

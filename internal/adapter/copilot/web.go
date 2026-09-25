@@ -2176,6 +2176,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.linkQuestionLocked(d, agentID, time.Now())
 		return
 	case *rpc.AssistantTurnStartData:
+		c.tr.stepStart[agentID] = ev.Timestamp
 		if agentID == "" {
 			c.foregroundIdle, c.turnRunning = false, true
 			c.idleUnresolved = false
@@ -2550,6 +2551,9 @@ type transcript struct {
 	// assistant message, so that message's recorded reasoningText is not
 	// shown a second time.
 	reasoned map[string]bool
+	// stepStart is when each agent's current model call began
+	// (assistant.turn_start), the start of the thinking it records.
+	stepStart map[string]time.Time
 }
 
 // maxEndedTools bounds transcript.ended. Forgetting older IDs only lets a
@@ -2561,7 +2565,7 @@ const maxEndedTools = 1024
 const maxAssets = 64
 
 func newTranscript() *transcript {
-	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}}
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}}
 }
 
 // items maps one event to its transcript items. An assistant message whose
@@ -2572,10 +2576,13 @@ func newTranscript() *transcript {
 // already holds the text.
 func (t *transcript) items(ev copilot.SessionEvent) []agentapi.Item {
 	var out []agentapi.Item
+	if _, ok := ev.Data.(*rpc.AssistantTurnStartData); ok {
+		t.stepStart[agentOf(ev)] = ev.Timestamp
+	}
 	if d, ok := ev.Data.(*rpc.AssistantMessageData); ok {
 		agentID := agentOf(ev)
 		if text := reasoningText(d); text != "" && !t.reasoned[agentID] {
-			out = append(out, agentapi.Item{ID: reasoningItemID(d.MessageID), Kind: agentapi.ItemReasoning, Text: text, Time: ev.Timestamp, AgentID: agentID})
+			out = append(out, agentapi.Item{ID: reasoningItemID(d.MessageID), Kind: agentapi.ItemReasoning, Text: text, Time: t.thoughtStart(agentID, ev.Timestamp), EndedAt: ev.Timestamp, AgentID: agentID})
 		}
 		delete(t.reasoned, agentID)
 	}
@@ -2583,6 +2590,15 @@ func (t *transcript) items(ev copilot.SessionEvent) []agentapi.Item {
 		out = append(out, it)
 	}
 	return out
+}
+
+// thoughtStart is when the agent's current model call began: the CLI
+// records thinking only with its end, and that call is where it ran.
+func (t *transcript) thoughtStart(agentID string, end time.Time) time.Time {
+	if at := t.stepStart[agentID]; !at.IsZero() && !at.After(end) {
+		return at
+	}
+	return end
 }
 
 // streamedReasoning notes that an agent's reasoning arrived live, ahead of
@@ -2620,6 +2636,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	case *rpc.AssistantReasoningData:
 		t.streamedReasoning(it.AgentID)
 		it.ID, it.Kind, it.Text = reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.Content
+		it.Time, it.EndedAt = t.thoughtStart(it.AgentID, ev.Timestamp), ev.Timestamp
 	case *rpc.SessionCompactionCompleteData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Conversation compacted."
 		if !d.Success {
@@ -2645,6 +2662,9 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		tc.Output = clip(tc.Output+d.PartialOutput, maxToolText)
 		it.ID, it.Kind, it.Tool = d.ToolCallID, agentapi.ItemTool, cloneTool(tc)
 	case *rpc.ToolExecutionCompleteData:
+		if _, started := t.tools[d.ToolCallID]; started {
+			it.EndedAt = ev.Timestamp
+		}
 		tc := t.tool(d.ToolCallID)
 		delete(t.tools, d.ToolCallID)
 		if len(t.ended) >= maxEndedTools {
