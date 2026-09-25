@@ -78,6 +78,8 @@ export interface AppContextValue {
   /** The service's settings (the send default the composer follows). */
   settings: Settings;
   usage: AccountUsage | null;
+  /** Reads GET /api/meta again: the catalogs and each provider's cheapest_model. */
+  refreshMeta: () => void;
 }
 
 export const AppContext = createContext<AppContextValue>({
@@ -87,6 +89,7 @@ export const AppContext = createContext<AppContextValue>({
   hasNews: () => false,
   settings: DEFAULT_SETTINGS,
   usage: null,
+  refreshMeta: () => {},
 });
 
 export const useApp = () => useContext(AppContext);

@@ -512,8 +512,10 @@ type WebSettings struct {
 	// offer: sorted, without duplicates, at most MaxHiddenModels each. It is
 	// a display preference, never a check on requests.
 	HiddenModels map[string][]string `json:"hidden_models,omitempty"`
-	// TitleModel maps a provider to the model that titles its new Tasks. A
-	// provider without an entry keeps its own title.
+	// TitleModel maps a provider to its Utility model: the model UAM uses for
+	// its own small AI jobs, such as titling new Tasks. The key keeps its
+	// first name, title_model. A provider without an entry uses its cheapest
+	// priced model; WebTitleModelNone opts it out (it keeps its own title).
 	TitleModel map[string]string `json:"title_model,omitempty"`
 	// CustomModels are the OpenAI-compatible models the owner brought
 	// (BYOM), valid as ValidCustomModels checks. No key is stored: only the
@@ -665,6 +667,10 @@ func cleanTitleModels(w *WebSettings) {
 		w.TitleModel = nil
 	}
 }
+
+// WebTitleModelNone is the WebSettings.TitleModel value that opts a provider
+// out of the Utility model, so UAM makes no AI call of its own for it.
+const WebTitleModelNone = "none"
 
 // The values of WebSettings.SendDefault.
 const (

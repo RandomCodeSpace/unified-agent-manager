@@ -321,7 +321,8 @@ export default function App() {
   const connection = late ? state.connection : 'connected';
   const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen, QUIET_MS);
 
-  const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage }), [meta, narrow, hasNews, state.settings, state.usage]);
+  const refreshMeta = useCallback(() => checkVersion(true), [checkVersion]);
+  const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage, refreshMeta }), [meta, narrow, hasNews, state.settings, state.usage, refreshMeta]);
 
   // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
   const detailId = state.detail?.id;

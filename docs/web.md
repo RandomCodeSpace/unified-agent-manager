@@ -414,20 +414,32 @@ are logged only at debug level (`UAM_DEBUG=1`).
   hide at most 200 IDs of up to 128 bytes each. An ID the provider no longer
   lists is kept. Hiding is only a display preference: a Task or Project
   already on a hidden model keeps it.
-  `title_model`, e.g. `{"title_model": {"copilot": "gpt-6-luna"}}`, picks
-  the model that titles each new Task from its first message. With no entry,
-  or an empty ID, the provider keeps its own title, which for Copilot is the
-  first prompt. Only a provider with the `titles` capability can have one
-  (Copilot, not OpenCode), and the model must be in its current list. UAM
-  asks the model in a separate short Copilot session with no tools and no
-  session store, and deletes that session afterwards. It then shows the
-  title, 60 characters at most, and writes it into the Copilot session, so
-  `copilot --resume` shows it too. Only the first message counts: later
-  messages, commands, reopened Tasks and a changed setting never retitle a
-  Task. A name you type wins, even while the title is on its way. If the
-  model fails or takes more than 20 s, the provider's title stays, and the
-  service log says why. Each title costs AI credits, about 0.002 with
-  gpt-6-luna.
+  The **Utility model** is the model UAM uses for its own small AI jobs,
+  such as titling a new Task from its first message; pick the cheapest that
+  does the job. It is kept per provider under `title_model` (the key keeps
+  its first name). With no entry, UAM uses the provider's cheapest priced
+  model, worked out whenever it is needed: among the models `/api/meta`
+  lists with input and output prices, leaving out `auto` and models hidden
+  in Settings, the lowest input plus output price per token wins, then the
+  lower input price, then the lower ID. `/api/meta` gives it per provider
+  as `cheapest_model`, omitted when no model is priced; then the provider
+  keeps its own title, which for Copilot is the first prompt. A `PATCH`
+  with a model ID, e.g. `{"title_model": {"copilot": "gpt-5-mini"}}`,
+  chooses that model; `"none"` opts the provider out, so it keeps its own
+  title and UAM makes no AI call; an empty ID removes the entry, back to
+  the cheapest. Only a provider with the `titles` capability can have a
+  model (Copilot, not OpenCode), and the model must be in its current list.
+  In Settings the **Utility model** section shows "Cheapest (currently
+  GPT-6 Luna)", the provider's own title (no AI), then each visible model
+  with its prices. UAM asks the model in a separate short Copilot session
+  with no tools and no session store, and deletes that session afterwards.
+  It then shows the title, 60 characters at most, and writes it into the
+  Copilot session, so `copilot --resume` shows it too. Only the first
+  message counts: later messages, commands, reopened Tasks and a changed
+  setting never retitle a Task. A name you type wins, even while the title
+  is on its way. If the model fails or takes more than 20 s, the provider's
+  title stays, and the service log says why. Each title costs AI credits,
+  about 0.002 with gpt-6-luna.
 - **Custom models (bring your own model)**: Settings → Models → Custom
   models adds OpenAI-compatible endpoints to Copilot's model list, next to
   the account's own models, so a Task can switch between them mid-Task in
@@ -444,7 +456,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   `display_name`, `base_url`, `model_id`, `wire_api` (`completions`, the
   default, or `responses`) and `api_key_env`); `[]` removes them all.
   Removing a model also takes it out of `hidden_models` and clears a
-  `title_model` set to it. In Settings a provider is added or edited as
+  `title_model` set to it, so that provider uses its cheapest model again. In Settings a provider is added or edited as
   a whole: name, base URL and key variable, then **Load models** lists what
   the endpoint serves as a searchable checklist (select all or none), and a
   model ID the endpoint does not list can be typed in. Saving writes one

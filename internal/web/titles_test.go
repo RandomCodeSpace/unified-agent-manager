@@ -119,8 +119,8 @@ func TestTitleTriggerRules(t *testing.T) {
 	conv.SetSendHook(nil)
 	mustSubmit(t, m, uncertain.ID, "again", mustUUID(t), ModeSend, SubmissionAccepted)
 
-	// With the setting cleared, a first message keeps the provider's title.
-	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": ""}}); err != nil {
+	// Opted out, a first message keeps the provider's title.
+	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": store.WebTitleModelNone}}); err != nil {
 		t.Fatal(err)
 	}
 	unset, _ := create("")
@@ -366,11 +366,18 @@ func TestTitleModelSetting(t *testing.T) {
 	if got := m.Settings(); got.TitleModel != nil {
 		t.Fatalf("refused changes set %v", got.TitleModel)
 	}
+	// The opt-out needs no titles capability and is kept as such.
+	if got, err := set(map[string]string{"plain": store.WebTitleModelNone}); err != nil || got.TitleModel["plain"] != store.WebTitleModelNone {
+		t.Fatalf("opt out plain = %+v, %v", got, err)
+	}
+	if f := frameOf(t, sub, "settings"); string(f.data["settings"]) != `{"send_default":"steer","title_model":{"plain":"none"}}` {
+		t.Fatalf("opt-out settings frame = %s", f.data["settings"])
+	}
 	got, err := set(map[string]string{"fake": "auto"})
-	if err != nil || got.TitleModel["fake"] != "auto" || len(got.TitleModel) != 1 {
+	if err != nil || got.TitleModel["fake"] != "auto" || len(got.TitleModel) != 2 {
 		t.Fatalf("set auto = %+v, %v", got, err)
 	}
-	if f := frameOf(t, sub, "settings"); string(f.data["settings"]) != `{"send_default":"steer","title_model":{"fake":"auto"}}` {
+	if f := frameOf(t, sub, "settings"); string(f.data["settings"]) != `{"send_default":"steer","title_model":{"fake":"auto","plain":"none"}}` {
 		t.Fatalf("settings frame = %s", f.data["settings"])
 	}
 	// A clear needs no titles capability; it clears only what it names.
@@ -419,5 +426,112 @@ func TestTitleModelRoute(t *testing.T) {
 	}
 	if w := ts.do(http.MethodGet, "/api/settings", "", auth); strings.TrimSpace(w.Body.String()) != `{"send_default":"steer"}` {
 		t.Fatalf("GET after refused PATCHes = %s", w.Body)
+	}
+	if got := patch(`{"title_model":{"fake":"none"}}`, http.StatusOK); got != `{"send_default":"steer","title_model":{"fake":"none"}}` {
+		t.Fatalf("PATCH opt-out = %s", got)
+	}
+	if got := patch(`{"title_model":{"fake":""}}`, http.StatusOK); got != `{"send_default":"steer"}` {
+		t.Fatalf("PATCH unset = %s", got)
+	}
+	ts.prov.SetModels([]agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6)}, nil)
+	setNow(ts.m, time.Now().Add(2*time.Hour))
+	ts.m.RefreshModels()
+	if w := ts.do(http.MethodGet, "/api/meta", "", auth); !strings.Contains(w.Body.String(), `"cheapest_model":"cheap"`) {
+		t.Fatalf("GET /api/meta = %s", w.Body)
+	}
+}
+
+// pricedModel is a model with input and output prices per batch tokens; a
+// zero batch reports none.
+func pricedModel(id string, input, output float64, batch int64) agentapi.Model {
+	return agentapi.Model{ID: id, Prices: &agentapi.Prices{BatchSize: batch, TierPrices: agentapi.TierPrices{Input: &input, Output: &output}}}
+}
+
+func TestCheapestModel(t *testing.T) {
+	onlyInput := 1.0
+	for name, tc := range map[string]struct {
+		models []agentapi.Model
+		hidden []string
+		want   string
+	}{
+		"lowest input+output":      {[]agentapi.Model{pricedModel("mini", 25, 200, 1e6), pricedModel("luna", 10, 50, 1e6), pricedModel("haiku", 100, 500, 1e6)}, nil, "luna"},
+		"unpriced skipped":         {[]agentapi.Model{{ID: "free"}, {ID: "half", Prices: &agentapi.Prices{TierPrices: agentapi.TierPrices{Input: &onlyInput}}}, pricedModel("paid", 5, 5, 1e6)}, nil, "paid"},
+		"auto skipped":             {[]agentapi.Model{pricedModel("auto", 1, 1, 1e6), pricedModel("b", 5, 5, 1e6)}, nil, "b"},
+		"hidden skipped":           {[]agentapi.Model{pricedModel("a", 1, 1, 1e6), pricedModel("b", 5, 5, 1e6)}, []string{"a"}, "b"},
+		"tie takes lower input":    {[]agentapi.Model{pricedModel("a", 6, 4, 1e6), pricedModel("b", 4, 6, 1e6)}, nil, "b"},
+		"tie takes lower ID":       {[]agentapi.Model{pricedModel("b", 5, 5, 1e6), pricedModel("a", 5, 5, 1e6)}, nil, "a"},
+		"per token, not per batch": {[]agentapi.Model{pricedModel("a", 10, 10, 1e6), pricedModel("b", 15, 15, 2e6)}, nil, "b"},
+		"no batch means a million": {[]agentapi.Model{pricedModel("a", 10, 10, 0), pricedModel("b", 15, 15, 2e6)}, nil, "b"},
+		"none priced":              {[]agentapi.Model{{ID: "a"}, pricedModel("auto", 1, 1, 1e6)}, nil, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			prov := agenttest.NewProvider("fake", titleCaps)
+			prov.SetModels(append(tc.models, agentapi.Model{ID: "visible"}), nil)
+			m := startManager(t, openTestStore(t), prov)
+			if tc.hidden != nil {
+				if _, err := m.UpdateSettings(SettingsPatch{HiddenModels: map[string][]string{"fake": tc.hidden}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := m.Providers()[0].CheapestModel; got != tc.want {
+				t.Fatalf("cheapest = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Unset, the Utility model is the cheapest priced model; a chosen model
+// replaces it, and the opt-out makes no title call and survives a restart.
+func TestUtilityModelDefaultsToCheapest(t *testing.T) {
+	prov := agenttest.NewProvider("fake", titleCaps)
+	prov.SetModels([]agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6), {ID: "auto"}}, nil)
+	prov.SetTitleHook(func(context.Context, agentapi.TitleRequest) (string, error) { return "Generated", nil })
+	st := openTestStore(t)
+	m := startManager(t, st, prov)
+	project := addProject(t, m, t.TempDir())
+	titled := func(prompt string) {
+		t.Helper()
+		sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustSubmit(t, m, sum.ID, prompt, mustUUID(t), ModeSend, SubmissionAccepted)
+	}
+	set := func(model string) {
+		t.Helper()
+		if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": model}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	titled("unset")
+	set("dear")
+	titled("chosen")
+	set(store.WebTitleModelNone)
+	titled("opted out")
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := st.Load(); err != nil || cfg.WebSettings.TitleModel["fake"] != store.WebTitleModelNone {
+		t.Fatalf("stored opt-out = %v, %v", cfg.WebSettings.TitleModel, err)
+	}
+	m = startManager(t, st, prov)
+	if got := m.Settings().TitleModel["fake"]; got != store.WebTitleModelNone {
+		t.Fatalf("opt-out after restart = %q", got)
+	}
+	titled("opted out after restart")
+	set("")
+	if got := m.Settings().TitleModel; got != nil {
+		t.Fatalf("unset left %v", got)
+	}
+	titled("unset again")
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, req := range prov.TitleRequests() {
+		got = append(got, req.Text+"="+req.Model)
+	}
+	if want := []string{"unset=cheap", "chosen=dear", "unset again=cheap"}; !slices.Equal(got, want) {
+		t.Fatalf("title requests = %q, want %q", got, want)
 	}
 }

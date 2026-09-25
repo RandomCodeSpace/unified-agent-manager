@@ -5,7 +5,7 @@ import { Note, Spinner, useApp } from './common';
 import { Field } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
-import { modelChoices } from '../lib/models';
+import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
 import { Select } from './ui/select';
 import { Switch } from './ui/switch';
@@ -238,7 +238,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
  * refusal puts the old value back and says why.
  */
 export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClose: () => void }) {
-  const { settings, dispatch, meta } = useApp();
+  const { settings, dispatch, meta, refreshMeta } = useApp();
   const saveSequence = useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -253,6 +253,8 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
     try {
       const saved = await api.updateWebSettings(patch);
       if (sequence === saveSequence.current) dispatch({ type: 'settings', settings: saved });
+      // Hiding a model can change a provider's cheapest_model, which only the service computes.
+      if (patch.hidden_models) refreshMeta();
     } catch (e) {
       if (sequence === saveSequence.current) {
         dispatch({ type: 'settings', settings: before });
@@ -321,14 +323,17 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               />
             </Row>
           </Section>
-          {titled.length > 0 && <Section id="titles" title="Task titles">
+          {titled.length > 0 && <Section id="utility" title="Utility model">
             {titled.map((p) => {
               const current = settings.title_model?.[p.name] ?? '';
-              const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current);
-              return <Row key={p.name} id={`titles-${p.name}`} label={p.display_name} help="Use the provider's own title, or generate a short title with a chosen model. Applies to new tasks without a name.">
-                <Select aria-label={`${p.display_name} task title model`} value={current} disabled={saving} className="sm:w-64" items={[
-                  { value: '', label: `${p.display_name}'s own title` },
-                  ...choices.map(({ model, note }) => ({ value: model.id, label: `${model.name}${note ? ` (${note.toLowerCase()})` : ''}`, hidden: !!note })),
+              const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current === UTILITY_NONE ? '' : current);
+              const cost = (m: Model) => (p.capabilities.usage ? modelCostLine(m) : '');
+              const cheapest = p.models.find((m) => m.id === p.cheapest_model);
+              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses for its own small AI jobs, such as titling new tasks from their first message. Pick the cheapest that does the job.">
+                <Select aria-label={`${p.display_name} utility model`} aria-describedby={`utility-${p.name}-help`} value={current} disabled={saving} className="sm:w-72" items={[
+                  { value: '', label: cheapestLabel(p), description: cheapest && cost(cheapest) },
+                  { value: UTILITY_NONE, label: `${p.display_name}'s own title (no AI)` },
+                  ...choices.map(({ model, note }) => ({ value: model.id, label: `${model.name}${note ? ` (${note.toLowerCase()})` : ''}`, description: cost(model), hidden: !!note })),
                 ]} onValueChange={(id) => void save({ title_model: { ...settings.title_model, [p.name]: id } })} />
               </Row>;
             })}

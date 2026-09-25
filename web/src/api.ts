@@ -190,6 +190,8 @@ export interface ProviderInfo {
   capabilities: Capabilities;
   /** Selectable models; empty means "provider default only". */
   models: Model[];
+  /** The cheapest priced model not hidden in Settings, the Utility model while `title_model` names none; omitted when none is priced. */
+  cheapest_model?: string;
 }
 
 export interface Meta {
@@ -224,7 +226,10 @@ export interface Settings {
   send_default: SendDefault;
   /** Model IDs not offered anywhere a model is chosen, by provider; omitted when none is hidden (#191). */
   hidden_models?: Record<string, string[]>;
-  /** The model that titles a provider's new Tasks; omitted when every provider keeps its own title (#183). */
+  /**
+   * The Utility model by provider, the model UAM uses for its own small AI jobs such as titling new Tasks: a model ID,
+   * or `none` to keep the provider's own title. A provider without an entry uses its `cheapest_model`. PATCH `''` unsets.
+   */
   title_model?: Record<string, string>;
   /** OpenAI-compatible models the owner brought; omitted when there are none. PATCH replaces the whole list. */
   custom_models?: CustomModel[];

@@ -731,7 +731,9 @@ func (m *Manager) Providers() []ProviderInfo {
 	defer m.mu.Unlock()
 	out := make([]ProviderInfo, 0, len(m.order))
 	for _, name := range m.order {
-		out = append(out, m.infos[name])
+		info := m.infos[name]
+		info.CheapestModel = m.cheapestModelLocked(name)
+		out = append(out, info)
 	}
 	return out
 }
@@ -1152,8 +1154,9 @@ func (m *Manager) Settings() Settings {
 // SettingsPatch is a settings change; a nil field changes nothing.
 // HiddenModels replaces the hidden model IDs of each provider it names, and
 // only those; an empty list hides none of that provider's models. TitleModel
-// sets the title model of each provider it names; an empty ID gives that
-// provider its own title back.
+// sets the Utility model of each provider it names: a model ID, or
+// store.WebTitleModelNone to opt out; an empty ID unsets it, so the provider
+// uses its cheapest priced model again.
 //
 // CustomModels, when not nil, replaces every custom model; an empty list
 // removes them all.
@@ -1167,8 +1170,8 @@ type SettingsPatch struct {
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
 // nothing. A change is stored and sent as a settings frame; no change writes
 // nothing. Hidden models are a display preference: nothing else checks them.
-// A title model must be one the provider lists now, and the provider must
-// have the titles capability.
+// A Utility model must be one the provider lists now, and the provider must
+// have the titles capability; neither is needed to unset it or opt out.
 func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.SendDefault != nil && *p.SendDefault != store.WebSendSteer && *p.SendDefault != store.WebSendQueue {
 		return Settings{}, newError(http.StatusBadRequest, "send_default must be %q or %q", store.WebSendSteer, store.WebSendQueue)
@@ -1212,7 +1215,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	for provider, model := range p.TitleModel {
 		info := m.infos[provider]
 		switch {
-		case model == "":
+		case model == "", model == store.WebTitleModelNone:
 		case m.titlerLocked(provider) == nil:
 			m.mu.Unlock()
 			return Settings{}, newError(http.StatusBadRequest, "%s cannot title tasks with a model", m.providers[provider].DisplayName())

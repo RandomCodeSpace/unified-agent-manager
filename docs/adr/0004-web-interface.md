@@ -1072,17 +1072,27 @@ titles new Tasks, built to the contract from research #182.
   preference, not a policy: the server does not refuse a hidden model in a
   Task's or a Project's requests, and a Task or Project default already on
   one keeps it.
-- **Task title model.** `title_model: {<provider>: <model ID>}` names the
-  model that titles a provider's new Tasks. A provider without an entry
-  keeps its own title, the default. In a headless Copilot session that title
-  is the first prompt as typed. A `PATCH` sets each provider it names and
-  leaves the others. An empty ID removes that provider's entry, and the key
-  is omitted when no provider has one. The provider must be registered. A
-  model also needs the `titles` capability and an ID in the provider's
-  current list, `auto` included. Anything else is 400. On load, UAM drops
-  entries whose provider or ID is empty, longer than 256 bytes or holds a
-  control character. The setting is read when a Task's first prompt is
-  accepted, so changing it never retitles a Task.
+- **Task title model, now the Utility model.** `title_model: {<provider>:
+  <model ID>}` names the provider's Utility model, the model UAM uses for
+  its own small AI jobs, of which titling new Tasks is the only one so far.
+  The key keeps its first name, so stored settings need no migration. A
+  provider without an entry uses its cheapest priced model, computed when a
+  title is due and given in `/api/meta` as `ProviderInfo.cheapest_model`:
+  among the listed models with input and output prices, not `auto` and not
+  hidden in Settings, the lowest input plus output price per token, then
+  the lower input price, then the lower ID. With no priced model the
+  provider keeps its own title; in a headless Copilot session that title is
+  the first prompt as typed. The value `none` opts a provider out: it keeps
+  its own title and UAM makes no AI call. It is stored as such, since an
+  absent entry now means the cheapest model. A `PATCH` sets each provider
+  it names and leaves the others. An empty ID removes that provider's
+  entry, and the key is omitted when no provider has one. The provider must
+  be registered. A model ID also needs the `titles` capability and an ID in
+  the provider's current list, `auto` included; `none` and the empty ID
+  need neither. Anything else is 400. On load, UAM drops entries whose
+  provider or ID is empty, longer than 256 bytes or holds a control
+  character. The setting is read when a Task's first prompt is accepted,
+  so changing it never retitles a Task.
 - **When a Task gets a title.** Only when the provider accepts the Task's
   first prompt, the Task has no name and no title yet, it has no user item
   and no accepted or uncertain submission, and the setting names a model for
@@ -1138,8 +1148,8 @@ titles new Tasks, built to the contract from research #182.
 
 | Method and path | Body | Result |
 |---|---|---|
-| `GET /api/settings` | – | `Settings`: `{"send_default", "hidden_models"?: {<provider>: [model ID]}, "title_model"?: {<provider>: model ID}}` |
-| `PATCH /api/settings` | `{"send_default"?, "hidden_models"?: {<provider>: [model ID]}, "title_model"?: {<provider>: model ID}}` | the new `Settings`; 400 for an unknown key or value, an unregistered provider, an invalid ID, more than 200 IDs, every listed model hidden, or a title model the provider cannot use or does not list, checked before anything changes |
+| `GET /api/settings` | – | `Settings`: `{"send_default", "hidden_models"?: {<provider>: [model ID]}, "title_model"?: {<provider>: model ID or "none"}}` |
+| `PATCH /api/settings` | `{"send_default"?, "hidden_models"?: {<provider>: [model ID]}, "title_model"?: {<provider>: model ID, "none" or ""}}` | the new `Settings`; 400 for an unknown key or value, an unregistered provider, an invalid ID, more than 200 IDs, every listed model hidden, or a title model the provider cannot use or does not list, checked before anything changes |
 
 Both routes pass the same Host, cross-origin, JSON and sign-in checks as
 every other route.
