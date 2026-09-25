@@ -55,7 +55,7 @@ function readJSON<T>(key: string, fallback: T): T {
   }
 }
 
-function initialSelection(): string | null {
+function hashSelection(): string | null {
   const h = window.location.hash;
   return h.startsWith(HASH_PREFIX) ? decodeURIComponent(h.slice(HASH_PREFIX.length)) || null : null;
 }
@@ -63,7 +63,7 @@ function initialSelection(): string | null {
 export default function App() {
   const [auth, setAuth] = useState<Auth>('checking');
   const [authRequired, setAuthRequired] = useState(true);
-  const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, selectedId: initialSelection() }));
+  const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, selectedId: hashSelection() }));
   const [meta, setMeta] = useState<Meta | null>(null);
   const [streamKey, setStreamKey] = useState(0);
   const narrow = useMedia(NARROW);
@@ -346,6 +346,16 @@ export default function App() {
     setDrawerOpen(false);
     setSettingsOpen(false);
   }, []);
+  // A `#task=` fragment the user navigates to (back/forward, a pasted URL) selects that Task; the
+  // write above uses replaceState, which fires no hashchange.
+  useEffect(() => {
+    const onHash = () => {
+      const id = hashSelection();
+      if (id) select(id);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [select]);
 
   /** New task: create it at once with the Project's defaults, no prompt or name, and open its chat. */
   const startTask = useCallback(
