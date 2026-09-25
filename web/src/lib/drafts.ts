@@ -1,11 +1,15 @@
 // A composer draft kept per Task in localStorage (`uam.draft.<id>`), so switching Tasks or
-// reloading keeps what was typed. Pure text rules; the Composer owns the storage calls.
+// reloading keeps what was typed; a new Task's, which has no id until its first Send, per
+// Project (`uam.draft.new.<projectId>`). Pure rules; the Composer owns the storage calls.
 
+import type { Model, TaskDefaults } from '../api';
 import type { Kind } from './attachments';
 
 export const DRAFT_PREFIX = 'uam.draft.';
+const NEW_PREFIX = `${DRAFT_PREFIX}new.`;
 
 export const draftKey = (taskId: string): string => `${DRAFT_PREFIX}${taskId}`;
+export const newTaskKey = (projectId: string): string => `${NEW_PREFIX}${projectId}`;
 
 /** A finished upload: its stored id is enough to send it again after a reload. */
 export interface DraftAttachment {
@@ -53,8 +57,27 @@ export function parseDraft(raw: string | null): Draft | null {
   }
 }
 
-/** Draft keys whose Task is gone, from every storage key and the ids that still exist. */
-export function staleDraftKeys(keys: readonly string[], liveIds: Iterable<string>): string[] {
+/** Draft keys whose Task (or, for a new Task's, Project) is gone, from every storage key and the ids that still exist. */
+export function staleDraftKeys(keys: readonly string[], liveIds: Iterable<string>, liveProjects: Iterable<string>): string[] {
   const live = new Set(liveIds);
-  return keys.filter((k) => k.startsWith(DRAFT_PREFIX) && !live.has(k.slice(DRAFT_PREFIX.length)));
+  const projects = new Set(liveProjects);
+  return keys.filter((k) => (k.startsWith(NEW_PREFIX) ? !projects.has(k.slice(NEW_PREFIX.length)) : k.startsWith(DRAFT_PREFIX) && !live.has(k.slice(DRAFT_PREFIX.length))));
+}
+
+/**
+ * A new Task's settings after a picker change, by the service's rule for a Task's: an effort
+ * or context size not given survives a model change only where the new model offers it.
+ */
+export function changeSettings(s: TaskDefaults, body: Partial<Omit<TaskDefaults, 'provider'>>, next?: Pick<Model, 'efforts' | 'context_sizes'>): TaskDefaults {
+  const out = { ...s, ...body };
+  if (body.model !== undefined && body.model !== s.model) {
+    if (body.effort === undefined && !next?.efforts?.includes(out.effort)) out.effort = '';
+    if (body.context_size === undefined && !next?.context_sizes?.some((c) => c.id === out.context_size)) out.context_size = 'default';
+  }
+  return out;
+}
+
+/** The create request for a new Task's first Send: its settings, no prompt (the message follows once it exists). */
+export function createRequest(projectId: string, s: TaskDefaults, requestId: string) {
+  return { project_id: projectId, provider: s.provider, model: s.model || undefined, effort: s.effort, context_size: s.context_size, mode: s.mode, request_id: requestId };
 }

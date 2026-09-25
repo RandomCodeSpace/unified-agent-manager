@@ -37,8 +37,9 @@ type FileEntry struct {
 	Type string `json:"type"`
 }
 
-// FileList answers GET /api/sessions/{id}/files. Reason says why the list
-// is empty or cut short.
+// FileList answers GET /api/sessions/{id}/files and
+// GET /api/projects/{id}/files. Reason says why the list is empty or cut
+// short.
 type FileList struct {
 	Files  []FileEntry `json:"files"`
 	Reason string      `json:"reason"`
@@ -56,6 +57,22 @@ func (m *Manager) Files(ctx context.Context, id, q string, limit int) (FileList,
 	workdir := s.workdir
 	m.mu.Unlock()
 	return listFiles(ctx, workdir, q, limit)
+}
+
+// ProjectFiles is Files for a Project's directory, for the @ picker of a new
+// Task that has no conversation yet.
+func (m *Manager) ProjectFiles(ctx context.Context, projectID, q string, limit int) (FileList, error) {
+	m.mu.Lock()
+	project := m.projects[projectID]
+	var dir string
+	if project != nil {
+		dir = project.Dir
+	}
+	m.mu.Unlock()
+	if project == nil {
+		return FileList{}, errProjectNotFound
+	}
+	return listFiles(ctx, dir, q, limit)
 }
 
 func listFiles(ctx context.Context, workdir, q string, limit int) (FileList, error) {

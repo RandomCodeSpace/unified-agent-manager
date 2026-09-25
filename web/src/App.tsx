@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
+import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -9,10 +9,11 @@ import { PreviousSessionsDialog, canImport } from './components/PreviousSessions
 import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
-import { staleDraftKeys } from './lib/drafts';
+import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
 import { needsYouCount, pageTitle, tasksOf } from './lib/tasks';
 import { checkDue, decideUpdate } from './lib/update';
-import { Task } from './components/Task';
+import { NewTaskPane, Task } from './components/Task';
+import type { FirstMessage } from './components/Composer';
 import { TaskActionsContext, type Renaming, type TaskActions } from './components/taskActions';
 import { Button } from './components/ui/button';
 import { AlertDialog, Sheet } from './components/ui/dialog';
@@ -87,6 +88,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() => readJSON<boolean>(SIDEBAR_KEY, true));
   const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
   const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === SETTINGS_HASH);
+  // New task opens a draft for a Project on its defaults; nothing exists on the service until its first Send.
+  // `tick` refocuses its composer when New task is chosen again.
+  const [newTask, setNewTask] = useState<{ projectId: string; defaults: TaskDefaults; tick: number } | null>(null);
+  const newTaskTick = useRef(0);
   const aside = useRef<HTMLElement>(null);
   const loadedAt = useRef(new Date().toISOString());
   // One create per project at a time; the request ID survives a failure so a retry is idempotent.
@@ -267,7 +272,7 @@ export default function App() {
       if (data.session && data.session.id === selected) markViewed(selected, data.session.updated_at);
       // Composer drafts of Tasks that no longer exist go with them.
       try {
-        for (const key of staleDraftKeys(Object.keys(localStorage), data.sessions.map((s) => s.id))) localStorage.removeItem(key);
+        for (const key of staleDraftKeys(Object.keys(localStorage), data.sessions.map((s) => s.id), data.projects.map((p) => p.id))) localStorage.removeItem(key);
       } catch {
         // Storage unavailable: nothing to sweep.
       }
@@ -366,6 +371,7 @@ export default function App() {
     setSheetOpen(false);
     setDrawerOpen(false);
     setSettingsOpen(false);
+    setNewTask(null);
   }, []);
   // A `#task=` fragment the user navigates to (back/forward, a pasted URL) selects that Task; the
   // write above uses replaceState, which fires no hashchange.
@@ -378,33 +384,75 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, [select]);
 
-  /** New task: create it at once with the Project's defaults, no prompt or name, and open its chat. */
+  /** New task: a draft for the Project on its defaults, with its composer focused; no request until its first Send. */
   const startTask = useCallback(
-    async (projectId: string) => {
-      const entry = creating.current.get(projectId) ?? { id: newRequestId(), busy: false };
-      if (entry.busy) return;
-      creating.current.set(projectId, { ...entry, busy: true });
-      setNotice(null);
-      try {
-        const project = state.projects.find((p) => p.id === projectId);
-        const settings = project && resolveTaskDefaults(meta, project.defaults, state.settings.hidden_models);
-        if (!project || !settings) throw new Error(meta ? 'No provider is available.' : 'The provider list has not loaded yet.');
-        const info = provider(meta, settings.provider);
-        if (info && !info.available) throw new Error(`${info.display_name} is unavailable: ${info.reason || 'not installed'}`);
-        const s = await api.createSession({ project_id: projectId, ...settings, model: settings.model || undefined, request_id: entry.id });
-        creating.current.delete(projectId);
-        focusTask.current = s.id;
-        startTransition(() => {
-          addTransitionType('sessions');
-          dispatch({ type: 'upsert_session', session: s });
-        });
-        select(s.id);
-      } catch (e) {
-        creating.current.set(projectId, { ...entry, busy: false });
-        setNotice(`Could not start a task: ${describeError(e)}`);
+    (projectId: string) => {
+      const project = state.projects.find((p) => p.id === projectId);
+      const defaults = project && resolveTaskDefaults(meta, project.defaults, state.settings.hidden_models);
+      if (!defaults) {
+        setNotice(`Could not start a task: ${meta ? 'No provider is available.' : 'The provider list has not loaded yet.'}`);
+        return;
       }
+      select(null);
+      setNewTask({ projectId, defaults, tick: ++newTaskTick.current });
     },
     [state.projects, state.settings.hidden_models, meta, select],
+  );
+  const draftTick = newTask?.tick;
+  useEffect(() => {
+    if (draftTick !== undefined && !window.matchMedia(COARSE).matches) document.getElementById('composer-text')?.focus();
+  }, [draftTick]);
+
+  /**
+   * A new Task's first Send: create the Task with the chosen settings, upload the held
+   * attachments to it, send the message, then open it. A failed create throws, so the draft
+   * keeps the text and says why; once the Task exists it opens whatever happens next, and a
+   * message that was not accepted waits in its composer with the reason on the notice line.
+   */
+  const createTask = useCallback(
+    async (projectId: string, first: FirstMessage) => {
+      const entry = creating.current.get(projectId) ?? { id: newRequestId(), busy: false };
+      if (entry.busy) throw new Error('This task is already being created.');
+      creating.current.set(projectId, { ...entry, busy: true });
+      let s: SessionSummary;
+      try {
+        const info = provider(meta, first.settings.provider);
+        if (info && !info.available) throw new Error(`${info.display_name} is unavailable: ${info.reason || 'not installed'}`);
+        s = await api.createSession(createRequest(projectId, first.settings, entry.id));
+      } catch (e) {
+        creating.current.set(projectId, { ...entry, busy: false });
+        throw new Error(`Could not start the task: ${describeError(e)}`, { cause: e });
+      }
+      creating.current.delete(projectId);
+      startTransition(() => {
+        addTransitionType('sessions');
+        dispatch({ type: 'upsert_session', session: s });
+      });
+      const sent: DraftAttachment[] = [];
+      let failed = '';
+      try {
+        for (const u of first.uploads) {
+          const a = await api.upload(s.id, u.file, () => {}).done;
+          sent.push({ id: a.id, name: a.name, size: a.size ?? u.file.size, kind: u.kind });
+        }
+        const extras = { ...(first.files.length ? { files: first.files } : {}), ...(sent.length ? { attachments: sent.map((a) => a.id) } : {}) };
+        const sub = await api.prompt(s.id, first.text, newRequestId(), 'send', extras);
+        if (sub.status !== 'accepted' && sub.status !== 'queued') failed = sub.error || `the message was ${sub.status}`;
+      } catch (e) {
+        failed = describeError(e);
+      }
+      if (failed) {
+        try {
+          const raw = serializeDraft({ text: first.text, files: first.files, attachments: sent });
+          if (raw) localStorage.setItem(draftKey(s.id), raw);
+        } catch {
+          // Storage unavailable: the notice still says what happened.
+        }
+      }
+      select(s.id);
+      if (failed) setNotice(`The task was created, but its first message was not sent: ${failed}. The message is in its composer.`);
+    },
+    [meta, select],
   );
 
   /** Runs one lifecycle request; the result is dispatched, a failure becomes the notice line. */
@@ -456,7 +504,7 @@ export default function App() {
 
   const actions: WorkspaceActions = useMemo(
     () => ({
-      onNewTask: (projectId) => void startTask(projectId),
+      onNewTask: startTask,
       onAddProject: () => openDialog({ kind: 'add' }),
       onEditProject: (project) => openDialog({ kind: 'edit', project }),
       onRemoveProject: (project) => openDialog({ kind: 'remove', project }),
@@ -472,6 +520,7 @@ export default function App() {
       onSettings: () => {
         setSettingsOpen((o) => !o);
         setDrawerOpen(false);
+        setNewTask(null);
       },
     }),
     [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, startTask, openDialog, toggleSidebar],
@@ -481,7 +530,8 @@ export default function App() {
 
   // The tab title and the installed app's badge carry how many Tasks wait for the user; the title names the open Task.
   const attention = useMemo(() => needsYouCount(state.sessions), [state.sessions]);
-  const openName = selected ? taskName(selected) : null;
+  // A new Task shows as "New task"; only real Tasks count as needing you.
+  const openName = selected ? taskName(selected) : newTask ? '' : null;
   useEffect(() => {
     document.title = pageTitle(attention, openName);
     if (attention > 0) navigator.setAppBadge?.(attention).catch(() => {});
@@ -502,6 +552,7 @@ export default function App() {
   const stale = !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   const dialogTask = taskDialog ? state.sessions.find((s) => s.id === taskDialog.id) : undefined;
+  const newTaskProject = newTask ? state.projects.find((p) => p.id === newTask.projectId) : undefined;
 
   function showProject(id: string) {
     setFilter(id);
@@ -551,6 +602,8 @@ export default function App() {
   let pane: React.ReactNode;
   if (settingsOpen) {
     pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} />;
+  } else if (newTask && newTaskProject) {
+    pane = <NewTaskPane key={newTask.projectId} project={newTaskProject} defaults={newTask.defaults} onSend={createTask} leading={leading} />;
   } else if (shown) {
     pane = (
       <Task
