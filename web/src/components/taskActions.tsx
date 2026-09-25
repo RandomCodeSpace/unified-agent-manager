@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Check, FolderMinus, History, Pencil, PowerOff, Settings2, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Check, Pencil, PowerOff, Trash2 } from 'lucide-react';
 import { createContext, useContext } from 'react';
 import { LIVE, needsYou, type SessionSummary } from '../api';
 import type { ActionItem } from './ui/menu';
@@ -32,13 +32,6 @@ export interface TaskActions {
   close: (id: string) => void;
   /** Tasks with a lifecycle request in flight, by id; several may run at once. */
   busy: Readonly<Record<string, boolean>>;
-  /** Opens the Task's Project's previous CLI sessions to import, without filtering the sidebar to it. */
-  previousSessions: (projectId: string) => void;
-  /** A provider can import previous sessions; the entry is offered only then. */
-  canImport: boolean;
-  /** The Task's Project's edit and remove dialogs (App owns them), reachable without filtering the sidebar. */
-  editProject: (projectId: string) => void;
-  removeProject: (projectId: string) => void;
 }
 
 export const TaskActionsContext = createContext<TaskActions>({
@@ -53,10 +46,6 @@ export const TaskActionsContext = createContext<TaskActions>({
   remove: () => {},
   close: () => {},
   busy: {},
-  previousSessions: () => {},
-  canImport: false,
-  editProject: () => {},
-  removeProject: () => {},
 });
 
 export const useTaskActions = () => useContext(TaskActionsContext);
@@ -90,9 +79,5 @@ export function taskMenuItems(s: SessionSummary, a: TaskActions, place: Renaming
   if (stage === 'settled') items.push({ key: 'reopen', label: 'Reopen', icon: <ArchiveRestore />, disabled: busy, onSelect: () => a.reopen(s.id), separator: true });
   if (stage !== 'archived') items.push({ key: 'archive', label: 'Archive', icon: <Archive />, disabled: busy || (stage === 'active' && blocked), reason: stage === 'active' && blocked ? STAGE_REASON : undefined, onSelect: () => a.archive(s.id) });
   if (stage === 'archived') items.push({ key: 'delete', label: 'Delete', icon: <Trash2 />, danger: true, disabled: busy, onSelect: () => a.remove(s.id), separator: true });
-  // The Task's Project, last: its previous CLI sessions, Edit and Remove, reachable without filtering the sidebar to it.
-  if (a.canImport) items.push({ key: 'previous', label: 'Previous sessions', icon: <History />, onSelect: () => a.previousSessions(s.project_id), separator: true });
-  items.push({ key: 'edit-project', label: 'Edit project', icon: <Settings2 />, onSelect: () => a.editProject(s.project_id), separator: !a.canImport });
-  items.push({ key: 'remove-project', label: 'Remove project', icon: <FolderMinus />, danger: true, onSelect: () => a.removeProject(s.project_id) });
   return items;
 }

@@ -38,7 +38,26 @@ export function visibleProjects(projects: Project[], filter: string | null): Pro
   return chosen ? [chosen] : projects;
 }
 
-/** The project New task should target: the open Task's, else the one with the newest activity (a Task's update or the project's creation). */
+/**
+ * Local Project search for the filter dropdown and the New task palette: every word must
+ * appear in the name or the directory. Name matches rank before directory-only ones; the
+ * given order holds otherwise. An empty query lists them all.
+ */
+export function searchProjects(projects: Project[], query: string): Project[] {
+  const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return projects;
+  const hits = (text: string) => words.every((word) => text.includes(word));
+  const byName = projects.filter((p) => hits(p.name.toLocaleLowerCase()));
+  const byDir = projects.filter((p) => !byName.includes(p) && hits(`${p.name} ${p.dir}`.toLocaleLowerCase()));
+  return [...byName, ...byDir];
+}
+
+/** The Project the New task palette highlights first: the filtered one, else the one with the newest activity. */
+export function newTaskProject(projects: Project[], sessions: SessionSummary[], filter: string | null, selectedId: string | null): Project | undefined {
+  return mostRecentProject(visibleProjects(projects, filter), sessions, selectedId);
+}
+
+/** The Project with the newest activity: the open Task's, else the one whose Task updated last (or that was created last). */
 export function mostRecentProject(projects: Project[], sessions: SessionSummary[], selectedId: string | null): Project | undefined {
   const selected = sessions.find((s) => s.id === selectedId);
   if (selected) return projects.find((p) => p.id === selected.project_id) ?? projects[0];

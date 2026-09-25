@@ -1,10 +1,11 @@
-import { FolderOpen } from 'lucide-react';
+import { FolderMinus, FolderOpen, History } from 'lucide-react';
 import { useRef, useState, type FormEvent } from 'react';
-import { api, describeError, isStatus, resolveTaskDefaults, type Project, type SessionSummary, type TaskDefaults } from '../api';
+import { api, describeError, isStatus, type Project, type SessionSummary } from '../api';
 import { Note, ProjectBadge, useApp } from './common';
 import { cn } from '../lib/cn';
 import { FolderPicker } from './FolderPicker';
-import { Field, TaskDefaultsFields } from './TaskDefaults';
+import { PreviousSessionsDialog, canImport } from './PreviousSessions';
+import { Field } from './TaskDefaults';
 import { Button } from './ui/button';
 import { AlertDialog, Dialog } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
@@ -27,8 +28,6 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
   const [dir, setDir] = useState('');
   const [browsing, setBrowsing] = useState(false);
   const [name, setName] = useState('');
-  // Defaults start from what New task would use today; the dialog mounts fresh each time it opens.
-  const [defaults, setDefaults] = useState<TaskDefaults | null>(() => resolveTaskDefaults(meta));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The picker collapses in and out (grid rows) so the dialog's height glides instead of jumping.
@@ -39,7 +38,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
     setBusy(true);
     setError(null);
     try {
-      onAdded(await api.createProject({ dir: dir.trim(), name: name.trim() || undefined, defaults: defaults ?? undefined }));
+      onAdded(await api.createProject({ dir: dir.trim(), name: name.trim() || undefined }));
       onClose();
     } catch (err) {
       const existing = isStatus(err, 409) ? err.body.project_id : undefined;
@@ -125,14 +124,6 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
           <Input id="add-name" placeholder="Defaults to the folder name" aria-describedby="add-name-hint" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         {(name.trim() || dir.trim()) && <Note>Badge assigned when added. Its letters and colour are chosen from those still available.</Note>}
-        {defaults && (
-          <section aria-labelledby="add-defaults-title" className="mt-1 border-t border-hairline pt-4">
-            <h3 id="add-defaults-title" className="mb-3 text-title text-ink">
-              Defaults for new tasks
-            </h3>
-            <TaskDefaultsFields prefix="add" value={defaults} disabled={busy} onChange={setDefaults} />
-          </section>
-        )}
         {error && (
           <Note tone="error" role="alert">
             {error}
@@ -144,25 +135,25 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
 }
 
 /**
- * Name and defaults for new Tasks. The fields show what New task would use today, but the
- * defaults are sent only once edited: a rename alone must not rewrite the stored defaults
- * against the live catalog (a stale model falls back to `auto` at New task time, not in the store).
+ * The one place for a Project: its name, with Previous sessions (import) and Remove project
+ * opening over it, so closing either lands back here. What new Tasks start with is in Settings.
  */
-export function EditProjectDialog({ open, onClose, onClosed, project, onUpdated }: DialogLifecycle & { project: Project; onUpdated: (p: Project) => void }) {
+export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onUpdated, onRemoved }: DialogLifecycle & { project: Project; tasks: SessionSummary[]; onUpdated: (p: Project) => void; onRemoved: (id: string) => void }) {
   const { meta } = useApp();
   const first = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(project.name);
-  const shown = resolveTaskDefaults(meta, project.defaults);
-  const [defaults, setDefaults] = useState<TaskDefaults | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [previous, setPrevious] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      onUpdated(await api.updateProject(project.id, { name: name.trim(), defaults: defaults ?? undefined }));
+      onUpdated(await api.updateProject(project.id, { name: name.trim() }));
       onClose();
     } catch (err) {
       setError(describeError(err));
@@ -184,33 +175,60 @@ export function EditProjectDialog({ open, onClose, onClosed, project, onUpdated 
         </span>
       }
       description={<span className="font-mono text-code-sm">{project.dir}</span>}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="edit-project" variant="primary" loading={busy} disabled={!name.trim()}>
+            Save
+          </Button>
+        </>
+      }
     >
-      <form className="flex flex-col gap-4" onSubmit={submit}>
+      <form id="edit-project" className="flex flex-col gap-4" onSubmit={submit}>
         <Field id="edit-name" label="Name">
           <Input id="edit-name" ref={first} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        {shown && (
-          <section aria-labelledby="edit-defaults-title" className="mt-1 border-t border-hairline pt-4">
-            <h3 id="edit-defaults-title" className="mb-3 text-title text-ink">
-              Defaults for new tasks
-            </h3>
-            <TaskDefaultsFields prefix="edit" value={defaults ?? shown} disabled={busy} onChange={setDefaults} />
-          </section>
-        )}
         {error && (
           <Note tone="error" role="alert">
             {error}
           </Note>
         )}
-        <div className="flex flex-wrap justify-end gap-2 pt-1 max-sm:[&>button]:flex-1">
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" loading={busy} disabled={!name.trim()}>
-            Save
+        {/* The Project's other two doors, secondary here: each opens over this dialog and lands back on its button. */}
+        <div className="mt-1 flex flex-wrap gap-2 border-t border-hairline pt-4">
+          {canImport(meta) && (
+            <Button variant="secondary" onClick={() => setPrevious(true)}>
+              <History />
+              Previous sessions
+            </Button>
+          )}
+          <Button
+            variant="danger"
+            onClick={() => {
+              setRemoving(true);
+              setRemoveOpen(true);
+            }}
+          >
+            <FolderMinus />
+            Remove project
           </Button>
         </div>
       </form>
+      {previous && <PreviousSessionsDialog project={project} onClose={() => setPrevious(false)} />}
+      {removing && (
+        <RemoveProjectDialog
+          open={removeOpen}
+          onClose={() => setRemoveOpen(false)}
+          onClosed={() => setRemoving(false)}
+          project={project}
+          tasks={tasks}
+          onRemoved={(id) => {
+            onRemoved(id);
+            onClose();
+          }}
+        />
+      )}
     </Dialog>
   );
 }

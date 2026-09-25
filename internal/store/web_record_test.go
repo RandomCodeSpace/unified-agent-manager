@@ -202,34 +202,109 @@ func TestNestedWebUnknownFieldsRoundTrip(t *testing.T) {
 	}
 }
 
-// Task defaults are additive: a Project written before them loads with none,
-// a Project without them writes no key, and unknown Project fields survive.
-func TestWebProjectDefaultsRoundTrip(t *testing.T) {
+// webSettingsField reads one web_settings key from the saved file; nil when absent.
+func webSettingsField(t *testing.T, path, key string) json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		WebSettings map[string]json.RawMessage `json:"web_settings"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	return decoded.WebSettings[key]
+}
+
+// Task defaults are one setting shared by every browser: absent loads as
+// unset, a value survives a save, and invalid stored values are cleared.
+func TestWebTaskDefaultsRoundTripAndLoadClean(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},
-		"web_projects":{
-			"p1":{"id":"p1","name":"repo","dir":"/tmp/repo","created_at":"2026-09-01T00:00:00Z","archived":true},
-			"p2":{"id":"p2","name":"other","dir":"/tmp/other","created_at":"2026-09-01T00:00:00Z"}}}`
-	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+	write := func(settings string) {
+		t.Helper()
+		if err := os.WriteFile(s.Path(), []byte(`{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":`+settings+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"send_default":"steer"}`)
+	cfg, err := s.Load()
+	if err != nil || cfg.WebSettings.TaskDefaults != (WebTaskDefaults{}) {
+		t.Fatalf("absent task defaults loaded as %+v, %v", cfg.WebSettings.TaskDefaults, err)
+	}
+	want := WebTaskDefaults{Provider: "copilot", Model: "gpt-5", Effort: "high", ContextSize: "long_context", Mode: "yolo"}
+	if err := s.Update(func(cfg *Config) error {
+		cfg.WebSettings.TaskDefaults = want
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
+	var saved WebTaskDefaults
+	if raw := webSettingsField(t, s.Path(), "task_defaults"); json.Unmarshal(raw, &saved) != nil || saved != want {
+		t.Fatalf("task defaults after save = %s", raw)
+	}
+	if cfg, err = s.Load(); err != nil || cfg.WebSettings.TaskDefaults != want {
+		t.Fatalf("task defaults after reload = %+v, %v", cfg.WebSettings.TaskDefaults, err)
+	}
+	write(`{"task_defaults":{"provider":"copilot","model":"","effort":"","context_size":"","mode":"safe"}}`)
+	if cfg, err = s.Load(); err != nil || cfg.WebSettings.TaskDefaults != (WebTaskDefaults{Provider: "copilot", ContextSize: "default", Mode: "safe"}) {
+		t.Fatalf("unset context size after load = %+v, %v", cfg.WebSettings.TaskDefaults, err)
+	}
+	for name, defaults := range map[string]string{
+		"noprovider": `{"provider":"","model":"a","effort":"","context_size":"default","mode":"safe"}`,
+		"badmodel":   `{"provider":"copilot","model":"a\u001b","effort":"","context_size":"default","mode":"safe"}`,
+		"badsize":    `{"provider":"copilot","model":"a","effort":"","context_size":"huge","mode":"safe"}`,
+		"badmode":    `{"provider":"copilot","model":"a","effort":"","context_size":"default","mode":"auto"}`,
+		"nomode":     `{"provider":"copilot","model":"a","effort":"","context_size":"default"}`,
+	} {
+		write(`{"task_defaults":` + defaults + `}`)
+		if cfg, err = s.Load(); err != nil || cfg.WebSettings.TaskDefaults != (WebTaskDefaults{}) {
+			t.Fatalf("%s task defaults after load = %+v, %v, want none", name, cfg.WebSettings.TaskDefaults, err)
+		}
+	}
+}
+
+// Per-Project defaults from before the setting migrate into it on load: the
+// newest Project's valid ones when the setting is unset, never over a set one;
+// every Project loses them and the next save writes none.
+func TestWebProjectDefaultsMigrateIntoSettings(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := func(id, created, defaults string) string {
+		return `"` + id + `":{"id":"` + id + `","name":"x","dir":"/tmp/` + id + `","created_at":"` + created + `","archived":true,"defaults":` + defaults + `}`
+	}
+	projects := `"web_projects":{` + strings.Join([]string{
+		project("old", "2026-09-01T00:00:00Z", `{"provider":"copilot","model":"old","effort":"","context_size":"default","mode":"safe"}`),
+		project("new", "2026-09-20T00:00:00Z", `{"provider":"copilot","model":"new","effort":"high","context_size":"","mode":"yolo"}`),
+		project("newest-invalid", "2026-09-24T00:00:00Z", `{"provider":"","model":"bad","effort":"","context_size":"default","mode":"safe"}`),
+		`"none":{"id":"none","name":"x","dir":"/tmp/none","created_at":"2026-09-25T00:00:00Z"}`,
+	}, ",") + `}`
+	write := func(settings string) {
+		t.Helper()
+		if err := os.WriteFile(s.Path(), []byte(`{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},`+settings+projects+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(``)
 	cfg, err := s.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WebProjects["p1"].Defaults != (WebTaskDefaults{}) {
-		t.Fatalf("old project loaded defaults: %+v", cfg.WebProjects["p1"])
+	if got := cfg.WebSettings.TaskDefaults; got != (WebTaskDefaults{Provider: "copilot", Model: "new", Effort: "high", ContextSize: "default", Mode: "yolo"}) {
+		t.Fatalf("migrated task defaults = %+v", got)
 	}
-	want := WebTaskDefaults{Provider: "copilot", Model: "gpt-5", Effort: "high", ContextSize: "long_context", Mode: "yolo"}
-	if err := s.Update(func(cfg *Config) error {
-		p := cfg.WebProjects["p1"]
-		p.Defaults = want
-		cfg.WebProjects["p1"] = p
-		return nil
-	}); err != nil {
+	for id, p := range cfg.WebProjects {
+		if p.LegacyDefaults != (WebTaskDefaults{}) {
+			t.Fatalf("project %s kept defaults after load: %+v", id, p.LegacyDefaults)
+		}
+	}
+	if err := s.Update(func(cfg *Config) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(s.Path())
@@ -239,120 +314,25 @@ func TestWebProjectDefaultsRoundTrip(t *testing.T) {
 	var decoded struct {
 		WebProjects map[string]map[string]json.RawMessage `json:"web_projects"`
 	}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(data, &decoded); err != nil || len(decoded.WebProjects) != 4 {
+		t.Fatalf("store after migration: %s, %v", data, err)
 	}
-	var saved map[string]string
-	if p1 := decoded.WebProjects["p1"]; string(p1["archived"]) != "true" || json.Unmarshal(p1["defaults"], &saved) != nil || len(saved) != 5 ||
-		saved["provider"] != "copilot" || saved["model"] != "gpt-5" || saved["effort"] != "high" || saved["context_size"] != "long_context" || saved["mode"] != "yolo" {
-		t.Fatalf("p1 after save: %s", data)
-	}
-	if _, ok := decoded.WebProjects["p2"]["defaults"]; ok {
-		t.Fatalf("project without defaults wrote them: %s", data)
-	}
-	if cfg, err = s.Load(); err != nil || cfg.WebProjects["p1"].Defaults != want {
-		t.Fatalf("defaults after reload = %+v, %v", cfg.WebProjects["p1"].Defaults, err)
-	}
-}
-
-func TestInvalidWebProjectDefaultsAreClearedOnLoad(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	project := func(id, defaults string) string {
-		return `"` + id + `":{"id":"` + id + `","name":"x","dir":"/tmp/` + id + `","created_at":"2026-09-01T00:00:00Z","defaults":` + defaults + `}`
-	}
-	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_projects":{` + strings.Join([]string{
-		project("unset", `{"provider":"copilot","model":"","effort":"","context_size":"","mode":"safe"}`),
-		project("noprovider", `{"provider":"","model":"a","effort":"","context_size":"default","mode":"safe"}`),
-		project("badmodel", `{"provider":"copilot","model":"a\u001b","effort":"","context_size":"default","mode":"safe"}`),
-		project("badsize", `{"provider":"copilot","model":"a","effort":"","context_size":"huge","mode":"safe"}`),
-		project("badmode", `{"provider":"copilot","model":"a","effort":"","context_size":"default","mode":"auto"}`),
-		project("nomode", `{"provider":"copilot","model":"a","effort":"","context_size":"default"}`),
-	}, ",") + `}}`
-	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := s.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.WebProjects) != 6 {
-		t.Fatalf("projects after load = %+v", cfg.WebProjects)
-	}
-	if got := cfg.WebProjects["unset"].Defaults; got != (WebTaskDefaults{Provider: "copilot", ContextSize: "default", Mode: "safe"}) {
-		t.Fatalf("valid defaults after load = %+v", got)
-	}
-	for _, id := range []string{"noprovider", "badmodel", "badsize", "badmode", "nomode"} {
-		if got := cfg.WebProjects[id].Defaults; got != (WebTaskDefaults{}) {
-			t.Fatalf("%s defaults after load = %+v, want none", id, got)
+	for id, p := range decoded.WebProjects {
+		if _, has := p["defaults"]; has || (id != "none" && string(p["archived"]) != "true") {
+			t.Fatalf("project %s after migration: %s", id, data)
 		}
 	}
-}
-
-func TestInvalidWebProjectsAndReferencesAreDroppedOnLoad(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
-	if err != nil {
-		t.Fatal(err)
+	var migrated WebTaskDefaults
+	if raw := webSettingsField(t, s.Path(), "task_defaults"); json.Unmarshal(raw, &migrated) != nil || migrated.Model != "new" {
+		t.Fatalf("task defaults after migration = %s", raw)
 	}
-	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},
-		"web_projects":{
-			"good":{"id":"good","name":"ok","dir":"/tmp/ok","created_at":"2026-09-01T00:00:00Z"},
-			"rel":{"id":"rel","name":"x","dir":"relative","created_at":"2026-09-01T00:00:00Z"},
-			"mismatch":{"id":"other","name":"x","dir":"/tmp/x","created_at":"2026-09-01T00:00:00Z"},
-			"bad;id":{"id":"bad;id","name":"x","dir":"/tmp/x","created_at":"2026-09-01T00:00:00Z"}},
-		"sessions":{"copilot:0f0e0d0c":{
-		"id":"0f0e0d0c-1111-4222-8333-444455556666","agent":"copilot","name":"","mode":"safe","workdir":"/tmp/ok",
-		"tmux_session":"","created_at":"2026-09-01T00:00:00Z","last_seen_at":"2026-09-01T00:00:00Z",
-		"pinned":false,"group":"","sort_index":0,"status":"active","provider_session_id":"conv_1",
-		"surface":"web","web":{"turn":"idle","updated_at":"2026-09-01T00:00:00Z","project_id":"x;rm","model":"bad\u001bmodel","effort":"high\u001b","context_size":"bogus","title":"t"}}}}`
-	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := s.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.WebProjects) != 1 || cfg.WebProjects["good"].Dir != "/tmp/ok" {
-		t.Fatalf("projects after load = %+v", cfg.WebProjects)
-	}
-	rec, ok := cfg.Sessions["copilot:0f0e0d0c"]
-	if !ok || rec.Web == nil || rec.Web.ProjectID != "" || rec.Web.Model != "" || rec.Web.Effort != "" || rec.Web.ContextSize != "" || rec.Web.Title != "t" {
-		t.Fatalf("record after load = %+v web %+v", rec, rec.Web)
+	// A set setting is kept over the Projects' defaults.
+	write(`"web_settings":{"task_defaults":{"provider":"copilot","model":"chosen","effort":"","context_size":"default","mode":"safe"}},`)
+	if cfg, err = s.Load(); err != nil || cfg.WebSettings.TaskDefaults.Model != "chosen" {
+		t.Fatalf("set task defaults after load = %+v, %v", cfg.WebSettings.TaskDefaults, err)
 	}
 }
 
-func TestTerminalRecordOmitsWebFields(t *testing.T) {
-	data, err := json.Marshal(SessionRecord{ID: "abc", Agent: "claude"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), `"surface"`) || strings.Contains(string(data), `"web"`) {
-		t.Fatalf("terminal record gained web keys: %s", data)
-	}
-}
-
-func TestPruneOldNeverDeletesSurfaceRecords(t *testing.T) {
-	old := time.Now().Add(-365 * 24 * time.Hour)
-	cfg := DefaultConfig()
-	cfg.Sessions["claude:dead0001"] = SessionRecord{ID: "dead0001", Agent: "claude", SessionName: "uam-claude-dead0001", LastSeenAt: old}
-	cfg.Sessions["copilot:web00001"] = SessionRecord{ID: "web00001", Agent: "copilot", Surface: SurfaceWeb, LastSeenAt: old}
-	cfg.Sessions["opencode:future01"] = SessionRecord{ID: "future01", Agent: "opencode", Surface: "future", LastSeenAt: old}
-	PruneOld(&cfg, time.Hour, func(string) bool { return false })
-	if _, ok := cfg.Sessions["claude:dead0001"]; ok {
-		t.Fatal("stale terminal record should be pruned")
-	}
-	for _, key := range []string{"copilot:web00001", "opencode:future01"} {
-		if _, ok := cfg.Sessions[key]; !ok {
-			t.Fatalf("record %s with a surface was pruned", key)
-		}
-	}
-}
-
-// Web settings are additive: a file without them loads with none and gains
-// no key from an unrelated write, a chosen value round-trips with keys a newer
-// uam wrote, and unknown values survive unrelated writes.
 func TestWebSettingsRoundTrip(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {

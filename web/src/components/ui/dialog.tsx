@@ -60,6 +60,26 @@ export function Dialog({ open, onOpenChange, onClosed, initialFocus, title, desc
   );
 }
 
+/**
+ * A command palette: the modal surface near the top of the screen, without the title row
+ * or padding, so the body lays out its own search row, list and footer. `label` names it.
+ * `finalFocus` follows Base UI: `false` leaves focus where the chosen action put it.
+ */
+export function CommandDialog({ open, onOpenChange, onClosed, initialFocus, finalFocus, label, className, children }: Omit<DialogProps, 'title' | 'description' | 'footer'> & { label: string; finalFocus?: ComponentProps<typeof BaseDialog.Popup>['finalFocus'] }) {
+  return (
+    <BaseDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className={backdropClass} />
+        <BaseDialog.Viewport className={cn(viewportClass, 'sm:items-start sm:pt-[12dvh]')}>
+          <BaseDialog.Popup data-popup="" aria-label={label} className={cn(popupClass, 'max-w-sheet-wide p-0', className)} initialFocus={initialFocus} finalFocus={finalFocus}>
+            {children}
+          </BaseDialog.Popup>
+        </BaseDialog.Viewport>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
+  );
+}
+
 export interface AlertDialogProps extends Omit<DialogProps, 'footer' | 'initialFocus'> {
   confirmLabel: string;
   danger?: boolean;

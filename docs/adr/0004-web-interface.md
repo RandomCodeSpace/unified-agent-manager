@@ -693,45 +693,58 @@ answer, and the subagent is `idle`, or when the provider cannot chat with a
 subagent. It never opens a conversation. Status changes arrive through the
 existing subagent event and detail response.
 
-## Project defaults for new Tasks
+## Task defaults for new Tasks
 
-- Date: 2026-09-24 (decided in #171)
+- Date: 2026-09-24 (decided in #171); moved from each Project into Settings on
+  2026-09-25
 
-A Project may keep **defaults for new Tasks**: `{provider, model, effort,
-context_size, mode}`. **New task** creates the Task at once with the Project's
-defaults and no prompt or name, then opens its empty chat. The first message
-goes through the normal composer, and the provider titles the Task from it as
-before. This replaces the New Task form.
+One setting, shared by every browser, says what a **new Task** starts with:
+`{provider, model, effort, context_size, mode}`. **New task** opens a draft on
+these defaults (see "Create a new Task only on its first message"); the first
+message goes through the normal composer, and the provider titles the Task
+from it as before. Until 2026-09-25 each Project kept its own defaults, set in
+the Add and Edit project dialogs; that was more than the owner wanted to
+manage per Project, so the defaults are one section of Settings and Projects
+carry none.
 
-- **Storage.** A `web_projects` entry gains an optional `defaults` object with
-  all five keys, omitted when the Project has none, so nothing migrates. On
-  load, defaults with a missing provider, a control character, an oversized
-  value, an unknown context size or a mode other than `safe` or `yolo` are
-  cleared; the Project stays. An empty context size loads as `default`.
+- **Storage.** `web_settings` gains an optional `task_defaults` object with
+  all five keys, omitted until set. On load, defaults with a missing
+  provider, a control character, an oversized value, an unknown context size
+  or a mode other than `safe` or `yolo` are cleared. An empty context size
+  loads as `default`.
+- **Migration.** A `web_projects` entry written before this change may carry
+  a `defaults` object. On load, when `task_defaults` is unset, the valid
+  defaults of the most recently created Project that has any become the
+  setting; every Project's `defaults` is cleared in memory, so the next save
+  drops the key. A set `task_defaults` is never replaced by a Project's.
 - **Checks on write.** The provider must be registered. Model, effort and
   context size are checked against the provider's models exactly as a Task's
   selection is, so a context size other than `default` needs the provider's
   context-size capability. `mode` must be `safe` or `yolo`; empty is refused.
   An empty context size is stored as `default`. A failed check is 400 and
-  changes nothing.
-- **Resolved by the browser.** The server applies no defaults: `POST
-  /api/sessions` is unchanged and already takes no prompt and no name. The
-  browser resolves the defaults against the live models. A default model the
-  provider no longer offers falls back to `auto` (or the first model), with no
-  effort and context size `default`, so New task never fails on a stale
-  default. A Project without defaults uses `auto`, no effort, `default` and
+  changes nothing; the same value again writes nothing.
+- **Resolved by the browser.** The server applies no defaults to `POST
+  /api/sessions`, which already takes no prompt and no name. The browser
+  resolves the setting against the live models. A default model the
+  provider no longer offers, or hidden in Settings, falls back to `auto` (or
+  the first visible model), with no effort and context size `default`, so New
+  task never fails on a stale default. With the setting unset, a new Task
+  starts with the provider's own defaults: `auto`, no effort, `default` and
   `safe`.
+- **Import** takes the setting's model, effort and context size when the
+  conversation's own model is no longer offered, and its mode.
 
-### HTTP additions and changes
+### HTTP changes
 
 | Method and path | Body | Result |
 |---|---|---|
-| `POST /api/projects` | gains `"defaults"?` | 201 `Project`; 400 invalid defaults; otherwise unchanged |
-| `PATCH /api/projects/{id}` | `{"name"?, "defaults"?}` | `Project`; the name is handled as before; 400 when neither is given or the defaults are invalid, checked before anything changes; 404 |
+| `PATCH /api/settings` | gains `"task_defaults"?: {provider, model, effort, context_size, mode}` | `Settings`; 400 when it is not an object or fails the checks above |
+| `POST /api/projects` | `{"dir", "name"?}` | 201 `Project`; a `defaults` key is ignored |
+| `PATCH /api/projects/{id}` | `{"name"}` | `Project`; 400 without a name; a `defaults` key is ignored; 404 |
 
-`Project` gains `defaults: {provider, model, effort, context_size, mode}`,
-omitted when the Project has none; `context_size` is `default` unless a tier is
-chosen. A change sends a `project` frame, as a rename does.
+`Settings` gains `task_defaults`, omitted until set; `context_size` is
+`default` unless a tier is chosen. A change sends a `settings` frame.
+`Project` no longer has `defaults`.
 
 ## Project branch
 
@@ -1017,8 +1030,7 @@ The owner asked for text from the Project's name and a random colour.
   missing, whose text is not two uppercase ASCII letters or digits, whose
   colour is not a palette key, or whose text an older Project's badge already
   has; the older Project keeps its badge. It writes `sessions.json` only when
-  it changed a badge. A rename, a defaults change and a restart keep the
-  badge. If the store is read-only, assignment uses the Project ID as a
+  it changed a badge. A rename and a restart keep the badge. If the store is read-only, assignment uses the Project ID as a
   stable seed. The choices use `math/rand/v2`; a badge is not a secret.
   The Add dialog says the badge is assigned when added, since its colour
   and collision fallback depend on the Projects stored at that moment.
@@ -1071,8 +1083,8 @@ titles new Tasks, built to the contract from research #182.
   can come back. Hiding every model the provider lists now is 400. On load,
   invalid IDs are dropped and the same caps apply. Hiding is a display
   preference, not a policy: the server does not refuse a hidden model in a
-  Task's or a Project's requests, and a Task or Project default already on
-  one keeps it.
+  Task's requests or in the Task defaults, and a Task or the defaults already
+  on one keep it.
 - **Task title model, now the Utility model.** `title_model: {<provider>:
   <model ID>}` names the provider's Utility model, the model UAM uses for
   its own small AI jobs, of which titling new Tasks is the only one so far.
@@ -1679,9 +1691,9 @@ when both are supported. OpenCode cannot: it keeps no per-session lock
   state `closed` with the transcript loaded: viewing never opens it, and its
   next prompt opens it. It keeps the model the record last selected for the
   main agent when the provider offers that model, otherwise it takes the
-  Project's defaults when they name this provider, otherwise the provider
-  default. It takes the Project's default mode. The provider's title is shown
-  until the user names the Task.
+  Task defaults of Settings when they name this provider, otherwise the
+  provider default. It takes the mode of those defaults. The provider's title
+  is shown until the user names the Task.
 - **In use.** `InUse` is Copilot's `sessions.checkInUse` (experimental),
   backed by an `flock` per holder process. It reports other processes
   holding the conversation on this host under the same `COPILOT_HOME`,

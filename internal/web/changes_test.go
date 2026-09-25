@@ -290,7 +290,7 @@ func TestProjectBranchFromGit(t *testing.T) {
 	gitIn(t, detached, "switch", "-q", "--detach")
 	want := map[string]string{repo: "feature/x", sub: "feature/x", linked: "topic", detached: "", t.TempDir(): ""}
 	for dir, branch := range want {
-		if p, err := m.AddProject(dir, "", nil); err != nil || p.Branch != branch {
+		if p, err := m.AddProject(dir, ""); err != nil || p.Branch != branch {
 			t.Fatalf("AddProject(%s) = %+v, %v; want branch %q", dir, p, err, branch)
 		}
 	}

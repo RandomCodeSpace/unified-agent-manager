@@ -437,14 +437,13 @@ func (s *Server) handleProjects(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Dir      string        `json:"dir"`
-		Name     string        `json:"name"`
-		Defaults *TaskDefaults `json:"defaults"`
+		Dir  string `json:"dir"`
+		Name string `json:"name"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	p, err := s.m.AddProject(body.Dir, body.Name, body.Defaults)
+	p, err := s.m.AddProject(body.Dir, body.Name)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -454,17 +453,16 @@ func (s *Server) handleAddProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name     *string       `json:"name"`
-		Defaults *TaskDefaults `json:"defaults"`
+		Name *string `json:"name"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.Name == nil && body.Defaults == nil {
-		writeError(w, http.StatusBadRequest, "name or defaults is required")
+	if body.Name == nil {
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	p, err := s.m.UpdateProject(r.PathValue("id"), body.Name, body.Defaults)
+	p, err := s.m.UpdateProject(r.PathValue("id"), *body.Name)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -518,6 +516,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			patch.CustomModels = &list
+		case "task_defaults":
+			patch.TaskDefaults = new(TaskDefaults)
+			if json.Unmarshal(raw, patch.TaskDefaults) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "task_defaults must be an object with provider, model, effort, context_size and mode")
+				return
+			}
 		default:
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown setting %q", key))
 			return

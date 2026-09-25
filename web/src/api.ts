@@ -233,6 +233,8 @@ export interface Settings {
   title_model?: Record<string, string>;
   /** OpenAI-compatible models the owner brought; omitted when there are none. PATCH replaces the whole list. */
   custom_models?: CustomModel[];
+  /** What a new Task starts with, shared by every browser; omitted until set, and the provider's own defaults apply then. */
+  task_defaults?: TaskDefaults;
 }
 
 /**
@@ -257,8 +259,6 @@ export interface Project {
   dir: string;
   created_at: string;
   badge: Badge;
-  /** Defaults for new Tasks; absent when the Project has none. */
-  defaults?: TaskDefaults;
   /** Current git branch of the directory; absent unless it is a checkout on a named branch. May change between `project` frames. */
   branch?: string;
 }
@@ -618,13 +618,12 @@ export const api = {
   meta: () => call<Meta>('GET', '/api/meta'),
 
   session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}`),
-  previousCounts: () => call<Record<string, number>>('GET', '/api/previous/counts'),
   previous: (id: string) => call<PreviousSession[]>('GET', `/api/projects/${enc(id)}/previous`),
   importPrevious: (id: string, conversationId: string) => call<SessionSummary>('POST', `/api/projects/${enc(id)}/previous/${enc(conversationId)}/import`),
 
   projects: async () => (await call<{ projects: Project[] }>('GET', '/api/projects')).projects,
-  createProject: (body: { dir: string; name?: string; defaults?: TaskDefaults }) => call<Project>('POST', '/api/projects', body),
-  updateProject: (id: string, body: { name?: string; defaults?: TaskDefaults }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
+  createProject: (body: { dir: string; name?: string }) => call<Project>('POST', '/api/projects', body),
+  updateProject: (id: string, body: { name: string }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
   deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
   /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
   listDirs: (path?: string, hidden = false) => call<DirList>('GET', `/api/fs/dirs${path ? `?path=${enc(path)}${hidden ? '&hidden=1' : ''}` : hidden ? '?hidden=1' : ''}`),
@@ -772,11 +771,11 @@ export function modelCatalog(meta: Meta | null, providerName: string): Model[] {
 }
 
 /**
- * What a new Task starts with, from a Project's defaults checked against the live catalog:
+ * What a new Task starts with, from the Task defaults of Settings checked against the live catalog:
  * the default provider if listed and available, else the first available one; the default
  * model if offered and not hidden in Settings, keeping its effort and context size only
  * where still offered; a model no longer offered, or hidden, falls back to `auto` (else the
- * first visible model) with effort cleared and context size `default`. Without defaults:
+ * first visible model) with effort cleared and context size `default`. With the setting unset:
  * `auto`, no effort, `default`, safe. Null until the provider list has loaded.
  */
 export function resolveTaskDefaults(meta: Meta | null, defaults?: TaskDefaults, hidden?: Settings['hidden_models']): TaskDefaults | null {

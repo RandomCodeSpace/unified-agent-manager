@@ -60,7 +60,7 @@ func TestSettingsDefaultStoredAndStreamed(t *testing.T) {
 	if after, err := os.Stat(st.Path()); err != nil || !os.SameFile(before, after) {
 		t.Fatalf("an unchanged setting rewrote the store: %v", err)
 	}
-	if _, err := m.AddProject(t.TempDir(), "", nil); err != nil {
+	if _, err := m.AddProject(t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if f := nextFrame(t, sub); f.event != "project" {
@@ -195,9 +195,12 @@ func TestHiddenModelsStoredStreamedAndNotEnforced(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Hidden models are a display preference: requests may still use them.
-	project, err := m.AddProject(t.TempDir(), "", &TaskDefaults{Provider: "fake", Model: "a", Mode: "safe"})
+	if _, err := m.UpdateSettings(SettingsPatch{TaskDefaults: &TaskDefaults{Provider: "fake", Model: "a", Mode: "safe"}}); err != nil {
+		t.Fatalf("task default on a hidden model: %v", err)
+	}
+	project, err := m.AddProject(t.TempDir(), "")
 	if err != nil {
-		t.Fatalf("project default on a hidden model: %v", err)
+		t.Fatal(err)
 	}
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project.ID, Model: "b"})
 	if err != nil {

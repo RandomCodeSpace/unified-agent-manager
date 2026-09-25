@@ -115,7 +115,7 @@ export function seed(): MockState {
     ],
   };
 
-  // p1 has defaults and a long branch, p2 none of either, p3 a default model the provider no longer offers.
+  // p1 has a long branch, p2 none.
   const projects: Project[] = [
     {
       id: 'p1',
@@ -123,7 +123,6 @@ export function seed(): MockState {
       dir: '/home/user/projects/unified-agent-manager',
       created_at: ago(60 * 24 * 9),
       badge: { text: 'UM', color: 'blue' },
-      defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
       branch: 'feat/web-project-defaults-and-sidebar-revamp',
     },
     { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4), badge: { text: 'DF', color: 'teal' } },
@@ -133,7 +132,6 @@ export function seed(): MockState {
       dir: '/home/user/projects/notes-site',
       created_at: ago(60 * 24 * 2),
       badge: { text: 'NS', color: 'pink' },
-      defaults: { provider: 'copilot', model: 'gpt-5.5-nova', effort: 'high', context_size: 'long_context', mode: 'yolo' },
       branch: 'main',
     },
   ];
@@ -778,6 +776,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
 
   return { meta, projects, previous, settings: {
       send_default: 'steer',
+      // The setting names a model with effort and a long context, so the Settings section and a draft show them resolved.
+      task_defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
       custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'UAM_BYOM_OPENROUTER', key_present: false }],
     },
     tasks, changes, commands, files };

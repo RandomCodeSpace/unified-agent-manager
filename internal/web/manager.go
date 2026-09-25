@@ -446,10 +446,10 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	for id, p := range cfg.WebProjects {
-		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Defaults: TaskDefaults(p.Defaults), Badge: Badge(p.Badge)}
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge)}
 	}
 	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
-		CustomModels: customModelsView(cfg.WebSettings.CustomModels)}
+		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults)}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -927,10 +927,10 @@ func (m *Manager) publishProjectLocked(p Project) {
 	m.broadcastLocked("project", "", func(seq uint64) any { return projectEvent{Seq: seq, Project: p} })
 }
 
-// AddProject adds the directory dir as a Project, with defaults for its new
-// Tasks unless defaults is nil, and gives it a badge. A directory has at most
-// one Project; adding it again reports the existing one with 409.
-func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project, error) {
+// AddProject adds the directory dir as a Project and gives it a badge. A
+// directory has at most one Project; adding it again reports the existing
+// one with 409.
+func (m *Manager) AddProject(dir, name string) (Project, error) {
 	canonical, err := canonicalWorkdir(dir)
 	if err != nil {
 		return Project{}, err
@@ -938,12 +938,6 @@ func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project,
 	clean, err := cleanName(name, filepath.Base(canonical))
 	if err != nil {
 		return Project{}, err
-	}
-	var d TaskDefaults
-	if defaults != nil {
-		if d, err = m.taskDefaults(*defaults); err != nil {
-			return Project{}, err
-		}
 	}
 	id, err := newUUID()
 	if err != nil {
@@ -967,7 +961,7 @@ func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project,
 	if existing != "" {
 		return Project{}, projectExists(existing)
 	}
-	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Defaults: d, Branch: branch}
+	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Branch: branch}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		for _, other := range cfg.WebProjects {
 			if other.Dir == canonical {
@@ -980,7 +974,7 @@ func (m *Manager) AddProject(dir, name string, defaults *TaskDefaults) (Project,
 		}
 		badge := newBadge(clean, cfg.WebProjects, m.pick)
 		p.Badge = Badge(badge)
-		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt, Defaults: store.WebTaskDefaults(d), Badge: badge}
+		cfg.WebProjects[id] = store.WebProject{ID: id, Name: clean, Dir: canonical, CreatedAt: p.CreatedAt, Badge: badge}
 		return nil
 	}); err != nil {
 		if existing != "" {
@@ -1001,10 +995,9 @@ func projectExists(id string) *Error {
 	return &Error{Status: http.StatusConflict, Message: "this directory already has a project", ProjectID: id}
 }
 
-// UpdateProject renames a Project, sets the defaults for its new Tasks, or
-// both; a nil argument leaves that part alone. An empty name resets it to the
+// UpdateProject renames a Project. An empty name resets it to the
 // directory's base name.
-func (m *Manager) UpdateProject(id string, name *string, defaults *TaskDefaults) (Project, error) {
+func (m *Manager) UpdateProject(id, name string) (Project, error) {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -1018,27 +1011,15 @@ func (m *Manager) UpdateProject(id string, name *string, defaults *TaskDefaults)
 		return Project{}, errProjectNotFound
 	}
 	var err error
-	if name != nil {
-		if next.Name, err = cleanName(*name, filepath.Base(next.Dir)); err != nil {
-			return Project{}, err
-		}
-	}
-	if defaults != nil {
-		if next.Defaults, err = m.taskDefaults(*defaults); err != nil {
-			return Project{}, err
-		}
+	if next.Name, err = cleanName(name, filepath.Base(next.Dir)); err != nil {
+		return Project{}, err
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		stored, ok := cfg.WebProjects[id]
 		if !ok {
 			return errProjectNotFound
 		}
-		if name != nil {
-			stored.Name = next.Name
-		}
-		if defaults != nil {
-			stored.Defaults = store.WebTaskDefaults(next.Defaults)
-		}
+		stored.Name = next.Name
 		cfg.WebProjects[id] = stored
 		return nil
 	}); err != nil {
@@ -1054,9 +1035,9 @@ func (m *Manager) UpdateProject(id string, name *string, defaults *TaskDefaults)
 	return *p, nil
 }
 
-// taskDefaults checks a Project's defaults for new Tasks the way Create
-// checks a Task's selection and mode, and returns them with an empty context
-// size made "default". The provider need only be registered.
+// taskDefaults checks the Task defaults setting the way Create checks a
+// Task's selection and mode, and returns them with an empty context size made
+// "default". The provider need only be registered.
 func (m *Manager) taskDefaults(d TaskDefaults) (TaskDefaults, error) {
 	d.ContextSize = cmp.Or(d.ContextSize, "default")
 	m.mu.Lock()
@@ -1159,12 +1140,14 @@ func (m *Manager) Settings() Settings {
 // uses its cheapest priced model again.
 //
 // CustomModels, when not nil, replaces every custom model; an empty list
-// removes them all.
+// removes them all. TaskDefaults replaces the settings a new Task starts
+// with; they are checked as a Task's selection is.
 type SettingsPatch struct {
 	SendDefault  *string
 	HiddenModels map[string][]string
 	TitleModel   map[string]string
 	CustomModels *[]store.WebCustomModel
+	TaskDefaults *TaskDefaults
 }
 
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
@@ -1199,6 +1182,13 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.CustomModels != nil {
 		if err := store.ValidCustomModels(*p.CustomModels); err != nil {
 			return Settings{}, newError(http.StatusBadRequest, "%s", err.Error())
+		}
+	}
+	var defaults TaskDefaults
+	if p.TaskDefaults != nil {
+		var err error
+		if defaults, err = m.taskDefaults(*p.TaskDefaults); err != nil {
+			return Settings{}, err
 		}
 	}
 	m.settingsMu.Lock()
@@ -1242,12 +1232,16 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.CustomModels != nil {
 		next.CustomModels = customModelsView(*p.CustomModels)
 	}
+	if p.TaskDefaults != nil {
+		next.TaskDefaults = defaults
+	}
 	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
-	if next.SendDefault == current.SendDefault && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged {
+	if next.SendDefault == current.SendDefault && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults {
 		return current, nil
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		cfg.WebSettings.SendDefault = next.SendDefault
+		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
 		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, titles)
 		if p.CustomModels != nil {

@@ -107,6 +107,7 @@ export function InlinePicker({
   );
 }
 
-function Key({ children }: { children: ReactNode }) {
+/** A keycap in a hint line. */
+export function Key({ children }: { children: ReactNode }) {
   return <kbd className="inline-flex h-4 min-w-4 items-center justify-center rounded-xs bg-sunken px-1 font-mono text-keycap text-muted">{children}</kbd>;
 }

@@ -1,6 +1,6 @@
 import { ContextMenu as BaseContextMenu } from '@base-ui/react/context-menu';
 import { Menu as BaseMenu } from '@base-ui/react/menu';
-import { Check, ChevronRight } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { createContext, useCallback, useContext, useMemo, useRef, type ComponentProps, type ReactNode } from 'react';
 import { cn } from '../../lib/cn';
 
@@ -157,25 +157,6 @@ export const Menu = {
   Actions({ items }: { items: ActionItem[] }) {
     const { defer } = useContext(DeferContext);
     return <>{renderActions({ Item: BaseMenu.Item, Separator: BaseMenu.Separator }, items, defer)}</>;
-  },
-  /** A row that opens a nested menu beside it (hover or arrow key; a tap on touch); its actions defer like the parent's. */
-  Submenu({ label, icon, children }: { label: string; icon?: ReactNode; children: ReactNode }) {
-    return (
-      <BaseMenu.SubmenuRoot>
-        <BaseMenu.SubmenuTrigger className={itemClass}>
-          {icon}
-          <span className="flex-1">{label}</span>
-          <ChevronRight aria-hidden="true" className="!size-3.5 text-faint" />
-        </BaseMenu.SubmenuTrigger>
-        <BaseMenu.Portal>
-          <BaseMenu.Positioner sideOffset={-4} collisionPadding={8} className="z-50 outline-hidden">
-            <BaseMenu.Popup data-popup="" className={popupClass}>
-              {children}
-            </BaseMenu.Popup>
-          </BaseMenu.Positioner>
-        </BaseMenu.Portal>
-      </BaseMenu.SubmenuRoot>
-    );
   },
 };
 

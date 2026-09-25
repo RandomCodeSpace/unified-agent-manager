@@ -16,7 +16,7 @@ export function Field({ id, label, hint, children }: { id: string; label: string
   );
 }
 
-/** The settings a new Task starts with: model, effort, context size and mode. Used by the Add and Edit project dialogs. */
+/** The settings a new Task starts with: model, effort, context size and mode (the New tasks section of Settings). */
 export function TaskDefaultsFields({ prefix, value, disabled, onChange }: { prefix: string; value: TaskDefaults; disabled: boolean; onChange: (next: TaskDefaults) => void }) {
   const { meta, settings } = useApp();
   const chosen = provider(meta, value.provider);

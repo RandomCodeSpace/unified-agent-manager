@@ -235,7 +235,7 @@ func sortPrevious(list []PreviousConversation) {
 // Project's directory. Nothing is sent. The Task starts closed with the
 // transcript read without opening the conversation; its next prompt opens it.
 // It keeps the conversation's model when the provider offers it, otherwise
-// takes the Project's defaults, and it takes the Project's mode. A
+// takes the Task defaults of Settings, and it takes their mode. A
 // conversation another client holds open, or a Task is linked to, is refused
 // with 409.
 func (m *Manager) Import(ctx context.Context, projectID, convID string) (SessionSummary, error) {
@@ -305,15 +305,16 @@ func (m *Manager) Import(ctx context.Context, projectID, convID string) (Session
 	}
 
 	m.mu.Lock()
+	defaults := m.settings.TaskDefaults
 	model, effort, size := "", "", "default"
 	if h.Model != "" && m.validateSelectionLocked(name, h.Model, "", "default") == nil {
 		model = h.Model
-	} else if d := p.Defaults; d.Provider == name && m.validateSelectionLocked(name, d.Model, d.Effort, cmp.Or(d.ContextSize, "default")) == nil {
+	} else if d := defaults; d.Provider == name && m.validateSelectionLocked(name, d.Model, d.Effort, cmp.Or(d.ContextSize, "default")) == nil {
 		model, effort, size = d.Model, d.Effort, cmp.Or(d.ContextSize, "default")
 	}
 	m.mu.Unlock()
 	mode := store.ModeSafe
-	if p.Defaults.Mode == string(store.ModeYolo) {
+	if defaults.Mode == string(store.ModeYolo) {
 		mode = store.ModeYolo
 	}
 	id, err := newUUID()
