@@ -6,7 +6,7 @@ import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
-import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
+import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle, WorkingMark } from './common';
 import { Chip } from './ui/chip';
 import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
@@ -68,6 +68,7 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
       <button type="button" aria-expanded={open} className="flex h-8 items-center gap-1.5 rounded-sm text-left transition-colors duration-100 hover:text-body" onClick={() => setOpen((o) => !o)}>
         <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
         Background tasks · {shown.known ? `${running} running` : 'Status unavailable'}
+        {shown.known && running > 0 && <WorkingMark />}
       </button>
       <Collapse open={open}>
       {!shown.known && <p className="pb-2">Last reported tasks. Their current status is unavailable.</p>}
@@ -76,7 +77,14 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
           <li key={task.id} className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
-              <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
+              {shown.known && task.status === 'running' ? (
+                <Chip tone="accent">
+                  <WorkingMark />
+                  Running
+                </Chip>
+              ) : (
+                <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
+              )}
               {task.status === 'running' && <Tip label={locked ? 'This task is read-only.' : !shown.known ? 'Refresh the connection to check this task before stopping it.' : 'Stop this background shell'}>
                 <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => void stop(task.id)}>
                   {requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
@@ -308,7 +316,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
                 <Bot />
                 <span className="max-sm:hidden">Subagents</span>
                 <span className="tabular-nums text-ink">{session.subagents.length}</span>
-                {agentsRunning > 0 && <Spinner />}
+                {agentsRunning > 0 && <WorkingMark />}
               </Button>
             </Tip>
           )}
