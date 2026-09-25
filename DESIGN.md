@@ -706,7 +706,7 @@ Primary is ink; secondary is `raised` with a `hairline-strong` edge; ghost has n
 | idle | dashed circle `faint` | time | "Idle" `muted` |
 | closed | hollow dot `faint` | Closed (unread only) | "Closed" `muted` |
 
-Only the attention chip has a fill. Chrome icons are lucide, 12–16px, one stroke weight. The Copilot provider mark uses its official Primer SVG. The working mark is one component (`WorkingMark` in `common.tsx`), so the sidebar rows, the Task header, the subagent "Running" chips and the transcript's "Working…" row move alike; tool rows keep the plain spinner, since a tool in flight is not the Task working.
+Only the attention chip has a fill. Chrome icons are lucide, 12–16px, one stroke weight. The Copilot provider mark uses its official Primer SVG. The working mark is one component (`WorkingMark` in `common.tsx`) and the one sign of agent work in progress: the sidebar rows, the Task header, the transcript's "Working…" row, the subagent "Running" chips and the Subagents header button, and the background tasks' "Running" chips and their "n running" line all move alike. The plain spinner means UAM itself is waiting on a request; tool rows keep it too, since a single tool call in flight is not the Task working. While a turn runs, a "Working…" line with the mark sits at the foot of the transcript, where new output lands, unless the last row is already live (a streaming thought or a running call's activity row says "Thinking…" or "Running: …"); it grows in and folds away through the height collapse. It moves down as prose streams above it; nothing above it moves.
 
 ## Motion
 
