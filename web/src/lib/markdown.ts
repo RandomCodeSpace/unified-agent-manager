@@ -103,3 +103,24 @@ export function taskFile(ref: string | undefined, workdir: string | undefined): 
   }
   return parts.length ? { path: parts.join('/'), hash } : null;
 }
+
+/**
+ * Whether an inline code span's text may name a file: no whitespace, no scheme, at most
+ * 300 characters, and a "/" or a `.ext` ending (1–10 letters or digits). Calls (`foo()`),
+ * globs (`*.ts`), flags (`--force`), versions (`v1.2.3`), home paths (`~/x`) and
+ * directories (`out/`) are not; `package.json` is. The Task's folder decides the rest.
+ */
+export function looksLikePath(text: string): boolean {
+  if (!text || text.length > 300 || /[\s()[\]{}*?<>|"'`$\\]/.test(text) || SCHEME.test(text)) return false;
+  if (/^[-~]/.test(text) || text.endsWith('/') || /^v?\d+(\.\d+)+$/i.test(text)) return false;
+  return text.includes('/') || /\.[A-Za-z0-9]{1,10}$/.test(text);
+}
+
+/**
+ * The file of the Task folder `workdir` an inline code span names, as `taskFile` maps a
+ * link, or null when the text does not look like a path. Code is literal: a `%` is part of
+ * the name, never an escape.
+ */
+export function codeFile(text: string, workdir: string | undefined): { path: string; hash: string } | null {
+  return looksLikePath(text) ? taskFile(text.replace(/%/g, '%25'), workdir) : null;
+}
