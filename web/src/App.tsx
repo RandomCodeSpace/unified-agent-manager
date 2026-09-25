@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { UPDATE_EVENTS, api, describeError, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -244,15 +244,25 @@ export default function App() {
         dispatch({ type: 'connection', status: 'reconnecting' });
         return;
       }
-      // The browser gave up (non-200 response). Re-check auth, then reopen.
-      dispatch({ type: 'connection', status: 'offline' });
+      // The browser gave up (non-200 response). A selected Task the service does not know (a stale
+      // link, one deleted elsewhere) is dropped with a notice; otherwise re-check auth, then reopen.
       const later = () => {
         retry = window.setTimeout(() => setStreamKey((k) => k + 1), 5000);
       };
-      api
-        .auth()
-        .then((r) => (loggedIn(r) ? later() : setAuth('out')))
-        .catch(later);
+      const reconnect = () => {
+        dispatch({ type: 'connection', status: 'offline' });
+        api
+          .auth()
+          .then((r) => (loggedIn(r) ? later() : setAuth('out')))
+          .catch(later);
+      };
+      const opened = state.selectedId;
+      if (!opened) return reconnect();
+      api.session(opened).then(reconnect, (err: unknown) => {
+        if (!isStatus(err, 404)) return reconnect();
+        dispatch({ type: 'select', id: null });
+        setNotice('That task no longer exists.');
+      });
     };
     const selected = state.selectedId;
     // Stream deltas wait for the next animation frame and land in one dispatch; any other
