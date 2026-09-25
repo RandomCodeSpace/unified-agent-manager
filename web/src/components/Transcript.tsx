@@ -9,7 +9,7 @@ import { CodeBlock, Markdown, SessionContext, Spinner, SubagentIdleIcon, Workdir
 import { DecidedRow } from './Interactions';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
-import { Collapse } from './ui/collapse';
+import { Collapse, usePresence } from './ui/collapse';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -99,8 +99,40 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       <WorkdirContext.Provider value={workdir}>
         {out}
         {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
+        <WorkingTail working={working && !liveAtFoot(items, byParent)} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
+  );
+}
+
+/**
+ * Whether the last row is already live: a thought streaming or a call running folds into an
+ * activity row that carries the working mark and says so ("Thinking…", "Running: …"). A subagent's
+ * call is its own row, not an activity row.
+ */
+function liveAtFoot(items: Item[], byParent: Map<string, Subagent>): boolean {
+  const last = items[items.length - 1];
+  if (!last) return false;
+  if (last.kind === 'reasoning') return true;
+  return last.kind === 'tool' && (last.tool?.status === 'pending' || last.tool?.status === 'running') && !byParent.has(last.id);
+}
+
+/**
+ * The live line at the foot of a running turn, where new output lands: the working mark and a
+ * shimmering "Working…" while prose streams or the agent is between steps. It steps aside while the
+ * last row is already live, grows in when the turn starts and folds away when it ends or waits for
+ * the user; the turn's status row already announces the state, so this one is not read out again.
+ */
+function WorkingTail({ working }: { working: boolean }) {
+  const { mounted, onClosed } = usePresence(working);
+  if (!mounted) return null;
+  return (
+    <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
+      <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
+        <WorkingMark />
+        <span className="animate-shimmer motion-reduce:animate-none">Working…</span>
+      </div>
+    </Collapse>
   );
 }
 
