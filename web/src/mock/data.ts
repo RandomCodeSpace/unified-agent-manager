@@ -203,6 +203,17 @@ export function seed(): MockState {
     model: 'claude-haiku-4.5',
     effort: 'high',
   };
+  const a4: Subagent = {
+    id: 'a4',
+    parent_tool_call_id: 'i6',
+    name: 'Check the heading order',
+    description: 'Check that headings in templates/ nest without skipping a level.',
+    status: 'completed',
+    started_at: ago(11),
+    ended_at: ago(9),
+    model: 'claude-haiku-4.5',
+    effort: 'low',
+  };
 
   const tasks: MockTask[] = [
     task({
@@ -435,9 +446,21 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           input: '{"description":"Run the accessibility linter"}',
           output: 'axe-core is not installed in this project.',
         }),
+        tool('i6', 11, {
+          name: 'task',
+          title: 'Check the heading order',
+          status: 'completed',
+          input: '{"description":"Check the heading order"}',
+          output: '## Heading order\n\n**The byline skips a level** in `templates/post.html`: it jumps from `h1` to `h3`. Demoted it to `h2`; [list.html](templates/list.html) nests correctly.\n\n- `templates/post.html`: 1 change\n- `templates/list.html`: no change',
+        }),
       ],
-      subagents: [a1, a2, a3],
+      subagents: [a1, a2, a3, a4],
       agentItems: {
+        a4: [
+          tool('w1', 11, { name: 'grep', title: 'Search "<h[1-6]" in templates', status: 'completed', output: 'templates/post.html:9\ntemplates/post.html:14\ntemplates/list.html:7' }, 'a4'),
+          tool('w2', 10, { name: 'edit', title: 'Edit templates/post.html', status: 'completed', output: '@@ -14,1 +14,1 @@\n-<h3 class="byline">\n+<h2 class="byline">' }, 'a4'),
+          { id: 'w3', kind: 'assistant', time: ago(9), agent_id: 'a4', text: 'The byline was an `h3` under an `h1`; it is an `h2` now. `list.html` nests correctly.' },
+        ],
         a3: [
           tool('v1', 11, { name: 'bash', title: 'npx axe http://localhost:4000/post', status: 'failed', output: 'npm ERR! could not determine executable to run' }, 'a3'),
           { id: 'v2', kind: 'assistant', time: ago(10), agent_id: 'a3', text: '`axe-core` is not installed and I was told not to add dependencies. Stopping here.' },
