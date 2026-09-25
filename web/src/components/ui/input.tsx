@@ -3,13 +3,14 @@ import type { ComponentProps } from 'react';
 import { cn } from '../../lib/cn';
 
 /**
- * DESIGN.md text input: `raised` on a `hairline-strong` edge, 6px corners, `ink` text. Focus
- * is the app's one ring (2px `focus`, 2px out, the same as Button); `aria-invalid` turns
- * the edge and the ring `error`. Sizes follow Button: sm 28 (in-place rename), md 32,
+ * DESIGN.md text input: a filled `sunken` surface with the inset `well` ring, 6px corners,
+ * `ink` text, no drawn edge (its label, placeholder and caret identify it). Focus is the
+ * `focus` glow (a 1px `focus` edge and a soft halo, no outline); `aria-invalid` turns the
+ * ring `error`. Sizes follow Button: sm 28 (in-place rename), md 32,
  * lg 36 (forms, the DESIGN.md default); md and lg reach 44px on a coarse pointer.
  */
 export const inputVariants = cva(
-  'w-full min-w-0 rounded-sm border border-hairline-strong bg-raised text-ink transition-[border-color,color] placeholder:text-muted aria-invalid:border-error aria-invalid:focus-visible:outline-error disabled:cursor-not-allowed disabled:opacity-45',
+  'w-full min-w-0 rounded-sm bg-sunken text-ink shadow-well transition-[background-color,color] placeholder:text-muted focus-visible:outline-none focus-visible:shadow-focus aria-invalid:shadow-[inset_0_0_0_1px_var(--color-error)] aria-invalid:focus-visible:shadow-[0_0_0_1px_var(--color-error),0_0_0_4px_var(--color-error-wash)] disabled:cursor-not-allowed disabled:opacity-45',
   {
     variants: {
       size: {

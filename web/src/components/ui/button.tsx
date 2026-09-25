@@ -5,7 +5,8 @@ import { Spinner } from './spinner';
 
 /**
  * DESIGN.md buttons: 6px rectangles at every size, `ui` 13/500. Primary is ink, never a
- * colour. Hover is the `tint-hover` step; press adds ink. Sizes: sm 28, md 32, lg 36.
+ * colour; secondary is a filled `sunken` surface with no edge. Hover is the `tint-hover`
+ * step; press adds ink. Sizes: sm 28, md 32, lg 36.
  * The small sizes keep their look and grow an invisible hit area instead (`after:`):
  * 32px on a fine pointer, 44px on a coarse one; md and lg grow to 44px themselves.
  * `aria-disabled` looks disabled but keeps its tooltip (the reason stays reachable).
@@ -14,12 +15,12 @@ import { Spinner } from './spinner';
 const press = 'not-aria-disabled:active:scale-[0.97]';
 
 export const buttonVariants = cva(
-  "relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-sm whitespace-nowrap text-ui font-medium select-none transition-[background-color,color,border-color,scale] after:absolute after:content-[''] disabled:pointer-events-none disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:opacity-45 [&_svg]:size-4 [&_svg]:shrink-0",
+  "relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-sm whitespace-nowrap text-ui font-medium select-none transition-[background-color,color,scale] after:absolute after:content-[''] disabled:pointer-events-none disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:opacity-45 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         primary: `bg-primary text-on-primary hover:bg-body active:bg-ink ${press}`,
-        secondary: `border border-hairline-strong bg-raised text-ink hover:bg-surface active:bg-sunken ${press}`,
+        secondary: `bg-sunken text-ink hover:bg-tint-hover active:bg-hairline ${press}`,
         ghost:
           'text-body not-aria-disabled:hover:bg-tint-hover not-aria-disabled:hover:text-ink active:bg-hairline data-open:bg-tint-hover data-open:text-ink aria-pressed:bg-tint-hover aria-pressed:text-ink',
         danger: `text-error hover:bg-error-wash active:bg-error-wash ${press}`,

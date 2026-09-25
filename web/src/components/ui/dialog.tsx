@@ -6,7 +6,8 @@ import { cn } from '../../lib/cn';
 import { Button } from './button';
 
 /**
- * Modal surfaces on Base UI (Level 3 in DESIGN.md: raised, modal shadow, on the backdrop).
+ * Modal surfaces on Base UI (Level 3 in DESIGN.md: raised, `lg` corners, modal shadow with its
+ * 1px ring, on the backdrop; they scale in from 0.97).
  * Focus is trapped, Esc closes, focus returns to the opener. `data-popup` marks every
  * popup so app-level Esc handlers stand back while one is open.
  */
@@ -17,7 +18,7 @@ const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-aut
 
 // Capped at the viewport less its 16px gutters: the title row stays and the body scrolls (Dialog) when the content is taller.
 const popupClass =
-  'relative flex max-h-[calc(100dvh-32px)] w-full max-w-sheet flex-col rounded-md bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,transform] duration-240 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
+  'relative flex max-h-[calc(100dvh-32px)] w-full max-w-sheet flex-col rounded-lg bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
 
 export interface DialogProps {
   open: boolean;
@@ -137,7 +138,7 @@ export function AlertDialog({ open, onOpenChange, onClosed, title, description, 
               <BaseAlertDialog.Close render={<Button variant="secondary" ref={cancel} />}>
                 {cancelLabel}
               </BaseAlertDialog.Close>
-              <Button variant={danger ? 'danger' : 'primary'} className={danger ? 'border border-hairline-strong bg-raised' : undefined} loading={busy} disabled={disabled} onClick={onConfirm}>
+              <Button variant={danger ? 'danger' : 'primary'} className={danger ? 'bg-sunken' : undefined} loading={busy} disabled={disabled} onClick={onConfirm}>
                 {confirmLabel}
               </Button>
             </div>

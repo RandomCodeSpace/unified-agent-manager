@@ -6,10 +6,10 @@ import { cn } from '../../lib/cn';
 
 /**
  * Dropdown and context menus on Base UI. Level 2 "floating" surface from DESIGN.md:
- * raised fill, hairline-strong edge, float shadow, 10px radius; 30px rows.
+ * raised fill on the float shadow (its 1px ring is the edge), 10px radius; 30px rows.
  */
 export const popupClass =
-  'z-50 min-w-44 origin-(--transform-origin) rounded-md border border-hairline-strong bg-raised p-1 text-ink shadow-float outline-hidden transition-[opacity,scale] duration-100 data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0';
+  'z-50 min-w-44 origin-(--transform-origin) rounded-md bg-raised p-1 text-ink shadow-float outline-hidden transition-[opacity,scale] duration-100 data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0';
 
 /** One row of any popup list (menus, selects, the composer's inline picker): the keyboard or pointer highlight is the `tint-hover` step. */
 export const itemClass =
@@ -17,7 +17,7 @@ export const itemClass =
 
 export const dangerItemClass = 'text-error data-highlighted:bg-error-wash data-highlighted:text-error [&_svg]:text-error data-highlighted:[&_svg]:text-error';
 
-export const separatorClass = 'my-1 h-px bg-hairline';
+export const separatorClass = 'my-1 fade-rule';
 
 export const labelClass = 'px-2 pt-2 pb-1 text-caption text-muted';
 
