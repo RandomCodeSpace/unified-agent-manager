@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // Title job bounds. A job waits for one of maxTitleJobs slots before its
@@ -33,13 +35,59 @@ func (m *Manager) titlerLocked(name string) agentapi.Titler {
 	return t
 }
 
+// utilityModelLocked returns the provider's Utility model, the model UAM
+// uses for its own small AI jobs: the one Settings name, else the cheapest
+// priced model; "" when Settings opt the provider out or none is priced.
+func (m *Manager) utilityModelLocked(provider string) string {
+	switch model := m.settings.TitleModel[provider]; model {
+	case store.WebTitleModelNone:
+		return ""
+	case "":
+		return m.cheapestModelLocked(provider)
+	default:
+		return model
+	}
+}
+
+// cheapestModelLocked returns the provider's cheapest priced model, or ""
+// when none is priced. A model is priced when it reports input and output
+// prices; auto and models hidden in Settings are skipped. The lowest
+// input+output price per token wins, then the lower input price, then the
+// lower ID.
+func (m *Manager) cheapestModelLocked(provider string) string {
+	type candidate struct {
+		id           string
+		total, input float64
+	}
+	var best *candidate
+	for _, mo := range m.infos[provider].Models {
+		p := mo.Prices
+		if mo.ID == "auto" || p == nil || p.Input == nil || p.Output == nil || slices.Contains(m.settings.HiddenModels[provider], mo.ID) {
+			continue
+		}
+		batch := float64(cmp.Or(p.BatchSize, defaultPriceBatch))
+		c := candidate{id: mo.ID, total: (*p.Input + *p.Output) / batch, input: *p.Input / batch}
+		if best == nil || c.total < best.total || c.total == best.total && (c.input < best.input || c.input == best.input && c.id < best.id) {
+			best = &c
+		}
+	}
+	if best == nil {
+		return ""
+	}
+	return best.id
+}
+
+// defaultPriceBatch is the token count a price is for when the provider
+// reports no batch size, as the browser assumes too.
+const defaultPriceBatch = 1_000_000
+
 // titleModelLocked returns the model that titles s from in, or "" when none
 // does. Only a Task's first message is titled: a prompt, not a command, with
 // text, sent while the Task has no name, no title, no user item and no
-// submission the provider may have taken, and while the settings name a
-// model for its provider.
+// submission the provider may have taken, and while its provider has a
+// Utility model.
 func (m *Manager) titleModelLocked(s *webSession, in turnInput) string {
-	model := m.settings.TitleModel[s.provider]
+	model := m.utilityModelLocked(s.provider)
 	if model == "" || in.command != "" || strings.TrimSpace(in.text) == "" || s.name != "" || s.title != "" || s.truncated || m.titlerLocked(s.provider) == nil {
 		return ""
 	}

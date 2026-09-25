@@ -81,6 +81,9 @@ type ProviderInfo struct {
 	Capabilities agentapi.Capabilities `json:"capabilities"`
 	// Models are the selectable models; empty means the provider default only.
 	Models []agentapi.Model `json:"models"`
+	// CheapestModel is the cheapest priced model not hidden in Settings: the
+	// Utility model when Settings name none. Omitted when none is priced.
+	CheapestModel string `json:"cheapest_model,omitempty"`
 }
 
 // Project is a directory the user added; its Tasks are web sessions whose
@@ -125,8 +128,11 @@ type Settings struct {
 	// offer, sorted; omitted when none is hidden. IDs the provider no longer
 	// lists are kept. The service never refuses a hidden model.
 	HiddenModels map[string][]string `json:"hidden_models,omitempty"`
-	// TitleModel maps a provider to the model that titles its new Tasks from
-	// their first message; omitted when every provider keeps its own title.
+	// TitleModel maps a provider to its Utility model, the model UAM uses for
+	// its own small AI jobs such as titling new Tasks: a model ID, or
+	// store.WebTitleModelNone when the provider keeps its own title. A
+	// provider without an entry uses ProviderInfo.CheapestModel. Omitted when
+	// no provider has an entry.
 	TitleModel map[string]string `json:"title_model,omitempty"`
 	// CustomModels are the OpenAI-compatible models the owner brought;
 	// omitted when there are none. Their model IDs are name/model_id.
