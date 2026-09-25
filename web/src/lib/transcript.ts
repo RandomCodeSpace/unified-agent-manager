@@ -537,8 +537,7 @@ export function firstLine(text: string | undefined): string {
       .replace(/(\*\*|__)(.+?)\1/g, '$2')
       .replace(/(^|[^\w])[*_](.+?)[*_](?=[^\w]|$)/g, '$1$2')
       .replace(/~~(.+?)~~/g, '$1')
-      .replace(/`+([^`]*)`+/g, '$1')
-      .replace(/<\/?[a-z][^>]*>/gi, '');
+      .replace(/`+([^`]*)`+/g, '$1');
     if (!plain.trim()) continue;
     if (/^#{1,6}\s/.test(line)) {
       heading ||= oneLine(plain);
