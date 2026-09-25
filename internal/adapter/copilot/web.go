@@ -1030,8 +1030,10 @@ type conversation struct {
 	// turn until session.idle, which never comes while a background shell runs.
 	turnRunning bool
 	// idleUnresolved marks a main-agent assistant.idle seen while the mode
-	// was unknown. The CLI withholds session.idle while background work runs,
-	// so a read showing a non-autopilot mode ends the turn instead.
+	// was autopilot or unknown. The CLI withholds session.idle, and with it
+	// the autopilot continuation, while background work runs, so a read
+	// showing a non-autopilot mode or a running attached shell ends the turn
+	// instead.
 	idleUnresolved    bool
 	backgroundTasks   *agentapi.BackgroundTasks
 	execution         *agentapi.ExecutionState
@@ -1896,6 +1898,10 @@ func (c *conversation) checkTasksLocked() {
 func (c *conversation) readTasks(sess sdkSession) {
 	for {
 		c.taskRPC.Lock()
+		// Only a read started after the idle can show the CLI still defers it.
+		c.mu.Lock()
+		afterIdle := c.idleUnresolved
+		c.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), webTasksTimeout)
 		tasks, err := sess.ListTasks(ctx)
 		cancel()
@@ -1912,6 +1918,9 @@ func (c *conversation) readTasks(sess sdkSession) {
 		case !c.closed:
 			c.applyShellTasksLocked(tasks)
 			c.applyTasksLocked(tasks)
+			if afterIdle && c.idleUnresolved && attachedShellRunning(tasks) {
+				c.finishTurnLocked(nil, time.Now())
+			}
 		}
 		again := c.relist && !c.closed
 		c.listing, c.relist = again, false
@@ -1921,6 +1930,15 @@ func (c *conversation) readTasks(sess sdkSession) {
 			return
 		}
 	}
+}
+
+// attachedShellRunning reports whether tasks hold a running attached shell:
+// work the CLI withholds session.idle for.
+func attachedShellRunning(tasks []rpc.TaskInfo) bool {
+	return slices.ContainsFunc(tasks, func(task rpc.TaskInfo) bool {
+		shell, ok := task.(*rpc.TaskShellInfo)
+		return ok && shell.AttachmentMode == rpc.TaskShellInfoAttachmentModeAttached && shell.Status == rpc.TaskStatusRunning
+	})
 }
 
 func (c *conversation) applyShellTasksLocked(tasks []rpc.TaskInfo) {
@@ -2173,10 +2191,11 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			return
 		}
 		if (c.autopilotTurn || c.execution != nil && (c.execution.Mode == "autopilot" || c.execution.Mode == "")) && (d.Aborted == nil || !*d.Aborted) {
+			c.idleUnresolved = true
 			if c.execution != nil && c.execution.Mode == "" {
-				c.idleUnresolved = true
 				c.checkExecutionLocked()
 			}
+			c.checkTasksLocked()
 			c.autopilotTurn = true
 			return
 		}
