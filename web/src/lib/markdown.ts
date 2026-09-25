@@ -45,3 +45,29 @@ export function splitBlocks(text: string): string[] {
   blocks.push(lines.slice(start).join('\n'));
   return blocks;
 }
+
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * The file path a markdown `src` or `href` names on the host, or null when it is a web
+ * address (`https:`, `data:`, `blob:`, `mailto:`, ...). Agents write `![](shot.png)`,
+ * `![](./shots/a.png)`, `![](/home/me/x.png)` and `file:///home/me/x.png`; all of those
+ * are paths for the service to serve from the Task's directory. Windows drive letters are
+ * not paths here: the service runs on Linux.
+ */
+export function localPath(ref: string | undefined): string | null {
+  if (!ref) return null;
+  if (/^file:\/\//i.test(ref)) {
+    try {
+      return decodeURIComponent(new URL(ref).pathname) || null;
+    } catch {
+      return null;
+    }
+  }
+  if (SCHEME.test(ref)) return null;
+  return ref;
+}
+
+/** Whether a path names a file the raw route can serve, by extension. */
+export const isImagePath = (p: string): boolean => IMAGE_FILE.test(p);

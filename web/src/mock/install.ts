@@ -358,6 +358,28 @@ export function install(): void {
   }
   window.XMLHttpRequest = FakeXHR as unknown as typeof XMLHttpRequest;
 
+  const screenshots = new Map<string, Uint8Array>();
+  /** A png the size of a small window, labelled with its path, drawn once per path. */
+  function screenshotPng(label: string): Uint8Array {
+    let bytes = screenshots.get(label);
+    if (bytes) return bytes;
+    const canvas = document.createElement('canvas');
+    canvas.width = 960;
+    canvas.height = 540;
+    const c = canvas.getContext('2d')!;
+    c.fillStyle = '#1f2430';
+    c.fillRect(0, 0, 960, 540);
+    c.fillStyle = '#7aa2f7';
+    for (let i = 0; i < 12; i++) c.fillRect(40 + i * 76, 420 - (i % 5) * 60, 48, 120 + (i % 5) * 60);
+    c.fillStyle = '#e6e6e6';
+    c.font = '28px sans-serif';
+    c.fillText(label, 40, 60);
+    const b64 = canvas.toDataURL('image/png').split(',')[1] ?? '';
+    bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+    screenshots.set(label, bytes);
+    return bytes;
+  }
+
   /** The service's byte sniffing and size limits; a `status` means the refusal. */
   function sniff(b: Uint8Array): { mime: string } | { status: number; error: string } {
     if (!b.length) return { status: 400, error: 'the file is empty' };
@@ -628,6 +650,17 @@ export function install(): void {
       if (!t) return fail(404, 'session not found');
       if (!t.open) return fail(409, 'the provider conversation is not open');
       return json(200, { commands: st.commands });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/files\/raw$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const raw = url.searchParams.get('path') ?? '';
+      if (!raw) return fail(400, 'path is required');
+      // The service resolves the path inside the Task's directory; here a clean prefix check stands in.
+      const abs = (raw.startsWith('/') ? raw : `${t.workdir}/${raw}`).replace(/\/\.\//g, '/');
+      if (abs.split('/').includes('..') || !abs.startsWith(`${t.workdir}/`) || /missing/.test(abs)) return fail(404, 'file not found');
+      if (!/\.png$/i.test(abs)) return fail(415, 'only png, jpeg, gif and webp images are served');
+      return new Response(screenshotPng(abs.slice(t.workdir.length + 1)).slice(), { status: 200, headers: { 'Content-Type': 'image/png', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-cache' } });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/files$/)) && method === 'GET') {
       const t = find(decodeURIComponent(r[1]));

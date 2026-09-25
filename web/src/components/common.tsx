@@ -1,16 +1,17 @@
-import { Check, CircleDashed, Copy, CornerDownLeft, Minus, Pause, X } from 'lucide-react';
+import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Minus, Pause, X } from 'lucide-react';
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { LIVE, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
+import { LIVE, api, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed } from '../lib/diagram';
-import { splitBlocks } from '../lib/markdown';
+import { isImagePath, localPath, splitBlocks } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
+import { Lightbox } from './Attachments';
 import { DiagramCard } from './Diagram';
-import { Button } from './ui/button';
+import { Button, buttonVariants } from './ui/button';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
 import { ContextMenu, type ActionItem } from './ui/menu';
@@ -402,6 +403,107 @@ interface MdSource {
 
 const MdContext = createContext<MdSource>({ text: '', streaming: false });
 
+/** The Task whose transcript is rendering: markdown images and links by file path are served from its directory. */
+export const SessionContext = createContext<string | undefined>(undefined);
+
+/** Natural sizes of local images that loaded, by URL, so a block parsed again reserves the same box before the bytes arrive. */
+const imageSizes = new Map<string, { width: number; height: number }>();
+
+/** A compact stand-in where an image cannot show: the alt text and the path, never a broken-image glyph. */
+function ImageNote({ alt, detail, href }: { alt: string; detail: string; href?: string }) {
+  const body = (
+    <>
+      <ImageOff className="size-3.5 shrink-0" aria-hidden="true" />
+      <span>{alt || 'Image'}</span>
+      <span className="truncate text-muted">{detail}</span>
+    </>
+  );
+  const className = 'inline-flex max-w-full items-center gap-1.5 rounded-sm bg-sunken px-2 py-1 align-middle text-caption text-body';
+  return href ? (
+    <a href={href} rel="noopener noreferrer" target="_blank" className={cn(className, 'hover:underline')}>
+      {body}
+    </a>
+  ) : (
+    <span className={className}>{body}</span>
+  );
+}
+
+/**
+ * An image the agent named by path, from the raw file route. Lazy, never wider than the
+ * column; one that fails (outside the Task's folder, missing, not an image) becomes a note.
+ * Clicking it opens the lightbox with the file's name.
+ */
+function LocalImage({ sessionId, path, alt }: { sessionId: string; path: string; alt: string }) {
+  const url = api.rawFileUrl(sessionId, path);
+  const [failed, setFailed] = useState(false);
+  const [size, setSize] = useState(() => imageSizes.get(url));
+  const [open, setOpen] = useState(false);
+  if (failed) return <ImageNote alt={alt} detail={path} />;
+  const name = path.split('/').pop() || path;
+  return (
+    <>
+      <button type="button" className="group/thumb block max-w-full rounded-sm text-left" aria-label={`Open ${alt || name}`} onClick={() => setOpen(true)}>
+        <img
+          src={url}
+          alt={alt}
+          title={path}
+          width={size?.width}
+          height={size?.height}
+          loading="lazy"
+          decoding="async"
+          className="block h-auto max-h-[480px] w-auto max-w-full rounded-sm bg-sunken object-contain transition-[box-shadow] duration-100 group-hover/thumb:shadow-float"
+          onError={() => setFailed(true)}
+          onLoad={(e) => {
+            const { naturalWidth: width, naturalHeight: height } = e.currentTarget;
+            if (width && height && !size) {
+              imageSizes.set(url, { width, height });
+              setSize({ width, height });
+            }
+          }}
+        />
+      </button>
+      <Lightbox
+        open={open}
+        onOpenChange={setOpen}
+        title={alt || name}
+        description={path}
+        src={url}
+        alt={alt || name}
+        footer={
+          <a href={url} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: 'secondary', size: 'md' })}>
+            <ExternalLink />
+            Open original
+          </a>
+        }
+      />
+    </>
+  );
+}
+
+/** A markdown image: by path from the Task's directory; `data:` inline; a web address stays a link, as the page loads nothing cross-origin. */
+function MdImage({ src, alt }: { src?: string; alt?: string }) {
+  const sessionId = useContext(SessionContext);
+  const text = alt ?? '';
+  const path = localPath(src);
+  if (path) return sessionId ? <LocalImage sessionId={sessionId} path={path} alt={text} /> : <ImageNote alt={text} detail={path} />;
+  if (src && /^(data|blob):/i.test(src)) return <img src={src} alt={text} loading="lazy" decoding="async" className="block h-auto max-h-[480px] w-auto max-w-full rounded-sm" />;
+  return <ImageNote alt={text} detail={src ?? ''} href={src && /^https?:/i.test(src) ? src : undefined} />;
+}
+
+/** A markdown link: web addresses open in a new tab; a path to an image file opens it from the raw file route; anything else is text. */
+function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const sessionId = useContext(SessionContext);
+  const path = localPath(href);
+  const target = path ? (sessionId && isImagePath(path) ? api.rawFileUrl(sessionId, path) : undefined) : typeof href === 'string' && /^(https?:|mailto:)/i.test(href) ? href : undefined;
+  return target ? (
+    <a href={target} rel="noopener noreferrer" target="_blank">
+      {children}
+    </a>
+  ) : (
+    <span>{children}</span>
+  );
+}
+
 interface Span {
   start: { offset?: number };
   end: { offset?: number };
@@ -419,17 +521,12 @@ function MermaidBlock({ source, position, children }: { source: string; position
 
 const languageOf = (className: unknown): string | undefined => /language-([\w+-]+)/.exec(Array.isArray(className) ? className.join(' ') : String(className ?? ''))?.[1];
 
+/** react-markdown drops `file:` URLs as unsafe; here they are paths for the raw file route, which MdImage and MdLink decide on. */
+const mdUrl = (url: string): string => (/^file:\/\//i.test(url) ? url : defaultUrlTransform(url));
+
 const mdComponents: Components = {
-  a({ href, children }) {
-    const safe = typeof href === 'string' && /^(https?:|mailto:)/i.test(href);
-    return safe ? (
-      <a href={href} rel="noopener noreferrer" target="_blank">
-        {children}
-      </a>
-    ) : (
-      <span>{children}</span>
-    );
-  },
+  a: MdLink,
+  img: MdImage,
   code({ className, children }) {
     const language = languageOf(className);
     const code = typeof children === 'string' ? children : Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;
@@ -456,7 +553,8 @@ const mdComponents: Components = {
 };
 
 /**
- * Markdown for untrusted provider text: no raw HTML, no images, safe links only. Rendered
+ * Markdown for untrusted provider text: no raw HTML, safe links only, images by path served
+ * from the Task's directory (`SessionContext`) and no image from another origin. Rendered
  * in top-level blocks, so while it streams only the last block is parsed again per delta.
  */
 export function Markdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
@@ -474,7 +572,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, streaming }: { text: s
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   return (
     <MdContext.Provider value={source}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents} disallowedElements={['img']} unwrapDisallowed>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={mdComponents} urlTransform={mdUrl}>
         {text}
       </ReactMarkdown>
     </MdContext.Provider>

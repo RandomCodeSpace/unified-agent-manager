@@ -158,6 +158,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/sessions/{id}/command", s.handleCommand)
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.handleCommands)
 	mux.HandleFunc("GET /api/sessions/{id}/files", s.handleFiles)
+	mux.HandleFunc("GET /api/sessions/{id}/files/raw", s.handleRawImage)
 	mux.HandleFunc("POST /api/sessions/{id}/attachments", s.handleUpload)
 	mux.HandleFunc("GET /api/sessions/{id}/attachments/{attachment_id}", s.handleAttachment)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/resume", s.handleQueueResume)
@@ -748,6 +749,31 @@ func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, files)
+}
+
+// handleRawImage serves an image file of the Task's directory, named by the
+// path query parameter, for the images a reply's markdown refers to by path.
+// The type is what the bytes sniffed as, never HTML. Unlike the other API
+// routes it may be revalidated: the browser sends If-Modified-Since or
+// If-None-Match and gets a 304 while the file is unchanged.
+func (s *Server) handleRawImage(w http.ResponseWriter, r *http.Request) {
+	img, err := s.m.RawImage(r.PathValue("id"), r.URL.Query().Get("path"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	defer func() { _ = img.File.Close() }()
+	h := w.Header()
+	h.Set("Content-Type", img.MIME)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Cache-Control", "private, no-cache")
+	h.Set("ETag", fmt.Sprintf(`"%x-%x"`, img.Info.Size(), img.Info.ModTime().UnixNano()))
+	if value := mime.FormatMediaType("inline", map[string]string{"filename": img.Info.Name()}); value != "" {
+		h.Set("Content-Disposition", value)
+	} else {
+		h.Set("Content-Disposition", "inline")
+	}
+	http.ServeContent(w, r, "", img.Info.ModTime(), img.File)
 }
 
 // handleUpload stores the request body as one attachment named by the name
