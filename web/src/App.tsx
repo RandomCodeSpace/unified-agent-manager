@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
+import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -25,6 +25,8 @@ type TaskDialog = { kind: 'archive' | 'delete' | 'close'; id: string } | null;
 const NARROW = '(max-width: 959px)';
 /** From this width the Changes sheet sits beside the column instead of over it. */
 const SHEET_INLINE = '(min-width: 1280px)';
+/** A touch screen: focusing the composer would raise the keyboard over the conversation just opened. */
+const COARSE = '(pointer: coarse)';
 const VIEWED_KEY = 'uam.viewed';
 const SIDEBAR_KEY = 'uam.sidebar';
 const FILTER_KEY = 'uam.projectFilter';
@@ -86,8 +88,10 @@ export default function App() {
   const loadedAt = useRef(new Date().toISOString());
   // One create per project at a time; the request ID survives a failure so a retry is idempotent.
   const creating = useRef(new Map<string, { id: string; busy: boolean }>());
-  // Task whose composer takes focus once its detail arrives (a Task just created).
+  // Task whose composer takes focus once its detail arrives (a Task just created, or one chosen
+  // from the list on a fine pointer); `selectTick` re-runs the focus when the open Task is chosen again.
   const focusTask = useRef<string | null>(null);
+  const [selectTick, setSelectTick] = useState(0);
   // The service version this page loaded with, the time of the last version check, whether the
   // stream has been down since it last opened, and whether a newer version waits for a Reload.
   const loadedVersion = useRef<string | null>(null);
@@ -316,13 +320,14 @@ export default function App() {
 
   const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage }), [meta, narrow, hasNews, state.settings, state.usage]);
 
-  // Focus the composer of a Task that was just created, once its detail is on screen.
+  // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
   const detailId = state.detail?.id;
+  const detailLocked = !!state.detail && readOnly(state.detail);
   useEffect(() => {
     if (!detailId || detailId !== focusTask.current) return;
     focusTask.current = null;
-    document.getElementById('composer-text')?.focus();
-  }, [detailId]);
+    if (!detailLocked) document.getElementById('composer-text')?.focus();
+  }, [detailId, detailLocked, selectTick]);
 
   const logout = useCallback(() => {
     void api.logout().finally(() => setAuth('out'));
@@ -344,6 +349,11 @@ export default function App() {
   }, []);
 
   const select = useCallback((id: string | null) => {
+    // Choosing a Task is an invitation to type: its composer takes focus, except on a touch screen, where a keyboard would rise over the conversation.
+    if (id && !window.matchMedia(COARSE).matches) {
+      focusTask.current = id;
+      setSelectTick((t) => t + 1);
+    }
     startTransition(() => {
       addTransitionType('switch');
       dispatch({ type: 'select', id });
