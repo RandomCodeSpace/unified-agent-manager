@@ -293,21 +293,21 @@ func openImage(workdir, p string) (*ServedImage, error) {
 	if err != nil || rel == "." || !filepath.IsLocal(rel) {
 		return nil, notFound
 	}
-	// Nothing that is not a regular file with an image name is opened, so a
-	// name linked to a device or FIFO never reaches open(2).
-	if info, err := os.Stat(real); err != nil || !info.Mode().IsRegular() {
-		return nil, notFound
-	}
-	if _, ok := imageExtensions[strings.ToLower(filepath.Ext(real))]; !ok {
-		return nil, newError(http.StatusUnsupportedMediaType, "only png, jpeg, gif and webp images are served")
-	}
-	// os.Root confines the open itself, so a link swapped in after the
+	// os.Root confines every call below, so a link swapped in after the
 	// resolution above still cannot leave the directory.
 	root, err := os.OpenRoot(realDir)
 	if err != nil {
 		return nil, notFound
 	}
 	defer func() { _ = root.Close() }()
+	// Nothing that is not a regular file with an image name is opened, so a
+	// name linked to a device or FIFO never reaches open(2).
+	if info, err := root.Stat(rel); err != nil || !info.Mode().IsRegular() {
+		return nil, notFound
+	}
+	if _, ok := imageExtensions[strings.ToLower(filepath.Ext(rel))]; !ok {
+		return nil, newError(http.StatusUnsupportedMediaType, "only png, jpeg, gif and webp images are served")
+	}
 	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, notFound
