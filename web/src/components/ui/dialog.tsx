@@ -1,12 +1,13 @@
 import { AlertDialog as BaseAlertDialog } from '@base-ui/react/alert-dialog';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { X } from 'lucide-react';
-import { useRef, type ComponentProps, type ReactNode, type RefObject } from 'react';
+import { useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import { cn } from '../../lib/cn';
 import { Button } from './button';
 
 /**
- * Modal surfaces on Base UI (Level 3 in DESIGN.md: raised, modal shadow, on the backdrop).
+ * Modal surfaces on Base UI (Level 3 in DESIGN.md: raised, `lg` corners, modal shadow with its
+ * 1px ring, on the backdrop; they scale in from 0.97).
  * Focus is trapped, Esc closes, focus returns to the opener. `data-popup` marks every
  * popup so app-level Esc handlers stand back while one is open.
  */
@@ -17,7 +18,7 @@ const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-aut
 
 // Capped at the viewport less its 16px gutters: the title row stays and the body scrolls (Dialog) when the content is taller.
 const popupClass =
-  'relative flex max-h-[calc(100dvh-32px)] w-full max-w-sheet flex-col rounded-md bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,transform] duration-240 ease-app data-starting-style:translate-y-2 data-starting-style:opacity-0 data-ending-style:translate-y-2 data-ending-style:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
+  'relative flex max-h-[calc(100dvh-32px)] w-full max-w-sheet flex-col rounded-lg bg-raised p-5 text-body shadow-modal outline-hidden transition-[opacity,scale] duration-240 ease-app data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:scale-[0.97] data-ending-style:opacity-0 max-sm:max-w-none max-sm:rounded-b-none max-sm:pb-[max(20px,env(safe-area-inset-bottom))]';
 
 export interface DialogProps {
   open: boolean;
@@ -121,6 +122,25 @@ export interface AlertDialogProps extends Omit<DialogProps, 'footer' | 'initialF
   cancelLabel?: string;
 }
 
+/**
+ * The state of one confirmation over a target (DESIGN.md Confirmations): `ask(target)` opens
+ * it, `close()` starts its exit, and the target stays until the exit has run, so the copy
+ * never changes while the dialog is still on screen. Spread `props` onto the AlertDialog.
+ */
+export function useConfirm<T>() {
+  const [target, setTarget] = useState<T | null>(null);
+  const [open, setOpen] = useState(false);
+  return {
+    target,
+    ask: (t: T) => {
+      setTarget(t);
+      setOpen(true);
+    },
+    close: () => setOpen(false),
+    props: { open, onOpenChange: (o: boolean) => !o && setOpen(false), onClosed: () => setTarget(null) },
+  };
+}
+
 /** Confirmation with the safe action focused first (DESIGN.md: initial focus on the least destructive button). */
 export function AlertDialog({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel' }: AlertDialogProps) {
   const cancel = useRef<HTMLButtonElement>(null);
@@ -137,7 +157,7 @@ export function AlertDialog({ open, onOpenChange, onClosed, title, description, 
               <BaseAlertDialog.Close render={<Button variant="secondary" ref={cancel} />}>
                 {cancelLabel}
               </BaseAlertDialog.Close>
-              <Button variant={danger ? 'danger' : 'primary'} className={danger ? 'border border-hairline-strong bg-raised' : undefined} loading={busy} disabled={disabled} onClick={onConfirm}>
+              <Button variant={danger ? 'danger' : 'primary'} className={danger ? 'bg-sunken' : undefined} loading={busy} disabled={disabled} onClick={onConfirm}>
                 {confirmLabel}
               </Button>
             </div>

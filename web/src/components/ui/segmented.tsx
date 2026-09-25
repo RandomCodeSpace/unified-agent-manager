@@ -1,6 +1,6 @@
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { cn } from '../../lib/cn';
 
 export interface Segment {
@@ -9,8 +9,11 @@ export interface Segment {
 }
 
 /**
- * A segmented control on Base UI's radio group: one `sunken` track, the chosen segment
- * raised one step (DESIGN.md). Arrow keys move the choice; the group carries the label.
+ * A segmented control on Base UI's radio group: one inset `sunken` track (the `well` ring)
+ * with equal-width segments and one floating `raised` thumb that slides to the chosen one
+ * on its transform (`base`; it snaps under Motion: Match system). The segment count and the
+ * chosen index reach the thumb as custom properties through the CSSOM (React's `style`
+ * prop), never as inline markup. Arrow keys move the choice; the group carries the label.
  * `sm` (28px, `caption`) fits a panel header.
  */
 export function Segmented({
@@ -34,6 +37,8 @@ export function Segmented({
   'aria-labelledby'?: string;
   'aria-describedby'?: string;
 }) {
+  const index = Math.max(0, items.findIndex((it) => it.value === value));
+  const vars = { '--seg-n': items.length, '--seg-i': index } as CSSProperties;
   return (
     <RadioGroup
       value={value}
@@ -42,14 +47,19 @@ export function Segmented({
       aria-label={ariaLabel}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
-      className={cn('inline-flex shrink-0 items-center gap-0.5 rounded-sm bg-sunken p-0.5', size === 'sm' ? 'h-7 pointer-coarse:h-9' : 'h-8 pointer-coarse:h-12', className)}
+      style={vars}
+      className={cn('relative isolate grid shrink-0 auto-cols-fr grid-flow-col rounded-sm bg-sunken p-0.5 shadow-well', size === 'sm' ? 'h-7 pointer-coarse:h-9' : 'h-8 pointer-coarse:h-12', className)}
     >
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-0.5 left-0.5 -z-10 w-[calc((100%-4px)/var(--seg-n))] translate-x-[calc(100%*var(--seg-i))] rounded-xs bg-raised shadow-raised transition-transform duration-160 ease-app"
+      />
       {items.map((it) => (
         <Radio.Root
           key={it.value}
           value={it.value}
           className={cn(
-            'flex h-full cursor-pointer items-center justify-center rounded-xs font-medium text-muted transition-[background-color,color,box-shadow] duration-100 hover:text-ink focus-visible:-outline-offset-2 data-checked:bg-raised data-checked:text-ink data-checked:shadow-raised data-disabled:cursor-not-allowed data-disabled:opacity-45',
+            'flex h-full cursor-pointer items-center justify-center rounded-xs font-medium whitespace-nowrap text-muted transition-colors duration-100 hover:text-ink focus-visible:-outline-offset-2 data-checked:text-ink data-disabled:cursor-not-allowed data-disabled:opacity-45',
             size === 'sm' ? 'px-2 text-caption' : 'min-w-16 px-3 text-ui',
           )}
         >

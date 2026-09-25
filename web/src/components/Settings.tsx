@@ -1,12 +1,13 @@
 import { X } from 'lucide-react';
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, describeError, resolveTaskDefaults, type CustomModel, type Model, type SendDefault, type Settings } from '../api';
-import { Note, Spinner, useApp } from './common';
+import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { Field, TaskDefaultsFields } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
+import { AlertDialog, useConfirm } from './ui/dialog';
 import { Select } from './ui/select';
 import { Switch } from './ui/switch';
 import { Button } from './ui/button';
@@ -15,14 +16,26 @@ import { Input } from './ui/input';
 import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
 
-/** One titled group of settings; a new group is another `Section` below the last. */
+/** One titled group of settings, a floating card (DESIGN.md Settings view); a new group is another `Section` below the last. */
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
-    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-3 border-t border-hairline py-4 first:border-t-0 first:pt-0">
+    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
       <h2 id={`${id}-title`} className="text-title text-ink">
         {title}
       </h2>
       {children}
+    </section>
+  );
+}
+
+/** A section whose content is still on its way (the first snapshot, the catalogs): the card with its title over a skeleton. */
+function PendingSection({ id, title, label }: { id: string; title: string; label: string }) {
+  return (
+    <section aria-labelledby={`${id}-title`} aria-busy="true" className="flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
+      <h2 id={`${id}-title`} className="text-title text-ink">
+        {title}
+      </h2>
+      <Skeleton label={label} rows={3} />
     </section>
   );
 }
@@ -68,6 +81,15 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
   const [loadError, setLoadError] = useState<string | null>(null);
   const providers = customProviders(models);
   const busy = disabled || loading;
+  // Removing a provider or one of its models is confirmed first (DESIGN.md Confirmations).
+  const removal = useConfirm<{ provider: CustomProvider; model?: string }>();
+  const pending = removal.target;
+  function remove() {
+    const r = removal.target;
+    if (!r) return;
+    removal.close();
+    void onSave(withProvider(models, r.provider.name, r.provider, r.model ? r.provider.models.filter((o) => o.model_id !== r.model).map((o) => o.model_id) : []));
+  }
 
   function edit(p?: CustomProvider) {
     setLoadError(null);
@@ -122,7 +144,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
         service starts (for example in ~/.bashrc), restart the service, and name that variable here.
       </Note>
       {providers.map((p) => (
-        <section key={p.name} aria-label={`${p.name} models`} className="flex flex-col border-b border-hairline py-2">
+        <section key={p.name} aria-label={`${p.name} models`} className="flex flex-col rounded-md bg-tint-well px-3 py-2">
           <div className="flex min-h-8 items-center gap-2">
             <div className="flex min-w-0 flex-1 flex-col">
               <span className="text-ui font-medium text-ink">{p.name}</span>
@@ -132,7 +154,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
             <Button size="sm" disabled={busy || !!draft} onClick={() => edit(p)}>
               Edit
             </Button>
-            <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove provider ${p.name}`} onClick={() => void onSave(withProvider(models, p.name, p, []))}>
+            <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove provider ${p.name}`} onClick={() => removal.ask({ provider: p })}>
               Remove
             </Button>
           </div>
@@ -142,15 +164,28 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
                 {m.display_name || m.model_id}
                 {m.display_name && m.display_name !== m.model_id && <span className="ml-2 text-meta text-muted">{m.model_id}</span>}
               </span>
-              <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove ${p.name}/${m.model_id}`} onClick={() => void onSave(withProvider(models, p.name, p, p.models.filter((o) => o !== m).map((o) => o.model_id)))}>
+              <Button size="sm" variant="danger" disabled={busy} aria-label={`Remove ${p.name}/${m.model_id}`} onClick={() => removal.ask({ provider: p, model: m.model_id })}>
                 Remove
               </Button>
             </div>
           ))}
         </section>
       ))}
+      <AlertDialog
+        {...removal.props}
+        title={pending ? (pending.model ? `Remove ${pending.provider.name}/${pending.model}?` : `Remove provider ${pending.provider.name}?`) : 'Remove?'}
+        description={
+          pending?.model
+            ? 'It leaves the model menus. Tasks already using it keep it until their model is changed.'
+            : pending
+              ? `${pending.provider.models.length === 1 ? 'Its one model leaves' : `Its ${pending.provider.models.length} models leave`} the model menus. Tasks already using one keep it until their model is changed.`
+              : undefined
+        }
+        confirmLabel={pending?.model ? 'Remove model' : 'Remove provider'}
+        onConfirm={remove}
+      />
       {draft && (
-        <form aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 border-b border-hairline py-2" onSubmit={(e) => void save(e, draft)}>
+        <form aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={(e) => void save(e, draft)}>
           <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
             {field(draft, 'name', 'Provider name', 'ollama')}
             {field(draft, 'base_url', 'Base URL', 'https://ollama.com/v1')}
@@ -180,7 +215,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
           </div>
           {loadError && <Note tone="warn" role="alert">{loadError}</Note>}
           {draft.ids.length > 0 && (
-            <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto rounded-sm border border-hairline px-2 py-1">
+            <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto rounded-sm bg-raised px-2 py-1 shadow-well">
               {matchingIds(draft.ids, draft.query).map((id) => (
                 <label key={id} className="flex min-h-7 items-center gap-2 text-ui text-ink">
                   <input
@@ -238,11 +273,14 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
  * refusal puts the old value back and says why.
  */
 export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClose: () => void }) {
-  const { settings, dispatch, meta, refreshMeta } = useApp();
+  const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
+  // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
+  const catalogPending = !meta && !metaError;
   const saveSequence = useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [motion, setMotion] = useState(loadMotion);
+  const [scrolled, sentinel] = useScrolled();
 
   async function save(patch: Partial<Settings>) {
     const sequence = ++saveSequence.current;
@@ -289,7 +327,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
 
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
-      <header className="flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3">
+      <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
         {leading}
         <h1 className="min-w-0 flex-1 truncate text-display-sm text-ink">Settings</h1>
         {saving && <Spinner className="shrink-0" />}
@@ -300,9 +338,17 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
         </Tip>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="flex w-full min-w-0 flex-col px-4 py-4 md:px-6">
-          <p className="mb-4 text-caption text-muted">Kept by the service, so they apply in every browser. This browser's own settings are at the end.</p>
-          <Section id="composer" title="Composer">
+        <ScrollSentinel sentinelRef={sentinel} />
+        <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
+          <p className="text-caption text-muted">Kept by the service, so they apply in every browser. This browser's own settings are at the end.</p>
+          {!loaded && (
+            <>
+              <PendingSection id="composer" title="Composer" label="Loading settings…" />
+              <PendingSection id="new-tasks" title="New tasks" label="" />
+              <PendingSection id="models" title="Models" label="" />
+            </>
+          )}
+          {loaded && <Section id="composer" title="Composer">
             <Row
               id="send-default"
               label="While a task is running, Enter…"
@@ -324,8 +370,11 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                 ]}
               />
             </Row>
-          </Section>
-          {taskDefaults && (
+          </Section>}
+          {loaded && catalogPending && <PendingSection id="new-tasks" title="New tasks" label="Loading the model catalog…" />}
+          {loaded && catalogPending && <PendingSection id="utility" title="Utility model" label="" />}
+          {loaded && catalogPending && <PendingSection id="models" title="Models" label="" />}
+          {loaded && taskDefaults && (
             <Section id="new-tasks" title="New tasks">
               <Note>What a new task starts with, in every project. The composer can still change each one before the first message.</Note>
               <div className="max-w-xl">
@@ -333,7 +382,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               </div>
             </Section>
           )}
-          {titled.length > 0 && <Section id="utility" title="Utility model">
+          {loaded && titled.length > 0 && <Section id="utility" title="Utility model">
             {titled.map((p) => {
               const current = settings.title_model?.[p.name] ?? '';
               const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current === UTILITY_NONE ? '' : current);
@@ -348,8 +397,16 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               </Row>;
             })}
           </Section>}
-          <Section id="models" title="Models">
+          {loaded && !catalogPending && <Section id="models" title="Models">
             <Note>Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.</Note>
+            {metaError && (
+              <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1">Could not load the model catalog: {metaError}</span>
+                <Button size="sm" variant="secondary" onClick={refreshMeta}>
+                  Retry
+                </Button>
+              </Note>
+            )}
             <CustomModels models={settings.custom_models ?? []} disabled={saving} onSave={saveCustom} />
             {(meta?.providers ?? []).map((p) => {
               const hidden = settings.hidden_models?.[p.name] ?? [];
@@ -360,7 +417,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                 {models.map((m) => {
                   const shown = !hidden.includes(m.id);
                   const offered = p.models.some((v) => v.id === m.id);
-                  return <div key={m.id} className="flex min-h-12 items-center gap-3 border-b border-hairline py-2">
+                  return <div key={m.id} className="flex min-h-12 items-center gap-3 py-2">
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="text-ui font-medium text-ink">{m.name}</span>
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-meta text-muted">
@@ -375,7 +432,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                 </div>
               </div>;
             })}
-          </Section>
+          </Section>}
           <Section id="browser" title="This browser">
             <Row id="motion" label="Motion" help="Always on animates even when the OS asks for reduced motion; Match system follows your OS setting.">
               <Segmented

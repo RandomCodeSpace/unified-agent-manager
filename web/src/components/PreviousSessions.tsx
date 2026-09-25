@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, describeError, providerLabel, type Meta, type PreviousSession, type Project, type SessionDetail } from '../api';
-import { Note, Spinner, useApp } from './common';
+import { Note, Skeleton, Spinner, useApp } from './common';
 import { useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
@@ -93,12 +93,12 @@ export function PreviousSessionsDialog({ project, onClose }: { project: Project;
         <Button variant="secondary" disabled={!!busy || (sessions === null && !error)} onClick={() => { setSessions(null); setError(""); setRefresh((n) => n + 1); }}>Refresh</Button>
       </>}>
       {error && <Note role="alert" tone="error" className="mb-3">{error}</Note>}
-      {sessions === null && !error && <Note role="status"><Spinner /> Loading previous sessions…</Note>}
+      {sessions === null && !error && <Skeleton label="Loading previous sessions…" rows={3} className="gap-1" rowClassName="h-12 w-full rounded-md" />}
       {sessions?.length === 0 && <Note>No previous sessions are available to import in this project.</Note>}
       {sessions && sessions.length > 0 && (
-        <ul className="max-h-[60dvh] divide-y divide-hairline overflow-y-auto">
+        <ul className="flex max-h-[60dvh] flex-col gap-1 overflow-y-auto">
           {sessions.map((s) => (
-            <li key={`${s.provider}:${s.conversation_id}`} className="flex items-center gap-3 py-3">
+            <li key={`${s.provider}:${s.conversation_id}`} className="flex items-center gap-3 rounded-md bg-tint-well px-3 py-2.5">
               <div className="min-w-0 flex-1">
                 <p className="break-words text-ui text-ink">{s.title || 'Untitled session'}</p>
                 <p className="mt-1 text-caption text-muted">{providerLabel(meta, s.provider)} · <time dateTime={s.updated_at}>{new Date(s.updated_at).toLocaleString()}</time></p>

@@ -5,7 +5,7 @@ import { cn } from '../../lib/cn';
 /**
  * DESIGN.md chip: 20px, `caption`, 4px corners, a glyph and a word. Text-only in its tone;
  * `attention` is the one filled chip, `well` sits a file name on the well, `outline` is
- * the read-only stage tag.
+ * the read-only stage tag (a quiet `sunken` fill; nothing in the chrome draws an edge).
  */
 export const chipVariants = cva('inline-flex h-5 shrink-0 items-center gap-1.5 rounded-xs px-1.5 text-caption whitespace-nowrap transition-[color,background-color] duration-160', {
   variants: {
@@ -20,7 +20,7 @@ export const chipVariants = cva('inline-flex h-5 shrink-0 items-center gap-1.5 r
     fill: {
       none: '',
       well: 'bg-tint-well',
-      outline: 'border border-hairline-strong',
+      outline: 'bg-sunken text-body',
     },
   },
   defaultVariants: { tone: 'muted', fill: 'none' },

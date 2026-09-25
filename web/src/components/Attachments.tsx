@@ -143,7 +143,7 @@ export function ImageThumbs({ sessionId, images, className }: { sessionId: strin
           <button
             key={a.id}
             type="button"
-            className="group/thumb flex max-h-40 max-w-full items-center justify-center overflow-hidden rounded-sm bg-sunken transition-[box-shadow] duration-100 hover:shadow-float pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+            className="lift flex max-h-40 max-w-full items-center justify-center overflow-hidden rounded-sm bg-sunken pointer-coarse:min-h-11 pointer-coarse:min-w-11"
             aria-label={`Open ${nameOf(a)}`}
             onClick={() => {
               setShown(a);

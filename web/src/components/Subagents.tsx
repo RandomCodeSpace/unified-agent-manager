@@ -5,11 +5,11 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
-import { Loading, Markdown, Note, useApp } from './common';
+import { Markdown, Note, Skeleton, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
 import { EXIT_MS } from './ui/collapse';
-import { Sheet } from './ui/dialog';
+import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -85,20 +85,20 @@ export function SidePanel({ id, inline, open, onClose, onClosed, label, children
   }, [inline, open]);
   if (!inline) {
     return (
-      <Sheet open={open} onOpenChange={(o) => !o && onClose()} onClosed={onClosed} side="right" label={label} className={cn('w-full max-w-none bg-canvas', !narrow && 'w-[min(var(--spacing-panel),100vw)] border-l border-hairline', className)}>
+      <Sheet open={open} onOpenChange={(o) => !o && onClose()} onClosed={onClosed} side="right" label={label} className={cn('w-full max-w-none bg-canvas', !narrow && 'w-[min(var(--spacing-panel),100vw)]', className)}>
         {children}
       </Sheet>
     );
   }
   return (
-    <aside ref={panelRef} aria-label={label} className={cn('relative flex w-(--panel-w) shrink-0 flex-col border-l border-hairline bg-canvas', className)}>
+    <aside ref={panelRef} aria-label={label} className={cn('relative flex w-(--panel-w) shrink-0 flex-col bg-canvas', className)}>
       <div className={cn('flex min-h-0 flex-1 flex-col transition-transform duration-240 ease-app', shown && open ? 'translate-x-0' : 'translate-x-full')} inert={!open}>
         <div
           {...handleProps}
           className="group/handle absolute inset-y-0 -left-1 z-10 flex w-2 cursor-col-resize items-center justify-center outline-hidden focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus"
           title="Drag to resize · double-click to reset"
         >
-          <span aria-hidden="true" className="h-full w-px bg-hairline transition-[background-color,width] duration-100 group-hover/handle:w-0.5 group-hover/handle:bg-accent group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-accent group-active/handle:bg-accent" />
+          <span aria-hidden="true" className="fade-rule-y h-full transition-[background-color,width] duration-100 group-hover/handle:w-0.5 group-hover/handle:bg-accent group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-accent group-active/handle:bg-accent" />
         </div>
         {children}
       </div>
@@ -107,7 +107,7 @@ export function SidePanel({ id, inline, open, onClose, onClosed, label, children
 }
 
 export function PanelHeader({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3', className)}>{children}</div>;
+  return <div className={cn('pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3', className)}>{children}</div>;
 }
 
 /**
@@ -142,8 +142,27 @@ export function SubagentPanel({
 }) {
   const { meta, narrow } = useApp();
   const lead = useRef<HTMLButtonElement>(null);
-  const [stops, stop] = useStops(session.id);
+  const [stops, stopNow] = useStops(session.id);
   const current = view.view === 'agent' ? session.subagents.find((s) => s.id === view.id) : undefined;
+  // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations); one dialog serves the list and the transcript header.
+  const stopConfirm = useConfirm<Subagent>();
+  const stop = (id: string) => {
+    const s = session.subagents.find((x) => x.id === id);
+    if (s) stopConfirm.ask(s);
+  };
+  const stopDialog = (
+    <AlertDialog
+      {...stopConfirm.props}
+      title={`Stop subagent ${stopConfirm.target ? `“${stopConfirm.target.name}”` : ''}?`}
+      description="It stops where it is. What it has done so far stays in its transcript; the main agent gets no result from it."
+      confirmLabel="Stop subagent"
+      onConfirm={() => {
+        const id = stopConfirm.target?.id;
+        stopConfirm.close();
+        if (id) stopNow(id);
+      }}
+    />
+  );
 
   // Focus the leading control whenever the view changes (open, back, open transcript).
   useEffect(() => {
@@ -181,6 +200,7 @@ export function SubagentPanel({
           result={current.status === 'completed' || current.status === 'idle' ? session.items.find((i) => i.id === current.parent_tool_call_id)?.tool?.output : undefined}
         />
         <SubagentComposer key={`composer-${current.id}`} session={session} subagent={current} />
+        {stopDialog}
       </SidePanel>
     );
   }
@@ -227,6 +247,7 @@ export function SubagentPanel({
           );
         })}
       </div>
+      {stopDialog}
     </SidePanel>
   );
 }
@@ -326,6 +347,7 @@ function AgentTranscriptView({
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const live = subagent.status === 'running';
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -337,7 +359,7 @@ function AgentTranscriptView({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, subagent.id, snapshotSeq, dispatch]);
+  }, [sessionId, subagent.id, snapshotSeq, attempt, dispatch]);
 
   // Follow new output only while the reader is at the bottom.
   const items: Item[] = transcript?.items ?? NO_ITEMS;
@@ -352,13 +374,16 @@ function AgentTranscriptView({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4" ref={scroller} onScroll={onScroll} role="log">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4" ref={scroller} onScroll={onScroll} role="log" aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined}>
       {subagent.description && <Note>{subagent.description}</Note>}
       {(!transcript || transcript.loading) && items.length === 0 ? (
-        <Loading label="Loading the transcript…" />
+        <Skeleton label="Loading the transcript…" rows={5} />
       ) : transcript?.error ? (
-        <Note tone="error" role="alert">
-          {transcript.error}
+        <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">Could not load the transcript: {transcript.error}</span>
+          <Button size="sm" variant="secondary" onClick={() => setAttempt((n) => n + 1)}>
+            Retry
+          </Button>
         </Note>
       ) : (
         <>
@@ -369,7 +394,7 @@ function AgentTranscriptView({
       {subagent.status === 'failed' && <Note tone="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</Note>}
       {subagent.status === 'cancelled' && <Note>Stopped before it finished.</Note>}
       {result && (
-        <div className="rounded-md bg-tint-well px-3 py-2 text-ui">
+        <div className="rounded-md bg-raised px-3.5 py-2.5 text-ui shadow-raised">
           <div className="mb-1 text-caption text-muted">Result sent to the main agent</div>
           <Markdown text={result} />
         </div>
@@ -394,7 +419,7 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
   // An uncertain follow-up keeps the subagent running until the provider settles it; say so meanwhile.
   if (subagent.status !== 'idle') {
     return outcome?.status === 'uncertain' ? (
-      <div className="border-t border-hairline px-4 py-2">
+      <div className="px-4 py-2">
         <Note tone="warn" role="alert">
           {UNCERTAIN_FOLLOW_UP}
         </Note>
@@ -438,9 +463,9 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
 
   const textId = `subagent-text-${subagent.id}`;
   return (
-    <div className="shrink-0 border-t border-hairline p-3">
+    <div className="transcript-dock -mt-6 shrink-0 p-3 pt-6">
       <form
-        className="flex flex-col rounded-md border border-hairline bg-raised transition-[border-color] focus-within:border-hairline-strong has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-1 has-[textarea:focus-visible]:outline-focus"
+        className="relative isolate flex flex-col rounded-lg bg-raised shadow-float before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:opacity-0 before:shadow-focus-float before:transition-opacity before:duration-160 before:content-[''] focus-within:before:opacity-100"
         aria-label={`Follow up with subagent ${subagent.name}`}
         onSubmit={(e) => {
           e.preventDefault();

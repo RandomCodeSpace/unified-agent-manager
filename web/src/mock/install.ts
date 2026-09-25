@@ -82,6 +82,8 @@ class FakeEventSource extends EventTarget {
 
 export function install(): void {
   const st: MockState = seed();
+  // `?mock&slow=1500` holds every reply and the first snapshot that long, to look at the loading states.
+  const slow = Math.max(0, Number(new URLSearchParams(window.location.search).get('slow')) || 0);
   const createdBy = new Map<string, string>();
   const sources = new Set<FakeEventSource>();
   let seq = 1;
@@ -287,7 +289,9 @@ export function install(): void {
         src.onerror?.(new Event('error'));
         return () => sources.delete(src);
       }
-      src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
+      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
+      if (slow) window.setTimeout(emitSnapshot, slow);
+      else emitSnapshot();
       if (t && !started.has(t.id)) {
         if (t.id === 't8') {
           started.add(t.id);
@@ -313,7 +317,8 @@ export function install(): void {
     if (!url.pathname.startsWith('/api/')) return realFetch(input, init);
     const method = (init?.method ?? 'GET').toUpperCase();
     const body: Json = typeof init?.body === 'string' ? (JSON.parse(init.body) as Json) : {};
-    await wait(60);
+    // The auth check gates the whole page and is not what the loading states are for.
+    await wait(url.pathname === '/api/auth' ? 60 : 60 + slow);
     // An import reads history on the host: slow enough here to watch "Import all" progress.
     if (/\/previous\/[^/]+\/import$/.test(url.pathname)) await wait(500);
     return route(method, url, body);

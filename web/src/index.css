@@ -118,10 +118,16 @@
   --radius-lg: 14px;
   --radius-full: 9999px;
 
+  /* Elevation (DESIGN.md Elevation & Depth): surfaces float on cool ink shadows instead of drawn borders.
+     Every level is two layers at most: a near-invisible 1px ring (0 blur, the crisp edge) and one soft
+     shadow. `well` is the inset ring of a sunken surface; `focus` lifts a focused field (it turns `raised` and rises, no coloured edge); `focus-float` the composer's deeper neutral shadow. */
   --shadow-*: initial;
-  --shadow-raised: 0 1px 2px rgba(28, 27, 24, 0.05);
-  --shadow-float: 0 4px 16px rgba(28, 27, 24, 0.12), 0 1px 2px rgba(28, 27, 24, 0.08);
-  --shadow-modal: 0 16px 48px rgba(28, 27, 24, 0.18), 0 2px 6px rgba(28, 27, 24, 0.08);
+  --shadow-raised: 0 0 0 1px rgba(20, 28, 45, 0.05), 0 2px 6px rgba(20, 28, 45, 0.07);
+  --shadow-float: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 6px 20px rgba(20, 28, 45, 0.1);
+  --shadow-modal: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 20px 48px rgba(20, 28, 45, 0.18);
+  --shadow-well: inset 0 0 0 1px rgba(20, 28, 45, 0.05);
+  --shadow-focus: 0 0 0 1px rgba(20, 28, 45, 0.08), 0 2px 8px rgba(20, 28, 45, 0.1);
+  --shadow-focus-float: 0 0 0 1px rgba(20, 28, 45, 0.1), 0 10px 28px rgba(20, 28, 45, 0.14);
 
   /* Durations are the bare duration-100/160/240 utilities (DESIGN.md fast/base/slow); only the easing is a token. */
   --ease-app: cubic-bezier(0.2, 0, 0, 1);
@@ -154,6 +160,7 @@
   --animate-slide-in: slide-in 240ms var(--ease-app);
   --animate-orbit: orbit 1.6s linear infinite;
   --animate-breathe: breathe 1.6s ease-in-out infinite;
+  --animate-sweep: sweep 1.4s ease-in-out infinite;
 
   /* The working mark: a satellite circles the core while the core breathes (1.6s, in step). */
   @keyframes orbit {
@@ -168,6 +175,15 @@
     }
     50% {
       opacity: 0.45;
+    }
+  }
+  /* Skeleton shimmer: one highlight band crosses the placeholder (transform only). */
+  @keyframes sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(100%);
     }
   }
   @keyframes pulse-dot {
@@ -253,9 +269,10 @@
     background: var(--color-selection);
     color: var(--color-ink);
   }
+  /* Keyboard focus: the 2px ring (≥3:1 on every surface), no halo. */
   :focus-visible {
     outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
+    outline-offset: 1px;
   }
   button,
   [role='button'],
@@ -292,9 +309,30 @@
     color: var(--color-muted);
     opacity: 1;
   }
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-hairline-strong) transparent;
+  /* Scrollbars: thin, overlay-style (no track), the thumb tinted from the ladder. Chromium and WebKit
+     take the pseudo-elements; the standard properties would switch those off, so they are Firefox's only. */
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--color-hairline-strong) transparent;
+    }
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: var(--radius-full);
+    background: var(--color-hairline-strong);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-faint);
   }
   summary::-webkit-details-marker {
     display: none;
@@ -348,6 +386,116 @@
 }
 
 @layer components {
+  /* Fading separators (DESIGN.md Lines): where a seam still needs a rule, it fades out at both ends so
+     nothing in the chrome is a full-width or full-height line. */
+  .fade-rule {
+    height: 1px;
+    flex: none;
+    background: linear-gradient(to right, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent);
+  }
+  .fade-rule-y {
+    width: 1px;
+    flex: none;
+    background: linear-gradient(to bottom, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent);
+  }
+  /* The sidebar's seam: the rail colour step and a fading rule at its right edge. */
+  .rail-edge::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 1px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--color-hairline) 12%, var(--color-hairline) 88%, transparent);
+  }
+
+  /* Hover lift: the element rises 1px (transform) while a pre-drawn float shadow on its pseudo-element
+     fades in (opacity); nothing else is animated. Off under Motion: Match system with reduced motion. */
+  .lift {
+    position: relative;
+    isolation: isolate;
+    transition: transform 160ms var(--ease-app);
+  }
+  .lift::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    box-shadow: var(--shadow-float);
+    opacity: 0;
+    transition: opacity 160ms var(--ease-app);
+    pointer-events: none;
+  }
+  .lift:hover {
+    transform: translateY(-1px);
+  }
+  .lift:hover::before {
+    opacity: 1;
+  }
+
+  /* The pane header (Task, Settings): no rule; once content is scrolled beneath it, `data-scrolled`
+     fades in (opacity) a short fade of the canvas below its edge. */
+  .pane-header {
+    position: relative;
+    z-index: 10;
+    background: var(--color-canvas);
+  }
+  .pane-header::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    height: 24px;
+    pointer-events: none;
+    background:
+      linear-gradient(to bottom, rgba(20, 28, 45, 0.05), transparent 60%),
+      linear-gradient(to bottom, var(--color-canvas), transparent);
+    opacity: 0;
+    transition: opacity 160ms var(--ease-app);
+  }
+  .pane-header[data-scrolled]::after {
+    opacity: 1;
+  }
+  /* The composer's dock overlaps the transcript's foot: one gradient (canvas from the composer up to
+     transparent) lets the conversation fade out beneath the floating control plane. */
+  .transcript-dock {
+    position: relative;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .transcript-dock > * {
+    pointer-events: auto;
+  }
+  .transcript-dock::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--color-canvas) 36px);
+  }
+
+  /* Skeleton (DESIGN.md Placeholder and loading states): a few `sunken` bars while a list or a
+     transcript first loads, with one highlight band sweeping across the whole group (transform only). */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(to right, transparent 20%, rgba(255, 255, 255, 0.7) 50%, transparent 80%);
+    animation: var(--animate-sweep);
+  }
+
   /* Markdown from providers (react-markdown output; utilities cannot reach inside it). */
   .md > :first-child {
     margin-top: 0;
@@ -418,9 +566,9 @@
     padding: 10px 12px;
     max-height: 480px;
     overflow: auto;
-    border: 1px solid var(--color-hairline);
     border-radius: var(--radius-md);
     background: var(--color-code-bg);
+    box-shadow: var(--shadow-well);
     font-size: 13px;
     line-height: 1.55;
   }
@@ -529,7 +677,7 @@
   }
   .diff caption {
     padding: 6px 12px;
-    border-bottom: 1px solid var(--color-hairline);
+    background: linear-gradient(to right, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent) bottom / 100% 1px no-repeat;
     color: var(--color-muted);
     text-align: left;
   }

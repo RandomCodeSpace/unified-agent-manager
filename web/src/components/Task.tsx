@@ -6,7 +6,7 @@ import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
-import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle, WorkingMark, useApp } from './common';
+import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
 import { Chip } from './ui/chip';
 import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
@@ -17,6 +17,7 @@ import { SubagentPanel, type PanelView } from './Subagents';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript } from './Transcript';
 import { Button } from './ui/button';
+import { AlertDialog, useConfirm } from './ui/dialog';
 import { Menu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -53,6 +54,8 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
     setWasRunning(running);
     if (wasRunning === 0 && running > 0) setOpen(true);
   }
+  // A stop kills the shell, so it is confirmed first (DESIGN.md Confirmations).
+  const stopConfirm = useConfirm<{ id: string; description: string; command: string }>();
   if (!shown?.tasks.length) return null;
   async function stop(id: string) {
     if (requests[id]?.pending || locked || !shown?.known) return;
@@ -88,7 +91,7 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
                 <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
               )}
               {task.status === 'running' && <Tip label={locked ? 'This task is read-only.' : !shown.known ? 'Refresh the connection to check this task before stopping it.' : 'Stop this background shell'}>
-                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => void stop(task.id)}>
+                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => stopConfirm.ask({ id: task.id, description: task.description || 'Shell task', command: task.command })}>
                   {requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
                 </Button>
               </Tip>}
@@ -99,6 +102,23 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
         ))}
       </ul>
       </Collapse>
+      <AlertDialog
+        {...stopConfirm.props}
+        title={`Stop ${stopConfirm.target ? `“${stopConfirm.target.description}”` : 'this background task'}?`}
+        description="This kills the process. Output it has not written yet is lost, and the agent is not told."
+        confirmLabel="Stop task"
+        onConfirm={() => {
+          const id = stopConfirm.target?.id;
+          stopConfirm.close();
+          if (id) void stop(id);
+        }}
+      >
+        {stopConfirm.target && (
+          <code className="mt-3 block truncate rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink" title={stopConfirm.target.command}>
+            {stopConfirm.target.command}
+          </code>
+        )}
+      </AlertDialog>
     </div>
   );
 }
@@ -116,6 +136,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const working = session.state === 'working' || session.state === 'starting';
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  const [scrolled, sentinel] = useScrolled();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
 
@@ -250,6 +271,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const noticed = !!failure && foregroundItems(session.items).some((i) => i.kind === 'notice' && (i.text ?? '').toLowerCase().includes(failure));
 
   const name = taskName(session);
+  // Recorded history still on its way with nothing to show yet: a skeleton, not the "New task" intro.
+  const historyLoading = session.history === 'loading' && session.items.length === 0;
   const fileCount = changes?.supported ? changes.files.length : null;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
@@ -259,7 +282,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   return (
     <div className="flex min-h-0 flex-1 animate-rise">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3">
+        <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
           {leading}
           <div className="group/title flex min-w-0 flex-1 items-center gap-1.5">
             {project && <ProjectBadge badge={project.badge} className="mr-0.5" />}
@@ -333,11 +356,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll}>
-          <div className="flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
-            <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />
+          <ScrollSentinel sentinelRef={sentinel} />
+          {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
+          {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
+          <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
+            {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
-            {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && <NewTaskIntro project={project} />}
+            {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
             <Transcript
               sessionId={session.id}
               items={session.items}
@@ -366,8 +392,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
           </div>
         </div>
 
-        <div className="relative w-full shrink-0 px-3 pb-3 sm:px-4 md:px-6">
-          <Appear show={showJump} className="absolute -top-10 left-1/2 -translate-x-1/2">
+        {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
+        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
+          <Appear show={showJump} className="absolute top-0 left-1/2 -translate-x-1/2">
             <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
               <ArrowDown />
               New output
@@ -413,17 +440,17 @@ export function NewTaskPane({ project, defaults, onSend, leading }: { project: P
   const newTask = useMemo(() => ({ projectId: project.id, send: (first: FirstMessage) => onSend(project.id, first) }), [project.id, onSend]);
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
-      <header className="flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3">
+      <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3">
         {leading}
         <ProjectBadge badge={project.badge} className="mr-0.5" />
         <h1 className="min-w-0 truncate text-display-sm text-ink">New task</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6">
+        <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6">
           <NewTaskIntro project={project} />
         </div>
       </div>
-      <div className="relative w-full shrink-0 px-3 pb-3 sm:px-4 md:px-6">
+      <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
         <Composer session={session} onRename={noRename} onSessionUpdate={onSettings} newTask={newTask} />
       </div>
     </div>

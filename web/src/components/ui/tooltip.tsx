@@ -28,7 +28,7 @@ export function Tip({ label, children, side = 'top', disabled = false }: { label
         <BaseTooltip.Positioner side={side} sideOffset={6} collisionPadding={8} className="z-60">
           <BaseTooltip.Popup
             data-popup=""
-            className="max-w-64 rounded-sm bg-ink px-2 py-1 text-caption text-on-primary shadow-float transition-[opacity,transform] duration-100 data-starting-style:translate-y-0.5 data-starting-style:opacity-0 data-ending-style:opacity-0 data-instant:transition-none"
+            className="max-w-64 origin-(--transform-origin) rounded-sm bg-ink px-2 py-1 text-caption text-on-primary shadow-float transition-[opacity,scale] duration-100 data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:opacity-0 data-instant:transition-none"
           >
             {label}
           </BaseTooltip.Popup>

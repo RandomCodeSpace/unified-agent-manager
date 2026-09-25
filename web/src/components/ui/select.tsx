@@ -45,7 +45,7 @@ export function Select({
         aria-label={ariaLabel}
         aria-describedby={describedBy}
         className={cn(
-          'flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-sm border border-hairline-strong bg-raised px-2.5 text-ui text-ink select-none hover:not-data-disabled:bg-surface data-disabled:opacity-45 data-disabled:cursor-not-allowed pointer-coarse:min-h-11',
+          'flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-sm bg-sunken px-2.5 text-ui text-ink shadow-well transition-[background-color] select-none hover:not-data-disabled:bg-tint-hover data-disabled:opacity-45 data-disabled:cursor-not-allowed pointer-coarse:min-h-11',
           className,
         )}
       >

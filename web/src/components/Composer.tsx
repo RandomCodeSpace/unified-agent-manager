@@ -10,11 +10,12 @@ import { applyPick, argumentTrigger, commandPending, commandReason, enterActions
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
-import { Markdown, Note, Spinner, useApp } from './common';
+import { Markdown, Note, Skeleton, Spinner, useApp } from './common';
 import { ExecutionItems, ExecutionStatus } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
+import { AlertDialog, useConfirm } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
 import { Menu } from './ui/menu';
 import { Tip } from './ui/tooltip';
@@ -217,7 +218,9 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
 export const Composer = memo(ComposerView, sameComposerProps);
 
 function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerProps) {
-  const { meta, settings: appSettings, dispatch } = useApp();
+  const { meta, metaError, settings: appSettings, dispatch } = useApp();
+  // The catalogs are still on their way: the pickers' slot holds a skeleton, since their values would be a guess.
+  const catalogPending = !meta && !metaError;
   // The draft this Task left behind (text, `@` files, finished uploads); read once, on mount.
   const storageKey = newTask ? newTaskKey(newTask.projectId) : draftKey(session.id);
   const [draft] = useState(() => readDraft(storageKey));
@@ -257,6 +260,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
   const modelLabel = modelName(meta, session.provider, session.model);
   const routed = session.last_model && session.last_model !== session.model ? modelName(meta, session.provider, session.last_model) : null;
   const queue = session.queue ?? [];
+  // Cancelling a queued prompt or clearing the queue loses its text, so each is confirmed first (DESIGN.md Confirmations).
+  const discard = useConfirm<{ kind: 'one'; id: string; text: string } | { kind: 'all'; count: number }>();
+  function confirmDiscard() {
+    const d = discard.target;
+    if (!d) return;
+    discard.close();
+    void action('queue', () => (d.kind === 'one' ? api.cancelQueued(session.id, d.id) : api.queueAction(session.id, 'clear')));
+  }
   // The queue strip opens and closes through the shared height collapse: it stays mounted through its
   // exit, showing the last queue, and a strip present when the composer mounts (a Task switch) does not grow in.
   const queueStrip = usePresence(queue.length > 0);
@@ -745,9 +756,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       // `data-draft` marks unsent work (text, picked files, uploads); an update waits while it is set.
       data-draft={text.trim() || files.length || uploads.length ? '' : undefined}
       className={cn(
-        'relative flex flex-col rounded-md border border-hairline bg-raised shadow-raised transition-[border-color,box-shadow] duration-160 focus-within:border-hairline-strong focus-within:shadow-float has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-1 has-[textarea:focus-visible]:outline-focus',
+        // The floating control plane (DESIGN.md Composer): `lg` corners on the float shadow; focus-within fades in
+        // (opacity only) a pseudo-element carrying a deeper neutral shadow (no glow), so no shadow is ever animated.
+        "relative isolate flex flex-col rounded-lg bg-raised shadow-float before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:opacity-0 before:shadow-focus-float before:transition-opacity before:duration-160 before:content-[''] focus-within:before:opacity-100",
         locked && 'bg-surface',
-        dragging > 0 && 'border-accent',
       )}
       onSubmit={(e) => {
         e.preventDefault();
@@ -790,7 +802,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         />
       )}
       {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked)) && (
-        <div className="flex flex-col gap-1 border-b border-hairline px-3.5 py-2">
+        <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {locked && <Note>{session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.'}</Note>}
           {last?.status === 'uncertain' && (
             <Note tone="warn" role="alert">
@@ -821,7 +833,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         </div>
       )}
       {commandResult && commandResult.kind !== 'action' && (
-        <div className="border-b border-hairline px-3.5 py-2 text-ui text-body">
+        <div className="px-3.5 py-2 text-ui text-body">
           <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon-sm" variant="subtle" aria-label="Dismiss command result" onClick={() => dismissResult()}><X /></Button></div>
           {commandResult.kind === 'select' ? <>
             <p className="text-caption text-muted">{commandResult.title}</p>
@@ -836,7 +848,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       )}
       {queueStrip.mounted && (
         <Collapse open={queue.length > 0} appear={!queueAtMount} onClosed={queueStrip.onClosed}>
-        <details className="group/queue border-b border-hairline px-3.5 py-1.5" open>
+        <details className="group/queue px-3.5 py-1.5" open>
           <summary className="flex h-6 list-none items-center gap-2 text-caption text-muted select-none [&::-webkit-details-marker]:hidden">
             <ListEnd aria-hidden="true" className="size-3.5" />
             <span className="tabular-nums">{shownQueue.length} queued</span>
@@ -848,7 +860,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
                 Resume
               </Button>
             )}
-            <Button size="sm" variant="subtle" className="h-6 text-muted" disabled={!!busy || locked} onClick={() => void action('queue', () => api.queueAction(session.id, 'clear'))}>
+            <Button size="sm" variant="subtle" className="h-6 text-muted" disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'all', count: shownQueue.length })}>
               Clear
             </Button>
           </summary>
@@ -860,7 +872,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
                   <span className="truncate" title={q.text}>{q.text}</span>
                   <QueuedExtras files={q.files} attachments={q.attachments} />
                 </span>
-                <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel queued prompt: ${q.text}`} disabled={!!busy || locked} onClick={() => void action('queue', () => api.cancelQueued(session.id, q.request_id))}>
+                <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel queued prompt: ${q.text}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: q.text })}>
                   <X />
                 </Button>
               </li>
@@ -868,6 +880,22 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           </ol>
         </details>
         </Collapse>
+      )}
+      {(discard.target || discard.props.open) && (
+        <AlertDialog
+          {...discard.props}
+          title={discard.target?.kind === 'all' ? `Clear ${discard.target.count === 1 ? 'the queued prompt' : `${discard.target.count} queued prompts`}?` : 'Cancel this queued prompt?'}
+          description={discard.target?.kind === 'all' ? 'Their text is not kept; nothing else changes.' : 'Its text is not kept; nothing else changes.'}
+          confirmLabel={discard.target?.kind === 'all' ? 'Clear queue' : 'Cancel prompt'}
+          cancelLabel="Keep"
+          onConfirm={confirmDiscard}
+        >
+          {discard.target?.kind === 'one' && (
+            <p className="mt-3 line-clamp-3 rounded-sm bg-sunken px-3 py-2 text-ui text-ink" title={discard.target.text}>
+              {discard.target.text}
+            </p>
+          )}
+        </AlertDialog>
       )}
 
       {(uploads.length > 0 || files.length > 0) && (
@@ -949,6 +977,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
             </Tip>
           </>
         )}
+        {catalogPending ? (
+          <Skeleton label="Loading the model catalog…" rows={1} className="w-48" rowClassName="h-5 w-full" />
+        ) : (
+          <>
         <Picker
           id="composer-model"
           icon={<Cpu aria-hidden="true" className="text-faint" />}
@@ -1028,6 +1060,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
               )}
             </Menu.Content>
           </Menu.Root>
+        )}
+          </>
         )}
         {/* The actions: the send button keeps the far right, so Stop rises in beside it and nothing else moves. */}
         <span className="ml-auto flex shrink-0 items-center gap-0.5">

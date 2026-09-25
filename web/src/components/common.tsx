@@ -1,5 +1,5 @@
 import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Minus, Pause, X } from 'lucide-react';
-import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { LIVE, api, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
@@ -70,7 +70,11 @@ export const INTERRUPTED_TEXT = 'UAM stopped while this turn was running; it was
 
 /** Values shared by most of the tree; avoids threading meta/dispatch through every layer. */
 export interface AppContextValue {
+  /** The catalogs; null until GET /api/meta answers. `metaError` says why it did not, once it failed. */
   meta: Meta | null;
+  metaError: string | null;
+  /** Whether the first snapshot has arrived: before that, nothing the service holds is known (skeletons, never empty states). */
+  loaded: boolean;
   dispatch: (a: Action) => void;
   narrow: boolean;
   /** Tasks with activity the user has not looked at yet (UI-local). */
@@ -84,6 +88,8 @@ export interface AppContextValue {
 
 export const AppContext = createContext<AppContextValue>({
   meta: null,
+  metaError: null,
+  loaded: false,
   dispatch: () => {},
   narrow: false,
   hasNews: () => false,
@@ -238,6 +244,58 @@ export function relTime(iso: string, now = Date.now()): string {
   return `${Math.round(h / 24)}d`;
 }
 
+/**
+ * Whether a scroll container has been scrolled away from its top, for the pane header's fade
+ * (`data-scrolled`). Watches a sentinel placed first inside the container through an
+ * IntersectionObserver, so nothing runs per scroll event; the returned ref goes on the sentinel.
+ */
+export function useScrolled(): [boolean, (el: HTMLElement | null) => void] {
+  const [scrolled, setScrolled] = useState(false);
+  const ref = useCallback((el: HTMLElement | null) => {
+    if (!el?.parentElement) return;
+    const observer = new IntersectionObserver(([entry]) => setScrolled(!entry.isIntersecting), { root: el.parentElement });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return [scrolled, ref];
+}
+
+/** The sentinel `useScrolled` watches: the first child of the scroll container, taking no room. */
+export function ScrollSentinel({ sentinelRef }: { sentinelRef: (el: HTMLElement | null) => void }) {
+  return <div ref={sentinelRef} aria-hidden="true" className="-mb-px h-px" />;
+}
+
+/**
+ * A skeleton (DESIGN.md Placeholder and loading states): `rows` bars of `sunken` in the shape
+ * of what is coming, one highlight sweeping over the group, while a list or a transcript first
+ * loads. It is a live status for screen readers and hidden decoration otherwise; the caller
+ * marks the region `aria-busy`.
+ */
+export function Skeleton({ label, rows = 3, className, rowClassName, children, ...props }: { label: string; rows?: number; className?: string; rowClassName?: string; children?: ReactNode; 'aria-hidden'?: boolean | 'true' }) {
+  const hidden = !!props['aria-hidden'];
+  return (
+    <div role={hidden ? undefined : 'status'} aria-hidden={hidden || undefined} className={cn('skeleton flex flex-col gap-3 motion-reduce:[&::after]:hidden', className)}>
+      {!hidden && <span className="sr-only">{label}</span>}
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} aria-hidden="true" className={cn('h-4 rounded-sm bg-sunken', i % 3 === 0 ? 'w-3/4' : i % 3 === 1 ? 'w-full' : 'w-1/2', rowClassName)} />
+      ))}
+      {children}
+    </div>
+  );
+}
+
+/** The conversation's skeleton: a user bubble at the right, then assistant lines, in the transcript's gutters. */
+export function TranscriptSkeleton({ label = 'Loading the conversation…' }: { label?: string }) {
+  return (
+    <div className="flex flex-col gap-6 px-3 pt-6 sm:px-4 md:px-6">
+      <Skeleton label={label} rows={0} className="items-end">
+        <div aria-hidden="true" className="h-11 w-[min(60%,480px)] rounded-lg bg-sunken" />
+      </Skeleton>
+      <Skeleton label="" rows={4} aria-hidden="true" />
+    </div>
+  );
+}
+
 /** True once `active` has held for `ms`; false again as soon as it ends. Keeps brief waits (a Task switch, a reconnect) from flashing. */
 export function useLate(active: boolean, ms: number): boolean {
   const [late, setLate] = useState(false);
@@ -319,8 +377,8 @@ export function InlineName({
 const remarkPlugins = [remarkGfm];
 
 /**
- * A code block (DESIGN.md `code-block`): sunken well, hairline, 10px radius, a 24px header
- * with the language when known and a copy button; right-click offers Copy code. The text
+ * A code block (DESIGN.md `code-block`): the `code-bg` well with its inset ring, 10px radius,
+ * a 24px header with the language when known and a copy button; right-click offers Copy code. The text
  * is read from the DOM, so it is exactly what is shown, unless `text` names what to copy.
  * The slots are for the diagram card: `head` is the header's middle (default: a spacer),
  * `body` replaces the `<pre>`, `foot` is a line under it.
@@ -332,8 +390,8 @@ export function CodeBlock({ language, className, text, head, body, foot, childre
   const items: ActionItem[] = [{ key: 'copy', label: 'Copy code', icon: <Copy />, onSelect: () => copy(read()) }];
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger render={<div className={cn('group/code relative my-2.5 overflow-hidden rounded-md border border-hairline bg-code-bg', className)} />}>
-        <div className="flex h-6 items-center gap-2 border-b border-hairline px-3 text-code-sm text-muted">
+      <ContextMenu.Trigger render={<div className={cn('group/code relative my-2.5 overflow-hidden rounded-md bg-code-bg shadow-well', className)} />}>
+        <div className="flex h-6 items-center gap-2 px-3 text-code-sm text-muted">
           <span className="font-mono">{language ?? 'code'}</span>
           {head ?? <span className="flex-1" />}
           <Button
@@ -347,7 +405,7 @@ export function CodeBlock({ language, className, text, head, body, foot, childre
           </Button>
         </div>
         {body ?? (
-          <pre ref={pre} translate="no" className="!my-0 !rounded-none !border-0 max-h-[480px] overflow-auto px-3 py-2.5 font-mono text-code text-ink">
+          <pre ref={pre} translate="no" className="!my-0 !rounded-none !shadow-none max-h-[480px] overflow-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink">
             {children}
           </pre>
         )}
@@ -454,7 +512,7 @@ function LocalImage({ sessionId, path, alt }: { sessionId: string; path: string;
   const name = path.split('/').pop() || path;
   return (
     <>
-      <button type="button" className="group/thumb block max-w-full rounded-sm text-left" aria-label={`Open ${alt || name}`} onClick={() => setOpen(true)}>
+      <button type="button" className="lift block max-w-full rounded-sm text-left" aria-label={`Open ${alt || name}`} onClick={() => setOpen(true)}>
         <img
           src={url}
           alt={alt}
@@ -463,7 +521,7 @@ function LocalImage({ sessionId, path, alt }: { sessionId: string; path: string;
           height={size?.height}
           loading="lazy"
           decoding="async"
-          className="block h-auto max-h-[480px] w-auto max-w-full rounded-sm bg-sunken object-contain transition-[box-shadow] duration-100 group-hover/thumb:shadow-float"
+          className="block h-auto max-h-[480px] w-auto max-w-full rounded-sm bg-sunken object-contain"
           onError={() => setFailed(true)}
           onLoad={(e) => {
             const { naturalWidth: width, naturalHeight: height } = e.currentTarget;

@@ -3,7 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type R
 import type { Project, SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { filteredProject, newTaskProject, searchProjects } from '../lib/tasks';
-import { ProjectBadge } from './common';
+import { ProjectBadge, Skeleton, useApp } from './common';
 import { Key } from './InlinePicker';
 import { Button } from './ui/button';
 import { CommandDialog } from './ui/dialog';
@@ -99,7 +99,7 @@ function FilterList({ projects, filter, input, onPick, onEdit }: { projects: Pro
   const { active, setActive, list, onKeyDown } = useHighlight(rows.length, 0, (i) => onPick(rows[i]?.id ?? null));
   return (
     <>
-      <label className="flex items-center gap-1.5 border-b border-hairline px-2 pb-1 text-muted">
+      <label className="flex items-center gap-1.5 px-2 pb-1 text-muted">
         <Search aria-hidden="true" className="size-3.5 shrink-0" />
         <input
           ref={input}
@@ -211,12 +211,13 @@ export function NewTaskPalette({ open, onOpenChange, projects, sessions, selecte
 
 function PaletteBody({ projects, start, input, onClose, onPick }: { projects: Project[]; start: Project | undefined; input: RefObject<HTMLInputElement | null>; onClose: () => void; onPick: (id: string) => void }) {
   const id = useId();
+  const { loaded } = useApp();
   const [query, setQuery] = useState('');
   const matches = useMemo(() => searchProjects(projects, query), [projects, query]);
   const { active, setActive, list, onKeyDown } = useHighlight(matches.length, Math.max(0, projects.findIndex((p) => p.id === start?.id)), (i) => onPick(matches[i].id));
   return (
     <>
-      <div className="flex items-center gap-1 border-b border-hairline px-2 py-1.5">
+      <div className="flex items-center gap-1 px-2 py-1.5">
         <Button size="icon" aria-label="Close" className="text-muted" onClick={onClose}>
           <ArrowLeft />
         </Button>
@@ -275,9 +276,11 @@ function PaletteBody({ projects, start, input, onClose, onPick }: { projects: Pr
             </button>
           ))}
         </div>
-        {matches.length === 0 && <p role="status" className="px-2 py-3 text-caption text-muted">No project matches</p>}
+        {matches.length === 0 && !loaded && <Skeleton label="Loading projects…" rows={3} className="gap-1 px-1 pb-1" rowClassName="h-10 w-full" />}
+        {matches.length === 0 && loaded && <p role="status" className="px-2 py-3 text-caption text-muted">No project matches</p>}
       </div>
-      <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline px-3 py-2 text-caption text-muted">
+      <div className="fade-rule mx-3" aria-hidden="true" />
+      <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-caption text-muted">
         <span className="flex items-center gap-1"><Key>↑</Key><Key>↓</Key> Navigate</span>
         <span className="flex items-center gap-1"><Key>Enter</Key> Select</span>
         <span className="flex items-center gap-1"><Key>Esc</Key> Close</span>

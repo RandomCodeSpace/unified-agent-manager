@@ -1,8 +1,8 @@
 import { X } from 'lucide-react';
 import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { UPDATE_EVENTS, api, describeError, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
-import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
+import { AppContext, Dot, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog } from './components/Projects';
 import { NewTaskPalette } from './components/ProjectPicker';
@@ -70,6 +70,7 @@ export default function App() {
   const [authRequired, setAuthRequired] = useState(true);
   const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, selectedId: hashSelection() }));
   const [meta, setMeta] = useState<Meta | null>(null);
+  const [metaError, setMetaError] = useState<string | null>(null);
   const [streamKey, setStreamKey] = useState(0);
   const narrow = useMedia(NARROW);
   const sheetInline = useMedia(SHEET_INLINE);
@@ -121,13 +122,23 @@ export default function App() {
       .catch(() => setAuth('out'));
   }, []);
 
-  // Custom models are part of the model lists, so a change to them reloads the catalogs.
+  // Custom models are part of the model lists, so a change to them reloads the catalogs; `metaAttempt` is a Retry after a failure.
   const customModels = JSON.stringify(state.settings.custom_models ?? []);
+  const [metaAttempt, setMetaAttempt] = useState(0);
   useEffect(() => {
     if (auth !== 'in') return;
     lastCheck.current = Date.now();
-    api.meta().then(setMeta).catch(() => setMeta(null));
-  }, [auth, customModels]);
+    api
+      .meta()
+      .then((m) => {
+        setMeta(m);
+        setMetaError(null);
+      })
+      .catch((e: unknown) => {
+        setMeta(null);
+        setMetaError(describeError(e));
+      });
+  }, [auth, customModels, metaAttempt]);
 
   /**
    * A redeploy shows as the stream reconnecting, so the version is read again once the stream
@@ -233,15 +244,25 @@ export default function App() {
         dispatch({ type: 'connection', status: 'reconnecting' });
         return;
       }
-      // The browser gave up (non-200 response). Re-check auth, then reopen.
-      dispatch({ type: 'connection', status: 'offline' });
+      // The browser gave up (non-200 response). A selected Task the service does not know (a stale
+      // link, one deleted elsewhere) is dropped with a notice; otherwise re-check auth, then reopen.
       const later = () => {
         retry = window.setTimeout(() => setStreamKey((k) => k + 1), 5000);
       };
-      api
-        .auth()
-        .then((r) => (loggedIn(r) ? later() : setAuth('out')))
-        .catch(later);
+      const reconnect = () => {
+        dispatch({ type: 'connection', status: 'offline' });
+        api
+          .auth()
+          .then((r) => (loggedIn(r) ? later() : setAuth('out')))
+          .catch(later);
+      };
+      const opened = state.selectedId;
+      if (!opened) return reconnect();
+      api.session(opened).then(reconnect, (err: unknown) => {
+        if (!isStatus(err, 404)) return reconnect();
+        dispatch({ type: 'select', id: null });
+        setNotice('That task no longer exists.');
+      });
     };
     const selected = state.selectedId;
     // Stream deltas wait for the next animation frame and land in one dispatch; any other
@@ -326,8 +347,12 @@ export default function App() {
   const connection = late ? state.connection : 'connected';
   const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen, QUIET_MS);
 
-  const refreshMeta = useCallback(() => checkVersion(true), [checkVersion]);
-  const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage, refreshMeta }), [meta, narrow, hasNews, state.settings, state.usage, refreshMeta]);
+  // A refresh with the catalogs on screen keeps them on a failure (checkVersion); without them it is a retry of the first read.
+  const refreshMeta = useCallback(() => (meta ? checkVersion(true) : setMetaAttempt((n) => n + 1)), [meta, checkVersion]);
+  const ctx = useMemo(
+    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage, refreshMeta }),
+    [meta, metaError, state.loaded, narrow, hasNews, state.settings, state.usage, refreshMeta],
+  );
 
   // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
   const detailId = state.detail?.id;
@@ -588,6 +613,7 @@ export default function App() {
 
   const sidebar = (
     <Sidebar
+      loaded={state.loaded}
       projects={state.projects}
       sessions={state.sessions}
       selectedId={state.selectedId}
@@ -638,8 +664,9 @@ export default function App() {
         </Button>
       </EmptyPane>
     );
-  } else if (state.selectedId) {
-    pane = <LoadingPane leading={leading} placeholder={lateLoad} />;
+  } else if (state.selectedId || !state.loaded) {
+    // The Task's detail, or the first snapshot, is on its way: a skeleton, never the placeholder that says there is nothing.
+    pane = <LoadingPane leading={leading} />;
   } else {
     // A quiet placeholder (issue #185): New task and Add project live in the sidebar.
     pane = (
@@ -664,7 +691,7 @@ export default function App() {
           >
             {/* The column animates to 0; the sidebar keeps its width inside so nothing reflows on the way, and is inert once hidden. */}
             {!narrow && (
-              <aside ref={aside} className="min-h-0 overflow-hidden" inert={!sidebarOpen} aria-hidden={!sidebarOpen}>
+              <aside ref={aside} className="rail-edge relative min-h-0 overflow-hidden" inert={!sidebarOpen} aria-hidden={!sidebarOpen}>
                 <div className="h-full w-rail">{sidebar}</div>
               </aside>
             )}
@@ -675,13 +702,13 @@ export default function App() {
             )}
             <main className="relative flex min-h-0 min-w-0 flex-col bg-canvas">
               {connection !== 'connected' && (
-                <p role="status" className={cn('flex items-center gap-2 border-b border-hairline px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
+                <p role="status" className={cn('flex items-center gap-2 px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
                   <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
                   {CONNECTION_TEXT[connection]}
                 </p>
               )}
               {updated && (
-                <p role="status" className="flex items-center gap-2 border-b border-hairline bg-surface px-4 py-1 text-caption text-body animate-fade-in">
+                <p role="status" className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-body animate-fade-in">
                   <Dot tone="accent" />
                   <span className="flex-1">UAM was updated.</span>
                   <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
@@ -690,7 +717,7 @@ export default function App() {
                 </p>
               )}
               {notice && (
-                <p className="flex items-center gap-2 border-b border-hairline bg-error-wash px-4 py-1.5 text-caption text-error animate-fade-in" role="alert">
+                <p className="flex items-center gap-2 bg-error-wash px-4 py-1.5 text-caption text-error animate-fade-in" role="alert">
                   <span className="flex-1">{notice}</span>
                   <Button size="icon" variant="ghost" aria-label="Dismiss" className="text-error hover:bg-error-wash hover:text-error" onClick={() => setNotice(null)}>
                     <X />
@@ -772,7 +799,7 @@ export default function App() {
 /** The header of the non-Task views while the sidebar is away (narrow, or hidden): its toggle, the brand, the connection. */
 function PaneHeader({ leading, connection }: { leading: React.ReactNode; connection?: keyof typeof CONNECTION_TEXT }) {
   return (
-    <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">
+    <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">
       {leading}
       <span className="text-title font-semibold text-ink">uam</span>
       <span className="flex-1" />
@@ -795,12 +822,12 @@ function EmptyPane({ leading, connection, children }: { leading: React.ReactNode
   );
 }
 
-/** Calm placeholder while the selected Task's detail is on its way and nothing was on screen before: the header holds its height, a quiet indicator once the wait is long. */
-function LoadingPane({ leading, placeholder }: { leading: React.ReactNode; placeholder: boolean }) {
+/** While the selected Task's detail (or the first snapshot) is on its way and nothing was on screen before: the header holds its height over a transcript-shaped skeleton. */
+function LoadingPane({ leading }: { leading: React.ReactNode }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-label="Loading conversation">
-      <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">{leading}</header>
-      {placeholder && <Loading label="Loading the conversation…" delay={0} className="flex-1 justify-center" />}
+      <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">{leading}</header>
+      <TranscriptSkeleton />
     </div>
   );
 }

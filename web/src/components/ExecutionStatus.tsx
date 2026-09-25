@@ -30,7 +30,8 @@ export function ExecutionItems({ execution, reason, busy, onChange, onRetry }: E
       {reason && <p className="px-2 py-1 text-caption text-muted" role="status">{reason}</p>}
       {onRetry && <Menu.Item closeOnClick={false} onClick={onRetry}>Retry commands</Menu.Item>}
       {!current && <p className="px-2 py-1 text-caption text-muted">{mode ? `Last reported: ${mode}` : 'Execution status unavailable.'}</p>}
-      {objective && <div className="space-y-1 border-t border-hairline px-2 py-2 text-ui">
+      {objective && <div className="fade-rule my-1" aria-hidden="true" />}
+      {objective && <div className="space-y-1 px-2 py-1 text-ui">
         <p className="text-caption text-muted">{current ? 'Objective: ' : 'Last reported objective: '}{objective.status}</p>
         <p className="break-words">{objective.objective}</p>
         <div className="space-y-1 text-caption text-muted">
