@@ -149,15 +149,23 @@ func TestNoAuthSkipsLoginButKeepsOtherChecks(t *testing.T) {
 
 func TestHostOriginAndContentTypeChecks(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{PublicOrigins: []string{"https://uam.example.com"}})
+	noAuth := newTestServer(t, ServerConfig{PublicOrigins: []string{"https://uam.example.com"}, NoAuth: true})
 	login := `{"token":"` + testToken + `"}`
+	// With sign-in on, any Host reaches the sign-in check; without it, a
+	// name that is not loopback or a public origin is refused.
 	for _, host := range []string{"evil.example", "evil.example:8260", "127.0.0.1.evil.example"} {
-		if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusForbidden {
-			t.Fatalf("Host %q = %d, want 403", host, w.Code)
+		if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"authenticated":false,"required":true}` {
+			t.Fatalf("Host %q = %d %s, want 200 signed out", host, w.Code, w.Body)
+		}
+		if w := noAuth.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusForbidden {
+			t.Fatalf("no-auth Host %q = %d, want 403", host, w.Code)
 		}
 	}
 	for _, host := range []string{"localhost:9999", "[::1]:8260", "127.0.0.1", "uam.example.com"} {
-		if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK {
-			t.Fatalf("Host %q = %d, want 200", host, w.Code)
+		for _, srv := range []*testServer{ts, noAuth} {
+			if w := srv.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK {
+				t.Fatalf("Host %q = %d, want 200", host, w.Code)
+			}
 		}
 	}
 	if w := ts.do(http.MethodPost, "/api/login", login, withHeader("Sec-Fetch-Site", "cross-site")); w.Code != http.StatusForbidden {
@@ -189,15 +197,22 @@ func TestHostOriginAndContentTypeChecks(t *testing.T) {
 	}
 }
 
-// Beyond loopback the service also answers IP-literal Hosts (the LAN
-// address); a name stays refused on every bind, and the cross-origin and JSON
-// checks do not change.
+// Without sign-in, the service also answers IP-literal Hosts (the LAN
+// address) beyond loopback; a name stays refused on every bind, and the
+// cross-origin and JSON checks do not change. With sign-in on, every Host
+// passes on every bind.
 func TestHostRuleFollowsTheBind(t *testing.T) {
 	for _, tc := range []struct {
 		listen  string
 		ipHosts bool
 	}{{"", false}, {"127.0.0.1:8260", false}, {"[::1]:8260", false}, {"0.0.0.0:8260", true}, {"[::]:8260", true}, {"192.0.2.10:8260", true}} {
-		ts := newTestServer(t, ServerConfig{Listen: tc.listen, PublicOrigins: []string{"https://uam.example.com"}})
+		ts := newTestServer(t, ServerConfig{Listen: tc.listen, PublicOrigins: []string{"https://uam.example.com"}, NoAuth: true})
+		authed := newTestServer(t, ServerConfig{Listen: tc.listen})
+		for _, host := range []string{"evil.example", "192.0.2.10.nip.io:8260", "[fe80::1%25eth0]:8260", "10.1.2.3:9999"} {
+			if w := authed.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK {
+				t.Fatalf("listen %q, sign-in on: Host %q = %d, want 200", tc.listen, host, w.Code)
+			}
+		}
 		for _, host := range []string{"localhost:8260", "127.0.0.1:8260", "[::1]:8260", "uam.example.com"} {
 			if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK {
 				t.Fatalf("listen %q: Host %q = %d, want 200", tc.listen, host, w.Code)
@@ -301,7 +316,6 @@ func TestLogHeaders(t *testing.T) {
 		status                              int
 		opts                                []reqOpt
 	}{
-		{"foreign Host", http.MethodGet, "/api/auth", "", "host not allowed", http.StatusForbidden, []reqOpt{withHost("evil.example")}},
 		{"foreign Origin", http.MethodPost, "/api/login", login, "cross-origin request rejected", http.StatusForbidden, []reqOpt{withHeader("Origin", "https://evil.example")}},
 		{"text/plain", http.MethodPost, "/api/login", login, "requests must use Content-Type: application/json", http.StatusUnsupportedMediaType, []reqOpt{withHeader("Content-Type", "text/plain")}},
 		{"no cookie", http.MethodGet, "/api/sessions", "", "authentication required", http.StatusUnauthorized, nil},
@@ -319,6 +333,14 @@ func TestLogHeaders(t *testing.T) {
 		if strings.Contains(raw, testToken) {
 			t.Fatalf("%s: a request body reached the log: %q", tc.name, raw)
 		}
+	}
+	// Only a server without sign-in refuses a foreign Host.
+	noAuth := newTestServer(t, ServerConfig{LogHeaders: true, NoAuth: true})
+	if w := noAuth.do(http.MethodGet, "/api/auth", "", withHost("evil.example")); w.Code != http.StatusForbidden {
+		t.Fatalf("no-auth foreign Host = %d, want 403", w.Code)
+	}
+	if got := records(); len(got) != 1 || got[0]["outcome"] != "host not allowed" || got[0]["host"] != "evil.example" || got[0]["status"] != float64(http.StatusForbidden) {
+		t.Fatalf("foreign Host: records = %v", got)
 	}
 }
 
@@ -621,6 +643,14 @@ func TestSessionCookieIsHostBoundAndExpires(t *testing.T) {
 	}
 	if code := sessions("127.0.0.1:8260", minted); code != http.StatusUnauthorized {
 		t.Fatalf("public cookie replayed at loopback = %d, want 401", code)
+	}
+	// Any Host reaches the service with sign-in on, but a rebound name holds
+	// no cookie for itself: one minted for loopback does not open it.
+	if code := sessions("evil.example", loopback); code != http.StatusUnauthorized {
+		t.Fatalf("loopback cookie replayed at a foreign host = %d, want 401", code)
+	}
+	if code := sessions("evil.example", validCookie("evil.example")); code != http.StatusOK {
+		t.Fatalf("cookie minted for a foreign host on that host = %d, want 200", code)
 	}
 }
 

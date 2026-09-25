@@ -100,14 +100,16 @@ the file no longer has: run `uam web stop` first, then `uam web` again.
 Session cookies are derived from the token, so the restart signs out every
 browser.
 
-Every API request needs the cookie. The service also rejects requests whose
-`Host` is not loopback, a configured public origin or, when it listens beyond
-loopback, an IP address; it rejects cross-origin state changes and sends no
-CORS headers.
+Every API request needs the cookie. The cookie is bound to the `Host` it was
+issued for, so the service accepts any `Host`: a website whose name resolves
+to this host holds no cookie for that name and reaches only the sign-in page.
+The service rejects cross-origin state changes and sends no CORS headers.
 
 `uam web --no-auth` turns sign-in off: every request is treated as signed in,
 and `uam web` and `uam web status` print `Authentication: disabled` instead of
-the token. The `Host`, cross-origin, and JSON checks still apply. It is off by
+the token. The cross-origin and JSON checks still apply, and the service
+then rejects requests whose `Host` is not loopback, a configured public origin
+or, when it listens beyond loopback, an IP address. It is off by
 default. Behind a public reverse proxy, it lets anyone on the internet run
 agents and shell commands on this host with your credentials; on an address
 beyond loopback, anyone who can reach that address. To turn it back off, run
@@ -663,13 +665,14 @@ The connection is plain HTTP, so the token and the session cookie cross the
 network unencrypted. Use it only on a network you trust; otherwise use SSH
 forwarding or an HTTPS reverse proxy.
 
-The `Host` check still blocks DNS rebinding. Beyond loopback the service also
-accepts a `Host` that is an IP address, such as the LAN address. Any domain
-name that is not a configured public origin gets 403, so a website whose name
-resolves to this host cannot use the service. To reach it by name, add that
-name with `--public-origin`. The cross-origin and JSON checks do not change.
+With sign-in on, any host name works, such as a LAN name, without
+`--public-origin`. The cross-origin and JSON checks do not change.
 
-With `--no-auth` as well, nothing stands between the network and your agents:
+With `--no-auth`, the `Host` check still blocks DNS rebinding: the service
+accepts loopback, a configured public origin and an IP address such as the LAN
+address, and any other name gets 403. To reach it by name, add that name with
+`--public-origin`. Beyond that, nothing stands between the network and your
+agents:
 
 ```text
   Authentication: disabled — anyone who can reach this service can use it
@@ -706,8 +709,10 @@ grep '"msg":"web request"' ~/.cache/uam/uam.log
 
 ## Same-host HTTPS reverse proxy
 
-The service can sit behind a reverse proxy on the same host. Tell it the
-public origin so the `Host` check accepts it:
+The service can sit behind a reverse proxy on the same host. With sign-in on,
+it accepts the proxy's host name as is. With `--no-auth`, the `Host` check
+refuses names that are not loopback or a configured public origin, so tell it
+the public origin:
 
 ```sh
 uam web --public-origin https://uam.example.com
