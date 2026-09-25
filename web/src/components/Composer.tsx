@@ -6,7 +6,7 @@ import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
 import { ComposerUsage } from './ComposerUsage';
-import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
+import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { draftKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
@@ -587,6 +587,12 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           return;
         }
       }
+      // An empty list (no match, a reason, still loading): Enter closes it rather than sending a half-typed token.
+      if (e.key === 'Enter' && !e.shiftKey && enterInPicker(items.length, !!argument) === 'close') {
+        e.preventDefault();
+        setDismissed(triggerKey);
+        return;
+      }
     }
     // Terminal-style history: Up from the first line recalls earlier prompts, Down from the last
     // line comes back, Escape restores the draft. Only the text changes; chips and uploads stay.
@@ -617,7 +623,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
         : commands && commands.length === 0
         ? 'This task has no commands.'
         : trigger.query
-          ? `No command matches “/${trigger.query}”. Enter sends it as text.`
+          ? `No command matches “/${trigger.query}”. Enter closes the list; Enter again sends it as text.`
           : null
       : trigger?.kind === '@'
         ? trigger.query
