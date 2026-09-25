@@ -151,7 +151,7 @@ export function seed(): MockState {
         text: 'Pick the terminals to cover',
         choices: ['Windows Terminal', 'GNOME Terminal', 'tmux inside either', 'VS Code integrated terminal'],
         multiple: true,
-        custom: false,
+        custom: true,
       },
       { text: 'Anything specific the doctor line should say?', custom: true },
     ],

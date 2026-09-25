@@ -132,7 +132,9 @@ function QuestionForm({
   const [chosen, setChosen] = useState<string[][]>(() => questions.map(() => []));
   const [custom, setCustom] = useState<string[]>(() => questions.map(() => ''));
 
+  // One source per answer: free text replaces the chosen options, and choosing an option drops the text.
   function toggle(qi: number, choice: string, multiple: boolean) {
+    setCustom((prev) => prev.map((v, i) => (i === qi ? '' : v)));
     setChosen((prev) =>
       prev.map((arr, i) => {
         if (i !== qi) return arr;
@@ -142,11 +144,14 @@ function QuestionForm({
     );
   }
 
+  function type(qi: number, text: string) {
+    setCustom((prev) => prev.map((v, i) => (i === qi ? text : v)));
+    if (text.trim()) setChosen((prev) => prev.map((arr, i) => (i === qi ? [] : arr)));
+  }
+
   const answers = questions.map((q, i) => {
-    const a = (chosen[i] ?? []).slice();
     const c = (custom[i] ?? '').trim();
-    if (q.custom && c) a.push(c);
-    return a;
+    return q.custom && c ? [c] : (chosen[i] ?? []).slice();
   });
   const complete = answers.every((a) => a.length > 0);
 
@@ -178,7 +183,7 @@ function QuestionForm({
             {q.custom && (
               <label htmlFor={`q-${interactionId}-${qi}-custom`} className="mt-1 flex items-center">
                 <span className="sr-only">Your answer</span>
-                <Input id={`q-${interactionId}-${qi}-custom`} placeholder="Your answer" value={custom[qi] ?? ''} onChange={(e) => setCustom((prev) => prev.map((v, i) => (i === qi ? e.target.value : v)))} />
+                <Input id={`q-${interactionId}-${qi}-custom`} placeholder="Your answer" value={custom[qi] ?? ''} onChange={(e) => type(qi, e.target.value)} />
               </label>
             )}
           </div>
