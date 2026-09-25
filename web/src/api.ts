@@ -669,6 +669,8 @@ export const api = {
     call<Submission>('POST', `/api/sessions/${enc(id)}/command`, { request_id, name, arguments: args, ...extras }),
   commands: async (id: string) => (await call<{ commands: Command[] }>('GET', `/api/sessions/${enc(id)}/commands`)).commands,
   files: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
+  /** The same listing for a Project's directory: a new Task's `@` picker, before the Task exists. */
+  projectFiles: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/projects/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
   upload: uploadFile,
   attachmentUrl: (id: string, attachmentId: string) => `/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`,
   /** An image file of the Task's directory, by absolute path or one relative to it. */

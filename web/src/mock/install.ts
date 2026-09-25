@@ -82,6 +82,7 @@ class FakeEventSource extends EventTarget {
 
 export function install(): void {
   const st: MockState = seed();
+  const createdBy = new Map<string, string>();
   const sources = new Set<FakeEventSource>();
   let seq = 1;
 
@@ -575,6 +576,9 @@ export function install(): void {
 
     if (path === '/api/sessions' && method === 'GET') return json(200, st.tasks.map(summary));
     if (path === '/api/sessions' && method === 'POST') {
+      // A repeated request_id answers with the Task it created, as the service does.
+      const again = typeof body.request_id === 'string' && st.tasks.find((x) => createdBy.get(x.id) === body.request_id);
+      if (again) return json(201, summary(again));
       const p = st.projects.find((x) => x.id === body.project_id);
       if (!p) return fail(400, 'unknown project_id');
       const sel = checkSelection(body);
@@ -609,6 +613,7 @@ export function install(): void {
         agentItems: {},
       };
       st.tasks.push(t);
+      if (typeof body.request_id === 'string') createdBy.set(t.id, body.request_id);
       broadcast('session', { session: summary(t) });
       if (prompt) void reply(t, 'Starting on it. I will read the relevant files first, then make the change and run the tests.', model === 'auto' || !model ? 'mai-code-1.1-flash' : model);
       return json(201, summary(t));
@@ -709,10 +714,12 @@ export function install(): void {
       if (!/\.png$/i.test(abs)) return fail(415, 'only png, jpeg, gif and webp images are served');
       return new Response(screenshotPng(abs.slice(t.workdir.length + 1)).slice(), { status: 200, headers: { 'Content-Type': 'image/png', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-cache' } });
     }
-    if ((r = m(/^\/api\/sessions\/([^/]+)\/files$/)) && method === 'GET') {
-      const t = find(decodeURIComponent(r[1]));
-      if (!t) return fail(404, 'session not found');
-      const tree = st.files[t.project_id];
+    // The `@` listing of a Task's directory, or of a Project's for a new Task that does not exist yet.
+    if ((r = m(/^\/api\/(sessions|projects)\/([^/]+)\/files$/)) && method === 'GET') {
+      const id = decodeURIComponent(r[2]);
+      const projectId = r[1] === 'projects' ? st.projects.find((p) => p.id === id)?.id : find(id)?.project_id;
+      if (!projectId) return fail(404, r[1] === 'projects' ? 'project not found' : 'session not found');
+      const tree = st.files[projectId];
       if (!tree) return json(200, { files: [], reason: 'this directory is not in a Git working tree' });
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50));
       const q = (url.searchParams.get('q') ?? '').toLowerCase();
@@ -732,7 +739,7 @@ export function install(): void {
         .filter((x) => x.s >= 0)
         .sort((a, b) => a.s - b.s || a.path.length - b.path.length || (a.path < b.path ? -1 : 1))
         .slice(0, limit)
-        .map(({ path }) => ({ path, type: isDir(t.project_id, path) ? 'directory' : 'file' }));
+        .map(({ path }) => ({ path, type: isDir(projectId, path) ? 'directory' : 'file' }));
       return json(200, { files, reason: '' });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/command$/)) && method === 'POST') {

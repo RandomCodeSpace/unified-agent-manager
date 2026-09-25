@@ -159,11 +159,17 @@ are logged only at debug level (`UAM_DEBUG=1`).
   no other Project uses while one is left. UAM picks it when you add the
   Project and keeps it when you rename it; Projects from before badges
   existed get one when the service starts.
-- **Tasks**: "New task" in a Project opens an empty conversation at once,
-  with the Project's defaults applied, and puts the cursor in the composer.
-  There is no form and no required first prompt: type the first message when
-  you are ready. The pickers in the composer's toolbar still change the model,
-  effort, context size and mode for that Task alone. A Project without
+- **Tasks**: "New task" in a Project opens a new, empty Task pane with the
+  Project's defaults applied and puts the cursor in the composer. The Task
+  itself, and its Copilot conversation, is created only when you send the
+  first message: until then nothing appears in the sidebar, and leaving the
+  pane (another Task, Settings, a reload) discards it, keeping what you typed
+  for the next New task in that Project (attachments are not kept). The
+  pickers in the composer's toolbar change the model, effort, context size
+  and mode the Task starts with; `@` lists the Project's files, while `/`
+  commands and `$` skills are available after the first message. If the Task
+  is created but the message cannot be sent, the Task opens with the message
+  back in its composer and the reason above it. A Project without
   defaults starts a Task with `auto`, default effort, default context size and
   safe mode. A default model the provider no longer offers is replaced by
   `auto` (or the first model), with default effort and context size, so New

@@ -1,16 +1,16 @@
 import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { LIVE, api, describeError, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary } from '../api';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { LIVE, api, describeError, provider, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
-import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle, WorkingMark } from './common';
+import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle, WorkingMark, useApp } from './common';
 import { Chip } from './ui/chip';
 import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
-import { Composer } from './Composer';
+import { Composer, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
@@ -337,12 +337,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
             <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />
             {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
-            {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && (
-              <div className="flex flex-col items-center gap-1 py-10 text-center animate-rise">
-                <p className="text-title text-ink">New task in {project?.name ?? 'this project'}</p>
-                <p className="text-ui text-muted">Your first message gives this task its title.</p>
-              </div>
-            )}
+            {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && <NewTaskIntro project={project} />}
             <Transcript
               sessionId={session.id}
               items={session.items}
@@ -385,6 +380,52 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
 
       {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} inline={sidePanelInline} open={sheetOpen} onRefresh={() => { setChangesError(null); setChangesTick((t) => t + 1); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
       {panelPresence.mounted && panelView && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
+    </div>
+  );
+}
+
+function NewTaskIntro({ project }: { project: Project | undefined }) {
+  return (
+    <div className="flex flex-col items-center gap-1 py-10 text-center animate-rise">
+      <p className="text-title text-ink">New task in {project?.name ?? 'this project'}</p>
+      <p className="text-ui text-muted">Your first message gives this task its title.</p>
+    </div>
+  );
+}
+
+const noRename = () => {};
+
+/**
+ * A new Task before its first message: nothing exists on the service yet, so there is no
+ * state, Changes or menu, only the Project's badge and a composer on the Project's
+ * defaults. `onSend` creates the Task and delivers the message (App `createTask`).
+ */
+export function NewTaskPane({ project, defaults, onSend, leading }: { project: Project; defaults: TaskDefaults; onSend: (projectId: string, first: FirstMessage) => Promise<void>; leading?: ReactNode }) {
+  const { meta } = useApp();
+  const [session, setSession] = useState<SessionDetail>(() => ({
+    id: '', project_id: project.id, provider: defaults.provider, name: '', title: '', workdir: project.dir, conversation_id: '',
+    model: defaults.model, last_model: '', effort: defaults.effort, context_size: defaults.context_size, mode: defaults.mode,
+    stage: 'active', state: 'idle', open: false, pending: 0, subagents_running: 0, created_at: '', updated_at: '',
+    capabilities: provider(meta, defaults.provider)?.capabilities ?? { cancel: false, permissions: false, questions: false, session_diff: false, history: false },
+    items: [], interactions: [], subagents: [], history_truncated: false, last_submission: null,
+  }));
+  const onSettings = useCallback((s: SessionSummary) => setSession((d) => ({ ...d, ...s })), []);
+  const newTask = useMemo(() => ({ projectId: project.id, send: (first: FirstMessage) => onSend(project.id, first) }), [project.id, onSend]);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col animate-rise">
+      <header className="flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3">
+        {leading}
+        <ProjectBadge badge={project.badge} className="mr-0.5" />
+        <h1 className="min-w-0 truncate text-display-sm text-ink">New task</h1>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6">
+          <NewTaskIntro project={project} />
+        </div>
+      </div>
+      <div className="relative w-full shrink-0 px-3 pb-3 sm:px-4 md:px-6">
+        <Composer session={session} onRename={noRename} onSessionUpdate={onSettings} newTask={newTask} />
+      </div>
     </div>
   );
 }

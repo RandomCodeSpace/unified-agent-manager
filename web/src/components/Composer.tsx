@@ -1,13 +1,13 @@
 import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, Shield, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type SessionDetail, type SessionSummary, type Submission } from '../api';
+import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
 import { ComposerUsage } from './ComposerUsage';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
-import { draftKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
+import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Markdown, Note, Spinner, useApp } from './common';
@@ -179,15 +179,34 @@ function FileRow({ f }: { f: FileEntry }) {
 
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
 
+/** A new Task's first message with the settings chosen for it; attachments are the files themselves, uploaded once the Task exists. */
+export interface FirstMessage {
+  settings: TaskDefaults;
+  text: string;
+  files: string[];
+  uploads: { file: File; kind: Kind }[];
+}
+
+/** A composer for a Task that does not exist yet: `send` creates it and delivers the message, and throws while nothing was created. */
+export interface NewTask {
+  projectId: string;
+  send: (first: FirstMessage) => Promise<void>;
+}
+
+/** A new Task has no provider conversation yet, so no commands or skills; its execution mode shows once it exists. */
+const NO_COMMANDS: Command[] = [];
+
 interface ComposerProps {
   session: SessionDetail;
   onRename: () => void;
   onSessionUpdate: (s: SessionSummary) => void;
+  /** Set for a new Task: its settings are `session`'s, changed locally through `onSessionUpdate`. */
+  newTask?: NewTask;
 }
 
 /** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
 function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
-  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate) return false;
+  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask) return false;
   if (a.session === b.session) return true;
   const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
   keys.delete('items');
@@ -199,10 +218,10 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
 
 export const Composer = memo(ComposerView, sameComposerProps);
 
-function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
+function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerProps) {
   const { meta, settings: appSettings, dispatch } = useApp();
   // The draft this Task left behind (text, `@` files, finished uploads); read once, on mount.
-  const storageKey = draftKey(session.id);
+  const storageKey = newTask ? newTaskKey(newTask.projectId) : draftKey(session.id);
   const [draft] = useState(() => readDraft(storageKey));
   const [text, setText] = useState(draft?.text ?? '');
   const [caret, setCaret] = useState(draft?.text.length ?? 0);
@@ -273,7 +292,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const pendingExecution = useRef<{ mode: 'interactive' | 'autopilot'; id: string } | null>(null);
   const commandKey = `${session.id}:${session.open}:${live}:${session.mode}:${session.execution?.mode}:${commandVersion}`;
   const [commandList, setCommandList] = useState<{ key: string; commands: Command[] | null; error: string | null } | null>(null);
-  const commands = commandList?.key === commandKey ? commandList.commands : null;
+  const commands = newTask ? NO_COMMANDS : commandList?.key === commandKey ? commandList.commands : null;
   const commandsError = commandList?.key === commandKey ? commandList.error : null;
   const [fileList, setFileList] = useState<{ q: string; files: FileEntry[]; reason: string } | null>(null);
   const fileSeq = useRef(0);
@@ -291,13 +310,13 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   // Fetching can reopen an exact closed conversation, but never submits a prompt.
   // Catalogue failures hold slash-shaped input instead of falling through to a prompt.
   useEffect(() => {
-    if (!wantCommands || commands || commandsError) return;
+    if (newTask || !wantCommands || commands || commandsError) return;
     let current = true;
     api.commands(session.id)
       .then((list) => current && setCommandList({ key: commandKey, commands: list, error: null }))
       .catch((e) => current && setCommandList({ key: commandKey, commands: null, error: sentence(describeError(e)) }));
     return () => { current = false; };
-  }, [wantCommands, commands, commandsError, commandKey, session.id]);
+  }, [newTask, wantCommands, commands, commandsError, commandKey, session.id]);
 
   // Open the same controls used by the toolbar after submission unlocks them.
   useEffect(() => {
@@ -318,20 +337,20 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
 
   // Files: debounced search; a stale answer never overwrites a newer one.
   const fileQuery = trigger?.kind === '@' ? trigger.query : null;
+  const projectId = newTask?.projectId;
   useEffect(() => {
     if (fileQuery === null) return;
     const seq = ++fileSeq.current;
     const timer = window.setTimeout(
       () => {
-        api
-          .files(session.id, fileQuery)
+        (projectId ? api.projectFiles(projectId, fileQuery) : api.files(session.id, fileQuery))
           .then((r) => seq === fileSeq.current && setFileList({ q: fileQuery, files: r.files, reason: r.reason }))
           .catch((e) => seq === fileSeq.current && setFileList({ q: fileQuery, files: [], reason: describeError(e) }));
       },
       fileQuery === '' ? 0 : 120,
     );
     return () => window.clearTimeout(timer);
-  }, [fileQuery, session.id]);
+  }, [fileQuery, session.id, projectId]);
 
   const items = useMemo<PickerItem[]>(() => {
     if (!trigger) return [];
@@ -416,6 +435,8 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const patch = (key: string, p: Partial<Pending>) => setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...p } : x)));
   // Uploads still in flight; leaving the Task (this composer unmounts) cancels them.
   const inflight = useRef(new Set<() => void>());
+  // A new Task's attachments wait here, by chip key, until its first Send uploads them; leaving it drops them.
+  const held = useRef(new Map<string, File>());
   useEffect(() => {
     const running = inflight.current;
     return () => {
@@ -437,14 +458,19 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
         continue;
       }
       kinds.push(kind);
-      const up = api.upload(session.id, file, (p) => patch(key, { progress: p }));
-      next.push({ key, name: file.name, size: file.size, kind, progress: 0, status: 'uploading', abort: up.abort });
-      inflight.current.add(up.abort);
       if (kind === 'image') {
         const reader = new FileReader();
         reader.onload = () => patch(key, { preview: String(reader.result) });
         reader.readAsDataURL(file);
       }
+      if (newTask) {
+        held.current.set(key, file);
+        next.push({ key, name: file.name, size: file.size, kind, progress: 1, status: 'done' });
+        continue;
+      }
+      const up = api.upload(session.id, file, (p) => patch(key, { progress: p }));
+      next.push({ key, name: file.name, size: file.size, kind, progress: 0, status: 'uploading', abort: up.abort });
+      inflight.current.add(up.abort);
       up.done
         .finally(() => inflight.current.delete(up.abort))
         .then((a) => patch(key, { status: 'done', id: a.id, progress: 1, name: a.name, size: a.size ?? file.size, abort: undefined }))
@@ -458,6 +484,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
 
   function removeUpload(key: string) {
     uploads.find((u) => u.key === key)?.abort?.();
+    held.current.delete(key);
     setUploads((u) => u.filter((x) => x.key !== key));
   }
 
@@ -512,9 +539,32 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const steerDefault = appSettings.send_default === 'steer';
   const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
 
+  /** A new Task's first Send: the text stays here, with the reason, unless the Task was created. */
+  async function sendFirst(t: string) {
+    if (!newTask) return;
+    const heldUploads = uploads.flatMap((u) => {
+      const file = held.current.get(u.key);
+      return u.status === 'done' && file ? [{ file, kind: u.kind }] : [];
+    });
+    refocus.current = true;
+    setBusy('send');
+    setError(null);
+    try {
+      await newTask.send({ settings: { provider: session.provider, model: session.model, effort, context_size: contextSize, mode }, text: t, files, uploads: heldUploads });
+      // The Task exists and holds the message now (or its composer does); this draft is done.
+      latestDraft.current = { text: '', files: [], attachments: [] };
+      writeDraft(storageKey, latestDraft.current);
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function send(promptMode: PromptMode) {
     const t = text.trim();
     if (cannotSubmit || (!cmd && promptMode === 'send' && live)) return;
+    if (newTask) return sendFirst(t);
     if (!cmd && promptMode === 'steer' && steerBlocked) {
       setError(`${steerBlocked}.`);
       return;
@@ -568,7 +618,10 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
       setBusy(null);
     }
   }
-  const settings = (body: Parameters<typeof api.settings>[1]) => action('settings', async () => onSessionUpdate(await api.settings(session.id, body)));
+  const settings = (body: Parameters<typeof api.settings>[1]) =>
+    newTask
+      ? onSessionUpdate({ ...session, ...changeSettings({ provider: session.provider, model: session.model, effort, context_size: contextSize, mode }, body, catalog.find((m) => m.id === body.model)) })
+      : action('settings', async () => onSessionUpdate(await api.settings(session.id, body)));
 
   async function changeExecution(next: 'interactive' | 'autopilot') {
     if (busy || executionReason || !autopilotCommand || (session.execution?.known && session.execution.mode === next)) return;
@@ -637,11 +690,13 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
 
   const sendLabel = busy === enter ? 'Submitting…' : cmd ? `Run /${cmd.name}` : live ? (enter === 'steer' ? 'Steer' : 'Queue') : 'Send';
   const pickerNote =
-    (trigger?.kind === '/' || trigger?.kind === '$') ? (commandsError || (items[hi]?.disabled ? commandReason(commands?.find((c) => c.name === items[hi].key), live) : null)) : trigger?.kind === '@' && fileList?.q === trigger.query && fileList.reason ? sentence(fileList.reason) : null;
+    (trigger?.kind === '/' || trigger?.kind === '$') ? (newTask && !argument ? `${trigger.kind === '$' ? 'Skills are' : 'Commands are'} available after the first message.` : commandsError || (items[hi]?.disabled ? commandReason(commands?.find((c) => c.name === items[hi].key), live) : null)) : trigger?.kind === '@' && fileList?.q === trigger.query && fileList.reason ? sentence(fileList.reason) : null;
   const pickerEmpty =
     (trigger?.kind === '/' || trigger?.kind === '$')
       ? argument
         ? 'Type arguments, then press Enter to run.'
+        : newTask
+        ? null
         : commands && commands.length === 0
         ? 'This task has no commands.'
         : trigger.query
@@ -878,6 +933,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
                     Attach files
                     {gateNote && <span className="block text-on-primary/70">{gateNote}</span>}
                     <span className="block text-on-primary/70">{LIMITS_TEXT}. Paste or drop works too.</span>
+                    {newTask && <span className="block text-on-primary/70">Kept until you leave this new task.</span>}
                   </>
                 )
               }
@@ -949,7 +1005,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           className="max-sm:hidden"
           onChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}
         />
-        <ExecutionStatus execution={session.execution} supported={!!session.capabilities.execution_modes}
+        <ExecutionStatus execution={session.execution} supported={!newTask && !!session.capabilities.execution_modes}
           reason={executionReason} busy={!!busy} onOpenChange={setExecutionOpen}
           onChange={(next) => void changeExecution(next)}
           onRetry={commandsError && !locked ? () => setCommandVersion((v) => v + 1) : undefined} />
@@ -967,7 +1023,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
                 <Menu.Label>Permissions</Menu.Label>
                 {modeChoices.map((c) => <Menu.RadioItem key={c.value} value={c.value} description={c.description} disabled={!!busy}>{c.label}</Menu.RadioItem>)}
               </Menu.RadioGroup>
-              {session.capabilities.execution_modes && (
+              {!newTask && session.capabilities.execution_modes && (
                 <>
                   <Menu.Separator />
                   <ExecutionItems execution={session.execution} reason={executionReason} busy={!!busy} onChange={(next) => void changeExecution(next)} onRetry={commandsError ? () => setCommandVersion((v) => v + 1) : undefined} />

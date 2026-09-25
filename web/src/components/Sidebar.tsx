@@ -254,7 +254,8 @@ function Shelf({ projects, label, tasks, selectedId, open, onToggle }: { project
 /** Project management follows the selected filter; it never heads a collapsible Task group. */
 function ProjectActions({ project, actions }: { project: Project; actions: WorkspaceActions }) {
   const items: ActionItem[] = [
-    { key: 'new', label: 'New task', icon: <SquarePen />, onSelect: () => actions.onNewTask(project.id) },
+    // New task opens a draft whose composer takes focus, so the closing menu leaves focus alone.
+    { key: 'new', label: 'New task', icon: <SquarePen />, takesFocus: true, onSelect: () => actions.onNewTask(project.id) },
     { key: 'edit', label: 'Edit project', icon: <Settings2 />, onSelect: () => actions.onEditProject(project), separator: true },
     { key: 'remove', label: 'Remove project', icon: <FolderMinus />, danger: true, onSelect: () => actions.onRemoveProject(project) },
   ];
@@ -420,7 +421,7 @@ export const Sidebar = memo(function Sidebar({
             <Menu.Content align="end" className="min-w-56">
               <Menu.Group>
                 <Menu.Label>New task in</Menu.Label>
-                <Menu.Actions items={projects.map((p) => ({ key: p.id, label: p.name, icon: <ProjectBadge badge={p.badge} />, onSelect: () => actions.onNewTask(p.id) }))} />
+                <Menu.Actions items={projects.map((p) => ({ key: p.id, label: p.name, icon: <ProjectBadge badge={p.badge} />, takesFocus: true, onSelect: () => actions.onNewTask(p.id) }))} />
               </Menu.Group>
             </Menu.Content>
           </Menu.Root>
