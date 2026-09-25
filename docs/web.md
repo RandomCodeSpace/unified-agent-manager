@@ -350,7 +350,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   inside the project (no symbolic links, nothing binary). Copilot receives the
   reference and reads the file with its tools, which asks for a read
   permission in safe mode. A directory that is not a Git working tree offers
-  no list. A steer takes text only.
+  no list.
 - **Attachments**: the paper-clip button, pasting, and dropping files onto the
   composer upload them at once. A chip shows the upload's progress, then its
   size and type, or why it was refused. Allowed: png, jpeg, gif and webp
@@ -359,8 +359,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   HEIC, audio, video, archives and everything else are refused. Images and
   PDFs need a model that accepts them: Copilot reports this per model, `auto`
   is not checked, and the button says so when the Task's model takes text
-  only. Attachments go with the message; a queued message keeps them, and a
-  steer takes none. In the conversation, images show as thumbnails that open
+  only. Attachments go with the message, whether it is sent, queued or
+  steered. In the conversation, images show as thumbnails that open
   larger on click and other files as chips that open the stored copy, also
   after a reload. UAM keeps the files outside the project (see Settle,
   archive, and delete).
@@ -387,9 +387,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   - When no turn is running, both send the message at once.
   - While a turn runs, Enter does what the Settings view says (steer by
     default) and Ctrl+Enter (⌘+Enter on a Mac) the other; the two buttons
-    and their tooltips follow the setting. A message that carries files or
-    attachments always queues, since a steer takes text only, and the
-    composer says so.
+    and their tooltips follow the setting. Files and attachments go with a
+    steer as with any other message.
   - **History**: with the caret on the first line (or an empty message), Up
     recalls the previous prompt from this Task, newest first, as in a shell;
     Up again goes further back. Down from the last line comes forward, and

@@ -428,6 +428,7 @@ type Conversation struct {
 	prompts       []agentapi.Prompt
 	runs          []CommandRun
 	steers        []string
+	steerPrompts  []agentapi.Prompt
 	modelSets     []string
 	settings      []agentapi.OpenRequest
 	cancels       int
@@ -625,17 +626,18 @@ func (c *Conversation) RunCommand(ctx context.Context, name string, args agentap
 	return nil
 }
 
-func (c *Conversation) Steer(ctx context.Context, prompt string) error {
+func (c *Conversation) Steer(ctx context.Context, prompt agentapi.Prompt) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return agentapi.ErrClosed
 	}
-	c.steers = append(c.steers, prompt)
+	c.steers = append(c.steers, prompt.Text)
+	c.steerPrompts = append(c.steerPrompts, prompt)
 	hook := c.steerHook
 	c.mu.Unlock()
 	if hook != nil {
-		return hook(ctx, prompt)
+		return hook(ctx, prompt.Text)
 	}
 	return nil
 }
@@ -789,6 +791,13 @@ func (c *Conversation) Steers() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.steers...)
+}
+
+// SteerPrompts returns every prompt passed to Steer, with its references.
+func (c *Conversation) SteerPrompts() []agentapi.Prompt {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]agentapi.Prompt(nil), c.steerPrompts...)
 }
 
 // Cancels reports how often Cancel ran.

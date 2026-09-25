@@ -48,8 +48,12 @@ func TestWebSendAttachesReferencedFiles(t *testing.T) {
 	if msg.Prompt != "see @src/a.go and @docs" || msg.DisplayPrompt != "" || msg.Mode != "" || !reflect.DeepEqual(msg.Attachments, wantFileAttachments()) {
 		t.Fatalf("sent %+v", msg)
 	}
-	if err := h.conv.Steer(context.Background(), "steer"); err != nil || h.fs.msgs[1].Attachments != nil {
-		t.Fatalf("steer %v sent attachments %+v", err, h.fs.msgs[1].Attachments)
+	if err := h.conv.Steer(context.Background(), agentapi.Prompt{Text: "steer", Files: composerFiles}); err != nil ||
+		h.fs.msgs[1].Mode != string(rpc.SendModeImmediate) || !reflect.DeepEqual(h.fs.msgs[1].Attachments, wantFileAttachments()) {
+		t.Fatalf("steer %v sent %+v", err, h.fs.msgs[1])
+	}
+	if err := h.conv.Steer(context.Background(), agentapi.Prompt{Text: "text only"}); err != nil || h.fs.msgs[2].Attachments != nil {
+		t.Fatalf("text-only steer %v sent attachments %+v", err, h.fs.msgs[2].Attachments)
 	}
 }
 

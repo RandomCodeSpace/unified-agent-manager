@@ -1199,7 +1199,7 @@ func TestWebSendOmitsModeAndSteerInterjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := len(h.sink.all())
-	if err := h.conv.Steer(ctx, "also this"); err != nil {
+	if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "also this"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(h.fs.modes, ","); got != ",immediate" || strings.Join(h.fs.sent, ",") != "start,also this" {
@@ -1209,11 +1209,11 @@ func TestWebSendOmitsModeAndSteerInterjects(t *testing.T) {
 		t.Fatalf("a steer reported %+v; the running turn reports its own end", evs)
 	}
 	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}
-	if err := h.conv.Steer(ctx, "p"); err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) {
+	if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "p"}); err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) {
 		t.Fatalf("rejected steer err = %v, want definite", err)
 	}
 	h.fs.sendErr = errors.New("CLI process exited: signal: killed")
-	if err := h.conv.Steer(ctx, "p"); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
+	if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "p"}); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
 		t.Fatalf("steer after CLI exit err = %v, want uncertain", err)
 	}
 }
@@ -1226,7 +1226,7 @@ func TestWebSteerDeliveredIsMarked(t *testing.T) {
 	if it := h.sink.last().Item; it == nil || it.ID != "msg-1" || it.Delivery != "" {
 		t.Fatalf("prompt item = %+v", it)
 	}
-	if err := h.conv.Steer(ctx, "use tabs"); err != nil { // msg-2
+	if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "use tabs"}); err != nil { // msg-2
 		t.Fatal(err)
 	}
 	h.fs.onEvent(ev("u2", userMessage("msg-2", rpc.UserMessageDeliverySteering, "use tabs")))
@@ -1243,8 +1243,8 @@ func TestWebSteerTheTurnDidNotUseIsReportedOnce(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
 	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "start"})
-	_ = h.conv.Steer(ctx, "too late")      // msg-2
-	_ = h.conv.Steer(ctx, "line one\ntwo") // msg-3
+	_ = h.conv.Steer(ctx, agentapi.Prompt{Text: "too late"})      // msg-2
+	_ = h.conv.Steer(ctx, agentapi.Prompt{Text: "line one\ntwo"}) // msg-3
 	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
 	evs := h.sink.all()
 	want := []string{
@@ -1282,8 +1282,8 @@ func TestWebBackgroundedShellOutputKeepsTheCallCompleted(t *testing.T) {
 func TestWebSteerDeliveredAfterIdleStartsATurn(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()
-	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "start"}) // msg-1
-	if err := h.conv.Steer(ctx, "late"); err != nil {    // msg-2
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "start"})                     // msg-1
+	if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "late"}); err != nil { // msg-2
 		t.Fatal(err)
 	}
 	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
@@ -1330,7 +1330,7 @@ func TestWebSteerUsedBeforeSendReturns(t *testing.T) {
 	h.fs.beforeReturn = func(id string) {
 		h.fs.onEvent(ev("u2", userMessage(id, rpc.UserMessageDeliverySteering, "quick")))
 	}
-	if err := h.conv.Steer(ctx, "quick"); err != nil {
+	if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "quick"}); err != nil {
 		t.Fatal(err)
 	}
 	h.fs.beforeReturn = nil
@@ -1370,7 +1370,7 @@ func TestWebSteerIdleBeforeSendReturns(t *testing.T) {
 					}
 					h.fs.onEvent(ev("idle", tc.idle))
 				}
-				if err := h.conv.Steer(ctx, "line one\ntwo"); err != nil {
+				if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "line one\ntwo"}); err != nil {
 					t.Fatal(err)
 				}
 				h.fs.beforeReturn = nil
@@ -1417,11 +1417,11 @@ func TestWebSteerConcurrentSendsBeforeAbortedIdle(t *testing.T) {
 		<-release[id]
 	}
 	done := make(chan error, 2)
-	go func() { done <- h.conv.Steer(ctx, "used") }()
+	go func() { done <- h.conv.Steer(ctx, agentapi.Prompt{Text: "used"}) }()
 	if id := <-started; id != "msg-2" {
 		t.Fatalf("first steer ID = %q", id)
 	}
-	go func() { done <- h.conv.Steer(ctx, "unused") }()
+	go func() { done <- h.conv.Steer(ctx, agentapi.Prompt{Text: "unused"}) }()
 	if id := <-started; id != "msg-3" {
 		t.Fatalf("second steer ID = %q", id)
 	}

@@ -1040,7 +1040,7 @@ func TestWebSend(t *testing.T) {
 	if err := conversation.Send(t.Context(), agentapi.Prompt{Text: "hello"}); !errors.Is(err, agentapi.ErrBusy) {
 		t.Fatalf("busy Send = %v", err)
 	}
-	if err := conversation.Steer(t.Context(), "hello"); !errors.Is(err, agentapi.ErrUnsupported) {
+	if err := conversation.Steer(t.Context(), agentapi.Prompt{Text: "hello"}); !errors.Is(err, agentapi.ErrUnsupported) {
 		t.Fatalf("Steer = %v, want unsupported", err)
 	}
 	if err := conversation.PromptSubagent(t.Context(), "child", "hello"); !errors.Is(err, agentapi.ErrUnsupported) {

@@ -342,7 +342,7 @@ type Conversation interface {
 	// the provider using it, the adapter emits an ItemNotice saying so.
 	// Ambiguous failures wrap ErrSubmissionUncertain and are never resent.
 	// ErrUnsupported means the provider cannot steer.
-	Steer(ctx context.Context, prompt string) error
+	Steer(ctx context.Context, prompt Prompt) error
 	// Cancel aborts the current turn. The conversation stays open.
 	Cancel(ctx context.Context) error
 	// CancelSubagent stops only the exact agent instance. Its final status

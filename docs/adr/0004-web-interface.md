@@ -845,7 +845,7 @@ plain text, and so is a `/word` that is not a listed command.
   bytes, as git decides). Directories are allowed. Nothing is sent or recorded
   when one fails. A queued prompt keeps its files, and UAM checks them again
   when the prompt is sent; a failure then is a `rejected` submission that
-  pauses the queue. A steer takes text only and refuses files with 400. The
+  pauses the queue. A steer takes files too, checked the same way. The
   text stays as typed, `@path` tokens included. Copilot receives
   `AttachmentFile` or `AttachmentDirectory` with the absolute path and the
   relative path as display name; the model gets a `<tagged_files>` pointer and
@@ -941,8 +941,9 @@ No request carries base64 in JSON.
   that no sent or queued prompt carries expires after 24 hours; UAM checks at
   start, after each upload and every hour. A sent upload lives as long as its
   Task, because the transcript shows it.
-- **Sending.** A prompt, a queued prompt and a command take
-  `attachments: [id]`; a steer takes none (400). A queued prompt keeps the IDs,
+- **Sending.** A prompt, a queued prompt, a steer and a command take
+  `attachments: [id]`. Copilot CLI 1.0.88 folds a steer's blobs and file
+  references into the running turn like its text. A queued prompt keeps the IDs,
   and UAM reads the bytes when it sends; a missing file then is a `rejected`
   submission that pauses the queue. A retried `request_id` returns the
   recorded outcome, so nothing is uploaded or sent twice. Copilot receives each

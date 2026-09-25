@@ -749,8 +749,7 @@ export function install(): void {
               return json(202, { ...sub, status: 'queued' });
             }
             if (body.mode === 'steer') {
-              if (extras.files.length || extras.attachments.length) return fail(400, 'a steer takes text only; send files and attachments with a prompt');
-              pushItem(t, { id: nextId('u'), kind: 'user', delivery: 'steer', text, time: now() });
+              pushItem(t, { id: nextId('u'), kind: 'user', delivery: 'steer', text, time: now(), ...withAttachments });
               t.last_submission = sub;
               broadcast('submission', { session_id: t.id, submission: sub }, t.id);
               return json(202, sub);

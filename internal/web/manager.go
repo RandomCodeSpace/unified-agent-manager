@@ -2420,10 +2420,7 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		return m.enqueueLocked(s, in, uploads, reqID)
 	case mode == ModeSteer && turnRunning(state):
 		m.mu.Unlock()
-		if len(in.files) > 0 || len(uploads) > 0 {
-			return Submission{}, newError(http.StatusBadRequest, "a steer takes text only; send files and attachments with a prompt")
-		}
-		return m.steer(s, conv, in.text, reqID)
+		return m.steer(s, conv, in, uploads, reqID)
 	case busy(state) || s.queueSending != "":
 		m.mu.Unlock()
 		return Submission{}, errTurnRunning
@@ -2529,18 +2526,33 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	}
 }
 
-// steer adds text to the running turn. The turn state does not change: the
-// turn the steer joins reports its own end. The caller holds s.op.
-func (m *Manager) steer(s *webSession, conv agentapi.Conversation, text, reqID string) (Submission, error) {
+// steer adds in, with its files and uploads, to the running turn. The turn
+// state does not change: the turn the steer joins reports its own end. The
+// caller holds s.op.
+func (m *Manager) steer(s *webSession, conv agentapi.Conversation, in turnInput, uploads []*upload, reqID string) (Submission, error) {
 	if conv == nil {
 		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open", false), nil
 	}
 	if sub, found, err := m.checkedPrompt(s, reqID); found || err != nil {
 		return sub, err
 	}
+	m.mu.Lock()
+	workdir := s.workdir
+	m.mu.Unlock()
+	files, err := checkFiles(workdir, in.files)
+	var blobs []agentapi.Blob
+	if err == nil {
+		blobs, err = m.readBlobs(s.id, uploads)
+	}
+	if err != nil {
+		return Submission{}, err
+	}
 	ctx, cancel := context.WithTimeout(m.ctx, sendTimeout)
-	err := conv.Steer(ctx, text)
+	err = conv.Steer(ctx, agentapi.Prompt{Text: in.text, Files: files, Attachments: blobs})
 	cancel()
+	if err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		m.markUsed(s, uploads)
+	}
 	switch {
 	case err == nil:
 		return m.recordSubmission(s, reqID, SubmissionAccepted, "", false), nil

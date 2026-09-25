@@ -302,8 +302,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               label="While a task is running, Enter…"
               help={
                 <>
-                  Steer adds the message to the running turn; Queue holds it for the next one. {other} stays on Ctrl+Enter (⌘+Enter on a Mac) and on its own button. A message with files or
-                  attachments always queues.
+                  Steer adds the message to the running turn; Queue holds it for the next one. {other} stays on Ctrl+Enter (⌘+Enter on a Mac) and on its own button.
                 </>
               }
             >

@@ -435,7 +435,6 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const uploading = uploads.some((u) => u.status === 'uploading');
   const refused = uploads.some((u) => u.status === 'error');
   const attachmentIds = uploads.flatMap((u) => (u.status === 'done' && u.id ? [u.id] : []));
-  const hasExtras = files.length > 0 || attachmentIds.length > 0;
   const extras = { ...(files.length ? { files } : {}), ...(attachmentIds.length ? { attachments: attachmentIds } : {}) };
 
   /* ---------- Sending ---------- */
@@ -452,7 +451,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
         : shapedCommand && commandsError
           ? 'Commands could not be loaded. Retry the command list.'
           : commandBlocked;
-  const steerBlocked = hasExtras ? 'A steer takes text only; queue the message instead' : steerUnavailable;
+  const steerBlocked = steerUnavailable;
   const cannotSubmit = !!busy || locked || session.state === 'starting' || !text.trim() || !!blocked;
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The primary button is Enter's;
   // the secondary is the other's, and stays Steer, disabled with its reason, while a steer is impossible.
@@ -696,10 +695,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           )}
           {commandBlocked && <Note role="status">{commandBlocked}</Note>}
           {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
-          {live && hasExtras && !cmd && (
-            <Note>{steerDefault ? 'Enter queues this message: a steer takes text only, so files and attachments go with the next turn.' : 'Files and attachments go with a queued message; Steer takes text only.'}</Note>
-          )}
-          {live && steerUnavailable && !hasExtras && !cmd && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
+          {live && steerUnavailable && !cmd && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
         </div>
       )}
       {commandResult && commandResult.kind !== 'action' && (

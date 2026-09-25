@@ -1524,25 +1524,25 @@ func (c *conversation) sendError(err error) error {
 	return fmt.Errorf("%w: %s", agentapi.ErrSubmissionUncertain, errText(err))
 }
 
-// Steer sends prompt in the "immediate" mode: the CLI folds it into the
-// running turn before its next model call, and moves a running foreground
+// Steer sends prompt, with its attachments, in the "immediate" mode: the CLI
+// folds it into the running turn before its next model call, and moves a running foreground
 // shell command to the background. It reports no turn transition. The
 // message ID the CLI returns links the steer to its user message: that
 // message is marked as a steer, and a steer a stopped or failed turn ends
 // without is reported as not delivered (the CLI drops unused steers on abort).
-func (c *conversation) Steer(ctx context.Context, prompt string) error {
+func (c *conversation) Steer(ctx context.Context, prompt agentapi.Prompt) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return agentapi.ErrClosed
 	}
-	st := &steer{prompt: prompt}
+	st := &steer{prompt: prompt.Text}
 	c.steers = append(c.steers, st)
 	c.steering++
 	c.mu.Unlock()
 	id, err := "", ctx.Err()
 	if err == nil {
-		if id, err = c.sess.Send(ctx, copilot.MessageOptions{Prompt: prompt, Mode: string(rpc.SendModeImmediate)}); err != nil {
+		if id, err = c.sess.Send(ctx, copilot.MessageOptions{Prompt: prompt.Text, Attachments: attachments(prompt), Mode: string(rpc.SendModeImmediate)}); err != nil {
 			err = c.sendError(err)
 		}
 	}
