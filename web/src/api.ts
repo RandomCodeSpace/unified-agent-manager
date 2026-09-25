@@ -668,6 +668,8 @@ export const api = {
   attachmentUrl: (id: string, attachmentId: string) => `/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`,
   /** An image file of the Task's directory, by absolute path or one relative to it. */
   rawFileUrl: (id: string, path: string) => `/api/sessions/${enc(id)}/files/raw?path=${enc(path)}`,
+  /** Any file of the Task's directory by its "/"-separated path relative to it, as a path so a page's relative links resolve to its siblings. */
+  viewFileUrl: (id: string, path: string) => `/api/sessions/${enc(id)}/files/view/${path.split('/').map(enc).join('/')}`,
   cancelBackgroundTask: (id: string, taskId: string) => call<{ accepted: true; background_tasks: BackgroundTasks }>('POST', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/cancel`),
   cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
   close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),

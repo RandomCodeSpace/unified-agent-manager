@@ -318,6 +318,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               live={live}
               working={working}
               provider={session.provider}
+              workdir={session.workdir}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
             />
             {cards.map((i) => (

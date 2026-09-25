@@ -46,7 +46,6 @@ export function splitBlocks(text: string): string[] {
   return blocks;
 }
 
-const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
 /**
@@ -69,5 +68,35 @@ export function localPath(ref: string | undefined): string | null {
   return ref;
 }
 
-/** Whether a path names a file the raw route can serve, by extension. */
-export const isImagePath = (p: string): boolean => IMAGE_FILE.test(p);
+/**
+ * The file a markdown link names, as a "/"-separated path relative to the Task's folder
+ * `workdir` with the link's `#fragment`, or null when it is a web address or lies outside
+ * the folder. A relative path is relative to the folder; a path is percent-decoded, as
+ * markdown encodes it, and its `?query` dropped.
+ */
+export function taskFile(ref: string | undefined, workdir: string | undefined): { path: string; hash: string } | null {
+  let p = localPath(ref);
+  if (!p || !ref) return null;
+  const hash = /#.*$/s.exec(ref)?.[0] ?? '';
+  if (!/^file:/i.test(ref)) {
+    p = p.replace(/[?#].*$/s, '');
+    try {
+      p = decodeURIComponent(p);
+    } catch {
+      // A stray % is part of the name.
+    }
+  }
+  if (p.startsWith('/')) {
+    const dir = workdir?.replace(/\/+$/, '');
+    if (!dir || !p.startsWith(`${dir}/`)) return null;
+    p = p.slice(dir.length + 1);
+  }
+  const parts: string[] = [];
+  for (const part of p.split('/')) {
+    if (part === '..') {
+      if (!parts.length) return null;
+      parts.pop();
+    } else if (part && part !== '.') parts.push(part);
+  }
+  return parts.length ? { path: parts.join('/'), hash } : null;
+}

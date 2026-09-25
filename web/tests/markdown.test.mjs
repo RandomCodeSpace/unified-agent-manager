@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { isImagePath, localPath, splitBlocks } from '../src/lib/markdown.ts';
+import { localPath, splitBlocks, taskFile } from '../src/lib/markdown.ts';
 
 const html = (text) => renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, text));
 
@@ -60,6 +60,23 @@ test('a src or href is a host path unless it has a web scheme', () => {
   for (const web of ['https://example.com/a.png', 'http://h/a.png', 'data:image/png;base64,AAAA', 'blob:http://h/x', 'mailto:a@b', 'javascript:alert(1)', '', undefined]) {
     assert.equal(localPath(web), null, String(web));
   }
-  assert.ok(isImagePath('/x/shot.PNG') && isImagePath('a.jpeg') && isImagePath('b.webp') && isImagePath('c.gif'));
-  assert.ok(!isImagePath('/x/logo.svg') && !isImagePath('notes.txt') && !isImagePath('shot.png.txt'));
+});
+
+test('a link names a file of the Task folder by its path relative to it', () => {
+  const dir = '/home/dev/proj';
+  const file = (ref, workdir = dir) => taskFile(ref, workdir);
+  assert.deepEqual(file('out/report.html'), { path: 'out/report.html', hash: '' });
+  assert.deepEqual(file('./out/../shot.png'), { path: 'shot.png', hash: '' });
+  assert.deepEqual(file('out/report.html#results'), { path: 'out/report.html', hash: '#results' });
+  assert.deepEqual(file('notes/a%20b.md?x=1'), { path: 'notes/a b.md', hash: '' });
+  assert.deepEqual(file('100%.txt'), { path: '100%.txt', hash: '' });
+  assert.deepEqual(file('/home/dev/proj/out/report.html'), { path: 'out/report.html', hash: '' });
+  assert.deepEqual(file('/home/dev/proj/out/r.html', '/home/dev/proj/'), { path: 'out/r.html', hash: '' });
+  assert.deepEqual(file('file:///home/dev/proj/out/a%20b.html#top'), { path: 'out/a b.html', hash: '#top' });
+  assert.deepEqual(file('Makefile'), { path: 'Makefile', hash: '' });
+  for (const outside of ['/home/dev/project2/x.html', '/home/dev/proj', '/etc/passwd', '../x.html', 'out/../../x', '.', '#top', 'file:///etc/passwd', 'https://example.com/r.html', 'mailto:a@b', undefined]) {
+    assert.equal(file(outside), null, String(outside));
+  }
+  assert.equal(taskFile('/home/dev/proj/x.html', undefined), null);
+  assert.deepEqual(taskFile('x.html', undefined), { path: 'x.html', hash: '' });
 });
