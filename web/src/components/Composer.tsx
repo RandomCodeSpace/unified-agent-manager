@@ -13,7 +13,9 @@ import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from
 import { Markdown, Note, Spinner, useApp } from './common';
 import { ExecutionItems, ExecutionStatus } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
+import { Appear } from './ui/appear';
 import { Button } from './ui/button';
+import { Collapse, usePresence } from './ui/collapse';
 import { Menu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -238,6 +240,12 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
   const modelLabel = modelName(meta, session.provider, session.model);
   const routed = session.last_model && session.last_model !== session.model ? modelName(meta, session.provider, session.last_model) : null;
   const queue = session.queue ?? [];
+  // The queue strip opens and closes through the shared height collapse: it stays mounted through its
+  // exit, showing the last queue, and a strip present when the composer mounts (a Task switch) does not grow in.
+  const queueStrip = usePresence(queue.length > 0);
+  const [shownQueue, setShownQueue] = useState(queue);
+  if (queue.length > 0 && queue !== shownQueue) setShownQueue(queue);
+  const [queueAtMount] = useState(queue.length > 0);
   const effort = session.effort ?? '';
   const contextSize = session.context_size || 'default';
   const sizes = selectedModel?.context_sizes ?? [];
@@ -751,7 +759,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           {live && steerUnavailable && !cmd && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
           {resendable && (
             <Tip label="Puts the last prompt back here to edit or send again. Nothing is sent until you do.">
-              <Button size="sm" variant="secondary" className="self-start" onClick={resend}>
+              <Button size="sm" variant="secondary" className="self-start animate-rise" onClick={resend}>
                 <RotateCcw />
                 Resend last prompt
               </Button>
@@ -773,11 +781,12 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           </> : commandResult.kind === 'text' && commandResult.markdown ? <Markdown text={commandResult.text} /> : <p className="whitespace-pre-wrap" role="status">{commandResult.text || 'Command completed.'}</p>}
         </div>
       )}
-      {queue.length > 0 && (
+      {queueStrip.mounted && (
+        <Collapse open={queue.length > 0} appear={!queueAtMount} onClosed={queueStrip.onClosed}>
         <details className="group/queue border-b border-hairline px-3.5 py-1.5" open>
           <summary className="flex h-6 list-none items-center gap-2 text-caption text-muted select-none [&::-webkit-details-marker]:hidden">
             <ListEnd aria-hidden="true" className="size-3.5" />
-            <span className="tabular-nums">{queue.length} queued</span>
+            <span className="tabular-nums">{shownQueue.length} queued</span>
             <span aria-hidden="true">·</span>
             <span>{session.queue_paused ? 'Paused' : 'Waiting for the current turn'}</span>
             <span className="flex-1" />
@@ -791,7 +800,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
             </Button>
           </summary>
           <ol className="flex flex-col gap-0.5 pb-1">
-            {queue.map((q, i) => (
+            {shownQueue.map((q, i) => (
               <li key={q.request_id} className="flex items-start gap-2 text-ui text-body">
                 <span className="mt-0.5 w-4 shrink-0 text-right text-caption tabular-nums text-muted">{i + 1}</span>
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
@@ -805,6 +814,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
             ))}
           </ol>
         </details>
+        </Collapse>
       )}
 
       {(uploads.length > 0 || files.length > 0) && (
@@ -969,13 +979,13 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
         {/* The actions: the send button keeps the far right, so Stop rises in beside it and nothing else moves. */}
         <span className="ml-auto flex shrink-0 items-center gap-0.5">
         {busy === 'settings' && <Spinner className="mr-1" />}
-        {(live || session.execution?.objective?.status === 'active') && (
+        <Appear show={live || session.execution?.objective?.status === 'active'}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop execution and pause queued follow-ups'}>
-            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="animate-rise rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
+            <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
               <Square className="!size-3" fill="currentColor" />
             </Button>
           </Tip>
-        )}
+        </Appear>
         {!locked && (
           <Tip
             label={
@@ -994,7 +1004,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
               )
             }
           >
-            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full transition-transform duration-100 active:scale-95" loading={busy === enter} disabled={cannotSubmit}>
+            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === enter} disabled={cannotSubmit}>
               <ArrowUp aria-hidden="true" strokeWidth={2.25} />
             </Button>
           </Tip>

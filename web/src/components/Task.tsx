@@ -8,6 +8,7 @@ import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
 import { Chip } from './ui/chip';
+import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
 import { Composer } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
@@ -359,12 +360,12 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
         </div>
 
         <div className="relative w-full shrink-0 px-3 pb-3 sm:px-4 md:px-6">
-          {showJump && (
-            <Button variant="secondary" size="sm" className="absolute -top-10 left-1/2 -translate-x-1/2 shadow-float animate-rise" onClick={scrollToBottom}>
+          <Appear show={showJump} className="absolute -top-10 left-1/2 -translate-x-1/2">
+            <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
               <ArrowDown />
               New output
             </Button>
-          )}
+          </Appear>
           <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
         </div>
