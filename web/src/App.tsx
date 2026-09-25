@@ -441,8 +441,16 @@ export default function App() {
       busy: busyTasks,
       previousSessions: (projectId) => setPrevious(state.projects.find((p) => p.id === projectId) ?? null),
       canImport: canImport(meta),
+      editProject: (projectId) => {
+        const project = state.projects.find((p) => p.id === projectId);
+        if (project) openDialog({ kind: 'edit', project });
+      },
+      removeProject: (projectId) => {
+        const project = state.projects.find((p) => p.id === projectId);
+        if (project) openDialog({ kind: 'remove', project });
+      },
     }),
-    [renaming, busyTasks, select, runTask, state.sessions, state.projects, meta, openTaskDialog],
+    [renaming, busyTasks, select, runTask, state.sessions, state.projects, meta, openTaskDialog, openDialog],
   );
 
   const actions: WorkspaceActions = useMemo(

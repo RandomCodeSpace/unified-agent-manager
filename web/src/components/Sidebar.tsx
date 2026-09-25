@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Ellipsis, FolderMinus, FolderPlus, GitBranch, ListFilter, LogOut, Settings as SettingsIcon, Settings2, Search, SquarePen, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Ellipsis, FolderMinus, FolderPlus, GitBranch, History, ListFilter, LogOut, Settings as SettingsIcon, Settings2, Search, SquarePen, X } from 'lucide-react';
 import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -302,14 +302,20 @@ function ProjectFilter({ projects, filter, onFilter, actions, previousCounts }: 
               </Menu.RadioItem>
             ))}
           </Menu.RadioGroup>
-          {/* Every Project's previous CLI sessions, so importing needs no filter. */}
-          {canImport(meta) && (
-            <Menu.Group>
-              <Menu.Separator />
-              <Menu.Label>Previous sessions</Menu.Label>
-              <Menu.Actions items={projects.map((p) => ({ key: p.id, label: `${p.name}${previousCounts[p.id] === undefined ? '' : ` (${previousCounts[p.id]})`}`, icon: <ProjectBadge badge={p.badge} />, onSelect: () => actions.onPreviousSessions(p) }))} />
-            </Menu.Group>
-          )}
+          {/* Each Project's own actions (previous CLI sessions, Edit, Remove), so none of them needs the filter. */}
+          <Menu.Group>
+            <Menu.Separator />
+            <Menu.Label>Projects</Menu.Label>
+            {projects.map((p) => (
+              <Menu.Submenu key={p.id} label={p.name} icon={<ProjectBadge badge={p.badge} />}>
+                <Menu.Actions items={[
+                  ...(canImport(meta) ? [{ key: 'previous', label: `Previous sessions${previousCounts[p.id] === undefined ? '' : ` (${previousCounts[p.id]})`}`, icon: <History />, onSelect: () => actions.onPreviousSessions(p) }] : []),
+                  { key: 'edit', label: 'Edit project', icon: <Settings2 />, onSelect: () => actions.onEditProject(p) },
+                  { key: 'remove', label: 'Remove project', icon: <FolderMinus />, danger: true, onSelect: () => actions.onRemoveProject(p) },
+                ]} />
+              </Menu.Submenu>
+            ))}
+          </Menu.Group>
         </Menu.Content>
       </Menu.Root>
       {chosen && <ProjectActions project={chosen} actions={actions} />}
