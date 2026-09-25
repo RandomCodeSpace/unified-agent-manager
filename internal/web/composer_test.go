@@ -312,6 +312,37 @@ func TestCommandRunsOnlyListedCommandsLikeASend(t *testing.T) {
 	}
 }
 
+// A new Task's @ picker lists the Project's directory before any
+// conversation exists.
+func TestProjectFilesRoute(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	base := "/api/projects/" + addProject(t, ts.m, composerRepo(t))
+
+	w := ts.do(http.MethodGet, base+"/files?q=readme&limit=5", "", auth)
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"files":[{"path":"README.md","type":"file"}],"reason":""}` {
+		t.Fatalf("files = %d %s", w.Code, w.Body)
+	}
+	var list FileList
+	if w := ts.do(http.MethodGet, base+"/files?limit=1", "", auth); w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &list) != nil || len(list.Files) != 1 {
+		t.Fatalf("limit 1 = %d %s", w.Code, w.Body)
+	}
+	for _, limit := range []string{"0", "201", "x"} {
+		if w := ts.do(http.MethodGet, base+"/files?limit="+limit, "", auth); w.Code != http.StatusBadRequest {
+			t.Fatalf("limit %s = %d", limit, w.Code)
+		}
+	}
+	if w := ts.do(http.MethodGet, "/api/projects/nope/files", "", auth); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown project = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodGet, base+"/files", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("files without cookie = %d", w.Code)
+	}
+	if n := len(ts.m.List()); n != 0 {
+		t.Fatalf("listing created %d tasks", n)
+	}
+}
+
 func TestOpenCodeCommandArgumentsRefuseShellExpansion(t *testing.T) {
 	prov := agenttest.NewProvider(agentapi.ProviderOpenCode, allCaps)
 	m := startManager(t, openTestStore(t), prov)

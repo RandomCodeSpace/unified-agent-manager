@@ -897,6 +897,7 @@ probe folder was not trusted, and this host has no user MCP configuration.
 |---|---|---|
 | `GET /api/sessions/{id}/commands` | – | `{"commands": [{"name", "description", "kind", "input_hint"}]}`; opens the conversation as a viewer does; 409 when it is not open |
 | `GET /api/sessions/{id}/files?q=&limit=` | – | `{"files": [{"path", "type"}], "reason"}`; `type` is `file` or `directory`; `limit` 1 to 200, default 50, else 400 |
+| `GET /api/projects/{id}/files?q=&limit=` | – | The same list for a Project's directory, for a new Task that does not exist yet; 404 for an unknown Project |
 | `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path, or for files on a steer during a turn |
 | `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, a refused file, or `` !` `` on OpenCode; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
 

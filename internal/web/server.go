@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
@@ -151,6 +152,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/usage", s.handleUsage)
 	mux.HandleFunc("GET /api/fs/dirs", s.handleListDirs)
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
+	mux.HandleFunc("GET /api/projects/{id}/files", s.handleFileList((*Manager).ProjectFiles))
 	mux.HandleFunc("GET /api/projects/{id}/previous", s.handlePrevious)
 	mux.HandleFunc("GET /api/previous/counts", s.handlePreviousCounts)
 	mux.HandleFunc("POST /api/projects/{id}/previous/{conversation_id}/import", s.handleImport)
@@ -166,7 +168,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
 	mux.HandleFunc("POST /api/sessions/{id}/command", s.handleCommand)
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.handleCommands)
-	mux.HandleFunc("GET /api/sessions/{id}/files", s.handleFiles)
+	mux.HandleFunc("GET /api/sessions/{id}/files", s.handleFileList((*Manager).Files))
 	mux.HandleFunc("GET /api/sessions/{id}/files/raw", s.handleRawImage)
 	mux.HandleFunc("GET /api/sessions/{id}/files/view/{path...}", s.handleViewFile)
 	mux.HandleFunc(fileKeyRoute, s.handleViewFile)
@@ -760,23 +762,27 @@ func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string][]agentapi.Command{"commands": commands})
 }
 
-func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	limit := defaultFileLimit
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > maxFileLimit {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", maxFileLimit))
+// handleFileList serves the @ picker's listing of a Task's or a Project's
+// directory; list is Files or ProjectFiles.
+func (s *Server) handleFileList(list func(*Manager, context.Context, string, string, int) (FileList, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		limit := defaultFileLimit
+		if v := q.Get("limit"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > maxFileLimit {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", maxFileLimit))
+				return
+			}
+			limit = n
+		}
+		files, err := list(s.m, r.Context(), r.PathValue("id"), q.Get("q"), limit)
+		if err != nil {
+			writeFailure(w, err)
 			return
 		}
-		limit = n
+		writeJSON(w, http.StatusOK, files)
 	}
-	files, err := s.m.Files(r.Context(), r.PathValue("id"), q.Get("q"), limit)
-	if err != nil {
-		writeFailure(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, files)
 }
 
 // handleRawImage serves an image file of the Task's directory, named by the
