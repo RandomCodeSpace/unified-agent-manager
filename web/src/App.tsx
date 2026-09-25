@@ -32,6 +32,12 @@ const HASH_PREFIX = '#task=';
 const QUIET_MS = 600;
 const SETTINGS_HASH = '#settings';
 /** The shell fills the viewport and keeps clear of the notch, rounded corners and home indicator of an installed app (`viewport-fit=cover`). */
+/** Typing anywhere (Settings forms, a subagent follow-up) counts as unsent work, like a composer draft. */
+function editing(): boolean {
+  const el = document.activeElement;
+  return el instanceof HTMLElement && (el.isContentEditable || el.matches('textarea, input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])'));
+}
+
 const SHELL = 'grid h-dvh overflow-x-clip pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]';
 
 // Older servers omit `required`; treat absent as true.
@@ -132,7 +138,7 @@ export default function App() {
   useEffect(() => {
     if (!meta) return;
     loadedVersion.current ??= meta.version;
-    const decision = decideUpdate(loadedVersion.current, meta.version, { draft: !!document.querySelector('[data-draft]'), popup: popupOpen() });
+    const decision = decideUpdate(loadedVersion.current, meta.version, { draft: !!document.querySelector('[data-draft]') || editing(), popup: popupOpen() });
     if (decision === 'reload') window.location.reload();
     else if (decision === 'offer') setUpdated(true);
   }, [meta]);
