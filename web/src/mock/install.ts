@@ -387,6 +387,14 @@ export function install(): void {
     screenshots.set(label, bytes);
     return bytes;
   }
+  // The seed's stored images (a user's uploads, a tool's results) get bytes, so their thumbnails render.
+  for (const t of st.tasks) {
+    for (const item of t.items) {
+      for (const a of [...(item.attachments ?? []), ...(item.images ?? [])]) {
+        if ('id' in a && a.id && a.mime === 'image/png') uploads.set(a.id, { id: a.id, name: a.name ?? a.id, mime: a.mime, size: a.size ?? 0, task: t.id, bytes: screenshotPng(a.name ?? a.id) });
+      }
+    }
+  }
 
   /** The service's byte sniffing and size limits; a `status` means the refusal. */
   function sniff(b: Uint8Array): { mime: string } | { status: number; error: string } {
