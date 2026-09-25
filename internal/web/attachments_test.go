@@ -441,7 +441,7 @@ func TestAttachmentRoutes(t *testing.T) {
 		{"cross-site", []reqOpt{auth, octet, withHeader("Sec-Fetch-Site", "cross-site")}, http.StatusForbidden},
 		{"foreign origin", []reqOpt{auth, octet, withHeader("Origin", "https://evil.example")}, http.StatusForbidden},
 		{"no cookie", []reqOpt{octet}, http.StatusUnauthorized},
-		{"foreign host", []reqOpt{auth, octet, withHost("evil.example")}, http.StatusForbidden},
+		{"cookie for another host", []reqOpt{auth, octet, withHost("evil.example")}, http.StatusUnauthorized},
 	} {
 		if w := ts.do(http.MethodPost, base+"?name=x.png", string(img), tc.opts...); w.Code != tc.code {
 			t.Fatalf("%s = %d %s, want %d", tc.what, w.Code, w.Body, tc.code)
@@ -781,8 +781,8 @@ func TestToolImageRoutes(t *testing.T) {
 	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/attachments/"+id, ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("serve without cookie = %d", w.Code)
 	}
-	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/attachments/"+id, "", auth, withHost("evil.example")); w.Code != http.StatusForbidden {
-		t.Fatalf("serve to a foreign host = %d", w.Code)
+	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/attachments/"+id, "", auth, withHost("evil.example")); w.Code != http.StatusUnauthorized {
+		t.Fatalf("serve to a foreign host with another host's cookie = %d", w.Code)
 	}
 	other, _ := createSession(t, ts.m, ts.prov)
 	if w := ts.do(http.MethodGet, "/api/sessions/"+other.ID+"/attachments/"+id, "", auth); w.Code != http.StatusNotFound {

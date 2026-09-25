@@ -290,8 +290,8 @@ func TestFolderRoutes(t *testing.T) {
 			t.Fatalf("%s without sign-in = %d, want 401", method, w.Code)
 		}
 	}
-	if w := ts.do(http.MethodGet, list, "", withHost("evil.example"), withCookie(ts)); w.Code != http.StatusForbidden {
-		t.Fatalf("foreign Host = %d, want 403", w.Code)
+	if w := ts.do(http.MethodGet, list, "", withCookie(ts), withHost("evil.example")); w.Code != http.StatusUnauthorized {
+		t.Fatalf("foreign Host with another host's cookie = %d, want 401", w.Code)
 	}
 	for _, opt := range []reqOpt{withHeader("Sec-Fetch-Site", "cross-site"), withHeader("Origin", "https://evil.example")} {
 		if w := ts.do(http.MethodPost, "/api/fs/dirs", create, withCookie(ts), opt); w.Code != http.StatusForbidden {

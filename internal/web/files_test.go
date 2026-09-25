@@ -161,15 +161,15 @@ func TestRawImageRefusesEverythingElse(t *testing.T) {
 		t.Fatalf("over cap = %d %s", w.Code, w.Body)
 	}
 
-	// The route follows the API's checks: session, cookie, Host and method.
+	// The route follows the API's checks: session, host-bound cookie and method.
 	if w := ts.do(http.MethodGet, rawURL("nope", "sky-dodge.png"), "", auth); w.Code != http.StatusNotFound {
 		t.Fatalf("unknown task = %d", w.Code)
 	}
 	if w := ts.do(http.MethodGet, rawURL(sum.ID, "sky-dodge.png"), ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("without cookie = %d", w.Code)
 	}
-	if w := ts.do(http.MethodGet, rawURL(sum.ID, "sky-dodge.png"), "", auth, withHost("evil.example")); w.Code != http.StatusForbidden {
-		t.Fatalf("foreign host = %d", w.Code)
+	if w := ts.do(http.MethodGet, rawURL(sum.ID, "sky-dodge.png"), "", auth, withHost("evil.example")); w.Code != http.StatusUnauthorized {
+		t.Fatalf("foreign host with another host's cookie = %d", w.Code)
 	}
 	// The route is GET only; another method falls through to the API's 404.
 	if w := ts.do(http.MethodPost, rawURL(sum.ID, "sky-dodge.png"), "{}", auth); w.Code != http.StatusNotFound || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
@@ -335,8 +335,11 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 			t.Errorf("%s = %d", name, w.Code)
 		}
 	}
-	if w := ts.do(http.MethodGet, keyURL(sum.ID, key, "notes.md"), "", withHost("localhost:8260")); w.Code != http.StatusUnauthorized {
-		t.Fatalf("other host = %d", w.Code)
+	// Any Host reaches the route with sign-in on; the key MAC binds the host.
+	for _, host := range []string{"localhost:8260", "evil.example"} {
+		if w := ts.do(http.MethodGet, keyURL(sum.ID, key, "notes.md"), "", withHost(host)); w.Code != http.StatusUnauthorized {
+			t.Fatalf("other host %q = %d", host, w.Code)
+		}
 	}
 	// The key opens only this GET route: not another method, not another route.
 	if w := ts.do(http.MethodPost, keyURL(sum.ID, key, "notes.md"), "{}"); w.Code != http.StatusUnauthorized {

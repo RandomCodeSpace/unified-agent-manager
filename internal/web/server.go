@@ -208,9 +208,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if api {
 		h.Set("Cache-Control", "no-store")
 	}
-	// A foreign Host means DNS rebinding or a misrouted request; the
-	// service only answers for loopback, configured public origins and,
-	// beyond loopback, IP literals.
+	// Without sign-in, a foreign Host means DNS rebinding or a misrouted
+	// request; the service then only answers for loopback, configured
+	// public origins and, beyond loopback, IP literals. With sign-in on,
+	// any Host passes (see allowedHost).
 	if !s.allowedHost(r.Host) {
 		s.refuse(w, r, http.StatusForbidden, "host not allowed")
 		return
@@ -309,6 +310,15 @@ func capLogValue(v string) string {
 }
 
 func (s *Server) allowedHost(hostport string) bool {
+	// With sign-in on, any Host is accepted. A rebound website sends its
+	// own name as Host and holds no cookie for it: the cookie MAC and file
+	// keys are bound to the Host (cookieMAC, fileKey), so it reaches only
+	// the sign-in page and static assets. The cross-origin and JSON checks
+	// still apply. Without sign-in this check is the only barrier against
+	// a rebound site driving agents.
+	if !s.noAuth {
+		return true
+	}
 	host := strings.ToLower(hostport)
 	if s.hosts[host] {
 		return true
