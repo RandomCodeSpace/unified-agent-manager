@@ -1,5 +1,5 @@
 import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Minus, Pause, X } from 'lucide-react';
-import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { LIVE, api, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
@@ -7,7 +7,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed } from '../lib/diagram';
-import { localPath, splitBlocks, taskFile } from '../lib/markdown';
+import { codeFile, localPath, splitBlocks, taskFile } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
 import { Lightbox } from './Attachments';
 import { DiagramCard } from './Diagram';
@@ -514,6 +514,71 @@ function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
   );
 }
 
+/** Whether a view-route URL answered 200, by URL, for the page's life (false while asked): a missing file is asked about once too. */
+const knownFiles = new Map<string, boolean>();
+const fileListeners = new Set<() => void>();
+const fileQueue: string[] = [];
+let filesProbing = 0;
+/** HEAD requests in flight at once, so a long transcript full of file names is no request storm. */
+const MAX_FILE_PROBES = 4;
+
+function subscribeFiles(listener: () => void) {
+  fileListeners.add(listener);
+  return () => void fileListeners.delete(listener);
+}
+
+function probeFiles() {
+  while (filesProbing < MAX_FILE_PROBES && fileQueue.length) {
+    const url = fileQueue.shift() as string;
+    filesProbing++;
+    void fetch(url, { method: 'HEAD' })
+      .then(
+        (res) => res.status === 200,
+        () => false,
+      )
+      .then((ok) => {
+        knownFiles.set(url, ok);
+        filesProbing--;
+        for (const listener of fileListeners) listener();
+        probeFiles();
+      });
+  }
+}
+
+/** Whether the file at a view-route URL exists (a directory does not); false until the one HEAD request answers. */
+function useFileExists(url: string | undefined): boolean {
+  const exists = useSyncExternalStore(subscribeFiles, () => (url ? knownFiles.get(url) === true : false));
+  useEffect(() => {
+    if (!url || knownFiles.has(url)) return;
+    knownFiles.set(url, false);
+    fileQueue.push(url);
+    probeFiles();
+  }, [url]);
+  return exists;
+}
+
+/**
+ * Inline code that names a file of the Task's folder (`ai-news.html`, `out/report.html`)
+ * opens it through the view route once the file is known to exist; until then, and when it
+ * does not, it is the same plain code. Nothing is asked while its block is still streaming.
+ */
+function InlineCode({ text, className }: { text: string; className?: string }) {
+  const sessionId = useContext(SessionContext);
+  const workdir = useContext(WorkdirContext);
+  const { streaming } = useContext(MdContext);
+  const file = sessionId && !streaming ? codeFile(text, workdir) : null;
+  const url = sessionId && file ? api.viewFileUrl(sessionId, file.path) : undefined;
+  const exists = useFileExists(url);
+  const code = <code className={className}>{text}</code>;
+  return exists && url && file ? (
+    <a href={url + file.hash} rel="noopener noreferrer" target="_blank" className="md-file">
+      {code}
+    </a>
+  ) : (
+    code
+  );
+}
+
 interface Span {
   start: { offset?: number };
   end: { offset?: number };
@@ -540,6 +605,8 @@ const mdComponents: Components = {
   code({ className, children }) {
     const language = languageOf(className);
     const code = typeof children === 'string' ? children : Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;
+    // Fenced code ends in a newline and so never looks like a path: only inline code links.
+    if (!language && code !== null) return <InlineCode text={code} className={className} />;
     if (!language || code === null) return <code className={className}>{children}</code>;
     return (
       <code className={className}>

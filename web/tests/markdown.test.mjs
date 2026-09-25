@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { localPath, splitBlocks, taskFile } from '../src/lib/markdown.ts';
+import { codeFile, localPath, looksLikePath, splitBlocks, taskFile } from '../src/lib/markdown.ts';
 
 const html = (text) => renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, text));
 
@@ -86,4 +86,27 @@ test('a link names a file of the Task folder by its path relative to it', () => 
   }
   assert.equal(taskFile('/home/dev/proj/x.html', undefined), null);
   assert.deepEqual(taskFile('x.html', undefined), { path: 'x.html', hash: '' });
+});
+
+test('inline code looks like a path when it has a slash or a file extension, and is no call, glob, flag or version', () => {
+  for (const path of ['ai-news.html', 'out/report.html', 'package.json', '.gitignore', 'src/lib', '/home/dev/proj/a.ts', './x.md', 'docs/README.md#install', 'a.tar.gz', '100%.txt', 'a'.repeat(295) + '.html']) {
+    assert.equal(looksLikePath(path), true, path);
+  }
+  for (const other of ['useState', 'Makefile', 'foo()', 'a.b.c()', '--flag', '-v', '*.ts', 'src/**/*.ts', 'v1.2.3', '1.2', '~/notes.md', '~', 'out/', 'https://example.com/a.html', 'file:///home/dev/proj/a.html', 'mailto:a@b.co', 'a.ts:42', 'npm run build', 'a b.md', 'x.', '.x-y', 'Map<string>', '$HOME/a.md', '{a,b}.md', 'a[0].b', 'a'.repeat(296) + '.html', '']) {
+    assert.equal(looksLikePath(other), false, other);
+  }
+});
+
+test('inline code names a file of the Task folder only when it is inside it', () => {
+  const dir = '/home/dev/proj';
+  assert.deepEqual(codeFile('ai-news.html', dir), { path: 'ai-news.html', hash: '' });
+  assert.deepEqual(codeFile('./out/report.html', dir), { path: 'out/report.html', hash: '' });
+  assert.deepEqual(codeFile('/home/dev/proj/out/report.html', dir), { path: 'out/report.html', hash: '' });
+  assert.deepEqual(codeFile('docs/README.md#install', dir), { path: 'docs/README.md', hash: '#install' });
+  assert.deepEqual(codeFile('a%20b.md', dir), { path: 'a%20b.md', hash: '' });
+  assert.deepEqual(codeFile('100%.txt', dir), { path: '100%.txt', hash: '' });
+  for (const outside of ['/etc/passwd', '/home/dev/project2/a.html', '../x.html', 'out/../../x.md', '~/a.md', 'useState', 'foo()']) {
+    assert.equal(codeFile(outside, dir), null, outside);
+  }
+  assert.equal(codeFile('/home/dev/proj/a.html', undefined), null);
 });
