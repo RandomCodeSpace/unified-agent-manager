@@ -130,8 +130,6 @@
   --spacing-sheet: 440px;
   --spacing-sheet-wide: 560px;
   --spacing-panel: 440px;
-  /* The transcript and composer column (DESIGN.md D2): 760px of text inside the 24px desktop gutters, centred, so a wider pane adds margin, not line length. */
-  --spacing-column: 808px;
   /* The folder picker's well: fixed so moving between folders never changes the dialog's height. */
   --spacing-picker: min(320px, 40dvh);
   --spacing-picker-phone: 40dvh;

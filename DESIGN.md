@@ -172,8 +172,6 @@ layout:
   sidebar-width: 264px
   drawer-width: 300px
   header-height: 44px
-  chat-column-width: 760px
-  chat-column-box: 808px
   chat-gutter: 24px
   chat-gutter-phone: 12px
   panel-default-width: 440px
@@ -460,7 +458,7 @@ Version 3 describes the shipped system after the 2026-09-24 revamp (issue #173):
 
 Version 4 adds the Project badge and its ten tones (#184), the collapsible and filterable sidebar with a quiet placeholder in place of the empty-state screen (#185), and the Settings view with the send default (#183).
 
-Version 5 (the 2026-09-24 polish, W4/W5) caps the transcript and composer in one centred 760px column, moves the project strip into the Task header, makes the composer one surface with one control row, turns Stop into an ink circle like Send, gives every disclosure and side panel one animation each way, heads a turn with one status row that never moves, and cross-fades Task switches with React's ViewTransition.
+Version 5 (the 2026-09-24 polish, W4/W5) caps the transcript and composer in one centred 760px column, moves the project strip into the Task header, makes the composer one surface with one control row, turns Stop into an ink circle like Send, gives every disclosure and side panel one animation each way, heads a turn with one status row that never moves, and cross-fades Task switches with React's ViewTransition. The 760px column was lifted afterwards: the transcript and composer fill the main pane.
 
 **Key characteristics**
 - Two ladders carry the whole UI: surfaces (`rail` → `canvas` → `surface` → `raised`, plus `sunken` for wells) and text (`ink` → `body` → `muted` → `faint`). Chrome never uses a colour outside these ladders except the four semantic tones, the accent and the attention colour.
@@ -575,12 +573,12 @@ The scale is the `--text-*` theme in `index.css`; Tailwind's default sizes are r
 | `keycap` (11px mono) | 11px | 400–500 | 1 | Branch names, model names in headers, version |
 | `eyebrow` | 11px | 600 | 1.2 | Reserved; no eyebrows above headings in the shipped UI |
 
-Rules: weight is ternary (400/500/600); only `display-*` carry negative tracking; counts, durations and times use `tabular-nums`; markdown headings inside chat do not scale up; the transcript and the composer share one centred column, 760px of text inside the 24px desktop gutters (`--spacing-column`, 808px outer), so a wider pane adds margin, not line length.
+Rules: weight is ternary (400/500/600); only `display-*` carry negative tracking; counts, durations and times use `tabular-nums`; markdown headings inside chat do not scale up; the transcript and the composer fill the main pane inside its gutters (24px desktop, 16px from 481px, 12px on a phone); only a user bubble keeps its own cap (88%/720px).
 
 ## Layout
 
 ### Shell
-Full viewport, no page scroll: `grid h-dvh grid-cols-[264px_minmax(0,1fr)]` from 960px up. The sidebar is a **fixed 264px** and is not resizable, but it **collapses**: the UAM brand at the left of its header (or Ctrl/Cmd+B) animates the first grid column to 0 over `slow` (240ms) while the sidebar keeps its 264px inside an `overflow-hidden` column, so nothing inside reflows; once hidden it is `inert`, and the main pane takes the whole width. The state is kept per browser (`uam.sidebar`). While it is hidden, the same toggle sits at the start of the main pane's header (the Task header, the Settings header, or the placeholder's header) and brings it back. Below 960px the sidebar is a 300px drawer (a Base UI dialog sliding from the left, with backdrop) that the toggle in the pane header, and Ctrl/Cmd+B, open and close. The main pane is a column: header (44px, hairline below) → transcript (flex 1, `overflow-y: auto`, `overscroll-behavior: contain`) → composer (pinned); transcript and composer sit in the same centred column (see Typography rules), so the sidebar collapse moves the column without re-wrapping it at 1280px and up. A lost connection also shows as a banner across the top of the main pane, above the pane's header. A redeployed service shows the same way, once, as a quiet `surface` strip ("UAM was updated." with an `accent` dot and a small secondary **Reload**): only while a draft, an upload or an open popup stops the page from reloading itself; never a toast, never repeated.
+Full viewport, no page scroll: `grid h-dvh grid-cols-[264px_minmax(0,1fr)]` from 960px up. The sidebar is a **fixed 264px** and is not resizable, but it **collapses**: the UAM brand at the left of its header (or Ctrl/Cmd+B) animates the first grid column to 0 over `slow` (240ms) while the sidebar keeps its 264px inside an `overflow-hidden` column, so nothing inside reflows; once hidden it is `inert`, and the main pane takes the whole width. The state is kept per browser (`uam.sidebar`). While it is hidden, the same toggle sits at the start of the main pane's header (the Task header, the Settings header, or the placeholder's header) and brings it back. Below 960px the sidebar is a 300px drawer (a Base UI dialog sliding from the left, with backdrop) that the toggle in the pane header, and Ctrl/Cmd+B, open and close. The main pane is a column: header (44px, hairline below) → transcript (flex 1, `overflow-y: auto`, `overscroll-behavior: contain`) → composer (pinned); transcript and composer fill the pane between its gutters (see Typography rules), so collapsing the sidebar gives them the freed width. A lost connection also shows as a banner across the top of the main pane, above the pane's header. A redeployed service shows the same way, once, as a quiet `surface` strip ("UAM was updated." with an `accent` dot and a small secondary **Reload**): only while a draft, an upload or an open popup stops the page from reloading itself; never a toast, never repeated.
 
 **Safe areas.** The page is an installable web app (`viewport-fit=cover`), so the shell pads all four sides with `env(safe-area-inset-*)`: the headers, the connection strip and the pinned composer keep clear of a notch, rounded corners and the home indicator, and the drawer and the side sheets, which are fixed to the viewport, pad their own top, bottom and outer edge. Nothing else reads the insets.
 
@@ -665,7 +663,7 @@ User turns are bubbles on the right (`bubble-user`, `lg` radius, 88%/720px max, 
 - **Interaction card (pending):** `raised`, hairline, `md`; a `chip-attention` with the `ShieldQuestion`/`MessageCircleQuestion` glyph heads it; the request in a `sunken` mono well; buttons right-aligned (Deny `danger`, Allow for task `secondary`, Allow once `primary`; stacked full-width on phone). Once decided it collapses in place (its last pending look, inert, over `slow`) and its record moves to its tool row (the approval mark) or its turn (the quiet row); nothing above it moves.
 
 ### Composer
-`raised`, hairline, `md`, pinned under the transcript in the same column; focus-within lifts it one shadow step. One surface: the textarea (`chat`, `field-sizing: content`, 56px to 40dvh) above one control row, which never wraps. From left: **Attach**, then the pickers; at the right the actions, with the primary button always last so Stop and the other action rise in beside it and nothing else moves. On a phone the effort/context, permissions and execution pickers fold into a **More** (`Ellipsis`) menu that holds the same groups, the credits become a `Coins` glyph and the cost estimate moves into their popover; the row stays one row at 420px.
+`raised`, hairline, `md`, pinned under the transcript across the pane; focus-within lifts it one shadow step. One surface: the textarea (`chat`, `field-sizing: content`, 56px to 40dvh) above one control row, which never wraps. From left: **Attach**, then the pickers; at the right the actions, with the primary button always last so Stop and the other action rise in beside it and nothing else moves. On a phone the effort/context, permissions and execution pickers fold into a **More** (`Ellipsis`) menu that holds the same groups, the credits become a `Coins` glyph and the cost estimate moves into their popover; the row stays one row at 420px.
 
 - **Pickers**: Model (`Cpu`, value in `code-sm`; its tooltip adds "Latest turn ran on ‹model›" when routing differed), combined Effort and Context (`Gauge`, e.g. "high · 200K"; it names only what can change, and for a model that fixes both it reads "Default", disabled, with the reason in its tooltip), and Permissions (`Shield`; `ShieldOff` in `attention` for yolo), separated by hairlines. The combined menu has two named sections; unsupported choices show their reason. Model/effort/context changes stay disabled during a turn. Permissions can change during a turn. Read-only values remain visible and cannot change.
 - **Context ring:** a 16px ring after Model, absent until usage is reported. It is `accent`, `attention` at 80%, and `error` at 95%. Its accessible name, tooltip and click/tap popover carry used/limit/percentage; the popover also shows reported prompt/cache counts.
@@ -766,7 +764,7 @@ The server sends `default-src 'self'; script-src 'self'; style-src 'self'; img-s
 - Set every identifier (model, branch, tool, path, command, diff) in JetBrains Mono at 11–13px.
 - Truncate rows; wrap nothing there. Put every context-menu action on a "…" button too.
 - Collapse activity rows and thinking by default, collapse the ledger once everything is done, keep the shelves collapsed.
-- Keep the transcript and the composer in the one centred 760px column; a wider pane adds margin.
+- Let the transcript and the composer fill the main pane; only the gutters and a user bubble's own cap bound them.
 
 ### Don't
 - Don't draw a border inside a border; a card's children use indents and sunken wells.
@@ -776,7 +774,7 @@ The server sends `default-src 'self'; script-src 'self'; style-src 'self'; img-s
 - Don't fill chips except the attention chip.
 - Don't show heuristics or previews in rows; rows show server state.
 - Don't put a colour on a ready row; ready is a time.
-- Don't widen the chat column past 760px of text or make the sidebar resizable; it is fixed or hidden, nothing between.
+- Don't put the transcript or the composer back in a centred fixed-width column, or make the sidebar resizable; it is fixed or hidden, nothing between.
 - Don't put New task or Add project in the main pane; the placeholder stays quiet.
 - Don't use `<style>` elements or `style=""` markup; classes first, CSSOM custom properties for measured values.
 - Don't inline provider SVG or HTML; a diagram is a `data:` image rendered in the sandboxed frame.

@@ -92,7 +92,7 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
   );
 }
 
-/** The conversation pane: a 44px header, the transcript scrolling in a fixed column, the composer pinned below. */
+/** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
 export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
   const actions = useTaskActions();
   const [changes, setChanges] = useState<ChangesData | null>(null);
@@ -322,7 +322,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll}>
-          <div className="mx-auto flex w-full max-w-column flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
+          <div className="flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
             <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />
             {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
@@ -358,7 +358,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
           </div>
         </div>
 
-        <div className="relative mx-auto w-full max-w-column shrink-0 px-3 pb-3 sm:px-4 md:px-6">
+        <div className="relative w-full shrink-0 px-3 pb-3 sm:px-4 md:px-6">
           {showJump && (
             <Button variant="secondary" size="sm" className="absolute -top-10 left-1/2 -translate-x-1/2 shadow-float animate-rise" onClick={scrollToBottom}>
               <ArrowDown />
