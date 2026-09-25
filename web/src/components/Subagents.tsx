@@ -5,7 +5,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
-import { Loading, Markdown, Note, useApp } from './common';
+import { Markdown, Note, Skeleton, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
 import { EXIT_MS } from './ui/collapse';
@@ -326,6 +326,7 @@ function AgentTranscriptView({
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const live = subagent.status === 'running';
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -337,7 +338,7 @@ function AgentTranscriptView({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, subagent.id, snapshotSeq, dispatch]);
+  }, [sessionId, subagent.id, snapshotSeq, attempt, dispatch]);
 
   // Follow new output only while the reader is at the bottom.
   const items: Item[] = transcript?.items ?? NO_ITEMS;
@@ -352,13 +353,16 @@ function AgentTranscriptView({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4" ref={scroller} onScroll={onScroll} role="log">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4" ref={scroller} onScroll={onScroll} role="log" aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined}>
       {subagent.description && <Note>{subagent.description}</Note>}
       {(!transcript || transcript.loading) && items.length === 0 ? (
-        <Loading label="Loading the transcript…" />
+        <Skeleton label="Loading the transcript…" rows={5} />
       ) : transcript?.error ? (
-        <Note tone="error" role="alert">
-          {transcript.error}
+        <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">Could not load the transcript: {transcript.error}</span>
+          <Button size="sm" variant="secondary" onClick={() => setAttempt((n) => n + 1)}>
+            Retry
+          </Button>
         </Note>
       ) : (
         <>

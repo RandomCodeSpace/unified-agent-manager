@@ -19,6 +19,8 @@ export interface AgentTranscript {
 }
 
 export interface State {
+  /** Whether a snapshot has arrived at least once: until then the Projects and Tasks are unknown, not absent (loading, never the empty state). */
+  loaded: boolean;
   projects: Project[];
   sessions: SessionSummary[];
   selectedId: string | null;
@@ -41,6 +43,7 @@ export interface State {
 }
 
 export const initialState: State = {
+  loaded: false,
   projects: [],
   sessions: [],
   selectedId: null,
@@ -93,6 +96,7 @@ export function reducer(state: State, action: Action): State {
       // expanded blocks reload them (see SubagentBlock).
       return {
         ...state,
+        loaded: true,
         projects: projects ?? [],
         sessions,
         detail,

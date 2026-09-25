@@ -6,7 +6,7 @@ import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
-import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, WorkingMark, useApp, useScrolled } from './common';
+import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
 import { Chip } from './ui/chip';
 import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
@@ -251,6 +251,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const noticed = !!failure && foregroundItems(session.items).some((i) => i.kind === 'notice' && (i.text ?? '').toLowerCase().includes(failure));
 
   const name = taskName(session);
+  // Recorded history still on its way with nothing to show yet: a skeleton, not the "New task" intro.
+  const historyLoading = session.history === 'loading' && session.items.length === 0;
   const fileCount = changes?.supported ? changes.files.length : null;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
@@ -336,11 +338,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll}>
           <ScrollSentinel sentinelRef={sentinel} />
           {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
-          <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log">
-            <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />
+          {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
+          <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
+            {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
-            {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && <NewTaskIntro project={project} />}
+            {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
             <Transcript
               sessionId={session.id}
               items={session.items}

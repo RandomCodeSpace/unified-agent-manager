@@ -241,3 +241,14 @@ test("a subagent's latest step is kept from live frames before its transcript is
   state = reducer(state, { type: 'select', id: 'other' });
   assert.deepEqual(state.agentSteps, {});
 });
+
+test('nothing counts as loaded until the first snapshot, and a lost connection does not unload it', () => {
+  assert.equal(initialState.loaded, false);
+  let state = reducer(initialState, { type: 'connection', status: 'offline' });
+  assert.equal(state.loaded, false);
+  state = reducer(state, { type: 'snapshot', data: { seq: 1, projects: [], sessions: [], session: null } });
+  assert.equal(state.loaded, true);
+  assert.deepEqual(state.projects, []);
+  state = reducer(state, { type: 'connection', status: 'reconnecting' });
+  assert.equal(state.loaded, true);
+});

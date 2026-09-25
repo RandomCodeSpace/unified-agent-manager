@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { UPDATE_EVENTS, api, describeError, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
-import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
+import { AppContext, Dot, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog } from './components/Projects';
 import { NewTaskPalette } from './components/ProjectPicker';
@@ -70,6 +70,7 @@ export default function App() {
   const [authRequired, setAuthRequired] = useState(true);
   const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, selectedId: hashSelection() }));
   const [meta, setMeta] = useState<Meta | null>(null);
+  const [metaError, setMetaError] = useState<string | null>(null);
   const [streamKey, setStreamKey] = useState(0);
   const narrow = useMedia(NARROW);
   const sheetInline = useMedia(SHEET_INLINE);
@@ -121,13 +122,23 @@ export default function App() {
       .catch(() => setAuth('out'));
   }, []);
 
-  // Custom models are part of the model lists, so a change to them reloads the catalogs.
+  // Custom models are part of the model lists, so a change to them reloads the catalogs; `metaAttempt` is a Retry after a failure.
   const customModels = JSON.stringify(state.settings.custom_models ?? []);
+  const [metaAttempt, setMetaAttempt] = useState(0);
   useEffect(() => {
     if (auth !== 'in') return;
     lastCheck.current = Date.now();
-    api.meta().then(setMeta).catch(() => setMeta(null));
-  }, [auth, customModels]);
+    api
+      .meta()
+      .then((m) => {
+        setMeta(m);
+        setMetaError(null);
+      })
+      .catch((e: unknown) => {
+        setMeta(null);
+        setMetaError(describeError(e));
+      });
+  }, [auth, customModels, metaAttempt]);
 
   /**
    * A redeploy shows as the stream reconnecting, so the version is read again once the stream
@@ -326,8 +337,12 @@ export default function App() {
   const connection = late ? state.connection : 'connected';
   const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen, QUIET_MS);
 
-  const refreshMeta = useCallback(() => checkVersion(true), [checkVersion]);
-  const ctx = useMemo(() => ({ meta, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage, refreshMeta }), [meta, narrow, hasNews, state.settings, state.usage, refreshMeta]);
+  // A refresh with the catalogs on screen keeps them on a failure (checkVersion); without them it is a retry of the first read.
+  const refreshMeta = useCallback(() => (meta ? checkVersion(true) : setMetaAttempt((n) => n + 1)), [meta, checkVersion]);
+  const ctx = useMemo(
+    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage, refreshMeta }),
+    [meta, metaError, state.loaded, narrow, hasNews, state.settings, state.usage, refreshMeta],
+  );
 
   // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
   const detailId = state.detail?.id;
@@ -588,6 +603,7 @@ export default function App() {
 
   const sidebar = (
     <Sidebar
+      loaded={state.loaded}
       projects={state.projects}
       sessions={state.sessions}
       selectedId={state.selectedId}
@@ -638,8 +654,9 @@ export default function App() {
         </Button>
       </EmptyPane>
     );
-  } else if (state.selectedId) {
-    pane = <LoadingPane leading={leading} placeholder={lateLoad} />;
+  } else if (state.selectedId || !state.loaded) {
+    // The Task's detail, or the first snapshot, is on its way: a skeleton, never the placeholder that says there is nothing.
+    pane = <LoadingPane leading={leading} />;
   } else {
     // A quiet placeholder (issue #185): New task and Add project live in the sidebar.
     pane = (
@@ -795,12 +812,12 @@ function EmptyPane({ leading, connection, children }: { leading: React.ReactNode
   );
 }
 
-/** Calm placeholder while the selected Task's detail is on its way and nothing was on screen before: the header holds its height, a quiet indicator once the wait is long. */
-function LoadingPane({ leading, placeholder }: { leading: React.ReactNode; placeholder: boolean }) {
+/** While the selected Task's detail (or the first snapshot) is on its way and nothing was on screen before: the header holds its height over a transcript-shaped skeleton. */
+function LoadingPane({ leading }: { leading: React.ReactNode }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-label="Loading conversation">
       <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">{leading}</header>
-      {placeholder && <Loading label="Loading the conversation…" delay={0} className="flex-1 justify-center" />}
+      <TranscriptSkeleton />
     </div>
   );
 }

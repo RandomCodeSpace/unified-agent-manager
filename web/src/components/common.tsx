@@ -70,7 +70,11 @@ export const INTERRUPTED_TEXT = 'UAM stopped while this turn was running; it was
 
 /** Values shared by most of the tree; avoids threading meta/dispatch through every layer. */
 export interface AppContextValue {
+  /** The catalogs; null until GET /api/meta answers. `metaError` says why it did not, once it failed. */
   meta: Meta | null;
+  metaError: string | null;
+  /** Whether the first snapshot has arrived: before that, nothing the service holds is known (skeletons, never empty states). */
+  loaded: boolean;
   dispatch: (a: Action) => void;
   narrow: boolean;
   /** Tasks with activity the user has not looked at yet (UI-local). */
@@ -84,6 +88,8 @@ export interface AppContextValue {
 
 export const AppContext = createContext<AppContextValue>({
   meta: null,
+  metaError: null,
+  loaded: false,
   dispatch: () => {},
   narrow: false,
   hasNews: () => false,
@@ -265,13 +271,27 @@ export function ScrollSentinel({ sentinelRef }: { sentinelRef: (el: HTMLElement 
  * loads. It is a live status for screen readers and hidden decoration otherwise; the caller
  * marks the region `aria-busy`.
  */
-export function Skeleton({ label, rows = 3, className, rowClassName }: { label: string; rows?: number; className?: string; rowClassName?: string }) {
+export function Skeleton({ label, rows = 3, className, rowClassName, children, ...props }: { label: string; rows?: number; className?: string; rowClassName?: string; children?: ReactNode; 'aria-hidden'?: boolean | 'true' }) {
+  const hidden = !!props['aria-hidden'];
   return (
-    <div role="status" className={cn('skeleton flex flex-col gap-3 motion-reduce:[&::after]:hidden', className)}>
-      <span className="sr-only">{label}</span>
+    <div role={hidden ? undefined : 'status'} aria-hidden={hidden || undefined} className={cn('skeleton flex flex-col gap-3 motion-reduce:[&::after]:hidden', className)}>
+      {!hidden && <span className="sr-only">{label}</span>}
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} aria-hidden="true" className={cn('h-4 rounded-sm bg-sunken', i % 3 === 0 ? 'w-3/4' : i % 3 === 1 ? 'w-full' : 'w-1/2', rowClassName)} />
       ))}
+      {children}
+    </div>
+  );
+}
+
+/** The conversation's skeleton: a user bubble at the right, then assistant lines, in the transcript's gutters. */
+export function TranscriptSkeleton({ label = 'Loading the conversation…' }: { label?: string }) {
+  return (
+    <div className="flex flex-col gap-6 px-3 pt-6 sm:px-4 md:px-6">
+      <Skeleton label={label} rows={0} className="items-end">
+        <div aria-hidden="true" className="h-11 w-[min(60%,480px)] rounded-lg bg-sunken" />
+      </Skeleton>
+      <Skeleton label="" rows={4} aria-hidden="true" />
     </div>
   );
 }

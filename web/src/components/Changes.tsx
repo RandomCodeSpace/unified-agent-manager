@@ -4,7 +4,7 @@ import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { api, describeError, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { Loading, Note } from './common';
+import { Note, Skeleton } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
@@ -125,7 +125,7 @@ export function ChangesSheet({
       <p className="shrink-0 px-3 py-1.5 text-caption leading-relaxed text-muted" title={label}>
         {scope === 'workspace' ? 'All uncommitted project changes vs HEAD.' : label}
       </p>
-      <ul className="max-h-[40%] shrink-0 overflow-y-auto p-1">
+      <ul className="max-h-[40%] shrink-0 overflow-y-auto p-1" aria-busy={!data && !error ? true : undefined}>
         {error && (
           <li className="px-2 py-1">
             <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
@@ -137,8 +137,8 @@ export function ChangesSheet({
           </li>
         )}
         {!data && !error && (
-          <li className="px-2">
-            <Loading label="Loading the changes…" />
+          <li className="px-2 py-1">
+            <Skeleton label="Loading the changes…" rows={3} className="gap-2" rowClassName="h-6 w-full" />
           </li>
         )}
         {data && !data.supported && (
@@ -233,7 +233,7 @@ function FileView({ sessionId, scope, path }: { sessionId: string; scope: Scope;
       </Note>
     );
   }
-  if (!file) return <Loading label="Loading the diff…" className="px-3" />;
+  if (!file) return <Skeleton label="Loading the diff…" rows={6} className="gap-2 p-3" />;
   if (patch instanceof Error) return <Note tone="error" className="p-3">Could not parse diff: {patch.message}</Note>;
   if (!patch || patch.hunks.length === 0) return <Note className="p-3">No textual changes in {file.path}.</Note>;
 

@@ -10,7 +10,7 @@ import { applyPick, argumentTrigger, commandPending, commandReason, enterActions
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
-import { Markdown, Note, Spinner, useApp } from './common';
+import { Markdown, Note, Skeleton, Spinner, useApp } from './common';
 import { ExecutionItems, ExecutionStatus } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { Appear } from './ui/appear';
@@ -217,7 +217,9 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
 export const Composer = memo(ComposerView, sameComposerProps);
 
 function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerProps) {
-  const { meta, settings: appSettings, dispatch } = useApp();
+  const { meta, metaError, settings: appSettings, dispatch } = useApp();
+  // The catalogs are still on their way: the pickers' slot holds a skeleton, since their values would be a guess.
+  const catalogPending = !meta && !metaError;
   // The draft this Task left behind (text, `@` files, finished uploads); read once, on mount.
   const storageKey = newTask ? newTaskKey(newTask.projectId) : draftKey(session.id);
   const [draft] = useState(() => readDraft(storageKey));
@@ -950,6 +952,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
             </Tip>
           </>
         )}
+        {catalogPending ? (
+          <Skeleton label="Loading the model catalog…" rows={1} className="w-48" rowClassName="h-5 w-full" />
+        ) : (
+          <>
         <Picker
           id="composer-model"
           icon={<Cpu aria-hidden="true" className="text-faint" />}
@@ -1029,6 +1035,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
               )}
             </Menu.Content>
           </Menu.Root>
+        )}
+          </>
         )}
         {/* The actions: the send button keeps the far right, so Stop rises in beside it and nothing else moves. */}
         <span className="ml-auto flex shrink-0 items-center gap-0.5">

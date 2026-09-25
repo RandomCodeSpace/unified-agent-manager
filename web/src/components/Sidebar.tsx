@@ -4,7 +4,7 @@ import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary }
 import { cn } from '../lib/cn';
 import { filteredProject, groupTasks, sidebarTasks } from '../lib/tasks';
 import type { Connection } from '../state';
-import { Dot, InlineName, ProjectBadge, STATE_LABELS, STATE_TONE, StateMark, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
+import { Dot, InlineName, ProjectBadge, STATE_LABELS, STATE_TONE, Skeleton, StateMark, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker } from './ProjectPicker';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
@@ -254,6 +254,7 @@ function Shelf({ projects, label, tasks, selectedId, open, onToggle }: { project
 /* ---------- Sidebar ---------- */
 
 export const Sidebar = memo(function Sidebar({
+  loaded,
   projects,
   sessions,
   selectedId,
@@ -263,6 +264,8 @@ export const Sidebar = memo(function Sidebar({
   connection,
   version,
 }: {
+  /** False until the first snapshot: the list is a skeleton, never "No projects yet". */
+  loaded: boolean;
   projects: Project[];
   sessions: SessionSummary[];
   selectedId: string | null;
@@ -327,8 +330,10 @@ export const Sidebar = memo(function Sidebar({
       </header>
 
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
-      <div ref={list} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-1 pb-3" onKeyDown={(e) => onListKeyDown(e)}>
-        {projects.length === 0 ? (
+      <div ref={list} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-1 pb-3" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)}>
+        {!loaded ? (
+          <Skeleton label="Loading tasks…" rows={5} className="gap-1" rowClassName="h-14 w-full rounded-md" />
+        ) : projects.length === 0 ? (
           <div className="flex flex-col items-start gap-3 px-2 pt-6">
             <p className="text-ui text-muted">No projects yet. A project is a directory on this host.</p>
             <Button variant="secondary" size="sm" onClick={actions.onAddProject}>
