@@ -9,17 +9,20 @@ import { Spinner } from './spinner';
  * The small sizes keep their look and grow an invisible hit area instead (`after:`):
  * 32px on a fine pointer, 44px on a coarse one; md and lg grow to 44px themselves.
  * `aria-disabled` looks disabled but keeps its tooltip (the reason stays reachable).
+ * The filled and outlined buttons (an action) also press to 0.97 (`fast`); the quiet ones only tint.
  */
+const press = 'not-aria-disabled:active:scale-[0.97]';
+
 export const buttonVariants = cva(
-  "relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-sm whitespace-nowrap text-ui font-medium select-none transition-[background-color,color,border-color] after:absolute after:content-[''] disabled:pointer-events-none disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:opacity-45 [&_svg]:size-4 [&_svg]:shrink-0",
+  "relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-sm whitespace-nowrap text-ui font-medium select-none transition-[background-color,color,border-color,scale] after:absolute after:content-[''] disabled:pointer-events-none disabled:opacity-45 aria-disabled:cursor-not-allowed aria-disabled:opacity-45 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        primary: 'bg-primary text-on-primary hover:bg-body active:bg-ink',
-        secondary: 'border border-hairline-strong bg-raised text-ink hover:bg-surface active:bg-sunken',
+        primary: `bg-primary text-on-primary hover:bg-body active:bg-ink ${press}`,
+        secondary: `border border-hairline-strong bg-raised text-ink hover:bg-surface active:bg-sunken ${press}`,
         ghost:
           'text-body not-aria-disabled:hover:bg-tint-hover not-aria-disabled:hover:text-ink active:bg-hairline data-open:bg-tint-hover data-open:text-ink aria-pressed:bg-tint-hover aria-pressed:text-ink',
-        danger: 'text-error hover:bg-error-wash active:bg-error-wash',
+        danger: `text-error hover:bg-error-wash active:bg-error-wash ${press}`,
         // Sits inside a raised surface: the same step, so the hover reads on white too.
         subtle: 'text-body not-aria-disabled:hover:bg-tint-hover not-aria-disabled:hover:text-ink active:bg-hairline data-open:bg-tint-hover data-open:text-ink',
       },
