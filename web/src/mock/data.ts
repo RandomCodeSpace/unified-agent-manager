@@ -1,7 +1,7 @@
 // Development-only seed for the in-browser mock service (see install.ts).
 // Shapes are the wire shapes from src/api.ts. Paths and names are fictional.
 
-import type { Command, Interaction, Item, Meta, Project, SessionDetail, Settings, Subagent } from '../api';
+import type { Command, Interaction, Item, Meta, Project, SessionDetail, Settings, Subagent, ToolCall } from '../api';
 
 export interface MockTask extends SessionDetail {
   /** Subagent transcripts keyed by agent id (served by the subagent route). */
@@ -546,6 +546,86 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       items: [
         { id: 'i1', kind: 'user', time: ago(60 * 24 * 6), text: 'Replace the RSS 2.0 feed template with Atom and keep the same URL.' },
         { id: 'i2', kind: 'assistant', time: ago(60 * 24 * 6 - 30), text: 'Switched `templates/feed.xml` to Atom 1.0. The URL is unchanged and the validator passes.' },
+      ],
+    }),
+    // t14: long runs of thinking and tool calls between short messages, with a running tool,
+    // a failed one and a permission still waiting; the activity rows fold these.
+    task({
+      id: 't14',
+      project_id: 'p3',
+      workdir: p('p3'),
+      model: 'claude-haiku-4.5',
+      last_model: 'claude-haiku-4.5',
+      name: '',
+      title: 'Launch Sky Dodge and capture the page',
+      state: 'awaiting_permission',
+      pending: 1,
+      created_at: ago(24),
+      updated_at: ago(1),
+      turn_timings: [
+        { id: 'tt-1', user_item_id: 'i1', started_at: ago(24), ended_at: ago(15), state: 'completed' },
+        { id: 'tt-2', user_item_id: 'u2', started_at: ago(14), ended_at: ago(13.5), state: 'completed' },
+        { id: 'tt-3', user_item_id: 'u3', started_at: ago(12), state: 'working' },
+      ],
+      items: (() => {
+        let min = 24;
+        const step = (m: number) => (min -= m);
+        // Each item sits `gap` minutes after the one before it, so a thought lasts the next item's gap.
+        const bash = (id: string, cmd: string, extra: Partial<ToolCall> = {}, gap = 0.2) => tool(id, step(gap), { name: 'bash', title: cmd, status: 'completed', input: JSON.stringify({ command: cmd }), output: 'ok', ...extra });
+        const read = (id: string, path: string, gap = 0.05) => tool(id, step(gap), { name: 'view', title: `Read ${path}`, status: 'completed', input: JSON.stringify({ path }), output: '40 lines' });
+        const think = (id: string, text: string, gap = 0.01) => ({ id, kind: 'reasoning' as const, time: ago(step(gap)), text });
+        const say = (id: string, text: string, gap = 0.1) => ({ id, kind: 'assistant' as const, time: ago(step(gap)), text });
+        return [
+          { id: 'i1', kind: 'user' as const, time: ago(min), text: 'Launch Sky Dodge in the browser and save a screenshot of the game.' },
+          think('r1', 'Find the game, start a static server, open it headless and capture the page.'),
+          bash('c1', 'ls ~/projects/sky-dodge'),
+          bash('c2', 'python3 -m http.server 8000 --directory ~/projects/sky-dodge &', {}, 0.01),
+          tool('c3', step(0.1), { name: 'web_fetch', title: 'Fetch http://localhost:8000', status: 'completed', input: '{"url":"http://localhost:8000"}', output: '<!doctype html>…' }),
+          think('r2', 'The page came back; try a headless capture.'),
+          say('m1', 'The browser needs `--no-sandbox` in this environment, and the earlier local server is no longer accepting connections. I will restart the server and capture the page.'),
+          bash('c4', 'pkill -f http.server; python3 -m http.server 8000 &'),
+          bash('c5', 'chromium --headless --no-sandbox --screenshot=shot.png http://localhost:8000', { status: 'failed', output: 'chromium: cannot open display; ERR_CONNECTION_REFUSED' }),
+          think('r3', 'Connection refused: the server was bound to another root. Check what it serves.'),
+          bash('c6', 'curl -s http://localhost:8000 | head -20'),
+          bash('c7', 'ss -ltnp | grep 8000'),
+          read('c8', 'index.html'),
+          read('c9', 'game.js'),
+          think('r4', 'The root is now a different app.'),
+          think('r5', 'Open the Sky Dodge assets directly instead.'),
+          think('r6', 'The screenshot path stays the same.'),
+          say('m2', 'The server\'s root page is now a different app ("Machine Monitor"), so the first capture was not the game. I will open the existing Sky Dodge assets directly without changing the project\'s current `index.html`, then replace the screenshot with the right page.'),
+          tool('c10', step(0.05), { name: 'web_fetch', title: 'Fetch http://localhost:8000/sky-dodge/', status: 'completed', input: '{"url":"http://localhost:8000/sky-dodge/"}', output: '<!doctype html>…' }),
+          think('r7', 'The assets load from the subfolder; capture that URL.'),
+          bash('c11', 'chromium --headless --no-sandbox --screenshot=sky-dodge.png http://localhost:8000/sky-dodge/', {}, 0.05),
+          read('c12', 'sky-dodge.png'),
+          say('m3', 'Launched Sky Dodge in the browser and saved a screenshot to `sky-dodge.png`.\n\nThe server\'s root page had changed to a different app, so I loaded Sky Dodge directly without altering the current `index.html`.'),
+          { id: 'u2', kind: 'user' as const, time: ago(step(1)), text: 'can you share inline image' },
+          think('r8', 'Provide the markdown inline image path for the user, `![Sky Dodge](sky-dodge.png)`; no tools needed.'),
+          say('m4', 'Here it is: `![Sky Dodge screenshot](sky-dodge.png)`.', 0.4),
+          { id: 'u3', kind: 'user' as const, time: ago(step(1.5)), text: 'I something stuck?' },
+          think('r9', 'Nothing is stuck; the image may not render inline in this client.'),
+          say('m5', 'No, nothing is stuck. The image may not have rendered inline in your client; try opening the screenshot. I will keep the game server up while you look.'),
+          think('r10', 'Keep the server running in the background and make the screenshot readable.'),
+          bash('c13', 'python3 -m http.server 8000 --directory ~/projects/sky-dodge', { status: 'running', output: undefined }),
+          say('m6', 'The server is up. To make the screenshot readable from your home directory I need to run a command outside the project.'),
+          bash('c14', 'chmod 0644 ~/sky-dodge.png', { status: 'pending', output: undefined }),
+        ];
+      })(),
+      interactions: [
+        {
+          id: 'perm-c14',
+          kind: 'permission',
+          title: 'Run a shell command outside the project',
+          detail: 'chmod 0644 ~/sky-dodge.png',
+          state: 'pending',
+          time: ago(1),
+          tool_call_id: 'c14',
+          options: [
+            { id: 'once', label: 'Allow once' },
+            { id: 'session', label: 'Allow for this task' },
+            { id: 'deny', label: 'Deny', reject: true },
+          ],
+        },
       ],
     }),
   ];
