@@ -131,6 +131,8 @@ whose `seq` is not greater than the snapshot's.
 | `session` | `{"seq", "session": SessionSummary}` (any session) |
 | `item` | `{"seq", "session_id", "item": Item}` (selected session; upsert by `item.id`) |
 | `delta` | `{"seq", "session_id", "item_id", "kind", "text"}` (append) |
+| `tool_output` | `{"seq", "session_id", "agent_id"?, "item_id", "text"}` (append to the existing tool's output; opt-in below) |
+| `items_trimmed` | `{"seq", "session_id", "items": [{"id", "agent_id"?}]}` (remove evicted transcript items and mark history truncated) |
 | `interaction` | `{"seq", "session_id", "interaction": Interaction}` (upsert by `id`) |
 | `submission` | `{"seq", "session_id", "submission": Submission}` |
 
@@ -138,6 +140,28 @@ A comment line is sent every 15 seconds. Each subscriber has a bounded queue;
 a subscriber that falls behind is disconnected, and the browser's automatic
 reconnect receives a fresh snapshot. Provider event processing never waits on
 a subscriber.
+
+The browser opts in with `&tool_output=delta`. Output-only appends to running
+tools then send only the new text; starts, rewrites, metadata changes and
+completion still send full `item` events. Clients without the parameter retain
+the full-item protocol. Sequence numbers are monotonic, not contiguous. Full
+snapshots and subagent detail responses retain the complete current output.
+The browser batches transcript updates once per animation frame while visible.
+
+When the retained transcript exceeds the item or byte budget, `items_trimmed`
+follows the update that triggered eviction. IDs are scoped by agent, with an
+absent `agent_id` identifying the main agent. Browsers remove those items from
+the main and open subagent transcripts. A subagent fetch replays newer trims
+alongside other buffered frames; trims already covered by its snapshot are
+ignored. Closing its panel aborts the fetch and releases its transcript and
+buffer. A pending fetch buffers at most 256 frames and 4 Mi UTF-16 code units of
+serialized frame data; overflow discards the buffer and offers an explicit Retry
+from a fresh snapshot instead of displaying incomplete output.
+
+On opening a long transcript, the browser initially renders roughly the latest
+100 items, extending back to the beginning of the first turn. “Show earlier
+messages” reveals preceding turns without discarding retained history or moving
+the reader's current content. Locating an older subagent reveals its parent row.
 
 ## Consequences
 

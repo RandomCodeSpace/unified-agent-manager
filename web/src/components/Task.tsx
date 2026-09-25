@@ -1,11 +1,12 @@
 import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { LIVE, api, describeError, provider, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
-import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
+import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
 import { Chip } from './ui/chip';
@@ -138,6 +139,34 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  // Anchor by ID so incoming output cannot move the beginning while someone reads.
+  const [firstVisible, setFirstVisible] = useState<string | undefined>(() => session.items[transcriptWindowStart(session.items)]?.id);
+  let visibleStart = firstVisible === undefined ? -1 : session.items.findIndex((it) => it.id === firstVisible);
+  if (visibleStart < 0) {
+    visibleStart = transcriptWindowStart(session.items);
+    const next = session.items[visibleStart]?.id;
+    if (next !== firstVisible) setFirstVisible(next);
+  }
+  const visibleItems = useMemo(() => session.items.slice(visibleStart), [session.items, visibleStart]);
+  const visibleInteractions = useMemo(() => windowInteractions(session.items, session.interactions, visibleStart), [session.items, session.interactions, visibleStart]);
+  const prependScroll = useRef<{ height: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const previous = prependScroll.current;
+    if (!el || !previous) return;
+    el.scrollTop = previous.top + el.scrollHeight - previous.height;
+    prependScroll.current = null;
+  }, [firstVisible]);
+
+  function showEarlier() {
+    const el = scroller.current;
+    if (!el) return;
+    const start = transcriptWindowStart(session.items, visibleStart);
+    prependScroll.current = { height: el.scrollHeight, top: el.scrollTop };
+    atBottom.current = false;
+    setFirstVisible(session.items[start]?.id);
+    if (start === 0) el.focus({ preventScroll: true });
+  }
   const [scrolled, sentinel] = useScrolled();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -241,6 +270,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
 
   /** Scroll the transcript to the `task` row that spawned a subagent and flash it. */
   function locate(toolCallId: string) {
+    const index = session.items.findIndex((it) => it.id === toolCallId);
+    if (index >= 0 && index < visibleStart) {
+      atBottom.current = false;
+      flushSync(() => setFirstVisible(session.items[transcriptWindowStart(session.items, index + 1)]?.id));
+    }
     const el = document.getElementById(`item-${toolCallId}`);
     if (!el) return;
     el.scrollIntoView({ block: 'center' });
@@ -357,7 +391,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
           </Menu.Root>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll}>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={-1}>
           <ScrollSentinel sentinelRef={sentinel} />
           {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
           {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
@@ -365,12 +399,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
+            {visibleStart > 0 && <Button variant="secondary" size="sm" className="self-center" onClick={showEarlier}>Show earlier messages</Button>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
             <Transcript
               sessionId={session.id}
-              items={session.items}
+              items={visibleItems}
               turnTimings={session.turn_timings}
-              interactions={session.interactions}
+              interactions={visibleInteractions}
               subagents={session.subagents}
               agents={agents}
               agentSteps={agentSteps}

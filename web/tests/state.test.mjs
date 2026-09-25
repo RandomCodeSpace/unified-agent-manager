@@ -8,7 +8,78 @@ const item = (text) => ({ id: 'reply', agent_id: 'helper', kind: 'assistant', te
 const tool = (status) => ({ id: 'tool', agent_id: 'helper', kind: 'tool', tool: { name: 'read', status }, time: '2026-09-24T11:59:00Z' });
 const delta = (seq, text) => ({ name: 'delta', seq, session_id: 'task', agent_id: 'helper', item_id: 'reply', kind: 'assistant', text });
 const update = (state, data) => reducer(state, { type: 'update', data });
-const loaded = (state, seq, items, subagent = running) => reducer(state, { type: 'agent_loaded', agentId: 'helper', seq, items, subagent });
+const loaded = (state, seq, items, subagent = running) => reducer(state, { type: 'agent_loaded', sessionId: 'task', agentId: 'helper', seq, items, subagent });
+
+test('leaving a subagent releases its buffer and ignores late output and fetch replies', () => {
+  let state = update(loading(), delta(11, 'buffered'));
+  state = reducer(state, { type: 'agent_unloaded', sessionId: 'task', agentId: 'helper' });
+  assert.deepEqual(state.agents, {});
+  state = update(state, delta(12, 'after close'));
+  state = loaded(state, 12, [item('late response')]);
+  assert.deepEqual(state.agents, {});
+  state = reducer(state, { type: 'agent_loading', sessionId: 'task', agentId: 'helper' });
+  state = loaded(state, 12, [item('fresh response')]);
+  assert.equal(state.agents.helper.items[0].text, 'fresh response');
+  const other = reducer(state, { type: 'select', id: 'other' });
+  assert.equal(reducer(other, { type: 'agent_loading', sessionId: 'task', agentId: 'helper' }), other);
+});
+
+test('pending subagent fetches bound both frame count and text and require retry after overflow', () => {
+  for (const text of ['x', 'x'.repeat(4 * 1024 * 1024)]) {
+    let state = loading();
+    for (let seq = 11; seq <= 267; seq++) state = update(state, delta(seq, text));
+    assert.equal(state.agents.helper.loading, false);
+    assert.match(state.agents.helper.error, /Retry/);
+    assert.deepEqual(state.agents.helper.buffered, []);
+    assert.deepEqual(state.agents.helper.items, []);
+    assert.equal(loaded(state, 268, [item('stale after overflow')]), state);
+  }
+});
+
+test('server trims remove only matching agent items and replay in order across a fetch', () => {
+  let state = loading();
+  state = { ...state, detail: { ...state.detail, items: [{ ...item('main'), agent_id: undefined }] } };
+  const trim = { name: 'items_trimmed', seq: 12, session_id: 'task', items: [{ id: 'reply', agent_id: 'helper' }] };
+  state = update(state, trim);
+  assert.equal(state.detail.items.length, 1);
+  assert.equal(state.detail.history_truncated, true);
+  state = loaded(state, 11, [item('evicted by newer trim')]);
+  assert.deepEqual(state.agents.helper.items, []);
+  state = update(state, { name: 'item', seq: 13, session_id: 'task', agent_id: 'helper', item: item('new item reusing ID') });
+  assert.equal(state.agents.helper.items[0].text, 'new item reusing ID');
+  state = update(state, { ...trim, seq: 14, items: [{ id: 'reply' }] });
+  assert.deepEqual(state.detail.items, []);
+  assert.equal(state.agents.helper.items.length, 1);
+  // A fetched snapshot already covers older eviction frames.
+  let fresh = update(loading(), trim);
+  fresh = loaded(fresh, 13, [item('recreated after trim')]);
+  assert.equal(fresh.agents.helper.items[0].text, 'recreated after trim');
+});
+
+test('tool output deltas batch in order and a final item replaces the streamed output', () => {
+  const start = { id: 'tool', kind: 'tool', tool: { name: 'bash', status: 'running', output: 'first\n' }, time: '2026-09-25T12:00:00Z' };
+  let state = { ...initialState, selectedId: 'task', snapshotSeq: 10, detailSeq: 10, detail: { id: 'task', items: [start] } };
+  const output = (seq, text) => ({ name: 'tool_output', seq, session_id: 'task', item_id: 'tool', text });
+  state = reducer(state, { type: 'updates', data: [output(9, 'stale'), output(11, 'second\n'), output(12, 'second\n')] });
+  assert.equal(state.detail.items[0].tool.output, 'first\nsecond\nsecond\n');
+  assert.equal(state.detail.items[0].text, undefined);
+  state = update(state, { name: 'item', seq: 13, session_id: 'task', item: { ...start, tool: { ...start.tool, status: 'completed', output: 'final' } } });
+  assert.equal(state.detail.items[0].tool.output, 'final');
+  assert.equal(state.detail.items[0].tool.status, 'completed');
+  assert.equal(update(state, output(12, 'late')), state);
+});
+
+test('subagent output deltas replay against fetched output and unopened agents retain no output', () => {
+  const output = (seq, text) => ({ name: 'tool_output', seq, session_id: 'task', agent_id: 'helper', item_id: 'tool', text });
+  let state = update(loading(), output(11, 'covered'));
+  state = update(state, output(12, 'later'));
+  state = loaded(state, 11, [{ ...tool('running'), tool: { name: 'bash', status: 'running', output: 'snapshot' } }]);
+  assert.equal(state.agents.helper.items[0].tool.output, 'snapshotlater');
+  state = { ...state, agents: {} };
+  state = update(state, output(13, 'not retained'));
+  assert.deepEqual(state.agents, {});
+  assert.deepEqual(state.detail.items, []);
+});
 
 test('usage follows snapshots and frames while retaining explicit stale state', () => {
   const usage = { quotas: [{ provider: 'copilot', remaining_percent: 88 }], stale: false };
@@ -36,7 +107,7 @@ function loading() {
     type: 'snapshot',
     data: { seq: 10, projects: [], sessions: [], session: { id: 'task', items: [], interactions: [], subagents: [running] } },
   });
-  return reducer(state, { type: 'agent_loading', agentId: 'helper' });
+  return reducer(state, { type: 'agent_loading', sessionId: 'task', agentId: 'helper' });
 }
 
 test('subagent fetch replays only the part of buffered output newer than its snapshot', () => {

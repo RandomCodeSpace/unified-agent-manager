@@ -1,6 +1,30 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, firstLine, foldWindow, linkInteractions, mainArgument, mergeByTime, questionOf, subagentSummary, summarizeTools, toolLabel } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, firstLine, foldWindow, linkInteractions, mainArgument, mergeByTime, questionOf, subagentSummary, summarizeTools, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+
+test('recent history starts at a whole turn and paging reveals every retained item', () => {
+  const items = Array.from({ length: 345 }, (_, index) => ({ id: String(index), kind: index % 30 === 0 ? 'user' : 'assistant' }));
+  items[240].delivery = 'steer';
+  assert.equal(transcriptWindowStart(items), 210);
+  assert.equal(transcriptWindowStart(items, 210), 90);
+  assert.equal(transcriptWindowStart(items, 90), 0);
+  assert.equal(transcriptWindowStart([]), 0);
+  assert.equal(transcriptWindowStart(items.slice(0, 60)), 0);
+  // A long single turn keeps its complete summary and timing.
+  assert.equal(transcriptWindowStart(items.map((it, i) => ({ ...it, kind: i === 0 ? 'user' : 'tool' }))), 0);
+});
+
+test('older interactions stay with their hidden rows, including decisions made later', () => {
+  const items = [{ id: 'old', time: '01' }, { id: 'new', time: '10' }];
+  const interactions = [
+    { id: 'old-decision', tool_call_id: 'old', time: '12' },
+    { id: 'new-decision', tool_call_id: 'new', time: '09' },
+    { id: 'old-loose', time: '02' },
+    { id: 'new-loose', time: '11' },
+  ];
+  assert.deepEqual(windowInteractions(items, interactions, 1).map((ix) => ix.id), ['new-decision', 'new-loose']);
+  assert.equal(windowInteractions(items, interactions, 0), interactions);
+});
 
 const tool = (name, input, extra = {}) => ({ name, status: 'completed', input, ...extra });
 

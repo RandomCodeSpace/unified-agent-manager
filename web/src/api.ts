@@ -517,6 +517,8 @@ export type UpdateData =
   | { name: 'settings'; seq: number; settings: Settings }
   | { name: 'usage'; seq: number; usage: AccountUsage }
   | { name: 'item'; seq: number; session_id: string; item: Item; agent_id?: string }
+  | { name: 'tool_output'; seq: number; session_id: string; item_id: string; text: string; agent_id?: string }
+  | { name: 'items_trimmed'; seq: number; session_id: string; items: { id: string; agent_id?: string }[] }
   | {
       name: 'delta';
       seq: number;
@@ -542,6 +544,8 @@ export const UPDATE_EVENTS = [
   'usage',
   'item',
   'delta',
+  'tool_output',
+  'items_trimmed',
   'interaction',
   'submission',
   'queue',
@@ -578,7 +582,7 @@ export function isStatus(e: unknown, status: number): e is ApiError {
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
-async function call<T>(method: Method, path: string, body?: unknown, omitBody = false): Promise<T> {
+async function call<T>(method: Method, path: string, body?: unknown, omitBody = false, signal?: AbortSignal): Promise<T> {
   // GET and DELETE carry no body; the others are JSON (the server rejects anything else).
   const bodyless = method === 'GET' || method === 'DELETE';
   let res: Response;
@@ -586,6 +590,7 @@ async function call<T>(method: Method, path: string, body?: unknown, omitBody = 
     res = await fetch(path, {
       method,
       credentials: 'same-origin',
+      signal,
       headers: bodyless ? undefined : { 'Content-Type': 'application/json' },
       body: bodyless || omitBody ? undefined : JSON.stringify(body ?? {}),
     });
@@ -689,9 +694,9 @@ export const api = {
   changes: (id: string, scope: Scope) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`),
   changeFile: (id: string, scope: Scope, path: string) =>
     call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`),
-  subagent: (id: string, agentId: string) =>
-    call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`),
-  eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}` : '/api/events'),
+  subagent: (id: string, agentId: string, signal?: AbortSignal) =>
+    call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal),
+  eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}&tool_output=delta` : '/api/events'),
 };
 
 export interface Upload {

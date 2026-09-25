@@ -265,7 +265,7 @@ export default function App() {
       });
     };
     const selected = state.selectedId;
-    // Stream deltas wait for the next animation frame and land in one dispatch; any other
+    // Transcript updates wait for the next animation frame and land in one dispatch; any other
     // frame (and a snapshot) flushes them first, so the order on the wire is kept.
     let queue: UpdateData[] = [];
     let frame = 0;
@@ -302,7 +302,7 @@ export default function App() {
       es.addEventListener(name, (e) => {
         const data = { name, ...JSON.parse((e as MessageEvent).data) } as UpdateData;
         // A hidden tab gets no animation frames: apply at once there.
-        if (data.name === 'delta' && !document.hidden) {
+        if ((data.name === 'delta' || data.name === 'tool_output' || data.name === 'item') && !document.hidden) {
           queue.push(data);
           frame ||= requestAnimationFrame(flush);
           return;

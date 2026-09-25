@@ -1023,7 +1023,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	sub, snapshot, err := s.m.Subscribe(id)
+	sub, snapshot, err := s.m.subscribe(id, r.URL.Query().Get("tool_output") == "delta")
 	if err != nil {
 		writeFailure(w, err)
 		return

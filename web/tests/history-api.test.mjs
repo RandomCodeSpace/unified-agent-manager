@@ -11,6 +11,24 @@ const hooks = registerHooks({
 const { api, UPDATE_EVENTS } = await import('../src/api.ts');
 hooks.deregister();
 
+test('selected task streams request and listen for incremental tool output', () => {
+  assert.equal(api.eventsUrl('task/id'), '/api/events?session=task%2Fid&tool_output=delta');
+  assert.equal(api.eventsUrl(null), '/api/events');
+  assert.ok(UPDATE_EVENTS.includes('tool_output'));
+  assert.ok(UPDATE_EVENTS.includes('items_trimmed'));
+});
+
+test('subagent transcript requests carry their cancellation signal', async () => {
+  const original = globalThis.fetch;
+  const controller = new AbortController();
+  globalThis.fetch = async (_path, options) => {
+    assert.equal(options.signal, controller.signal);
+    return new Response('{}');
+  };
+  try { await api.subagent('task', 'helper', controller.signal); }
+  finally { globalThis.fetch = original; }
+});
+
 test('history and discovery use read-only routes; importing posts only an empty JSON object', async () => {
   const requests = [];
   const original = globalThis.fetch;
