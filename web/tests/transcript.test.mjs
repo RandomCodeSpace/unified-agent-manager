@@ -394,4 +394,7 @@ test('the activity label counts questions by outcome, never as tool calls', asyn
   // A question still waiting stays the running call.
   const waiting = asked('a5', 'Which?', at(3), { status: 'running', output: undefined });
   assert.deepEqual(summarizeActivity([{ item: item('c1', undefined, at(2)) }, { item: waiting }], { live: true }), { label: 'Ran 1 command · Running: ask_user Which?', tone: 'muted', active: true });
+  // Its pending question request waits for an answer, not an approval.
+  const pending = new Map([['a5', [q('q1', 'Which?', { state: 'pending', tool_call_id: 'a5' })]]]);
+  assert.deepEqual(summarizeActivity([{ item: waiting }], { live: true, approvals: pending }), { label: 'Waiting for your answer: ask_user Which?', tone: 'attention', active: true });
 });
