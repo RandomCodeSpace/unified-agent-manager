@@ -333,7 +333,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
           </div>
         </div>
 
-        <div className="relative mx-auto w-full max-w-column shrink-0 px-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-4 md:px-6">
+        <div className="relative mx-auto w-full max-w-column shrink-0 px-3 pb-3 sm:px-4 md:px-6">
           {showJump && (
             <Button variant="secondary" size="sm" className="absolute -top-10 left-1/2 -translate-x-1/2 shadow-float animate-rise" onClick={scrollToBottom}>
               <ArrowDown />

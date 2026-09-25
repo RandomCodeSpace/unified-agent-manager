@@ -331,9 +331,13 @@ func TestEmbeddedIndexAndSPAFallback(t *testing.T) {
 		}
 	}
 	assets := fstest.MapFS{
-		"index.html":       {Data: []byte("<!doctype html><title>app</title>")},
-		"assets/app.js":    {Data: []byte("console.log(1)")},
-		"assets/style.css": {Data: []byte("body{}")},
+		"index.html":             {Data: []byte("<!doctype html><title>app</title>")},
+		"assets/app.js":          {Data: []byte("console.log(1)")},
+		"assets/style.css":       {Data: []byte("body{}")},
+		"manifest.webmanifest":   {Data: []byte(`{"name":"UAM"}`)},
+		"icon-192.png":           {Data: []byte("\x89PNG")},
+		"favicon.svg":            {Data: []byte("<svg/>")},
+		"licenses/Geist-OFL.txt": {Data: []byte("OFL")},
 	}
 	ts2 := newTestServer(t, ServerConfig{Assets: assets})
 	if w := ts2.do(http.MethodGet, "/assets/app.js", ""); w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/javascript") {
@@ -342,14 +346,26 @@ func TestEmbeddedIndexAndSPAFallback(t *testing.T) {
 	if w := ts2.do(http.MethodGet, "/assets/style.css", ""); !strings.HasPrefix(w.Header().Get("Content-Type"), "text/css") {
 		t.Fatalf("css content type %q", w.Header().Get("Content-Type"))
 	}
-	// Hashed build output is cached for good; documents that name it are revalidated.
+	// The web app manifest has its own media type, which Go's table lacks, and the page's policy.
+	if w := ts2.do(http.MethodGet, "/manifest.webmanifest", ""); w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/manifest+json" || w.Header().Get("Content-Security-Policy") != contentSecurity {
+		t.Fatalf("manifest = %d %q %q", w.Code, w.Header().Get("Content-Type"), w.Header().Get("Content-Security-Policy"))
+	}
+	if w := ts2.do(http.MethodGet, "/icon-192.png", ""); w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "image/png") {
+		t.Fatalf("icon = %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	// Hashed build output is cached for good; documents that name it, and the manifest, are
+	// revalidated; the icons keep their names, so they are cached for a day.
 	for target, want := range map[string]string{
-		"/assets/app.js":    "public, max-age=31536000, immutable",
-		"/assets/style.css": "public, max-age=31536000, immutable",
-		"/":                 "no-cache",
-		"/index.html":       "no-cache",
-		"/sessions/abc":     "no-cache",
-		"/assets/":          "no-cache",
+		"/assets/app.js":          "public, max-age=31536000, immutable",
+		"/assets/style.css":       "public, max-age=31536000, immutable",
+		"/":                       "no-cache",
+		"/index.html":             "no-cache",
+		"/sessions/abc":           "no-cache",
+		"/assets/":                "no-cache",
+		"/manifest.webmanifest":   "no-cache",
+		"/icon-192.png":           "public, max-age=86400",
+		"/favicon.svg":            "public, max-age=86400",
+		"/licenses/Geist-OFL.txt": "",
 	} {
 		if got := ts2.do(http.MethodGet, target, "").Header().Get("Cache-Control"); got != want {
 			t.Fatalf("GET %s Cache-Control = %q, want %q", target, got, want)

@@ -9,6 +9,7 @@ import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { tasksOf } from './lib/tasks';
+import { checkDue, decideUpdate } from './lib/update';
 import { Task } from './components/Task';
 import { TaskActionsContext, type Renaming, type TaskActions } from './components/taskActions';
 import { Button } from './components/ui/button';
@@ -30,6 +31,14 @@ const HASH_PREFIX = '#task=';
 /** A wait shorter than this shows nothing new: no "Connecting…", no loading placeholder. */
 const QUIET_MS = 600;
 const SETTINGS_HASH = '#settings';
+/** The shell fills the viewport and keeps clear of the notch, rounded corners and home indicator of an installed app (`viewport-fit=cover`). */
+/** Typing anywhere (Settings forms, a subagent follow-up) counts as unsent work, like a composer draft. */
+function editing(): boolean {
+  const el = document.activeElement;
+  return el instanceof HTMLElement && (el.isContentEditable || el.matches('textarea, input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])'));
+}
+
+const SHELL = 'grid h-dvh overflow-x-clip pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]';
 
 // Older servers omit `required`; treat absent as true.
 const loggedIn = (r: { authenticated: boolean; required?: boolean }) => r.authenticated || r.required === false;
@@ -78,6 +87,12 @@ export default function App() {
   const creating = useRef(new Map<string, { id: string; busy: boolean }>());
   // Task whose composer takes focus once its detail arrives (a Task just created).
   const focusTask = useRef<string | null>(null);
+  // The service version this page loaded with, the time of the last version check, whether the
+  // stream has been down since it last opened, and whether a newer version waits for a Reload.
+  const loadedVersion = useRef<string | null>(null);
+  const lastCheck = useRef(0);
+  const wasDown = useRef(false);
+  const [updated, setUpdated] = useState(false);
 
   useEffect(() => {
     onUnauthorized(() => {
@@ -97,8 +112,36 @@ export default function App() {
   const customModels = JSON.stringify(state.settings.custom_models ?? []);
   useEffect(() => {
     if (auth !== 'in') return;
+    lastCheck.current = Date.now();
     api.meta().then(setMeta).catch(() => setMeta(null));
   }, [auth, customModels]);
+
+  /**
+   * A redeploy shows as the stream reconnecting, so the version is read again once the stream
+   * is back; a page coming back into view (a phone that slept through it) reads it too, at most
+   * once a minute. A failed read keeps the providers on screen.
+   */
+  const checkVersion = useCallback((force: boolean) => {
+    const now = Date.now();
+    if (!force && !checkDue(lastCheck.current, now)) return;
+    lastCheck.current = now;
+    api.meta().then(setMeta).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (auth !== 'in') return;
+    const onVisible = () => document.visibilityState === 'visible' && checkVersion(false);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [auth, checkVersion]);
+  // A new version applies itself when nothing would be lost (no draft, no popup); otherwise the
+  // strip above the pane offers Reload and the next check tries again.
+  useEffect(() => {
+    if (!meta) return;
+    loadedVersion.current ??= meta.version;
+    const decision = decideUpdate(loadedVersion.current, meta.version, { draft: !!document.querySelector('[data-draft]') || editing(), popup: popupOpen() });
+    if (decision === 'reload') window.location.reload();
+    else if (decision === 'offer') setUpdated(true);
+  }, [meta]);
 
   // Keep the view in the URL fragment so a reload lands on it: `#settings`, else the selected task.
   useEffect(() => {
@@ -164,8 +207,15 @@ export default function App() {
     const es = new EventSource(api.eventsUrl(state.selectedId));
     let retry: number | undefined;
     dispatch({ type: 'connection', status: 'connecting' });
-    es.onopen = () => dispatch({ type: 'connection', status: 'connected' });
+    es.onopen = () => {
+      dispatch({ type: 'connection', status: 'connected' });
+      if (wasDown.current) {
+        wasDown.current = false;
+        checkVersion(true);
+      }
+    };
     es.onerror = () => {
+      wasDown.current = true;
       if (es.readyState !== EventSource.CLOSED) {
         dispatch({ type: 'connection', status: 'reconnecting' });
         return;
@@ -241,7 +291,7 @@ export default function App() {
       // Deltas still queued belong to this stream; the next one starts with a snapshot.
       cancelAnimationFrame(frame);
     };
-  }, [auth, state.selectedId, streamKey, markViewed]);
+  }, [auth, state.selectedId, streamKey, markViewed, checkVersion]);
 
   const hasNews = useCallback(
     (s: SessionSummary) => {
@@ -492,11 +542,12 @@ export default function App() {
       <TaskActionsContext.Provider value={taskActions}>
         <TooltipProvider delay={400} closeDelay={0}>
           <div
-            className={
+            className={cn(
+              SHELL,
               narrow
-                ? 'grid h-dvh grid-cols-1 overflow-x-clip'
-                : cn('grid h-dvh overflow-x-clip transition-[grid-template-columns] duration-240 ease-app', sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]')
-            }
+                ? 'grid-cols-1'
+                : cn('transition-[grid-template-columns] duration-240 ease-app', sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]'),
+            )}
           >
             {/* The column animates to 0; the sidebar keeps its width inside so nothing reflows on the way, and is inert once hidden. */}
             {!narrow && (
@@ -514,6 +565,15 @@ export default function App() {
                 <p role="status" className={cn('flex items-center gap-2 border-b border-hairline px-4 py-1.5 text-caption', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
                   <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
                   {CONNECTION_TEXT[connection]}
+                </p>
+              )}
+              {updated && (
+                <p role="status" className="flex items-center gap-2 border-b border-hairline bg-surface px-4 py-1 text-caption text-body">
+                  <Dot tone="accent" />
+                  <span className="flex-1">UAM was updated.</span>
+                  <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
+                    Reload
+                  </Button>
                 </p>
               )}
               {notice && (

@@ -115,8 +115,10 @@ export function Sheet({
           data-popup=""
           aria-label={label}
           className={cn(
-            'fixed inset-y-0 z-50 flex w-drawer max-w-[calc(100vw-44px)] flex-col bg-rail shadow-modal outline-hidden transition-transform duration-240 ease-app',
-            side === 'left' ? 'left-0 data-starting-style:-translate-x-full data-ending-style:-translate-x-full' : 'right-0 data-starting-style:translate-x-full data-ending-style:translate-x-full',
+            'fixed inset-y-0 z-50 flex w-drawer max-w-[calc(100vw-44px)] flex-col bg-rail pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-modal outline-hidden transition-transform duration-240 ease-app',
+            side === 'left'
+              ? 'left-0 pl-[env(safe-area-inset-left)] data-starting-style:-translate-x-full data-ending-style:-translate-x-full'
+              : 'right-0 pr-[env(safe-area-inset-right)] data-starting-style:translate-x-full data-ending-style:translate-x-full',
             className,
           )}
           {...props}
