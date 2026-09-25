@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { activityTurns, changedFiles, currentStep, describeEntry, filterCounts, matchesFilter, promoted, summarizeTurn, toolKind } from '../src/lib/transcript.ts';
+import { changedFiles, currentStep, itemTook, promoted, summarizeTurn, toolKind } from '../src/lib/transcript.ts';
 import { DENSITY_KEY, parseDensity } from '../src/lib/density.ts';
-import { DECLINED_OUTPUT, mergeByTime } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT } from '../src/lib/transcript.ts';
 
 const at = (s) => `2026-09-25T10:00:${String(s).padStart(2, '0')}Z`;
 const tool = (name, input, extra = {}) => ({ name, status: 'completed', input, ...extra });
 const call = (id, t, time = at(2), extra = {}) => ({ id, kind: 'tool', tool: t, time, ...extra });
-const thought = (id, time, text = 'Because.') => ({ id, kind: 'reasoning', time, text });
+const thought = (id, time, text = 'Because.', ended) => ({ id, kind: 'reasoning', time, text, ...(ended ? { ended_at: ended } : {}) });
 const prose = (id, time, text = 'Done.') => ({ id, kind: 'assistant', time, text });
 const user = (id, time, text = 'Do it', extra = {}) => ({ id, kind: 'user', time, text, ...extra });
 const perm = (id, extra = {}) => ({ id, kind: 'permission', title: 'Run shell command', detail: 'ls', state: 'answered', resolution: 'allowed (yolo)', time: at(3), ...extra });
@@ -30,7 +30,7 @@ test('a tool call is a command, a file, a search, a subagent or a question by it
 
 test('the turn line counts thoughts with their time, and what the tools did by kind and distinct path', () => {
   const turn = entries(
-    thought('r1', at(0)), thought('r2', at(3)), // r1 lasts 3s, r2 lasts 2s
+    thought('r1', at(0), undefined, at(3)), thought('r2', at(3), undefined, at(5)), // r1 took 3s, r2 took 2s
     bash('c1', 'ls', at(5)), bash('c2', 'ls', at(6)),
     read('c3', 'a.ts', at(7)), read('c4', 'a.ts', at(8)), read('c5', 'b.ts', at(9)),
     edit('c6', 'a.ts', at(10)), call('c7', tool('grep', '{"pattern":"x"}'), at(11)), call('c8', tool('task', '{"description":"d"}'), at(12)), call('c9', tool('mcp__x', '{"a":"b"}'), at(13)),
@@ -111,62 +111,15 @@ test('a turn changed the distinct paths its completed edit, write and create cal
   const turn = entries(edit('c1', 'a.ts'), edit('c2', 'a.ts'), call('c3', tool('write', '{"path":"b.ts"}')), call('c4', tool('create', '{"file_path":"c.ts"}')), edit('c5', 'd.ts', at(2), { status: 'failed' }), read('c6', 'e.ts'), edit('c7', 'f.ts', at(2), { status: 'running' }));
   assert.deepEqual(changedFiles(turn), ['a.ts', 'b.ts', 'c.ts']);
   assert.deepEqual(changedFiles(entries(prose('m1', at(1)))), []);
+  // Without a recorded end a thought counts but adds no time: nothing is inferred from what followed.
+  assert.deepEqual(summarizeTurn(entries(thought('r1', at(0)), prose('m1', at(9))), { live: false }).parts.map((p) => p.text), ['1 thought']);
 });
 
-test('an entry is described for its row: kind, name, argument, state and the time until the next item', () => {
-  const ctx = { live: true, streamingId: 'r2' };
-  assert.deepEqual(describeEntry({ item: thought('r1', at(1), '# Plan\nGrep first.') }, at(4), ctx), { id: 'r1', kind: 'thought', name: 'Thought', arg: 'Grep first.', status: 'completed', failed: false, time: at(1), took: '3s', entry: { item: thought('r1', at(1), '# Plan\nGrep first.') } });
-  assert.equal(describeEntry({ item: thought('r2', at(5)) }, at(9), ctx).status, 'running');
-  assert.equal(describeEntry({ item: thought('r2', at(5)) }, at(9), ctx).took, null);
-  const b = describeEntry({ item: bash('c1', 'npm test', at(2)) }, at(12), ctx);
-  assert.deepEqual([b.kind, b.name, b.arg, b.status, b.failed, b.took], ['command', 'bash', 'npm test', 'completed', false, '10s']);
-  const f = describeEntry({ item: bash('c2', 'ls', at(2), { status: 'failed' }) }, at(3), ctx);
-  assert.deepEqual([f.status, f.failed], ['failed', true]);
-  // Open calls: running while live, "no result" once the turn ended; neither has a duration.
-  const open = bash('c3', 'ls', at(2), { status: 'running' });
-  assert.deepEqual([describeEntry({ item: open }, at(3), ctx).status, describeEntry({ item: open }, at(3), { live: false }).status], ['running', 'ended']);
-  assert.equal(describeEntry({ item: open }, at(3), ctx).took, null);
-  const question = describeEntry({ item: asked('a1', 'Which colour?', at(3)) }, at(5), ctx);
-  assert.deepEqual([question.kind, question.name, question.arg, question.status], ['question', 'Question', 'Which colour?', 'completed']);
-  const request = describeEntry({ interaction: perm('p1', { detail: 'rm -rf build\nsecond line' }) }, undefined, ctx);
-  assert.deepEqual([request.kind, request.name, request.arg, request.status, request.took], ['request', 'Run shell command', 'rm -rf build', 'decided', null]);
-  const qi = describeEntry({ interaction: q('q1', 'Then?', { state: 'expired' }) }, undefined, ctx);
-  assert.deepEqual([qi.kind, qi.arg, qi.status], ['question', 'Then?', 'ended']);
-});
-
-test('the timeline groups work under the ordinary user message that began its turn; a steer does not start one', () => {
-  const items = [user('u1', at(0), '**Fix** it\n\nPlease.'), thought('r1', at(1)), bash('c1', 'ls', at(2)), prose('m1', at(3)), user('u2', at(4), 'also this', { delivery: 'steer' }), bash('c2', 'pwd', at(5)), user('u3', at(6), 'Now explain'), prose('m2', at(7))];
-  const interactions = [perm('p1', { tool_call_id: 'c1', time: at(2) }), perm('p2', { time: at(5) }), perm('p3', { state: 'pending', resolution: undefined, time: at(5) }), q('q1', 'Then?', { time: at(3) })];
-  const timings = [{ id: 'tt1', user_item_id: 'u1', started_at: at(0), ended_at: at(6), state: 'completed' }];
-  const { turns, approvals } = activityTurns(items, interactions, timings, false);
-  assert.deepEqual(turns.map((t) => [t.id, t.title, t.entries.map((e) => e.id)]), [['u1', 'Fix it', ['r1', 'c1', 'q1', 'c2', 'p2']], ['u3', 'Now explain', []]]);
-  assert.equal(turns[0].timing.id, 'tt1');
-  assert.deepEqual(turns[0].entries.map((e) => e.took), ['1s', '1s', null, '1s', null]);
-  assert.deepEqual([...approvals.keys()], ['c1']);
-  // Work before any user message sits in a "start" turn; a Task with no work has no turns.
-  assert.deepEqual(activityTurns([bash('c0', 'ls', at(0)), user('u1', at(1))], [], []).turns.map((t) => [t.id, t.title, t.entries.length]), [['start', 'Before the first message', 1], ['u1', 'Do it', 0]]);
-  assert.deepEqual(activityTurns([], [], []).turns, []);
-});
-
-test('filters keep commands, files, thinking or failures, and count what each would show', () => {
-  const items = [user('u1', at(0)), thought('r1', at(1)), bash('c1', 'ls', at(2), { status: 'failed' }), read('c2', 'a.ts', at(3)), edit('c3', 'b.ts', at(4)), call('c4', tool('grep', '{}'), at(5)), asked('a1', 'Which?', at(6), { status: 'failed', output: 'boom' })];
-  const { turns } = activityTurns(items, [], []);
-  const [turn] = turns;
-  const ids = (filter) => turn.entries.filter((e) => matchesFilter(e, filter)).map((e) => e.id);
-  assert.deepEqual(ids('all'), ['r1', 'c1', 'c2', 'c3', 'c4', 'a1']);
-  assert.deepEqual(ids('commands'), ['c1']);
-  assert.deepEqual(ids('files'), ['c2', 'c3']);
-  assert.deepEqual(ids('thinking'), ['r1']);
-  assert.deepEqual(ids('failures'), ['c1', 'a1']);
-  assert.deepEqual(filterCounts(turns), { all: 6, commands: 1, files: 2, thinking: 1, failures: 2 });
-  assert.deepEqual(filterCounts([]), { all: 0, commands: 0, files: 0, thinking: 0, failures: 0 });
-});
-
-test('the merged order of a turn is what the timeline reads', () => {
-  const items = [user('u1', at(0)), bash('c1', 'ls', at(2))];
-  const merged = mergeByTime(items, [perm('p1', { time: at(1) })]);
-  assert.deepEqual(merged.map((e) => e.item?.id ?? e.interaction.id), ['u1', 'p1', 'c1']);
-  assert.deepEqual(activityTurns(items, [perm('p1', { time: at(1) })], []).turns[0].entries.map((e) => e.id), ['p1', 'c1']);
+test('a step took the span from its recorded start to its recorded end; nothing is inferred without an end', () => {
+  assert.equal(itemTook(thought('r1', at(1), 'Plan.', at(4))), '3s');
+  assert.equal(itemTook({ ...bash('c1', 'npm test', at(2)), ended_at: at(12) }), '10s');
+  assert.equal(itemTook(bash('c2', 'ls', at(2))), null);
+  assert.equal(itemTook(thought('r2', at(5))), null);
 });
 
 test('activity density is compact unless the browser stored "detailed"', () => {

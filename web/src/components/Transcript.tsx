@@ -1,10 +1,10 @@
-import { Bot, Check, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, PanelRight, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
-import { approvalMark, askedOn, changedFiles, currentStep, duration, elapsedSince, foregroundItems, foregroundStart, completedDuration, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, changedFiles, currentStep, duration, elapsedSince, foregroundItems, foregroundStart, itemTook, completedDuration, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { turnVerb } from '../lib/verbs';
 import type { AgentTranscript } from '../state';
 import { ImageThumbs, ItemAttachments } from './Attachments';
@@ -40,8 +40,6 @@ interface Props {
   onOpenAgent: (agentId: string, opener: HTMLElement) => void;
   /** Compact folds a turn's work into its head row (DESIGN.md turn line); detailed draws one activity row per run. */
   density?: Density;
-  /** Open the Activity panel from an expanded turn; `opener` gets focus back when it closes. */
-  onOpenActivity?: (opener: HTMLElement) => void;
   /** Open the Changes sheet from a turn's "Changed n files" line. */
   onOpenChanges?: () => void;
 }
@@ -59,7 +57,7 @@ function useArrivals(ids: string[]) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenActivity, onOpenChanges }: Props) {
+export function Transcript({ sessionId, items, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)]);
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
@@ -99,7 +97,7 @@ export function Transcript({ sessionId, items, turnTimings = [], interactions, s
       const id = userItemId ?? 'start';
       out.push(
         <div key={`turn-${id}`} className="flex flex-col gap-3">
-          {(last && working) || showEnd || summary.count > 0 ? <TurnHead id={id} working={last && working} start={foregroundStart(turnTimings)} timing={timing} summary={summary} entries={group} ctx={gctx} onOpenActivity={onOpenActivity} /> : null}
+          {(last && working) || showEnd || summary.count > 0 ? <TurnHead id={id} working={last && working} start={foregroundStart(turnTimings)} timing={timing} summary={summary} entries={group} ctx={gctx} /> : null}
           {renderCompact(group, gctx, special, own)}
           {changed.length > 0 && <ChangedLine files={changed} onOpen={onOpenChanges} />}
         </div>,
@@ -184,7 +182,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
  * mounted on the first open only; the counts turn `error` after a failure and `attention`
  * while a call waits for the user.
  */
-function TurnHead({ id, working, start, timing, summary, entries, ctx, onOpenActivity }: { id: string; working: boolean; start?: string; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; onOpenActivity?: (opener: HTMLElement) => void }) {
+function TurnHead({ id, working, start, timing, summary, entries, ctx }: { id: string; working: boolean; start?: string; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext }) {
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -235,7 +233,7 @@ function TurnHead({ id, working, start, timing, summary, entries, ctx, onOpenAct
       </div>
       {opened && (
         <Collapse open={open} appear>
-          <Timeline id={timelineId} entries={entries} ctx={ctx} onOpenActivity={onOpenActivity} />
+          <Timeline id={timelineId} entries={entries} ctx={ctx} />
         </Collapse>
       )}
     </div>
@@ -245,37 +243,49 @@ function TurnHead({ id, working, start, timing, summary, entries, ctx, onOpenAct
 /**
  * A turn's whole timeline, in order, under its head row: each thought (its text `muted` on
  * its own click), each tool call as its row with its approval, details and images, each
- * question block and each decided request; then "Open in panel".
+ * question row and each decided request.
  */
-function Timeline({ id, entries, ctx, onOpenActivity }: { id: string; entries: Entry[]; ctx: RenderContext; onOpenActivity?: (opener: HTMLElement) => void }) {
+function Timeline({ id, entries, ctx }: { id: string; entries: Entry[]; ctx: RenderContext }) {
   const rows: ReactNode[] = [];
+  const row = (key: string, time: string, took: string | null, node: ReactNode) =>
+    rows.push(
+      <div key={key} className="flex items-start gap-3">
+        <StepTime time={time} took={took} />
+        <div className="min-w-0 flex-1">{node}</div>
+      </div>,
+    );
   for (const entry of entries) {
     if (!isWork(entry)) continue;
+    // A settled question stands in the answer as its card; the timeline only marks its place.
     if (entry.interaction) {
-      const ix = entry.interaction;
-      const asked = questionOf(undefined, ix, ctx.live);
-      rows.push(asked ? <QuestionBlock key={ix.id} id={`timeline-${ix.id}`} asked={asked} /> : <DecidedRow key={ix.id} interaction={ix} />);
+      row(entry.interaction.id, entry.interaction.time, null, <DecidedRow interaction={entry.interaction} />);
       continue;
     }
     const item = entry.item;
+    const took = item.id === ctx.streamingId ? null : itemTook(item);
     if (item.kind === 'reasoning') {
-      if (item.text?.trim()) rows.push(<Thinking key={item.id} item={item} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} />);
+      if (item.text?.trim()) row(item.id, item.time, took, <Thinking item={item} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} />);
       continue;
     }
     const asked = askedOn(item, ctx.approvals, ctx.live);
-    if (asked && asked.outcome !== 'pending') rows.push(<QuestionBlock key={item.id} id={`timeline-${item.id}`} asked={asked} />);
-    else rows.push(<ToolRow key={item.id} item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} />);
+    const question = asked && asked.outcome !== 'pending' ? ctx.approvals.get(item.id)?.find((ix) => ix.kind === 'question') : undefined;
+    row(item.id, item.time, took, question ? <DecidedRow interaction={question} /> : <ToolRow item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} />);
   }
   return (
     <div id={id} className="relative mb-2 ml-1.5 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-px before:fade-rule-y before:content-['']">
       {rows}
-      {onOpenActivity && (
-        <Button size="sm" className="w-fit text-caption text-muted" onClick={(e) => onOpenActivity(e.currentTarget)}>
-          <PanelRight />
-          Open in panel
-        </Button>
-      )}
     </div>
+  );
+}
+
+/** A timeline step's start (to the second, 24-hour) and its recorded duration, blank while it runs or when unrecorded. */
+function StepTime({ time, took }: { time: string; took: string | null }) {
+  const at = new Date(time);
+  return (
+    <span className="flex h-6 shrink-0 items-center gap-2 text-caption tabular-nums text-faint pointer-coarse:h-11" title={at.toLocaleString()}>
+      <span>{at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })}</span>
+      <span className="w-10 text-right text-muted">{took}</span>
+    </span>
   );
 }
 
@@ -336,20 +346,18 @@ interface RenderContext {
   live: boolean;
   /** The item still receiving deltas, if any. */
   streamingId: string | undefined;
-  /** For each reasoning item that was followed by another item: when that next item started. */
+  /** For each reasoning item with a recorded end: when it ended. */
   thoughtEnd: Map<string, string>;
   arrival: (id: string) => string;
   /** Requests by the tool item they sit on, oldest first. */
   approvals: Map<string, Interaction[]>;
 }
 
-/** A reasoning item ends when the next item begins; both are server timestamps. */
+
+/** Each reasoning item's recorded end. */
 function thoughtEnds(items: Item[]): Map<string, string> {
   const m = new Map<string, string>();
-  items.forEach((item, k) => {
-    const next = items[k + 1];
-    if (item.kind === 'reasoning' && next) m.set(item.id, next.time);
-  });
+  for (const item of items) if (item.kind === 'reasoning' && item.ended_at) m.set(item.id, item.ended_at);
   return m;
 }
 

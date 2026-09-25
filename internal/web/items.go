@@ -102,9 +102,13 @@ func (m *Manager) publishItemLocked(s *webSession, it agentapi.Item) {
 }
 
 // upsertItemLocked replaces the item with the same agent and ID or appends
-// it.
+// it. A replacement keeps the earliest start: a tool's completion event is
+// stamped when it finished, not when it began.
 func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool) {
 	if i, ok := s.itemIdx[itemKey(it.AgentID, it.ID)]; ok {
+		if prev := s.items[i].Time; !prev.IsZero() && prev.Before(it.Time) {
+			it.Time = prev
+		}
 		s.itemBytes -= itemSize(s.items[i])
 		s.items[i] = it
 	} else {

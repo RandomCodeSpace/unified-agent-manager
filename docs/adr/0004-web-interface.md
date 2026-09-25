@@ -1762,3 +1762,14 @@ The record's `web` object gains `terminal_session`, the ID of the tied
 terminal record, and `imported`, a durable boolean marking imported Tasks.
 The capability flag is the authority for import support; providers setting it
 must implement `Importer`.
+
+## Amendment: recorded step times
+
+`Item.time` is when the item began, and `Item` gains `ended_at` (omitted
+while it runs or when the provider did not record an end). The Copilot
+adapter takes both from the recorded events: a tool call runs from
+`tool.execution_start` to `tool.execution_complete`; a thought runs from its
+model call's `assistant.turn_start` to the event that carried it. The service
+keeps an item's earliest `time` when a later event replaces it, so a live
+item and the same item read back from history agree. The browser shows a
+duration only from these two times and never infers one from the next item.

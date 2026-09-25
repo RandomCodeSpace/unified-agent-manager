@@ -718,6 +718,19 @@ func TestItemAndTextBounds(t *testing.T) {
 	}
 }
 
+func TestItemReplacementKeepsItsStart(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	start, end := time.Unix(100, 0).UTC(), time.Unix(112, 0).UTC()
+	conv.EmitItem(agentapi.Item{ID: "c1", Kind: agentapi.ItemTool, Time: start, Tool: &agentapi.ToolCall{Name: "glob", Status: agentapi.ToolRunning}})
+	conv.EmitItem(agentapi.Item{ID: "c1", Kind: agentapi.ItemTool, Time: end, EndedAt: end, Tool: &agentapi.ToolCall{Name: "glob", Status: agentapi.ToolCompleted}})
+	d := detail(t, m, sum.ID)
+	it := d.Items[len(d.Items)-1]
+	if !it.Time.Equal(start) || !it.EndedAt.Equal(end) || it.Tool.Status != agentapi.ToolCompleted {
+		t.Fatalf("item = %v..%v %s, want %v..%v completed", it.Time, it.EndedAt, it.Tool.Status, start, end)
+	}
+}
+
 func TestCreateValidatesProjectModelAndProvider(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	for _, dir := range []string{"", "relative/path", "/definitely/not/here"} {

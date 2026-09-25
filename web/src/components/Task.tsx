@@ -1,4 +1,4 @@
-import { Activity, ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
+import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { LIVE, api, describeError, provider, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
 import type { AgentTranscript } from '../state';
@@ -6,7 +6,6 @@ import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
 import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
-import { ActivityPanel } from './Activity';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
 import { Chip } from './ui/chip';
@@ -42,9 +41,6 @@ interface Props {
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
 const BOTTOM_SLACK = 32;
-
-/** The side panel beside the conversation: the subagent list, one subagent, or the activity timeline. */
-type SideView = PanelView | { view: 'activity' };
 
 function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string; snapshot: BackgroundTasks | undefined; locked: boolean }) {
   const [response, setResponse] = useState<{ source: BackgroundTasks | undefined; snapshot: BackgroundTasks } | null>(null);
@@ -135,7 +131,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const [changesError, setChangesError] = useState<string | null>(null);
   const [changesTick, setChangesTick] = useState(0);
   const [showJump, setShowJump] = useState(false);
-  const [panel, setPanel] = useState<SideView | null>(null);
+  const [panel, setPanel] = useState<PanelView | null>(null);
   const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
   const working = session.state === 'working' || session.state === 'starting';
@@ -210,7 +206,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   // A closing panel stays mounted, showing its last view, until its exit has run.
   const panelPresence = usePresence(!!shownPanel);
   const sheetPresence = usePresence(sheetOpen);
-  const [lastPanel, setLastPanel] = useState<SideView | null>(null);
+  const [lastPanel, setLastPanel] = useState<PanelView | null>(null);
   if (shownPanel && shownPanel !== lastPanel) setLastPanel(shownPanel);
   const panelView = shownPanel ?? lastPanel;
 
@@ -227,13 +223,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const { startRename } = actions;
   const renameInHeader = useCallback(() => startRename(session.id, 'header'), [startRename, session.id]);
 
-  function openPanel(view: SideView, opener: HTMLElement) {
+  function openPanel(view: PanelView, opener: HTMLElement) {
     panelOpener.current = opener;
     if (sheetOpen) onSheet(false);
     setPanel(view);
   }
-  const activityOpen = shownPanel?.view === 'activity';
-  const toggleActivity = (opener: HTMLElement) => (activityOpen ? closePanel() : openPanel({ view: 'activity' }, opener));
 
   // Esc closes the panel when no popup owns the key.
   useEffect(() => {
@@ -245,16 +239,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
     return () => document.removeEventListener('keydown', onKey);
   }, [shownPanel, closePanel]);
 
-  /** Scroll the transcript to an element and flash it: the `task` row that spawned a subagent, or a turn's head row. */
-  function flash(elementId: string, block: ScrollLogicalPosition) {
-    const el = document.getElementById(elementId);
+  /** Scroll the transcript to the `task` row that spawned a subagent and flash it. */
+  function locate(toolCallId: string) {
+    const el = document.getElementById(`item-${toolCallId}`);
     if (!el) return;
-    el.scrollIntoView({ block });
+    el.scrollIntoView({ block: 'center' });
     el.classList.add('animate-flash');
     window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
   }
-  const locate = (toolCallId: string) => flash(`item-${toolCallId}`, 'center');
-  const locateTurn = (turnId: string) => flash(`turn-${turnId}`, 'start');
 
   function onScroll() {
     const el = scroller.current;
@@ -286,7 +278,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const fileCount = changes?.supported ? changes.files.length : null;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
-  const activityCount = session.items.filter((i) => i.kind === 'tool' || (i.kind === 'reasoning' && i.text?.trim())).length;
   const items = taskMenuItems(session, actions, 'header');
   const renamable = canRename(session, actions);
 
@@ -339,24 +330,15 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
               {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
             </Button>
           </Tip>
-          {activityCount > 0 && (
-            <Tip label="Activity: every thought and tool call, by turn">
-              <Button id="activity-link" size="md" aria-pressed={activityOpen} aria-label={`Open activity, ${activityCount} entries`} className="px-2 text-muted" onClick={(e) => toggleActivity(e.currentTarget)}>
-                <Activity />
-                <span className="max-sm:hidden">Activity</span>
-                <span className="tabular-nums text-ink">{activityCount}</span>
-              </Button>
-            </Tip>
-          )}
           {session.subagents.length > 0 && (
             <Tip label="Subagents">
               <Button
                 id="subagents-link"
                 size="md"
-                aria-pressed={!!shownPanel && !activityOpen}
+                aria-pressed={!!shownPanel}
                 aria-label={`Subagents, ${session.subagents.length}${agentsRunning ? `, ${agentsRunning} running` : ''}`}
                 className="px-2 text-muted"
-                onClick={(e) => (shownPanel && !activityOpen ? closePanel() : openPanel({ view: 'list' }, e.currentTarget))}
+                onClick={(e) => (shownPanel ? closePanel() : openPanel({ view: 'list' }, e.currentTarget))}
               >
                 <Bot />
                 <span className="max-sm:hidden">Subagents</span>
@@ -398,7 +380,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
               workdir={session.workdir}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
               density={density}
-              onOpenActivity={(opener) => openPanel({ view: 'activity' }, opener)}
               onOpenChanges={openChanges}
             />
             {cards.map((i) => (
@@ -429,8 +410,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
       </div>
 
       {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} inline={sidePanelInline} open={sheetOpen} onRefresh={() => { setChangesError(null); setChangesTick((t) => t + 1); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
-      {panelPresence.mounted && panelView?.view === 'activity' && <ActivityPanel session={session} live={live} streamingId={working ? session.items[session.items.length - 1]?.id : undefined} inline={sidePanelInline} open={!!shownPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locateTurn} />}
-      {panelPresence.mounted && panelView && panelView.view !== 'activity' && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
+      {panelPresence.mounted && panelView && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
     </div>
   );
 }

@@ -571,7 +571,12 @@ type Item struct {
 	Kind ItemKind  `json:"kind"`
 	Text string    `json:"text,omitempty"`
 	Tool *ToolCall `json:"tool,omitempty"`
+	// Time is when the item began: a tool call's start, a thought's model
+	// call start, a message's first text.
 	Time time.Time `json:"time"`
+	// EndedAt is when a tool call or thought finished, from the provider's
+	// record; zero while it runs or when the provider did not say.
+	EndedAt time.Time `json:"ended_at,omitzero"`
 	// AgentID is empty for the main agent, otherwise the exact subagent
 	// instance ID from the provider.
 	AgentID string `json:"agent_id,omitempty"`

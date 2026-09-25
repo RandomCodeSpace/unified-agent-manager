@@ -353,6 +353,11 @@ export function duration(from: string, to: string): string | null {
   return formatMs(new Date(to).getTime() - new Date(from).getTime());
 }
 
+/** How long a tool call or thought took, from its recorded start and end; null while it runs or when unrecorded. */
+export function itemTook(item: Item): string | null {
+  return item.ended_at ? duration(item.time, item.ended_at) : null;
+}
+
 /** A span in milliseconds as "12s", "1m 4s" or "<1s"; null when it is not a span. */
 export function formatMs(ms: number): string | null {
   if (!Number.isFinite(ms) || ms < 0) return null;
@@ -555,10 +560,10 @@ export function firstLine(text: string | undefined): string {
 // ---------------------------------------------------------------------------------------
 // The compact activity model (DESIGN.md Transcript, "Turn line"): one line per turn instead
 // of one activity row per run of work. How a turn's thoughts and tool calls are counted for
-// its head row, which entries still stand in the answer (promotion), the current step for
-// the live foot line, and the Task's whole timeline grouped by turn for the Activity panel.
+// its head row, which entries still stand in the answer (promotion) and the current step for
+// the live foot line.
 
-export type ActivityKind = 'command' | 'file' | 'search' | 'thought' | 'question' | 'request' | 'subagent' | 'tool';
+export type ActivityKind = 'command' | 'file' | 'search' | 'question' | 'subagent' | 'tool';
 
 const COMMAND_TOOLS: readonly string[] = ['bash', 'shell', 'powershell'];
 const READ_TOOLS: readonly string[] = ['view', 'read', 'list'];
@@ -582,66 +587,6 @@ export interface ActivityContext {
   streamingId?: string;
   /** Requests by the tool item they sit on. */
   approvals?: Map<string, Interaction[]>;
-}
-
-export type ActivityStatus = 'completed' | 'failed' | 'running' | 'pending' | 'ended' | 'decided';
-
-/** One entry of the timeline: a thought, a tool call, a question or a decided request, described for a row. */
-export interface ActivityEntry {
-  id: string;
-  kind: ActivityKind;
-  /** The tool name; "Thought"; "Question"; the request's title. */
-  name: string;
-  /** The tool's main argument; the thought's first line; the question; the request's detail. */
-  arg: string;
-  status: ActivityStatus;
-  failed: boolean;
-  time: string;
-  /** Until the next item began (the same clock as "Thought for 12s"); null when nothing followed yet. */
-  took: string | null;
-  entry: Entry;
-}
-
-const questionStatus = (q: AskedQuestion, live: boolean): ActivityStatus => {
-  switch (q.outcome) {
-    case 'answered':
-    case 'declined':
-      return 'completed';
-    case 'failed':
-      return 'failed';
-    case 'none':
-      return 'ended';
-    default:
-      return live ? 'running' : 'ended';
-  }
-};
-
-/** An entry described for a row; `next` is when the item after it began. */
-export function describeEntry(entry: Entry, next: string | undefined, ctx: ActivityContext): ActivityEntry {
-  if (entry.interaction) {
-    const ix = entry.interaction;
-    if (ix.kind === 'question') {
-      const q = questionOf(undefined, ix, ctx.live)!;
-      return { id: ix.id, kind: 'question', name: 'Question', arg: q.questions[0]?.text ?? ix.title, status: questionStatus(q, ctx.live), failed: q.outcome === 'failed', time: ix.time, took: null, entry };
-    }
-    return { id: ix.id, kind: 'request', name: ix.title, arg: firstLine(ix.detail), status: ix.state === 'pending' ? 'pending' : 'decided', failed: false, time: ix.time, took: null, entry };
-  }
-  const item = entry.item;
-  const took = next ? duration(item.time, next) : null;
-  if (item.kind === 'reasoning') {
-    const streaming = item.id === ctx.streamingId;
-    return { id: item.id, kind: 'thought', name: 'Thought', arg: firstLine(item.text), status: streaming ? 'running' : 'completed', failed: false, time: item.time, took: streaming ? null : took, entry };
-  }
-  const t = item.tool;
-  const asked = askedOn(item, ctx.approvals, ctx.live);
-  if (asked) {
-    return { id: item.id, kind: 'question', name: 'Question', arg: asked.questions[0]?.text ?? '', status: questionStatus(asked, ctx.live), failed: asked.outcome === 'failed', time: item.time, took: asked.outcome === 'pending' ? null : took, entry };
-  }
-  const { name, arg } = toolLabel(t);
-  const raw = t?.status ?? 'pending';
-  const active = raw === 'pending' || raw === 'running';
-  const status: ActivityStatus = active ? (ctx.live ? raw : 'ended') : raw;
-  return { id: item.id, kind: toolKind(t?.name ?? ''), name, arg, status, failed: raw === 'failed', time: item.time, took: active ? null : took, entry };
 }
 
 export interface SummaryPart {
@@ -671,13 +616,14 @@ export interface TurnSummary {
  * live foot line names them.
  */
 export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSummary {
-  const work = entries.filter(isWork);
-  let thoughts = 0, thinkMs = 0, commands = 0, searches = 0, subagents = 0, other = 0, failed = 0, noResult = 0, decided = 0, images = 0;
+  let count = 0, thoughts = 0, thinkMs = 0, commands = 0, searches = 0, subagents = 0, other = 0, failed = 0, noResult = 0, decided = 0, images = 0;
   const changed = new Set<string>();
   const read = new Set<string>();
   const outcomes: AskedQuestion['outcome'][] = [];
   let waiting = false;
-  for (const entry of work) {
+  for (const entry of entries) {
+    if (!isWork(entry)) continue;
+    count++;
     if (entry.interaction) {
       if (entry.interaction.kind === 'question') outcomes.push(questionOf(undefined, entry.interaction, ctx.live)!.outcome);
       else decided++;
@@ -687,8 +633,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     if (item.kind === 'reasoning') {
       if (item.id === ctx.streamingId || !item.text?.trim()) continue;
       thoughts++;
-      const end = nextTime(entries, entry);
-      if (end) thinkMs += Math.max(0, Date.parse(end) - Date.parse(item.time));
+      if (item.ended_at) thinkMs += Math.max(0, Date.parse(item.ended_at) - Date.parse(item.time));
       continue;
     }
     const t = item.tool;
@@ -748,17 +693,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     quiet(asked('none') && `${noun(asked('none'), 'question')} unanswered`),
     quiet(images && noun(images, 'image')),
   ].filter(Boolean) as SummaryPart[];
-  return { parts, label: parts.map((p) => p.text).join(' · '), tone: failed ? 'error' : waiting ? 'attention' : 'muted', count: work.length };
-}
-
-/** When the item after `entry` began, in its turn's entries; undefined when nothing followed. */
-function nextTime(entries: Entry[], entry: Entry): string | undefined {
-  const k = entries.indexOf(entry);
-  for (let i = k + 1; i < entries.length; i++) {
-    const t = entries[i].item?.time;
-    if (t) return t;
-  }
-  return undefined;
+  return { parts, label: parts.map((p) => p.text).join(' · '), tone: failed ? 'error' : waiting ? 'attention' : 'muted', count };
 }
 
 export interface Step {
@@ -819,70 +754,3 @@ export function changedFiles(entries: Entry[]): string[] {
   return out;
 }
 
-export interface ActivityTurn {
-  /** The id of the ordinary user message that began it, or "start" before the first one. */
-  id: string;
-  /** The user message's first line, as plain text. */
-  title: string;
-  time: string;
-  timing?: TurnTiming;
-  entries: ActivityEntry[];
-}
-
-/**
- * The Task's timeline grouped by turn: every thought, tool call, question and decided request
- * of the main agent, in order, under the ordinary user message that began its turn (a steer
- * message does not start one). Pending permissions stay action cards and are not listed.
- */
-export function activityTurns(items: Item[], interactions: Interaction[], timings: TurnTiming[] = [], live = false, streamingId?: string): { turns: ActivityTurn[]; approvals: Map<string, Interaction[]> } {
-  const { linked, loose, questions } = linkInteractions(items, interactions);
-  const ctx: ActivityContext = { live, streamingId, approvals: linked };
-  const next = new Map<string, string | undefined>();
-  items.forEach((item, k) => next.set(item.id, items[k + 1]?.time));
-  const turns: ActivityTurn[] = [];
-  let turn: ActivityTurn = { id: 'start', title: 'Before the first message', time: items[0]?.time ?? '', entries: [] };
-  for (const entry of mergeByTime(items, [...loose, ...questions])) {
-    const item = entry.item;
-    if (item?.kind === 'user' && !item.delivery) {
-      if (turn.entries.length) turns.push(turn);
-      turn = { id: item.id, title: firstLine(item.text) || 'Untitled', time: item.time, timing: timingForTurn(timings, item.id), entries: [] };
-      continue;
-    }
-    if (!isWork(entry)) continue;
-    turn.entries.push(describeEntry(entry, item ? next.get(item.id) : undefined, ctx));
-  }
-  if (turn.entries.length || turn.id !== 'start') turns.push(turn);
-  return { turns, approvals: linked };
-}
-
-export type ActivityFilter = 'all' | 'commands' | 'files' | 'thinking' | 'failures';
-
-export const FILTERS: readonly { id: ActivityFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'commands', label: 'Commands' },
-  { id: 'files', label: 'Files' },
-  { id: 'thinking', label: 'Thinking' },
-  { id: 'failures', label: 'Failures' },
-];
-
-export function matchesFilter(entry: ActivityEntry, filter: ActivityFilter): boolean {
-  switch (filter) {
-    case 'all':
-      return true;
-    case 'commands':
-      return entry.kind === 'command';
-    case 'files':
-      return entry.kind === 'file';
-    case 'thinking':
-      return entry.kind === 'thought';
-    case 'failures':
-      return entry.failed;
-  }
-}
-
-/** How many entries each filter would show. */
-export function filterCounts(turns: readonly ActivityTurn[]): Record<ActivityFilter, number> {
-  const counts: Record<ActivityFilter, number> = { all: 0, commands: 0, files: 0, thinking: 0, failures: 0 };
-  for (const turn of turns) for (const entry of turn.entries) for (const f of FILTERS) if (matchesFilter(entry, f.id)) counts[f.id]++;
-  return counts;
-}
