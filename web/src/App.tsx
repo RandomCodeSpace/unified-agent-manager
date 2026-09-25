@@ -613,13 +613,13 @@ export default function App() {
             )}
             <main className="relative flex min-h-0 min-w-0 flex-col bg-canvas">
               {connection !== 'connected' && (
-                <p role="status" className={cn('flex items-center gap-2 border-b border-hairline px-4 py-1.5 text-caption', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
+                <p role="status" className={cn('flex items-center gap-2 border-b border-hairline px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
                   <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
                   {CONNECTION_TEXT[connection]}
                 </p>
               )}
               {updated && (
-                <p role="status" className="flex items-center gap-2 border-b border-hairline bg-surface px-4 py-1 text-caption text-body">
+                <p role="status" className="flex items-center gap-2 border-b border-hairline bg-surface px-4 py-1 text-caption text-body animate-fade-in">
                   <Dot tone="accent" />
                   <span className="flex-1">UAM was updated.</span>
                   <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
@@ -628,7 +628,7 @@ export default function App() {
                 </p>
               )}
               {notice && (
-                <p className="flex items-center gap-2 border-b border-hairline bg-error-wash px-4 py-1.5 text-caption text-error" role="alert">
+                <p className="flex items-center gap-2 border-b border-hairline bg-error-wash px-4 py-1.5 text-caption text-error animate-fade-in" role="alert">
                   <span className="flex-1">{notice}</span>
                   <Button size="icon" variant="ghost" aria-label="Dismiss" className="text-error hover:bg-error-wash hover:text-error" onClick={() => setNotice(null)}>
                     <X />

@@ -611,7 +611,7 @@ export function Loading({ label = 'Loading…', delay = 300, className }: { labe
 /** A `caption` line for feedback: `error` and `warn` are the only coloured ones. */
 export function Note({ tone = 'muted', className, children, role, id }: { tone?: 'muted' | 'error' | 'warn' | 'info'; className?: string; children: ReactNode; role?: 'alert' | 'status'; id?: string }) {
   return (
-    <p id={id} role={role} className={cn('text-caption', tone === 'error' && 'text-error', tone === 'warn' && 'text-warning', tone === 'info' && 'text-info', tone === 'muted' && 'text-muted', className)}>
+    <p id={id} role={role} className={cn('text-caption animate-fade-in', tone === 'error' && 'text-error', tone === 'warn' && 'text-warning', tone === 'info' && 'text-info', tone === 'muted' && 'text-muted', className)}>
       {children}
     </p>
   );

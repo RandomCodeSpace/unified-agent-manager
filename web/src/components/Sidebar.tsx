@@ -444,11 +444,11 @@ export const Sidebar = memo(function Sidebar({
         ) : query.trim() ? (
           <>
             <p className="px-2 py-2 text-caption text-muted" role="status">{tasks.length} matching tasks</p>
-            <ul className="flex flex-col gap-1">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+            <ul className="flex flex-col gap-1 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
           </>
         ) : (
           <>
-            <ul className="flex flex-col gap-1">{active.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+            <ul className="flex flex-col gap-1 animate-fade-in">{active.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
             {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
             <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${shelfScope}:settled`]} onToggle={() => toggleShelf(`${shelfScope}:settled`)} />
             <Shelf projects={projectMap} label="Archived" tasks={archived} selectedId={selectedId} open={!!shelves[`${shelfScope}:archived`]} onToggle={() => toggleShelf(`${shelfScope}:archived`)} />
