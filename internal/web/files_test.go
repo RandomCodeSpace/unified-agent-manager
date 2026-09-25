@@ -316,11 +316,16 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 	}
 
 	expired := fileKey(testToken, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Minute).Unix())
+	// The last hex digit changed, never replaced by itself.
+	flip := "0"
+	if strings.HasSuffix(key, "0") {
+		flip = "1"
+	}
 	valid := time.Now().Add(time.Hour).Unix()
 	refused := map[string]string{
 		"expired":      keyURL(sum.ID, expired, "notes.md"),
 		"other task":   keyURL(other.ID, key, "notes.md"),
-		"tampered":     keyURL(sum.ID, key[:len(key)-1]+"0", "notes.md"),
+		"tampered":     keyURL(sum.ID, key[:len(key)-1]+flip, "notes.md"),
 		"extended":     keyURL(sum.ID, strconv.FormatInt(valid, 10)+key[strings.IndexByte(key, '.'):], "notes.md"),
 		"no mac":       keyURL(sum.ID, strconv.FormatInt(valid, 10), "notes.md"),
 		"other secret": keyURL(sum.ID, fileKey("another-token-of-24-chars-plus", "127.0.0.1:8260", sum.ID, valid), "notes.md"),

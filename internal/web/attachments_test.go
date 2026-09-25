@@ -760,6 +760,11 @@ func TestToolImageRoutes(t *testing.T) {
 		t.Fatalf("item frame = %s", f.data["item"])
 	}
 	id := it.Images[0].ID
+	// The subagent's copy of the item is stored on its own; wait for it.
+	waitUntil(t, "subagent tool image stored", func() bool {
+		w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/subagents/agent-1", "", auth)
+		return strings.Contains(w.Body.String(), `"images":[{"id":"`)
+	})
 	for _, path := range []string{"/api/sessions/" + sum.ID, "/api/sessions/" + sum.ID + "/subagents/agent-1"} {
 		w := ts.do(http.MethodGet, path, "", auth)
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"images":[{"id":"`+id+`"`) {
