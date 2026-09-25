@@ -8,7 +8,7 @@ import { Dot, InlineName, ProjectBadge, STATE_LABELS, STATE_TONE, StateMark, TON
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
-import { PreviousSessionsEntry, usePreviousCounts } from './PreviousSessions';
+import { PreviousSessionsEntry, canImport, usePreviousCounts } from './PreviousSessions';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 import copilotIcon from '../assets/copilot.svg';
@@ -19,6 +19,8 @@ export interface WorkspaceActions {
   onAddProject: () => void;
   onEditProject: (p: Project) => void;
   onRemoveProject: (p: Project) => void;
+  /** Opens a Project's previous CLI sessions to import, leaving the filter alone. */
+  onPreviousSessions: (p: Project) => void;
   /** The Project the sidebar is filtered to; null shows every Project. Remembered per browser. */
   filter: string | null;
   onFilter: (id: string | null) => void;
@@ -265,7 +267,8 @@ function ProjectActions({ project, actions }: { project: Project; actions: Works
 /* ---------- Project filter ---------- */
 
 /** "All projects" or the chosen Project's badge and name; the menu lists every Project. Active, it sits raised with a one-click clear. */
-function ProjectFilter({ projects, filter, onFilter, actions }: { projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; actions: WorkspaceActions }) {
+function ProjectFilter({ projects, filter, onFilter, actions, previousCounts }: { projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; actions: WorkspaceActions; previousCounts: Record<string, number> }) {
+  const { meta } = useApp();
   const chosen = filteredProject(projects, filter);
   return (
     <div className="flex shrink-0 items-center gap-0.5 px-2 pb-1">
@@ -299,6 +302,14 @@ function ProjectFilter({ projects, filter, onFilter, actions }: { projects: Proj
               </Menu.RadioItem>
             ))}
           </Menu.RadioGroup>
+          {/* Every Project's previous CLI sessions, so importing needs no filter. */}
+          {canImport(meta) && (
+            <Menu.Group>
+              <Menu.Separator />
+              <Menu.Label>Previous sessions</Menu.Label>
+              <Menu.Actions items={projects.map((p) => ({ key: p.id, label: `${p.name}${previousCounts[p.id] === undefined ? '' : ` (${previousCounts[p.id]})`}`, icon: <ProjectBadge badge={p.badge} />, onSelect: () => actions.onPreviousSessions(p) }))} />
+            </Menu.Group>
+          )}
         </Menu.Content>
       </Menu.Root>
       {chosen && <ProjectActions project={chosen} actions={actions} />}
@@ -411,7 +422,7 @@ export const Sidebar = memo(function Sidebar({
 
       </header>
 
-      {projects.length > 0 && <ProjectFilter projects={projects} filter={actions.filter} onFilter={actions.onFilter} actions={actions} />}
+      {projects.length > 0 && <ProjectFilter projects={projects} filter={actions.filter} onFilter={actions.onFilter} actions={actions} previousCounts={previousCounts} />}
       {chosen && <div className="px-2"><PreviousSessionsEntry key={chosen.id} project={chosen} count={previousCounts[chosen.id]} /></div>}
 
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}

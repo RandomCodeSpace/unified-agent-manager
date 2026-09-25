@@ -1,7 +1,7 @@
 // Development-only seed for the in-browser mock service (see install.ts).
 // Shapes are the wire shapes from src/api.ts. Paths and names are fictional.
 
-import type { Command, Interaction, Item, Meta, Project, SessionDetail, Settings, Subagent, ToolCall } from '../api';
+import type { Command, Interaction, Item, Meta, PreviousSession, Project, SessionDetail, Settings, Subagent, ToolCall } from '../api';
 
 export interface MockTask extends SessionDetail {
   /** Subagent transcripts keyed by agent id (served by the subagent route). */
@@ -26,12 +26,14 @@ export interface MockState {
   commands: Command[];
   /** Git-visible paths per project; a project without an entry is not a Git tree. */
   files: Record<string, string[]>;
+  /** Recorded CLI conversations per project that can be imported as Tasks; one already is (t3's), one is open elsewhere. */
+  previous: Record<string, PreviousSession[]>;
 }
 
 const NOW = Date.now();
 const ago = (min: number) => new Date(NOW - min * 60000).toISOString();
 
-const CAPS = { cancel: true, permissions: true, questions: true, session_diff: false, history: true, context_size: true };
+const CAPS = { cancel: true, permissions: true, questions: true, session_diff: false, history: true, context_size: true, import: true };
 const SIZES = [
   { id: 'default', tokens: 200_000 },
   { id: 'long_context', tokens: 1_000_000 },
@@ -735,7 +737,20 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
     p3: ['templates/post.html', 'templates/list.html', 'templates/feed.xml', 'assets/theme.css', 'content/posts/hello.md', 'scripts/contrast.mjs'],
   };
 
-  return { meta, projects, settings: {
+  const prev = (conversation_id: string, title: string, min: number, in_use = false): PreviousSession => ({ provider: 'copilot', conversation_id, title, created_at: ago(min + 20), updated_at: ago(min), in_use });
+  const previous: Record<string, PreviousSession[]> = {
+    p1: [
+      prev('conv-t3', 'Doctor: add terminal line', 42),
+      prev('cli-p1-1', 'Explain the vterm replay order', 60 * 3),
+      prev('cli-p1-2', 'Why does golangci-lint ignore the build tag?', 60 * 9),
+      prev('cli-p1-3', 'Rename the tmux package', 60 * 30, true),
+      prev('cli-p1-4', 'Sketch the web attach flow', 60 * 50),
+    ],
+    p2: [prev('cli-p2-1', 'Trim the zsh prompt', 60 * 24 * 3)],
+    p3: [prev('cli-p3-1', 'Feed validator errors', 60 * 24), prev('cli-p3-2', 'Dark cover images', 60 * 26)],
+  };
+
+  return { meta, projects, previous, settings: {
       send_default: 'steer',
       custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'UAM_BYOM_OPENROUTER', key_present: false }],
     },

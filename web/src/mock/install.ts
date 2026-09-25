@@ -526,6 +526,50 @@ export function install(): void {
       }
     }
 
+    // Recorded CLI conversations that are not Tasks yet; importing one makes it a completed Task with its history.
+    const notLinked = (p: Project) => (st.previous[p.id] ?? []).filter((s) => !st.tasks.some((t) => t.conversation_id === s.conversation_id));
+    if (path === '/api/previous/counts') return json(200, Object.fromEntries(st.projects.map((p) => [p.id, notLinked(p).length])));
+    if ((r = m(/^\/api\/projects\/([^/]+)\/previous$/)) && method === 'GET') {
+      const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
+      return p ? json(200, notLinked(p)) : fail(404, 'project not found');
+    }
+    if ((r = m(/^\/api\/projects\/([^/]+)\/previous\/([^/]+)\/import$/)) && method === 'POST') {
+      const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
+      const s = p && notLinked(p).find((x) => x.conversation_id === decodeURIComponent(r![2]));
+      if (!p || !s) return fail(404, 'previous session not found');
+      if (s.in_use) return fail(409, 'the conversation is open in another client');
+      const t: MockTask = {
+        id: nextId('t'),
+        project_id: p.id,
+        provider: s.provider,
+        name: '',
+        title: s.title,
+        workdir: p.dir,
+        conversation_id: s.conversation_id,
+        model: 'auto',
+        last_model: '',
+        subagents_running: 0,
+        state: 'completed',
+        open: false,
+        pending: 0,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+        capabilities: st.meta.providers[0].capabilities,
+        items: [
+          { id: nextId('u'), kind: 'user', text: s.title, time: s.created_at },
+          { id: nextId('m'), kind: 'assistant', text: 'Imported from the CLI history: the conversation ended here.', time: s.updated_at },
+        ],
+        interactions: [],
+        subagents: [],
+        history_truncated: false,
+        last_submission: null,
+        agentItems: {},
+      };
+      st.tasks.push(t);
+      broadcast('session', { session: summary(t) });
+      return json(201, summary(t));
+    }
+
     if (path === '/api/sessions' && method === 'GET') return json(200, st.tasks.map(summary));
     if (path === '/api/sessions' && method === 'POST') {
       const p = st.projects.find((x) => x.id === body.project_id);

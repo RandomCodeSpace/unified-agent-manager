@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, describeError, providerLabel, type PreviousSession, type Project, type SessionDetail, type SessionSummary } from '../api';
+import { api, describeError, providerLabel, type Meta, type PreviousSession, type Project, type SessionDetail, type SessionSummary } from '../api';
 import { Note, Spinner, useApp } from './common';
 import { useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 
+/** An available provider can import its recorded conversations. */
+export const canImport = (meta: Meta | null): boolean => !!meta?.providers.some((p) => p.available && p.capabilities.import);
+
 /** One discovery request for the rail, independent of live task output and project count. */
 export function usePreviousCounts(projects: Project[], sessions: SessionSummary[]) {
   const { meta } = useApp();
-  const enabled = !!meta?.providers.some((p) => p.available && p.capabilities.import);
+  const enabled = canImport(meta);
   const projectKey = projects.map((p) => `${p.id}:${p.dir}`).sort((a, b) => a.localeCompare(b)).join("\n");
   const linkedKey = sessions.map((s) => `${s.provider}:${s.conversation_id}`).sort((a, b) => a.localeCompare(b)).join("\n");
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -24,8 +27,7 @@ export function usePreviousCounts(projects: Project[], sessions: SessionSummary[
 export function PreviousSessionsEntry({ project, count }: { project: Project; count?: number }) {
   const { meta } = useApp();
   const [open, setOpen] = useState(false);
-  const enabled = !!meta?.providers.some((p) => p.available && p.capabilities.import);
-  if (!enabled) return null;
+  if (!canImport(meta)) return null;
   return (
     <>
       <button type="button" data-nav="" className="flex min-h-8 w-full items-center rounded-sm px-2 text-left text-caption text-muted hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:min-h-11" onClick={() => setOpen(true)}>
@@ -36,7 +38,7 @@ export function PreviousSessionsEntry({ project, count }: { project: Project; co
   );
 }
 
-function PreviousSessionsDialog({ project, onClose }: { project: Project; onClose: () => void }) {
+export function PreviousSessionsDialog({ project, onClose }: { project: Project; onClose: () => void }) {
   const { meta, dispatch } = useApp();
   const actions = useTaskActions();
   const [sessions, setSessions] = useState<PreviousSession[] | null>(null);

@@ -5,6 +5,7 @@ import { initialState, reducer } from './state';
 import { AppContext, Dot, Loading, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog, RemoveProjectDialog } from './components/Projects';
+import { PreviousSessionsDialog, canImport } from './components/PreviousSessions';
 import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
@@ -79,6 +80,8 @@ export default function App() {
   const [taskDialog, setTaskDialog] = useState<TaskDialog>(null);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [renaming, setRenaming] = useState<Renaming | null>(null);
+  // The Project whose previous CLI sessions are open to import (from the filter menu or a Task's menu).
+  const [previous, setPrevious] = useState<Project | null>(null);
   const [busyTasks, setBusyTasks] = useState<Readonly<Record<string, boolean>>>({});
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
   const [sidebarOpen, setSidebarOpen] = useState(() => readJSON<boolean>(SIDEBAR_KEY, true));
@@ -436,8 +439,10 @@ export default function App() {
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
       busy: busyTasks,
+      previousSessions: (projectId) => setPrevious(state.projects.find((p) => p.id === projectId) ?? null),
+      canImport: canImport(meta),
     }),
-    [renaming, busyTasks, select, runTask, state.sessions, openTaskDialog],
+    [renaming, busyTasks, select, runTask, state.sessions, state.projects, meta, openTaskDialog],
   );
 
   const actions: WorkspaceActions = useMemo(
@@ -446,6 +451,7 @@ export default function App() {
       onAddProject: () => openDialog({ kind: 'add' }),
       onEditProject: (project) => openDialog({ kind: 'edit', project }),
       onRemoveProject: (project) => openDialog({ kind: 'remove', project }),
+      onPreviousSessions: setPrevious,
       filter,
       onFilter: (id) => {
         setFilter(id);
@@ -629,6 +635,7 @@ export default function App() {
               </ViewTransition>
             </main>
 
+            {previous && <PreviousSessionsDialog project={previous} onClose={() => setPrevious(null)} />}
             {dialog?.kind === 'add' && (
               <AddProjectDialog
                 open={dialogOpen}
