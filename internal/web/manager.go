@@ -308,6 +308,13 @@ type interaction struct {
 	yolo bool
 }
 
+// public is ix as a browser sees it: Auto says yolo mode is answering it.
+func (ix *interaction) public() agentapi.Interaction {
+	out := ix.Interaction
+	out.Auto = ix.yolo && ix.State == agentapi.InteractionPending
+	return out
+}
+
 // persistKey is the durable part of a session; sessions.json is written only
 // when it changes, never per streamed token.
 type persistKey struct {
@@ -812,7 +819,7 @@ func (m *Manager) detailLocked(s *webSession, terminal bool) SessionDetail {
 		d.TerminalSession = &TerminalSession{ID: s.terminalID, Name: cleanTitle(s.terminalName)}
 	}
 	for _, ix := range s.interactions {
-		d.Interactions = append(d.Interactions, ix.Interaction)
+		d.Interactions = append(d.Interactions, ix.public())
 	}
 	if s.backgroundTasks != nil {
 		snapshot := *s.backgroundTasks
@@ -3425,6 +3432,7 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 	defer m.mu.Unlock()
 	before := m.summaryLocked(s)
 	ix.answering = false
+	wasYolo := ix.yolo
 	if err != nil {
 		// Not answered: the request is the user's again.
 		ix.yolo = false
@@ -3447,6 +3455,9 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 		m.changedLocked(s, before)
 		return agentapi.Interaction{}, newError(http.StatusGone, "the interaction expired")
 	default:
+		if wasYolo && ix.State == agentapi.InteractionPending {
+			m.publishInteractionLocked(s, ix) // the browser learns it waits for the user
+		}
 		m.changedLocked(s, before)
 		log.Warn("web interaction answer failed", "session", s.id, "error", err)
 		return agentapi.Interaction{}, newError(http.StatusBadGateway, "answer failed: %s", shortError(err))
@@ -3461,14 +3472,15 @@ const yoloResolution = "allowed (yolo)"
 // the provider's single-use allow option, through the same claim as a
 // browser's answer. Questions, and requests without that option (the
 // provider's policy says a person must decide), stay with the user.
-func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) {
+// It reports whether it claimed ix.
+func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
 	if s.mode != store.ModeYolo || m.closed || s.removed || s.conv == nil ||
 		ix.Kind != agentapi.InteractionPermission || ix.State != agentapi.InteractionPending || ix.answering {
-		return
+		return false
 	}
 	i := slices.IndexFunc(ix.Options, func(o agentapi.Option) bool { return o.AllowOnce && !o.Reject })
 	if i < 0 {
-		return
+		return false
 	}
 	conv, id, answer := s.conv, ix.ID, agentapi.Answer{Decision: ix.Options[i].ID, Auto: true}
 	ix.answering, ix.yolo = true, true
@@ -3479,13 +3491,17 @@ func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) {
 			log.Warn("web yolo approval failed", "session", s.id, "interaction", id, "error", err)
 		}
 	}()
+	return true
 }
 
 // autoAllowPendingLocked applies yolo mode to every pending permission
-// request of s.
+// request of s; the browser learns each claimed one no longer waits for the
+// user.
 func (m *Manager) autoAllowPendingLocked(s *webSession) {
 	for _, ix := range s.interactions {
-		m.autoAllowLocked(s, ix)
+		if m.autoAllowLocked(s, ix) {
+			m.publishInteractionLocked(s, ix)
+		}
 	}
 }
 

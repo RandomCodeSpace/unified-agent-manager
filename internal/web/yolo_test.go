@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -125,6 +126,47 @@ func TestYoloResolutionSurvivesTheProviderReport(t *testing.T) {
 	}
 	if strings.Join(states, ",") != "pending:,answered:"+yoloResolution {
 		t.Fatalf("interaction frames = %v", states)
+	}
+}
+
+// A request yolo claims never reaches a browser as waiting for the user: its
+// first frame and a detail fetched while the answer is out say auto. A failed
+// answer hands it back to the user, and the browser learns so.
+func TestYoloClaimedRequestNeverWaitsForTheUser(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createTask(t, m, prov, "yolo")
+	release := make(chan struct{})
+	conv.SetRespondHook(func(context.Context, string, agentapi.Answer) error { <-release; return errors.New("provider hiccup") })
+	sub, _, err := m.Subscribe(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := func() agentapi.Interaction {
+		var ix agentapi.Interaction
+		decodeField(t, frameOf(t, sub, "interaction"), "interaction", &ix)
+		return ix
+	}
+
+	conv.EmitInteraction(onceRequest("p1", ""))
+	if ix := next(); ix.ID != "p1" || ix.State != agentapi.InteractionPending || !ix.Auto {
+		t.Fatalf("first frame = %+v, want pending auto", ix)
+	}
+	waitUntil(t, "yolo answer at the provider", func() bool { return len(conv.Responds()) == 1 })
+	if ix := interactionOf(t, m, sum.ID, "p1"); ix.State != agentapi.InteractionPending || !ix.Auto {
+		t.Fatalf("detail while yolo answers = %+v, want pending auto", ix)
+	}
+
+	close(release)
+	if ix := next(); ix.ID != "p1" || ix.State != agentapi.InteractionPending || ix.Auto {
+		t.Fatalf("frame after the failed answer = %+v, want pending for the user", ix)
+	}
+	if d := detail(t, m, sum.ID); d.Pending != 1 || d.Interactions[0].Auto {
+		t.Fatalf("detail after the failed answer: pending=%d %+v", d.Pending, d.Interactions[0])
+	}
+
+	conv.EmitInteraction(permissionRequest("managed")) // no allow-once option: a person must decide
+	if ix := next(); ix.ID != "managed" || ix.Auto {
+		t.Fatalf("policy request frame = %+v, want not auto", ix)
 	}
 }
 

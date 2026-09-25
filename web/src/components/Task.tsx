@@ -4,7 +4,7 @@ import { LIVE, api, describeError, readOnly, stageLabel, taskName, type Backgrou
 import type { AgentTranscript } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
-import { foregroundItems } from '../lib/transcript';
+import { awaitsUser, foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle } from './common';
 import { Chip } from './ui/chip';
@@ -199,7 +199,8 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
   }
 
   // A decided card collapses in place (its last pending look, inert) instead of vanishing; it leaves once the collapse has run.
-  const pendingIds = session.interactions.filter((i) => i.state === 'pending').map((i) => i.id).join(',');
+  // A request yolo mode is answering is never a card.
+  const pendingIds = session.interactions.filter(awaitsUser).map((i) => i.id).join(',');
   const [seenPending, setSeenPending] = useState(pendingIds);
   const [lingering, setLingering] = useState<Interaction[]>([]);
   if (pendingIds !== seenPending) {
@@ -208,7 +209,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
     const decided = gone.flatMap((id) => session.interactions.filter((i) => i.id === id)).map((i) => ({ ...i, state: 'pending' as const }));
     if (decided.length) setLingering((l) => [...l, ...decided.filter((i) => !l.some((x) => x.id === i.id))]);
   }
-  const cards = [...session.interactions.filter((i) => i.state === 'pending'), ...lingering.filter((i) => !session.interactions.some((x) => x.id === i.id && x.state === 'pending'))];
+  const cards = [...session.interactions.filter(awaitsUser), ...lingering.filter((i) => !session.interactions.some((x) => x.id === i.id && awaitsUser(x)))];
 
   // The provider's own notice about a failure already stands in the transcript: the failed line is not repeated under it.
   const failure = session.state === 'failed' ? session.state_detail?.toLowerCase() ?? '' : '';
@@ -320,7 +321,7 @@ export function Task({ session, project, agents, snapshotSeq, sheetOpen, sidePan
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
             />
             {cards.map((i) => (
-              <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && x.state === 'pending')} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
+              <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && awaitsUser(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
                 <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
               </Collapse>
             ))}

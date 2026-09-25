@@ -389,6 +389,8 @@ export interface Interaction {
   agent_id?: string;
   /** The `tool` item (same `agent_id`) this request is for; absent or unmatched means no link. */
   tool_call_id?: string;
+  /** Yolo mode is answering this pending request: it does not wait for the user. */
+  auto?: boolean;
 }
 
 export interface Answer {

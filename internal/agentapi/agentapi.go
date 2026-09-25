@@ -697,6 +697,9 @@ type Interaction struct {
 	// is the call that needs it; for a question, the tool call that asked
 	// (Copilot's ask_user). It is empty when unknown.
 	ToolCallID string `json:"tool_call_id,omitempty"`
+	// Auto is set by the web service, never by a provider: yolo mode is
+	// answering this pending request, so it does not wait for the user.
+	Auto bool `json:"auto,omitempty"`
 }
 
 // Option is one permission decision.
