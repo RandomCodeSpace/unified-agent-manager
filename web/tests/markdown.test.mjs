@@ -57,6 +57,10 @@ test('a src or href is a host path unless it has a web scheme', () => {
   assert.equal(localPath('sky-dodge.png'), 'sky-dodge.png');
   assert.equal(localPath('./shots/a.png'), './shots/a.png');
   assert.equal(localPath('file:///home/dev/shots/a%20b.png'), '/home/dev/shots/a b.png');
+  assert.equal(localPath('shots/a%20b.png'), 'shots/a b.png');
+  assert.equal(localPath('/home/dev/shots/a%20b.png'), '/home/dev/shots/a b.png');
+  assert.equal(localPath('a%2520b.png'), 'a%20b.png');
+  assert.equal(localPath('100%.png'), '100%.png');
   for (const web of ['https://example.com/a.png', 'http://h/a.png', 'data:image/png;base64,AAAA', 'blob:http://h/x', 'mailto:a@b', 'javascript:alert(1)', '', undefined]) {
     assert.equal(localPath(web), null, String(web));
   }
@@ -70,6 +74,9 @@ test('a link names a file of the Task folder by its path relative to it', () => 
   assert.deepEqual(file('out/report.html#results'), { path: 'out/report.html', hash: '#results' });
   assert.deepEqual(file('notes/a%20b.md?x=1'), { path: 'notes/a b.md', hash: '' });
   assert.deepEqual(file('100%.txt'), { path: '100%.txt', hash: '' });
+  assert.deepEqual(file('a%23b.md#top'), { path: 'a#b.md', hash: '#top' });
+  assert.deepEqual(file('a%2520b.md'), { path: 'a%20b.md', hash: '' });
+  assert.deepEqual(file('/home/dev/proj/a%20b.png'), { path: 'a b.png', hash: '' });
   assert.deepEqual(file('/home/dev/proj/out/report.html'), { path: 'out/report.html', hash: '' });
   assert.deepEqual(file('/home/dev/proj/out/r.html', '/home/dev/proj/'), { path: 'out/r.html', hash: '' });
   assert.deepEqual(file('file:///home/dev/proj/out/a%20b.html#top'), { path: 'out/a b.html', hash: '#top' });

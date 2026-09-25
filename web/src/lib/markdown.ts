@@ -48,12 +48,21 @@ export function splitBlocks(text: string): string[] {
 
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
+/** A path percent-decoded, as markdown encodes it; a stray `%` is part of the name. */
+function decodePath(p: string): string {
+  try {
+    return decodeURIComponent(p);
+  } catch {
+    return p;
+  }
+}
+
 /**
  * The file path a markdown `src` or `href` names on the host, or null when it is a web
  * address (`https:`, `data:`, `blob:`, `mailto:`, ...). Agents write `![](shot.png)`,
  * `![](./shots/a.png)`, `![](/home/me/x.png)` and `file:///home/me/x.png`; all of those
- * are paths for the service to serve from the Task's directory. Windows drive letters are
- * not paths here: the service runs on Linux.
+ * are paths for the service to serve from the Task's directory, percent-decoded. Windows
+ * drive letters are not paths here: the service runs on Linux.
  */
 export function localPath(ref: string | undefined): string | null {
   if (!ref) return null;
@@ -65,7 +74,7 @@ export function localPath(ref: string | undefined): string | null {
     }
   }
   if (SCHEME.test(ref)) return null;
-  return ref;
+  return decodePath(ref);
 }
 
 /**
@@ -78,14 +87,8 @@ export function taskFile(ref: string | undefined, workdir: string | undefined): 
   let p = localPath(ref);
   if (!p || !ref) return null;
   const hash = /#.*$/s.exec(ref)?.[0] ?? '';
-  if (!/^file:/i.test(ref)) {
-    p = p.replace(/[?#].*$/s, '');
-    try {
-      p = decodeURIComponent(p);
-    } catch {
-      // A stray % is part of the name.
-    }
-  }
+  // Cut before decoding, so an escaped `%23` stays in the name.
+  if (!/^file:/i.test(ref)) p = decodePath(ref.replace(/[?#].*$/s, ''));
   if (p.startsWith('/')) {
     const dir = workdir?.replace(/\/+$/, '');
     if (!dir || !p.startsWith(`${dir}/`)) return null;
