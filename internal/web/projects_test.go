@@ -66,7 +66,7 @@ func TestProjectsAddRenameAndOnePerDirectory(t *testing.T) {
 		t.Fatalf("snapshot projects = %s", snap.data["projects"])
 	}
 	dir := t.TempDir()
-	p, err := m.AddProject(dir, "", nil)
+	p, err := m.AddProject(dir, "")
 	if err != nil || p.Name != filepath.Base(dir) || p.ID == "" || !validRequestID(p.ID) {
 		t.Fatalf("AddProject = %+v, %v", p, err)
 	}
@@ -75,12 +75,12 @@ func TestProjectsAddRenameAndOnePerDirectory(t *testing.T) {
 	if announced.ID != p.ID || announced.Name != p.Name || announced.Dir != p.Dir || !announced.CreatedAt.Equal(p.CreatedAt) {
 		t.Fatalf("project frame = %+v, want %+v", announced, p)
 	}
-	_, err = m.AddProject(dir+"/.", "other", nil)
+	_, err = m.AddProject(dir+"/.", "other")
 	var dup *Error
 	if !errors.As(err, &dup) || dup.Status != http.StatusConflict || dup.ProjectID != p.ID {
 		t.Fatalf("second project for the directory = %v", err)
 	}
-	renamed, err := m.UpdateProject(p.ID, setting("  My \x1b[1mrepo "), nil)
+	renamed, err := m.UpdateProject(p.ID, "  My \x1b[1mrepo ")
 	if err != nil || renamed.Name != "My repo" || renamed.Dir != dir {
 		t.Fatalf("UpdateProject = %+v, %v", renamed, err)
 	}
@@ -88,10 +88,10 @@ func TestProjectsAddRenameAndOnePerDirectory(t *testing.T) {
 	if announced.Name != "My repo" {
 		t.Fatalf("rename frame = %+v", announced)
 	}
-	if reset, err := m.UpdateProject(p.ID, setting(""), nil); err != nil || reset.Name != filepath.Base(dir) {
+	if reset, err := m.UpdateProject(p.ID, ""); err != nil || reset.Name != filepath.Base(dir) {
 		t.Fatalf("empty rename = %+v, %v", reset, err)
 	}
-	if _, err := m.UpdateProject("missing", setting("x"), nil); statusOf(err) != http.StatusNotFound {
+	if _, err := m.UpdateProject("missing", "x"); statusOf(err) != http.StatusNotFound {
 		t.Fatalf("rename unknown = %v, want 404", err)
 	}
 	cfg, err := st.Load()
@@ -103,7 +103,7 @@ func TestProjectsAddRenameAndOnePerDirectory(t *testing.T) {
 	}
 }
 
-func TestProjectDefaultsValidatedStoredAndLoaded(t *testing.T) {
+func TestTaskDefaultsSettingValidatedStoredAndLoaded(t *testing.T) {
 	caps := allCaps
 	caps.ContextSize = true
 	fake := agenttest.NewProvider("fake", caps)
@@ -112,6 +112,9 @@ func TestProjectDefaultsValidatedStoredAndLoaded(t *testing.T) {
 	plain.SetModels(selectionModels(), nil)
 	st := openTestStore(t)
 	m := startManager(t, st, fake, plain)
+	if got := m.Settings(); got.TaskDefaults != (TaskDefaults{}) {
+		t.Fatalf("task defaults before any = %+v", got.TaskDefaults)
+	}
 	for _, d := range []TaskDefaults{
 		{Provider: "missing", Mode: "safe"},
 		{Provider: "fake", Model: "gpt-9", Mode: "safe"},
@@ -122,42 +125,107 @@ func TestProjectDefaultsValidatedStoredAndLoaded(t *testing.T) {
 		{Provider: "fake", Model: "a", Mode: "bogus"},
 		{Provider: "fake", Model: "a"},
 	} {
-		if _, err := m.AddProject(t.TempDir(), "", &d); statusOf(err) != http.StatusBadRequest {
-			t.Fatalf("AddProject with defaults %+v = %v, want 400", d, err)
+		if _, err := m.UpdateSettings(SettingsPatch{TaskDefaults: &d}); statusOf(err) != http.StatusBadRequest {
+			t.Fatalf("UpdateSettings with task defaults %+v = %v, want 400", d, err)
 		}
 	}
-	if got := m.Projects(); len(got) != 0 {
-		t.Fatalf("refused defaults added projects: %+v", got)
+	if _, err := os.Stat(st.Path()); !os.IsNotExist(err) {
+		t.Fatalf("a refused change wrote the store: %v", err)
+	}
+	sub, _, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
 	}
 	want := TaskDefaults{Provider: "fake", Model: "a", Effort: "high", ContextSize: "long_context", Mode: "yolo"}
-	p, err := m.AddProject(t.TempDir(), "repo", &want)
-	if err != nil || p.Defaults != want {
-		t.Fatalf("AddProject with defaults = %+v, %v", p, err)
+	got, err := m.UpdateSettings(SettingsPatch{TaskDefaults: &want})
+	if err != nil || got.TaskDefaults != want || m.Settings().TaskDefaults != want {
+		t.Fatalf("set task defaults = %+v, %v", got, err)
 	}
-	dir := t.TempDir()
-	bare, err := m.UpdateProject(addProject(t, m, dir), nil, &TaskDefaults{Provider: "plain", Model: "auto", Mode: "safe"})
-	if err != nil || bare.Name != filepath.Base(dir) || bare.Defaults != (TaskDefaults{Provider: "plain", Model: "auto", ContextSize: "default", Mode: "safe"}) {
-		t.Fatalf("defaults only = %+v, %v", bare, err)
+	var streamed Settings
+	decodeField(t, frameOf(t, sub, "settings"), "settings", &streamed)
+	if streamed.TaskDefaults != want {
+		t.Fatalf("settings frame = %+v", streamed)
 	}
-	if _, err := m.UpdateProject(p.ID, setting("renamed"), &TaskDefaults{Provider: "fake", Mode: ""}); statusOf(err) != http.StatusBadRequest {
-		t.Fatalf("invalid defaults with a name = %v, want 400", err)
+	// An empty context size is stored as default; the same value again writes nothing.
+	bare, err := m.UpdateSettings(SettingsPatch{TaskDefaults: &TaskDefaults{Provider: "plain", Model: "auto", Mode: "safe"}})
+	if err != nil || bare.TaskDefaults != (TaskDefaults{Provider: "plain", Model: "auto", ContextSize: "default", Mode: "safe"}) {
+		t.Fatalf("bare task defaults = %+v, %v", bare, err)
 	}
-	if got := m.Projects()[0]; got.Name != "repo" || got.Defaults != want {
-		t.Fatalf("refused update changed the project: %+v", got)
+	before, err := os.Stat(st.Path())
+	if err != nil {
+		t.Fatal(err)
 	}
-	both, err := m.UpdateProject(p.ID, setting("renamed"), &TaskDefaults{Provider: "fake", ContextSize: "default", Mode: "safe"})
-	if err != nil || both.Name != "renamed" || both.Defaults != (TaskDefaults{Provider: "fake", ContextSize: "default", Mode: "safe"}) {
-		t.Fatalf("name and defaults = %+v, %v", both, err)
+	if same, err := m.UpdateSettings(SettingsPatch{TaskDefaults: &TaskDefaults{Provider: "plain", Model: "auto", ContextSize: "default", Mode: "safe"}}); err != nil || same.TaskDefaults != bare.TaskDefaults {
+		t.Fatalf("no change = %+v, %v", same, err)
 	}
-	if named, err := m.UpdateProject(p.ID, setting("again"), nil); err != nil || named.Name != "again" || named.Defaults != both.Defaults {
-		t.Fatalf("name only = %+v, %v", named, err)
+	if after, err := os.Stat(st.Path()); err != nil || !os.SameFile(before, after) {
+		t.Fatalf("an unchanged setting rewrote the store: %v", err)
 	}
-	if _, err := m.UpdateProject("missing", nil, &want); statusOf(err) != http.StatusNotFound {
-		t.Fatalf("update unknown = %v, want 404", err)
+	if cfg, err := st.Load(); err != nil || cfg.WebSettings.TaskDefaults != store.WebTaskDefaults(bare.TaskDefaults) {
+		t.Fatalf("stored task defaults = %+v, %v", cfg.WebSettings.TaskDefaults, err)
 	}
-	loaded := startManager(t, st, agenttest.NewProvider("fake", caps), agenttest.NewProvider("plain", allCaps)).Projects()
-	if len(loaded) != 2 || loaded[0].Name != "again" || loaded[0].Defaults != both.Defaults || loaded[1].Defaults != bare.Defaults {
-		t.Fatalf("projects after reload = %+v", loaded)
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := startManager(t, st, agenttest.NewProvider("fake", caps), agenttest.NewProvider("plain", allCaps)).Settings(); got.TaskDefaults != bare.TaskDefaults {
+		t.Fatalf("task defaults after restart = %+v", got)
+	}
+}
+
+// Task defaults kept per Project by older versions become the setting on
+// load: the newest Project's valid ones, once, and the Projects lose them.
+func TestProjectDefaultsMigrateIntoSettings(t *testing.T) {
+	st := openTestStore(t)
+	project := func(id, created, defaults string) string {
+		return `"` + id + `":{"id":"` + id + `","name":"` + id + `","dir":"/tmp/` + id + `","created_at":"` + created + `","defaults":` + defaults + `}`
+	}
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"sessions":{},"ui":{"sort":"state","peek_width":60},"web_projects":{` + strings.Join([]string{
+		project("old", "2026-09-01T00:00:00Z", `{"provider":"fake","model":"a","effort":"","context_size":"default","mode":"safe"}`),
+		project("new", "2026-09-20T00:00:00Z", `{"provider":"fake","model":"b","effort":"high","context_size":"","mode":"yolo"}`),
+		project("newest-invalid", "2026-09-24T00:00:00Z", `{"provider":"","model":"c","effort":"","context_size":"default","mode":"safe"}`),
+	}, ",") + `}}`
+	if err := os.WriteFile(st.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := agenttest.NewProvider("fake", allCaps)
+	fake.SetModels(selectionModels(), nil)
+	m := startManager(t, st, fake)
+	want := TaskDefaults{Provider: "fake", Model: "b", Effort: "high", ContextSize: "default", Mode: "yolo"}
+	if got := m.Settings(); got.TaskDefaults != want {
+		t.Fatalf("migrated task defaults = %+v, want %+v", got.TaskDefaults, want)
+	}
+	// The next save drops the Projects' defaults and keeps the setting; a
+	// later change to the setting is not undone by the old Projects.
+	if _, err := m.UpdateProject("old", "renamed"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		WebProjects map[string]map[string]json.RawMessage `json:"web_projects"`
+		WebSettings struct {
+			TaskDefaults TaskDefaults `json:"task_defaults"`
+		} `json:"web_settings"`
+	}
+	if err := json.Unmarshal(data, &saved); err != nil || saved.WebSettings.TaskDefaults != want {
+		t.Fatalf("store after migration: %s, %v", data, err)
+	}
+	for id, p := range saved.WebProjects {
+		if _, has := p["defaults"]; has {
+			t.Fatalf("project %s kept defaults after the next save: %s", id, data)
+		}
+	}
+	changed := TaskDefaults{Provider: "fake", Model: "a", Mode: "safe"}
+	if _, err := m.UpdateSettings(SettingsPatch{TaskDefaults: &changed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := startManager(t, st, agenttest.NewProvider("fake", allCaps)).Settings(); got.TaskDefaults != (TaskDefaults{Provider: "fake", Model: "a", ContextSize: "default", Mode: "safe"}) {
+		t.Fatalf("task defaults after restart = %+v", got.TaskDefaults)
 	}
 }
 
@@ -427,7 +495,7 @@ func TestWritersKeepFieldsANewerUamWrote(t *testing.T) {
 	if _, err := m.Rename(id, "new name"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.UpdateProject(projectID, setting("renamed"), nil); err != nil {
+	if _, err := m.UpdateProject(projectID, "renamed"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Close(id); err != nil { // flushes synchronously
@@ -827,7 +895,7 @@ func TestReopenRestoresSubagentsFromHistory(t *testing.T) {
 	}
 }
 
-func TestProjectDefaultsRoutes(t *testing.T) {
+func TestTaskDefaultsRoutes(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)
 	ts.prov.SetModels(selectionModels(), nil)
@@ -835,64 +903,43 @@ func TestProjectDefaultsRoutes(t *testing.T) {
 	ts.m.modelsAt["fake"] = time.Time{}
 	ts.m.mu.Unlock()
 	ts.m.RefreshModels()
-	add := func(body string) Project {
+	patch := func(body string, want int) string {
 		t.Helper()
-		w := ts.do(http.MethodPost, "/api/projects", body, auth)
-		var p Project
-		if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil || w.Code != http.StatusCreated {
-			t.Fatalf("POST /api/projects %s = %d %s", body, w.Code, w.Body)
-		}
-		return p
-	}
-	for _, defaults := range []string{`{"provider":"fake","mode":""}`, `{"provider":"nope","mode":"safe"}`, `{"provider":"fake","model":"b","effort":"low","mode":"safe"}`} {
-		w := ts.do(http.MethodPost, "/api/projects", `{"dir":"`+t.TempDir()+`","defaults":`+defaults+`}`, auth)
-		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"error"`) {
-			t.Fatalf("POST /api/projects defaults %s = %d %s, want 400", defaults, w.Code, w.Body)
-		}
-	}
-	withDefaults := add(`{"dir":"` + t.TempDir() + `","defaults":{"provider":"fake","model":"b","effort":"high","context_size":"","mode":"yolo"}}`)
-	bare := add(`{"dir":"` + t.TempDir() + `","name":"bare"}`)
-	patch := func(id, body string, want int) string {
-		t.Helper()
-		w := ts.do(http.MethodPatch, "/api/projects/"+id, body, auth)
+		w := ts.do(http.MethodPatch, "/api/settings", body, auth)
 		if w.Code != want {
-			t.Fatalf("PATCH /api/projects/%s %s = %d %s, want %d", id, body, w.Code, w.Body, want)
+			t.Fatalf("PATCH /api/settings %s = %d %s, want %d", body, w.Code, w.Body, want)
 		}
-		return w.Body.String()
+		return strings.TrimSpace(w.Body.String())
 	}
-	const defaultsB = `"defaults":{"provider":"fake","model":"b","effort":"high","context_size":"default","mode":"yolo"}`
-	if got := patch(withDefaults.ID, `{"name":"renamed"}`, http.StatusOK); !strings.Contains(got, `"name":"renamed"`) || !strings.Contains(got, defaultsB) {
-		t.Fatalf("name only = %s", got)
+	for _, body := range []string{
+		`{"task_defaults":null}`, `{"task_defaults":"auto"}`, `{"task_defaults":{"provider":"fake","mode":""}}`,
+		`{"task_defaults":{"provider":"nope","mode":"safe"}}`, `{"task_defaults":{"provider":"fake","model":"b","effort":"low","mode":"safe"}}`,
+	} {
+		if got := patch(body, http.StatusBadRequest); !strings.Contains(got, `"error"`) {
+			t.Fatalf("PATCH %s = %s", body, got)
+		}
 	}
-	if got := patch(bare.ID, `{"name":"still bare"}`, http.StatusOK); strings.Contains(got, `"defaults"`) {
-		t.Fatalf("name only without defaults = %s", got)
+	if got := patch(`{"task_defaults":{"provider":"fake","model":"b","effort":"high","context_size":"","mode":"yolo"}}`, http.StatusOK); got != `{"send_default":"steer","task_defaults":{"provider":"fake","model":"b","effort":"high","context_size":"default","mode":"yolo"}}` {
+		t.Fatalf("PATCH task defaults = %s", got)
 	}
-	if got := patch(bare.ID, `{"defaults":{"provider":"fake","model":"auto","effort":"","context_size":"default","mode":"safe"}}`, http.StatusOK); !strings.Contains(got, `"name":"still bare"`) ||
-		!strings.Contains(got, `"defaults":{"provider":"fake","model":"auto","effort":"","context_size":"default","mode":"safe"}`) {
-		t.Fatalf("defaults only = %s", got)
+	if w := ts.do(http.MethodGet, "/api/settings", "", auth); !strings.Contains(w.Body.String(), `"task_defaults":{"provider":"fake","model":"b"`) {
+		t.Fatalf("GET /api/settings = %d %s", w.Code, w.Body)
 	}
-	if got := patch(withDefaults.ID, `{"name":"both","defaults":{"provider":"fake","model":"","effort":"","context_size":"default","mode":"safe"}}`, http.StatusOK); !strings.Contains(got, `"name":"both"`) ||
-		!strings.Contains(got, `"defaults":{"provider":"fake","model":"","effort":"","context_size":"default","mode":"safe"}`) {
-		t.Fatalf("name and defaults = %s", got)
-	}
-	patch(withDefaults.ID, `{}`, http.StatusBadRequest)
-	patch(withDefaults.ID, `{"defaults":null}`, http.StatusBadRequest)
-	patch(withDefaults.ID, `{"defaults":{"provider":"fake","mode":"bogus"}}`, http.StatusBadRequest)
-	patch("missing", `{"defaults":{"provider":"fake","mode":"safe"}}`, http.StatusNotFound)
-	none := add(`{"dir":"` + t.TempDir() + `"}`)
 
-	w := ts.do(http.MethodGet, "/api/projects", "", auth)
-	var list struct {
-		Projects []map[string]json.RawMessage `json:"projects"`
+	// Projects no longer carry defaults: a "defaults" key in their bodies is ignored, and they never list one.
+	w := ts.do(http.MethodPost, "/api/projects", `{"dir":"`+t.TempDir()+`","name":"repo","defaults":{"provider":"fake","model":"a","mode":"safe"}}`, auth)
+	var p Project
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil || w.Code != http.StatusCreated || strings.Contains(w.Body.String(), `"defaults"`) {
+		t.Fatalf("POST /api/projects with defaults = %d %s", w.Code, w.Body)
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list.Projects) != 3 {
-		t.Fatalf("projects = %d %s", w.Code, w.Body)
+	if w := ts.do(http.MethodPatch, "/api/projects/"+p.ID, `{"defaults":{"provider":"fake","model":"a","mode":"safe"}}`, auth); w.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH /api/projects defaults only = %d %s, want 400", w.Code, w.Body)
 	}
-	for _, p := range list.Projects {
-		_, has := p["defaults"]
-		if id := strings.Trim(string(p["id"]), `"`); has == (id == none.ID) {
-			t.Fatalf("project %s defaults present = %v in %s", id, has, w.Body)
-		}
+	if w := ts.do(http.MethodPatch, "/api/projects/"+p.ID, `{"name":"renamed","defaults":{"provider":"fake","model":"a","mode":"safe"}}`, auth); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"name":"renamed"`) || strings.Contains(w.Body.String(), `"defaults"`) {
+		t.Fatalf("PATCH /api/projects name with defaults = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodGet, "/api/projects", "", auth); w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"defaults"`) {
+		t.Fatalf("GET /api/projects = %d %s", w.Code, w.Body)
 	}
 }
 

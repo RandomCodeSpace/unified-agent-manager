@@ -384,11 +384,11 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, [select]);
 
-  /** New task: a draft for the Project on its defaults, with its composer focused; no request until its first Send. */
+  /** New task: a draft for the Project on the Task defaults of Settings, with its composer focused; no request until its first Send. */
   const startTask = useCallback(
     (projectId: string) => {
       const project = state.projects.find((p) => p.id === projectId);
-      const defaults = project && resolveTaskDefaults(meta, project.defaults, state.settings.hidden_models);
+      const defaults = project && resolveTaskDefaults(meta, state.settings.task_defaults, state.settings.hidden_models);
       if (!defaults) {
         setNotice(`Could not start a task: ${meta ? 'No provider is available.' : 'The provider list has not loaded yet.'}`);
         return;
@@ -396,7 +396,7 @@ export default function App() {
       select(null);
       setNewTask({ projectId, defaults, tick: ++newTaskTick.current });
     },
-    [state.projects, state.settings.hidden_models, meta, select],
+    [state.projects, state.settings.task_defaults, state.settings.hidden_models, meta, select],
   );
   const draftTick = newTask?.tick;
   useEffect(() => {

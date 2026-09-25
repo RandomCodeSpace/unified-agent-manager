@@ -93,16 +93,14 @@ type Project struct {
 	Name      string    `json:"name"`
 	Dir       string    `json:"dir"`
 	CreatedAt time.Time `json:"created_at"`
-	// Defaults are omitted when the Project has none.
-	Defaults TaskDefaults `json:"defaults,omitzero"`
-	Badge    Badge        `json:"badge"`
+	Badge     Badge     `json:"badge"`
 	// Branch is the branch checked out in Dir's git work tree, read from git
 	// and never stored. It is empty when Dir is not in a work tree, HEAD is
 	// detached, or git cannot tell.
 	Branch string `json:"branch,omitempty"`
 }
 
-// TaskDefaults are the settings a Project's new Tasks start with. The
+// TaskDefaults are the settings a new Task starts with (Settings). The
 // browser resolves them against the live models when it creates a Task.
 // ContextSize is "default" unless a tier is chosen; Mode is safe or yolo.
 type TaskDefaults struct {
@@ -137,6 +135,9 @@ type Settings struct {
 	// CustomModels are the OpenAI-compatible models the owner brought;
 	// omitted when there are none. Their model IDs are name/model_id.
 	CustomModels []CustomModel `json:"custom_models,omitempty"`
+	// TaskDefaults are the settings a new Task starts with; omitted when
+	// unset, and the browser then starts from the provider's own defaults.
+	TaskDefaults TaskDefaults `json:"task_defaults,omitzero"`
 }
 
 // CustomModel is one custom model in Settings. APIKeyEnv only names the

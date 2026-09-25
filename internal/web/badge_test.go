@@ -178,7 +178,7 @@ func TestProjectBadgeAssignedAndKeptOnRenameAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := m.AddProject(t.TempDir(), "config", nil)
+	p, err := m.AddProject(t.TempDir(), "config")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestProjectBadgeAssignedAndKeptOnRenameAndRestart(t *testing.T) {
 	if want, _ := json.Marshal(p.Badge); string(framed["badge"]) != string(want) {
 		t.Fatalf("project frame badge = %s, want %s", framed["badge"], want)
 	}
-	renamed, err := m.UpdateProject(p.ID, setting("zz top"), nil)
+	renamed, err := m.UpdateProject(p.ID, "zz top")
 	if err != nil || renamed.Badge != p.Badge {
 		t.Fatalf("renamed badge = %+v, %v; want %+v", renamed.Badge, err, p.Badge)
 	}

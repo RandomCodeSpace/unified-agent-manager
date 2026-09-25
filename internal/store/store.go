@@ -442,9 +442,11 @@ type WebProject struct {
 	Name      string    `json:"name"`
 	Dir       string    `json:"dir"`
 	CreatedAt time.Time `json:"created_at"`
-	// Defaults are the settings a new Task in the Project starts with; zero
-	// when the Project has none.
-	Defaults WebTaskDefaults `json:"defaults,omitzero"`
+	// LegacyDefaults are the per-Project Task defaults of versions before
+	// WebSettings.TaskDefaults. Load reads them once, adopts the newest valid
+	// ones as the setting when it is unset, and clears them, so the next save
+	// drops the key. Nothing writes them.
+	LegacyDefaults WebTaskDefaults `json:"defaults,omitzero"`
 	// Badge is zero until the web service assigns one; it also replaces an
 	// invalid one on load.
 	Badge WebBadge `json:"badge,omitzero"`
@@ -459,8 +461,10 @@ type WebBadge struct {
 	Color string `json:"color"`
 }
 
-// WebTaskDefaults are a Project's settings for new Tasks. ContextSize is
-// "default" unless a tier is chosen; Mode is safe or yolo.
+// WebTaskDefaults are the settings a new Task starts with, shared by every
+// browser. ContextSize is "default" unless a tier is chosen; Mode is safe or
+// yolo. The zero value means unset: the browser then starts from the
+// provider's own defaults.
 type WebTaskDefaults struct {
 	Provider    string `json:"provider"`
 	Model       string `json:"model"`
@@ -521,6 +525,8 @@ type WebSettings struct {
 	// (BYOM), valid as ValidCustomModels checks. No key is stored: only the
 	// name of the service environment variable that holds it.
 	CustomModels []WebCustomModel `json:"custom_models,omitempty"`
+	// TaskDefaults are the settings a new Task starts with; zero when unset.
+	TaskDefaults WebTaskDefaults `json:"task_defaults,omitzero"`
 
 	unknown map[string]json.RawMessage
 }
@@ -685,6 +691,7 @@ var knownWebSettingsFields = map[string]struct{}{
 	"hidden_models": {},
 	"title_model":   {},
 	"custom_models": {},
+	"task_defaults": {},
 }
 
 func (w WebSettings) MarshalJSON() ([]byte, error) {
@@ -935,6 +942,8 @@ func (s *Store) loadNoLock() (Config, error) {
 	cleanHiddenModels(&cfg.WebSettings)
 	cleanTitleModels(&cfg.WebSettings)
 	cleanCustomModels(&cfg.WebSettings)
+	cleanTaskDefaults(&cfg.WebSettings)
+	migrateProjectDefaults(&cfg)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
 	// erroring or clobbering it on the next save (F33).
@@ -1059,19 +1068,56 @@ func dropInvalidProjects(cfg *Config) {
 			delete(cfg.WebProjects, key)
 			continue
 		}
-		// Defaults are lookups, never argv; bad ones cost the Project its
-		// defaults, not the Project itself.
-		if d := p.Defaults; d != (WebTaskDefaults{}) {
-			if d.ContextSize == "" {
-				d.ContextSize = "default"
-			}
-			if d.Provider == "" || hasControlChar(d.Provider) || len(d.Provider) > maxWebModelBytes || hasControlChar(d.Model) || len(d.Model) > maxWebModelBytes || hasControlChar(d.Effort) || len(d.Effort) > maxWebModelBytes || (d.ContextSize != "default" && d.ContextSize != "long_context") || (Mode(d.Mode) != ModeSafe && Mode(d.Mode) != ModeYolo) {
-				log.Warn("clearing invalid task defaults on web project", "key", key)
-				d = WebTaskDefaults{}
-			}
-			p.Defaults = d
-			cfg.WebProjects[key] = p
+	}
+}
+
+// validTaskDefaults returns d with an empty context size made "default", and
+// whether it is usable: a provider, no control characters or oversized
+// values, a known context size and a safe or yolo mode. Defaults are
+// lookups, never argv.
+func validTaskDefaults(d WebTaskDefaults) (WebTaskDefaults, bool) {
+	if d.ContextSize == "" {
+		d.ContextSize = "default"
+	}
+	if d.Provider == "" || hasControlChar(d.Provider) || len(d.Provider) > maxWebModelBytes || hasControlChar(d.Model) || len(d.Model) > maxWebModelBytes || hasControlChar(d.Effort) || len(d.Effort) > maxWebModelBytes || (d.ContextSize != "default" && d.ContextSize != "long_context") || (Mode(d.Mode) != ModeSafe && Mode(d.Mode) != ModeYolo) {
+		return WebTaskDefaults{}, false
+	}
+	return d, true
+}
+
+// cleanTaskDefaults clears loaded task defaults that validTaskDefaults
+// refuses; unset stays unset.
+func cleanTaskDefaults(w *WebSettings) {
+	if w.TaskDefaults == (WebTaskDefaults{}) {
+		return
+	}
+	d, ok := validTaskDefaults(w.TaskDefaults)
+	if !ok {
+		log.Warn("clearing invalid stored task defaults")
+	}
+	w.TaskDefaults = d
+}
+
+// migrateProjectDefaults moves the per-Project Task defaults of older
+// versions into the one setting: when it is unset, the valid defaults of the
+// most recently created Project that has any become it. Every Project's
+// legacy defaults are cleared, so the next save drops them.
+func migrateProjectDefaults(cfg *Config) {
+	var adopted WebTaskDefaults
+	var adoptedAt time.Time
+	for key, p := range cfg.WebProjects {
+		if p.LegacyDefaults == (WebTaskDefaults{}) {
+			continue
 		}
+		if d, ok := validTaskDefaults(p.LegacyDefaults); ok && (adopted == (WebTaskDefaults{}) || p.CreatedAt.After(adoptedAt)) {
+			adopted, adoptedAt = d, p.CreatedAt
+		}
+		p.LegacyDefaults = WebTaskDefaults{}
+		cfg.WebProjects[key] = p
+	}
+	if cfg.WebSettings.TaskDefaults == (WebTaskDefaults{}) && adopted != (WebTaskDefaults{}) {
+		log.Info("adopting a project's task defaults as the setting", "provider", adopted.Provider, "model", adopted.Model)
+		cfg.WebSettings.TaskDefaults = adopted
 	}
 }
 

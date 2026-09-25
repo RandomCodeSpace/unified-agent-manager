@@ -21,15 +21,18 @@ import (
 var importCaps = agentapi.Capabilities{Cancel: true, Permissions: true, Questions: true, History: true, Import: true}
 
 // importManager starts a manager whose provider can import, with one
-// Project and the offered models.
+// Project, the offered models and Task defaults in Settings.
 func importManager(t *testing.T) (*Manager, *agenttest.Provider, *store.Store, Project) {
 	t.Helper()
 	prov := agenttest.NewProvider("fake", importCaps)
 	prov.SetModels([]agentapi.Model{{ID: "m-recorded", Name: "Recorded"}, {ID: "m-default", Name: "Default", Efforts: []string{"high"}}}, nil)
 	st := openTestStore(t)
 	m := startManager(t, st, prov)
-	p, err := m.AddProject(t.TempDir(), "", &TaskDefaults{Provider: "fake", Model: "m-default", Effort: "high", Mode: "yolo"})
+	p, err := m.AddProject(t.TempDir(), "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateSettings(SettingsPatch{TaskDefaults: &TaskDefaults{Provider: "fake", Model: "m-default", Effort: "high", Mode: "yolo"}}); err != nil {
 		t.Fatal(err)
 	}
 	return m, prov, st, p
@@ -142,8 +145,8 @@ func TestImportCreatesAClosedTaskWithTheRecordedTranscript(t *testing.T) {
 	if _, err := m.Import(context.Background(), p.ID, prevA); statusOf(err) != http.StatusConflict {
 		t.Fatalf("second import = %v", err)
 	}
-	// A model the provider no longer offers gives way to the Project's
-	// defaults.
+	// A model the provider no longer offers gives way to the Task defaults
+	// of Settings.
 	other, err := m.Import(context.Background(), p.ID, prevB)
 	if err != nil || other.Model != "m-default" || other.Effort != "high" {
 		t.Fatalf("import with an unoffered model = %+v, %v", other, err)

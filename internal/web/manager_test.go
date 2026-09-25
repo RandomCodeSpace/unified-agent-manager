@@ -49,7 +49,7 @@ func newTestManager(t *testing.T) (*Manager, *agenttest.Provider, *store.Store) 
 // addProject adds dir as a Project and returns its ID.
 func addProject(t *testing.T, m *Manager, dir string) string {
 	t.Helper()
-	p, err := m.AddProject(dir, "", nil)
+	p, err := m.AddProject(dir, "")
 	if err != nil {
 		t.Fatalf("AddProject: %v", err)
 	}
@@ -721,7 +721,7 @@ func TestItemAndTextBounds(t *testing.T) {
 func TestCreateValidatesProjectModelAndProvider(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	for _, dir := range []string{"", "relative/path", "/definitely/not/here"} {
-		if _, err := m.AddProject(dir, "", nil); statusOf(err) != http.StatusBadRequest {
+		if _, err := m.AddProject(dir, ""); statusOf(err) != http.StatusBadRequest {
 			t.Fatalf("AddProject(%q) = %v, want 400", dir, err)
 		}
 	}

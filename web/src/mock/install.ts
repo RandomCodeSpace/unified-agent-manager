@@ -135,7 +135,7 @@ export function install(): void {
     if (media?.max_images && images > media.max_images) return fail(400, `${modelLabel(t)} accepts at most ${media.max_images} images per prompt`);
     return { files, attachments };
   };
-  /** The service's selection checks, for a Project's defaults and a new Task alike: a string is the 400 message. */
+  /** The service's selection checks, for the Task defaults setting and a new Task alike: a string is the 400 message. */
   const checkSelection = (raw: unknown): TaskDefaults | string => {
     const d = (raw && typeof raw === 'object' ? raw : {}) as Json;
     const prov = st.meta.providers.find((p) => p.name === d.provider);
@@ -473,7 +473,13 @@ export function install(): void {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults') return fail(400, `unknown setting "${key}"`);
+      if (body.task_defaults !== undefined) {
+        const defaults = checkSelection(body.task_defaults);
+        if (typeof defaults === 'string') return fail(400, defaults);
+        st.settings = { ...st.settings, task_defaults: defaults };
+        broadcast('settings', { settings: st.settings });
+      }
       if (Array.isArray(body.custom_models)) {
         // The mock sets no key variables; the service lists the models after Copilot's own.
         const custom = (body.custom_models as CustomModel[]).map((c) => ({ ...c, key_present: false }));
@@ -497,10 +503,8 @@ export function install(): void {
       if (!dir.startsWith('/')) return fail(400, 'dir must be an absolute path to a directory');
       const existing = st.projects.find((p) => p.dir === dir.replace(/\/+$/, ''));
       if (existing) return fail(409, 'that directory already has a project', { project_id: existing.id });
-      const defaults = body.defaults === undefined ? undefined : checkSelection(body.defaults);
-      if (typeof defaults === 'string') return fail(400, defaults);
       const name = String(body.name ?? '').trim() || dir.split('/').filter(Boolean).pop() || dir;
-      const p: Project = { id: nextId('p'), name, dir, created_at: now(), badge: newBadge(name), ...(defaults ? { defaults } : {}) };
+      const p: Project = { id: nextId('p'), name, dir, created_at: now(), badge: newBadge(name) };
       st.projects.push(p);
       st.changes[p.id] = [];
       broadcast('project', { project: p });
@@ -510,11 +514,8 @@ export function install(): void {
       const p = st.projects.find((x) => x.id === decodeURIComponent(r![1]));
       if (!p) return fail(404, 'project not found');
       if (method === 'PATCH') {
-        if (body.name === undefined && body.defaults === undefined) return fail(400, 'name or defaults required');
-        const defaults = body.defaults === undefined ? undefined : checkSelection(body.defaults);
-        if (typeof defaults === 'string') return fail(400, defaults);
-        if (body.name !== undefined) p.name = String(body.name).trim() || p.dir.split('/').filter(Boolean).pop() || p.dir;
-        if (defaults) p.defaults = defaults;
+        if (body.name === undefined) return fail(400, 'name is required');
+        p.name = String(body.name).trim() || p.dir.split('/').filter(Boolean).pop() || p.dir;
         broadcast('project', { project: p });
         return json(200, p);
       }

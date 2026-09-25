@@ -1,8 +1,8 @@
 import { X } from 'lucide-react';
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { api, describeError, type CustomModel, type Model, type SendDefault, type Settings } from '../api';
+import { api, describeError, resolveTaskDefaults, type CustomModel, type Model, type SendDefault, type Settings } from '../api';
 import { Note, Spinner, useApp } from './common';
-import { Field } from './TaskDefaults';
+import { Field, TaskDefaultsFields } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
@@ -284,6 +284,8 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
 
   const other = settings.send_default === 'steer' ? 'Queue' : 'Steer';
   const titled = (meta?.providers ?? []).filter((p) => p.capabilities.titles);
+  // What New task uses today: the setting checked against the live catalog, or the provider's own defaults until it is set.
+  const taskDefaults = resolveTaskDefaults(meta, settings.task_defaults, settings.hidden_models);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
@@ -323,6 +325,14 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               />
             </Row>
           </Section>
+          {taskDefaults && (
+            <Section id="new-tasks" title="New tasks">
+              <Note>What a new task starts with, in every project. The composer can still change each one before the first message.</Note>
+              <div className="max-w-xl">
+                <TaskDefaultsFields prefix="new-tasks" value={taskDefaults} disabled={saving} onChange={(next) => void save({ task_defaults: next })} />
+              </div>
+            </Section>
+          )}
           {titled.length > 0 && <Section id="utility" title="Utility model">
             {titled.map((p) => {
               const current = settings.title_model?.[p.name] ?? '';

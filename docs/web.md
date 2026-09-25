@@ -146,12 +146,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   selected folder, or the one being shown, into the field. With the
   keyboard: arrows move, Enter opens, Backspace goes up, typing jumps to a
   name, and Ctrl+Enter (Cmd+Enter on a Mac) uses the folder. A directory
-  has one Project; adding it again points you to the existing one. A Project
-  can carry defaults for new Tasks: model, effort, context size (where the
-  provider allows it) and mode. Set them when you add the Project, or later
-  with "Edit project" (the gear beside the Project in the sidebar's filter
-  list), which also renames it and offers "Previous sessions" and "Remove
-  project". Editing a Project changes only its record in UAM. Web sessions from before Projects existed are placed in
+  has one Project; adding it again points you to the existing one. "Edit
+  project" (the gear beside the Project in the sidebar's filter list) renames
+  it and offers "Previous sessions" and "Remove project". Editing a Project
+  changes only its record in UAM. Web sessions from before Projects existed are placed in
   a Project for their directory, named after it, when the service starts.
   Each Project has a badge of two characters on a colour: the first letter or
   digit of its name and the last one (`CG` for config), then a random remaining
@@ -165,8 +163,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   arrow keys and Enter, click one, or press Alt+1 to Alt+9 for the first
   nine. The Project the sidebar is filtered to starts highlighted, otherwise
   the one you worked in last; with a single Project the pen skips the list.
-  Picking one opens a new, empty Task pane with the
-  Project's defaults applied and puts the cursor in the composer. The Task
+  Picking one opens a new, empty Task pane on the defaults for new tasks
+  from Settings and puts the cursor in the composer. The Task
   itself, and its Copilot conversation, is created only when you send the
   first message: until then nothing appears in the sidebar, and leaving the
   pane (another Task, Settings, a reload) discards it, keeping what you typed
@@ -175,11 +173,11 @@ are logged only at debug level (`UAM_DEBUG=1`).
   and mode the Task starts with; `@` lists the Project's files, while `/`
   commands and `$` skills are available after the first message. If the Task
   is created but the message cannot be sent, the Task opens with the message
-  back in its composer and the reason above it. A Project without
-  defaults starts a Task with `auto`, default effort, default context size and
-  safe mode. A default model the provider no longer offers is replaced by
-  `auto` (or the first model), with default effort and context size, so New
-  task does not fail on a stale default. A provider that is not installed or
+  back in its composer and the reason above it. Until the defaults are set
+  in Settings, a Task starts with `auto`, default effort, default context
+  size and safe mode. A default model the provider no longer offers is
+  replaced by `auto` (or the first model), with default effort and context
+  size, so New task does not fail on a stale default. A provider that is not installed or
   not compatible is reported with the reason. The Task runs in the Project's
   directory.
 - **Names and titles**: the name is optional. Without one, the Task shows the
@@ -196,7 +194,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   turn. The list is refreshed at most every five minutes, so a changed
   subscription shows up without restarting the service.
 - **Model visibility**: Settings → Models hides models from the composer,
-  Project defaults and title-model choices. Existing Tasks and defaults keep
+  the defaults for new tasks and title-model choices. Existing Tasks and defaults keep
   their current model and show "hidden in Settings". New models are visible
   automatically. Hiding is a display preference, not an access rule.
 - **Composer layout**: the toolbar groups Model, Effort/Context and Safe/Yolo.
@@ -418,7 +416,15 @@ are logged only at debug level (`UAM_DEBUG=1`).
   old value comes back with the reason. `GET /api/settings` returns the
   settings as `{"send_default": "steer"}`, and `PATCH /api/settings` with
   `{"send_default": "queue"}` changes them. An unknown key or value is
-  refused and changes nothing. `hidden_models`, e.g.
+  refused and changes nothing. **New tasks** holds what every new Task
+  starts with, in every Project: model, effort, context size (where the
+  provider allows it) and Safe or Yolo mode, kept as `task_defaults`, e.g.
+  `{"task_defaults": {"provider": "copilot", "model": "gpt-5-mini",
+  "effort": "high", "context_size": "default", "mode": "safe"}}`; the
+  service checks them as it checks a Task's selection. Until they are set,
+  a new Task starts with the provider's own defaults. Defaults that older
+  versions kept per Project are adopted from the newest Project that had
+  them the first time the service loads the store. `hidden_models`, e.g.
   `{"hidden_models": {"copilot": ["gpt-5-mini"]}}`, lists the models not
   offered in the pickers; a `PATCH` replaces the list of each provider it
   names, and an empty list shows all of that provider's models again. At
@@ -548,7 +554,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   Tasks. A session appears once it has a first message. Importing one makes
   it a Task with its whole conversation; nothing is sent. The Task keeps the
   session's model when Copilot still offers it, otherwise it takes the
-  Project's defaults, and it takes the Project's mode. It starts closed: your
+  defaults for new tasks from Settings, and it takes their mode. It starts closed: your
   next message opens the session. Import is offered when the installed
   Copilot CLI supports both history reading and in-use detection;
   OpenCode cannot tell when another program uses a session, so it offers no
