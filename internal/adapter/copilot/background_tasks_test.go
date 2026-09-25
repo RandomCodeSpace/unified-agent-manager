@@ -234,6 +234,63 @@ func TestWebAssistantIdleEndsTurnWithBackgroundShellWhenModeUnknown(t *testing.T
 	}
 }
 
+// Copilot CLI 1.0.88, live: in autopilot, an agent that starts an attached
+// async shell and calls task_complete ends with assistant.idle. The CLI
+// defers session.idle, and with it the autopilot continuation decision,
+// while an attached shell runs, so nothing follows until the shell exits.
+// A follow-up sent then without a mode is delivered at once.
+func TestWebAutopilotAssistantIdleWithAttachedShellEndsTurn(t *testing.T) {
+	h, runtime := runtimeHarness(t)
+	c := h.conv.(*conversation)
+	runtime.state.Mode = "autopilot"
+	c.refreshExecution(context.Background())
+	ctx := context.Background()
+	lastTurn := func() *agentapi.Turn {
+		var last *agentapi.Turn
+		for _, event := range h.sink.all() {
+			if event.Turn != nil {
+				last = event.Turn
+			}
+		}
+		return last
+	}
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "start a server"}); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("user", userMessage("p1", rpc.UserMessageDeliveryIdle, "start a server")))
+	h.fs.onEvent(ev("start", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.setTasks(&rpc.TaskShellInfo{ID: "0", Command: "python3 -m http.server 8390", AttachmentMode: rpc.TaskShellInfoAttachmentModeAttached, Status: rpc.TaskStatusRunning})
+	h.fs.onEvent(ev("background", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 1)
+	h.fs.onEvent(ev("end", &rpc.AssistantTurnEndData{TurnID: "0"}))
+	h.fs.onEvent(ev("next", &rpc.AssistantTurnStartData{TurnID: "1"}))
+	h.fs.onEvent(ev("done", &rpc.SessionTaskCompleteData{}))
+	h.fs.onEvent(ev("end-1", &rpc.AssistantTurnEndData{TurnID: "1"}))
+	h.fs.onEvent(ev("main-idle", &rpc.AssistantIdleData{}))
+	waitFor(t, "autopilot turn to end with the attached shell running", func() bool {
+		last := lastTurn()
+		return last != nil && last.State == agentapi.TurnCompleted
+	})
+	if h.fs.aborts != 0 || len(h.fs.subCancels) != 0 {
+		t.Fatal("ending the turn stopped the background shell")
+	}
+	c.mu.Lock()
+	tasks := c.backgroundTasks
+	c.mu.Unlock()
+	if tasks == nil || len(tasks.Tasks) != 1 || tasks.Tasks[0].Status != "running" {
+		t.Fatalf("background shell = %+v", tasks)
+	}
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "follow-up"}); err != nil {
+		t.Fatalf("follow-up after the autopilot idle: %v", err)
+	}
+	if last := lastTurn(); last == nil || last.State != agentapi.TurnWorking {
+		t.Fatalf("follow-up did not start a turn: %+v", last)
+	}
+	if strings.Join(h.fs.modes, ",") != "," {
+		t.Fatalf("modes %q, want the follow-up sent without a mode", h.fs.modes)
+	}
+}
+
 func TestWebUnresolvedAssistantIdleKeepsAutopilotWorking(t *testing.T) {
 	h, lastTurn := unresolvedIdle(t, agentapi.ExecutionState{Known: true, Mode: "autopilot"})
 	if last := lastTurn(); last == nil || last.State != agentapi.TurnWorking {
