@@ -344,6 +344,11 @@ test('the activity label keeps what needs attention: the running call, a waiting
   const approvals = new Map([['c2', [ix('p1', { tool_call_id: 'c2', state: 'pending', resolution: undefined })]]]);
   const waiting = summarizeActivity(entries, { live: true, approvals });
   assert.deepEqual(waiting, { label: 'Thought and ran 1 command · Waiting for your approval: bash npm test', tone: 'attention', active: true });
+  // A request yolo mode is answering does not wait for the user.
+  const auto = new Map([['c2', [ix('p1', { tool_call_id: 'c2', state: 'pending', resolution: undefined, auto: true })]]]);
+  assert.deepEqual(summarizeActivity(entries, { live: true, approvals: auto }), live);
+  const { awaitsUser } = await import('../src/lib/transcript.ts');
+  assert.deepEqual([ix('p', { state: 'pending' }), ix('p', { state: 'pending', auto: true }), ix('p', { auto: true })].map(awaitsUser), [true, false, false]);
   // The turn ended before the call reported: no longer active, its duration known.
   assert.deepEqual(summarizeActivity(entries, { live: false, endedAt: at(9) }), { label: 'Thought and ran 1 command · 1 without a result · 8s', tone: 'muted', active: false });
   const failed = [{ item: item('c1', undefined, at(2), tool('bash', '{"command":"ls"}', { status: 'failed' })) }, { item: item('c3', undefined, at(2)) }];

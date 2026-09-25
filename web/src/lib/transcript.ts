@@ -343,6 +343,9 @@ export function duration(from: string, to: string): string | null {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+/** The request waits for the user: pending, and not one yolo mode is already answering. */
+export const awaitsUser = (ix: Interaction) => ix.state === 'pending' && !ix.auto;
+
 const isActiveTool = (item: Item) => item.tool?.status === 'pending' || item.tool?.status === 'running';
 
 /** Work between two messages: thinking, tool calls and the quiet row of a decided request. Prose, the user's bubbles, questions and notices bound it. */
@@ -398,7 +401,7 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
   const decided = entries.length - items.length;
   const { done, failed, noResult } = toolCounts(tools, live);
   const running = live ? tools.filter(isActiveTool).at(-1) : undefined;
-  const waiting = !!running && !!approvals?.get(running.id)?.some((ix) => ix.state === 'pending');
+  const waiting = !!running && !!approvals?.get(running.id)?.some(awaitsUser);
   const images = tools.reduce((n, it) => n + (it.images?.length ?? 0), 0);
   const active = !!running || thinking;
   const took = !active && endedAt && items[0] ? duration(items[0].time, endedAt) : null;

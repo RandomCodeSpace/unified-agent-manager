@@ -294,8 +294,9 @@ func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction
 		s.ixIdx[ix.ID] = cur
 		s.trimInteractions()
 	}
-	m.publishInteractionLocked(s, cur)
+	// Claimed first, so the browser never sees a yolo request wait for the user.
 	m.autoAllowLocked(s, cur)
+	m.publishInteractionLocked(s, cur)
 }
 
 // trimInteractions forgets the oldest resolved interactions beyond the cap.
@@ -319,7 +320,7 @@ func (s *webSession) trimInteractions() {
 }
 
 func (m *Manager) publishInteractionLocked(s *webSession, ix *interaction) {
-	snapshot := ix.Interaction
+	snapshot := ix.public()
 	m.broadcastLocked("interaction", s.id, func(seq uint64) any {
 		return interactionEvent{Seq: seq, SessionID: s.id, Interaction: snapshot}
 	})
