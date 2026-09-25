@@ -276,6 +276,11 @@
     outline-offset: 1px;
     box-shadow: 0 0 0 5px rgba(42, 85, 189, 0.18);
   }
+  /* Text fields take no halo: a bare one inside a larger control (the composer, a palette's
+     search) is shown focused by that control and its caret; the shared Input draws its own glow. */
+  :is(input, textarea):focus-visible {
+    box-shadow: none;
+  }
   button,
   [role='button'],
   summary {
