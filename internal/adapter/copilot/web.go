@@ -2659,7 +2659,14 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 			return it, false
 		}
 		tc := t.tool(d.ToolCallID)
-		tc.Output = clip(tc.Output+d.PartialOutput, maxToolText)
+		// The CLI publishes the tool's current display output, not a text
+		// delta (its own UI replaces partialOutput too). Appending repeats
+		// every earlier line. Suppress repeated snapshots, including the cap.
+		output := clip(d.PartialOutput, maxToolText)
+		if tc.Output == output {
+			return it, false
+		}
+		tc.Output = output
 		it.ID, it.Kind, it.Tool = d.ToolCallID, agentapi.ItemTool, cloneTool(tc)
 	case *rpc.ToolExecutionCompleteData:
 		if _, started := t.tools[d.ToolCallID]; started {

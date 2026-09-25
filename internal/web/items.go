@@ -3,6 +3,7 @@ package web
 import (
 	"cmp"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -101,11 +102,24 @@ func (m *Manager) publishItemLocked(s *webSession, it agentapi.Item) {
 	})
 }
 
+// Send evictions after the item/delta that triggered them, including when an
+// update to an old item evicts that very item. A browser must not recreate it.
+func (m *Manager) publishItemsTrimmedLocked(s *webSession, removed []trimmedItem) {
+	if len(removed) == 0 {
+		return
+	}
+	m.broadcastLocked("items_trimmed", s.id, func(seq uint64) any {
+		return itemsTrimmedEvent{Seq: seq, SessionID: s.id, Items: removed}
+	})
+}
+
 // upsertItemLocked replaces the item with the same agent and ID or appends
 // it. A replacement keeps the earliest start: a tool's completion event is
 // stamped when it finished, not when it began.
 func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool) {
+	var previous agentapi.Item
 	if i, ok := s.itemIdx[itemKey(it.AgentID, it.ID)]; ok {
+		previous = s.items[i]
 		if prev := s.items[i].Time; !prev.IsZero() && prev.Before(it.Time) {
 			it.Time = prev
 		}
@@ -116,10 +130,39 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 		s.items = append(s.items, it)
 	}
 	s.itemBytes += itemSize(it)
-	s.trimItems()
+	removed := s.trimItems()
 	if publish {
+		defer m.publishItemsTrimmedLocked(s, removed)
+		if suffix, ok := toolOutputSuffix(previous, it); ok {
+			if suffix == "" {
+				return
+			}
+			m.broadcastFilteredLocked("tool_output", s.id, func(sub *Subscriber) bool { return sub.toolDeltas }, func(seq uint64) any {
+				return toolOutputEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, ItemID: it.ID, Text: suffix}
+			})
+			m.broadcastFilteredLocked("item", s.id, func(sub *Subscriber) bool { return !sub.toolDeltas }, func(seq uint64) any {
+				return itemEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, Item: it}
+			})
+			return
+		}
 		m.publishItemLocked(s, it)
 	}
+}
+
+// Only append-only output with otherwise identical metadata can be a delta.
+// Starts, rewrites, status changes, images and completion remain full items.
+func toolOutputSuffix(previous, next agentapi.Item) (string, bool) {
+	if previous.Tool == nil || next.Tool == nil || next.Kind != agentapi.ItemTool || next.Tool.Status != agentapi.ToolRunning || !strings.HasPrefix(next.Tool.Output, previous.Tool.Output) {
+		return "", false
+	}
+	output := previous.Tool.Output
+	tool := *previous.Tool
+	tool.Output = next.Tool.Output
+	previous.Tool = &tool
+	if !reflect.DeepEqual(previous, next) {
+		return "", false
+	}
+	return next.Tool.Output[len(output):], true
 }
 
 // agentItems returns the retained items of one agent ("" for the main
@@ -153,10 +196,11 @@ func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
 	it.Text += add
 	s.items[i] = it
 	s.itemBytes += len(add)
-	s.trimItems()
+	removed := s.trimItems()
 	m.broadcastLocked("delta", s.id, func(seq uint64) any {
 		return deltaEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, ItemID: d.ItemID, Kind: it.Kind, Text: add}
 	})
+	m.publishItemsTrimmedLocked(s, removed)
 }
 
 // applyHistoryLocked installs the provider's record of a conversation.
@@ -198,7 +242,7 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 		s.itemBytes += itemSize(it)
 	}
 	s.rebuildIndex()
-	s.trimItems()
+	removed := s.trimItems()
 	if !publish {
 		return
 	}
@@ -208,6 +252,7 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 		}
 		m.publishItemLocked(s, it)
 	}
+	m.publishItemsTrimmedLocked(s, removed)
 }
 
 func (s *webSession) rebuildIndex() {
@@ -220,7 +265,7 @@ func (s *webSession) rebuildIndex() {
 // trimItems drops the oldest items once the count or byte budget is
 // exceeded. It trims with slack so steady streaming does not reindex on
 // every event.
-func (s *webSession) trimItems() {
+func (s *webSession) trimItems() []trimmedItem {
 	drop := 0
 	if len(s.items) > maxItems {
 		drop = len(s.items) - maxItems*9/10
@@ -236,14 +281,17 @@ func (s *webSession) trimItems() {
 		}
 	}
 	if drop == 0 {
-		return
+		return nil
 	}
+	removed := make([]trimmedItem, drop)
 	for i := range drop {
+		removed[i] = trimmedItem{ID: s.items[i].ID, AgentID: s.items[i].AgentID}
 		s.itemBytes -= itemSize(s.items[i])
 	}
 	s.items = append([]agentapi.Item(nil), s.items[drop:]...)
 	s.rebuildIndex()
 	s.truncated = true
+	return removed
 }
 
 func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interaction {

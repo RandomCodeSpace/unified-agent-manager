@@ -520,7 +520,7 @@ func TestWebToolEventsUpsertOneItem(t *testing.T) {
 	want := []agentapi.ToolCall{
 		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`},
 		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`, Output: "a"},
-		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`, Output: "a" + strings.Repeat("b", maxToolText-1)},
+		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`, Output: strings.Repeat("b", maxToolText)},
 		{Name: "bash", Status: agentapi.ToolCompleted, Input: `{"command":"ls"}`, Output: "done"},
 		{Name: "view", Status: agentapi.ToolRunning},
 		{Name: "view", Status: agentapi.ToolFailed, Output: "no such file"},
@@ -534,6 +534,38 @@ func TestWebToolEventsUpsertOneItem(t *testing.T) {
 		if evs[i].Kind != agentapi.EventItem || it.ID != id || it.Kind != agentapi.ItemTool || *it.Tool != w {
 			t.Fatalf("event %d = %+v tool %+v, want %+v", i, it, it.Tool, w)
 		}
+	}
+}
+
+func TestWebToolPartialOutputReplacesCumulativeSnapshots(t *testing.T) {
+	h := openWeb(t)
+	h.fs.onEvent(ev("start", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
+	// The live CLI shell sends its output so far, including a repeated final
+	// partial. Appending these produced 14 lines from a four-line command.
+	for i, output := range []string{"one\n", "one\ntwo\n", "one\ntwo\nthree\n", "one\ntwo\nthree\nfour\n", "one\ntwo\nthree\nfour\n"} {
+		h.fs.onEvent(ev(fmt.Sprint(i), &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: output}))
+		if got := h.sink.last().Item.Tool.Output; got != output {
+			t.Fatalf("partial %d = %q, want %q", i, got, output)
+		}
+	}
+	if got := len(h.sink.all()); got != 5 {
+		t.Fatalf("start and four changed partials emitted %d events, want 5", got)
+	}
+	// A replacement need not extend the previous output.
+	h.fs.onEvent(ev("rewrite", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "replaced"}))
+	if got := h.sink.last().Item.Tool.Output; got != "replaced" {
+		t.Fatalf("replacement = %q", got)
+	}
+	long := strings.Repeat("x", maxToolText)
+	h.fs.onEvent(ev("cap", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: long}))
+	count := len(h.sink.all())
+	h.fs.onEvent(ev("past-cap", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: long + "more"}))
+	if got := len(h.sink.all()); got != count {
+		t.Fatalf("unchanged capped output emitted another event: %d -> %d", count, got)
+	}
+	h.fs.onEvent(ev("end", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "final"}}))
+	if it := h.sink.last().Item; it.Tool.Status != agentapi.ToolCompleted || it.Tool.Output != "final" {
+		t.Fatalf("completion = %+v", it.Tool)
 	}
 }
 

@@ -6,7 +6,12 @@ export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline'
 export const DEFAULT_SETTINGS: Settings = { send_default: 'steer' };
 
 /** A frame that arrived for a subagent while its transcript fetch was in flight. */
-export type Buffered = Extract<UpdateData, { name: 'item' | 'delta' | 'subagent' }>;
+export type Buffered = Extract<UpdateData, { name: 'item' | 'delta' | 'tool_output' | 'subagent' | 'items_trimmed' }>;
+
+// A stalled HTTP fetch must not retain an unlimited stream. Retry from a fresh
+// snapshot on overflow; dropping individual deltas would corrupt the transcript.
+const MAX_BUFFERED_FRAMES = 256;
+const MAX_BUFFERED_CHARS = 4 * 1024 * 1024;
 
 /** A subagent transcript, present once its block was expanded. Live frames with that agent_id land here. */
 export interface AgentTranscript {
@@ -16,6 +21,7 @@ export interface AgentTranscript {
   error?: string;
   items: Item[];
   buffered: Buffered[];
+  bufferedChars: number;
 }
 
 export interface State {
@@ -73,9 +79,10 @@ export type Action =
   | { type: 'upsert_project'; project: Project }
   | { type: 'remove_project'; id: string }
   | { type: 'upsert_interaction'; sessionId: string; interaction: Interaction }
-  | { type: 'agent_loading'; agentId: string }
-  | ({ type: 'agent_loaded'; agentId: string } & SubagentDetail)
-  | { type: 'agent_failed'; agentId: string; error: string };
+  | { type: 'agent_loading'; sessionId: string; agentId: string }
+  | ({ type: 'agent_loaded'; sessionId: string; agentId: string } & SubagentDetail)
+  | { type: 'agent_failed'; sessionId: string; agentId: string; error: string }
+  | { type: 'agent_unloaded'; sessionId: string; agentId: string };
 
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -135,21 +142,30 @@ export function reducer(state: State, action: Action): State {
       return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, action.interaction) } };
     }
     case 'agent_loading':
+      if (state.selectedId !== action.sessionId || state.detail?.id !== action.sessionId) return state;
       // What was loaded before stays on screen while the fresh copy is on its way (stale while loading).
-      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, snapshotSeq: state.agents[action.agentId]?.snapshotSeq ?? -1, items: state.agents[action.agentId]?.items ?? [], buffered: [] } } };
+      return { ...state, agents: { ...state.agents, [action.agentId]: { loading: true, snapshotSeq: state.agents[action.agentId]?.snapshotSeq ?? -1, items: state.agents[action.agentId]?.items ?? [], buffered: [], bufferedChars: 0 } } };
     case 'agent_loaded': {
+      if (state.selectedId !== action.sessionId || !state.agents[action.agentId]?.loading) return state;
       const detail = state.detail;
       const withAgent = detail ? { ...detail, subagents: upsert(detail.subagents, action.subagent) } : detail;
-      const loaded = { ...state, detail: withAgent, agents: { ...state.agents, [action.agentId]: { loading: false, snapshotSeq: action.seq, items: action.items, buffered: [] } } };
+      const loaded = { ...state, detail: withAgent, agents: { ...state.agents, [action.agentId]: { loading: false, snapshotSeq: action.seq, items: action.items, buffered: [], bufferedChars: 0 } } };
       // The response and SSE may arrive in either order. Replay only events
       // after the server's snapshot, retaining their original order.
       return (state.agents[action.agentId]?.buffered ?? []).reduce((next, frame) => withAgentFrame(next, action.agentId, frame), loaded);
     }
     case 'agent_failed':
+      if (state.selectedId !== action.sessionId || !state.agents[action.agentId]?.loading) return state;
       return {
         ...state,
-        agents: { ...state.agents, [action.agentId]: { loading: false, snapshotSeq: -1, error: action.error, items: [], buffered: [] } },
+        agents: { ...state.agents, [action.agentId]: { loading: false, snapshotSeq: -1, error: action.error, items: [], buffered: [], bufferedChars: 0 } },
       };
+    case 'agent_unloaded': {
+      if (state.selectedId !== action.sessionId || !state.agents[action.agentId]) return state;
+      const agents = { ...state.agents };
+      delete agents[action.agentId];
+      return { ...state, agents };
+    }
     case 'updates':
       return action.data.reduce((next, data) => reducer(next, { type: 'update', data }), state);
     case 'update': {
@@ -185,6 +201,16 @@ export function reducer(state: State, action: Action): State {
         case 'delta':
           if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
           return { ...state, detail: { ...detail, items: appendDelta(detail.items, d.item_id, d.kind, d.text) } };
+        case 'tool_output':
+          if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
+          return { ...state, detail: { ...detail, items: appendToolOutput(detail.items, d.item_id, d.text) } };
+        case 'items_trimmed': {
+          state = { ...state, detail: { ...detail, history_truncated: true, items: trimItems(detail.items, d.items, '') } };
+          for (const agentId of new Set(d.items.flatMap((it) => it.agent_id ? [it.agent_id] : []))) {
+            state = withAgentFrame(state, agentId, d);
+          }
+          return state;
+        }
         case 'interaction':
           return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, d.interaction) } };
         case 'queue':
@@ -210,6 +236,15 @@ function appendDelta(items: Item[], itemId: string, kind: ItemKind, text: string
   return out;
 }
 
+function appendToolOutput(items: Item[], itemId: string, text: string): Item[] {
+  const i = items.findIndex((item) => item.id === itemId);
+  const item = items[i];
+  if (!item?.tool || !text) return items;
+  const out = items.slice();
+  out[i] = { ...item, tool: { ...item.tool, output: (item.tool.output ?? '') + text } };
+  return out;
+}
+
 /**
  * Routes subagent updates and buffers them during the transcript fetch. Metadata
  * stays live even before the transcript is opened. Frames already in the fetched
@@ -222,8 +257,15 @@ function withAgentFrame(state: State, agentId: string, frame: Buffered): State {
     state = { ...state, detail: { ...state.detail, subagents: upsert(state.detail.subagents, frame.subagent) } };
   }
   state = withAgentStep(state, agentId, frame);
-  if (!a) return state;
-  if (a.loading) return { ...state, agents: { ...state.agents, [agentId]: { ...a, buffered: [...a.buffered, frame] } } };
+  if (!a || a.error) return state;
+  if (a.loading) {
+    const bufferedChars = a.bufferedChars + JSON.stringify(frame).length;
+    if (a.buffered.length >= MAX_BUFFERED_FRAMES || bufferedChars > MAX_BUFFERED_CHARS) {
+      return { ...state, agents: { ...state.agents, [agentId]: { loading: false, snapshotSeq: -1, items: [], buffered: [], bufferedChars: 0, error: 'Too much output arrived while loading. Retry to load the latest transcript.' } } };
+    }
+    const items = frame.name === 'items_trimmed' ? applyFrame(a.items, frame, agentId) : a.items;
+    return { ...state, agents: { ...state.agents, [agentId]: { ...a, items, buffered: [...a.buffered, frame], bufferedChars } } };
+  }
   return { ...state, agents: { ...state.agents, [agentId]: { ...a, items: applyFrame(a.items, frame, agentId) } } };
 }
 
@@ -245,7 +287,14 @@ function withAgentStep(state: State, agentId: string, frame: Buffered): State {
 function applyFrame(items: Item[], frame: Buffered, agentId: string): Item[] {
   if (frame.name === 'item') return upsert(items, frame.item);
   if (frame.name === 'delta') return appendDelta(items, frame.item_id, frame.kind, frame.text, agentId);
+  if (frame.name === 'tool_output') return appendToolOutput(items, frame.item_id, frame.text);
+  if (frame.name === 'items_trimmed') return trimItems(items, frame.items, agentId);
   return items;
+}
+
+function trimItems(items: Item[], removed: { id: string; agent_id?: string }[], agentId: string): Item[] {
+  const ids = new Set(removed.filter((it) => (it.agent_id ?? '') === agentId).map((it) => it.id));
+  return ids.size ? items.filter((it) => !ids.has(it.id)) : items;
 }
 
 function upsert<T extends { id: string }>(list: T[], v: T): T[] {

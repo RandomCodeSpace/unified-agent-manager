@@ -20,11 +20,12 @@ const (
 // Subscriber is one event-stream connection. It only observes: dropping it
 // never affects providers.
 type Subscriber struct {
-	session string
-	ch      chan []byte
-	queued  atomic.Int64
-	gone    chan struct{}
-	dropped bool // guarded by Manager.mu
+	session    string
+	toolDeltas bool // opted in to tool_output frames; older clients receive full items
+	ch         chan []byte
+	queued     atomic.Int64
+	gone       chan struct{}
+	dropped    bool // guarded by Manager.mu
 }
 
 // Frames returns the queue of encoded events for this subscriber.
@@ -92,6 +93,25 @@ type deltaEvent struct {
 	ItemID    string            `json:"item_id"`
 	Kind      agentapi.ItemKind `json:"kind"`
 	Text      string            `json:"text"`
+}
+
+type toolOutputEvent struct {
+	Seq       uint64 `json:"seq"`
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id,omitempty"`
+	ItemID    string `json:"item_id"`
+	Text      string `json:"text"`
+}
+
+type trimmedItem struct {
+	ID      string `json:"id"`
+	AgentID string `json:"agent_id,omitempty"`
+}
+
+type itemsTrimmedEvent struct {
+	Seq       uint64        `json:"seq"`
+	SessionID string        `json:"session_id"`
+	Items     []trimmedItem `json:"items"`
 }
 
 type subagentEvent struct {
@@ -162,6 +182,10 @@ func encodeFrame(event string, payload any) ([]byte, error) {
 // every later event exactly once and nothing between the two. Subscribing to
 // a session views it, as Detail does.
 func (m *Manager) Subscribe(sessionID string) (*Subscriber, []byte, error) {
+	return m.subscribe(sessionID, false)
+}
+
+func (m *Manager) subscribe(sessionID string, toolDeltas bool) (*Subscriber, []byte, error) {
 	m.refreshBranches(m.ctx, false)
 	terminal := false
 	if sessionID != "" {
@@ -188,7 +212,7 @@ func (m *Manager) Subscribe(sessionID string) (*Subscriber, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	sub := &Subscriber{session: sessionID, ch: make(chan []byte, subscriberQueue), gone: make(chan struct{})}
+	sub := &Subscriber{session: sessionID, toolDeltas: toolDeltas, ch: make(chan []byte, subscriberQueue), gone: make(chan struct{})}
 	m.subs[sub] = struct{}{}
 	return sub, frame, nil
 }
@@ -228,10 +252,16 @@ func (m *Manager) dropLocked(sub *Subscriber) {
 // otherwise only subscribers of that session. The payload is built and
 // encoded only when someone will receive it.
 func (m *Manager) broadcastLocked(event, sessionID string, build func(seq uint64) any) {
+	m.broadcastFilteredLocked(event, sessionID, nil, build)
+}
+
+// A negotiated frame can have a legacy equivalent. Each uses the same global
+// sequence counter; gaps are allowed, and snapshots still cover both.
+func (m *Manager) broadcastFilteredLocked(event, sessionID string, accepts func(*Subscriber) bool, build func(seq uint64) any) {
 	m.seq++
 	targets := 0
 	for sub := range m.subs {
-		if sessionID == "" || sub.session == sessionID {
+		if (sessionID == "" || sub.session == sessionID) && (accepts == nil || accepts(sub)) {
 			targets++
 		}
 	}
@@ -244,7 +274,7 @@ func (m *Manager) broadcastLocked(event, sessionID string, build func(seq uint64
 		return
 	}
 	for sub := range m.subs {
-		if sessionID != "" && sub.session != sessionID {
+		if (sessionID != "" && sub.session != sessionID) || (accepts != nil && !accepts(sub)) {
 			continue
 		}
 		if sub.queued.Load()+int64(len(frame)) > subscriberBytes {

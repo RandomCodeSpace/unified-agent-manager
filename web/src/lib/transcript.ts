@@ -101,6 +101,23 @@ export function foldWindow(count: number): { head: number; hidden: number; tail:
   return { head: FOLD_HEAD, hidden: count - FOLD_HEAD - FOLD_TAIL, tail: FOLD_TAIL };
 }
 
+/** Reveal roughly 100 more items, keeping the first turn whole (including steers). */
+export function transcriptWindowStart(items: Item[], before = items.length): number {
+  let start = Math.max(0, before - 100);
+  while (start > 0 && (items[start].kind !== 'user' || items[start].delivery)) start--;
+  return start;
+}
+
+/** Hidden rows keep their decisions; they must not reappear as unrelated loose requests. */
+export function windowInteractions(items: Item[], interactions: Interaction[], start: number): Interaction[] {
+  if (start === 0) return interactions;
+  const indices = new Map(items.map((it, index) => [it.id, index]));
+  return interactions.filter((ix) => {
+    const index = ix.tool_call_id ? indices.get(ix.tool_call_id) : undefined;
+    return index === undefined ? ix.time >= items[start].time : index >= start;
+  });
+}
+
 export const STATE_TEXT: Record<InteractionState, string> = {
   pending: 'Pending',
   answered: 'Answered',

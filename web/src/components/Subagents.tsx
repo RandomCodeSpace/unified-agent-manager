@@ -351,13 +351,16 @@ function AgentTranscriptView({
 
   useEffect(() => {
     let cancelled = false;
-    dispatch({ type: 'agent_loading', agentId: subagent.id });
+    const controller = new AbortController();
+    dispatch({ type: 'agent_loading', sessionId, agentId: subagent.id });
     api
-      .subagent(sessionId, subagent.id)
-      .then((d) => !cancelled && dispatch({ type: 'agent_loaded', agentId: subagent.id, ...d }))
-      .catch((e: unknown) => !cancelled && dispatch({ type: 'agent_failed', agentId: subagent.id, error: describeError(e) }));
+      .subagent(sessionId, subagent.id, controller.signal)
+      .then((d) => !cancelled && dispatch({ type: 'agent_loaded', sessionId, agentId: subagent.id, ...d }))
+      .catch((e: unknown) => !cancelled && dispatch({ type: 'agent_failed', sessionId, agentId: subagent.id, error: describeError(e) }));
     return () => {
       cancelled = true;
+      controller.abort();
+      dispatch({ type: 'agent_unloaded', sessionId, agentId: subagent.id });
     };
   }, [sessionId, subagent.id, snapshotSeq, attempt, dispatch]);
 
