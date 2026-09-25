@@ -257,10 +257,13 @@ func TestPromptAttachmentsSendOnceAndStay(t *testing.T) {
 		t.Fatalf("record after send = %s", data)
 	}
 
-	// Queued prompts keep their attachments; a steer takes none.
+	// A steer and a queued prompt keep their attachments.
 	conv.EmitTurn(agentapi.TurnWorking, "")
-	if _, err := m.Submit(sum.ID, PromptRequest{Text: "steer", RequestID: mustUUID(t), Mode: ModeSteer, Attachments: []string{b.ID}}); statusOf(err) != http.StatusBadRequest {
-		t.Fatalf("steer with an attachment = %v", err)
+	if sub, err := m.Submit(sum.ID, PromptRequest{Text: "steer", RequestID: mustUUID(t), Mode: ModeSteer, Attachments: []string{b.ID}}); err != nil || sub.Status != SubmissionAccepted {
+		t.Fatalf("steer with an attachment = %+v, %v", sub, err)
+	}
+	if p := conv.SteerPrompts(); len(p) != 1 || p[0].Text != "steer" || len(p[0].Attachments) != 1 || !bytes.Equal(p[0].Attachments[0].Data, doc) {
+		t.Fatalf("steered %+v", p)
 	}
 	if _, err := m.Submit(sum.ID, PromptRequest{Text: "later", RequestID: mustUUID(t), Mode: ModeQueue, Attachments: []string{b.ID}}); err != nil {
 		t.Fatal(err)

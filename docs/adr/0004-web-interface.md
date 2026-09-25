@@ -375,9 +375,12 @@ provider can offer the same way.
 callers and different turn semantics, and a separate method leaves `Send` and
 its callers unchanged.
 
-Copilot mapping: `Send` passes `Mode: "enqueue"` explicitly, so a prompt that
-reaches a CLI still busy with a turn runs after that turn instead of joining
-it. `Steer` passes `Mode: "immediate"` and keeps the returned `messageId`. A
+Copilot mapping: `Send` passes no mode and returns `ErrBusy` while a
+foreground turn runs. With no mode the CLI delivers the prompt at once when
+its main agent is idle, even while a background shell runs. An explicit
+`Mode: "enqueue"`, or any prompt sent during a turn, is held until
+`session.idle`, which CLI 1.0.88 withholds while a background shell runs, so
+such a prompt could wait forever. `Steer` passes `Mode: "immediate"` and keeps the returned `messageId`. A
 main-agent `user.message` with that `messageId` marks the steer as used, and
 `delivery: "steering"` sets `Item.Delivery`. A steer that arrives during the
 turn's final model call gets a follow-up call in the same turn, with
@@ -842,7 +845,7 @@ plain text, and so is a `/word` that is not a listed command.
   bytes, as git decides). Directories are allowed. Nothing is sent or recorded
   when one fails. A queued prompt keeps its files, and UAM checks them again
   when the prompt is sent; a failure then is a `rejected` submission that
-  pauses the queue. A steer takes text only and refuses files with 400. The
+  pauses the queue. A steer takes files too, checked the same way. The
   text stays as typed, `@path` tokens included. Copilot receives
   `AttachmentFile` or `AttachmentDirectory` with the absolute path and the
   relative path as display name; the model gets a `<tagged_files>` pointer and
@@ -938,8 +941,9 @@ No request carries base64 in JSON.
   that no sent or queued prompt carries expires after 24 hours; UAM checks at
   start, after each upload and every hour. A sent upload lives as long as its
   Task, because the transcript shows it.
-- **Sending.** A prompt, a queued prompt and a command take
-  `attachments: [id]`; a steer takes none (400). A queued prompt keeps the IDs,
+- **Sending.** A prompt, a queued prompt, a steer and a command take
+  `attachments: [id]`. Copilot CLI 1.0.88 folds a steer's blobs and file
+  references into the running turn like its text. A queued prompt keeps the IDs,
   and UAM reads the bytes when it sends; a missing file then is a `rejected`
   submission that pauses the queue. A retried `request_id` returns the
   recorded outcome, so nothing is uploaded or sent twice. Copilot receives each

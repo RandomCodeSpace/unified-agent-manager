@@ -5,7 +5,7 @@ import type { Command, PromptMode, SendDefault } from '../api';
 /**
  * What Enter and Ctrl/Cmd+Enter submit. With no turn running both send. While a turn runs,
  * Enter does the setting's action and the modifier the other; when a steer is impossible
- * (the message carries files or attachments) both queue, and the composer says why.
+ * (the provider cannot steer) both queue, and the composer says why.
  */
 export function enterActions(live: boolean, sendDefault: SendDefault, steerBlocked: boolean): { enter: PromptMode; modified: PromptMode } {
   if (!live) return { enter: 'send', modified: 'send' };

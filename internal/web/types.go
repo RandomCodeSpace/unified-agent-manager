@@ -290,10 +290,9 @@ type PromptRequest struct {
 	RequestID string `json:"request_id"`
 	Mode      string `json:"mode"`
 	// Files are project paths relative to the Task's directory, sent as
-	// structured references. A steer takes none.
+	// structured references.
 	Files []string `json:"files"`
-	// Attachments are IDs from POST /api/sessions/{id}/attachments. A steer
-	// takes none.
+	// Attachments are IDs from POST /api/sessions/{id}/attachments.
 	Attachments []string `json:"attachments"`
 }
 

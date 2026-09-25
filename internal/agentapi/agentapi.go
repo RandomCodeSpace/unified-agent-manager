@@ -323,7 +323,8 @@ type Conversation interface {
 	// provider accepted or rejected it. The turn continues asynchronously and
 	// is reported through events. Ambiguous failures wrap
 	// ErrSubmissionUncertain. A provider that would otherwise fold a prompt
-	// sent during a turn into that turn must run it after the turn instead.
+	// sent during a turn into that turn must run it after the turn or refuse
+	// it with ErrBusy instead.
 	Send(ctx context.Context, prompt Prompt) error
 	// Commands lists the slash commands that become a prompt: skills and
 	// the provider's prompt commands. Nothing else is offered.
@@ -341,7 +342,7 @@ type Conversation interface {
 	// the provider using it, the adapter emits an ItemNotice saying so.
 	// Ambiguous failures wrap ErrSubmissionUncertain and are never resent.
 	// ErrUnsupported means the provider cannot steer.
-	Steer(ctx context.Context, prompt string) error
+	Steer(ctx context.Context, prompt Prompt) error
 	// Cancel aborts the current turn. The conversation stays open.
 	Cancel(ctx context.Context) error
 	// CancelSubagent stops only the exact agent instance. Its final status

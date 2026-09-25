@@ -198,8 +198,14 @@ func TestQueuedPromptKeepsItsFilesAndChecksThemAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
-	if _, err := m.Submit(sum.ID, PromptRequest{Text: "steer", RequestID: mustUUID(t), Mode: ModeSteer, Files: []string{"README.md"}}); statusOf(err) != http.StatusBadRequest {
-		t.Fatalf("steer with files = %v, want 400", err)
+	if sub, err := m.Submit(sum.ID, PromptRequest{Text: "steer", RequestID: mustUUID(t), Mode: ModeSteer, Files: []string{"README.md"}}); err != nil || sub.Status != SubmissionAccepted {
+		t.Fatalf("steer with files = %+v, %v", sub, err)
+	}
+	if p := conv.SteerPrompts(); len(p) != 1 || len(p[0].Files) != 1 || p[0].Files[0].Path != filepath.Join(dir, "README.md") {
+		t.Fatalf("steered %+v", p)
+	}
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "steer", RequestID: mustUUID(t), Mode: ModeSteer, Files: []string{"../outside"}}); statusOf(err) != http.StatusBadRequest || len(conv.SteerPrompts()) != 1 {
+		t.Fatalf("steer with a bad file = %v", err)
 	}
 	queued, err := m.Submit(sum.ID, PromptRequest{Text: "then @README.md", RequestID: mustUUID(t), Mode: ModeQueue, Files: []string{"README.md"}})
 	if err != nil || queued.Status != SubmissionQueued {

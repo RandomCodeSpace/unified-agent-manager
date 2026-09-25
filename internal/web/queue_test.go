@@ -241,6 +241,35 @@ func TestQueuePausesWhenADrainedPromptIsNotAccepted(t *testing.T) {
 	}
 }
 
+// A provider still running a turn refuses the drained prompt with ErrBusy
+// without taking it: it waits at the front, unpaused, for the next completed
+// turn, and is then sent.
+func TestQueuedPromptRefusedAsBusyWaitsForTheNextTurn(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := busySession(t, m, prov)
+	rid := mustUUID(t)
+	mustSubmit(t, m, sum.ID, "B", rid, ModeQueue, SubmissionQueued)
+	refused := make(chan struct{}, 1)
+	conv.SetSendHook(func(context.Context, string) error {
+		select {
+		case refused <- struct{}{}:
+			return agentapi.ErrBusy
+		default:
+			return nil
+		}
+	})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "refused prompt back in the queue", func() bool {
+		d := detail(t, m, sum.ID)
+		return len(conv.Sends()) == 2 && queueTexts(d) == "B" && !d.QueuePaused && (d.LastSubmission == nil || d.LastSubmission.RequestID != rid)
+	})
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if last := waitLastSubmission(t, m, sum.ID, rid); last.Status != SubmissionAccepted || strings.Join(conv.Sends(), ",") != "first,B,B" {
+		t.Fatalf("after the turn: %+v sends=%q", last, conv.Sends())
+	}
+}
+
 func TestCancelQueuedPromptBeingSentReturnsConflict(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	sum, conv := busySession(t, m, prov)

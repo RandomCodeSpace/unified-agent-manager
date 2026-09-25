@@ -1025,6 +1025,10 @@ type conversation struct {
 	assistantIdleSeen bool
 	autopilotTurn     bool
 	foregroundIdle    bool
+	// turnRunning is set from a foreground turn's start until its end. Send
+	// refuses a prompt while it is: the CLI holds any prompt sent during a
+	// turn until session.idle, which never comes while a background shell runs.
+	turnRunning bool
 	// idleUnresolved marks a main-agent assistant.idle seen while the mode
 	// was unknown. The CLI withholds session.idle while background work runs,
 	// so a read showing a non-autopilot mode ends the turn instead.
@@ -1418,9 +1422,12 @@ func (c *conversation) SetTitle(ctx context.Context, title string) error {
 	return nil
 }
 
-// Send uses the "enqueue" mode explicitly: a prompt that reaches a CLI still
-// busy with a turn runs after that turn instead of joining it. Referenced
-// files go as file and directory attachments with their absolute paths.
+// Send starts a turn, and refuses with ErrBusy while one is running. It sends
+// no mode: the CLI then delivers the prompt at once whenever its main agent is
+// idle, background shells or not. An explicit "enqueue", and any prompt sent
+// during a turn, is held until session.idle, which the CLI withholds while a
+// background shell runs. Referenced files go as file and directory
+// attachments with their absolute paths.
 func (c *conversation) Send(ctx context.Context, prompt agentapi.Prompt) error {
 	return c.send(ctx, copilot.MessageOptions{Prompt: prompt.Text, Attachments: attachments(prompt)})
 }
@@ -1478,15 +1485,17 @@ func blobAttachments(atts []copilot.Attachment) []agentapi.Attachment {
 
 func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) error {
 	c.mu.Lock()
-	closed, idles := c.closed, c.idles
+	closed, running, idles := c.closed, c.turnRunning, c.idles
 	c.mu.Unlock()
 	if closed {
 		return agentapi.ErrClosed
 	}
+	if running {
+		return agentapi.ErrBusy
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	msg.Mode = string(rpc.SendModeEnqueue)
 	if _, err := c.sess.Send(ctx, msg); err != nil {
 		return c.sendError(err)
 	}
@@ -1494,7 +1503,7 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	defer c.mu.Unlock()
 	// An idle seen while Send was in flight already ended this turn.
 	if c.idles == idles {
-		c.foregroundIdle = false
+		c.foregroundIdle, c.turnRunning = false, true
 		c.idleUnresolved = false
 		c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
@@ -1515,25 +1524,25 @@ func (c *conversation) sendError(err error) error {
 	return fmt.Errorf("%w: %s", agentapi.ErrSubmissionUncertain, errText(err))
 }
 
-// Steer sends prompt in the "immediate" mode: the CLI folds it into the
-// running turn before its next model call, and moves a running foreground
+// Steer sends prompt, with its attachments, in the "immediate" mode: the CLI
+// folds it into the running turn before its next model call, and moves a running foreground
 // shell command to the background. It reports no turn transition. The
 // message ID the CLI returns links the steer to its user message: that
 // message is marked as a steer, and a steer a stopped or failed turn ends
 // without is reported as not delivered (the CLI drops unused steers on abort).
-func (c *conversation) Steer(ctx context.Context, prompt string) error {
+func (c *conversation) Steer(ctx context.Context, prompt agentapi.Prompt) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return agentapi.ErrClosed
 	}
-	st := &steer{prompt: prompt}
+	st := &steer{prompt: prompt.Text}
 	c.steers = append(c.steers, st)
 	c.steering++
 	c.mu.Unlock()
 	id, err := "", ctx.Err()
 	if err == nil {
-		if id, err = c.sess.Send(ctx, copilot.MessageOptions{Prompt: prompt, Mode: string(rpc.SendModeImmediate)}); err != nil {
+		if id, err = c.sess.Send(ctx, copilot.MessageOptions{Prompt: prompt.Text, Attachments: attachments(prompt), Mode: string(rpc.SendModeImmediate)}); err != nil {
 			err = c.sendError(err)
 		}
 	}
@@ -2112,7 +2121,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	case *rpc.AssistantTurnStartData:
 		if agentID == "" {
-			c.foregroundIdle = false
+			c.foregroundIdle, c.turnRunning = false, true
 			c.idleUnresolved = false
 			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
@@ -2132,7 +2141,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		// A message delivered while idle starts a turn: also a steer that
 		// reached the CLI after the idle of the turn it was meant for.
 		if agentID == "" && d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliveryIdle {
-			c.foregroundIdle = false
+			c.foregroundIdle, c.turnRunning = false, true
 			c.idleUnresolved = false
 			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
@@ -2245,7 +2254,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	if c.foregroundIdle {
 		return
 	}
-	c.foregroundIdle = true
+	c.foregroundIdle, c.turnRunning = true, false
 	c.idleUnresolved = false
 	c.idles++
 	turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel}

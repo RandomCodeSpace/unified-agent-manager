@@ -1027,7 +1027,7 @@ func (c *webConversation) commandUncertain(ctx context.Context, client *apiClien
 
 // Steer is not offered: this unregistered adapter refuses prompts while a
 // turn runs, so nothing is folded into a running turn.
-func (c *webConversation) Steer(context.Context, string) error {
+func (c *webConversation) Steer(context.Context, agentapi.Prompt) error {
 	return agentapi.ErrUnsupported
 }
 
