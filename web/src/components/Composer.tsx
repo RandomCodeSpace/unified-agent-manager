@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, ListPlus, Paperclip, RotateCcw, Shield, ShieldOff, Square, X, Zap } from 'lucide-react';
+import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, Shield, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type SessionDetail, type SessionSummary, type Submission } from '../api';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
@@ -118,7 +118,7 @@ function Picker({
   if (disabled) {
     return (
       <Tip label={tip(reason ?? `${label} cannot change now`)}>
-        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hint ? ` ${hint}.` : ''}`} className={cn('text-muted', className)}>
+        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hint ? ` ${hint}.` : ''}`} className={cn('min-w-0 shrink text-muted', className)}>
           {face}
         </Button>
       </Tip>
@@ -127,7 +127,7 @@ function Picker({
   return (
     <Menu.Root modal={false}>
       <Tip label={tip(compact ? `${label}: ${display}` : label)}>
-        <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} className={cn('text-body', className)} />}>{face}</Menu.Trigger>
+        <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} className={cn('min-w-0 shrink text-body', className)} />}>{face}</Menu.Trigger>
       </Tip>
       <Menu.Content side="top" align="start" sideOffset={6} className="min-w-52">
         <Menu.RadioGroup value={value} onValueChange={(v) => onChange(v as string)}>
@@ -500,11 +500,9 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
           : commandBlocked;
   const steerBlocked = steerUnavailable;
   const cannotSubmit = !!busy || locked || session.state === 'starting' || !text.trim() || !!blocked;
-  // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The primary button is Enter's;
-  // the secondary is the other's, and stays Steer, disabled with its reason, while a steer is impossible.
+  // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The one send button is Enter's.
   const steerDefault = appSettings.send_default === 'steer';
   const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
-  const other: PromptMode = steerBlocked ? 'steer' : modified;
 
   async function send(promptMode: PromptMode) {
     const t = text.trim();
@@ -848,8 +846,8 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
       />
 
       {/* One control row (DESIGN.md D3): Attach and the pickers at left, the actions at right. On a phone the effort,
-          context, permissions and execution pickers fold into a More menu, so the row never wraps. */}
-      <div className="flex flex-wrap items-center gap-0.5 px-2 pt-1 pb-2">
+          context, permissions and execution pickers fold into a More menu. The row never wraps. */}
+      <div className="flex items-center gap-0.5 px-2 pt-1 pb-2">
         {!locked && (
           <>
             <input
@@ -968,29 +966,13 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
             </Menu.Content>
           </Menu.Root>
         )}
-        {/* The actions: the primary keeps the far right, so Stop and the other action rise in beside it and nothing else moves. */}
-        <span className="ml-auto flex items-center gap-0.5">
+        {/* The actions: the send button keeps the far right, so Stop rises in beside it and nothing else moves. */}
+        <span className="ml-auto flex shrink-0 items-center gap-0.5">
         {busy === 'settings' && <Spinner className="mr-1" />}
         {(live || session.execution?.objective?.status === 'active') && (
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop execution and pause queued follow-ups'}>
             <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="animate-rise rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
               <Square className="!size-3" fill="currentColor" />
-            </Button>
-          </Tip>
-        )}
-        {live && !cmd && other === 'steer' && (
-          <Tip label={steerBlocked || 'Steer this turn (Ctrl+Enter)'}>
-            <Button size="md" variant="secondary" className="animate-rise" loading={busy === 'steer'} disabled={cannotSubmit || !!steerBlocked} onClick={() => void send('steer')}>
-              <Zap />
-              Steer
-            </Button>
-          </Tip>
-        )}
-        {live && !cmd && other === 'queue' && (
-          <Tip label="Queue for the next turn (Ctrl+Enter)">
-            <Button size="md" variant="secondary" className="animate-rise" loading={busy === 'queue'} disabled={cannotSubmit} onClick={() => void send('queue')}>
-              <ListPlus />
-              Queue
             </Button>
           </Tip>
         )}
@@ -1013,12 +995,7 @@ function ComposerView({ session, onRename, onSessionUpdate }: ComposerProps) {
             }
           >
             <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full transition-transform duration-100 active:scale-95" loading={busy === enter} disabled={cannotSubmit}>
-              {/* The glyph cross-fades in place as Enter's action changes. */}
-              <span className="grid *:[grid-area:1/1] *:transition-opacity *:duration-100">
-                <ArrowUp aria-hidden="true" strokeWidth={2.25} className={cn(live && 'opacity-0')} />
-                <Zap aria-hidden="true" className={cn(!(live && enter === 'steer') && 'opacity-0')} />
-                <ListPlus aria-hidden="true" className={cn(!(live && enter === 'queue') && 'opacity-0')} />
-              </span>
+              <ArrowUp aria-hidden="true" strokeWidth={2.25} />
             </Button>
           </Tip>
         )}
