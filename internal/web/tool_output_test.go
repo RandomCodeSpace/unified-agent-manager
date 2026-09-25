@@ -30,7 +30,7 @@ func TestToolOutputStreamNegotiationAndPayload(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			reader := bufio.NewReader(resp.Body)
 			bytes := 0
 			next := func() frame {
