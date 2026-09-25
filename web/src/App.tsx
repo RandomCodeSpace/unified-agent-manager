@@ -202,6 +202,24 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [auth, narrow, toggleSidebar]);
 
+  // Start typing in the viewed Task without first clicking its message box.
+  // Focus synchronously so the browser inserts the first character normally.
+  useEffect(() => {
+    if (auth !== 'in') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing || e.metaKey || ((e.ctrlKey || e.altKey) && !e.getModifierState('AltGraph'))) return;
+      if (e.key !== 'Dead' && ([...e.key].length !== 1 || !e.key.trim())) return;
+      const target = e.target;
+      if (!(target instanceof HTMLElement) || target.isContentEditable || target.closest('input, textarea, select, [role="textbox"], [role="combobox"], [role="listbox"], [role="menu"], [role="tree"], [role="grid"], [role="tablist"], [role="slider"], [role="spinbutton"]')) return;
+      if (document.querySelector('[data-popup]:not([data-popup="tooltip"])') || window.getSelection()?.isCollapsed === false) return;
+      const composer = document.getElementById('composer-text');
+      if (!(composer instanceof HTMLTextAreaElement) || composer.disabled || composer.readOnly || composer.closest('[inert]') || !composer.getClientRects().length) return;
+      composer.focus({ preventScroll: true });
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [auth]);
+
   // Esc closes the Changes sheet when no popup owns the key (popups and the drawer handle their own).
   useEffect(() => {
     if (!sheetOpen) return;
