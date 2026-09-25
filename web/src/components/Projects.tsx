@@ -195,7 +195,8 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
           </Note>
         )}
         {/* The Project's other two doors, secondary here: each opens over this dialog and lands back on its button. */}
-        <div className="mt-1 flex flex-wrap gap-2 border-t border-hairline pt-4">
+        <div className="fade-rule mt-1" aria-hidden="true" />
+        <div className="flex flex-wrap gap-2 pt-3">
           {canImport(meta) && (
             <Button variant="secondary" onClick={() => setPrevious(true)}>
               <History />

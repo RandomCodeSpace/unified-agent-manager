@@ -96,9 +96,9 @@ export function PreviousSessionsDialog({ project, onClose }: { project: Project;
       {sessions === null && !error && <Note role="status"><Spinner /> Loading previous sessions…</Note>}
       {sessions?.length === 0 && <Note>No previous sessions are available to import in this project.</Note>}
       {sessions && sessions.length > 0 && (
-        <ul className="max-h-[60dvh] divide-y divide-hairline overflow-y-auto">
+        <ul className="flex max-h-[60dvh] flex-col gap-1 overflow-y-auto">
           {sessions.map((s) => (
-            <li key={`${s.provider}:${s.conversation_id}`} className="flex items-center gap-3 py-3">
+            <li key={`${s.provider}:${s.conversation_id}`} className="flex items-center gap-3 rounded-md bg-tint-well px-3 py-2.5">
               <div className="min-w-0 flex-1">
                 <p className="break-words text-ui text-ink">{s.title || 'Untitled session'}</p>
                 <p className="mt-1 text-caption text-muted">{providerLabel(meta, s.provider)} · <time dateTime={s.updated_at}>{new Date(s.updated_at).toLocaleString()}</time></p>

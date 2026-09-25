@@ -62,7 +62,7 @@ export function InlinePicker({
     <div
       ref={popupRef}
       data-popup=""
-      className="absolute bottom-full left-0 z-40 mb-1.5 flex w-full origin-bottom-left flex-col overflow-hidden rounded-md border border-hairline-strong bg-raised text-ink shadow-float animate-rise sm:w-[440px]"
+      className="absolute bottom-full left-0 z-40 mb-1.5 flex w-full origin-bottom-left flex-col overflow-hidden rounded-md bg-raised text-ink shadow-float animate-rise sm:w-[440px]"
     >
       <div className="flex h-7 shrink-0 items-center gap-2 px-3 text-caption text-muted">
         <span className="font-medium">{title}</span>
@@ -102,7 +102,12 @@ export function InlinePicker({
           );
         })}
       </div>
-      {note && <div className="border-t border-hairline px-3 py-1.5 text-caption text-muted">{note}</div>}
+      {note && (
+        <>
+          <div className="fade-rule mx-3" aria-hidden="true" />
+          <div className="px-3 py-1.5 text-caption text-muted">{note}</div>
+        </>
+      )}
     </div>
   );
 }

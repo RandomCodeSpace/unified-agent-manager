@@ -664,7 +664,7 @@ export default function App() {
           >
             {/* The column animates to 0; the sidebar keeps its width inside so nothing reflows on the way, and is inert once hidden. */}
             {!narrow && (
-              <aside ref={aside} className="min-h-0 overflow-hidden" inert={!sidebarOpen} aria-hidden={!sidebarOpen}>
+              <aside ref={aside} className="rail-edge relative min-h-0 overflow-hidden" inert={!sidebarOpen} aria-hidden={!sidebarOpen}>
                 <div className="h-full w-rail">{sidebar}</div>
               </aside>
             )}
@@ -675,13 +675,13 @@ export default function App() {
             )}
             <main className="relative flex min-h-0 min-w-0 flex-col bg-canvas">
               {connection !== 'connected' && (
-                <p role="status" className={cn('flex items-center gap-2 border-b border-hairline px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
+                <p role="status" className={cn('flex items-center gap-2 px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
                   <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
                   {CONNECTION_TEXT[connection]}
                 </p>
               )}
               {updated && (
-                <p role="status" className="flex items-center gap-2 border-b border-hairline bg-surface px-4 py-1 text-caption text-body animate-fade-in">
+                <p role="status" className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-body animate-fade-in">
                   <Dot tone="accent" />
                   <span className="flex-1">UAM was updated.</span>
                   <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
@@ -690,7 +690,7 @@ export default function App() {
                 </p>
               )}
               {notice && (
-                <p className="flex items-center gap-2 border-b border-hairline bg-error-wash px-4 py-1.5 text-caption text-error animate-fade-in" role="alert">
+                <p className="flex items-center gap-2 bg-error-wash px-4 py-1.5 text-caption text-error animate-fade-in" role="alert">
                   <span className="flex-1">{notice}</span>
                   <Button size="icon" variant="ghost" aria-label="Dismiss" className="text-error hover:bg-error-wash hover:text-error" onClick={() => setNotice(null)}>
                     <X />
@@ -772,7 +772,7 @@ export default function App() {
 /** The header of the non-Task views while the sidebar is away (narrow, or hidden): its toggle, the brand, the connection. */
 function PaneHeader({ leading, connection }: { leading: React.ReactNode; connection?: keyof typeof CONNECTION_TEXT }) {
   return (
-    <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">
+    <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">
       {leading}
       <span className="text-title font-semibold text-ink">uam</span>
       <span className="flex-1" />
@@ -799,7 +799,7 @@ function EmptyPane({ leading, connection, children }: { leading: React.ReactNode
 function LoadingPane({ leading, placeholder }: { leading: React.ReactNode; placeholder: boolean }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-label="Loading conversation">
-      <header className="flex h-header shrink-0 items-center gap-2 border-b border-hairline px-3">{leading}</header>
+      <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">{leading}</header>
       {placeholder && <Loading label="Loading the conversation…" delay={0} className="flex-1 justify-center" />}
     </div>
   );

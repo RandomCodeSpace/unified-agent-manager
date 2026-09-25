@@ -1,7 +1,7 @@
 import { X } from 'lucide-react';
 import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, describeError, resolveTaskDefaults, type CustomModel, type Model, type SendDefault, type Settings } from '../api';
-import { Note, Spinner, useApp } from './common';
+import { Note, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { Field, TaskDefaultsFields } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
@@ -15,10 +15,10 @@ import { Input } from './ui/input';
 import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
 
-/** One titled group of settings; a new group is another `Section` below the last. */
+/** One titled group of settings, a floating card (DESIGN.md Settings view); a new group is another `Section` below the last. */
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
-    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-3 border-t border-hairline py-4 first:border-t-0 first:pt-0">
+    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
       <h2 id={`${id}-title`} className="text-title text-ink">
         {title}
       </h2>
@@ -122,7 +122,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
         service starts (for example in ~/.bashrc), restart the service, and name that variable here.
       </Note>
       {providers.map((p) => (
-        <section key={p.name} aria-label={`${p.name} models`} className="flex flex-col border-b border-hairline py-2">
+        <section key={p.name} aria-label={`${p.name} models`} className="flex flex-col rounded-md bg-tint-well px-3 py-2">
           <div className="flex min-h-8 items-center gap-2">
             <div className="flex min-w-0 flex-1 flex-col">
               <span className="text-ui font-medium text-ink">{p.name}</span>
@@ -150,7 +150,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
         </section>
       ))}
       {draft && (
-        <form aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 border-b border-hairline py-2" onSubmit={(e) => void save(e, draft)}>
+        <form aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={(e) => void save(e, draft)}>
           <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
             {field(draft, 'name', 'Provider name', 'ollama')}
             {field(draft, 'base_url', 'Base URL', 'https://ollama.com/v1')}
@@ -180,7 +180,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
           </div>
           {loadError && <Note tone="warn" role="alert">{loadError}</Note>}
           {draft.ids.length > 0 && (
-            <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto rounded-sm border border-hairline px-2 py-1">
+            <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto rounded-sm bg-raised px-2 py-1 shadow-well">
               {matchingIds(draft.ids, draft.query).map((id) => (
                 <label key={id} className="flex min-h-7 items-center gap-2 text-ui text-ink">
                   <input
@@ -243,6 +243,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [motion, setMotion] = useState(loadMotion);
+  const [scrolled, sentinel] = useScrolled();
 
   async function save(patch: Partial<Settings>) {
     const sequence = ++saveSequence.current;
@@ -289,7 +290,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
 
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
-      <header className="flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3">
+      <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
         {leading}
         <h1 className="min-w-0 flex-1 truncate text-display-sm text-ink">Settings</h1>
         {saving && <Spinner className="shrink-0" />}
@@ -300,8 +301,9 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
         </Tip>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="flex w-full min-w-0 flex-col px-4 py-4 md:px-6">
-          <p className="mb-4 text-caption text-muted">Kept by the service, so they apply in every browser. This browser's own settings are at the end.</p>
+        <ScrollSentinel sentinelRef={sentinel} />
+        <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
+          <p className="text-caption text-muted">Kept by the service, so they apply in every browser. This browser's own settings are at the end.</p>
           <Section id="composer" title="Composer">
             <Row
               id="send-default"
@@ -360,7 +362,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                 {models.map((m) => {
                   const shown = !hidden.includes(m.id);
                   const offered = p.models.some((v) => v.id === m.id);
-                  return <div key={m.id} className="flex min-h-12 items-center gap-3 border-b border-hairline py-2">
+                  return <div key={m.id} className="flex min-h-12 items-center gap-3 py-2">
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="text-ui font-medium text-ink">{m.name}</span>
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-meta text-muted">

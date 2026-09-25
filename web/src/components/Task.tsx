@@ -6,7 +6,7 @@ import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { awaitsUser, completedChanges, foregroundItems } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
-import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, Spinner, StateMark, TaskTitle, WorkingMark, useApp } from './common';
+import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, WorkingMark, useApp, useScrolled } from './common';
 import { Chip } from './ui/chip';
 import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
@@ -116,6 +116,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const working = session.state === 'working' || session.state === 'starting';
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  const [scrolled, sentinel] = useScrolled();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
 
@@ -259,7 +260,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   return (
     <div className="flex min-h-0 flex-1 animate-rise">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3">
+        <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
           {leading}
           <div className="group/title flex min-w-0 flex-1 items-center gap-1.5">
             {project && <ProjectBadge badge={project.badge} className="mr-0.5" />}
@@ -333,7 +334,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll}>
-          <div className="flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6" role="log">
+          <ScrollSentinel sentinelRef={sentinel} />
+          {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
+          <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log">
             <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />
             {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
@@ -366,8 +369,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
           </div>
         </div>
 
-        <div className="relative w-full shrink-0 px-3 pb-3 sm:px-4 md:px-6">
-          <Appear show={showJump} className="absolute -top-10 left-1/2 -translate-x-1/2">
+        {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
+        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
+          <Appear show={showJump} className="absolute top-0 left-1/2 -translate-x-1/2">
             <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
               <ArrowDown />
               New output
@@ -413,17 +417,17 @@ export function NewTaskPane({ project, defaults, onSend, leading }: { project: P
   const newTask = useMemo(() => ({ projectId: project.id, send: (first: FirstMessage) => onSend(project.id, first) }), [project.id, onSend]);
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
-      <header className="flex h-header shrink-0 items-center gap-1.5 border-b border-hairline pr-2 pl-3">
+      <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3">
         {leading}
         <ProjectBadge badge={project.badge} className="mr-0.5" />
         <h1 className="min-w-0 truncate text-display-sm text-ink">New task</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="flex w-full flex-col gap-6 px-3 py-6 sm:px-4 md:px-6">
+        <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6">
           <NewTaskIntro project={project} />
         </div>
       </div>
-      <div className="relative w-full shrink-0 px-3 pb-3 sm:px-4 md:px-6">
+      <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
         <Composer session={session} onRename={noRename} onSessionUpdate={onSettings} newTask={newTask} />
       </div>
     </div>

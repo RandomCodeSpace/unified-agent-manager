@@ -122,10 +122,10 @@ export function ChangesSheet({
           <X />
         </Button>
       </PanelHeader>
-      <p className="shrink-0 border-b border-hairline px-3 py-1.5 text-caption leading-relaxed text-muted" title={label}>
+      <p className="shrink-0 px-3 py-1.5 text-caption leading-relaxed text-muted" title={label}>
         {scope === 'workspace' ? 'All uncommitted project changes vs HEAD.' : label}
       </p>
-      <ul className="max-h-[40%] shrink-0 overflow-y-auto border-b border-hairline p-1">
+      <ul className="max-h-[40%] shrink-0 overflow-y-auto p-1">
         {error && (
           <li className="px-2 py-1">
             <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
@@ -155,6 +155,7 @@ export function ChangesSheet({
           <FileRow key={f.path} file={f} selected={f.path === shownPath} onOpen={() => setPath(f.path)} />
         ))}
       </ul>
+      <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
       <div className="min-h-0 flex-1 overflow-auto">{shownPath && <FileView key={`${scope}:${shownPath}:${tick}`} sessionId={session.id} scope={scope} path={shownPath} />}</div>
     </SidePanel>
   );

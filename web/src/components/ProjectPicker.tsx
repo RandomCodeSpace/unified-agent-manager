@@ -99,7 +99,7 @@ function FilterList({ projects, filter, input, onPick, onEdit }: { projects: Pro
   const { active, setActive, list, onKeyDown } = useHighlight(rows.length, 0, (i) => onPick(rows[i]?.id ?? null));
   return (
     <>
-      <label className="flex items-center gap-1.5 border-b border-hairline px-2 pb-1 text-muted">
+      <label className="flex items-center gap-1.5 px-2 pb-1 text-muted">
         <Search aria-hidden="true" className="size-3.5 shrink-0" />
         <input
           ref={input}
@@ -216,7 +216,7 @@ function PaletteBody({ projects, start, input, onClose, onPick }: { projects: Pr
   const { active, setActive, list, onKeyDown } = useHighlight(matches.length, Math.max(0, projects.findIndex((p) => p.id === start?.id)), (i) => onPick(matches[i].id));
   return (
     <>
-      <div className="flex items-center gap-1 border-b border-hairline px-2 py-1.5">
+      <div className="flex items-center gap-1 px-2 py-1.5">
         <Button size="icon" aria-label="Close" className="text-muted" onClick={onClose}>
           <ArrowLeft />
         </Button>
@@ -277,7 +277,8 @@ function PaletteBody({ projects, start, input, onClose, onPick }: { projects: Pr
         </div>
         {matches.length === 0 && <p role="status" className="px-2 py-3 text-caption text-muted">No project matches</p>}
       </div>
-      <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline px-3 py-2 text-caption text-muted">
+      <div className="fade-rule mx-3" aria-hidden="true" />
+      <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-caption text-muted">
         <span className="flex items-center gap-1"><Key>↑</Key><Key>↓</Key> Navigate</span>
         <span className="flex items-center gap-1"><Key>Enter</Key> Select</span>
         <span className="flex items-center gap-1"><Key>Esc</Key> Close</span>

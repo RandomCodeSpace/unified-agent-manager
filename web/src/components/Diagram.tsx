@@ -70,7 +70,7 @@ export function DiagramCard({ source, ready, children }: { source: string; ready
           </>
         }
         body={image || undefined}
-        foot={error && <Note className={cn('border-t border-hairline px-3 py-1.5')}>Diagram could not be rendered: {error.split('\n')[0]}</Note>}
+        foot={error && <Note className={cn('px-3 py-1.5')}>Diagram could not be rendered: {error.split('\n')[0]}</Note>}
       >
         {children}
       </CodeBlock>

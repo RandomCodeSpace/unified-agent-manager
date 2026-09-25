@@ -745,9 +745,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       // `data-draft` marks unsent work (text, picked files, uploads); an update waits while it is set.
       data-draft={text.trim() || files.length || uploads.length ? '' : undefined}
       className={cn(
-        'relative flex flex-col rounded-md border border-hairline bg-raised shadow-raised transition-[border-color,box-shadow] duration-160 focus-within:border-hairline-strong focus-within:shadow-float has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:-outline-offset-1 has-[textarea:focus-visible]:outline-focus',
+        // The floating control plane (DESIGN.md Composer): `lg` corners on the float shadow; focus-within fades in
+        // (opacity only) a pseudo-element carrying the deeper shadow and the accent glow, so no shadow is ever animated.
+        "relative isolate flex flex-col rounded-lg bg-raised shadow-float before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:opacity-0 before:shadow-focus-float before:transition-opacity before:duration-160 before:content-[''] focus-within:before:opacity-100",
         locked && 'bg-surface',
-        dragging > 0 && 'border-accent',
       )}
       onSubmit={(e) => {
         e.preventDefault();
@@ -790,7 +791,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         />
       )}
       {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked)) && (
-        <div className="flex flex-col gap-1 border-b border-hairline px-3.5 py-2">
+        <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {locked && <Note>{session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.'}</Note>}
           {last?.status === 'uncertain' && (
             <Note tone="warn" role="alert">
@@ -821,7 +822,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         </div>
       )}
       {commandResult && commandResult.kind !== 'action' && (
-        <div className="border-b border-hairline px-3.5 py-2 text-ui text-body">
+        <div className="px-3.5 py-2 text-ui text-body">
           <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon-sm" variant="subtle" aria-label="Dismiss command result" onClick={() => dismissResult()}><X /></Button></div>
           {commandResult.kind === 'select' ? <>
             <p className="text-caption text-muted">{commandResult.title}</p>
@@ -836,7 +837,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       )}
       {queueStrip.mounted && (
         <Collapse open={queue.length > 0} appear={!queueAtMount} onClosed={queueStrip.onClosed}>
-        <details className="group/queue border-b border-hairline px-3.5 py-1.5" open>
+        <details className="group/queue px-3.5 py-1.5" open>
           <summary className="flex h-6 list-none items-center gap-2 text-caption text-muted select-none [&::-webkit-details-marker]:hidden">
             <ListEnd aria-hidden="true" className="size-3.5" />
             <span className="tabular-nums">{shownQueue.length} queued</span>

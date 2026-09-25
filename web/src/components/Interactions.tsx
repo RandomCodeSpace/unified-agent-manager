@@ -71,7 +71,7 @@ export function InteractionCard({ session, interaction, onUpdate }: { session: S
   if (!pending) return <DecidedRow interaction={interaction} />;
 
   return (
-    <section className="rounded-md border border-hairline bg-raised px-4 py-3 shadow-raised animate-rise" role="group" aria-labelledby={titleId}>
+    <section className="rounded-lg bg-raised px-4 py-3 shadow-float animate-rise" role="group" aria-labelledby={titleId}>
       <div className="mb-1.5 flex items-center gap-2">
         <Chip tone="attention">
           <Icon aria-hidden="true" className="size-3.5" />

@@ -143,9 +143,10 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
   const meta = rowMeta(s, unread);
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
+  // A card on the rail: `raised` with the soft ring, lifting on hover (`lift`: transform and a pre-drawn shadow's opacity).
   const rowClass = cn(
-    'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised px-2.5 py-2 text-left text-caption transition-colors duration-100 focus-visible:-outline-offset-2',
-    selected ? 'bg-tint-selected text-ink' : 'hover:bg-tint-hover',
+    'lift flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color,color,transform] duration-100 focus-visible:-outline-offset-2',
+    selected ? 'bg-tint-selected text-ink' : 'hover:bg-raised',
     readOnly(s) && !selected && 'text-muted',
     strong ? 'font-medium text-ink' : 'text-body',
   );
@@ -230,7 +231,7 @@ function Shelf({ projects, label, tasks, selectedId, open, onToggle }: { project
         <span className="whitespace-nowrap">
           {label} <span className="tabular-nums text-muted">{tasks.length}</span>
         </span>
-        <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
+        <span className="fade-rule flex-1" aria-hidden="true" />
         <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
       <Collapse open={open}>
@@ -298,7 +299,7 @@ export const Sidebar = memo(function Sidebar({
   return (
     <nav aria-label="Tasks" className="flex h-full min-h-0 flex-col bg-rail text-body">
       <header className="flex h-header shrink-0 items-center gap-0.5 px-2">
-        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted focus-within:bg-raised focus-within:outline-2 focus-within:outline-focus">
+        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted transition-[background-color,box-shadow] duration-100 focus-within:bg-raised focus-within:shadow-focus">
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
           <input type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>

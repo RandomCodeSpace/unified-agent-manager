@@ -260,7 +260,7 @@ const ActivityRun = memo(function ActivityRun({ entries, ctx, endedAt, className
   if (!label) return null;
   return (
     <div data-activity="" className={cn('flex flex-col', className)}>
-      <button type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-full items-center gap-2 rounded-sm text-left text-caption text-muted transition-colors duration-100 hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => setOpen((o) => !o)}>
+      <button type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => setOpen((o) => !o)}>
         <span className="flex size-3.5 shrink-0 items-center justify-center">
           {active ? <WorkingMark /> : <ChevronRight aria-hidden="true" className={cn('size-3 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />}
         </span>
@@ -333,7 +333,7 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className }: { it
   return (
     <div className={cn('flex justify-end', className)}>
       <Copyable text={item.text ?? ''} label="Copy message" side="left" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
-        <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink">
+        <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised">
           <span className="sr-only">You: </span>
           {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
           {item.text && <Markdown text={item.text} />}
@@ -359,13 +359,13 @@ const ToolRun = memo(function ToolRun({ items, live, sessionId, approvals, arriv
   const active = live && items.some((item) => isActive(item.tool?.status));
   return (
     <div data-tool-run="">
-      <button type="button" aria-expanded={open} className={cn('flex min-h-7 w-full items-center gap-2 rounded-sm text-left text-ui text-muted transition-colors duration-100 hover:text-body pointer-coarse:min-h-11', failed && 'text-error')} onClick={() => setOpen((o) => !o)}>
+      <button type="button" aria-expanded={open} className={cn('flex min-h-7 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-ui text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', failed && 'text-error')} onClick={() => setOpen((o) => !o)}>
         {active ? <WorkingMark /> : <Terminal aria-hidden="true" className="size-4 shrink-0" />}
         <span>{summarizeTools(items, live)}</span>
         <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
       <Collapse open={open}>
-        <div className="mt-1 flex flex-col gap-1 border-l border-hairline pl-3">
+        <div className="relative mt-1 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-px before:fade-rule-y before:content-['']">
           {items.map((item) => <ToolRow key={item.id} item={item} live={live} sessionId={sessionId} approvals={approvals.get(item.id)} className={arrival(item.id)} />)}
         </div>
       </Collapse>
@@ -444,7 +444,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
           <button
             type="button"
             aria-expanded={open}
-            className={cn('flex h-6 w-full items-center gap-2 rounded-sm pr-8 pl-1 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-hover pointer-coarse:min-h-11 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
+            className={cn('flex h-6 w-full items-center gap-2 rounded-full pr-8 pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
             title={ended ? 'The turn ended before this tool reported a result' : undefined}
             onClick={() => setOpen((o) => !o)}
           >
@@ -504,7 +504,7 @@ const QuestionBlock = memo(function QuestionBlock({ id, asked, className }: { id
   ];
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('flex flex-col gap-1.5 rounded-md bg-tint-well px-3 py-2.5 text-ui', className)} />}>
+      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('flex flex-col gap-1.5 rounded-md bg-raised px-3.5 py-3 text-ui shadow-raised', className)} />}>
         <div className="flex items-center gap-1.5 text-caption text-muted">
           <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-faint" />
           <span>Question</span>
@@ -539,14 +539,18 @@ const QuestionBlock = memo(function QuestionBlock({ id, asked, className }: { id
           </div>
         ))}
         {asked.outcome === 'answered' && (
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-t border-hairline pt-1.5">
-            <span className="text-caption text-muted">You answered</span>
-            <span className="min-w-0 text-ink">{asked.answer}</span>
-          </div>
+          <>
+            <div className="fade-rule mt-0.5" aria-hidden="true" />
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="text-caption text-muted">You answered</span>
+              <span className="min-w-0 text-ink">{asked.answer}</span>
+            </div>
+          </>
         )}
-        {asked.outcome === 'declined' && <p className="border-t border-hairline pt-1.5 text-caption text-muted">You declined to answer.</p>}
-        {asked.outcome === 'none' && <p className="border-t border-hairline pt-1.5 text-caption text-muted">No answer.</p>}
-        {asked.outcome === 'failed' && <p className="border-t border-hairline pt-1.5 text-caption text-error">Failed{asked.error ? `: ${asked.error}` : '.'}</p>}
+        {asked.outcome !== 'answered' && asked.outcome !== 'pending' && <div className="fade-rule mt-0.5" aria-hidden="true" />}
+        {asked.outcome === 'declined' && <p className="text-caption text-muted">You declined to answer.</p>}
+        {asked.outcome === 'none' && <p className="text-caption text-muted">No answer.</p>}
+        {asked.outcome === 'failed' && <p className="text-caption text-error">Failed{asked.error ? `: ${asked.error}` : '.'}</p>}
       </ContextMenu.Trigger>
       <ContextMenu.Content>
         <ContextMenu.Actions items={items} />
@@ -611,7 +615,7 @@ export function Thinking({ item, streaming, endedAt, className }: { item: Item; 
         <span className={cn('tabular-nums', streaming && 'animate-shimmer motion-reduce:animate-none')}>{streaming ? 'Thinking…' : took ? `Thought for ${took}` : 'Thought'}</span>
       </button>
       <Collapse open={expanded}>
-        <Copyable text={text} label="Copy thinking" className="mt-1 border-l-2 border-hairline pr-6 pl-3">
+        <Copyable text={text} label="Copy thinking" className="mt-1 pr-6 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-['']">
           <Markdown text={text} className="md-quiet" streaming={streaming} />
         </Copyable>
       </Collapse>
@@ -684,7 +688,7 @@ function SubagentRow({ item, subagent, agentItems, provider, onOpen }: { item: I
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger
-        render={<div id={`item-${item.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-sm bg-tint-well py-1.5 pr-1.5 pl-3 text-ui transition-colors" />}
+        render={<div id={`item-${item.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-raised py-2 pr-2 pl-3.5 text-ui shadow-raised transition-colors" />}
       >
         <Bot aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <div className="flex min-w-0 flex-1 flex-col max-sm:basis-[calc(100%-28px)]">
