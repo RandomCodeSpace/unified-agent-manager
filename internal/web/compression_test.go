@@ -204,9 +204,9 @@ func TestCompressionStaticHTTPAndSecurity(t *testing.T) {
 	for _, path := range []string{"/", "/assets/app.js", "/assets/style.css", "/icon.svg", "/empty.css", "/diagram-frame.html", "/api/auth"} {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			t.Run(method+path, func(t *testing.T) {
-			req, _ := http.NewRequest(method, httpSrv.URL+path, nil)
-			req.Header.Set("Accept-Encoding", "gzip")
-			resp, err := client.Do(req)
+				req, _ := http.NewRequest(method, httpSrv.URL+path, nil)
+				req.Header.Set("Accept-Encoding", "gzip")
+				resp, err := client.Do(req)
 				if err != nil {
 					t.Fatal(err)
 				}
