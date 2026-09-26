@@ -27,7 +27,7 @@ const configFileName = "sessions.json"
 // on-disk values so a hand-edited or corrupt config can never feed an invalid
 // value downstream (F44).
 const (
-	DefaultAgentName = "opencode"
+	DefaultAgentName = "copilot"
 	defaultSort      = "state"
 	defaultPeekWidth = 60
 	minPeekWidth     = 20
@@ -1157,7 +1157,7 @@ func validateRecord(rec SessionRecord) string {
 }
 
 // providerSessionIDRE constrains persisted provider session ids to the id
-// alphabets the supported providers use — claude/codex UUIDs and opencode
+// alphabets current and historical providers use — UUIDs and prefixed
 // "ses_..." ids — with no shell metacharacters and no leading dash (a value
 // starting with '-' could be parsed as a flag by the agent CLI).
 var providerSessionIDRE = regexp.MustCompile(`^[0-9A-Za-z_][0-9A-Za-z_-]{0,63}$`)
@@ -1202,7 +1202,9 @@ func normalize(cfg Config) Config {
 	if cfg.SchemaVersion == 0 {
 		cfg.SchemaVersion = CurrentSchemaVersion
 	}
-	if cfg.DefaultAgent == "" {
+	// OpenCode is retired. Keep its saved records, but never select it for a
+	// new session when loading an older configuration.
+	if cfg.DefaultAgent == "" || cfg.DefaultAgent == "opencode" {
 		cfg.DefaultAgent = DefaultAgentName
 	}
 	if cfg.Sessions == nil {
@@ -1458,7 +1460,9 @@ func (s *Store) TryRecordSessionExit(exit SessionExit) (bool, error) {
 func PruneOld(cfg *Config, maxAge time.Duration, exists func(string) bool) {
 	cutoff := time.Now().Add(-maxAge)
 	for key, rec := range cfg.Sessions {
-		if rec.Surface != "" {
+		// Retired-provider records are kept for manual export; their absence
+		// from the active registry is not evidence that their data is stale.
+		if rec.Surface != "" || rec.Agent == "opencode" {
 			continue
 		}
 		if rec.LastSeenAt.Before(cutoff) && !exists(rec.SessionName) {

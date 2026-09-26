@@ -19,7 +19,7 @@ func dashboardFixture(width, height int) Model {
 	m.sessions = []adapter.Session{
 		{ID: "shared", AgentType: "codex", DisplayName: "release-check", Prompt: "verify release pipeline", Cwd: "/work/uam", ProcAlive: adapter.Alive, CreatedAt: now.Add(-4 * time.Minute)},
 		{ID: "shared", AgentType: "claude", DisplayName: "repair-tests", Prompt: "repair integration tests", Cwd: "/work/uam", ProcAlive: adapter.Exited, CreatedAt: now.Add(-2 * time.Hour)},
-		{ID: "failed", AgentType: "opencode", DisplayName: "failing-agent", Prompt: "inspect failure", Cwd: "/work/other", ProcAlive: adapter.Exited, ExitCode: exitCode(7), CreatedAt: now.Add(-3 * time.Hour)},
+		{ID: "failed", AgentType: "copilot", DisplayName: "failing-agent", Prompt: "inspect failure", Cwd: "/work/other", ProcAlive: adapter.Exited, ExitCode: exitCode(7), CreatedAt: now.Add(-3 * time.Hour)},
 	}
 	m.loading = false
 	m.hasLoaded = true
@@ -56,7 +56,7 @@ func TestDashboardShowsProviderAndObservedUpdateTimeAtEveryWidth(t *testing.T) {
 			{agent: "codex", id: "shared"}: updated,
 		}
 		view := ansi.Strip(m.View().Content)
-		for _, provider := range []string{"codex", "claude", "opencode"} {
+		for _, provider := range []string{"codex", "claude", "copilot"} {
 			if !strings.Contains(view, provider) {
 				t.Fatalf("width %d dashboard missing provider %q:\n%s", width, provider, view)
 			}

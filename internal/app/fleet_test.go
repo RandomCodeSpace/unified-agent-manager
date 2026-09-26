@@ -123,7 +123,7 @@ func TestProviderIndependentRowsKeepTheSameSemanticGrammar(t *testing.T) {
 		CreatedAt: now.Add(-time.Hour),
 		PR:        &adapter.PRRef{Number: 7, Status: adapter.PROpen},
 	}
-	for _, provider := range []string{"claude", "codex", "opencode", "omp"} {
+	for _, provider := range []string{"claude", "codex", "copilot", "omp"} {
 		sess := base
 		sess.AgentType = provider
 		m := NewWithDeps(nil, nil)

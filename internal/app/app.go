@@ -224,7 +224,7 @@ func NewWithDeps(st *store.Store, reg *adapter.Registry) Model {
 		darkBackground: compat.HasDarkBackground,
 		sessionLoads:   &sessionLoadCoordinator{},
 	}
-	// The baked-in OpenCode default may not be installed; reconcile it to an
+	// The baked-in default may not be installed; reconcile it to an
 	// enabled provider so Enter-with-no-input and the prompt hint never point at
 	// a disabled agent (C2-9).
 	m.defaultAgent = m.validateDefaultAgent(m.defaultAgent)

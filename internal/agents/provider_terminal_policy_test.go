@@ -19,8 +19,7 @@ func TestProviderTerminalPolicyMatrix(t *testing.T) {
 		"hermes":  {Identity: adapter.ProviderHermes, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative},
 		// omp sets no mouse modes and never enters ?1049 — verified on a PTY —
 		// so like codex it owns the primary screen and its scrollback.
-		"omp":      {Identity: adapter.ProviderOMP, OuterScreen: adapter.OuterScreenPrimary, KeyProtocol: adapter.KeyProtocolNative},
-		"opencode": {Identity: adapter.ProviderOpenCode, OuterScreen: adapter.OuterScreenUAM, KeyProtocol: adapter.KeyProtocolNative},
+		"omp": {Identity: adapter.ProviderOMP, OuterScreen: adapter.OuterScreenPrimary, KeyProtocol: adapter.KeyProtocolNative},
 	}
 	observed := make(map[string]adapter.ProviderTerminalPolicy, len(want))
 

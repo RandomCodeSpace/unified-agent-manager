@@ -12,7 +12,7 @@ func TestProfilePrecedenceAndExplicitFalse(t *testing.T) {
 	overrides := completeSessionOverrides(store.ModeYolo, "session-alias", store.MousePolicyOn, "C-c", false, 9000)
 	cfg := store.DefaultConfig()
 	cfg.DefaultProfile = "global"
-	cfg.Profiles["global"] = completeProfile("opencode", store.ModeSafe, "global-alias", store.MousePolicyAuto, "C-b", true, 4000)
+	cfg.Profiles["global"] = completeProfile("copilot", store.ModeSafe, "global-alias", store.MousePolicyAuto, "C-b", true, 4000)
 	cfg.Profiles["focused"] = profile
 	record := store.SessionRecord{Agent: "claude", Profile: "focused", ProfileOverrides: &overrides}
 

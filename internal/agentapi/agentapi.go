@@ -1,7 +1,7 @@
 // Package agentapi is the provider-neutral contract between the uam web
-// service and the structured provider integrations (the Copilot SDK and the
-// OpenCode server). It carries only what the web interface needs; provider
-// specifics stay inside the adapters.
+// service and structured provider integrations such as the Copilot SDK.
+// It carries only what the web interface needs; provider specifics stay
+// inside the adapters.
 //
 // Lifetime rules every implementation must follow:
 //
@@ -24,8 +24,7 @@ import (
 
 // Provider names match the uam agent names used in sessions.json.
 const (
-	ProviderCopilot  = "copilot"
-	ProviderOpenCode = "opencode"
+	ProviderCopilot = "copilot"
 )
 
 var (
@@ -76,7 +75,7 @@ type Capabilities struct {
 
 // Provider creates and reopens conversations for one provider runtime.
 type Provider interface {
-	// Name returns ProviderCopilot or ProviderOpenCode.
+	// Name returns the provider identifier used in persisted task records.
 	Name() string
 	// DisplayName returns a human label, e.g. "GitHub Copilot".
 	DisplayName() string

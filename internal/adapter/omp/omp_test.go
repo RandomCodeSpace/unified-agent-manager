@@ -193,8 +193,8 @@ func TestYoloArgsUsesAutoApprove(t *testing.T) {
 	}
 }
 
-// On resume omp gets `-c`/`--continue` to continue its last session (same as
-// opencode); a fresh dispatch adds nothing.
+// On resume omp gets `-c`/`--continue` to continue its last session;
+// a fresh dispatch adds nothing.
 func TestSessionArgsAppendsContinueOnResume(t *testing.T) {
 	if got := sessionArgs(adapter.ResumeRequest{ID: "x"}, "dispatched"); got != nil {
 		t.Fatalf("dispatched should add no flags, got %v", got)

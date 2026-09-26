@@ -143,6 +143,26 @@ func TestLastSeenIDSelectsMaxLastSeenAt(t *testing.T) {
 	}
 }
 
+func TestLastSeenIDSkipsRetiredOpenCode(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	activeKey := store.Key("copilot", "aaaaaaaa")
+	retiredKey := store.Key("opencode", "bbbbbbbb")
+	cfg := store.Config{Sessions: map[string]store.SessionRecord{
+		activeKey:  {ID: "aaaaaaaa", Agent: "copilot", LastSeenAt: base},
+		retiredKey: {ID: "bbbbbbbb", Agent: "opencode", LastSeenAt: base.Add(time.Hour)},
+	}}
+	if got := lastSeenID(cfg); got != "aaaaaaaa" {
+		t.Fatalf("lastSeenID = %q, want the supported session", got)
+	}
+	delete(cfg.Sessions, activeKey)
+	if got := lastSeenID(cfg); got != "" {
+		t.Fatalf("lastSeenID = %q with only retired sessions, want none", got)
+	}
+	if _, ok := cfg.Sessions[retiredKey]; !ok {
+		t.Fatal("selecting a session must preserve the retired record")
+	}
+}
+
 // C1-6 — equal LastSeenAt must resolve deterministically (largest id wins) so
 // repeated `uam last` invocations are stable.
 func TestLastSeenIDTiebreakIsDeterministic(t *testing.T) {

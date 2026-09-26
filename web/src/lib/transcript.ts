@@ -255,7 +255,7 @@ const ANSWER = /^User\s+(?:selected|responded|answered)\s*:\s*/i;
 export const DECLINED_OUTPUT = 'The user was unable to respond due to an error';
 /** What UAM's adapter tells the CLI when the user declines; a failed call may carry it. */
 const DECLINED_ERROR = 'the user declined to answer';
-/** OpenCode's answered resolution, "Answered: a, b; c". */
+/** Legacy answered resolution, "Answered: a, b; c". */
 const RESOLVED = /^Answered:\s*/;
 
 /**

@@ -11,7 +11,7 @@ import (
 // falls back to the registry's chosen default so Enter-with-no-input and the
 // prompt hint target a provider that actually exists.
 func TestNewWithDepsFallsBackToEnabledWhenDefaultNotEnabled(t *testing.T) {
-	// Only "codex" is enabled; the baked-in OpenCode default is not.
+	// Only "codex" is enabled; the baked-in Copilot default is not.
 	reg := adapter.NewRegistry([]adapter.AgentAdapter{
 		&svcFakeAdapter{name: "codex", available: true},
 		&svcFakeAdapter{name: "claude", available: false},
@@ -27,12 +27,12 @@ func TestNewWithDepsFallsBackToEnabledWhenDefaultNotEnabled(t *testing.T) {
 // and dispatched-to verbatim.
 func TestHandleSessionsLoadedReconcilesDisabledDefaultAgent(t *testing.T) {
 	reg := adapter.NewRegistry([]adapter.AgentAdapter{
-		&svcFakeAdapter{name: "opencode", available: true},
+		&svcFakeAdapter{name: "copilot", available: true},
 	})
 	m := NewWithDeps(nil, reg)
 	m = m.handleSessionsLoaded(sessionsLoadedMsg{defaultAgent: "claude"})
-	if m.defaultAgent != "opencode" {
-		t.Fatalf("loaded defaultAgent = %q, want enabled fallback %q", m.defaultAgent, "opencode")
+	if m.defaultAgent != "copilot" {
+		t.Fatalf("loaded defaultAgent = %q, want enabled fallback %q", m.defaultAgent, "copilot")
 	}
 }
 
@@ -53,8 +53,8 @@ func TestHandleSessionsLoadedKeepsEnabledDefaultAgent(t *testing.T) {
 // and must leave the baked-in default in place.
 func TestDefaultAgentValidationNilRegistryDoesNotPanic(t *testing.T) {
 	m := NewWithDeps(nil, nil)
-	if m.defaultAgent != "opencode" {
-		t.Fatalf("nil-registry default = %q, want %q", m.defaultAgent, "opencode")
+	if m.defaultAgent != "copilot" {
+		t.Fatalf("nil-registry default = %q, want %q", m.defaultAgent, "copilot")
 	}
 	m = m.handleSessionsLoaded(sessionsLoadedMsg{defaultAgent: "anything"})
 	if m.defaultAgent != "anything" {
@@ -66,7 +66,7 @@ func TestDefaultAgentValidationNilRegistryDoesNotPanic(t *testing.T) {
 	// kept (no enabled agent to fall back to).
 	empty := adapter.NewRegistry([]adapter.AgentAdapter{&svcFakeAdapter{name: "codex", available: false}})
 	m2 := NewWithDeps(nil, empty)
-	if m2.defaultAgent != "opencode" {
-		t.Fatalf("none-enabled default = %q, want baked-in %q kept", m2.defaultAgent, "opencode")
+	if m2.defaultAgent != "copilot" {
+		t.Fatalf("none-enabled default = %q, want baked-in %q kept", m2.defaultAgent, "copilot")
 	}
 }

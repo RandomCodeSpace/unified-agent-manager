@@ -25,7 +25,7 @@ func TestNewUsesBareHermesCommand(t *testing.T) {
 		t.Fatalf("candidates = %+v", ag.Candidates)
 	}
 	// Launched bare: no --tui (fails to start) and no --yolo (unknown flag
-	// kills the pane, same as opencode).
+	// kills the pane, as other providers do).
 	if got, want := ag.Candidates[0].Args, []string{"hermes"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidate args = %v, want %v", got, want)
 	}

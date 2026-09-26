@@ -2278,11 +2278,6 @@ func (m *Manager) Command(id string, req CommandRequest) (Submission, error) {
 	m.mu.Lock()
 	provider := s.provider
 	m.mu.Unlock()
-	// OpenCode puts the arguments into the command's template and then runs
-	// every !`cmd` in the result as a shell command, without asking.
-	if provider == agentapi.ProviderOpenCode && strings.Contains(req.Arguments, "!`") {
-		return Submission{}, newError(http.StatusBadRequest, "command arguments must not contain !`")
-	}
 	if provider == agentapi.ProviderCopilot {
 		return m.executeCommand(s, req)
 	}

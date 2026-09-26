@@ -242,13 +242,13 @@ func TestNaturalAgentCrashRemainsResumableAndRecordsFailure(t *testing.T) {
 
 func TestImmediateExitRecordsProviderIdentityHandoff(t *testing.T) {
 	c := newTestClient(t)
-	name := "uam-opencode-a1b2c3d4"
+	name := "uam-fake-a1b2c3d4"
 	st, err := store.Open(store.DefaultPath())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Update(func(cfg *store.Config) error {
-		cfg.PutSession("opencode:a1b2c3d4", store.SessionRecord{ID: "a1b2c3d4", Agent: "opencode", Name: "n", SessionName: name, Status: store.StatusActive})
+		cfg.PutSession("fake:a1b2c3d4", store.SessionRecord{ID: "a1b2c3d4", Agent: "fake", Name: "n", SessionName: name, Status: store.StatusActive})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -266,7 +266,7 @@ func TestImmediateExitRecordsProviderIdentityHandoff(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		rec := cfg.Sessions["opencode:a1b2c3d4"]
+		rec := cfg.Sessions["fake:a1b2c3d4"]
 		return rec.LastExitCode != nil && *rec.LastExitCode == 0 && rec.ProviderSessionID == "ses_fast123"
 	})
 	for _, path := range []string{statePath(c.Dir, name), SocketPath(c.Dir, name), handoff} {
@@ -307,13 +307,13 @@ func TestImmediateExitRecordsProviderIdentityHandoffWithRelativeRuntimeDir(t *te
 	c := &Client{Dir: "runtime", Exe: exe}
 	t.Cleanup(func() { _ = c.KillAll(context.Background()) })
 
-	name := "uam-opencode-a1b2c3d5"
+	name := "uam-fake-a1b2c3d5"
 	st, err := store.Open(store.DefaultPath())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Update(func(cfg *store.Config) error {
-		cfg.PutSession("opencode:a1b2c3d5", store.SessionRecord{ID: "a1b2c3d5", Agent: "opencode", Name: "n", SessionName: name, Status: store.StatusActive})
+		cfg.PutSession("fake:a1b2c3d5", store.SessionRecord{ID: "a1b2c3d5", Agent: "fake", Name: "n", SessionName: name, Status: store.StatusActive})
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -332,7 +332,7 @@ func TestImmediateExitRecordsProviderIdentityHandoffWithRelativeRuntimeDir(t *te
 		if err != nil {
 			return false
 		}
-		rec := cfg.Sessions["opencode:a1b2c3d5"]
+		rec := cfg.Sessions["fake:a1b2c3d5"]
 		return rec.LastExitCode != nil && *rec.LastExitCode == 0 && rec.ProviderSessionID == "ses_relative123"
 	})
 	for _, path := range []string{statePath(absoluteRuntimeDir, name), SocketPath(absoluteRuntimeDir, name), handoff} {
@@ -383,7 +383,7 @@ func TestCreateSessionPreservesShortRelativeSocketPathInDeepWorkingDirectory(t *
 
 func TestProviderIdentityStaleHostCleanupRemovesAllRuntimeFiles(t *testing.T) {
 	c := newTestClient(t)
-	name := "uam-opencode-aabbccdd"
+	name := "uam-fake-aabbccdd"
 	if err := writeState(c.Dir, State{Name: name, HostPID: 1 << 28, ChildPID: 1 << 28, CreatedUnix: 1}); err != nil {
 		t.Fatal(err)
 	}

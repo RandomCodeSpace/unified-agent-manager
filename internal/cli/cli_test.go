@@ -7,12 +7,9 @@ import (
 	"errors"
 	"flag"
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -293,9 +290,6 @@ func TestRunWithTUIStateFreeCommandsDoNotOpenStore(t *testing.T) {
 	if err := RunWithTUI(context.Background(), []string{"__attach"}, noopRunTUI); err == nil || !strings.Contains(err.Error(), "attach requires a session name") {
 		t.Fatalf("__attach must be routed before the store and return its own validation error, got %v", err)
 	}
-	if err := RunWithTUI(context.Background(), []string{"__opencode"}, noopRunTUI); err == nil || !strings.Contains(err.Error(), "OpenCode supervisor") {
-		t.Fatalf("__opencode must be routed before the store and return its own validation error, got %v", err)
-	}
 }
 
 func TestMainStatelessCommandsSkipLoggerAndStore(t *testing.T) {
@@ -368,117 +362,6 @@ func TestCLIMainHelperProcess(t *testing.T) {
 	os.Args = append([]string{"uam"}, args...)
 	Main()
 	os.Exit(0)
-}
-
-func TestMainPropagatesOpenCodeTUIExitCodeWithoutPrintingError(t *testing.T) {
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider := filepath.Join(t.TempDir(), "opencode")
-	script := `#!/bin/sh
-case "$1" in
-  --version) printf '1.18.1\n'; exit 0 ;;
-  serve) shift; exec "$UAM_CLI_TEST_EXE" -test.run=^TestCLIOpenCodeProviderHelper$ -- serve "$@" ;;
-  *) exec "$UAM_CLI_TEST_EXE" -test.run=^TestCLIOpenCodeProviderHelper$ -- tui "$@" ;;
-esac
-`
-	if err := os.WriteFile(provider, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cwd := filepath.Clean(t.TempDir())
-	runtimeDir := secureSessionDir(t)
-	args := []string{
-		"__opencode",
-		"--path", provider,
-		"--dir", cwd,
-		"--name", "uam-opencode-a1b2c3d4",
-		"--runtime-dir", runtimeDir,
-		"--mode", "safe",
-	}
-	encoded, err := json.Marshal(args)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(executable, "-test.run=^TestCLIMainHelperProcess$")
-	cmd.Env = append(os.Environ(),
-		"UAM_TEST_MAIN_COMMAND=__opencode",
-		"UAM_TEST_MAIN_ARGS="+string(encoded),
-		"UAM_CLI_TEST_EXE="+executable,
-		"UAM_CLI_PROVIDER_HELPER=1",
-		"UAM_CACHE_DIR="+t.TempDir(),
-		"UAM_CONFIG_DIR="+filepath.Join(t.TempDir(), "unused-config"),
-		"OPENCODE_SERVER_PASSWORD=credential-must-never-print",
-	)
-	output, err := cmd.CombinedOutput()
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 23 {
-		t.Fatalf("Main() subprocess = (%v, %q), want exit code 23", err, output)
-	}
-	if len(output) != 0 {
-		t.Fatalf("Main() printed a TUI/credential error: %q", output)
-	}
-}
-
-func TestCLIOpenCodeProviderHelper(t *testing.T) {
-	if os.Getenv("UAM_CLI_PROVIDER_HELPER") != "1" {
-		return
-	}
-	separator := -1
-	for i, arg := range os.Args {
-		if arg == "--" {
-			separator = i
-			break
-		}
-	}
-	if separator < 0 || separator+1 >= len(os.Args) {
-		t.Fatalf("provider helper argv = %q", os.Args)
-	}
-	mode := os.Args[separator+1]
-	if mode != "serve" && mode != "tui" {
-		t.Fatalf("provider helper mode = %q", mode)
-	}
-	fs := flag.NewFlagSet(mode, flag.ContinueOnError)
-	hostname := fs.String("hostname", "", "")
-	port := fs.Int("port", 0, "")
-	_ = fs.String("session", "", "")
-	_ = fs.Bool("auto", false, "")
-	if err := fs.Parse(os.Args[separator+2:]); err != nil {
-		t.Fatal(err)
-	}
-	handler := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodGet && request.URL.Path == "/global/health":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"healthy":true,"version":"1.18.1"}`)
-		case request.Method == http.MethodGet && request.URL.Path == "/event":
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.WriteHeader(http.StatusOK)
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
-			if mode == "tui" {
-				time.Sleep(25 * time.Millisecond)
-				os.Exit(23)
-			}
-			<-request.Context().Done()
-		case request.Method == http.MethodPost && request.URL.Path == "/session":
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"id": "ses_cli123", "directory": request.Header.Get("X-OpenCode-Directory"), "title": "CLI helper",
-			})
-		default:
-			http.NotFound(w, request)
-		}
-	})
-	server := &http.Server{
-		Addr:              net.JoinHostPort(*hostname, strconv.Itoa(*port)),
-		Handler:           handler,
-		ReadHeaderTimeout: time.Second,
-	}
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		t.Fatal(err)
-	}
 }
 
 func cliMainSubprocess(t *testing.T, command, cacheDir, configDir string) *exec.Cmd {
@@ -693,7 +576,7 @@ func TestRunWithoutStoreInternalSubcommands(t *testing.T) {
 	if handled, err := runWithoutStore(context.Background(), []string{"__attach"}); !handled || err == nil {
 		t.Fatal("__attach without a session must fail")
 	}
-	if handled, err := runWithoutStore(context.Background(), []string{"__opencode"}); !handled || err == nil {
-		t.Fatal("__opencode without supervisor flags must fail before store access")
+	if handled, err := runWithoutStore(context.Background(), []string{"__opencode"}); handled || err != nil {
+		t.Fatal("removed OpenCode supervisor must not be routed")
 	}
 }

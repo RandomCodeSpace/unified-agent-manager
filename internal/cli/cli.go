@@ -15,7 +15,6 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
@@ -162,8 +161,6 @@ func runWithoutStore(ctx context.Context, args []string) (bool, error) {
 		return true, session.RunHost(args[1:])
 	case "__attach":
 		return true, session.RunAttach(args[1:])
-	case "__opencode":
-		return true, opencode.RunSupervisorCommand(args[1:])
 	case "web":
 		return true, runWeb(ctx, args[1:])
 	case "__web":
@@ -283,12 +280,12 @@ func runLast(ctx context.Context, svc *app.Service, runTUI func(context.Context,
 
 // lastSeenID returns the id of the record with the maximum persisted LastSeenAt.
 // Ties are broken by the larger id so repeated `uam last` invocations are
-// deterministic. Returns "" when there are no records (C1-6). Records owned by
-// the web service are not terminal sessions and are never candidates.
+// deterministic. Returns "" when there are no eligible records (C1-6). Web
+// sessions and retired OpenCode records are never candidates.
 func lastSeenID(cfg store.Config) string {
 	var best store.SessionRecord
 	for _, rec := range cfg.Sessions {
-		if rec.Surface != "" {
+		if rec.Surface != "" || rec.Agent == "opencode" {
 			continue
 		}
 		if best.ID == "" || rec.LastSeenAt.After(best.LastSeenAt) ||

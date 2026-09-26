@@ -12,7 +12,7 @@ import (
 //
 // Everything in this file is a pure function of adapter.Session plus an
 // injected now. Nothing here reads provider output, touches the filesystem, or
-// probes a binary, so a claude session, a codex session, an opencode session
+// probes a binary, so a claude session, a codex session, a copilot session
 // and an omp session all produce the same shapes from the same fields. That is
 // the property that lets the dashboard show more per-session data without the
 // display drifting apart between harnesses.

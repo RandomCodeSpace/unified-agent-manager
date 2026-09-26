@@ -39,7 +39,7 @@ func writeProviderIdentityFixture(t *testing.T, path, contents string, mode os.F
 
 func TestProviderIdentityPath(t *testing.T) {
 	dir := providerIdentityTestDir(t)
-	name := "uam-opencode-a1b2c3d4"
+	name := "uam-fake-a1b2c3d4"
 
 	got, err := ProviderIdentityPath(dir, name)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestProviderIdentityPath(t *testing.T) {
 
 func TestProviderIdentityAtomicRoundTrip(t *testing.T) {
 	dir := providerIdentityTestDir(t)
-	name := "uam-opencode-a1b2c3d4"
+	name := "uam-fake-a1b2c3d4"
 	if err := WriteProviderIdentity(dir, name, "ses_abc123"); err != nil {
 		t.Fatalf("WriteProviderIdentity: %v", err)
 	}
@@ -97,8 +97,8 @@ func TestProviderIdentityAtomicRoundTrip(t *testing.T) {
 
 func TestProviderIdentityWriteReplacesSafeDestination(t *testing.T) {
 	const (
-		name     = "uam-opencode-a1b2c3d4"
-		original = `{"session_name":"uam-opencode-a1b2c3d4","provider_session_id":"ses_original"}`
+		name     = "uam-fake-a1b2c3d4"
+		original = `{"session_name":"uam-fake-a1b2c3d4","provider_session_id":"ses_original"}`
 	)
 	dir := providerIdentityTestDir(t)
 	path := providerIdentityTestPath(t, dir, name)
@@ -118,8 +118,8 @@ func TestProviderIdentityWriteReplacesSafeDestination(t *testing.T) {
 
 func TestProviderIdentityWriteRejectsUnsafeDestination(t *testing.T) {
 	const (
-		name     = "uam-opencode-a1b2c3d4"
-		original = `{"session_name":"uam-opencode-a1b2c3d4","provider_session_id":"ses_original"}`
+		name     = "uam-fake-a1b2c3d4"
+		original = `{"session_name":"uam-fake-a1b2c3d4","provider_session_id":"ses_original"}`
 	)
 
 	t.Run("symlink", func(t *testing.T) {
@@ -242,7 +242,7 @@ func TestProviderIdentityWriteRejectsUnsafeDestination(t *testing.T) {
 
 func TestProviderIdentityMissingReturnsEmpty(t *testing.T) {
 	dir := providerIdentityTestDir(t)
-	got, err := ReadProviderIdentity(dir, "uam-opencode-a1b2c3d4")
+	got, err := ReadProviderIdentity(dir, "uam-fake-a1b2c3d4")
 	if err != nil || got != "" {
 		t.Fatalf("ReadProviderIdentity missing = (%q, %v), want empty success", got, err)
 	}
@@ -250,7 +250,7 @@ func TestProviderIdentityMissingReturnsEmpty(t *testing.T) {
 
 func TestProviderIdentityRejectsInvalidProviderIDBeforeWrite(t *testing.T) {
 	dir := providerIdentityTestDir(t)
-	name := "uam-opencode-a1b2c3d4"
+	name := "uam-fake-a1b2c3d4"
 	if err := WriteProviderIdentity(dir, name, "-unsafe"); err == nil {
 		t.Fatal("WriteProviderIdentity must reject an invalid provider ID")
 	}
@@ -262,9 +262,9 @@ func TestProviderIdentityRejectsInvalidProviderIDBeforeWrite(t *testing.T) {
 
 func TestProviderIdentityReadFailsClosed(t *testing.T) {
 	const (
-		name    = "uam-opencode-a1b2c3d4"
-		valid   = `{"session_name":"uam-opencode-a1b2c3d4","provider_session_id":"ses_abc123"}`
-		foreign = `{"session_name":"uam-opencode-a1b2c3d4","provider_session_id":"ses_foreign"}`
+		name    = "uam-fake-a1b2c3d4"
+		valid   = `{"session_name":"uam-fake-a1b2c3d4","provider_session_id":"ses_abc123"}`
+		foreign = `{"session_name":"uam-fake-a1b2c3d4","provider_session_id":"ses_foreign"}`
 	)
 
 	t.Run("symlink", func(t *testing.T) {
@@ -331,8 +331,8 @@ func TestProviderIdentityReadFailsClosed(t *testing.T) {
 	}{
 		{name: "malformed JSON", contents: `{"session_name":`},
 		{name: "trailing JSON value", contents: valid + ` {}`},
-		{name: "embedded name mismatch", contents: `{"session_name":"uam-opencode-deadbeef","provider_session_id":"ses_abc123"}`},
-		{name: "invalid embedded provider ID", contents: `{"session_name":"uam-opencode-a1b2c3d4","provider_session_id":"-unsafe"}`},
+		{name: "embedded name mismatch", contents: `{"session_name":"uam-fake-deadbeef","provider_session_id":"ses_abc123"}`},
+		{name: "invalid embedded provider ID", contents: `{"session_name":"uam-fake-a1b2c3d4","provider_session_id":"-unsafe"}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := providerIdentityTestDir(t)
@@ -347,7 +347,7 @@ func TestProviderIdentityReadFailsClosed(t *testing.T) {
 
 func TestProviderIdentityFailedWritePreservesPreviousValue(t *testing.T) {
 	dir := providerIdentityTestDir(t)
-	name := "uam-opencode-a1b2c3d4"
+	name := "uam-fake-a1b2c3d4"
 	if err := WriteProviderIdentity(dir, name, "ses_original"); err != nil {
 		t.Fatal(err)
 	}

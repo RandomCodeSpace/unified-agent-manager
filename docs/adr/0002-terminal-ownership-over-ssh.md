@@ -26,7 +26,7 @@ terminal policy decides the outer screen:
 
 | Outer-screen policy | Current providers | Attach behavior |
 |---|---|---|
-| UAM | Claude Code, Copilot, Hermes, OpenCode | UAM enters and owns an alternate screen. Provider alternate-screen sequences are contained inside that boundary. |
+| UAM | Claude Code, Copilot, Hermes | UAM enters and owns an alternate screen. Provider alternate-screen sequences are contained inside that boundary. |
 | Primary | OpenAI Codex, Oh My Pi | UAM attaches on the primary screen and does not create an outer alternate screen. |
 
 The Codex and Oh My Pi primary-screen policies are deliberate. They do not
@@ -104,7 +104,7 @@ terminal preferences. Targeted cleanup is sufficient to re-establish ownership.
 ### Disable provider mouse reporting automatically over SSH
 
 Rejected because it prevents wheel and touch scrolling in providers such as
-OpenCode and OMP. Users who prioritize terminal-owned selection or paste can
+OMP. Users who prioritize terminal-owned selection or paste can
 still opt out with `UAM_ATTACH_MOUSE=off`.
 
 ### Strip all private terminal modes

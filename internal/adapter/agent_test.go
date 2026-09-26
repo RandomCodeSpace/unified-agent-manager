@@ -212,10 +212,10 @@ func TestLaunchPreparationCommandSelection(t *testing.T) {
 		{
 			name: "prepared override",
 			preparedCommand: func(sessionName string) []string {
-				return []string{"/trusted/uam", "__opencode", "--name", sessionName}
+				return []string{"/trusted/uam", "__fake", "--name", sessionName}
 			},
 			wantCommand: func(sessionName string) []string {
-				return []string{"/trusted/uam", "__opencode", "--name", sessionName}
+				return []string{"/trusted/uam", "__fake", "--name", sessionName}
 			},
 		},
 		{
@@ -272,7 +272,7 @@ func TestLaunchPreparationCommandRejectsInvalidAliasBeforeHook(t *testing.T) {
 	prepareCalled := false
 	ag.PrepareLaunch = func(Context, ResumeRequest, string, string, string) (LaunchPreparation, error) {
 		prepareCalled = true
-		return LaunchPreparation{Command: []string{"/trusted/uam", "__opencode"}}, nil
+		return LaunchPreparation{Command: []string{"/trusted/uam", "__fake"}}, nil
 	}
 
 	_, err := ag.Dispatch(context.Background(), DispatchRequest{CommandAlias: "bad alias", Cwd: "/tmp", Mode: "yolo"})

@@ -5,7 +5,7 @@
 
 ## Context
 
-Users want to start a Copilot or OpenCode task from a browser, close the
+Users want to start a Copilot task from a browser, close the
 browser and the SSH connection, and later see the same task's progress or
 result. The terminal path (ADR 0001–0003) renders provider TUIs through a PTY
 host. Rendering those TUIs in a browser would inherit terminal semantics
@@ -20,7 +20,6 @@ structured APIs:
 | Provider | Integration |
 |---|---|
 | GitHub Copilot | Official Copilot Go SDK driving the installed `copilot` CLI |
-| OpenCode | `opencode serve` HTTP API and event stream, one UAM-owned server per project directory |
 
 Only Copilot is registered for now. Web features are built against Copilot
 first, and a provider is offered only when it supports them the same way.
@@ -28,7 +27,8 @@ Per-Task context size, usage and credits (#188), and importing previous
 sessions are capability-gated exceptions to this rule.
 The image and PDF gate for attachments is not an exception: it follows what
 each model reports, and every provider must apply it the same way.
-The OpenCode integration stays in the code base, unregistered.
+OpenCode support was removed from the CLI, TUI and web code on 2026-09-26.
+Saved records remain on disk for recovery; no OpenCode runtime is launched.
 
 ### Ownership
 
@@ -592,8 +592,7 @@ main-agent `user.message` with `delivery: "idle"` reports `TurnWorking`, so
 that turn is tracked and can be stopped. When a steer arrives, Copilot also moves
 a running foreground shell command to the background. That completes the
 shell's tool call, and the adapter ignores the partial output the shell keeps
-sending under the same call ID. OpenCode, which is not registered, returns
-`ErrUnsupported`.
+sending under the same call ID.
 
 ### HTTP additions and changes
 
@@ -673,14 +672,13 @@ above.
 
 This does not use Copilot's `session.permissions.setMode(allow-all)`. That RPC
 is experimental, it stores the permission state in the provider conversation,
-where `copilot --resume` would inherit it, and OpenCode has no runtime switch
-that behaves the same.
+where `copilot --resume` would inherit it.
 
 ### Provider contract additions
 
 | Addition | Meaning |
 |---|---|
-| `Option.AllowOnce` (`allow_once`) | Marks the decision that allows this one request and nothing more. Copilot marks `approve_once` unless managed policy requires a person or the SDK cannot read the request's kind. OpenCode marks `once`. |
+| `Option.AllowOnce` (`allow_once`) | Marks the decision that allows this one request and nothing more. Copilot marks `approve_once` unless managed policy requires a person or the SDK cannot read the request's kind. |
 | `Answer.Auto` (never serialized) | Set only by yolo. Copilot then sends `approve_once` without `approvedInteractively`, which it sets for a person's answer. A client cannot set it. |
 
 ### HTTP additions and changes
@@ -764,8 +762,6 @@ snapshot of `GET /api/events?session={id}`, and `GET
   `getMessages` and a disconnect also wrote nothing to `events.jsonl`, but it
   takes the in-use lock while it reads, removed a dead holder's stale lock
   files, and activates the session, so it is not used for reading.
-- **OpenCode** (unregistered) uses its conversation open path, whose
-  transcript reads are GET requests. This is not a registered web provider.
 - **Missing journals.** CLI 1.0.88 returns an unstructured RPC -32603 error
   containing `journal is unavailable` for an absent or unreadable journal.
   The adapter maps that text to `ErrConversationNotFound`; a recorded-error
@@ -827,8 +823,7 @@ written to `sessions.json`, and sends a `session` frame.
 `Conversation.CancelSubagent(ctx, agentID)` stops the exact agent instance.
 Copilot sends `session.tasks.cancel` with the envelope `agentId`, never the
 parent tool-call ID. It does not abort the parent, send another prompt, or
-suppress a replacement agent that the parent chooses to launch. OpenCode stays
-unregistered and returns `ErrUnsupported` for this operation.
+suppress a replacement agent that the parent chooses to launch.
 
 `POST /api/sessions/{id}/subagents/{agent_id}/cancel` takes no body or request
 ID and returns 200 with the current `Subagent` record directly. As with other
@@ -867,7 +862,6 @@ When a conversation closes or its runtime exits, `idle` falls back to
 `Conversation.PromptSubagent(ctx, agentID, text)` sends a follow-up to the
 exact agent instance. The main agent does not see it and no Task turn starts.
 Ambiguous failures wrap `ErrSubmissionUncertain` and are never resent.
-OpenCode stays unregistered and returns `ErrUnsupported`.
 
 Copilot reads `session.tasks.list`. A subagent is `idle` only when the entry
 for its exact agent ID says `idle` with execution mode `sync`; a background
@@ -1018,7 +1012,7 @@ plain text, and so is a `/word` that is not a listed command.
   `session.commands.list` with built-ins and skills, keeps every `skill` and
   the built-ins `init` and `review`, and drops the rest: they duplicate web
   controls, change the mode, only print text, or reach outside the Task.
-  OpenCode lists everything `GET /command` returns. UAM drops names with spaces
+  UAM drops names with spaces
   or control characters and sanitizes descriptions and hints.
 - **Running a command.** The command route has the rules of a send: the same
   `request_id` record, 409 while a turn runs, and no queue or steer. The name
@@ -1026,16 +1020,7 @@ plain text, and so is a `/word` that is not a listed command.
   `session.commands.invoke` and sends the result only when it is an
   `agent-prompt` without `mode`, with `displayPrompt` set to `/name arguments`.
   Any other result, or an invoke error, is a `rejected` submission; invoke
-  starts no turn, so nothing reached the model. OpenCode posts
-  `POST /session/{id}/command` in the background because it answers only when
-  the turn ends. The command counts as accepted once its user message exists;
-  a lost answer is `uncertain` and never resent. The adapter shows
-  `/name arguments` for that message instead of the expanded template, while
-  the conversation stays open.
-- **OpenCode shell expansion.** OpenCode puts the arguments into the command
-  template and then runs every `` !`cmd` `` in it without asking. UAM refuses
-  arguments containing `` !` `` with 400 on OpenCode Tasks, and the adapter
-  refuses them too.
+  starts no turn, so nothing reached the model.
 - **File list.** `git ls-files --cached --others --exclude-standard -z` runs in
   the Task's directory through the read-only git runner the Changes view uses,
   so `.gitignore` applies and paths are relative to that directory. Output is
@@ -1055,8 +1040,6 @@ plain text, and so is a `/word` that is not a listed command.
   `AttachmentFile` or `AttachmentDirectory` with the absolute path and the
   relative path as display name; the model gets a `<tagged_files>` pointer and
   reads the file with its tools, which asks a read permission in Safe mode.
-  OpenCode receives a `file` part with a `file://` URL after the text part,
-  and inlines the file itself.
 
 ### Copilot configuration discovery
 
@@ -1100,7 +1083,7 @@ probe folder was not trusted, and this host has no user MCP configuration.
 | `GET /api/sessions/{id}/files?q=&limit=` | – | `{"files": [{"path", "type"}], "reason"}`; `type` is `file` or `directory`; `limit` 1 to 200, default 50, else 400 |
 | `GET /api/projects/{id}/files?q=&limit=` | – | The same list for a Project's directory, for a new Task that does not exist yet; 404 for an unknown Project |
 | `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path, or for files on a steer during a turn |
-| `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, a refused file, or `` !` `` on OpenCode; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
+| `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, or a refused file; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
 
 `QueuedPrompt` gains `files` (omitted when empty).
 
@@ -1135,9 +1118,7 @@ No request carries base64 in JSON.
   `supported_media_types`; a PDF needs `application/pdf` in that list. A model
   that reports neither, such as `auto`, is not gated. Text is never gated. UAM
   checks the gate at upload and again when the prompt goes out, so a model
-  change cannot slip an image past it. OpenCode reports `capabilities.input`
-  per model, but its adapter has no model catalog yet, so it cannot apply the
-  gate; OpenCode must gate the same way before it is registered.
+  change cannot slip an image past it.
 - **Storage.** Uploads live in `web-attachments/<task id>/` next to
   `sessions.json`, never in a project directory. Directories are 0700 and
   files 0600: `<upload id>` holds the bytes and `<upload id>.json` the name,
@@ -1161,8 +1142,7 @@ No request carries base64 in JSON.
   and a PDF blob then reached the model as a bare name); for a file it
   otherwise gives the agent the path, to read with whatever tools the host
   has (UAM ships none; `pdftotext` is poppler-utils). The
-  sweep removes the `.d` directory with its upload. OpenCode receives a `file`
-  part with a `data:` URL after the text and file-reference parts.
+  sweep removes the `.d` directory with its upload.
 - **Transcript.** User items carry `attachments: [{"id"?, "name", "mime",
   "size"?}]`. Copilot's live `user.message` holds the blob data, and its
   recorded event holds `assetId: "sha256:<hex>"` and `byteLength` instead; a
@@ -1171,10 +1151,10 @@ No request carries base64 in JSON.
   an upload. Such a PDF is `not_native` unless the message's
   `supportedNativeDocumentMimeTypes` lists its type and
   `nativeDocumentPathFallbackPaths` does not list its path; the browser then
-  warns under it that the agent had to read the file with host tools. OpenCode's user `file` part keeps its `data:` URL. The adapters report the
+  warns under it that the agent had to read the file with host tools. The adapter reports the
   SHA-256 of the content, and UAM gives each item attachment the ID of this
   Task's stored upload with the same content. Matching on content works for
-  both providers after a reload or a restart, and needs no message ID from the
+  Copilot after a reload or a restart, and needs no message ID from the
   send, which Copilot does not return. An attachment without a stored copy has
   no `id`, and the browser shows it as a chip without a preview.
 - **Serving.** `GET /api/sessions/{id}/attachments/{attachment_id}` returns a
@@ -1347,7 +1327,7 @@ titles new Tasks, built to the contract from research #182.
   `session-state` directory, no `session-store.db` row and no `session.list`
   entry, so `copilot --resume` never lists it after the job. Every title
   costs AI credits; research #182 measured about 0.002 per title for
-  gpt-6-luna. OpenCode has no `titles` capability yet.
+  gpt-6-luna.
 
 ### Provider contract additions (`internal/agentapi`)
 
@@ -1381,7 +1361,7 @@ every other route.
 The owner asked to show AI credits used and remaining next to the model. This
 is the second capability-gated exception to provider parity, after per-Task
 context size. A provider has the `usage` capability only when it reports
-account quota; Copilot does, and OpenCode, which is not registered, does not.
+account quota, as Copilot does.
 The browser shows usage only for a provider with the capability.
 
 - **Account quota.** UAM reads every usage provider's quota at start, after
@@ -1678,12 +1658,6 @@ This section holds the backend part of the contract.
   from the raw JSON of a kind the SDK cannot read, and trims it. It is the
   `toolCallId` of the tool execution events, which the transcript already
   uses as the tool item's ID.
-- **OpenCode.** A permission names its call by `tool.callID`, but the adapter
-  gives a tool item the ID of its part. So it remembers the part ID of each
-  call ID it sees in a tool part and reports that part ID, or nothing while
-  the part is unknown. It looks the part up each time it reports the request.
-  A request replayed on reopen before the history is read therefore gets its
-  link when it resolves. OpenCode stays unregistered.
 - **Sanitizing.** The service keeps `tool_call_id` only if it is valid UTF-8,
   at most 256 bytes, and holds no space or control character. It drops
   anything else rather than cleaning it, because a changed ID would match no
@@ -1802,11 +1776,6 @@ holds the backend part of the contract.
   digest alone, and UAM links it to its stored copy by SHA-256. A
   size-omitted marker has no bytes and no digest, so such an image cannot come
   back after a restart.
-- **OpenCode.** A completed tool state holds `attachments`, file parts with a
-  `data:` URL; OpenCode 1.18's `read` and `webfetch` return an image that
-  way. The adapter maps the image parts, with the part's `filename` as the
-  name. The stored part keeps the URL, so the history has the bytes too.
-  OpenCode stays unregistered.
 - **Storage.** Tool images live with the uploads in
   `web-attachments/<task id>/`, 0700 directories and 0600 files, as
   `<image id>` and `<image id>.json`. The record is the upload record with
@@ -1876,8 +1845,7 @@ capability-gated exception to the provider-parity rule. A provider offers
 `import` only when it can list conversations by folder and can tell that another client
 holds one open. Copilot probes `sessions.checkInUse` and
 `readPersistedEvents` once per provider instance and advertises `import` only
-when both are supported. OpenCode cannot: it keeps no per-session lock
-(#138), so its conversations are not listed or imported.
+when both are supported.
 
 - **List.** `Importer.Previous` lists the conversations whose working
   directory is exactly the Project's directory: Copilot's `session.list` with

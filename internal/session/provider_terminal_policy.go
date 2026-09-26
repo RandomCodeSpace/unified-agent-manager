@@ -24,7 +24,7 @@ func validateProviderIdentity(identity string) error {
 // exactly that: the alt screen has no scrollback, so there is nothing left for
 // the wheel to move and the session appears frozen at one page. Providers that
 // drive their own alt screen and their own mouse reporting (claude, copilot,
-// hermes, opencode) are unaffected and must keep uam's outer screen, which is
+// hermes) are unaffected and must keep uam's outer screen, which is
 // what contains their escape sequences and gets reset on detach.
 //
 // Membership is a statement about observed terminal behaviour, verified by

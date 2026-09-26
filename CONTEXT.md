@@ -6,7 +6,7 @@ state owned by an agent provider.
 | Term | Meaning |
 |---|---|
 | **Managed Session** | One persistent UAM record and its detached terminal host. It has a UAM ID, provider, name, workspace, prompt metadata, and lifecycle state. |
-| **Provider Conversation** | Conversation state owned by Claude Code, Codex, Copilot, Oh My Pi, OpenCode, or another provider. A provider conversation may have its own identifier and resume rules. It is not the same object as a Managed Session. |
+| **Provider Conversation** | Conversation state owned by Claude Code, Codex, Copilot, Oh My Pi, or another provider. A provider conversation may have its own identifier and resume rules. It is not the same object as a Managed Session. |
 | **Attach** | Connect the current terminal to an already-running Managed Session. The attach operation itself does not start or resume a provider process, although the `uam attach` command first resumes a selected Stopped session when supported. Detaching leaves the running process in place. |
 | **Resume** | Start a stopped Managed Session's provider process again, preserving the UAM identity and asking the provider to continue an earlier Provider Conversation. |
 | **Workspace** | The working directory shared by a Managed Session and its provider process. Multiple Managed Sessions may use the same Workspace and therefore edit the same files. UAM does not create a worktree or other filesystem isolation automatically. |

@@ -149,7 +149,7 @@ func dashboardBenchmarkFixture(count int) Model {
 		}
 		m.sessions[i] = adapter.Session{
 			ID:          fmt.Sprintf("session-%04d", i),
-			AgentType:   []string{"codex", "claude", "opencode"}[i%3],
+			AgentType:   []string{"codex", "claude", "copilot"}[i%3],
 			DisplayName: fmt.Sprintf("agent-task-%04d", i),
 			Prompt:      "review the current change without moving the target",
 			Cwd:         fmt.Sprintf("/work/project-%03d", i%100),

@@ -40,16 +40,12 @@ The current provider behavior is:
 |---|---|---|
 | Claude Code | UAM seeded and retained a provider session ID | `--continue` for older records or provider versions that could not seed an ID |
 | GitHub Copilot CLI | Always for UAM-created records; the UAM ID is used as the provider name | None |
-| OpenCode | UAM retained a valid root `ses_…` Provider Conversation ID | None; a missing or invalid ID requires a new Managed Session |
 | Oh My Pi | The Managed Session has its dedicated provider state directory | Legacy records use `-c` without isolated state |
 | OpenAI Codex | Not currently available | `resume --last` |
 | Hermes Agent | Not currently available | Resume is unsupported; create a new Managed Session |
 
 Other providers may declare exact, heuristic, or unsupported resume through the
 same contract.
-
-OpenCode has no heuristic fallback. `--allow-latest` cannot Resume an OpenCode
-record without a valid retained ID.
 
 ### Ambiguity guard
 
@@ -65,14 +61,6 @@ the provider:
 This guard is intentionally conservative. A unique retained session can use the
 provider fallback without another confirmation, but UAM still cannot prove
 provider state that it does not own.
-
-### OpenCode `/new`
-
-OpenCode's `/new` command starts another Provider Conversation inside the same
-running Managed Session. It does not create a second UAM row or a second
-detached host. UAM's OpenCode identity integration follows the current root
-conversation so a later exact resume targets the conversation last selected in
-that Managed Session.
 
 Use `uam new` or dispatch another session when two independently attachable UAM
 sessions are required. Using the same Workspace is allowed, with the shared-file

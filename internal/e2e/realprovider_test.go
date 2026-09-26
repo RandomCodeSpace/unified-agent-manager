@@ -1,7 +1,7 @@
 package e2e
 
 // Real-provider end-to-end suite: drives the shipped uam binary against the
-// real opencode, copilot and codex CLIs through the public CLI surface
+// real copilot and codex CLIs through the public CLI surface
 // (dispatch, attach, restart, stop, rm, ls, doctor, kill-all). Every other
 // E2E test in this repository uses a fake provider; this is the only place a
 // provider's actual argv contract, startup, prompt delivery, resume and
@@ -9,14 +9,12 @@ package e2e
 //
 // Opt-in, because it makes real model calls on the operator's accounts:
 //
-//	UAM_E2E_BIN=$(pwd)/bin/uam UAM_E2E_REAL_PROVIDERS=opencode,copilot,codex \
+//	UAM_E2E_BIN=$(pwd)/bin/uam UAM_E2E_REAL_PROVIDERS=copilot,codex \
 //	  go test ./internal/e2e -run TestRealProvider -count=1 -v
 //
 // Provider state is isolated from the operator's own history: each provider's
-// home directory is redirected (CODEX_HOME, COPILOT_HOME, XDG_DATA_HOME and
-// XDG_CONFIG_HOME for opencode) to a per-run temp root that borrows only the
-// credential files. UAM_E2E_OPENCODE_MODEL picks the opencode model (default
-// ollama-cloud/gpt-oss:20b).
+// home directory is redirected (CODEX_HOME and COPILOT_HOME) to a per-run
+// temp root that borrows only the credential files.
 //
 // Raw viewer captures are written to <root>/captures/ and the root is kept
 // when a test fails or UAM_E2E_KEEP is set.
@@ -42,10 +40,9 @@ import (
 )
 
 const (
-	binEnv           = "UAM_E2E_BIN"
-	providersEnv     = "UAM_E2E_REAL_PROVIDERS"
-	openCodeModelEnv = "UAM_E2E_OPENCODE_MODEL"
-	keepEnv          = "UAM_E2E_KEEP"
+	binEnv       = "UAM_E2E_BIN"
+	providersEnv = "UAM_E2E_REAL_PROVIDERS"
+	keepEnv      = "UAM_E2E_KEEP"
 
 	detachChord = "\x02d"
 	ctrlLeft    = "\x1b[1;5D"
@@ -268,87 +265,6 @@ var providers = map[string]providerSpec{
 			return nil
 		},
 	},
-	"opencode": {
-		name:     "opencode",
-		yoloArgs: nil,
-		argvCheck: func(argv []string, mode string) error {
-			if len(argv) < 2 || argv[1] != "__opencode" {
-				return fmt.Errorf("opencode launch argv %q is not the uam supervisor", argv)
-			}
-			if v, ok := flagValue(argv, "--mode"); !ok || v != mode {
-				return fmt.Errorf("opencode launch argv %q lacks --mode %s", argv, mode)
-			}
-			return nil
-		},
-		resumeCheck: func(argv []string, _, providerID string) error {
-			if v, ok := flagValue(argv, "--session"); !ok || v != providerID {
-				return fmt.Errorf("opencode resume argv %q lacks --session %s", argv, providerID)
-			}
-			if slices.Contains(argv, "--prompt-fd") {
-				return fmt.Errorf("opencode resume argv %q replays the initial prompt", argv)
-			}
-			return nil
-		},
-		altScreen:   true,
-		backDetach:  true,
-		readyMarker: func(h *harness) string { return h.root + "/work" },
-		isolate: func(t *testing.T, h *harness) []string {
-			data := filepath.Join(h.root, "xdg-data")
-			config := filepath.Join(h.root, "xdg-config")
-			if err := os.MkdirAll(filepath.Join(data, "opencode"), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.MkdirAll(filepath.Join(config, "opencode"), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			real := filepath.Join(os.Getenv("HOME"), ".local", "share", "opencode")
-			linkCredential(t, filepath.Join(real, "auth.json"), filepath.Join(data, "opencode", "auth.json"))
-			for _, optional := range []string{"account.json", "mcp-auth.json"} {
-				if _, err := os.Stat(filepath.Join(real, optional)); err == nil {
-					_ = os.Symlink(filepath.Join(real, optional), filepath.Join(data, "opencode", optional))
-				}
-			}
-			// A minimal config: the operator's plugins, MCP servers and agent
-			// overrides are not what this suite tests.
-			model := os.Getenv(openCodeModelEnv)
-			if model == "" {
-				model = "ollama-cloud/gpt-oss:20b"
-			}
-			cfg, err := json.Marshal(map[string]any{"$schema": "https://opencode.ai/config.json", "model": model})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(config, "opencode", "opencode.json"), cfg, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			return []string{"XDG_DATA_HOME=" + data, "XDG_CONFIG_HOME=" + config}
-		},
-		providerSessions: func(h *harness) int {
-			// One uam session maps to one identity file; the supervisor
-			// creates exactly one root session per dispatch.
-			return countEntries(h.sessions, func(d os.DirEntry) bool {
-				return strings.HasSuffix(d.Name(), ".provider.json")
-			})
-		},
-		providerIDCheck: func(id, _ string) error {
-			if !strings.HasPrefix(id, "ses_") {
-				return fmt.Errorf("opencode provider id %q is not a ses_ id", id)
-			}
-			return nil
-		},
-		storeCheck: func(h *harness, uamID string) error {
-			row := h.mustFind(uamID)
-			path := filepath.Join(h.sessions, row.SessionName+".provider.json")
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if !bytes.Contains(data, []byte(row.ProviderSessionID)) {
-				return fmt.Errorf("identity file %s does not carry %s", path, row.ProviderSessionID)
-			}
-			return nil
-		},
-	},
 }
 
 // harness is one isolated uam installation: its own session runtime dir,
@@ -372,7 +288,7 @@ func enabledProviders(t *testing.T) []string {
 	t.Helper()
 	raw := strings.TrimSpace(os.Getenv(providersEnv))
 	if raw == "" {
-		t.Skipf("%s is required: comma-separated subset of opencode,copilot,codex", providersEnv)
+		t.Skipf("%s is required: comma-separated subset of copilot,codex", providersEnv)
 	}
 	var out []string
 	for name := range strings.SplitSeq(raw, ",") {
@@ -907,7 +823,7 @@ func TestRealProviderLifecycle(t *testing.T) {
 				if !hasAll(st.Command, spec.yoloArgs) {
 					t.Fatalf("yolo launch argv %q lacks %q", st.Command, spec.yoloArgs)
 				}
-				// Providers that discover their id live (opencode) publish it a
+				// Providers that discover their id live publish it a
 				// few seconds after launch.
 				providerID := h.awaitProviderID(t, spec, id, 30*time.Second)
 

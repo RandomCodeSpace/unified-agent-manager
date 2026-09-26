@@ -25,11 +25,11 @@ func TestModelViewBasics(t *testing.T) {
 	}
 }
 
-func TestNewWithDepsStartsFromOpenCodeDefault(t *testing.T) {
-	fake := &svcFakeAdapter{name: "opencode", available: true}
+func TestNewWithDepsStartsFromCopilotDefault(t *testing.T) {
+	fake := &svcFakeAdapter{name: "copilot", available: true}
 	m := NewWithDeps(nil, adapter.NewRegistry([]adapter.AgentAdapter{fake}))
-	if m.defaultAgent != "opencode" {
-		t.Fatalf("default agent = %q, want opencode", m.defaultAgent)
+	if m.defaultAgent != "copilot" {
+		t.Fatalf("default agent = %q, want copilot", m.defaultAgent)
 	}
 }
 
