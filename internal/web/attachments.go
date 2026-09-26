@@ -171,11 +171,6 @@ func cmpName(model string) string {
 	return "model " + model
 }
 
-// mediaLocked is the gate of the Task's selected model.
-func (m *Manager) mediaLocked(s *webSession) *agentapi.Media {
-	return m.modelLocked(s.provider, s.model).Media
-}
-
 // Upload stores one file for the Task and returns its record. The type is
 // sniffed from the bytes, and images and PDFs must pass the Task's model
 // gate.

@@ -63,7 +63,7 @@ func openGrantRoot(raw string) (*os.Root, string, grantIdentity, error) {
 		_ = r.Close()
 		return nil, "", grantIdentity{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	current, pathErr := os.Lstat(canonical)
 	st, statErr := descriptorStat(f)
@@ -293,7 +293,7 @@ func (r *grantRoots) checkedOpen(ctx context.Context, rel string, beforeLeaf, be
 	if err != nil {
 		return nil, err
 	}
-	defer a.Close()
+	defer func() { _ = a.Close() }()
 	if beforeRewalk != nil {
 		beforeRewalk()
 	}

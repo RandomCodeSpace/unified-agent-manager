@@ -2421,15 +2421,22 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		return Submission{}, err
 	}
 	m.mu.Lock()
-	selection := PromptSettings{Model: s.model, Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default")}
+	state, conv := s.state(), s.conv
+	willQueue := mode == ModeQueue && (turnRunning(state) || s.queueSending != "" || (len(s.queue) > 0 && !s.queuePaused))
+	current := PromptSettings{Model: s.model, Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default")}
+	selection := current
 	if in.command == "" {
 		if in.settings != nil {
 			selection = *in.settings
 			selection.ContextSize = cmp.Or(selection.ContextSize, "default")
 		}
-		if err := m.validateSelectionLocked(s.provider, selection.Model, selection.Effort, selection.ContextSize); err != nil {
-			m.mu.Unlock()
-			return Submission{}, err
+		// An immediate continuation keeps the persisted provider selection.
+		// New selections and queued snapshots must use the current catalog.
+		if selection != current || willQueue {
+			if err := m.validateSelectionLocked(s.provider, selection.Model, selection.Effort, selection.ContextSize); err != nil {
+				m.mu.Unlock()
+				return Submission{}, err
+			}
 		}
 		if selection.Model == "" && s.model != "" {
 			m.mu.Unlock()
@@ -2437,8 +2444,7 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		}
 		in.settings = &selection
 	}
-	state, conv := s.state(), s.conv
-	if mode == ModeSteer && turnRunning(state) && selection != (PromptSettings{Model: s.model, Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default")}) {
+	if mode == ModeSteer && turnRunning(state) && selection != current {
 		m.mu.Unlock()
 		return Submission{}, newError(http.StatusConflict, "a running steer uses the current model settings; queue a next turn to change them")
 	}
@@ -2450,7 +2456,7 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 	switch {
 	// Behind queued prompts that are about to be sent, a queued prompt waits
 	// its turn even when no turn is running.
-	case mode == ModeQueue && (turnRunning(state) || s.queueSending != "" || (len(s.queue) > 0 && !s.queuePaused)):
+	case willQueue:
 		defer m.mu.Unlock()
 		return m.enqueueLocked(s, in, uploads, reqID)
 	case mode == ModeSteer && turnRunning(state):
@@ -2461,6 +2467,11 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		return Submission{}, errTurnRunning
 	}
 	m.mu.Unlock()
+	if selection == current {
+		// Let checkedPrompt/openLocked retain their saved-model and holder
+		// checks. A queued snapshot keeps settings for dispatch validation.
+		in.settings = nil
+	}
 	return m.send(s, in, reqID)
 }
 

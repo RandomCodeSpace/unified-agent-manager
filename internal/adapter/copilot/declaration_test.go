@@ -209,7 +209,7 @@ func TestDeclarationRegistrationCollisionAndReadiness(t *testing.T) {
 	}
 	fc := &fakeClient{toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{{Name: declarationToolName}}}}}
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
-	defer p.Shutdown(context.Background())
+	defer func() { _ = p.Shutdown(context.Background()) }()
 	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "collision", Workdir: t.TempDir(), Events: &recSink{}, ValidateFile: func(context.Context, string) (string, error) { return "/tmp/report.txt", nil }})
 	if err == nil || conv != nil || !fc.sessions[0].disconnected || len(fc.sessions[0].setTools) != 1 {
 		t.Fatalf("collision = %v, %v; calls=%v", conv, err, fc.sessions[0].toolCalls)
@@ -233,7 +233,7 @@ func TestDeclarationJournalMapsOnlySuccessfulToolAndChild(t *testing.T) {
 	}
 	fc := &fakeClient{journal: events}
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
-	defer p.Shutdown(context.Background())
+	defer func() { _ = p.Shutdown(context.Background()) }()
 	read, err := p.ReadHistory(context.Background(), agentapi.ReadRequest{ConversationID: "session"})
 	if err != nil || len(read.Items) != 4 || read.Items[1].Tool.Declaration == nil {
 		t.Fatalf("read history = %+v, %v", read, err)

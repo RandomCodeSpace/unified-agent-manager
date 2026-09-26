@@ -42,14 +42,14 @@ func (m *Manager) declarationValidator(id, workdir string) func(context.Context,
 			if err != nil {
 				return "", err
 			}
-			defer root.Close()
+			defer func() { _ = root.Close() }()
 			// A name swapped to a FIFO after resolveTaskFile's stat must not
 			// leave the provider's tool goroutine blocked in open(2).
 			f, err := root.OpenFile(relative, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 			if err != nil {
 				return "", errGrantUnavailable
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			info, err := f.Stat()
 			if err != nil || !info.Mode().IsRegular() {
 				return "", errGrantUnavailable
@@ -79,7 +79,7 @@ func (m *Manager) declarationValidator(id, workdir string) func(context.Context,
 		if err != nil {
 			return "", err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if _, err := grantFileInfo(f); err != nil {
 			return "", err
 		}

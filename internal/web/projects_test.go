@@ -754,6 +754,36 @@ func TestReopenAppliesStoredModelOrFails(t *testing.T) {
 	}
 }
 
+func TestPromptUnchangedSettingsReopensStoredModel(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explicit=%t", explicit), func(t *testing.T) {
+			st := openTestStore(t)
+			id := mustUUID(t)
+			seedLegacyWebRecord(t, st, id, t.TempDir(), &store.WebState{Turn: StateCompleted, UpdatedAt: time.Now().UTC(), Model: "saved-model"})
+			prov := agenttest.NewProvider("fake", allCaps)
+			prov.AddConversation("conv_"+id[:8], nil)
+			m := startManager(t, st, prov)
+			// A new selection must still be offered; only the already-saved
+			// settings defer to the provider when the conversation reopens.
+			changed := PromptRequest{Text: "change", RequestID: mustUUID(t), Mode: ModeSend, Settings: &PromptSettings{Model: "unoffered", ContextSize: "default"}}
+			if _, err := m.Submit(id, changed); statusOf(err) != http.StatusBadRequest {
+				t.Fatalf("new unoffered selection = %v", err)
+			}
+			req := PromptRequest{Text: "continue", RequestID: mustUUID(t), Mode: ModeSend}
+			if explicit {
+				req.Settings = &PromptSettings{Model: "saved-model", ContextSize: "default"}
+			}
+			if sub, err := m.Submit(id, req); err != nil || sub.Status != SubmissionAccepted {
+				t.Fatalf("reopen with saved settings = %+v, %v", sub, err)
+			}
+			conv := prov.Last()
+			if sets := conv.ModelSettings(); len(sets) != 1 || sets[0].Model != "saved-model" || sets[0].Effort != "" || len(conv.Sends()) != 1 {
+				t.Fatalf("reopen settings = %+v, sends = %v", sets, conv.Sends())
+			}
+		})
+	}
+}
+
 func TestTitleIsSanitizedPersistedAndShownUntilNamed(t *testing.T) {
 	m, prov, st := newTestManager(t)
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: addProject(t, m, t.TempDir()), Name: "   "})
