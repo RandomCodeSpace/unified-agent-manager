@@ -40,14 +40,16 @@ const (
 // DaemonState is web.json: how to find and verify the running service. It
 // never contains the access token.
 type DaemonState struct {
-	PID           int       `json:"pid"`
-	StartTime     int64     `json:"start_time"`
-	Listen        string    `json:"listen"`
-	PublicOrigins []string  `json:"public_origins,omitempty"`
-	NoAuth        bool      `json:"no_auth,omitempty"`
-	LogHeaders    bool      `json:"log_headers,omitempty"`
-	Version       string    `json:"version"`
-	StartedAt     time.Time `json:"started_at"`
+	PID           int      `json:"pid"`
+	StartTime     int64    `json:"start_time"`
+	Listen        string   `json:"listen"`
+	PublicOrigins []string `json:"public_origins,omitempty"`
+	// LegacyNoAuth detects unsupported insecure daemons written by older
+	// versions. New daemons never set this field.
+	LegacyNoAuth bool      `json:"no_auth,omitempty"`
+	LogHeaders   bool      `json:"log_headers,omitempty"`
+	Version      string    `json:"version"`
+	StartedAt    time.Time `json:"started_at"`
 }
 
 // URL is the address browsers on this host use (see LocalAddr).
@@ -72,10 +74,8 @@ func (st DaemonState) LocalAddr() string {
 type DaemonConfig struct {
 	Listen        string
 	PublicOrigins []string
-	// NoAuth serves every request without authentication.
-	NoAuth    bool
-	Providers []agentapi.Provider
-	Version   string
+	Providers     []agentapi.Provider
+	Version       string
 	// LogHeaders logs every request's headers (see ServerConfig).
 	LogHeaders bool
 }
@@ -355,7 +355,7 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 	if err := mgr.Start(context.Background()); err != nil {
 		return err
 	}
-	srv, err := NewServer(ServerConfig{Manager: mgr, Token: token, Listen: listen, PublicOrigins: origins, NoAuth: cfg.NoAuth, LogHeaders: cfg.LogHeaders, Version: cfg.Version})
+	srv, err := NewServer(ServerConfig{Manager: mgr, Token: token, PublicOrigins: origins, LogHeaders: cfg.LogHeaders, Version: cfg.Version})
 	if err != nil {
 		_ = mgr.Shutdown(context.Background())
 		return err
@@ -367,7 +367,7 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 	}
 	state := DaemonState{
 		PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: ln.Addr().String(),
-		PublicOrigins: origins, NoAuth: cfg.NoAuth, LogHeaders: cfg.LogHeaders, Version: cfg.Version, StartedAt: time.Now().UTC(),
+		PublicOrigins: origins, LogHeaders: cfg.LogHeaders, Version: cfg.Version, StartedAt: time.Now().UTC(),
 	}
 	if err := writeStateFile(dir, state); err != nil {
 		_ = ln.Close()
@@ -399,10 +399,6 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 		_ = ready.Close()
 	}
 	log.Info("uam web started", "pid", state.PID, "listen", state.Listen)
-	if cfg.NoAuth {
-		log.Warn("uam web authentication is disabled; anyone who can reach this service can use it",
-			"listen", state.Listen, "public_origins", origins)
-	}
 
 	var runErr error
 wait:

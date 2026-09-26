@@ -1,6 +1,8 @@
+import { recentProjection } from './lib/historyState';
+import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
-import { ViewTransition, addTransitionType, startTransition, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { addTransitionType, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { UPDATE_EVENTS, api, describeError, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -10,7 +12,8 @@ import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { needsYouCount, pageTitle, tasksOf } from './lib/tasks';
+import { needsYouCount, newsReader, pageTitle, tasksOf } from './lib/tasks';
+import { RecentTasks } from './lib/recentTasks';
 import { checkDue, decideUpdate } from './lib/update';
 import { NewTaskPane, Task } from './components/Task';
 import type { FirstMessage } from './components/Composer';
@@ -69,6 +72,11 @@ export default function App() {
   const [auth, setAuth] = useState<Auth>('checking');
   const [authRequired, setAuthRequired] = useState(true);
   const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, selectedId: hashSelection() }));
+  const [recentTasks] = useState(() => new RecentTasks());
+  const confirmedDetail = useRef<SessionDetail | null>(null);
+  useLayoutEffect(() => {
+    confirmedDetail.current = auth === 'in' && state.connection === 'connected' ? state.detail && recentProjection(state.detail) : null;
+  }, [auth, state.connection, state.detail]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [streamKey, setStreamKey] = useState(0);
@@ -94,7 +102,7 @@ export default function App() {
   const [newTask, setNewTask] = useState<{ projectId: string; defaults: TaskDefaults; tick: number } | null>(null);
   const newTaskTick = useRef(0);
   const aside = useRef<HTMLElement>(null);
-  const loadedAt = useRef(new Date().toISOString());
+  const [loadedAt] = useState(() => new Date().toISOString());
   // One create per project at a time; the request ID survives a failure so a retry is idempotent.
   const creating = useRef(new Map<string, { id: string; busy: boolean }>());
   // Task whose composer takes focus once its detail arrives (a Task just created, or one chosen
@@ -110,6 +118,9 @@ export default function App() {
 
   useEffect(() => {
     onUnauthorized(() => {
+      recentTasks.clear();
+      confirmedDetail.current = null;
+      dispatch({ type: 'reset' });
       setAuthRequired(true);
       setAuth('out');
     });
@@ -120,7 +131,9 @@ export default function App() {
         setAuth(loggedIn(r) ? 'in' : 'out');
       })
       .catch(() => setAuth('out'));
-  }, []);
+  }, [recentTasks]);
+
+  useEffect(() => { if (auth !== 'in') recentTasks.clear(); }, [auth, recentTasks]);
 
   // Custom models are part of the model lists, so a change to them reloads the catalogs; `metaAttempt` is a Retry after a failure.
   const customModels = JSON.stringify(state.settings.custom_models ?? []);
@@ -247,16 +260,19 @@ export default function App() {
   useEffect(() => {
     if (auth !== 'in') return;
     const es = new EventSource(api.eventsUrl(state.selectedId));
+    let alive = true;
     let retry: number | undefined;
     dispatch({ type: 'connection', status: 'connecting' });
     es.onopen = () => {
-      dispatch({ type: 'connection', status: 'connected' });
+      if (!alive) return;
+      // The snapshot confirms this connection; opening TCP alone does not.
       if (wasDown.current) {
         wasDown.current = false;
         checkVersion(true);
       }
     };
     es.onerror = () => {
+      if (!alive) return;
       wasDown.current = true;
       if (es.readyState !== EventSource.CLOSED) {
         dispatch({ type: 'connection', status: 'reconnecting' });
@@ -265,19 +281,23 @@ export default function App() {
       // The browser gave up (non-200 response). A selected Task the service does not know (a stale
       // link, one deleted elsewhere) is dropped with a notice; otherwise re-check auth, then reopen.
       const later = () => {
-        retry = window.setTimeout(() => setStreamKey((k) => k + 1), 5000);
+        if (!alive) return;
+        retry = window.setTimeout(() => { if (alive) setStreamKey((k) => k + 1); }, 5000);
       };
       const reconnect = () => {
+        if (!alive) return;
         dispatch({ type: 'connection', status: 'offline' });
         api
           .auth()
-          .then((r) => (loggedIn(r) ? later() : setAuth('out')))
+          .then((r) => { if (alive) { if (loggedIn(r)) later(); else { recentTasks.clear(); confirmedDetail.current = null; dispatch({ type: 'reset' }); setAuth('out'); } } })
           .catch(later);
       };
       const opened = state.selectedId;
       if (!opened) return reconnect();
       api.session(opened).then(reconnect, (err: unknown) => {
+        if (!alive) return;
         if (!isStatus(err, 404)) return reconnect();
+        recentTasks.remove(opened);
         dispatch({ type: 'select', id: null });
         setNotice('That task no longer exists.');
       });
@@ -296,13 +316,13 @@ export default function App() {
       dispatch({ type: 'updates', data });
     };
     es.addEventListener('snapshot', (e) => {
+      if (!alive) return;
       const data = JSON.parse((e as MessageEvent).data) as SnapshotData;
       flush();
-      // A snapshot lands the opened Task: the pane cross-fades to it (ViewTransition, type "switch").
-      startTransition(() => {
-        addTransitionType('switch');
-        dispatch({ type: 'snapshot', data });
-      });
+      confirmedDetail.current = null;
+      recentTasks.confirm(data);
+      // Open the Task as soon as its snapshot arrives; a view transition delays readiness.
+      dispatch({ type: 'snapshot', data });
       setFilter((current) => {
         if (!current || data.projects.some((p) => p.id === current)) return current;
         localStorage.removeItem(FILTER_KEY);
@@ -318,7 +338,14 @@ export default function App() {
     });
     for (const name of UPDATE_EVENTS) {
       es.addEventListener(name, (e) => {
+        if (!alive) return;
         const data = { name, ...JSON.parse((e as MessageEvent).data) } as UpdateData;
+        recentTasks.invalidate(data);
+        // Invalidations precede React's commit. A click in between must not
+        // put the old confirmed reference straight back into the cache.
+        const current = confirmedDetail.current;
+        if (current && (((data.name === 'history' || data.name === 'items_trimmed' || data.name === 'session_removed') && current.id === data.session_id)
+          || (data.name === 'project_removed' && current.project_id === data.project_id))) confirmedDetail.current = null;
         // A hidden tab gets no animation frames: apply at once there.
         if ((data.name === 'delta' || data.name === 'tool_output' || data.name === 'item') && !document.hidden) {
           queue.push(data);
@@ -344,21 +371,15 @@ export default function App() {
       });
     }
     return () => {
+      alive = false;
       es.close();
       window.clearTimeout(retry);
       // Deltas still queued belong to this stream; the next one starts with a snapshot.
       cancelAnimationFrame(frame);
     };
-  }, [auth, state.selectedId, streamKey, markViewed, checkVersion]);
+  }, [auth, state.selectedId, streamKey, markViewed, checkVersion, recentTasks]);
 
-  const hasNews = useCallback(
-    (s: SessionSummary) => {
-      if (s.id === state.selectedId) return false;
-      const seen = viewed[s.id] ?? loadedAt.current;
-      return s.updated_at > seen;
-    },
-    [viewed, state.selectedId],
-  );
+  const hasNews = useMemo(() => newsReader(state.selectedId, viewed, loadedAt), [state.selectedId, viewed, loadedAt]);
 
   // Opening a Task reopens the stream; only a disconnect that lasts is shown as one.
   const late = useLate(state.connection !== 'connected', QUIET_MS);
@@ -382,8 +403,10 @@ export default function App() {
   }, [detailId, detailLocked, selectTick]);
 
   const logout = useCallback(() => {
-    void api.logout().finally(() => setAuth('out'));
-  }, []);
+    recentTasks.clear();
+    confirmedDetail.current = null;
+    void api.logout().finally(() => { dispatch({ type: 'reset' }); setAuth('out'); });
+  }, [recentTasks]);
   const onSheet = useCallback((open: boolean) => {
     setSheetOpen(open);
     if (!open) document.getElementById('changes-link')?.focus();
@@ -406,16 +429,16 @@ export default function App() {
       focusTask.current = id;
       setSelectTick((t) => t + 1);
     }
-    startTransition(() => {
-      addTransitionType('switch');
-      dispatch({ type: 'select', id });
-    });
+    // Capture only on leaving a confirmed task, not on every streamed token.
+    const current = confirmedDetail.current;
+    if (current && current.id !== id) recentTasks.remember(current);
+    dispatch({ type: 'select', id, cached: id ? recentTasks.get(id) : undefined });
     setNotice(null);
     setSheetOpen(false);
     setDrawerOpen(false);
     setSettingsOpen(false);
     setNewTask(null);
-  }, []);
+  }, [recentTasks]);
   // A `#task=` fragment the user navigates to (back/forward, a pasted URL) selects that Task; the
   // write above uses replaceState, which fires no hashchange.
   useEffect(() => {
@@ -597,9 +620,9 @@ export default function App() {
   }
   if (auth === 'out') return <Login onLoggedIn={() => setAuth('in')} />;
 
-  // The Task on screen: the selected one, or the one before it (inert) until the new detail arrives or the wait gets long.
-  const shown = state.detail && selected ? state.detail : state.selectedId && selected && !lateLoad ? state.previous : null;
-  const stale = !!shown && shown !== state.detail;
+  // A cached selected task stays visible through a slow refresh. An unrelated previous task yields to the skeleton after the quiet period.
+  const shown = state.detail && selected ? state.detail : state.selectedId && selected && (state.previousCached || !lateLoad) ? state.previous : null;
+  const stale = !settingsOpen && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   const dialogTask = taskDialog ? state.sessions.find((s) => s.id === taskDialog.id) : undefined;
   const newTaskProject = newTask ? state.projects.find((p) => p.id === newTask.projectId) : undefined;
@@ -618,6 +641,8 @@ export default function App() {
       else if (kind === 'close') await runTask(id, () => api.close(id), 'close the conversation');
       else {
         await runTask(id, () => api.deleteSession(id), 'delete the task');
+        recentTasks.remove(id);
+        if (confirmedDetail.current?.id === id) confirmedDetail.current = null;
         startTransition(() => {
           addTransitionType('sessions');
           dispatch({ type: 'remove_session', id });
@@ -657,6 +682,7 @@ export default function App() {
     pane = <NewTaskPane key={newTask.projectId} project={newTaskProject} defaults={newTask.defaults} onSend={createTask} leading={leading} />;
   } else if (shown) {
     pane = (
+      <DetailsProvider key={shown.id} session={shown} active={!stale && state.connection === 'connected'} generation={state.detailGeneration} versions={state.bodyVersions} onAuthLost={() => { recentTasks.clear(); confirmedDetail.current = null; dispatch({ type: 'reset' }); setAuth('out'); }}>
       <Task
         key={shown.id}
         session={shown}
@@ -664,6 +690,11 @@ export default function App() {
         agents={state.agents}
         agentSteps={state.agentSteps}
         snapshotSeq={state.snapshotSeq}
+        historyGeneration={state.detailGeneration}
+        active={!stale}
+        historyRequest={state.historyRequest}
+        historyItemSeq={state.historyItemSeq}
+        onHistoryReset={() => { recentTasks.remove(shown.id); confirmedDetail.current = null; setStreamKey(k => k + 1); }}
         sheetOpen={sheetOpen}
         sidePanelInline={sheetInline}
         onSheet={onSheet}
@@ -671,6 +702,7 @@ export default function App() {
         onInteractionUpdate={onInteractionUpdate}
         leading={leading}
       />
+      </DetailsProvider>
     );
   } else if (state.selectedId && state.snapshotSeq >= 0 && !selected) {
     pane = (
@@ -742,12 +774,15 @@ export default function App() {
                   </Button>
                 </p>
               )}
-              {/* One wrapper for every pane, so the Task on screen stays mounted while it turns stale; a switch cross-fades it. */}
-              <ViewTransition name="pane" default="none" update={{ switch: 'vt-pane', default: 'none' }}>
-                <div className="flex min-h-0 flex-1 flex-col" inert={stale}>
-                  {pane}
-                </div>
-              </ViewTransition>
+              {stale && state.previousCached && (
+                <p role="status" className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-muted">
+                  <Dot tone="accent" pulse /> Refreshing task…
+                </p>
+              )}
+              {/* A cached page is presentation only; actions and typing wait for confirmation. */}
+              <div className="flex min-h-0 flex-1 flex-col" inert={stale} aria-busy={stale || undefined}>
+                {pane}
+              </div>
             </main>
 
             <NewTaskPalette open={paletteOpen} onOpenChange={setPaletteOpen} projects={state.projects} sessions={state.sessions} selectedId={state.selectedId} filter={filter} onPick={startTask} />
@@ -771,7 +806,11 @@ export default function App() {
                 project={dialog.project}
                 tasks={tasksOf(state.sessions, dialog.project.id)}
                 onUpdated={(p) => dispatch({ type: 'upsert_project', project: p })}
-                onRemoved={(id) => dispatch({ type: 'remove_project', id })}
+                onRemoved={(id) => {
+                  recentTasks.removeProject(id);
+                  if (confirmedDetail.current?.project_id === id) confirmedDetail.current = null;
+                  dispatch({ type: 'remove_project', id });
+                }}
               />
             )}
 

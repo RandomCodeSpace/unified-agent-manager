@@ -12,7 +12,6 @@ import (
 	"io"
 	"io/fs"
 	"mime"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -60,18 +59,12 @@ const (
 // ServerConfig configures the HTTP interface.
 type ServerConfig struct {
 	Manager *Manager
-	// Token is the access token browsers present at /api/login.
+	// Token is the required access token browsers present at /api/login.
 	Token string
-	// Listen is the address the service binds. Beyond loopback, a Host that
-	// is an IP literal (such as the LAN address) is also accepted.
-	Listen string
-	// PublicOrigins are origins (scheme://host[:port]) of same-host reverse
-	// proxies whose Host header is accepted besides loopback.
+	// PublicOrigins are validated origins (scheme://host[:port]) of same-host
+	// reverse proxies. Authentication is bound to the request Host.
 	PublicOrigins []string
-	// NoAuth treats every request as authenticated. The Host, cross-origin,
-	// content-type and body checks still apply.
-	NoAuth  bool
-	Version string
+	Version       string
 	// Assets overrides the embedded frontend (tests).
 	Assets fs.FS
 	// LogHeaders logs one record per request with its headers (credentials
@@ -83,10 +76,7 @@ type ServerConfig struct {
 type Server struct {
 	m         *Manager
 	token     string
-	noAuth    bool
 	headerLog bool
-	ipHosts   bool
-	hosts     map[string]bool
 	csrf      *http.CrossOriginProtection
 	assets    fs.FS
 	version   string
@@ -99,17 +89,17 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if cfg.Manager == nil || cfg.Token == "" {
 		return nil, errors.New("web server needs a manager and an access token")
 	}
+	if err := ValidateToken(cfg.Token); err != nil {
+		return nil, fmt.Errorf("web server access token: %w", err)
+	}
 	s := &Server{
-		m: cfg.Manager, token: cfg.Token, noAuth: cfg.NoAuth, headerLog: cfg.LogHeaders, ipHosts: BeyondLoopback(cfg.Listen), hosts: map[string]bool{},
+		m: cfg.Manager, token: cfg.Token, headerLog: cfg.LogHeaders,
 		csrf: http.NewCrossOriginProtection(), assets: cfg.Assets, version: cfg.Version, heartbeat: heartbeatInterval,
 	}
 	for _, origin := range cfg.PublicOrigins {
-		normalized, err := NormalizePublicOrigin(origin)
-		if err != nil {
+		if _, err := NormalizePublicOrigin(origin); err != nil {
 			return nil, err
 		}
-		u, _ := url.Parse(normalized)
-		s.hosts[strings.ToLower(u.Host)] = true
 	}
 	if s.assets == nil {
 		sub, err := fs.Sub(embedded, "dist")
@@ -159,6 +149,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions", s.handleList)
 	mux.HandleFunc("POST /api/sessions", s.handleCreate)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleDetail)
+	mux.HandleFunc("GET /api/sessions/{id}/history", s.handleHistoryPage)
 	mux.HandleFunc("PATCH /api/sessions/{id}", s.handlePatch)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDelete)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}", s.handleSubagent)
@@ -186,6 +177,9 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/changes", s.handleChanges)
 	mux.HandleFunc("GET /api/sessions/{id}/changes/file", s.handleFileChange)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("GET /api/events/detail", s.handleDetailEvents)
+	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}", s.handleItemBody)
+	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
@@ -210,14 +204,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if api {
 		h.Set("Cache-Control", "no-store")
 	}
-	// Without sign-in, a foreign Host means DNS rebinding or a misrouted
-	// request; the service then only answers for loopback, configured
-	// public origins and, beyond loopback, IP literals. With sign-in on,
-	// any Host passes (see allowedHost).
-	if !s.allowedHost(r.Host) {
-		s.refuse(w, r, http.StatusForbidden, "host not allowed")
-		return
-	}
+	// Any Host can reach sign-in and static assets. Cookies and file keys
+	// are Host-bound, so another Host cannot reuse their authentication.
 	if !safeMethod(r.Method) {
 		if err := s.csrf.Check(r); err != nil {
 			s.refuse(w, r, http.StatusForbidden, "cross-origin request rejected")
@@ -247,7 +235,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logRequest(r, "allowed", 0)
-	s.mux.ServeHTTP(w, r)
+	serveCompressed(w, r, s.mux)
 }
 
 // fileKeyRequest reports whether r is for the file key route, whose handler
@@ -311,33 +299,6 @@ func capLogValue(v string) string {
 	return v
 }
 
-func (s *Server) allowedHost(hostport string) bool {
-	// With sign-in on, any Host is accepted. A rebound website sends its
-	// own name as Host and holds no cookie for it: the cookie MAC and file
-	// keys are bound to the Host (cookieMAC, fileKey), so it reaches only
-	// the sign-in page and static assets. The cross-origin and JSON checks
-	// still apply. Without sign-in this check is the only barrier against
-	// a rebound site driving agents.
-	if !s.noAuth {
-		return true
-	}
-	host := strings.ToLower(hostport)
-	if s.hosts[host] {
-		return true
-	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	if host == "localhost" {
-		return true
-	}
-	// A domain name stays refused on any bind: that is what a rebound
-	// website sends.
-	ip := net.ParseIP(host)
-	return ip != nil && (ip.IsLoopback() || s.ipHosts)
-}
-
 func jsonContentType(value string) bool { return hasMediaType(value, "application/json") }
 
 func hasMediaType(value, want string) bool {
@@ -395,7 +356,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": s.authenticated(r), "required": !s.noAuth})
+	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": s.authenticated(r), "required": true})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -648,10 +609,22 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
+	if r.URL.Query().Get("view") == compactRepresentation {
+		d, err := s.m.CompactDetail(id)
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, d)
+		return
+	}
 	detail, err := s.m.Detail(id)
 	if err != nil {
 		writeFailure(w, err)
 		return
+	}
+	if r.URL.Query().Get("history") == "recent" {
+		detail = recentDetail(detail)
 	}
 	writeJSON(w, http.StatusOK, detail)
 }
@@ -721,6 +694,15 @@ func (s *Server) handleSubagent(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.m.View(r.Context(), id); err != nil {
 		writeFailure(w, err)
+		return
+	}
+	if r.URL.Query().Get("view") == compactRepresentation {
+		d, err := s.m.CompactSubagent(id, r.PathValue("agent_id"))
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, d)
 		return
 	}
 	detail, err := s.m.Subagent(id, r.PathValue("agent_id"))
@@ -818,17 +800,17 @@ func (s *Server) handleRawImage(w http.ResponseWriter, r *http.Request) {
 // after view/ so that a page's relative links resolve to its siblings. Every
 // response is sandboxed (viewSecurity), which Chromium's PDF viewer renders
 // under too; a type the route does not display is a download. Files change,
-// so each load revalidates. With authentication on, the cookie-checked view
+// so each load revalidates. The cookie-checked view
 // route redirects to the same path under a file key, which the sandboxed
 // page's own requests then carry.
 func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if key := r.PathValue("key"); key != "" {
-		if !s.noAuth && !s.validFileKey(key, r.Host, id) {
+		if !s.validFileKey(key, r.Host, id) {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
-	} else if !s.noAuth {
+	} else {
 		key := fileKey(s.token, r.Host, id, time.Now().Add(fileKeyTTL).Unix())
 		// The id segment is escaped, so the first /files/view/ is the route's.
 		http.Redirect(w, r, strings.Replace(r.URL.EscapedPath(), "/files/view/", "/files/key/"+key+"/", 1), http.StatusFound) // #nosec G710 -- the request's own path, which this route matched under /api/sessions/; never another host.
@@ -1023,7 +1005,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	sub, snapshot, err := s.m.subscribe(id, r.URL.Query().Get("tool_output") == "delta")
+	sub, snapshot, err := s.m.subscribeView(id, r.URL.Query().Get("tool_output") == "delta", r.URL.Query().Get("history") == "recent", r.URL.Query().Get("view") == compactRepresentation)
 	if err != nil {
 		writeFailure(w, err)
 		return

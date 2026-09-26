@@ -372,12 +372,6 @@
   ::view-transition-old(.vt-row-exit) {
     animation: fade-out 160ms var(--ease-app);
   }
-  ::view-transition-group(.vt-pane),
-  ::view-transition-old(.vt-pane),
-  ::view-transition-new(.vt-pane) {
-    animation-duration: 160ms;
-    animation-timing-function: var(--ease-app);
-  }
   @keyframes fade-out {
     to {
       opacity: 0;

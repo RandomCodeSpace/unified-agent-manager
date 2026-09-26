@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -231,9 +232,23 @@ func viewTask(t *testing.T, ts *testServer) (SessionSummary, string) {
 
 func viewURL(id, p string) string { return "/api/sessions/" + id + "/files/view/" + p }
 
+// Follow the production cookie-to-file-key redirect, then serve without a cookie.
+func authenticatedFileView(t *testing.T, ts *testServer) func(string, string, ...reqOpt) *httptest.ResponseRecorder {
+	t.Helper()
+	auth := ts.login(t, "127.0.0.1:8260")
+	return func(method, target string, opts ...reqOpt) *httptest.ResponseRecorder {
+		w := ts.do(method, target, "", append([]reqOpt{auth}, opts...)...)
+		if w.Code == http.StatusFound {
+			return ts.do(method, w.Header().Get("Location"), "", opts...)
+		}
+		return w
+	}
+}
+
 func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
-	ts := newTestServer(t, ServerConfig{NoAuth: true})
+	ts := newTestServer(t, ServerConfig{})
 	sum, real := viewTask(t, ts)
+	view := authenticatedFileView(t, ts)
 
 	served := map[string]struct{ mime, disposition string }{
 		"out/report.html": {"text/html; charset=utf-8", "inline"},
@@ -250,7 +265,7 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 		"blob.bin":        {"application/octet-stream", "attachment"},
 	}
 	for p, want := range served {
-		w := ts.do(http.MethodGet, viewURL(sum.ID, p), "")
+		w := view(http.MethodGet, viewURL(sum.ID, p))
 		h := w.Header()
 		name, _ := url.PathUnescape(p)
 		body, _ := os.ReadFile(filepath.Join(real, name))
@@ -261,7 +276,7 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 			t.Errorf("GET %s = %d %v %q", p, w.Code, h, w.Body.String()[:min(w.Body.Len(), 80)])
 		}
 	}
-	if w := ts.do(http.MethodGet, viewURL(sum.ID, "notes.md"), "", withHeader("Range", "bytes=2-")); w.Code != http.StatusPartialContent || w.Body.String() != "Notes" {
+	if w := view(http.MethodGet, viewURL(sum.ID, "notes.md"), withHeader("Range", "bytes=2-")); w.Code != http.StatusPartialContent || w.Body.String() != "Notes" {
 		t.Fatalf("range = %d %q", w.Code, w.Body)
 	}
 
@@ -269,16 +284,16 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 		"", "out", "out/", "missing.html", "outside-link.x", "outside-dir/secret.x",
 		"..%2Foutside%2Fsecret.x", "out%2F..%2F..%2Foutside%2Fsecret.x", "%2Fetc%2Fpasswd", "%00",
 	} {
-		w := ts.do(http.MethodGet, viewURL(sum.ID, p), "")
+		w := view(http.MethodGet, viewURL(sum.ID, p))
 		if w.Code != http.StatusNotFound && w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), real) {
 			t.Errorf("GET %q = %d %s", p, w.Code, w.Body)
 		}
 	}
 	// A literal .. is cleaned away by the mux before any handler runs.
-	if w := ts.do(http.MethodGet, viewURL(sum.ID, "../../../../etc/passwd"), ""); w.Code == http.StatusOK && strings.Contains(w.Body.String(), "root:") {
+	if w := view(http.MethodGet, viewURL(sum.ID, "../../../../etc/passwd")); w.Code == http.StatusOK && strings.Contains(w.Body.String(), "root:") {
 		t.Fatalf("dot-dot = %d", w.Code)
 	}
-	if w := ts.do(http.MethodGet, viewURL("nope", "notes.md"), ""); w.Code != http.StatusNotFound {
+	if w := view(http.MethodGet, viewURL("nope", "notes.md")); w.Code != http.StatusNotFound {
 		t.Fatalf("unknown task = %d", w.Code)
 	}
 }

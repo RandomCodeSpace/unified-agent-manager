@@ -4,6 +4,7 @@
 // Tasks.
 
 import { visibleModels } from './lib/models';
+import { foregroundRead } from './lib/reads';
 
 export type SessionState =
   | 'idle'
@@ -307,6 +308,12 @@ export interface ToolCall {
   status: ToolStatus;
   input?: string;
   output?: string;
+  display_arg?: string;
+  path?: string;
+  has_input?: boolean;
+  has_output?: boolean;
+  /** Client-only semantic outcome retained after page eviction. */
+  question_outcome?: 'pending' | 'answered' | 'declined' | 'none' | 'failed';
 }
 
 /** An image a tool's result returned, stored with the Task; served by the attachment route. */
@@ -318,6 +325,7 @@ export interface ToolImage {
 }
 
 export interface Item {
+  compact?: { has_reasoning: boolean; has_text: boolean };
   id: string;
   kind: ItemKind;
   delivery?: 'steer' | 'autopilot';
@@ -341,6 +349,8 @@ export interface Item {
 export type SubagentStatus = 'running' | 'idle' | 'completed' | 'failed' | 'cancelled';
 
 export interface Subagent {
+  preview?: string;
+  result_summary?: string;
   id: string;
   /** Item id of the `task` tool call that started this subagent (a tool item's id is the provider tool call id). */
   parent_tool_call_id?: string;
@@ -362,7 +372,8 @@ export interface BackgroundTasks {
   tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string }[];
 }
 
-export interface SubagentDetail {
+export interface SubagentDetail extends Representation {
+  before?: string;
   /** SSE sequence captured with the transcript and metadata. */
   seq: number;
   subagent: Subagent;
@@ -452,11 +463,37 @@ export interface TurnTiming {
   state: 'working' | 'completed' | 'cancelled' | 'failed' | 'unknown';
 }
 
-export interface SessionDetail extends SessionSummary {
+export interface Representation {
+  representation?: 'compact-v1';
+  epoch?: string;
+  detail_stream?: boolean;
+}
+
+export interface BodyReference { agentId: string; itemId: string; coveredSeq?: number }
+export interface BodyData { seq: number; epoch: string; session_id: string; agent_id?: string; item: Item }
+export interface DetailSnapshot { seq: number; epoch: string; session_id: string; agent_id?: string; subagent?: Subagent; items?: Item[]; before?: string; after?: string; range?: boolean; range_reset?: boolean; scope?: 'window' }
+export type DetailFrame =
+  | ({ name: 'detail_snapshot' | 'detail_page' } & DetailSnapshot)
+  | ({ name: 'body' } & BodyData)
+  | { name: 'body_current'; seq: number; epoch: string; session_id: string; agent_id?: string; item_id: string }
+  | { name: 'body_unavailable'; seq: number; epoch: string; session_id: string; agent_id?: string; item_id: string }
+  | { name: 'detail_ready'; seq: number; epoch: string; session_id: string }
+  | { name: 'detail_reset'; seq: number; epoch: string; session_id: string }
+  | { name: 'body_delta' | 'body_output'; seq: number; epoch: string; session_id: string; agent_id?: string; item_id: string; kind?: ItemKind; text: string }
+  | (Extract<UpdateData, { name: 'item' | 'delta' | 'items_trimmed' }> & { epoch?: string });
+
+export interface SessionDetail extends SessionSummary, Representation {
   turn_timings?: TurnTiming[];
   seq?: number;
   history?: 'loaded' | 'loading' | 'unavailable';
   history_reason?: string;
+  /** Opaque cursor for earlier items. Empty at the beginning; absent on older servers. */
+  history_before?: string;
+  history_after?: string;
+  /** Client-owned bounded live tail and lightweight grouping index. */
+  recent_items?: Item[];
+  recent_before?: string;
+  history_index?: Item[];
   terminal_session?: { id: string; name: string };
   queue?: QueuedPrompt[];
   queue_paused?: boolean;
@@ -467,6 +504,13 @@ export interface SessionDetail extends SessionSummary {
   background_tasks?: BackgroundTasks;
   history_truncated: boolean;
   last_submission: Submission | null;
+}
+
+export interface HistoryPage extends Representation {
+  seq: number;
+  items: Item[];
+  before: string;
+  after?: string;
 }
 
 export type Scope = 'session' | 'workspace';
@@ -496,7 +540,7 @@ export interface FileDiff {
   patch?: string;
 }
 
-export interface SnapshotData {
+export interface SnapshotData extends Representation {
   seq: number;
   projects: Project[];
   /** Absent from a service older than settings; the defaults apply then. */
@@ -508,7 +552,7 @@ export interface SnapshotData {
 }
 
 export type UpdateData =
-  | { name: 'history'; seq: number; session_id: string; history: 'loaded' | 'loading' | 'unavailable'; history_reason?: string; history_truncated: boolean; items: Item[]; subagents: Subagent[] }
+  | { name: 'history'; seq: number; session_id: string; history: 'loaded' | 'loading' | 'unavailable'; history_reason?: string; history_before?: string; history_truncated: boolean; items: Item[]; subagents: Subagent[] }
   | { name: 'queue'; seq: number; session_id: string; queue: QueuedPrompt[]; paused: boolean }
   | { name: 'session'; seq: number; session: SessionSummary }
   | { name: 'session_removed'; seq: number; session_id: string }
@@ -516,7 +560,7 @@ export type UpdateData =
   | { name: 'project_removed'; seq: number; project_id: string }
   | { name: 'settings'; seq: number; settings: Settings }
   | { name: 'usage'; seq: number; usage: AccountUsage }
-  | { name: 'item'; seq: number; session_id: string; item: Item; agent_id?: string }
+  | { name: 'item'; seq: number; session_id: string; item: Item; agent_id?: string; append?: boolean }
   | { name: 'tool_output'; seq: number; session_id: string; item_id: string; text: string; agent_id?: string }
   | { name: 'items_trimmed'; seq: number; session_id: string; items: { id: string; agent_id?: string }[] }
   | {
@@ -627,7 +671,8 @@ export const api = {
   logout: () => call<void>('POST', '/api/logout'),
   meta: () => call<Meta>('GET', '/api/meta'),
 
-  session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}`),
+  session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}?history=recent&view=compact-v1`),
+  history: (id: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),
   previous: (id: string) => call<PreviousSession[]>('GET', `/api/projects/${enc(id)}/previous`),
   importPrevious: (id: string, conversationId: string) => call<SessionSummary>('POST', `/api/projects/${enc(id)}/previous/${enc(conversationId)}/import`),
 
@@ -695,8 +740,11 @@ export const api = {
   changeFile: (id: string, scope: Scope, path: string) =>
     call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`),
   subagent: (id: string, agentId: string, signal?: AbortSignal) =>
-    call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal),
-  eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}&tool_output=delta` : '/api/events'),
+    foregroundRead(() => call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal), signal),
+  subagentHistory: (id: string, agentId: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),
+  itemBody: (id: string, itemId: string, agentId: string, signal?: AbortSignal) => foregroundRead(() => call<BodyData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}?agent_id=${enc(agentId)}`, undefined, false, signal), signal),
+  detailEventsUrl: (id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string) => `/api/events/detail?session=${enc(id)}${agentId ? `&agent=${enc(agentId)}` : ''}${agentBefore ? `&agent_before=${enc(agentBefore)}` : ''}${epoch ? `&epoch=${enc(epoch)}` : ''}${agentUntil ? `&agent_until=${enc(agentUntil)}` : ''}${bodies.map(b => `&item=${enc(JSON.stringify(b.coveredSeq === undefined ? [b.agentId, b.itemId] : [b.agentId, b.itemId, b.coveredSeq]))}`).join('')}`,
+  eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}&tool_output=delta&history=recent&view=compact-v1` : '/api/events'),
 };
 
 export interface Upload {

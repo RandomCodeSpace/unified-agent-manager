@@ -100,20 +100,22 @@ the file no longer has: run `uam web stop` first, then `uam web` again.
 Session cookies are derived from the token, so the restart signs out every
 browser.
 
-Every API request needs the cookie. The cookie is bound to the `Host` it was
-issued for, so the service accepts any `Host`: a website whose name resolves
-to this host holds no cookie for that name and reaches only the sign-in page.
-The service rejects cross-origin state changes and sends no CORS headers.
+Protected API requests need a session cookie. The signed file-view route instead
+checks a task-scoped file key. Cookies and file keys are bound to the `Host`
+they were issued for, so the service accepts any `Host`: a website whose name
+resolves to this host holds no credential for that name and reaches only the
+sign-in page and static assets. The service rejects cross-origin state changes
+and sends no CORS headers.
 
-`uam web --no-auth` turns sign-in off: every request is treated as signed in,
-and `uam web` and `uam web status` print `Authentication: disabled` instead of
-the token. The cross-origin and JSON checks still apply, and the service
-then rejects requests whose `Host` is not loopback, a configured public origin
-or, when it listens beyond loopback, an IP address. It is off by
-default. Behind a public reverse proxy, it lets anyone on the internet run
-agents and shell commands on this host with your credentials; on an address
-beyond loopback, anyone who can reach that address. To turn it back off, run
-`uam web stop`, then `uam web` without the flag.
+Authentication is always required. Both `uam web --no-auth` and the internal
+`uam __web --no-auth` entry point reject the removed flag. Token load, creation
+or validation failures stop startup before the service listens.
+
+If an older daemon is still running without authentication, `uam web` refuses
+to reuse it. `uam web status` identifies it as an unsupported legacy service;
+`status --json` reports `no_auth: true` and `restart_required: true`. Run
+`uam web stop`, then `uam web` to restart with sign-in required. This never
+happens automatically, and the existing token is not replaced.
 
 For adding a Project, the API also lists and creates folders on the host, as
 the service user. `GET /api/fs/dirs?path=<absolute path>` returns the
@@ -127,10 +129,7 @@ with `{"parent", "name"}` creates one folder (mode 0755) and returns 201
 `{"path"}`, or 409 when the name exists. A path that is not a folder, too
 long or a symbolic-link loop is 400, one you cannot read or write is 403,
 a missing one 404, and a full disk or quota 507. Both need sign-in like
-every other API route. With
-`--no-auth` on an address others can reach, anyone who can reach the service
-can browse your directory tree and create folders in it, the same exposure as
-the rest of the service. Created folders are logged with their path; listings
+other protected API routes. Created folders are logged with their path; listings
 are logged only at debug level (`UAM_DEBUG=1`).
 
 ## Use it
@@ -326,9 +325,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   > **Warning:** in yolo mode the agent can run any command and change any
   > file your Linux account can reach, with your credentials, and nobody is
   > asked first. Turn it on only for a project where you would click "Allow"
-  > on everything anyway. With `--no-auth` behind a public reverse proxy or
-  > on an address beyond loopback, anyone who can reach the page can start a
-  > yolo Task.
+  > on everything anyway. Sign-in is required to create or control a Task.
 - **Commands**: type `/` at the start of a message to list supported provider
   commands and skills. Names and aliases are searchable. Known unsupported
   commands stay visible with their reason and cannot become ordinary prompts.
@@ -486,10 +483,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   redirect, stops after 10 s or 1 MiB, and answers
   `{"models": [sorted IDs, at most 500], "truncated": true|omitted,
   "key_present": true}`, or an error with only the upstream status line.
-  This is a request from the service to a URL the browser chose: on an
-  instance without sign-in (`--no-auth`) anyone who reaches it can make the
-  service send such a GET, with a `UAM_BYOM_` key, to any host it can reach,
-  loopback and private addresses included. The key itself never passes through the browser,
+  This is an authenticated request from the service to a URL the browser chose.
+  A signed-in owner can make the service send this GET, with a `UAM_BYOM_` key,
+  to any host it can reach, including loopback and private addresses.
+  The key itself never passes through the browser,
   the API, `sessions.json` or the service log: the service reads the
   variable from its own environment when it opens a Copilot session, and
   settings only report `key_present`. Export the variable where the service
@@ -684,7 +681,7 @@ uam web started (pid 258199)
   URL:           http://127.0.0.1:8260/
   Listen:        0.0.0.0:8260
   Access token:  <64 hex characters>
-  Warning: listening on 0.0.0.0:8260, so other machines can reach this service; sign-in is required (--no-auth is not in use)
+  Warning: listening on 0.0.0.0:8260, so other machines can reach this service; sign-in is required
 ```
 
 Other machines that can reach the port open `http://<host IP>:8260/` and sign
@@ -696,31 +693,14 @@ The connection is plain HTTP, so the token and the session cookie cross the
 network unencrypted. Use it only on a network you trust; otherwise use SSH
 forwarding or an HTTPS reverse proxy.
 
-With sign-in on, any host name works, such as a LAN name, without
+Any host name works, such as a LAN name, without
 `--public-origin`. The cross-origin and JSON checks do not change.
-
-With `--no-auth`, the `Host` check still blocks DNS rebinding: the service
-accepts loopback, a configured public origin and an IP address such as the LAN
-address, and any other name gets 403. To reach it by name, add that name with
-`--public-origin`. Beyond that, nothing stands between the network and your
-agents:
-
-```text
-  Authentication: disabled — anyone who can reach this service can use it
-  Warning: listening on 0.0.0.0:8260, so other machines can reach this service
-  Warning: --no-auth is in use: anyone who can reach 0.0.0.0:8260 can run agents on this host with your credentials
-```
-
-Anyone who can reach the port can then start Tasks in your directories with
-your Copilot credentials, including yolo Tasks that run shell commands
-without asking.
 
 ## Log request headers
 
 For debugging, `uam web --log-headers` logs one line per HTTP request: the
 method, the path with its query, the remote address, the `Host`, every request
-header, and whether the request was allowed or refused (`host not allowed`,
-`cross-origin request rejected`, the JSON content-type refusal, or
+header, and whether the request was allowed or refused (`cross-origin request rejected`, the JSON content-type refusal, or
 `authentication required`, with the status code). It is off by default, and
 `uam web status` shows `Header logging: on` while it is on. Headers that can
 carry a credential are logged as `[redacted]`: `Cookie`, `Authorization`,
@@ -740,10 +720,9 @@ grep '"msg":"web request"' ~/.cache/uam/uam.log
 
 ## Same-host HTTPS reverse proxy
 
-The service can sit behind a reverse proxy on the same host. With sign-in on,
-it accepts the proxy's host name as is. With `--no-auth`, the `Host` check
-refuses names that are not loopback or a configured public origin, so tell it
-the public origin:
+The service can sit behind a reverse proxy on the same host. It accepts the
+proxy's host name as is. Optionally record the public origin in the service
+settings and CLI output:
 
 ```sh
 uam web --public-origin https://uam.example.com
@@ -765,8 +744,7 @@ uam.example.com {
 `flush_interval -1` keeps the event stream unbuffered. The proxy must pass the
 original `Host` header (Caddy does by default). This makes the service
 reachable from the internet, protected by the access token; keep the token
-private and rotate it if it leaks. With `--no-auth` it is not protected at all
-(see [Sign in](#sign-in)).
+private and rotate it if it leaks. See [Sign in](#sign-in).
 
 ## Limitations
 

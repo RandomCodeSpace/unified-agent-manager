@@ -255,6 +255,8 @@ type SessionDetail struct {
 	// HistoryUnavailable); HistoryReason says why it is unavailable.
 	History       string `json:"history"`
 	HistoryReason string `json:"history_reason,omitempty"`
+	// Present for paged clients, empty when all retained items are included.
+	HistoryBefore *string `json:"history_before,omitempty"`
 	// TerminalSession is the uam terminal session tied to the same
 	// conversation, present while its host runs.
 	TerminalSession *TerminalSession `json:"terminal_session,omitempty"`

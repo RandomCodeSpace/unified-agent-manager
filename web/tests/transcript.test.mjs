@@ -24,6 +24,7 @@ test('older interactions stay with their hidden rows, including decisions made l
   ];
   assert.deepEqual(windowInteractions(items, interactions, 1).map((ix) => ix.id), ['new-decision', 'new-loose']);
   assert.equal(windowInteractions(items, interactions, 0), interactions);
+  assert.deepEqual(windowInteractions(items.slice(1), interactions, 0, true).map((ix) => ix.id), ['new-decision', 'new-loose']);
 });
 
 const tool = (name, input, extra = {}) => ({ name, status: 'completed', input, ...extra });
@@ -456,4 +457,20 @@ test('a subagent row summarises its current step, its error, or the first line o
   assert.equal(subagentSummary({ ...running, status: 'cancelled' }, [shell], { ...report, output: 'Stopped after step 2.' }), 'Stopped after step 2.');
   assert.equal(subagentSummary({ ...running, status: 'failed', error: 'axe-core is not installed.' }, [shell], { ...report, status: 'failed', output: 'other' }), 'axe-core is not installed.');
   assert.equal(subagentSummary({ ...running, status: 'failed' }, [shell], { ...report, status: 'failed', output: 'npm ERR! could not determine executable to run\nstack…' }), 'npm ERR! could not determine executable to run');
+});
+
+test('compact tool labels and exact semantic paths preserve summaries without deferred input', () => {
+  const a = { id: 'a', kind: 'tool', tool: { name: 'edit', status: 'completed', path: '/long/exact/path.ts', display_arg: '/long/exact/…', has_input: true, has_output: true } };
+  const b = { ...a, id: 'b', tool: { ...a.tool, display_arg: 'a different clipped label' } };
+  assert.deepEqual(toolLabel(a.tool), { name: 'edit', arg: '/long/exact/…' });
+  assert.equal(summarizeTools([a, b], false), 'Changed 1 file');
+  assert.equal(subagentSummary({ status: 'running', preview: 'Reviewing parser behavior' }, undefined, undefined), 'Reviewing parser behavior');
+  assert.equal(subagentSummary({ status: 'completed', result_summary: 'Found two edge cases' }, undefined, undefined), 'Found two edge cases');
+});
+
+test('compact completed subagent previews preserve the meaningful plain report line', () => {
+  const result_summary = '## Summary\n\n**Two** templates changed.\nNext steps follow.';
+  for (const status of ['completed', 'idle', 'failed']) {
+    assert.equal(subagentSummary({ status, result_summary }, undefined, undefined), 'Two templates changed.');
+  }
 });

@@ -202,9 +202,6 @@ func (s *Server) validFileKey(key, host, id string) bool {
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
-	if s.noAuth {
-		return true
-	}
 	c, err := r.Cookie(cookieName)
 	if err != nil {
 		return false

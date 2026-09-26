@@ -1,3 +1,7 @@
+import { flushSync } from 'react-dom';
+import { HistoryAnchor } from './HistoryAnchor';
+import { windowInteractions } from '../lib/transcript';
+import { BodyNotice, DetailVisibility, useDetailAgent, useItemBody } from './Details';
 import { ArrowLeft, Bot, Copy, Crosshair, Ellipsis, Square, X } from 'lucide-react';
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
@@ -189,7 +193,7 @@ export function SubagentPanel({
             <X />
           </Button>
         </PanelHeader>
-        <AgentTranscriptView
+        <DetailVisibility open={open}><AgentTranscriptView
           key={current.id}
           sessionId={session.id}
           workdir={session.workdir}
@@ -197,8 +201,10 @@ export function SubagentPanel({
           interactions={session.interactions}
           transcript={agents[current.id]}
           snapshotSeq={snapshotSeq}
+          open={open}
+          parent={session.items.find((i) => i.id === current.parent_tool_call_id)}
           result={current.status === 'completed' || current.status === 'idle' ? session.items.find((i) => i.id === current.parent_tool_call_id)?.tool?.output : undefined}
-        />
+        /></DetailVisibility>
         <SubagentComposer key={`composer-${current.id}`} session={session} subagent={current} />
         {stopDialog}
       </SidePanel>
@@ -329,9 +335,11 @@ function AgentTranscriptView({
   workdir,
   subagent,
   interactions,
-  transcript,
+  transcript: legacyTranscript,
   snapshotSeq,
-  result,
+  result: legacyResult,
+  open,
+  parent,
 }: {
   sessionId: string;
   workdir: string;
@@ -342,16 +350,30 @@ function AgentTranscriptView({
   snapshotSeq: number;
   /** The `task` tool's output on the parent item, which is the subagent's result. */
   result?: string;
+  open: boolean;
+  parent?: Item;
 }) {
   const { dispatch } = useApp();
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const live = subagent.status === 'running';
   const [attempt, setAttempt] = useState(0);
+  const detail = useDetailAgent(subagent.id, open);
+  const transcript = detail.compact ? detail.agent : legacyTranscript;
+  const parentItem: Item = parent ?? { id: subagent.parent_tool_call_id ?? '', kind: 'tool', time: '', compact: { has_text: false, has_reasoning: false } };
+  const { item: parentFullItem, body: parentBody, attach: parentAttach, retry: parentRetry } = useItemBody(parentItem, open && !!subagent.parent_tool_call_id && (subagent.status === 'completed' || subagent.status === 'idle'));
+  const result = detail.compact ? parentFullItem?.tool?.output : legacyResult;
+  const pageRead = useRef<{ token: number; controller: AbortController } | null>(null);
+  const pageToken = useRef(0);
+  const retryAfter = useRef(0);
+  const [windowReset, setWindowReset] = useState(0);
+  useEffect(() => () => { pageRead.current?.controller.abort(); pageRead.current = null; }, [sessionId, subagent.id, open, detail.agent?.seq]);
 
   useEffect(() => {
+    if (detail.compact || !open) return;
     let cancelled = false;
     const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 10000);
     dispatch({ type: 'agent_loading', sessionId, agentId: subagent.id });
     api
       .subagent(sessionId, subagent.id, controller.signal)
@@ -360,42 +382,103 @@ function AgentTranscriptView({
     return () => {
       cancelled = true;
       controller.abort();
+      window.clearTimeout(timer);
       dispatch({ type: 'agent_unloaded', sessionId, agentId: subagent.id });
     };
-  }, [sessionId, subagent.id, snapshotSeq, attempt, dispatch]);
+  }, [sessionId, subagent.id, snapshotSeq, attempt, dispatch, detail.compact, open]);
 
   // Follow new output only while the reader is at the bottom.
   const items: Item[] = transcript?.items ?? NO_ITEMS;
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [items]);
+    if (!el) return;
+    if (atBottom.current && !detail.agent?.after) el.scrollTop = el.scrollHeight;
+  }, [items, detail.agent?.after]);
 
+  function nearEdge(el: HTMLElement, direction: 'older' | 'newer') {
+    const rect = el.querySelector('[data-history-window]')?.getBoundingClientRect();
+    const edge = el.getBoundingClientRect();
+    const distance = direction === 'older' ? rect ? edge.top - rect.top : el.scrollTop : rect ? rect.bottom - edge.bottom : el.scrollHeight - el.scrollTop - el.clientHeight;
+    return distance < Math.min(1000, Math.max(200, el.clientHeight * 2));
+  }
+
+  function loadOlder(direction: 'older' | 'newer' = 'older') {
+    const agent = detail.agent, store = detail.store;
+    const before = direction === 'older' ? agent?.before : agent?.after;
+    if (Date.now() < retryAfter.current || !detail.compact || !open || !agent || !before || agent.loading || agent.page || pageRead.current || !store) return;
+    const controller = new AbortController(), token = ++pageToken.current;
+    pageRead.current = { token, controller };
+    store.action({ type: 'page_start', agentId: subagent.id, before, token, direction });
+    const timer = window.setTimeout(() => {
+      if (pageRead.current?.token !== token) return;
+      retryAfter.current = Date.now() + 1000;
+      store.action({ type: 'page_failed', agentId: subagent.id, token, error: 'Loading earlier messages timed out. Scroll up to retry.' });
+      controller.abort();
+    }, 10000);
+    void api.subagentHistory(sessionId, subagent.id, before, controller.signal, direction).then(page => {
+      if (controller.signal.aborted || pageRead.current?.token !== token || store.value.agent?.page?.token !== token) return;
+      atBottom.current = false;
+      store.action({ type: 'page_done', agentId: subagent.id, before, token, page });
+    }).catch(error => {
+      if (pageRead.current?.token === token && !controller.signal.aborted) { retryAfter.current = Date.now() + 1000; store.action({ type: 'page_failed', agentId: subagent.id, token, error: describeError(error) }); }
+    }).finally(() => { window.clearTimeout(timer); if (pageRead.current?.token === token) pageRead.current = null; });
+  }
+  const loadOnDemand = useEffectEvent(loadOlder);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || !open) return;
+    let touchY = 0;
+    const key = (event: globalThis.KeyboardEvent) => { if (['Home', 'PageUp', 'ArrowUp'].includes(event.key) && nearEdge(el, 'older')) loadOnDemand(); if (['End', 'PageDown', 'ArrowDown'].includes(event.key) && nearEdge(el, 'newer')) loadOnDemand('newer'); };
+    const start = (event: TouchEvent) => { touchY = event.touches[0]?.clientY ?? 0; };
+    const move = (event: TouchEvent) => { const y = event.touches[0]?.clientY ?? touchY; if (y > touchY && nearEdge(el, 'older')) loadOnDemand(); if (y < touchY && nearEdge(el, 'newer')) loadOnDemand('newer'); touchY = y; };
+    el.addEventListener('keydown', key); el.addEventListener('touchstart', start, { passive: true }); el.addEventListener('touchmove', move, { passive: true });
+    return () => { el.removeEventListener('keydown', key); el.removeEventListener('touchstart', start); el.removeEventListener('touchmove', move); };
+  }, [open]);
+  const scrollTop = useRef(0);
   function onScroll() {
     const el = scroller.current;
-    if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
+    if (!el) return;
+    atBottom.current = !detail.agent?.after && el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
+    if (el.scrollTop < scrollTop.current && nearEdge(el, 'older')) loadOlder();
+    else if (el.scrollTop > scrollTop.current && nearEdge(el, 'newer')) loadOlder('newer');
+    scrollTop.current = el.scrollTop;
+  }
+
+  const visibleInteractions = detail.compact ? windowInteractions(items, interactions, 0, !!detail.agent?.before, !!detail.agent?.after) : interactions;
+  function latest() {
+    pageRead.current?.controller.abort(); pageRead.current = null;
+    flushSync(() => { detail.store?.action({ type: 'latest', agentId: subagent.id }); setWindowReset(value => value + 1); });
+    atBottom.current = true;
+    if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4" ref={scroller} onScroll={onScroll} role="log" aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined}>
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4" ref={scroller} onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder(); if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer'); }} role="log" tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined}>
+      {detail.agent?.page && <Note>Loading {detail.agent.page.direction === 'newer' ? 'newer' : 'earlier'} messages…</Note>}
+      {detail.agent?.after && <Button className="sticky top-0 z-10 self-center" size="sm" variant="secondary" onClick={latest}>Jump to latest</Button>}
+      {detail.agent?.pageError && <Note tone="error">{detail.agent.pageError}</Note>}
       {subagent.description && <Note>{subagent.description}</Note>}
       {(!transcript || transcript.loading) && items.length === 0 ? (
         <Skeleton label="Loading the transcript…" rows={5} />
       ) : transcript?.error ? (
         <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1">Could not load the transcript: {transcript.error}</span>
-          <Button size="sm" variant="secondary" onClick={() => setAttempt((n) => n + 1)}>
+          <Button size="sm" variant="secondary" onClick={() => { if (detail.compact) detail.retry?.(); else setAttempt((n) => n + 1); }}>
             Retry
           </Button>
         </Note>
       ) : (
         <>
-          <AgentItems sessionId={sessionId} workdir={workdir} agentId={subagent.id} items={items} interactions={interactions} live={live} />
+          <HistoryAnchor scroller={scroller} firstItem={items[0]?.id ?? ''} lastItem={items.at(-1)?.id} itemIds={detail.compact ? items.map(item => item.id) : undefined} knownIds={detail.agent?.index?.map(item => item.id)} resetKey={`${detail.store?.value.epoch}:${windowReset}`} className="flex flex-col gap-3">
+            <AgentItems sessionId={sessionId} workdir={workdir} agentId={subagent.id} items={items} identityItems={detail.agent?.index} historyItemSeq={detail.agent?.itemSeq} interactions={visibleInteractions} live={live && !detail.agent?.after} />
+          </HistoryAnchor>
           {items.length === 0 && <Note>Nothing recorded yet.</Note>}
         </>
       )}
       {subagent.status === 'failed' && <Note tone="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</Note>}
       {subagent.status === 'cancelled' && <Note>Stopped before it finished.</Note>}
+      {detail.compact && parentBody && <div ref={parentAttach}><BodyNotice body={parentBody} retry={parentRetry} /></div>}
       {result && (
         <div className="rounded-md bg-raised px-3.5 py-2.5 text-ui shadow-raised">
           <div className="mb-1 text-caption text-muted">Result sent to the main agent</div>

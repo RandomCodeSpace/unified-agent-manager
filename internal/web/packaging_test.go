@@ -20,7 +20,7 @@ func TestEmbeddedFrontendPackaging(t *testing.T) {
 			expect = "absent"
 		}
 	}
-	s, err := NewServer(ServerConfig{Manager: &Manager{}, Token: "packaging-test"})
+	s, err := NewServer(ServerConfig{Manager: &Manager{}, Token: testToken})
 	if expect == "absent" {
 		if err == nil || !strings.Contains(err.Error(), "web assets are not built; run make build or make install") {
 			t.Fatalf("unbuilt source should explain how to build the UI, got %v", err)

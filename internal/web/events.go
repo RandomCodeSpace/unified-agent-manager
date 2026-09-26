@@ -20,12 +20,17 @@ const (
 // Subscriber is one event-stream connection. It only observes: dropping it
 // never affects providers.
 type Subscriber struct {
-	session    string
-	toolDeltas bool // opted in to tool_output frames; older clients receive full items
-	ch         chan []byte
-	queued     atomic.Int64
-	gone       chan struct{}
-	dropped    bool // guarded by Manager.mu
+	session       string
+	compact       bool
+	detail        bool
+	agent         string
+	bodies        map[string]bool
+	toolDeltas    bool // opted in to tool_output frames; older clients receive full items
+	recentHistory bool // snapshots and history frames contain only the newest page
+	ch            chan []byte
+	queued        atomic.Int64
+	gone          chan struct{}
+	dropped       bool // guarded by Manager.mu
 }
 
 // Frames returns the queue of encoded events for this subscriber.
@@ -84,6 +89,7 @@ type itemEvent struct {
 	SessionID string        `json:"session_id"`
 	AgentID   string        `json:"agent_id,omitempty"`
 	Item      agentapi.Item `json:"item"`
+	Append    bool          `json:"append,omitempty"` // new item, rather than an update to an unloaded older item
 }
 
 type deltaEvent struct {
@@ -155,6 +161,7 @@ type historyEvent struct {
 	Truncated     bool                `json:"history_truncated"`
 	Items         []agentapi.Item     `json:"items"`
 	Subagents     []agentapi.Subagent `json:"subagents"`
+	Before        *string             `json:"history_before,omitempty"`
 }
 
 type queueEvent struct {
@@ -186,6 +193,14 @@ func (m *Manager) Subscribe(sessionID string) (*Subscriber, []byte, error) {
 }
 
 func (m *Manager) subscribe(sessionID string, toolDeltas bool) (*Subscriber, []byte, error) {
+	return m.subscribeHistory(sessionID, toolDeltas, false)
+}
+
+func (m *Manager) subscribeHistory(sessionID string, toolDeltas, recentHistory bool) (*Subscriber, []byte, error) {
+	return m.subscribeView(sessionID, toolDeltas, recentHistory, false)
+}
+
+func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, compact bool) (*Subscriber, []byte, error) {
 	m.refreshBranches(m.ctx, false)
 	terminal := false
 	if sessionID != "" {
@@ -206,13 +221,32 @@ func (m *Manager) subscribe(sessionID string, toolDeltas bool) (*Subscriber, []b
 		}
 		m.viewHistoryLocked(s)
 		d := m.detailLocked(s, terminal)
+		if recentHistory && !compact {
+			d = recentDetail(d)
+		}
 		detail = &d
 	}
-	frame, err := encodeFrame("snapshot", snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: m.settings, Usage: m.accountUsageLocked(), Sessions: m.summariesLocked(), Session: detail})
+	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: m.settings, Usage: m.accountUsageLocked(), Sessions: m.summariesLocked(), Session: detail}
+	var payload any = snapshot
+	if compact {
+		var d *compactSessionDetail
+		if detail != nil {
+			projected := m.compactDetailLocked(m.sessions[sessionID], *detail)
+			d = &projected
+		}
+		payload = struct {
+			snapshotEvent
+			Representation string                `json:"representation"`
+			Epoch          string                `json:"epoch"`
+			DetailStream   bool                  `json:"detail_stream"`
+			Session        *compactSessionDetail `json:"session"`
+		}{snapshot, compactRepresentation, m.epoch, true, d}
+	}
+	frame, err := encodeFrame("snapshot", payload)
 	if err != nil {
 		return nil, nil, err
 	}
-	sub := &Subscriber{session: sessionID, toolDeltas: toolDeltas, ch: make(chan []byte, subscriberQueue), gone: make(chan struct{})}
+	sub := &Subscriber{session: sessionID, compact: compact, toolDeltas: toolDeltas, recentHistory: recentHistory, ch: make(chan []byte, subscriberQueue), gone: make(chan struct{})}
 	m.subs[sub] = struct{}{}
 	return sub, frame, nil
 }
@@ -252,7 +286,7 @@ func (m *Manager) dropLocked(sub *Subscriber) {
 // otherwise only subscribers of that session. The payload is built and
 // encoded only when someone will receive it.
 func (m *Manager) broadcastLocked(event, sessionID string, build func(seq uint64) any) {
-	m.broadcastFilteredLocked(event, sessionID, nil, build)
+	m.broadcastFilteredLocked(event, sessionID, func(sub *Subscriber) bool { return !sub.detail }, build)
 }
 
 // A negotiated frame can have a legacy equivalent. Each uses the same global

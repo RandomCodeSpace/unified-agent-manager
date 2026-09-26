@@ -96,10 +96,13 @@ func itemKey(agentID, id string) string {
 	return agentID + "\x00" + id
 }
 
-func (m *Manager) publishItemLocked(s *webSession, it agentapi.Item) {
-	m.broadcastLocked("item", s.id, func(seq uint64) any {
-		return itemEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, Item: it}
+func (m *Manager) publishItemLocked(s *webSession, it agentapi.Item, appendItem bool) {
+	m.broadcastFilteredLocked("item", s.id, legacySubscriber, func(seq uint64) any {
+		return itemEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, Item: it, Append: appendItem}
 	})
+	m.publishCompactItemLocked(s, it, appendItem)
+	m.publishBodyLocked(s, it)
+	m.itemPreviewLocked(s, it)
 }
 
 // Send evictions after the item/delta that triggered them, including when an
@@ -108,9 +111,25 @@ func (m *Manager) publishItemsTrimmedLocked(s *webSession, removed []trimmedItem
 	if len(removed) == 0 {
 		return
 	}
-	m.broadcastLocked("items_trimmed", s.id, func(seq uint64) any {
+	m.broadcastFilteredLocked("items_trimmed", s.id, nil, func(seq uint64) any {
 		return itemsTrimmedEvent{Seq: seq, SessionID: s.id, Items: removed}
 	})
+	for sub := range m.subs {
+		if sub.detail && sub.session == s.id {
+			for _, it := range removed {
+				delete(sub.bodies, itemKey(it.AgentID, it.ID))
+			}
+		}
+	}
+}
+
+// Item mutation barriers are bounded to retained IDs and precede every publication.
+func (m *Manager) markItemMutationLocked(s *webSession, it agentapi.Item) {
+	m.seq++
+	if s.itemSeq == nil {
+		s.itemSeq = map[string]uint64{}
+	}
+	s.itemSeq[itemKey(it.AgentID, it.ID)] = m.seq
 }
 
 // upsertItemLocked replaces the item with the same agent and ID or appends
@@ -129,6 +148,9 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 		s.itemIdx[itemKey(it.AgentID, it.ID)] = len(s.items)
 		s.items = append(s.items, it)
 	}
+	if previous.ID == "" || !reflect.DeepEqual(previous, it) {
+		m.markItemMutationLocked(s, it)
+	}
 	s.itemBytes += itemSize(it)
 	removed := s.trimItems()
 	if publish {
@@ -137,15 +159,20 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 			if suffix == "" {
 				return
 			}
-			m.broadcastFilteredLocked("tool_output", s.id, func(sub *Subscriber) bool { return sub.toolDeltas }, func(seq uint64) any {
+			m.broadcastFilteredLocked("tool_output", s.id, func(sub *Subscriber) bool { return legacySubscriber(sub) && sub.toolDeltas }, func(seq uint64) any {
 				return toolOutputEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, ItemID: it.ID, Text: suffix}
 			})
-			m.broadcastFilteredLocked("item", s.id, func(sub *Subscriber) bool { return !sub.toolDeltas }, func(seq uint64) any {
+			m.broadcastFilteredLocked("item", s.id, func(sub *Subscriber) bool { return legacySubscriber(sub) && !sub.toolDeltas }, func(seq uint64) any {
 				return itemEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, Item: it}
 			})
+			if previous.Tool.Output == "" {
+				m.publishCompactItemLocked(s, it, false)
+			}
+			m.publishBodyDeltaLocked(s, it, suffix, true)
+			m.itemPreviewLocked(s, it)
 			return
 		}
-		m.publishItemLocked(s, it)
+		m.publishItemLocked(s, it, previous.ID == "")
 	}
 }
 
@@ -195,11 +222,21 @@ func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
 	}
 	it.Text += add
 	s.items[i] = it
+	m.markItemMutationLocked(s, it)
 	s.itemBytes += len(add)
 	removed := s.trimItems()
-	m.broadcastLocked("delta", s.id, func(seq uint64) any {
+	m.broadcastFilteredLocked("delta", s.id, func(sub *Subscriber) bool {
+		return legacySubscriber(sub) || (it.Kind != agentapi.ItemReasoning && it.Kind != agentapi.ItemTool && compactAgent(it.AgentID)(sub))
+	}, func(seq uint64) any {
 		return deltaEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, ItemID: d.ItemID, Kind: it.Kind, Text: add}
 	})
+	if it.Kind == agentapi.ItemReasoning || it.Kind == agentapi.ItemTool {
+		if len(it.Text) == len(add) {
+			m.publishCompactItemLocked(s, it, false)
+		}
+		m.publishBodyDeltaLocked(s, it, add, false)
+	}
+	m.itemPreviewLocked(s, it)
 	m.publishItemsTrimmedLocked(s, removed)
 }
 
@@ -237,6 +274,9 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 		}
 	}
 	s.items = items
+	for _, it := range items {
+		m.markItemMutationLocked(s, it)
+	}
 	s.itemBytes = 0
 	for _, it := range s.items {
 		s.itemBytes += itemSize(it)
@@ -250,7 +290,7 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 		if _, kept := s.itemIdx[itemKey(it.AgentID, it.ID)]; !kept {
 			continue
 		}
-		m.publishItemLocked(s, it)
+		m.publishItemLocked(s, it, false)
 	}
 	m.publishItemsTrimmedLocked(s, removed)
 }
@@ -259,6 +299,11 @@ func (s *webSession) rebuildIndex() {
 	s.itemIdx = make(map[string]int, len(s.items))
 	for i, it := range s.items {
 		s.itemIdx[itemKey(it.AgentID, it.ID)] = i
+	}
+	for key := range s.itemSeq {
+		if _, ok := s.itemIdx[key]; !ok {
+			delete(s.itemSeq, key)
+		}
 	}
 }
 
@@ -459,9 +504,10 @@ func (s *webSession) subagentList() []agentapi.Subagent {
 
 func (m *Manager) publishSubagentLocked(s *webSession, sa *agentapi.Subagent) {
 	snapshot := *sa
-	m.broadcastLocked("subagent", s.id, func(seq uint64) any {
+	m.broadcastFilteredLocked("subagent", s.id, legacySubscriber, func(seq uint64) any {
 		return subagentEvent{Seq: seq, SessionID: s.id, Subagent: snapshot}
 	})
+	m.queueSubagentPreviewLocked(s, sa.ID, true)
 }
 
 // endSubagentsLocked marks every running subagent cancelled and every idle
@@ -528,6 +574,12 @@ func (s *webSession) trimSubagents() {
 	for _, sa := range s.subagents {
 		if excess > 0 && sa.Status.Terminal() {
 			delete(s.subIdx, sa.ID)
+			if state := s.previews[sa.ID]; state != nil {
+				if state.timer != nil {
+					state.timer.Stop()
+				}
+				delete(s.previews, sa.ID)
+			}
 			excess--
 			continue
 		}

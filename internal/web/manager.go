@@ -113,6 +113,7 @@ type Manager struct {
 	sessions map[string]*webSession
 	dirty    map[string]struct{}
 	creating map[string]chan struct{}
+	epoch    string
 	seq      uint64
 	subs     map[*Subscriber]struct{}
 	closed   bool
@@ -146,6 +147,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
 		store:     st,
+		epoch:     rand.Text(),
 		providers: map[string]agentapi.Provider{},
 		ctx:       ctx,
 		cancel:    cancel,
@@ -183,6 +185,9 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 }
 
 type webSession struct {
+	previews map[string]*subagentPreviewState
+	itemSeq  map[string]uint64
+
 	// op serializes provider-facing operations on this session. It is never
 	// taken while holding Manager.mu.
 	op sync.Mutex
@@ -1425,6 +1430,7 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 	s.gen++
 	s.removed = true
 	m.cancelHistoryLocked(s)
+	s.stopPreviews()
 	delete(m.sessions, s.id)
 	delete(m.dirty, s.id)
 	m.broadcastLocked("session_removed", "", func(seq uint64) any { return sessionRemovedEvent{Seq: seq, SessionID: s.id} })
@@ -3559,6 +3565,9 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	m.closed = true
+	for _, s := range m.sessions {
+		s.stopPreviews()
+	}
 	var convs []agentapi.Conversation
 	for _, s := range m.sessions {
 		before := m.summaryLocked(s)

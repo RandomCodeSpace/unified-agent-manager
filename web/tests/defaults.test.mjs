@@ -5,7 +5,7 @@ import { registerHooks } from 'node:module';
 // The browser resolves extensionless TypeScript imports; node's strip-types runner does not.
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
-    return nextResolve(specifier === './lib/models' ? './lib/models.ts' : specifier, context);
+    return nextResolve(['./lib/models', './lib/reads'].includes(specifier) ? `${specifier}.ts` : specifier, context);
   },
 });
 const { resolveTaskDefaults } = await import('../src/api.ts');

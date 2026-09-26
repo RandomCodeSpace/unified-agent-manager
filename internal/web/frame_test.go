@@ -21,7 +21,7 @@ func frameAssets() fstest.MapFS {
 }
 
 // The diagram frame document gets its own policy and may be framed by this
-// origin; every other check (Host without sign-in, method) still applies, and
+// origin; method and cross-origin checks still apply, and
 // no cookie is needed, as for the rest of the static app.
 func TestDiagramFrameDocumentHeaders(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{Assets: frameAssets()})
@@ -49,10 +49,6 @@ func TestDiagramFrameDocumentHeaders(t *testing.T) {
 	// redirect but handleStatic cleans to the frame gets it too.
 	if w := ts.do(http.MethodGet, "/diagram-frame.html/", ""); w.Code != http.StatusOK || w.Header().Get("Content-Security-Policy") != frameSecurity || !strings.Contains(w.Body.String(), "diagram-frame-abc.js") {
 		t.Fatalf("GET /diagram-frame.html/ = %d %q", w.Code, w.Header().Get("Content-Security-Policy"))
-	}
-	noAuth := newTestServer(t, ServerConfig{Assets: frameAssets(), NoAuth: true})
-	if w := noAuth.do(http.MethodGet, "/diagram-frame.html", "", withHost("evil.example")); w.Code != http.StatusForbidden {
-		t.Fatalf("no-auth foreign Host = %d, want 403", w.Code)
 	}
 	if w := ts.do(http.MethodPost, "/diagram-frame.html", "{}"); w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST frame = %d, want 405", w.Code)
@@ -93,7 +89,7 @@ func TestOnlyTheDiagramFrameRelaxesThePolicy(t *testing.T) {
 	}
 	// Refusals and state changes too.
 	for _, w := range []interface{ Header() http.Header }{
-		newTestServer(t, ServerConfig{Assets: frameAssets(), NoAuth: true}).do(http.MethodGet, "/diagram-frame.html", "", withHost("evil.example")),
+		ts.do(http.MethodPost, "/diagram-frame.html", "{}", withHeader("Origin", "https://evil.example")),
 		ts.do(http.MethodGet, "/api/sessions", ""),
 		ts.do(http.MethodPost, "/api/login", `{"token":"`+testToken+`"}`),
 		ts.do(http.MethodPost, "/api/logout", "", withCookie(ts)),
