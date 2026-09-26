@@ -259,8 +259,13 @@ type webSession struct {
 	interactions []*interaction
 	ixIdx        map[string]*interaction
 
-	subagents         []*agentapi.Subagent
-	subIdx            map[string]*agentapi.Subagent
+	subagents []*agentapi.Subagent
+	subIdx    map[string]*agentapi.Subagent
+	// subagentsOlder is set once held subagent records were forgotten.
+	// Every subagent recorded after subagents[subagentHead] is held; the
+	// ones before it that are not are paged from the record.
+	subagentsOlder    bool
+	subagentHead      int
 	stoppedSubagents  map[string]bool // accepted stops awaiting the provider event
 	summaryRuns       map[string]*subagentSummaryRun
 	subagentSummaries map[string]store.SubagentSummary

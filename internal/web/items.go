@@ -550,13 +550,7 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 	if in.Status != agentapi.SubagentRunning && in.Status != agentapi.SubagentIdle && !in.Status.Terminal() {
 		return
 	}
-	in.Name = clampText(displaytext.Sanitize(in.Name), maxLabelText)
-	in.Description = clampText(displaytext.Sanitize(in.Description), maxLabelText)
-	in.Model = clampText(displaytext.Sanitize(in.Model), maxLabelText)
-	in.Effort = clampText(displaytext.Sanitize(in.Effort), maxLabelText)
-	in.Error = clipRunes(displaytext.Sanitize(in.Error), maxDetailRunes)
-	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
-	in.Result = boundedResultSummary(in.Result)
+	in = clampSubagent(in)
 	cur := s.subIdx[in.ID]
 	if cur == nil {
 		cur = &agentapi.Subagent{}
@@ -583,6 +577,18 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 	if publish {
 		m.publishSubagentLocked(s, cur)
 	}
+}
+
+// clampSubagent bounds and sanitizes a provider's subagent record.
+func clampSubagent(in agentapi.Subagent) agentapi.Subagent {
+	in.Name = clampText(displaytext.Sanitize(in.Name), maxLabelText)
+	in.Description = clampText(displaytext.Sanitize(in.Description), maxLabelText)
+	in.Model = clampText(displaytext.Sanitize(in.Model), maxLabelText)
+	in.Effort = clampText(displaytext.Sanitize(in.Effort), maxLabelText)
+	in.Error = clipRunes(displaytext.Sanitize(in.Error), maxDetailRunes)
+	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
+	in.Result = boundedResultSummary(in.Result)
+	return in
 }
 
 // subagentList returns a copy of s's subagent records.
@@ -656,15 +662,19 @@ func (m *Manager) forgetBackgroundTaskStateLocked(s *webSession) {
 	}
 }
 
-// trimSubagents forgets the oldest finished subagents beyond the cap.
+// trimSubagents forgets the oldest finished subagents beyond the cap. The
+// newest record stays, so every forgotten one is followed by a held one:
+// the list head, before which the record is paged.
 func (s *webSession) trimSubagents() {
 	excess := len(s.subagents) - maxSubagents
 	if excess <= 0 {
 		return
 	}
+	head, dropped := s.subagentHead, 0
 	kept := s.subagents[:0]
-	for _, sa := range s.subagents {
-		if excess > 0 && sa.Status.Terminal() {
+	for i, sa := range s.subagents {
+		if excess > 0 && sa.Status.Terminal() && i < len(s.subagents)-1 {
+			head, dropped = max(head, i+1), dropped+1
 			delete(s.subIdx, sa.ID)
 			if state := s.previews[sa.ID]; state != nil {
 				if state.timer != nil {
@@ -678,6 +688,10 @@ func (s *webSession) trimSubagents() {
 		kept = append(kept, sa)
 	}
 	s.subagents = kept
+	if dropped > 0 {
+		// Every forgotten record came before head.
+		s.subagentHead, s.subagentsOlder = head-dropped, true
+	}
 }
 
 // validateAnswer checks an answer against what the provider offered, so an

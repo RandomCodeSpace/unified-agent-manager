@@ -313,7 +313,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   the total and how many are running. The button opens a panel beside the
   conversation that lists the subagents grouped by status (running, idle,
   failed, completed, cancelled) with their start time and duration. Only the
-  running group is open; the others show their count and open on a click. "Spawned
+  running group is open; the others show their count and open on a click. The
+  list holds the newest 200 subagents; when Copilot's record has older ones,
+  the count reads "200+" and the list ends with "Show older subagents", which
+  loads the next 100 from the record. Nothing older is read until you click. "Spawned
   by" jumps to the tool call in the conversation. Opening a row, or "Open" on
   its row in the conversation, shows that subagent's own prompt, replies,
   and tool calls in the panel, live while it runs. The panel uses the same

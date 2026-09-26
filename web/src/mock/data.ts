@@ -6,6 +6,8 @@ import type { Command, Interaction, Item, Meta, PreviousSession, Project, Sessio
 export interface MockTask extends SessionDetail {
   /** Subagent transcripts keyed by agent id (served by the subagent route). */
   agentItems: Record<string, Item[]>;
+  /** Older subagents only Copilot's record still has: listed on request (`subagents_before`), openable like the rest. */
+  recordSubagents?: Subagent[];
 }
 
 export interface MockChange {
@@ -248,6 +250,17 @@ export function seed(): MockState {
     model: 'claude-haiku-4.5',
     effort: 'low',
   };
+  const oldAudits: Subagent[] = [1, 2, 3].map((n) => ({
+    id: `a-old-${n}`,
+    parent_tool_call_id: `h-old-${n}`,
+    name: `Audit package batch ${n}`,
+    description: `Check batch ${n} of the packages for exports without callers.`,
+    status: 'completed',
+    started_at: ago(1800 - n * 100),
+    ended_at: ago(1750 - n * 100),
+    model: 'claude-haiku-4.5',
+    effort: 'low',
+  }));
   const a5: Subagent = {
     id: 'a5',
     parent_tool_call_id: 'h-audit',
@@ -730,7 +743,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         clipped({ id: 'h-list', kind: 'assistant', time: ago(0.5), text: '' }, removedExports(), 6000, wholeTexts),
       ],
       subagents: [a5],
-      agentItems: { a5: longHistory('g', 300, 'a5') },
+      recordSubagents: oldAudits,
+      agentItems: { a5: longHistory('g', 300, 'a5'), ...Object.fromEntries(oldAudits.map((s) => [s.id, longHistory(`o${s.id}`, 20, s.id)])) },
     }),
   ];
 

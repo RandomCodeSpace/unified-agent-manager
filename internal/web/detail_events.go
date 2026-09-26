@@ -271,11 +271,12 @@ func (m *Manager) subscribeDetailWindow(id, agent string, refs []bodyRef, before
 	snapshot := detailSnapshot{detailBarrier: barrier, AgentID: agent}
 	var older []initialDetailFrame
 	if agent != "" {
-		sa := s.subIdx[agent]
-		if sa == nil {
+		// A subagent only the record lists was read before the lock.
+		sa, _, ok := m.subagentLocked(s, agent, nil)
+		if !ok {
 			return nil, nil, newError(404, "subagent not found")
 		}
-		projected := s.compactSubagent(*sa)
+		projected := s.compactSubagent(sa)
 		snapshot.Subagent = &projected
 		v := m.viewLocked(s, agent, nil)
 		items := v.items

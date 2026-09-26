@@ -200,11 +200,12 @@ func (m *Manager) publishHistoryLocked(s *webSession) {
 		page := v.page(len(v.items))
 		return struct {
 			historyEvent
-			Epoch          string            `json:"epoch"`
-			Representation string            `json:"representation"`
-			Items          []compactItem     `json:"items"`
-			Subagents      []compactSubagent `json:"subagents"`
-		}{historyEvent{Seq: seq, SessionID: s.id, History: s.historyState(), HistoryReason: s.historyReason, Truncated: v.truncated(s), Before: &page.Before}, m.epoch, compactRepresentation, page.Items, s.compactSubagents()}
+			Epoch           string            `json:"epoch"`
+			Representation  string            `json:"representation"`
+			Items           []compactItem     `json:"items"`
+			Subagents       []compactSubagent `json:"subagents"`
+			SubagentsBefore string            `json:"subagents_before,omitempty"`
+		}{historyEvent{Seq: seq, SessionID: s.id, History: s.historyState(), HistoryReason: s.historyReason, Truncated: v.truncated(s), Before: &page.Before}, m.epoch, compactRepresentation, page.Items, s.compactSubagents(), m.subagentsBeforeLocked(s)}
 	})
 	m.broadcastFilteredLocked("detail_reset", s.id, func(sub *Subscriber) bool { return sub.detail }, func(seq uint64) any { return detailBarrier{seq, m.epoch, s.id} })
 }
@@ -246,6 +247,7 @@ func (m *Manager) boundHistoryLocked(s *webSession) {
 		for _, sa := range s.subagents {
 			s.subIdx[sa.ID] = sa
 		}
+		s.subagentHead, s.subagentsOlder = max(0, s.subagentHead-subStart), true
 		s.truncated = true
 	}
 	start := len(s.items)
@@ -288,7 +290,7 @@ func (m *Manager) dropHistoryLocked(s *webSession) {
 	s.items, s.itemIdx, s.itemBytes, s.truncated = nil, map[string]int{}, 0, false
 	s.archiveGone, s.subagentsArchived, s.subagentTails = false, false, nil
 	m.archive.forget(s.id)
-	s.subagents, s.subIdx = nil, map[string]*agentapi.Subagent{}
+	s.subagents, s.subIdx, s.subagentsOlder, s.subagentHead = nil, map[string]*agentapi.Subagent{}, false, 0
 	s.history, s.historyReason, s.historyRead, s.historyBytes = "", "", false, 0
 }
 

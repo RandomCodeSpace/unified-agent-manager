@@ -404,6 +404,14 @@ export interface BackgroundTasks {
   tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string }[];
 }
 
+/** Subagents recorded before a cursor, read from Copilot's record on request, oldest first. */
+export interface SubagentPage extends Representation {
+  seq: number;
+  subagents: Subagent[];
+  /** Cursor for the ones recorded before these; empty at the first. */
+  before: string;
+}
+
 export interface SubagentDetail extends Representation {
   before?: string;
   /** SSE sequence captured with the transcript and metadata. */
@@ -534,6 +542,8 @@ export interface SessionDetail extends SessionSummary, Representation {
   items: Item[];
   interactions: Interaction[];
   subagents: Subagent[];
+  /** Cursor for older subagents only Copilot's record still lists; absent when `subagents` has them all. */
+  subagents_before?: string;
   background_tasks?: BackgroundTasks;
   history_truncated: boolean;
   last_submission: Submission | null;
@@ -587,7 +597,7 @@ export interface SnapshotData extends Representation {
 }
 
 export type UpdateData =
-  | { name: 'history'; seq: number; session_id: string; history: 'loaded' | 'loading' | 'unavailable'; history_reason?: string; history_before?: string; history_truncated: boolean; items: Item[]; subagents: Subagent[] }
+  | { name: 'history'; seq: number; session_id: string; history: 'loaded' | 'loading' | 'unavailable'; history_reason?: string; history_before?: string; history_truncated: boolean; items: Item[]; subagents: Subagent[]; subagents_before?: string }
   | { name: 'queue'; seq: number; session_id: string; queue: QueuedPrompt[]; paused: boolean }
   | { name: 'session'; seq: number; session: SessionSummary }
   | { name: 'session_removed'; seq: number; session_id: string }
@@ -815,6 +825,7 @@ export const api = {
     call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`, undefined, false, signal),
   subagent: (id: string, agentId: string, signal?: AbortSignal) =>
     foregroundRead(() => call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal), signal),
+  olderSubagents: (id: string, before: string, signal?: AbortSignal) => foregroundRead(() => call<SubagentPage>('GET', `/api/sessions/${enc(id)}/subagents?before=${enc(before)}`, undefined, false, signal), signal),
   subagentHistory: (id: string, agentId: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),
   itemBody: (id: string, itemId: string, agentId: string, signal?: AbortSignal) => foregroundRead(() => call<BodyData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}?agent_id=${enc(agentId)}`, undefined, false, signal), signal),
   detailEventsUrl: (id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string) => `/api/events/detail?session=${enc(id)}${agentId ? `&agent=${enc(agentId)}` : ''}${agentBefore ? `&agent_before=${enc(agentBefore)}` : ''}${epoch ? `&epoch=${enc(epoch)}` : ''}${agentUntil ? `&agent_until=${enc(agentUntil)}` : ''}${bodies.map(b => `&item=${enc(JSON.stringify(b.coveredSeq === undefined ? [b.agentId, b.itemId] : [b.agentId, b.itemId, b.coveredSeq]))}`).join('')}`,

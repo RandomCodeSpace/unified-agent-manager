@@ -47,6 +47,7 @@ type Provider struct {
 	reads       []agentapi.ReadRequest
 	windowHook  func(ctx context.Context, req agentapi.WindowRequest) error
 	windows     []agentapi.WindowRequest
+	subReads    []agentapi.SubagentRequest
 	previous    []agentapi.PreviousConversation
 	previousErr error
 	listDirs    []string
@@ -278,6 +279,32 @@ func (p *Pager) ReadHistoryWindow(ctx context.Context, req agentapi.WindowReques
 		w.Next = items[end].ID
 	}
 	return w, nil
+}
+
+// ReadSubagents reads the subagents of a known record up to req.AgentID
+// (agentapi.SubagentPager), or fails with agentapi.ErrConversationNotFound
+// or agentapi.ErrItemNotFound. Every call is recorded.
+func (p *Pager) ReadSubagents(_ context.Context, req agentapi.SubagentRequest) (agentapi.SubagentWindow, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.subReads = append(p.subReads, req)
+	h, ok := p.known[req.ConversationID]
+	if !ok {
+		return agentapi.SubagentWindow{}, fmt.Errorf("read %s: %w", req.ConversationID, agentapi.ErrConversationNotFound)
+	}
+	at := slices.IndexFunc(h.Subagents, func(sa agentapi.Subagent) bool { return sa.ID == req.AgentID })
+	if at < 0 {
+		return agentapi.SubagentWindow{}, fmt.Errorf("read %s: %w", req.AgentID, agentapi.ErrItemNotFound)
+	}
+	start := max(0, at-req.Before)
+	return agentapi.SubagentWindow{Subagents: slices.Clone(h.Subagents[start : at+1]), Start: start == 0}, nil
+}
+
+// SubagentReads returns every ReadSubagents request, oldest first.
+func (p *Pager) SubagentReads() []agentapi.SubagentRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]agentapi.SubagentRequest(nil), p.subReads...)
 }
 
 // SetWindowHook runs hook before each ReadHistoryWindow: a non-nil error

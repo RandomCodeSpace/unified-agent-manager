@@ -958,31 +958,163 @@ func (p *webProvider) ReadHistoryWindow(ctx context.Context, req agentapi.Window
 }
 
 func (p *webProvider) readWindow(ctx context.Context, client sdkClient, req agentapi.WindowRequest) (agentapi.HistoryWindow, error) {
-	forward, max := rpc.EventsReadDirectionForward, int64(webReadEvents)
-	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Direction: &forward, Max: &max}
 	t, f := newTranscript(), newWindowFold(req)
 	t.whole = true
+	err := p.readForward(ctx, client, req.ConversationID, func(ev copilot.SessionEvent) {
+		for _, it := range t.items(ev) {
+			if it.AgentID == req.AgentID {
+				f.add(it)
+			}
+		}
+	})
+	if err != nil {
+		return agentapi.HistoryWindow{}, err
+	}
+	return f.window()
+}
+
+// readForward folds the whole persisted journal into fold, oldest first and
+// without its ephemeral events, in one pass.
+func (p *webProvider) readForward(ctx context.Context, client sdkClient, convID string, fold func(copilot.SessionEvent)) error {
+	forward, max := rpc.EventsReadDirectionForward, int64(webReadEvents)
+	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: convID, Direction: &forward, Max: &max}
 	for {
 		res, err := p.readEvents(ctx, client, read)
 		if err != nil {
-			return agentapi.HistoryWindow{}, err
+			return err
 		}
 		for _, ev := range res.Events {
-			if ev.Ephemeral != nil && *ev.Ephemeral {
-				continue
-			}
-			for _, it := range t.items(ev) {
-				if it.AgentID == req.AgentID {
-					f.add(it)
-				}
+			if ev.Ephemeral == nil || !*ev.Ephemeral {
+				fold(ev)
 			}
 		}
 		if !res.HasMore {
-			return f.window()
+			return nil
 		}
 		cursor := res.Cursor
-		read = &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Cursor: &cursor, Direction: &forward, Max: &max}
+		read = &rpc.SessionsReadPersistedEventsRequest{SessionID: convID, Cursor: &cursor, Direction: &forward, Max: &max}
 	}
+}
+
+// ReadSubagents reads the subagents recorded up to req.AgentID from the
+// persisted journal in one forward pass that keeps only the window, as
+// ReadHistoryWindow does. A record's Result is the start of its parent tool
+// call's output, as ReadHistory reports it.
+func (p *webProvider) ReadSubagents(ctx context.Context, req agentapi.SubagentRequest) (agentapi.SubagentWindow, error) {
+	if req.ConversationID == "" {
+		return agentapi.SubagentWindow{}, errors.New("copilot: ReadRequest.ConversationID is required")
+	}
+	client, err := p.ensureStarted(ctx)
+	if err != nil {
+		return agentapi.SubagentWindow{}, err
+	}
+	for attempt := 1; ; attempt++ {
+		f := newSubagentFold(req)
+		err := p.readForward(ctx, client, req.ConversationID, f.add)
+		if err == nil {
+			return f.window()
+		}
+		if !errors.Is(err, errJournalChanged) || attempt == webWindowAttempts {
+			return agentapi.SubagentWindow{}, err
+		}
+	}
+}
+
+// subagentFold keeps the subagents recorded up to a requested one while a
+// journal is folded oldest first: at most req.Before of those before it,
+// holding at most webWindowBytes. Later events still update the kept ones.
+type subagentFold struct {
+	req agentapi.SubagentRequest
+	log *subagentLog
+	// seen holds every subagent met before the requested one, so an update
+	// never brings back one dropped from the front.
+	seen    map[string]bool
+	dropped int
+	bytes   int // held by the records before the requested one
+	found   bool
+}
+
+func newSubagentFold(req agentapi.SubagentRequest) *subagentFold {
+	return &subagentFold{req: req, log: newSubagentLog(), seen: map[string]bool{}}
+}
+
+func (f *subagentFold) add(ev copilot.SessionEvent) {
+	id := agentOf(ev)
+	switch d := ev.Data.(type) {
+	case *rpc.ToolExecutionCompleteData:
+		if parent := f.log.byCall[d.ToolCallID]; f.log.byID[parent] != nil && d.Result != nil {
+			f.change(parent, func(sa *agentapi.Subagent) { sa.Result = clip(d.Result.Content, webResultBytes) })
+		}
+		return
+	case *rpc.SubagentStartedData, *rpc.SubagentConfiguredData:
+	case *rpc.SubagentCompletedData:
+		id = cmp.Or(id, f.log.byCall[d.ToolCallID])
+	case *rpc.SubagentFailedData:
+		id = cmp.Or(id, f.log.byCall[d.ToolCallID])
+	default:
+		return
+	}
+	switch {
+	case id == "":
+	case f.log.byID[id] != nil:
+		f.change(id, func(*agentapi.Subagent) { f.log.apply(ev) })
+	case f.found || f.seen[id]:
+	default:
+		f.seen[id] = true
+		f.log.apply(ev)
+		if id == f.req.AgentID {
+			f.found = true
+			return
+		}
+		f.bytes += subagentBytes(*f.log.byID[id])
+		f.trim()
+	}
+}
+
+// change applies an update to the kept record id.
+func (f *subagentFold) change(id string, update func(*agentapi.Subagent)) {
+	sa, counted := f.log.byID[id], id != f.req.AgentID
+	if counted {
+		f.bytes -= subagentBytes(*sa)
+	}
+	update(sa)
+	if counted {
+		f.bytes += subagentBytes(*sa)
+		f.trim()
+	}
+}
+
+// trim drops the oldest records beyond the bounds before the requested one.
+func (f *subagentFold) trim() {
+	for {
+		before := len(f.log.order)
+		if f.found {
+			before--
+		}
+		if before == 0 || before <= f.req.Before && f.bytes <= webWindowBytes {
+			return
+		}
+		id := f.log.order[0]
+		sa := f.log.byID[id]
+		f.bytes -= subagentBytes(*sa)
+		if f.log.byCall[sa.ParentToolCallID] == id {
+			delete(f.log.byCall, sa.ParentToolCallID)
+		}
+		delete(f.log.byID, id)
+		f.log.order = f.log.order[1:]
+		f.dropped++
+	}
+}
+
+func (f *subagentFold) window() (agentapi.SubagentWindow, error) {
+	if !f.found {
+		return agentapi.SubagentWindow{}, fmt.Errorf("read copilot subagents: %w: %s", agentapi.ErrItemNotFound, f.req.AgentID)
+	}
+	return agentapi.SubagentWindow{Subagents: f.log.list(), Start: f.dropped == 0}, nil
+}
+
+func subagentBytes(sa agentapi.Subagent) int {
+	return len(sa.ID) + len(sa.Name) + len(sa.Description) + len(sa.Model) + len(sa.Effort) + len(sa.Error) + len(sa.ParentToolCallID) + len(sa.Result)
 }
 
 // windowFold keeps one agent's items around a requested item while a

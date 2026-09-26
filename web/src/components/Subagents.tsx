@@ -229,6 +229,7 @@ export function SubagentPanel({
         <span className="text-title text-ink">Subagents</span>
         <span className="text-caption tabular-nums text-muted">
           {session.subagents.length}
+          {session.subagents_before && '+'}
           {running > 0 && ` · ${running} running`}
         </span>
         <span className="flex-1" />
@@ -280,9 +281,35 @@ export function SubagentPanel({
             </section>
           );
         })}
+        {session.subagents_before && <OlderSubagents key={`${session.id}:${session.subagents_before}`} sessionId={session.id} before={session.subagents_before} />}
       </div>
       {stopDialog}
     </SidePanel>
+  );
+}
+
+/** Subagents only Copilot's record still lists: read a page at a time, only when asked, and merged into the groups above. */
+function OlderSubagents({ sessionId, before }: { sessionId: string; before: string }) {
+  const { dispatch } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function load() {
+    setBusy(true);
+    setError(null);
+    try {
+      const page = await api.olderSubagents(sessionId, before);
+      dispatch({ type: 'subagents_older', sessionId, before, page });
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-col items-start gap-1 px-2 pt-1">
+      <Button size="sm" loading={busy} onClick={() => void load()}>Show older subagents</Button>
+      {error && <Note tone="error" role="alert">Could not load older subagents: {error}</Note>}
+    </div>
   );
 }
 

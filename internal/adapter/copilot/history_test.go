@@ -287,3 +287,92 @@ func TestReadHistoryLeavesToolCallsBegunBeforeItsPartToTheWindow(t *testing.T) {
 		t.Fatalf("window = %v, %v", err, itemIDs(w.Items))
 	}
 }
+
+// subagentJournal records n subagents, each spawned by a task tool call
+// whose output is its result. Subagent 3 ends only after subagent 5 began,
+// and subagent 1 fails.
+func subagentJournal(n int) []copilot.SessionEvent {
+	end := func(i int) []copilot.SessionEvent {
+		id, call := fmt.Sprintf("sa%03d", i), fmt.Sprintf("task%03d", i)
+		last := ev("e-c"+id, &rpc.SubagentCompletedData{ToolCallID: call, AgentName: "explore"})
+		if i == 1 {
+			last = ev("e-f"+id, &rpc.SubagentFailedData{ToolCallID: call, AgentName: "explore", Error: "boom"})
+		}
+		return []copilot.SessionEvent{last, ev("e-tc"+id, &rpc.ToolExecutionCompleteData{ToolCallID: call, Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "result " + id + strings.Repeat("r", 1000)}})}
+	}
+	var journal []copilot.SessionEvent
+	for i := range n {
+		id, call := fmt.Sprintf("sa%03d", i), fmt.Sprintf("task%03d", i)
+		journal = append(journal,
+			ev("e-ts"+id, &rpc.ToolExecutionStartData{ToolCallID: call, ToolName: "task"}),
+			agentEv("e-s"+id, id, &rpc.SubagentStartedData{ToolCallID: call, AgentName: "explore", AgentDisplayName: "Explore " + id}),
+			agentEv("e-m"+id, id, &rpc.AssistantMessageData{MessageID: "m" + id, Content: "done"}))
+		if i != 3 {
+			journal = append(journal, end(i)...)
+		}
+		if i == 5 {
+			journal = append(journal, end(3)...)
+		}
+	}
+	return journal
+}
+
+func subagentIDs(subs []agentapi.Subagent) []string {
+	out := make([]string, len(subs))
+	for i, sa := range subs {
+		out[i] = sa.ID
+	}
+	return out
+}
+
+func TestReadSubagentsReadsTheRecordsUpToOne(t *testing.T) {
+	fc := &fakeClient{journal: subagentJournal(8), pageSize: 5}
+	p := readerProvider(fc)
+	read := agentapi.ReadRequest{ConversationID: "c1"}
+	w, err := p.ReadSubagents(context.Background(), agentapi.SubagentRequest{ReadRequest: read, AgentID: "sa005", Before: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := subagentIDs(w.Subagents); !slices.Equal(got, []string{"sa002", "sa003", "sa004", "sa005"}) || w.Start {
+		t.Fatalf("window = %v, start %v", got, w.Start)
+	}
+	// One forward pass to the end of the journal releases its snapshot.
+	if len(fc.reads) != 8 {
+		t.Fatalf("reads = %d", len(fc.reads))
+	}
+	for _, r := range fc.reads {
+		if r.Direction == nil || *r.Direction != rpc.EventsReadDirectionForward {
+			t.Fatalf("read %+v is not forward", r)
+		}
+	}
+	// Records are as ReadHistory reports them, updated after the requested
+	// one began.
+	h, err := p.ReadHistory(context.Background(), read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sa := range w.Subagents {
+		want := h.Subagents[slices.IndexFunc(h.Subagents, func(r agentapi.Subagent) bool { return r.ID == sa.ID })]
+		if sa != want || sa.Status != agentapi.SubagentCompleted || len(sa.Result) != webResultBytes {
+			t.Fatalf("record %+v, want %+v", sa, want)
+		}
+	}
+	w, err = p.ReadSubagents(context.Background(), agentapi.SubagentRequest{ReadRequest: read, AgentID: "sa002", Before: 10})
+	if err != nil || !slices.Equal(subagentIDs(w.Subagents), []string{"sa000", "sa001", "sa002"}) || !w.Start || w.Subagents[1].Status != agentapi.SubagentFailed || w.Subagents[1].Error != "boom" {
+		t.Fatalf("first window = %v, %+v", err, w)
+	}
+	if _, err := p.ReadSubagents(context.Background(), agentapi.SubagentRequest{ReadRequest: read, AgentID: "zzz"}); !errors.Is(err, agentapi.ErrItemNotFound) {
+		t.Fatalf("unknown subagent = %v", err)
+	}
+	// The records kept before the requested one hold at most webWindowBytes.
+	long := subagentJournal(6)
+	for i := range long {
+		if d, ok := long[i].Data.(*rpc.SubagentStartedData); ok {
+			d.AgentDescription = strings.Repeat("d", 1500<<10)
+		}
+	}
+	w, err = readerProvider(&fakeClient{journal: long}).ReadSubagents(context.Background(), agentapi.SubagentRequest{ReadRequest: read, AgentID: "sa005", Before: 10})
+	if err != nil || !slices.Equal(subagentIDs(w.Subagents), []string{"sa003", "sa004", "sa005"}) || w.Start {
+		t.Fatalf("long window = %v, %v", err, subagentIDs(w.Subagents))
+	}
+}

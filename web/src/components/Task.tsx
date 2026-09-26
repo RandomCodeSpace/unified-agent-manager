@@ -537,13 +537,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 id="subagents-link"
                 size="md"
                 aria-pressed={!!shownPanel}
-                aria-label={`Subagents, ${session.subagents.length}${agentsRunning ? `, ${agentsRunning} running` : ''}`}
+                aria-label={`Subagents, ${session.subagents.length}${session.subagents_before ? ' or more' : ''}${agentsRunning ? `, ${agentsRunning} running` : ''}`}
                 className="px-2 text-muted"
                 onClick={(e) => (shownPanel ? closePanel() : openPanel({ view: 'list' }, e.currentTarget))}
               >
                 <Bot />
                 <span className="max-sm:hidden">Subagents</span>
-                <span className="tabular-nums text-ink">{session.subagents.length}</span>
+                <span className="tabular-nums text-ink">{session.subagents.length}{session.subagents_before && '+'}</span>
                 {agentsRunning > 0 && <WorkingMark />}
               </Button>
             </Tip>

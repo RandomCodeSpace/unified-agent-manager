@@ -49,6 +49,10 @@ type compactSessionDetail struct {
 	DetailStream   bool              `json:"detail_stream"`
 	Items          []compactItem     `json:"items"`
 	Subagents      []compactSubagent `json:"subagents"`
+	// SubagentsBefore is the cursor of the subagents recorded before those
+	// listed and not listed, empty when there are none or they cannot be
+	// read.
+	SubagentsBefore string `json:"subagents_before,omitempty"`
 }
 type compactHistoryPage struct {
 	Seq            uint64        `json:"seq"`
@@ -288,7 +292,7 @@ func (m *Manager) compactDetailLocked(s *webSession, d SessionDetail) compactSes
 	v := m.viewLocked(s, "", nil)
 	page := v.page(len(v.items))
 	d.HistoryBefore, d.HistoryTruncated = &page.Before, v.truncated(s)
-	return compactSessionDetail{SessionDetail: d, Representation: compactRepresentation, Epoch: m.epoch, DetailStream: true, Items: page.Items, Subagents: s.compactSubagents()}
+	return compactSessionDetail{SessionDetail: d, Representation: compactRepresentation, Epoch: m.epoch, DetailStream: true, Items: page.Items, Subagents: s.compactSubagents(), SubagentsBefore: m.subagentsBeforeLocked(s)}
 }
 func (m *Manager) CompactDetail(id string) (compactSessionDetail, error) {
 	if _, err := m.Detail(id); err != nil {
@@ -306,9 +310,10 @@ func (m *Manager) CompactDetail(id string) (compactSessionDetail, error) {
 }
 
 // CompactSubagent returns a subagent with its newest page, read from the
-// record when its transcript is not retained.
+// record when its transcript is not retained, and its record when it is not
+// held.
 func (m *Manager) CompactSubagent(id, agent string) (compactSubagentDetail, error) {
-	var fresh *archiveWindow
+	var fresh, record *archiveWindow
 	for {
 		m.mu.Lock()
 		s := m.sessions[id]
@@ -316,10 +321,17 @@ func (m *Manager) CompactSubagent(id, agent string) (compactSubagentDetail, erro
 			m.mu.Unlock()
 			return compactSubagentDetail{}, newError(404, "session not found")
 		}
-		sa := s.subIdx[agent]
-		if sa == nil {
+		sa, read, ok := m.subagentLocked(s, agent, record)
+		if !ok {
 			m.mu.Unlock()
-			return compactSubagentDetail{}, newError(404, "subagent not found")
+			if read == nil || record != nil {
+				return compactSubagentDetail{}, newError(404, "subagent not found")
+			}
+			var err error
+			if record, err = m.readSubagents(read); err != nil {
+				return compactSubagentDetail{}, err
+			}
+			continue
 		}
 		s.historyUsed = m.now()
 		v := m.viewLocked(s, agent, fresh)
@@ -333,7 +345,7 @@ func (m *Manager) CompactSubagent(id, agent string) (compactSubagentDetail, erro
 			continue
 		}
 		page := v.page(len(v.items))
-		d := compactSubagentDetail{Seq: m.seq, Epoch: m.epoch, Representation: compactRepresentation, Subagent: s.compactSubagent(*sa), Items: page.Items, Before: page.Before, Archive: v.archived}
+		d := compactSubagentDetail{Seq: m.seq, Epoch: m.epoch, Representation: compactRepresentation, Subagent: s.compactSubagent(sa), Items: page.Items, Before: page.Before, Archive: v.archived}
 		m.mu.Unlock()
 		return d, nil
 	}
@@ -362,7 +374,9 @@ func (m *Manager) CompactHistoryPage(id, agent, before, after string) (compactHi
 			m.mu.Unlock()
 			return compactHistoryPage{}, newError(404, "session not found")
 		}
-		if agent != "" && s.subIdx[agent] == nil {
+		// A subagent only the record lists is paged from it, which checks
+		// the boundary.
+		if agent != "" && s.subIdx[agent] == nil && m.subagentPagerLocked(s) == nil {
 			m.mu.Unlock()
 			return compactHistoryPage{}, newError(404, "subagent not found")
 		}

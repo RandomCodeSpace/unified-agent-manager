@@ -307,7 +307,8 @@ record on demand:
   an item that is not retained, or retained clipped, whole from the record.
   `Item.Clipped` marks the adapter's 64 KiB tool-text cut and the service's
   own clamps; compact items carry `clipped: true`. A detail stream reads at
-  most three windows before its first frames. A `body` frame over the 32 MiB
+  most three windows before its first frames, plus the record of a subagent
+  that is not held. A `body` frame over the 32 MiB
   frame limit falls back to the retained copy; the GET route serves it whole.
   A live tool call that settles clipped is sent whole to its body subscribers
   once the record has it.
@@ -318,7 +319,28 @@ record on demand:
   build the list or page the main transcript. Open conversations keep live
   subagent items; once trimmed, they page from the record like the main
   transcript. `ReadHistory` keeps the lifecycle events of the pages it
-  drains, so every recorded subagent is listed, up to the 200-record cap.
+  drains, so every recorded subagent reaches the service.
+- **Subagent list.** The service holds at most 200 subagent records, beyond
+  which it forgets the oldest finished ones, and 4 MiB of them, beyond which
+  it forgets the oldest; never the newest. The list head is the held record
+  after which every recorded subagent is held. Once a record was forgotten,
+  and the provider pages its subagents (`agentapi.SubagentPager`; Copilot),
+  the compact detail, snapshot and `history` event carry `subagents_before`,
+  the archive cursor of the head; it is absent otherwise.
+  `GET /api/sessions/{id}/subagents?before=` returns
+  `{seq, epoch, representation, subagents, before}`: at most 100 compact
+  subagents recorded right before the named one, oldest first, and the
+  cursor of the next older page, empty at the first recorded subagent.
+  Cursors name a subagent ID only, so they survive restarts. A page may
+  repeat a held subagent, as held; a subagent the record leaves running shows
+  cancelled unless the conversation is open, as a read-only load has it. The
+  browser reads a page only when asked and puts it before the list it holds.
+  A missing, repeated or malformed cursor returns 400, a missing task 404
+  and a subagent the record does not have 409. The compact subagent detail, its
+  history pages, item bodies and the detail stream serve a subagent only the
+  record lists too: its record is read once (`ReadSubagents` with no older
+  records) and cached like a page, its transcript as any subagent's. The
+  legacy subagent route stays with held records.
 - **Cost.** Reads run without `Manager.mu`, in the history read slots, bounded
   by the open timeout. The adapter reads the journal forward in one pass
   (`ReadHistoryWindow`) and keeps at most 1,000 whole items and 4 MiB on the
@@ -329,7 +351,10 @@ record on demand:
   page (one pass) took 0.45 s on the largest local journal (8.0 MiB, 1,019
   events) and 1.7 s on a synthetic 41.6 MiB one; cached pages took about 2 ms.
   Backward and forward passes cost the same. Forward folds tool start and
-  completion pairs in one streaming pass with bounded memory.
+  completion pairs in one streaming pass with bounded memory. A subagent
+  read (`ReadSubagents`) is one forward pass too; it folds only lifecycle
+  events and parent tool results and keeps at most 1,000 records and 4 MiB
+  before the named one, which the same cache holds.
 
 Each active transcript keeps a contiguous reading window of at most 150 items
 and 4 MiB of accounted data, plus a separate recent tail of at most 50 items

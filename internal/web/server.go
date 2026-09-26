@@ -154,6 +154,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/history", s.handleHistoryPage)
 	mux.HandleFunc("PATCH /api/sessions/{id}", s.handlePatch)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDelete)
+	mux.HandleFunc("GET /api/sessions/{id}/subagents", s.handleSubagents)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}", s.handleSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/subagents/{agent_id}/cancel", s.handleCancelSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/background-tasks/{task_id}/cancel", s.handleCancelBackgroundTask)

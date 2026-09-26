@@ -34,6 +34,10 @@ const (
 	archiveWindowItems = 1000
 	// maxDetailReads bounds the record reads one detail stream starts.
 	maxDetailReads = 3
+	// subagentPageRecords is how many subagent records one list page holds;
+	// subagentWindowRecords how many one read keeps before its boundary.
+	subagentPageRecords   = 100
+	subagentWindowRecords = 1000
 )
 
 func heldCursor(id string) string    { return base64.RawURLEncoding.EncodeToString([]byte(id)) }
@@ -49,11 +53,13 @@ func decodeHistoryCursor(cursor string) (string, error) {
 	return string(id), nil
 }
 
-// archiveWindow is a contiguous run of one agent's recorded items, whole.
-// It never changes once cached.
+// archiveWindow is a contiguous run of one agent's recorded items, whole,
+// or of the recorded subagents. It never changes once cached.
 type archiveWindow struct {
-	key   string
-	items []agentapi.Item
+	key       string
+	items     []agentapi.Item
+	subagents []agentapi.Subagent
+	// index holds the position of each item, or subagent, by ID.
 	index map[string]int
 	start bool   // items begins with the agent's first recorded item
 	next  string // the item recorded after items, "" at the end of the record
@@ -224,7 +230,8 @@ type transcriptView struct {
 // which the cache may already have evicted.
 func (m *Manager) viewLocked(s *webSession, agent string, fresh *archiveWindow) transcriptView {
 	v := transcriptView{items: s.agentItems(agent)}
-	if m.pagerLocked(s) == nil || !s.truncated && (agent == "" || !s.subagentsArchived) {
+	// A subagent that is not held may have items that are not either.
+	if m.pagerLocked(s) == nil || !s.truncated && (agent == "" || !s.subagentsArchived && s.subIdx[agent] != nil) {
 		return v
 	}
 	v.archive = true
@@ -432,9 +439,10 @@ func (m *Manager) wholeItemLocked(s *webSession, it agentapi.Item) agentapi.Item
 }
 
 // warmDetailBodies reads from the record, before a detail stream's first
-// frames, what they serve but memory lacks: a subagent's newest items when
-// its transcript is not retained, and the whole bodies of the items named,
-// in at most maxDetailReads reads.
+// frames, what they serve but memory lacks: the record of a subagent that is
+// not held, a subagent's newest items when its transcript is not retained,
+// and the whole bodies of the items named, in at most maxDetailReads reads
+// of items.
 func (m *Manager) warmDetailBodies(id, agent string, refs []bodyRef) {
 	m.mu.Lock()
 	s := m.sessions[id]
@@ -443,8 +451,12 @@ func (m *Manager) warmDetailBodies(id, agent string, refs []bodyRef) {
 		return
 	}
 	var reads []*archiveRead
-	if agent != "" && s.subIdx[agent] != nil && m.viewLocked(s, agent, nil).missing {
-		reads = append(reads, m.windowReadLocked(s, agent, "", archiveWindowItems, 0))
+	var record *subagentRead
+	if agent != "" {
+		_, read, ok := m.subagentLocked(s, agent, nil)
+		if record = read; (ok || read != nil) && m.viewLocked(s, agent, nil).missing {
+			reads = append(reads, m.windowReadLocked(s, agent, "", archiveWindowItems, 0))
+		}
 	}
 	for _, ref := range refs {
 		if _, _, read, _ := m.itemBodyLocked(s, ref[0], ref[1], nil); read != nil {
@@ -452,6 +464,11 @@ func (m *Manager) warmDetailBodies(id, agent string, refs []bodyRef) {
 		}
 	}
 	m.mu.Unlock()
+	if record != nil {
+		if _, err := m.readSubagents(record); err != nil {
+			return // the stream then reports the subagent missing
+		}
+	}
 	for i, r := range reads {
 		if i == maxDetailReads {
 			return
@@ -490,6 +507,194 @@ func (m *Manager) refreshBodyLocked(s *webSession, it agentapi.Item) {
 			m.broadcastFilteredLocked("body", s.id, bodySubscriber(it), func(seq uint64) any { return itemBody{detailBarrier{seq, m.epoch, s.id}, it.AgentID, body} })
 		}
 	}()
+}
+
+// subagentPagerLocked returns s's provider when it can page s's recorded
+// subagents.
+func (m *Manager) subagentPagerLocked(s *webSession) agentapi.SubagentPager {
+	pager, _ := m.providers[s.provider].(agentapi.SubagentPager)
+	if s.convID == "" || s.archiveGone {
+		return nil
+	}
+	return pager
+}
+
+// subagentsBeforeLocked is the cursor of the subagents recorded before the
+// list head that are not held, "" when there are none or they cannot be
+// read.
+func (m *Manager) subagentsBeforeLocked(s *webSession) string {
+	if !s.subagentsOlder || s.subagentHead >= len(s.subagents) || m.subagentPagerLocked(s) == nil {
+		return ""
+	}
+	return archiveCursor(s.subagents[s.subagentHead].ID)
+}
+
+// subagentRead is a read of recorded subagents a request needs first.
+type subagentRead struct {
+	s     *webSession
+	pager agentapi.SubagentPager
+	req   agentapi.SubagentRequest
+}
+
+func (r *subagentRead) key() string { return subagentsKey(r.s.id, r.req.ConversationID) }
+
+// subagentsKey is the cache key of a Task's recorded subagents; the \x01
+// sets it apart from every agent's items.
+func subagentsKey(id, convID string) string { return id + "\x00" + convID + "\x01" }
+
+func (m *Manager) subagentReadLocked(s *webSession, agent string, before int) *subagentRead {
+	return &subagentRead{s, m.subagentPagerLocked(s), agentapi.SubagentRequest{ReadRequest: agentapi.ReadRequest{ConversationID: s.convID, Workdir: s.workdir},
+		AgentID: agent, Before: before}}
+}
+
+// readSubagents reads recorded subagents as readArchive reads items: without
+// Manager.mu, in a history read slot, into the shared cache.
+func (m *Manager) readSubagents(r *subagentRead) (*archiveWindow, error) {
+	if r.pager == nil {
+		return nil, newError(http.StatusConflict, "history changed; reload the task")
+	}
+	release, err := m.readSlot(m.ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
+	defer cancel()
+	h, err := r.pager.ReadSubagents(ctx, r.req)
+	switch {
+	case errors.Is(err, agentapi.ErrConversationNotFound):
+		m.mu.Lock()
+		r.s.archiveGone = true
+		m.mu.Unlock()
+		return nil, newError(http.StatusConflict, "history changed; reload the task")
+	case errors.Is(err, agentapi.ErrItemNotFound):
+		return nil, newError(http.StatusNotFound, "subagent not found")
+	case err != nil:
+		var webErr *Error
+		if errors.As(err, &webErr) {
+			return nil, err
+		}
+		log.Warn("read web task subagents failed", "session", r.s.id, "error", err)
+		return nil, newError(http.StatusServiceUnavailable, "could not read the recorded subagents: %s", shortError(err))
+	}
+	w := &archiveWindow{key: r.key(), subagents: make([]agentapi.Subagent, len(h.Subagents)), index: make(map[string]int, len(h.Subagents)), start: h.Start}
+	for i, sa := range h.Subagents {
+		sa = clampSubagent(sa)
+		w.subagents[i] = sa
+		if _, dup := w.index[sa.ID]; !dup {
+			w.index[sa.ID] = i
+		}
+		w.bytes += len(sa.ID) + len(sa.Name) + len(sa.Description) + len(sa.Model) + len(sa.Effort) + len(sa.Error) + len(sa.ParentToolCallID) + len(sa.Result)
+	}
+	m.archive.add(w)
+	return w, nil
+}
+
+// subagentLocked returns agent's record: the held one, else one a cached
+// read of the record holds. read is the record read that would find it.
+func (m *Manager) subagentLocked(s *webSession, agent string, fresh *archiveWindow) (sa agentapi.Subagent, read *subagentRead, ok bool) {
+	if held := s.subIdx[agent]; held != nil {
+		return *held, nil, true
+	}
+	if agent == "" || m.subagentPagerLocked(s) == nil {
+		return agentapi.Subagent{}, nil, false
+	}
+	read = m.subagentReadLocked(s, agent, 0)
+	if w, at := m.archive.find(fresh, read.key(), agent, nil); w != nil {
+		return m.recordedSubagentLocked(s, w.subagents[at]), nil, true
+	}
+	return agentapi.Subagent{}, read, false
+}
+
+// recordedSubagentLocked is what the list shows of a recorded subagent: its
+// held record when it has one. Nothing of a conversation that is not open
+// runs, as installHistoryLocked has it.
+func (m *Manager) recordedSubagentLocked(s *webSession, sa agentapi.Subagent) agentapi.Subagent {
+	if held := s.subIdx[sa.ID]; held != nil {
+		return *held
+	}
+	if s.conv == nil {
+		switch sa.Status {
+		case agentapi.SubagentRunning:
+			sa.Status = agentapi.SubagentCancelled
+		case agentapi.SubagentIdle:
+			sa.Status = agentapi.SubagentCompleted
+		}
+	}
+	return sa
+}
+
+// compactSubagentPage is a page of recorded subagents, oldest first.
+type compactSubagentPage struct {
+	Seq            uint64            `json:"seq"`
+	Epoch          string            `json:"epoch"`
+	Representation string            `json:"representation"`
+	Subagents      []compactSubagent `json:"subagents"`
+	// Before is the cursor of the subagents recorded before these, "" at
+	// the first.
+	Before string `json:"before"`
+}
+
+// OlderSubagents returns the page of subagents recorded before the one an
+// archive cursor names, from the record.
+func (m *Manager) OlderSubagents(id, before string) (compactSubagentPage, error) {
+	boundary, err := decodeHistoryCursor(before)
+	if err != nil {
+		return compactSubagentPage{}, err
+	}
+	var fresh *archiveWindow
+	for reads := 0; ; reads++ {
+		m.mu.Lock()
+		s := m.sessions[id]
+		if s == nil {
+			m.mu.Unlock()
+			return compactSubagentPage{}, newError(http.StatusNotFound, "session not found")
+		}
+		s.historyUsed = m.now()
+		read := m.subagentReadLocked(s, boundary, subagentWindowRecords)
+		// A window read for this page serves it even when bounded short.
+		w, at := m.archive.find(fresh, read.key(), boundary, func(w *archiveWindow, at int) bool {
+			return w.start || at >= subagentPageRecords || w == fresh && at > 0
+		})
+		if w != nil {
+			page := compactSubagentPage{Seq: m.seq, Epoch: m.epoch, Representation: compactRepresentation}
+			low := max(0, at-subagentPageRecords)
+			for _, sa := range w.subagents[low:at] {
+				page.Subagents = append(page.Subagents, s.compactSubagent(m.recordedSubagentLocked(s, sa)))
+			}
+			if low > 0 || !w.start {
+				page.Before = archiveCursor(w.subagents[low].ID)
+			}
+			m.mu.Unlock()
+			if page.Subagents == nil {
+				page.Subagents = []compactSubagent{}
+			}
+			return page, nil
+		}
+		m.mu.Unlock()
+		if reads == 2 {
+			return compactSubagentPage{}, newError(http.StatusServiceUnavailable, "the recorded subagents changed while they were read; try again")
+		}
+		if fresh, err = m.readSubagents(read); err != nil {
+			if status, _ := errorStatus(err); status == http.StatusNotFound {
+				return compactSubagentPage{}, newError(http.StatusConflict, "history changed; reload the task")
+			}
+			return compactSubagentPage{}, err
+		}
+	}
+}
+
+func (s *Server) handleSubagents(w http.ResponseWriter, r *http.Request) {
+	if len(r.URL.Query()["before"]) != 1 {
+		writeFailure(w, newError(http.StatusBadRequest, "provide one subagent cursor"))
+		return
+	}
+	page, err := s.m.OlderSubagents(r.PathValue("id"), r.URL.Query().Get("before"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 // subagentTail is what a subagent's list entry shows from a transcript that

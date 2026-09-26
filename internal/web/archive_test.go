@@ -2,10 +2,13 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -493,5 +496,228 @@ func TestArchivePagingFollowsAnOpenConversation(t *testing.T) {
 	}
 	if !slices.Equal(ids, wantIDs) || archived == 0 || trimmed == 0 {
 		t.Fatalf("walked %d items, want %d; %d archive pages, %d cursors of trimmed items", len(ids), len(wantIDs), archived, trimmed)
+	}
+}
+
+// subagentRecord is a record of n completed subagents, sa-000 first, each
+// spawned by a task tool call of the main agent and with three items; the
+// record leaves sa-010 running, and sa-005 has 60 items.
+func subagentRecord(n int) agentapi.History {
+	var h agentapi.History
+	for i := range n {
+		id, call := fmt.Sprintf("sa-%03d", i), fmt.Sprintf("task-%03d", i)
+		status := agentapi.SubagentCompleted
+		if i == 10 {
+			status = agentapi.SubagentRunning
+		}
+		h.Subagents = append(h.Subagents, agentapi.Subagent{ID: id, Name: "explore " + id, Status: status, ParentToolCallID: call})
+		h.Items = append(h.Items, agentapi.Item{ID: call, Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "task", Status: agentapi.ToolCompleted, Output: "result " + id}})
+		items := 3
+		if i == 5 {
+			items = 60
+		}
+		for j := range items {
+			h.Items = append(h.Items, agentapi.Item{ID: fmt.Sprintf("%s-%02d", id, j), Kind: agentapi.ItemAssistant, Text: "sub", AgentID: id})
+		}
+	}
+	return h
+}
+
+func compactIDs(subs []compactSubagent) []string {
+	out := make([]string, len(subs))
+	for i, sa := range subs {
+		out[i] = sa.ID
+	}
+	return out
+}
+
+// walkSubagents lists a Task's subagents as a browser does: the held ones,
+// then every older page. It returns their IDs, oldest first, and the
+// cursors used.
+func walkSubagents(t *testing.T, m *Manager, id string) (ids, cursors []string) {
+	t.Helper()
+	d, err := m.CompactDetail(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids = compactIDs(d.Subagents)
+	for before := d.SubagentsBefore; before != ""; {
+		cursors = append(cursors, before)
+		page, err := m.OlderSubagents(id, before)
+		if err != nil {
+			t.Fatalf("subagents before %q: %v", before, err)
+		}
+		if len(page.Subagents) == 0 || len(page.Subagents) > subagentPageRecords || page.Epoch != m.epoch || page.Representation != compactRepresentation {
+			t.Fatalf("subagents before %q: %d records, epoch %q", before, len(page.Subagents), page.Epoch)
+		}
+		ids = append(compactIDs(page.Subagents), ids...)
+		before = page.Before
+	}
+	return ids, cursors
+}
+
+func TestSubagentListPagesToTheFirstRecordedOneAcrossRestarts(t *testing.T) {
+	record := subagentRecord(450)
+	m, pager, st, sum := archivedTask(t, record, true)
+	var all []string
+	for _, sa := range record.Subagents {
+		all = append(all, sa.ID)
+	}
+	d, err := m.CompactDetail(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The newest 200 are held; the list says older ones can be read.
+	if len(d.Subagents) != maxSubagents || d.Subagents[0].ID != "sa-250" || d.SubagentsBefore != archiveCursor("sa-250") {
+		t.Fatalf("held %d subagents from %s, before %q", len(d.Subagents), d.Subagents[0].ID, d.SubagentsBefore)
+	}
+	if reads := pager.SubagentReads(); len(reads) != 0 {
+		t.Fatalf("listing read the record: %+v", reads)
+	}
+	ids, cursors := walkSubagents(t, m, sum.ID)
+	if !slices.Equal(ids, all) || len(cursors) != 3 {
+		t.Fatalf("walked %d subagents in %d pages, want %d without gaps or repeats", len(ids), len(cursors), len(all))
+	}
+	// One read of the record served all 250 older records.
+	if reads := pager.SubagentReads(); len(reads) != 1 || reads[0].AgentID != "sa-250" || reads[0].Before != subagentWindowRecords {
+		t.Fatalf("subagent reads = %+v", reads)
+	}
+	// A subagent the record leaves running shows as the listed ones do.
+	page, err := m.OlderSubagents(sum.ID, archiveCursor("sa-011"))
+	if err != nil || len(page.Subagents) != 11 || page.Before != "" {
+		t.Fatalf("first page = %v, %+v", err, page)
+	}
+	if sa := page.Subagents[10]; sa.ID != "sa-010" || sa.Status != agentapi.SubagentCancelled || sa.Name != "explore sa-010" || sa.ResultSummary != "result sa-010" {
+		t.Fatalf("recorded subagent = %+v", sa)
+	}
+	if held, _ := m.heldItems(sum.ID); slices.ContainsFunc(held, func(it agentapi.Item) bool { return it.AgentID != "" }) {
+		t.Fatal("paging the list read subagent items")
+	}
+	for _, cursor := range []string{"%%%", "a.", ""} {
+		if _, err := m.OlderSubagents(sum.ID, cursor); statusOf(err) != 400 {
+			t.Fatalf("cursor %q = %v", cursor, err)
+		}
+	}
+	if _, err := m.OlderSubagents(sum.ID, archiveCursor("nobody")); statusOf(err) != 409 {
+		t.Fatalf("unrecorded boundary = %v", err)
+	}
+
+	srv, err := NewServer(ServerConfig{Manager: m, Token: testToken, Version: "test", Assets: fstest.MapFS{"index.html": {Data: []byte("app")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ts := &testServer{srv: srv, m: m}
+	path := "/api/sessions/" + sum.ID + "/subagents"
+	if w := ts.do("GET", path+"?before="+url.QueryEscape(cursors[0]), ""); w.Code != 401 {
+		t.Fatalf("unauthenticated page = %d", w.Code)
+	}
+	w := ts.do("GET", path+"?before="+url.QueryEscape(cursors[0]), "", withCookie(ts))
+	var got compactSubagentPage
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != 200 || len(got.Subagents) != subagentPageRecords || got.Subagents[0].ID != "sa-150" || got.Before != archiveCursor("sa-150") {
+		t.Fatalf("page route = %d %v %s", w.Code, err, w.Body)
+	}
+	for _, query := range []string{"", "?before=" + url.QueryEscape(cursors[0]) + "&before=" + url.QueryEscape(cursors[0])} {
+		if w := ts.do("GET", path+query, "", withCookie(ts)); w.Code != 400 {
+			t.Fatalf("query %q = %d", query, w.Code)
+		}
+	}
+
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restarted := startManager(t, st, pager)
+	waitHistory(t, restarted, sum.ID, HistoryLoaded)
+	if again, cursorsAgain := walkSubagents(t, restarted, sum.ID); !slices.Equal(again, all) || !slices.Equal(cursorsAgain, cursors) {
+		t.Fatal("subagent cursors changed across a restart")
+	}
+}
+
+func TestSubagentOnlyTheRecordListsOpens(t *testing.T) {
+	record := subagentRecord(250)
+	m, pager, _, sum := archivedTask(t, record, true)
+	if d, _ := m.CompactDetail(sum.ID); slices.Contains(compactIDs(d.Subagents), "sa-005") {
+		t.Fatal("sa-005 is held")
+	}
+	sa, err := m.CompactSubagent(sum.ID, "sa-005")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sa.Subagent.ID != "sa-005" || sa.Subagent.Status != agentapi.SubagentCompleted || sa.Subagent.ResultSummary != "result sa-005" || !sa.Archive || len(sa.Items) != 50 || sa.Items[49].ID != "sa-005-59" {
+		t.Fatalf("subagent detail: %+v, archive %v, %d items", sa.Subagent, sa.Archive, len(sa.Items))
+	}
+	if reads := pager.SubagentReads(); len(reads) != 1 || reads[0].AgentID != "sa-005" || reads[0].Before != 0 {
+		t.Fatalf("subagent reads = %+v", reads)
+	}
+	ids, _, _ := walkBack(t, m, sum.ID, "sa-005", sa.Items, sa.Before)
+	if !slices.Equal(ids, recordIDs(record, "sa-005")) {
+		t.Fatalf("walked %v", ids)
+	}
+	if body, err := m.ItemBody(sum.ID, "sa-005", "sa-005-01"); err != nil || body.Item.Text != "sub" {
+		t.Fatalf("body = %v, %+v", err, body)
+	}
+	if d, _ := m.CompactDetail(sum.ID); len(d.Subagents) != maxSubagents || slices.Contains(compactIDs(d.Subagents), "sa-005") {
+		t.Fatal("opening a subagent the record lists held it")
+	}
+
+	// The detail stream, once the cache forgot both reads.
+	m.archive.forget(sum.ID)
+	m.warmDetailBodies(sum.ID, "sa-005", nil)
+	sub, frames, err := m.subscribeDetail(sum.ID, "sa-005", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Unsubscribe(sub)
+	snap := frames[0].payload.(detailSnapshot)
+	if snap.Subagent == nil || snap.Subagent.ID != "sa-005" || !snap.Archive || snap.HistoryTruncated || len(snap.Items) != 50 || snap.Items[0].ID != "sa-005-10" {
+		t.Fatalf("subagent snapshot: %+v, archive %v, truncated %v, %d items", snap.Subagent, snap.Archive, snap.HistoryTruncated, len(snap.Items))
+	}
+
+	if _, err := m.CompactSubagent(sum.ID, "nobody"); statusOf(err) != 404 {
+		t.Fatalf("unknown subagent = %v", err)
+	}
+	m.warmDetailBodies(sum.ID, "nobody", nil)
+	if _, _, err := m.subscribeDetail(sum.ID, "nobody", nil); statusOf(err) != 404 {
+		t.Fatalf("unknown subagent stream = %v", err)
+	}
+}
+
+func TestSubagentListPagesAnOpenConversation(t *testing.T) {
+	pager := agenttest.NewPager("fake", allCaps)
+	m := startManager(t, openTestStore(t), pager)
+	sum, conv := createSession(t, m, pager.Provider)
+	var record agentapi.History
+	emit := func(id string, status agentapi.SubagentStatus) {
+		sa := agentapi.Subagent{ID: id, Name: id, Status: status}
+		record.Subagents = append(record.Subagents, sa)
+		conv.EmitSubagent(sa)
+	}
+	// A running subagent is never forgotten; the held list skips the
+	// finished ones after it.
+	emit("sa-000", agentapi.SubagentRunning)
+	for i := 1; i <= 250; i++ {
+		emit(fmt.Sprintf("sa-%03d", i), agentapi.SubagentCompleted)
+	}
+	pager.SetHistory(sum.ConversationID, record)
+	d, err := m.CompactDetail(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Subagents) != maxSubagents || d.Subagents[0].ID != "sa-000" || d.Subagents[1].ID != "sa-052" || d.SubagentsBefore != archiveCursor("sa-052") {
+		t.Fatalf("held %v.., before %q", compactIDs(d.Subagents[:2]), d.SubagentsBefore)
+	}
+	// The page repeats the held running one as it is held.
+	page, err := m.OlderSubagents(sum.ID, d.SubagentsBefore)
+	if err != nil || len(page.Subagents) != 52 || page.Before != "" || page.Subagents[0].Status != agentapi.SubagentRunning || page.Subagents[51].ID != "sa-051" {
+		t.Fatalf("page = %v, %d records, before %q", err, len(page.Subagents), page.Before)
+	}
+	// A provider that cannot page its subagents offers no cursor.
+	plain := startManager(t, openTestStore(t), agenttest.NewProvider("fake", allCaps))
+	other, plainConv := createSession(t, plain, plain.providers["fake"].(*agenttest.Provider))
+	for i := range maxSubagents + 1 {
+		plainConv.EmitSubagent(agentapi.Subagent{ID: fmt.Sprint(i), Status: agentapi.SubagentCompleted})
+	}
+	if d, _ := plain.CompactDetail(other.ID); d.SubagentsBefore != "" {
+		t.Fatalf("cursor %q without a pager", d.SubagentsBefore)
 	}
 }

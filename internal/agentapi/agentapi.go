@@ -240,6 +240,32 @@ type HistoryWindow struct {
 	Next string
 }
 
+// SubagentPager is implemented by a HistoryReader that can read a
+// conversation's recorded subagents a window at a time, so every one stays
+// listable when only the newest are kept in memory. Like ReadHistory it
+// sends nothing and changes nothing. ErrConversationNotFound means the
+// record is gone; ErrItemNotFound that it records no subagent req.AgentID.
+type SubagentPager interface {
+	ReadSubagents(ctx context.Context, req SubagentRequest) (SubagentWindow, error)
+}
+
+// SubagentRequest names one recorded subagent and how many of those
+// recorded before it to read.
+type SubagentRequest struct {
+	ReadRequest
+	AgentID string
+	Before  int
+}
+
+// SubagentWindow is a contiguous run of a conversation's subagents in the
+// order they were first recorded, ending with the requested one. Each record
+// is as ReadHistory reports it.
+type SubagentWindow struct {
+	Subagents []Subagent
+	// Start is set when Subagents begins with the first recorded subagent.
+	Start bool
+}
+
 // Importer is implemented by a provider whose Capabilities.Import is set.
 type Importer interface {
 	// Previous lists the conversations recorded with exactly workdir as

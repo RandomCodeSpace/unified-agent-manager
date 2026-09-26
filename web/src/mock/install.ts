@@ -115,7 +115,8 @@ export function install(): void {
     const { agentItems: _a, ...rest } = t;
     if (t.representation !== 'compact-v1') return rest;
     const start = Math.max(0, t.items.length - PAGE);
-    return { ...rest, epoch, items: t.items.slice(start), history_before: start > 0 ? itemCursor(t.items[start].id) : '' };
+    const older = t.recordSubagents?.length && t.subagents.length ? { subagents_before: `a.${itemCursor(t.subagents[0].id)}` } : {};
+    return { ...rest, ...older, epoch, items: t.items.slice(start), history_before: start > 0 ? itemCursor(t.items[start].id) : '' };
   };
   /**
    * One history page the way the service pages: the `held` newest items come from memory; older
@@ -1003,9 +1004,16 @@ export function install(): void {
       if (!t || !items) return fail(404, 'subagent not found');
       return historyPage(items, 0, url);
     }
+    // Older subagents from "Copilot's record", one page, only when asked for.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      if (!url.searchParams.get('before')) return fail(400, 'provide a subagents cursor');
+      return json(200, { seq, epoch, representation: 'compact-v1', subagents: t.recordSubagents ?? [], before: '' });
+    }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)$/))) {
       const t = find(decodeURIComponent(r[1]));
-      const s = t?.subagents.find((x) => x.id === decodeURIComponent(r![2]));
+      const s = [...(t?.subagents ?? []), ...(t?.recordSubagents ?? [])].find((x) => x.id === decodeURIComponent(r![2]));
       if (!t || !s) return fail(404, 'subagent not found');
       return json(200, { seq, subagent: s, items: t.agentItems[s.id] ?? [] });
     }
