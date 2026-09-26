@@ -4,9 +4,21 @@
 // workspace feels alive. Not part of the production bundle.
 
 import { BADGE_COLORS, LIVE, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { itemCursor } from '../lib/historyWindow';
 import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
+
+/** The service's history page size, and how many of its newest items a compact Task's main transcript keeps in memory; subagents keep none (read on open). */
+const PAGE = 50;
+const HELD = 200;
+/** Archive cursors look unlike item cursors here, as they may on the service; the client treats both as opaque. */
+const ARCHIVE_CURSOR = 'arc.';
+
+function decodeCursor(cursor: string): string {
+  const raw = cursor.startsWith(ARCHIVE_CURSOR) ? cursor.slice(ARCHIVE_CURSOR.length) : cursor;
+  return new TextDecoder().decode(Uint8Array.from(atob(raw.replaceAll('-', '+').replaceAll('_', '/')), (c) => c.charCodeAt(0)));
+}
 
 const THINKING =
   'The user wants a small, safe change. I should check the existing tests first, then edit the one function involved and run the package tests rather than the whole suite.';
@@ -56,11 +68,15 @@ class FakeEventSource extends EventTarget {
   onerror: ((e: Event) => void) | null = null;
   onmessage: ((e: MessageEvent) => void) | null = null;
   readonly session: string | null;
+  /** The query of a detail stream (`/api/events/detail`), null on the main stream. */
+  readonly detail: URLSearchParams | null;
   private detach: () => void = () => {};
 
   constructor(url: string, hooks: { attach: (src: FakeEventSource) => () => void }) {
     super();
-    this.session = new URL(url, window.location.origin).searchParams.get('session');
+    const parsed = new URL(url, window.location.origin);
+    this.session = parsed.searchParams.get('session');
+    this.detail = parsed.pathname === '/api/events/detail' ? parsed.searchParams : null;
     window.setTimeout(() => {
       if (this.readyState === 2) return;
       this.readyState = 1;
@@ -87,14 +103,49 @@ export function install(): void {
   const createdBy = new Map<string, string>();
   const sources = new Set<FakeEventSource>();
   let seq = 1;
+  // A reload is a service restart: a new instance, while archive cursors stay valid.
+  const epoch = `mock-${Date.now().toString(36)}`;
 
   const summary = (t: MockTask): SessionSummary => {
-    const { items: _i, interactions: _n, subagents: _s, history_truncated: _h, last_submission: _l, agentItems: _a, ...rest } = t;
+    const { items: _i, interactions: _n, subagents: _s, history_truncated: _h, last_submission: _l, agentItems: _a, representation: _r, detail_stream: _d, ...rest } = t;
     return rest;
   };
+  // A compact Task's detail carries its newest page and a cursor for the rest.
   const detail = (t: MockTask): SessionDetail => {
     const { agentItems: _a, ...rest } = t;
-    return rest;
+    if (t.representation !== 'compact-v1') return rest;
+    const start = Math.max(0, t.items.length - PAGE);
+    return { ...rest, epoch, items: t.items.slice(start), history_before: start > 0 ? itemCursor(t.items[start].id) : '' };
+  };
+  /**
+   * One history page the way the service pages: the `held` newest items come from memory; older
+   * ones from Copilot's record, as pages marked `archive` whose cursors survive a restart. Neither
+   * kind of page crosses into the other, and every page carries the current seq and epoch.
+   */
+  const historyPage = (items: Item[], held: number, url: URL): Response => {
+    const before = url.searchParams.get('before');
+    const cursor = before ?? url.searchParams.get('after') ?? '';
+    let at: number;
+    try {
+      const id = decodeCursor(cursor);
+      at = items.findIndex((i) => i.id === id);
+    } catch {
+      return fail(400, 'invalid history cursor');
+    }
+    if (at < 0) return fail(409, 'history changed; reload the task');
+    const boundary = Math.max(0, items.length - held);
+    const start = before !== null ? Math.max(at - PAGE, at > boundary ? boundary : 0) : at + 1;
+    const end = before !== null ? at : Math.min(start + PAGE, start < boundary ? boundary : items.length);
+    const mark = (i: number) => (i <= boundary ? ARCHIVE_CURSOR : '') + itemCursor(items[i].id);
+    return json(200, {
+      seq,
+      epoch,
+      representation: 'compact-v1',
+      items: items.slice(start, end),
+      before: start > 0 ? mark(start) : '',
+      after: start < end && end < items.length ? itemCursor(items[end - 1].id) : '',
+      ...(end <= boundary ? { archive: true } : {}),
+    });
   };
   const find = (id: string) => st.tasks.find((t) => t.id === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
@@ -287,6 +338,20 @@ export function install(): void {
       const t = src.session ? find(src.session) : undefined;
       if (src.session && !t) {
         src.onerror?.(new Event('error'));
+        return () => sources.delete(src);
+      }
+      // A detail stream: an open subagent's first window. The mock's items carry their bodies, so no
+      // body interest needs an answer. A subagent is read from Copilot's record on open, hence the wait.
+      if (src.detail) {
+        const agent = src.detail.get('agent');
+        const items = t && agent ? t.agentItems[agent] : undefined;
+        if (t && agent && items) {
+          window.setTimeout(() => {
+            const start = Math.max(0, items.length - PAGE);
+            src.emit('detail_snapshot', { seq, epoch, session_id: t.id, agent_id: agent, items: items.slice(start), before: start > 0 ? ARCHIVE_CURSOR + itemCursor(items[start].id) : '', archive: true });
+            src.emit('detail_ready', { seq, epoch, session_id: t.id });
+          }, 600 + slow);
+        }
         return () => sources.delete(src);
       }
       const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
@@ -914,6 +979,17 @@ export function install(): void {
       const f = t && (st.changes[t.project_id] ?? []).find((x) => x.path === url.searchParams.get('path'));
       if (!f) return fail(404, 'file not found');
       return json(200, f);
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/history$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      return historyPage(t.items, HELD, url);
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)\/history$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      const items = t?.agentItems[decodeURIComponent(r[2])];
+      if (!t || !items) return fail(404, 'subagent not found');
+      return historyPage(items, 0, url);
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)$/))) {
       const t = find(decodeURIComponent(r[1]));

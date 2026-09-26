@@ -542,6 +542,8 @@ export interface HistoryPage extends Representation {
   items: Item[];
   before: string;
   after?: string;
+  /** Older history read back from Copilot's record: immutable, so this browser may cache it (lib/historyArchive.ts). */
+  archive?: boolean;
 }
 
 export type Scope = 'session' | 'workspace';

@@ -8,6 +8,7 @@ import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, 
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
+import { historyPage } from '../lib/historyArchive';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
@@ -446,7 +447,7 @@ function AgentTranscriptView({
       store.action({ type: 'page_failed', agentId: subagent.id, token, error: 'Loading earlier messages timed out. Scroll up to retry.' });
       controller.abort();
     }, 10000);
-    void api.subagentHistory(sessionId, subagent.id, before, controller.signal, direction).then(page => {
+    void historyPage(sessionId, subagent.id, before, direction, store.value.epoch, () => api.subagentHistory(sessionId, subagent.id, before, controller.signal, direction)).then(page => {
       if (controller.signal.aborted || pageRead.current?.token !== token || store.value.agent?.page?.token !== token) return;
       atBottom.current = false;
       store.action({ type: 'page_done', agentId: subagent.id, before, token, page });

@@ -6,6 +6,7 @@ import type { AgentTranscript, HistoryRequest } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
+import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
@@ -227,7 +228,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       dispatch({ type: 'history_failed', sessionId: session.id, before, error: 'History took too long to load. Scroll up to retry.' });
     }, 10000);
     try {
-      const page = await api.history(session.id, before, controller.signal, direction);
+      const page = await historyPage(session.id, '', before, direction, session.epoch, () => api.history(session.id, before, controller.signal, direction));
       if (controller.signal.aborted) return null;
       if (session.epoch && page.epoch && session.epoch !== page.epoch) {
         onHistoryReset();

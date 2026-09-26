@@ -90,6 +90,17 @@ const tool = (id: string, min: number, t: Item['tool'] & { title?: string }, age
   ...(agent_id ? { agent_id } : {}),
 });
 
+/** `count` short items in turns of four (a prompt or step, a search, a thought, a result), three minutes apart. IDs are stable across reloads. */
+function longHistory(prefix: string, count: number, agent_id?: string): Item[] {
+  return Array.from({ length: count }, (_, n): Item => {
+    const id = `${prefix}${n}`, turn = Math.floor(n / 4) + 1, min = (count - n) * 3 + 3, agent = agent_id ? { agent_id } : {};
+    if (n % 4 === 1) return tool(id, min, { name: 'grep', title: `Search "export" in pkg${turn}/`, status: 'completed', output: `${(turn % 7) + 2} matches` }, agent_id);
+    if (n % 4 === 2) return { id, kind: 'reasoning', time: ago(min), text: `Package ${turn} exports ${(turn % 5) + 1} names; ${turn % 3} have no callers.`, ...agent };
+    if (n % 4 === 3) return { id, kind: 'assistant', time: ago(min), text: turn % 3 ? `Package ${turn}: removed ${turn % 3} unused export${turn % 3 === 1 ? '' : 's'}.` : `Package ${turn}: nothing unused.`, ...agent };
+    return { id, kind: agent_id ? 'assistant' : 'user', time: ago(min), text: agent_id ? `Step ${turn}: reading pkg${turn}.` : `Turn ${turn}: check pkg${turn} for unused exports.`, ...agent };
+  });
+}
+
 export function seed(): MockState {
   const meta: Meta = {
     version: 'dev-mock',
@@ -211,6 +222,17 @@ export function seed(): MockState {
     ended_at: ago(9),
     model: 'claude-haiku-4.5',
     effort: 'low',
+  };
+  const a5: Subagent = {
+    id: 'a5',
+    parent_tool_call_id: 'h-audit',
+    name: 'Audit the remaining packages',
+    description: 'Check the packages not covered yet for exports without callers.',
+    status: 'completed',
+    started_at: ago(900),
+    ended_at: ago(2),
+    model: 'claude-haiku-4.5',
+    effort: 'medium',
   };
 
   const tasks: MockTask[] = [
@@ -658,6 +680,29 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           ],
         },
       ],
+    }),
+    // t15: a compact Task with a long history. The mock service holds only its newest items; older
+    // pages, and all of its subagent's, come "from Copilot's record" as archive pages (install.ts).
+    task({
+      id: 't15',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'claude-haiku-4.5',
+      last_model: 'claude-haiku-4.5',
+      name: 'Remove unused exports across packages',
+      title: '',
+      state: 'completed',
+      representation: 'compact-v1',
+      detail_stream: true,
+      created_at: ago(1900),
+      updated_at: ago(1),
+      items: [
+        ...longHistory('h', 600),
+        tool('h-audit', 2, { name: 'task', title: 'Audit the remaining packages', status: 'completed', input: '{"description":"Audit the remaining packages"}', output: 'Checked the remaining 75 packages; nothing else is unused.' }),
+        { id: 'h-done', kind: 'assistant', time: ago(1), text: 'Every package is checked: 200 unused exports removed, the build and tests pass.' },
+      ],
+      subagents: [a5],
+      agentItems: { a5: longHistory('g', 300, 'a5') },
     }),
   ];
 

@@ -611,6 +611,17 @@ are logged only at debug level (`UAM_DEBUG=1`).
   it is in use. Deleting a Task leaves Copilot's conversation and any saved
   legacy terminal record intact. UAM no longer probes old terminal hosts or
   shows a terminal-host badge.
+- **Older history**: scrolling up past what the service holds in memory
+  loads older messages from Copilot's record, a page at a time, down to the
+  start of the conversation; a subagent's transcript does the same once you
+  open it. These older pages never change, so this browser keeps the ones you
+  have read in its own storage (IndexedDB), and reading them again later,
+  even after a reload or a service restart, needs no request. The cache holds
+  at most 64 MiB (less when the browser gives this site little space) and
+  16 MiB per Task, drops the least recently read Tasks first, and drops a
+  Task not read here for 14 days. Signing out, or losing the sign-in, clears
+  it; deleting a Task removes that Task's pages. Newer messages and item
+  details always come from the service.
 - **Changes**: the "Changes" button in the Task header shows how many files
   differ from `HEAD` in the project directory and opens them beside the
   conversation with the diff (a full-screen sheet on a narrow window). That

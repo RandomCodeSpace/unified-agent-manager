@@ -13,6 +13,7 @@ import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions }
 import { cn } from './lib/cn';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
 import { needsYouCount, newsReader, pageTitle, tasksOf } from './lib/tasks';
+import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
 import { checkDue, decideUpdate } from './lib/update';
 import { NewTaskPane, Task } from './components/Task';
@@ -134,6 +135,8 @@ export default function App() {
   }, [recentTasks]);
 
   useEffect(() => { if (auth !== 'in') recentTasks.clear(); }, [auth, recentTasks]);
+  // Signed out for any reason (sign-out, a 401, sign-in required): no transcript stays in this browser.
+  useEffect(() => { if (auth === 'out') clearArchive(); }, [auth]);
 
   // Custom models are part of the model lists, so a change to them reloads the catalogs; `metaAttempt` is a Retry after a failure.
   const customModels = JSON.stringify(state.settings.custom_models ?? []);
@@ -298,6 +301,7 @@ export default function App() {
         if (!alive) return;
         if (!isStatus(err, 404)) return reconnect();
         recentTasks.remove(opened);
+        forgetArchive(opened);
         dispatch({ type: 'select', id: null });
         setNotice('That task no longer exists.');
       });
@@ -335,12 +339,14 @@ export default function App() {
       } catch {
         // Storage unavailable: nothing to sweep.
       }
+      retainArchive(data.sessions.map((s) => s.id));
     });
     for (const name of UPDATE_EVENTS) {
       es.addEventListener(name, (e) => {
         if (!alive) return;
         const data = { name, ...JSON.parse((e as MessageEvent).data) } as UpdateData;
         recentTasks.invalidate(data);
+        if (data.name === 'session_removed') forgetArchive(data.session_id);
         // Invalidations precede React's commit. A click in between must not
         // put the old confirmed reference straight back into the cache.
         const current = confirmedDetail.current;
@@ -642,6 +648,7 @@ export default function App() {
       else {
         await runTask(id, () => api.deleteSession(id), 'delete the task');
         recentTasks.remove(id);
+        forgetArchive(id);
         if (confirmedDetail.current?.id === id) confirmedDetail.current = null;
         startTransition(() => {
           addTransitionType('sessions');
