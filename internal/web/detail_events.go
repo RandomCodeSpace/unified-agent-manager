@@ -39,6 +39,7 @@ type detailSnapshot struct {
 	After            *string          `json:"after,omitempty"`
 	Range            bool             `json:"range,omitempty"`
 	RangeReset       bool             `json:"range_reset,omitempty"`
+	Archive          bool             `json:"archive,omitempty"`
 }
 type detailPage struct {
 	detailBarrier
@@ -47,11 +48,14 @@ type detailPage struct {
 	Before  string        `json:"before"`
 	After   string        `json:"after"`
 	Scope   string        `json:"scope,omitempty"`
+	Archive bool          `json:"archive,omitempty"`
 }
 
 type initialDetailFrame struct {
 	event   string
 	payload any
+	// fallback is sent instead of a payload too large for one frame.
+	fallback any
 }
 
 func cloneBody(it agentapi.Item) agentapi.Item {
@@ -106,22 +110,40 @@ func parseDetailInterest(r *http.Request) (string, string, []bodyRef, error) {
 	return id, agent, refs, nil
 }
 
+// ItemBody returns one item whole: read from the provider's record when it
+// is not retained, or retained clipped, and the record can be paged.
 func (m *Manager) ItemBody(id, agent, item string) (itemBody, error) {
 	if !validDetailID(agent, true) || !validDetailID(item, false) {
 		return itemBody{}, newError(400, "invalid body reference")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s := m.sessions[id]
-	if s == nil {
-		return itemBody{}, newError(404, "session not found")
+	var fresh *archiveWindow
+	for {
+		m.mu.Lock()
+		s := m.sessions[id]
+		if s == nil {
+			m.mu.Unlock()
+			return itemBody{}, newError(404, "session not found")
+		}
+		s.historyUsed = m.now()
+		it, _, read, err := m.itemBodyLocked(s, agent, item, fresh)
+		body := itemBody{detailBarrier{m.seq, m.epoch, id}, agent, cloneBody(it)}
+		m.mu.Unlock()
+		switch {
+		case err != nil:
+			return itemBody{}, err
+		case read == nil || fresh != nil && it.ID != "":
+			return body, nil
+		case fresh != nil:
+			return itemBody{}, newError(http.StatusConflict, "history changed; reload the task")
+		}
+		if fresh, err = m.readArchive(read); err != nil {
+			// A retained copy, clipped, is still its body.
+			if it.ID != "" {
+				return body, nil
+			}
+			return itemBody{}, err
+		}
 	}
-	i, ok := s.itemIdx[itemKey(agent, item)]
-	if !ok {
-		return itemBody{}, newError(404, "item is no longer retained")
-	}
-	s.historyUsed = m.now()
-	return itemBody{detailBarrier{m.seq, m.epoch, id}, agent, cloneBody(s.items[i])}, nil
 }
 func (s *Server) handleItemBody(w http.ResponseWriter, r *http.Request) {
 	body, err := s.m.ItemBody(r.PathValue("id"), r.URL.Query().Get("agent_id"), r.PathValue("item_id"))
@@ -133,7 +155,7 @@ func (s *Server) handleItemBody(w http.ResponseWriter, r *http.Request) {
 }
 
 func decodeAgentBoundary(cursor string) (string, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(cursor, archiveCursorPrefix))
 	if err != nil || !validDetailID(string(raw), false) {
 		return "", newError(400, "invalid agent boundary")
 	}
@@ -255,12 +277,16 @@ func (m *Manager) subscribeDetailWindow(id, agent string, refs []bodyRef, before
 		}
 		projected := s.compactSubagent(*sa)
 		snapshot.Subagent = &projected
-		items := s.agentItems(agent)
-		page := compactPage(items, len(items))
+		v := m.viewLocked(s, agent, nil)
+		items := v.items
+		page := v.page(len(items))
 		snapshot.Items = page.Items
 		snapshot.Before = &page.Before
 		snapshot.After = &page.After
-		snapshot.HistoryTruncated = s.truncated
+		snapshot.HistoryTruncated = v.truncated(s)
+		snapshot.Archive = v.archived
+		// Items the retained ones do not reach are paged from the record.
+		lost := !v.archive || v.missing
 		if until != "" {
 			if before == "" {
 				return nil, nil, newError(400, "agent_until requires agent_before")
@@ -281,20 +307,20 @@ func (m *Manager) subscribeDetailWindow(id, agent string, refs []bodyRef, before
 			}
 			if first < 0 || last < 0 || !compactWindowFits(items[first:last+1]) {
 				snapshot.RangeReset = true
-				snapshot.HistoryTruncated = true
+				snapshot.HistoryTruncated = lost
 			} else {
 				for end := last + 1; end > first; {
 					part := compactPage(items[first:end], end-first)
 					begin := end - len(part.Items)
-					part.Before = ""
+					part.Before = v.head
 					part.After = ""
 					if begin > 0 {
-						part.Before = base64.RawURLEncoding.EncodeToString([]byte(items[begin].ID))
+						part.Before = v.cursor(items[begin].ID)
 					}
 					if end < len(items) {
-						part.After = base64.RawURLEncoding.EncodeToString([]byte(items[end-1].ID))
+						part.After = v.cursor(items[end-1].ID)
 					}
-					older = append(older, initialDetailFrame{"detail_page", detailPage{detailBarrier: barrier, AgentID: agent, Items: part.Items, Before: part.Before, After: part.After, Scope: "window"}})
+					older = append(older, initialDetailFrame{"detail_page", detailPage{detailBarrier: barrier, AgentID: agent, Items: part.Items, Before: part.Before, After: part.After, Scope: "window", Archive: v.archived}, nil})
 					end = begin
 				}
 			}
@@ -306,11 +332,11 @@ func (m *Manager) subscribeDetailWindow(id, agent string, refs []bodyRef, before
 			start := slices.IndexFunc(items, func(it agentapi.Item) bool { return it.ID == boundary })
 			if start < 0 {
 				start = 0
-				snapshot.HistoryTruncated = true
+				snapshot.HistoryTruncated = lost
 			}
 			for end := len(items) - len(page.Items); end > start; {
-				prior := compactPage(items, end)
-				older = append(older, initialDetailFrame{"detail_page", detailPage{detailBarrier: barrier, AgentID: agent, Items: prior.Items, Before: prior.Before, After: prior.After}})
+				prior := v.page(end)
+				older = append(older, initialDetailFrame{"detail_page", detailPage{detailBarrier: barrier, AgentID: agent, Items: prior.Items, Before: prior.Before, After: prior.After, Archive: v.archived}, nil})
 				end -= len(prior.Items)
 			}
 		}
@@ -318,34 +344,42 @@ func (m *Manager) subscribeDetailWindow(id, agent string, refs []bodyRef, before
 		return nil, nil, newError(400, "agent boundary requires an agent")
 	}
 
-	frames := []initialDetailFrame{{"detail_snapshot", snapshot}}
+	frames := []initialDetailFrame{{"detail_snapshot", snapshot, nil}}
 	frames = append(frames, older...)
 	bodies := make(map[string]bool, len(refs))
 	for _, ref := range refs {
 		key := itemKey(ref[0], ref[1])
-		i, ok := s.itemIdx[key]
-		if !ok {
+		// A body the record must provide was read before the lock, if at all.
+		it, whole, _, err := m.itemBodyLocked(s, ref[0], ref[1], nil)
+		if err != nil || it.ID == "" {
 			frames = append(frames, initialDetailFrame{"body_unavailable", struct {
 				detailBarrier
 				AgentID string `json:"agent_id"`
 				ItemID  string `json:"item_id"`
-			}{barrier, ref[0], ref[1]}})
+			}{barrier, ref[0], ref[1]}, nil})
 			continue
 		}
-		bodies[key] = true
+		if _, held := s.itemIdx[key]; held {
+			bodies[key] = true
+		}
+		if whole {
+			// A body too large for one frame is sent as retained.
+			frames = append(frames, initialDetailFrame{"body", itemBody{barrier, ref[0], cloneBody(it)}, itemBody{barrier, ref[0], clampItem(it, it.Time)}})
+			continue
+		}
 		if covered, ok := known[ref]; ok && epoch == m.epoch && covered <= m.seq {
 			if changed, tracked := s.itemSeq[key]; tracked && changed <= covered {
 				frames = append(frames, initialDetailFrame{"body_current", struct {
 					detailBarrier
 					AgentID string `json:"agent_id"`
 					ItemID  string `json:"item_id"`
-				}{barrier, ref[0], ref[1]}})
+				}{barrier, ref[0], ref[1]}, nil})
 				continue
 			}
 		}
-		frames = append(frames, initialDetailFrame{"body", itemBody{barrier, ref[0], cloneBody(s.items[i])}})
+		frames = append(frames, initialDetailFrame{"body", itemBody{barrier, ref[0], cloneBody(it)}, nil})
 	}
-	frames = append(frames, initialDetailFrame{"detail_ready", barrier})
+	frames = append(frames, initialDetailFrame{"detail_ready", barrier, nil})
 	sub := &Subscriber{session: id, compact: true, detail: true, agent: agent, bodies: bodies, ch: make(chan []byte, subscriberQueue), gone: make(chan struct{})}
 	s.historyUsed = m.now()
 	m.subs[sub] = struct{}{}
@@ -371,6 +405,7 @@ func (s *Server) handleDetailEvents(w http.ResponseWriter, r *http.Request) {
 			known[refs[i]] = seq
 		}
 	}
+	s.m.warmDetailBodies(id, agent, refs)
 	sub, initial, err := s.m.subscribeDetailWindow(id, agent, refs, r.URL.Query().Get("agent_before"), r.URL.Query().Get("agent_until"), r.URL.Query().Get("epoch"), known)
 	if err != nil {
 		writeFailure(w, err)
@@ -400,6 +435,9 @@ func (s *Server) handleDetailEvents(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 		frame, err := encodeFrame(part.event, part.payload)
+		if (err != nil || len(frame) > subscriberBytes) && part.fallback != nil {
+			frame, err = encodeFrame(part.event, part.fallback)
+		}
 		if err != nil || len(frame) > subscriberBytes || !write(frame) {
 			return
 		}
@@ -448,6 +486,16 @@ func (m *Manager) publishCompactItemLocked(s *webSession, it agentapi.Item, appe
 }
 func (m *Manager) publishBodyLocked(s *webSession, it agentapi.Item) {
 	m.broadcastFilteredLocked("body", s.id, bodySubscriber(it), func(seq uint64) any { return itemBody{detailBarrier{seq, m.epoch, s.id}, it.AgentID, it} })
+	if !it.Clipped || !settled(it) {
+		return
+	}
+	watched := bodySubscriber(it)
+	for sub := range m.subs {
+		if sub.session == s.id && watched(sub) {
+			m.refreshBodyLocked(s, it)
+			return
+		}
+	}
 }
 func (m *Manager) publishBodyDeltaLocked(s *webSession, it agentapi.Item, text string, output bool) {
 	name := "body_delta"

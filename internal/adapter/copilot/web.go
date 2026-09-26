@@ -45,6 +45,15 @@ const (
 	webReadEvents = 1000
 	webReadPages  = 64
 	webReadBytes  = 16 << 20
+	// A window read keeps at most webWindowBytes of items on each side of
+	// its item, and starts over at most webWindowAttempts times when the
+	// journal it reads is replaced.
+	webWindowBytes    = 4 << 20
+	webWindowAttempts = 3
+	// A read keeps the first webResultBytes of at most webReadResults tool
+	// outputs of the events it drains.
+	webReadResults = 4096
+	webResultBytes = 512
 )
 
 var (
@@ -811,16 +820,29 @@ func (p *webProvider) ReadHistory(ctx context.Context, req agentapi.ReadRequest)
 	truncated := false
 	bytesKept := 0
 	model := ""
+	// Every recorded subagent is listed: the drained events keep their
+	// subagent lifecycle events and the start of up to webReadResults tool
+	// outputs, a subagent's result when its parent tool call is not kept.
+	var drained [][]copilot.SessionEvent
+	results := map[string]string{}
+	drain := func(evs []copilot.SessionEvent) {
+		var lifecycle []copilot.SessionEvent
+		for _, ev := range evs {
+			switch d := ev.Data.(type) {
+			case *rpc.SubagentStartedData, *rpc.SubagentConfiguredData, *rpc.SubagentCompletedData, *rpc.SubagentFailedData:
+				lifecycle = append(lifecycle, ev)
+			case *rpc.ToolExecutionCompleteData:
+				if d.Result != nil && len(results) < webReadResults {
+					results[d.ToolCallID] = clip(d.Result.Content, webResultBytes)
+				}
+			}
+		}
+		drained = append(drained, lifecycle)
+	}
 	for {
-		res, err := client.ReadEvents(ctx, read)
-		switch {
-		case err != nil && strings.Contains(err.Error(), "journal is unavailable"):
-			return agentapi.History{}, fmt.Errorf("%w: %s", agentapi.ErrConversationNotFound, req.ConversationID)
-		case err != nil:
-			p.poke()
-			return agentapi.History{}, fmt.Errorf("read copilot history: %s", errText(err))
-		case res == nil || res.CursorStatus == rpc.EventsCursorStatusExpired:
-			return agentapi.History{}, errors.New("read copilot history: the journal changed while it was read")
+		res, err := p.readEvents(ctx, client, read)
+		if err != nil {
+			return agentapi.History{}, err
 		}
 		// The last model selection may predate the retained transcript. Keep
 		// it while draining older pages so import preserves the model.
@@ -844,9 +866,12 @@ func (p *webProvider) ReadHistory(ctx context.Context, req agentapi.ReadRequest)
 				start--
 			}
 			pages = append(pages, slices.Clone(res.Events[start:]))
+			drain(res.Events[:start])
 			if len(pages) == webReadPages && res.HasMore {
 				truncated = true
 			}
+		} else {
+			drain(res.Events)
 		}
 		if !res.HasMore {
 			break
@@ -857,13 +882,222 @@ func (p *webProvider) ReadHistory(ctx context.Context, req agentapi.ReadRequest)
 		read = &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Cursor: &cursor, Direction: &backward, Max: &max}
 	}
 	var evs []copilot.SessionEvent
+	for i := len(drained) - 1; i >= 0; i-- {
+		evs = append(evs, drained[i]...)
+	}
+	started := map[[2]string]bool{}
 	for i := len(pages) - 1; i >= 0; i-- {
 		evs = append(evs, pages[i]...)
+		for _, ev := range pages[i] {
+			if d, ok := ev.Data.(*rpc.ToolExecutionStartData); ok {
+				started[[2]string{agentOf(ev), d.ToolCallID}] = true
+			}
+		}
 	}
 	recorded := history(evs)
+	if truncated {
+		// A tool call that began before the kept events belongs, whole, to
+		// the older part ReadHistoryWindow reads. Its later half here would
+		// show it twice, and out of place.
+		recorded.Items = slices.DeleteFunc(recorded.Items, func(it agentapi.Item) bool {
+			return it.Tool != nil && !started[[2]string{it.AgentID, it.ID}]
+		})
+	}
+	parents := map[string]*agentapi.Subagent{}
+	for i := range recorded.Subagents {
+		sa := &recorded.Subagents[i]
+		sa.Result, parents[sa.ParentToolCallID] = results[sa.ParentToolCallID], sa
+	}
+	for _, it := range recorded.Items {
+		if sa := parents[it.ID]; sa != nil && it.Tool != nil {
+			sa.Result = clip(it.Tool.Output, webResultBytes)
+		}
+	}
 	recorded.Model = model
 	recorded.Truncated = truncated
 	return recorded, nil
+}
+
+var errJournalChanged = errors.New("read copilot history: the journal changed while it was read")
+
+// readEvents reads one page of a persisted journal.
+func (p *webProvider) readEvents(ctx context.Context, client sdkClient, read *rpc.SessionsReadPersistedEventsRequest) (*rpc.EventsReadResult, error) {
+	res, err := client.ReadEvents(ctx, read)
+	switch {
+	case err != nil && strings.Contains(err.Error(), "journal is unavailable"):
+		return nil, fmt.Errorf("%w: %s", agentapi.ErrConversationNotFound, read.SessionID)
+	case err != nil:
+		p.poke()
+		return nil, fmt.Errorf("read copilot history: %s", errText(err))
+	case res == nil || res.CursorStatus == rpc.EventsCursorStatusExpired:
+		return nil, errJournalChanged
+	}
+	return res, nil
+}
+
+// ReadHistoryWindow reads one agent's items around req.ItemID from the
+// persisted journal, whole: unlike ReadHistory it clips no text. The
+// journal is read forward in one pass that keeps only the window; the rest
+// is still read, to release the read's pinned snapshot. The journal of an
+// open conversation grows meanwhile, which the snapshot does not see; a read
+// whose snapshot expired starts over and finds the item again.
+func (p *webProvider) ReadHistoryWindow(ctx context.Context, req agentapi.WindowRequest) (agentapi.HistoryWindow, error) {
+	if req.ConversationID == "" {
+		return agentapi.HistoryWindow{}, errors.New("copilot: ReadRequest.ConversationID is required")
+	}
+	client, err := p.ensureStarted(ctx)
+	if err != nil {
+		return agentapi.HistoryWindow{}, err
+	}
+	for attempt := 1; ; attempt++ {
+		w, err := p.readWindow(ctx, client, req)
+		if !errors.Is(err, errJournalChanged) || attempt == webWindowAttempts {
+			return w, err
+		}
+	}
+}
+
+func (p *webProvider) readWindow(ctx context.Context, client sdkClient, req agentapi.WindowRequest) (agentapi.HistoryWindow, error) {
+	forward, max := rpc.EventsReadDirectionForward, int64(webReadEvents)
+	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Direction: &forward, Max: &max}
+	t, f := newTranscript(), newWindowFold(req)
+	t.whole = true
+	for {
+		res, err := p.readEvents(ctx, client, read)
+		if err != nil {
+			return agentapi.HistoryWindow{}, err
+		}
+		for _, ev := range res.Events {
+			if ev.Ephemeral != nil && *ev.Ephemeral {
+				continue
+			}
+			for _, it := range t.items(ev) {
+				if it.AgentID == req.AgentID {
+					f.add(it)
+				}
+			}
+		}
+		if !res.HasMore {
+			return f.window()
+		}
+		cursor := res.Cursor
+		read = &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Cursor: &cursor, Direction: &forward, Max: &max}
+	}
+}
+
+// windowFold keeps one agent's items around a requested item while a
+// journal is folded oldest first. As in history, an item keeps the place of
+// its first event and later events update it.
+type windowFold struct {
+	req   agentapi.WindowRequest
+	items []agentapi.Item
+	// index holds each kept item's position counted from the first item met.
+	index map[string]int
+	// seen holds every item met before the requested one, so an update
+	// never brings back an item dropped from the front.
+	seen    map[string]struct{}
+	dropped int
+	at      int    // position of the requested item, -1 until it is met
+	bytes   [2]int // kept before and after it
+	next    string
+}
+
+func newWindowFold(req agentapi.WindowRequest) *windowFold {
+	return &windowFold{req: req, index: map[string]int{}, seen: map[string]struct{}{}, at: -1}
+}
+
+func (f *windowFold) add(it agentapi.Item) {
+	if pos, ok := f.index[it.ID]; ok {
+		i := pos - f.dropped
+		it.Time = f.items[i].Time
+		if side := f.side(pos); side >= 0 {
+			f.bytes[side] += itemBytes(it) - itemBytes(f.items[i])
+		}
+		f.items[i] = it
+		f.trim()
+		return
+	}
+	if f.at >= 0 {
+		if f.next == "" && f.dropped+len(f.items)-f.at-1 < f.req.After && f.bytes[1] < webWindowBytes {
+			f.index[it.ID] = f.dropped + len(f.items)
+			f.items = append(f.items, it)
+			f.bytes[1] += itemBytes(it)
+			f.trim()
+		} else if f.next == "" {
+			f.next = it.ID
+		}
+		return
+	}
+	if _, ok := f.seen[it.ID]; ok {
+		return
+	}
+	f.seen[it.ID] = struct{}{}
+	f.index[it.ID] = f.dropped + len(f.items)
+	f.items = append(f.items, it)
+	if it.ID == f.req.ItemID {
+		f.at = f.dropped + len(f.items) - 1
+		return
+	}
+	f.bytes[0] += itemBytes(it)
+	f.trim()
+}
+
+// side is 0 before the requested item, 1 after it and -1 for it.
+func (f *windowFold) side(pos int) int {
+	switch {
+	case f.at < 0 || pos < f.at:
+		return 0
+	case pos == f.at:
+		return -1
+	}
+	return 1
+}
+
+// trim drops the oldest items beyond the bounds before the requested item
+// and the newest beyond the bytes after it. The requested item stays.
+func (f *windowFold) trim() {
+	for {
+		before := len(f.items)
+		if f.at >= 0 {
+			before = f.at - f.dropped
+		}
+		if before == 0 || before <= f.req.Before && f.bytes[0] <= webWindowBytes {
+			break
+		}
+		f.bytes[0] -= itemBytes(f.items[0])
+		delete(f.index, f.items[0].ID)
+		f.items = f.items[1:]
+		f.dropped++
+	}
+	for f.at >= 0 && f.bytes[1] > webWindowBytes && f.dropped+len(f.items)-1 > f.at {
+		last := f.items[len(f.items)-1]
+		f.bytes[1] -= itemBytes(last)
+		delete(f.index, last.ID)
+		f.items = f.items[:len(f.items)-1]
+		f.next = last.ID
+	}
+}
+
+func (f *windowFold) window() (agentapi.HistoryWindow, error) {
+	at := len(f.items)
+	if f.at >= 0 {
+		at = f.at - f.dropped
+	} else if f.req.ItemID != "" {
+		return agentapi.HistoryWindow{}, fmt.Errorf("read copilot history: %w: %s", agentapi.ErrItemNotFound, f.req.ItemID)
+	}
+	return agentapi.HistoryWindow{Items: f.items, At: at, Start: f.dropped == 0, Next: f.next}, nil
+}
+
+// itemBytes approximates the memory an item's text and images hold.
+func itemBytes(it agentapi.Item) int {
+	n := len(it.ID) + len(it.Text)
+	if it.Tool != nil {
+		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output)
+	}
+	for _, img := range it.Images {
+		n += len(img.Data)
+	}
+	return n
 }
 
 // Previous lists the local sessions recorded with exactly workdir as their
@@ -2652,6 +2886,19 @@ type transcript struct {
 	// stepStart is when each agent's current model call began
 	// (assistant.turn_start), the start of the thinking it records.
 	stepStart map[string]time.Time
+	// whole keeps texts whole; otherwise they are clipped, the item marked
+	// Clipped, and clippedInput holds the running tool calls whose input was.
+	whole        bool
+	clippedInput map[string]bool
+}
+
+// clip bounds s unless t keeps texts whole, and reports whether it cut.
+func (t *transcript) clip(s string, n int) (string, bool) {
+	if t.whole {
+		return s, false
+	}
+	out := clip(s, n)
+	return out, len(out) < len(s)
 }
 
 // maxEndedTools bounds transcript.ended. Forgetting older IDs only lets a
@@ -2663,7 +2910,7 @@ const maxEndedTools = 1024
 const maxAssets = 64
 
 func newTranscript() *transcript {
-	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}}
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}}
 }
 
 // items maps one event to its transcript items. An assistant message whose
@@ -2740,7 +2987,8 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		if !d.Success {
 			it.Text = "Conversation compaction failed."
 			if d.Error != nil {
-				it.Text += " " + clip(displaytext.Sanitize(*d.Error), maxErrorText)
+				text, cut := t.clip(displaytext.Sanitize(*d.Error), maxErrorText)
+				it.Text, it.Clipped = it.Text+" "+text, cut
 			}
 		}
 	case *rpc.SessionTruncationData:
@@ -2748,10 +2996,16 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	case *rpc.SessionErrorData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Error: "+displaytext.Sanitize(d.Message)
 	case *rpc.ToolExecutionStartData:
-		tc := &agentapi.ToolCall{Name: d.ToolName, Status: agentapi.ToolRunning, Input: clip(compactJSON(d.Arguments), maxToolText)}
+		input, cut := t.clip(compactJSON(d.Arguments), maxToolText)
+		tc := &agentapi.ToolCall{Name: d.ToolName, Status: agentapi.ToolRunning, Input: input}
 		t.tools[d.ToolCallID] = tc
 		delete(t.ended, d.ToolCallID) // a new call reusing an ended ID
-		it.ID, it.Kind, it.Tool = d.ToolCallID, agentapi.ItemTool, cloneTool(tc)
+		if cut {
+			t.clippedInput[d.ToolCallID] = true
+		} else {
+			delete(t.clippedInput, d.ToolCallID)
+		}
+		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut
 	case *rpc.ToolExecutionPartialResultData:
 		if _, ended := t.ended[d.ToolCallID]; ended {
 			return it, false
@@ -2760,12 +3014,12 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		// The CLI publishes the tool's current display output, not a text
 		// delta (its own UI replaces partialOutput too). Appending repeats
 		// every earlier line. Suppress repeated snapshots, including the cap.
-		output := clip(d.PartialOutput, maxToolText)
+		output, cut := t.clip(d.PartialOutput, maxToolText)
 		if tc.Output == output {
 			return it, false
 		}
 		tc.Output = output
-		it.ID, it.Kind, it.Tool = d.ToolCallID, agentapi.ItemTool, cloneTool(tc)
+		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut || t.clippedInput[d.ToolCallID]
 	case *rpc.ToolExecutionCompleteData:
 		if _, started := t.tools[d.ToolCallID]; started {
 			it.EndedAt = ev.Timestamp
@@ -2777,8 +3031,9 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		}
 		t.ended[d.ToolCallID] = struct{}{}
 		tc.Status = agentapi.ToolCompleted
+		cut := false
 		if d.Result != nil {
-			tc.Output = clip(d.Result.Content, maxToolText)
+			tc.Output, cut = t.clip(d.Result.Content, maxToolText)
 			it.Images = t.images(d.Result)
 			if d.Success && tc.Name == declarationToolName {
 				tc.Declaration = parseDeclarationResult(d.Result.Content)
@@ -2787,10 +3042,11 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		if !d.Success {
 			tc.Status = agentapi.ToolFailed
 			if d.Error != nil {
-				tc.Output = clip(d.Error.Message, maxToolText)
+				tc.Output, cut = t.clip(d.Error.Message, maxToolText)
 			}
 		}
-		it.ID, it.Kind, it.Tool = d.ToolCallID, agentapi.ItemTool, tc
+		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, tc, cut || t.clippedInput[d.ToolCallID]
+		delete(t.clippedInput, d.ToolCallID)
 	case *rpc.SessionBinaryAssetData:
 		if len(t.assets) >= maxAssets {
 			clear(t.assets)

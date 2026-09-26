@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -23,6 +24,9 @@ type compactItem struct {
 	agentapi.Item
 	Compact *compactBody `json:"compact,omitempty"`
 	Tool    *compactTool `json:"tool,omitempty"`
+	// Clipped marks an item whose texts were shortened here; its body is
+	// whole.
+	Clipped bool `json:"clipped,omitempty"`
 }
 type compactTool struct {
 	agentapi.ToolCall
@@ -53,6 +57,8 @@ type compactHistoryPage struct {
 	Items          []compactItem `json:"items"`
 	Before         string        `json:"before"`
 	After          string        `json:"after"`
+	// Archive marks items read from the provider's record, not retained.
+	Archive bool `json:"archive,omitempty"`
 }
 type compactSubagentDetail struct {
 	Seq            uint64          `json:"seq"`
@@ -61,6 +67,7 @@ type compactSubagentDetail struct {
 	Subagent       compactSubagent `json:"subagent"`
 	Items          []compactItem   `json:"items"`
 	Before         string          `json:"before"`
+	Archive        bool            `json:"archive,omitempty"`
 }
 
 func boundedPreview(s string, limit int) string {
@@ -144,7 +151,7 @@ func compactArgument(tool *agentapi.ToolCall) (arg, path string) {
 }
 
 func projectItem(it agentapi.Item) compactItem {
-	out := compactItem{Item: cloneBody(it)}
+	out := compactItem{Item: cloneBody(it), Clipped: it.Clipped}
 	if it.Kind == agentapi.ItemTool {
 		out.Compact = &compactBody{HasText: it.Text != ""}
 		out.Text = ""
@@ -229,38 +236,47 @@ func (s *webSession) compactSubagent(sa agentapi.Subagent) compactSubagent {
 	if i, ok := s.itemIdx[itemKey("", sa.ParentToolCallID)]; ok && s.items[i].Tool != nil && result == "" {
 		result = s.items[i].Tool.Output
 	}
+	result = cmp.Or(result, sa.Result)
 	if preview == "" && sa.Status != agentapi.SubagentRunning {
 		if i, ok := s.itemIdx[itemKey("", sa.ParentToolCallID)]; ok && s.items[i].Tool != nil {
 			preview = s.items[i].Tool.Output
 		}
+		preview = cmp.Or(preview, sa.Result)
 	}
 	if preview == "" {
-		for i := len(s.items) - 1; i >= 0; i-- {
-			it := s.items[i]
-			if it.AgentID != sa.ID {
-				continue
-			}
-			switch it.Kind {
-			case agentapi.ItemAssistant, agentapi.ItemNotice:
-				preview = it.Text
-			case agentapi.ItemReasoning:
-				preview = "Thinking…"
-			case agentapi.ItemTool:
-				if it.Tool != nil {
-					arg, _ := compactArgument(it.Tool)
-					preview = "Running: " + it.Tool.Name
-					if arg != "" {
-						preview += " " + arg
-					}
-				}
-			}
-			if preview != "" {
-				break
+		for i := len(s.items) - 1; i >= 0 && preview == ""; i-- {
+			if s.items[i].AgentID == sa.ID {
+				preview = itemPreview(s.items[i])
 			}
 		}
 	}
+	if preview == "" {
+		preview = s.subagentTails[sa.ID].preview
+	}
 	return compactSubagent{Subagent: sa, Preview: boundedPreview(preview, 512), ResultSummary: boundedResultSummary(result), Summary: s.generatedSubagentSummary(sa)}
 }
+
+// itemPreview is what a subagent's list entry shows for its latest item, or
+// "" when that item shows nothing.
+func itemPreview(it agentapi.Item) string {
+	switch it.Kind {
+	case agentapi.ItemAssistant, agentapi.ItemNotice:
+		return it.Text
+	case agentapi.ItemReasoning:
+		return "Thinking…"
+	case agentapi.ItemTool:
+		if it.Tool != nil {
+			arg, _ := compactArgument(it.Tool)
+			preview := "Running: " + it.Tool.Name
+			if arg != "" {
+				preview += " " + arg
+			}
+			return preview
+		}
+	}
+	return ""
+}
+
 func (s *webSession) compactSubagents() []compactSubagent {
 	out := make([]compactSubagent, 0, len(s.subagents))
 	for _, sa := range s.subagents {
@@ -269,8 +285,9 @@ func (s *webSession) compactSubagents() []compactSubagent {
 	return out
 }
 func (m *Manager) compactDetailLocked(s *webSession, d SessionDetail) compactSessionDetail {
-	page := compactPage(d.Items, len(d.Items))
-	d.HistoryBefore = &page.Before
+	v := m.viewLocked(s, "", nil)
+	page := v.page(len(v.items))
+	d.HistoryBefore, d.HistoryTruncated = &page.Before, v.truncated(s)
 	return compactSessionDetail{SessionDetail: d, Representation: compactRepresentation, Epoch: m.epoch, DetailStream: true, Items: page.Items, Subagents: s.compactSubagents()}
 }
 func (m *Manager) CompactDetail(id string) (compactSessionDetail, error) {
@@ -287,66 +304,92 @@ func (m *Manager) CompactDetail(id string) (compactSessionDetail, error) {
 	d := m.detailLocked(s)
 	return m.compactDetailLocked(s, d), nil
 }
+
+// CompactSubagent returns a subagent with its newest page, read from the
+// record when its transcript is not retained.
 func (m *Manager) CompactSubagent(id, agent string) (compactSubagentDetail, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s := m.sessions[id]
-	if s == nil {
-		return compactSubagentDetail{}, newError(404, "session not found")
+	var fresh *archiveWindow
+	for {
+		m.mu.Lock()
+		s := m.sessions[id]
+		if s == nil {
+			m.mu.Unlock()
+			return compactSubagentDetail{}, newError(404, "session not found")
+		}
+		sa := s.subIdx[agent]
+		if sa == nil {
+			m.mu.Unlock()
+			return compactSubagentDetail{}, newError(404, "subagent not found")
+		}
+		s.historyUsed = m.now()
+		v := m.viewLocked(s, agent, fresh)
+		if v.missing && fresh == nil {
+			read := m.windowReadLocked(s, agent, "", archiveWindowItems, 0)
+			m.mu.Unlock()
+			var err error
+			if fresh, err = m.readArchive(read); err != nil {
+				return compactSubagentDetail{}, err
+			}
+			continue
+		}
+		page := v.page(len(v.items))
+		d := compactSubagentDetail{Seq: m.seq, Epoch: m.epoch, Representation: compactRepresentation, Subagent: s.compactSubagent(*sa), Items: page.Items, Before: page.Before, Archive: v.archived}
+		m.mu.Unlock()
+		return d, nil
 	}
-	sa := s.subIdx[agent]
-	if sa == nil {
-		return compactSubagentDetail{}, newError(404, "subagent not found")
-	}
-	s.historyUsed = m.now()
-	items := s.agentItems(agent)
-	page := compactPage(items, len(items))
-	return compactSubagentDetail{Seq: m.seq, Epoch: m.epoch, Representation: compactRepresentation, Subagent: s.compactSubagent(*sa), Items: page.Items, Before: page.Before}, nil
 }
 func (m *Manager) CompactOlderHistory(id, agent, before string) (compactHistoryPage, error) {
 	return m.CompactHistoryPage(id, agent, before, "")
 }
 
+// CompactHistoryPage returns the page before (or after) the item a cursor
+// names. Past the retained items it reads the provider's record without
+// Manager.mu; a page never needs more than two reads.
 func (m *Manager) CompactHistoryPage(id, agent, before, after string) (compactHistoryPage, error) {
 	if (before == "") == (after == "") {
 		return compactHistoryPage{}, newError(400, "provide exactly one history cursor")
 	}
-	cursor := before
-	if after != "" {
-		cursor = after
+	cursor := cmp.Or(before, after)
+	boundary, err := decodeHistoryCursor(cursor)
+	if err != nil {
+		return compactHistoryPage{}, err
 	}
-	boundary, err := base64.RawURLEncoding.DecodeString(cursor)
-	if err != nil || len(boundary) == 0 || len(boundary) > 4096 {
-		return compactHistoryPage{}, newError(400, "invalid history cursor")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s := m.sessions[id]
-	if s == nil {
-		return compactHistoryPage{}, newError(404, "session not found")
-	}
-	if agent != "" && s.subIdx[agent] == nil {
-		return compactHistoryPage{}, newError(404, "subagent not found")
-	}
-	s.historyUsed = m.now()
-	items := s.agentItems(agent)
-	index := slices.IndexFunc(items, func(it agentapi.Item) bool { return it.ID == string(boundary) })
-	if index < 0 {
-		return compactHistoryPage{}, newError(409, "history changed; reload the task")
-	}
-	var page compactHistoryPage
-	if after != "" {
-		page = compactForwardPage(items, index+1)
-		if len(page.Items) == 0 {
-			page.Before = cursor
+	var fresh *archiveWindow
+	for reads := 0; ; reads++ {
+		m.mu.Lock()
+		s := m.sessions[id]
+		if s == nil {
+			m.mu.Unlock()
+			return compactHistoryPage{}, newError(404, "session not found")
 		}
-	} else {
-		page = compactPage(items, index)
-		if len(page.Items) == 0 {
-			page.After = cursor
+		if agent != "" && s.subIdx[agent] == nil {
+			m.mu.Unlock()
+			return compactHistoryPage{}, newError(404, "subagent not found")
+		}
+		s.historyUsed = m.now()
+		page, read, err := m.historyPageLocked(s, agent, boundary, after != "", fresh)
+		if read == nil || err != nil {
+			page.Seq, page.Epoch, page.Representation = m.seq, m.epoch, compactRepresentation
+			m.mu.Unlock()
+			if err != nil {
+				return compactHistoryPage{}, err
+			}
+			if len(page.Items) == 0 && after != "" {
+				page.Before = cursor
+			} else if len(page.Items) == 0 {
+				page.After = cursor
+			}
+			if page.Items == nil {
+				page.Items = []compactItem{}
+			}
+			return page, nil
+		}
+		m.mu.Unlock()
+		if reads == 2 {
+			return compactHistoryPage{}, newError(http.StatusServiceUnavailable, "the recorded transcript changed while it was read; try again")
+		}
+		if fresh, err = m.readArchive(read); err != nil {
+			return compactHistoryPage{}, err
 		}
 	}
-	page.Seq = m.seq
-	page.Epoch = m.epoch
-	return page, nil
 }

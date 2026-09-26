@@ -156,6 +156,9 @@ func (m *Manager) subagentSummaryItemLocked(s *webSession, it agentapi.Item) {
 func (s *webSession) subagentResult(itemID, agentID string) string {
 	index, ok := s.itemIdx[itemKey(agentID, itemID)]
 	if !ok {
+		if last := s.subagentTails[agentID].lastAssistant; agentID != "" && last.ID == itemID {
+			return last.Text
+		}
 		return ""
 	}
 	it := s.items[index]
@@ -321,7 +324,7 @@ func (s *webSession) lastSubagentAssistant(id string) string {
 			return it.ID
 		}
 	}
-	return ""
+	return s.subagentTails[id].lastAssistant.ID
 }
 
 func (s *webSession) matchesSubagentSummary(record store.SubagentSummary) bool {

@@ -201,9 +201,9 @@ main-agent item/output/trim frames within its 256-frame and 2 MiB reservation.
 It replays only frames newer than the response's `seq`, and
 ignores subsequently delivered frames already represented by each older item.
 The response never advances the live stream's sequence watermark. Replacement
-history and reconnect snapshots invalidate pending pages. Existing server
-retention limits still apply; pagination cannot recover history already trimmed
-by the provider or service.
+history and reconnect snapshots invalidate pending pages. Server retention
+limits still bound memory. This legacy route stops at retained history; compact
+pages continue into the provider's record (see Record paging below).
 
 ### Compact transcript and revealed bodies
 
@@ -267,8 +267,9 @@ and trimming/history eviction removes it. Closed bodies retain no reusable
 coverage. The same fixture then transferred 1.34 MB total, including about 15 KB
 for the 20 reconfigurations after initial delivery.
 
-`GET /api/sessions/{id}/items/{item_id}?agent_id={id}` returns a complete retained
-item with task/agent identity, epoch and sequence for one-off copy actions. Its
+`GET /api/sessions/{id}/items/{item_id}?agent_id={id}` returns a complete item,
+whole from the record when it is not retained or retained clipped, with
+task/agent identity, epoch and sequence for one-off copy actions. Its
 response is a point-in-time value and never hydrates the live body store. Compact
 subagent reads accept `view=compact-v1`; their older-page route is
 `/api/sessions/{id}/subagents/{agent_id}/history?before={cursor}`. Reads never open
@@ -277,8 +278,58 @@ or prompt a provider conversation.
 Compact main and subagent history routes accept either `before` or `after`, and
 return both boundary cursors. The named boundary is exclusive. Supplying both
 directions, a repeated cursor, or a malformed cursor returns 400; a missing task
-returns 404 and an evicted boundary returns 409. Legacy responses keep their
-existing shape.
+returns 404 and a boundary neither retained nor recorded returns 409. Legacy
+responses keep their existing shape.
+
+#### Record paging
+
+With a provider that pages its record (`agentapi.HistoryPager`; Copilot),
+nothing on disk is out of reach. Retained items stay bounded; the rest of a
+transcript, and the whole text of an item retained clipped, is read from the
+record on demand:
+
+- **Pages.** A compact page whose boundary is the oldest retained item of an
+  agent, or an item no longer retained, is read from the record and carries
+  `archive: true`. Its cursors are archive cursors, `a.` followed by the
+  base64url UTF-8 item ID. They hold only the recorded ID, so they survive
+  restarts and deploys, and the `.` sets them apart from retained cursors. The
+  first retained page's `before` is the archive cursor of its oldest item.
+  Retained-format cursors of items only the record has are accepted too, in
+  both directions. A forward page from the record ends before the first
+  retained item, whose page follows. `before` is empty only at the agent's
+  first recorded item. A page depends on the record alone, not on which
+  cached window serves it. Pages carry the current `seq` and `epoch`.
+- **Truncation.** On compact views `history_truncated` means that older items
+  exist but cannot be read. It stays false while the record can be paged. It
+  becomes true when the record is gone, the provider cannot page, or the
+  record lacks the oldest retained main-agent item.
+- **Bodies.** `GET .../items/{item_id}` and detail-stream `body` frames serve
+  an item that is not retained, or retained clipped, whole from the record.
+  `Item.Clipped` marks the adapter's 64 KiB tool-text cut and the service's
+  own clamps; compact items carry `clipped: true`. A detail stream reads at
+  most three windows before its first frames. A `body` frame over the 32 MiB
+  frame limit falls back to the retained copy; the GET route serves it whole.
+  A live tool call that settles clipped is sent whole to its body subscribers
+  once the record has it.
+- **Subagents.** A read-only load keeps no subagent items. Each list entry
+  keeps its record, the start of its parent tool call's output and its latest
+  preview. A subagent's transcript is read from the record only when it is
+  opened (compact subagent detail, detail stream, history pages), never to
+  build the list or page the main transcript. Open conversations keep live
+  subagent items; once trimmed, they page from the record like the main
+  transcript. `ReadHistory` keeps the lifecycle events of the pages it
+  drains, so every recorded subagent is listed, up to the 200-record cap.
+- **Cost.** Reads run without `Manager.mu`, in the history read slots, bounded
+  by the open timeout. The adapter reads the journal forward in one pass
+  (`ReadHistoryWindow`) and keeps at most 1,000 whole items and 4 MiB on the
+  paged side. It drains the rest to release the snapshot and starts over, up
+  to three times, when the snapshot expires because the journal was replaced.
+  The service caches recent windows for all Tasks, at most 32 MiB of item
+  data, and reads again once one is evicted. Measured with CLI 1.0.88: a cold
+  page (one pass) took 0.45 s on the largest local journal (8.0 MiB, 1,019
+  events) and 1.7 s on a synthetic 41.6 MiB one; cached pages took about 2 ms.
+  Backward and forward passes cost the same. Forward folds tool start and
+  completion pairs in one streaming pass with bounded memory.
 
 Each active transcript keeps a contiguous reading window of at most 150 items
 and 4 MiB of accounted data, plus a separate recent tail of at most 50 items
@@ -756,7 +807,9 @@ snapshot of `GET /api/events?session={id}`, and `GET
   or activate the session, so it takes no in-use lock and starts no hook or
   MCP server. It retains at most 16 MiB of encoded events and 64 pages,
   newest first. A longer journal keeps its newest part and sets
-  `history_truncated`. Older pages are drained without retention to finish
+  `history_truncated`; a tool call begun before that part is left to record
+  paging rather than shown without its start. Older pages are drained, keeping
+  only their subagent lifecycle events and tool-output starts, to finish
   the SDK snapshot and release its handle. The SDK exposes no release-cursor
   call. Cancellation is bounded by the read context; a cursor left after an
   interrupted continuation expires after five idle minutes. The experimental

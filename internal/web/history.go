@@ -97,17 +97,27 @@ func historyFailure(err error, convID string) string {
 // readHistory reads a conversation's record through reader, at most
 // maxHistoryReads at a time.
 func (m *Manager) readHistory(ctx context.Context, reader agentapi.HistoryReader, convID, workdir string) (agentapi.History, error) {
+	release, err := m.readSlot(ctx)
+	if err != nil {
+		return agentapi.History{}, err
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(ctx, openTimeout)
+	defer cancel()
+	return reader.ReadHistory(ctx, agentapi.ReadRequest{ConversationID: convID, Workdir: workdir})
+}
+
+// readSlot waits for one of the maxHistoryReads record read slots and
+// returns its release.
+func (m *Manager) readSlot(ctx context.Context) (func(), error) {
 	waitCtx, waitCancel := context.WithTimeout(ctx, historySlotTimeout)
 	defer waitCancel()
 	select {
 	case m.reads <- struct{}{}:
+		return func() { <-m.reads }, nil
 	case <-waitCtx.Done():
-		return agentapi.History{}, newError(http.StatusServiceUnavailable, "history readers are busy or the request was cancelled; try again")
+		return nil, newError(http.StatusServiceUnavailable, "history readers are busy or the request was cancelled; try again")
 	}
-	defer func() { <-m.reads }()
-	ctx, cancel := context.WithTimeout(ctx, openTimeout)
-	defer cancel()
-	return reader.ReadHistory(ctx, agentapi.ReadRequest{ConversationID: convID, Workdir: workdir})
 }
 
 // installHistoryLocked installs a record read without opening the
@@ -124,7 +134,17 @@ func (m *Manager) installHistoryLocked(s *webSession, h agentapi.History) {
 			h.Subagents[i].Status = agentapi.SubagentCompleted
 		}
 	}
+	// A subagent's transcript is read from the record when it is opened.
+	var tails map[string]subagentTail
+	s.archiveGone = false
+	if m.pagerLocked(s) != nil {
+		h.Items, tails = archiveSubagentItems(h.Items)
+	}
+	m.archive.forget(s.id)
 	m.applyHistoryLocked(s, h, false)
+	if tails != nil {
+		s.subagentsArchived, s.subagentTails = true, tails
+	}
 	if h.Truncated {
 		s.truncated = true
 	}
@@ -176,15 +196,15 @@ func (m *Manager) publishHistoryLocked(s *webSession) {
 			Truncated: s.truncated, Items: page.Items, Subagents: s.subagentList(), Before: &page.Before}
 	})
 	m.broadcastFilteredLocked("history", s.id, compactMain, func(seq uint64) any {
-		items := s.agentItems("")
-		page := compactPage(items, len(items))
+		v := m.viewLocked(s, "", nil)
+		page := v.page(len(v.items))
 		return struct {
 			historyEvent
 			Epoch          string            `json:"epoch"`
 			Representation string            `json:"representation"`
 			Items          []compactItem     `json:"items"`
 			Subagents      []compactSubagent `json:"subagents"`
-		}{historyEvent{Seq: seq, SessionID: s.id, History: s.historyState(), HistoryReason: s.historyReason, Truncated: s.truncated, Before: &page.Before}, m.epoch, compactRepresentation, page.Items, s.compactSubagents()}
+		}{historyEvent{Seq: seq, SessionID: s.id, History: s.historyState(), HistoryReason: s.historyReason, Truncated: v.truncated(s), Before: &page.Before}, m.epoch, compactRepresentation, page.Items, s.compactSubagents()}
 	})
 	m.broadcastFilteredLocked("detail_reset", s.id, func(sub *Subscriber) bool { return sub.detail }, func(seq uint64) any { return detailBarrier{seq, m.epoch, s.id} })
 }
@@ -266,6 +286,8 @@ func (m *Manager) dropHistoryLocked(s *webSession) {
 	s.stopPreviews()
 	s.itemSeq = nil
 	s.items, s.itemIdx, s.itemBytes, s.truncated = nil, map[string]int{}, 0, false
+	s.archiveGone, s.subagentsArchived, s.subagentTails = false, false, nil
+	m.archive.forget(s.id)
 	s.subagents, s.subIdx = nil, map[string]*agentapi.Subagent{}
 	s.history, s.historyReason, s.historyRead, s.historyBytes = "", "", false, 0
 }

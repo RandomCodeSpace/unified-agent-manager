@@ -47,14 +47,30 @@ func clampText(s string, limit int) string {
 	return s[:cut] + truncatedMarker
 }
 
+// clampItem bounds an item's texts, marking it Clipped when it cuts one, and
+// checks the rest as checkItem does.
 func clampItem(it agentapi.Item, now time.Time) agentapi.Item {
-	it.Text = clampText(it.Text, maxItemText)
+	it = checkItem(it, now)
+	clamp := func(s *string, limit int) {
+		if len(*s) > limit {
+			*s, it.Clipped = clampText(*s, limit), true
+		}
+	}
+	clamp(&it.Text, maxItemText)
+	if it.Tool != nil {
+		clamp(&it.Tool.Name, maxLabelText)
+		clamp(&it.Tool.Title, maxLabelText)
+		clamp(&it.Tool.Input, maxToolText)
+		clamp(&it.Tool.Output, maxToolText)
+	}
+	return it
+}
+
+// checkItem copies an item with its declaration, attachments and images
+// checked, and its texts whole.
+func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 	if it.Tool != nil {
 		tool := *it.Tool
-		tool.Name = clampText(tool.Name, maxLabelText)
-		tool.Title = clampText(tool.Title, maxLabelText)
-		tool.Input = clampText(tool.Input, maxToolText)
-		tool.Output = clampText(tool.Output, maxToolText)
 		if d := tool.Declaration; d != nil {
 			if d.ArtifactID == "" || len(d.ArtifactID) > 64 || !utf8.ValidString(d.ArtifactID) || strings.ContainsFunc(d.ArtifactID, unicode.IsControl) ||
 				!filepath.IsAbs(d.Path) || len(d.Path) > maxGrantPathBytes || !utf8.ValidString(d.Path) || strings.ContainsFunc(d.Path, unicode.IsControl) ||
@@ -303,6 +319,7 @@ func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
 // streamed while it was read) are kept after it. publish sends each item and
 // subagent to viewers; without it the caller publishes the result.
 func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, publish bool) {
+	s.subagentsArchived, s.subagentTails = false, nil
 	m.applyUsageLocked(s, history.Usage)
 	for _, sa := range history.Subagents {
 		if sa.ID != "" {
@@ -539,6 +556,7 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 	in.Effort = clampText(displaytext.Sanitize(in.Effort), maxLabelText)
 	in.Error = clipRunes(displaytext.Sanitize(in.Error), maxDetailRunes)
 	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
+	in.Result = boundedResultSummary(in.Result)
 	cur := s.subIdx[in.ID]
 	if cur == nil {
 		cur = &agentapi.Subagent{}
@@ -552,6 +570,7 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 		in.Name = cmp.Or(in.Name, cur.Name)
 		in.Description = cmp.Or(in.Description, cur.Description)
 		in.Model = cmp.Or(in.Model, cur.Model)
+		in.Result = cmp.Or(in.Result, cur.Result)
 		if in.StartedAt.IsZero() {
 			in.StartedAt = cur.StartedAt
 		}
