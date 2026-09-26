@@ -12,8 +12,8 @@ type Json = Record<string, unknown>;
 /** The service's history page size, and how many of its newest items a compact Task's main transcript keeps in memory; subagents keep none (read on open). */
 const PAGE = 50;
 const HELD = 200;
-/** Archive cursors look unlike item cursors here, as they may on the service; the client treats both as opaque. */
-const ARCHIVE_CURSOR = 'arc.';
+/** Archive cursors are `a.` and the item cursor, as on the service. */
+const ARCHIVE_CURSOR = 'a.';
 
 function decodeCursor(cursor: string): string {
   const raw = cursor.startsWith(ARCHIVE_CURSOR) ? cursor.slice(ARCHIVE_CURSOR.length) : cursor;
@@ -386,6 +386,8 @@ export function install(): void {
     await wait(url.pathname === '/api/auth' ? 60 : 60 + slow);
     // An import reads history on the host: slow enough here to watch "Import all" progress.
     if (/\/previous\/[^/]+\/import$/.test(url.pathname)) await wait(500);
+    // A clipped item's whole text is read from the record.
+    if (/\/items\/[^/]+$/.test(url.pathname)) await wait(600);
     return route(method, url, body);
   };
 
@@ -984,6 +986,16 @@ export function install(): void {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
       return historyPage(t.items, HELD, url);
+    }
+    // An item's body: whole, a clipped item's from `wholeTexts`.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/items\/([^/]+)$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      const agent = url.searchParams.get('agent_id') ?? '';
+      const id = decodeURIComponent(r[2]);
+      const found = t && (agent ? t.agentItems[agent] : t.items)?.find((i) => i.id === id);
+      if (!t || !found) return fail(404, 'item is no longer retained');
+      const { clipped: _c, ...item } = found;
+      return json(200, { seq, epoch, session_id: t.id, agent_id: agent, item: id in st.wholeTexts ? { ...item, text: st.wholeTexts[id] } : item });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)\/history$/)) && method === 'GET') {
       const t = find(decodeURIComponent(r[1]));

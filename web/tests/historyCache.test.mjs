@@ -3,7 +3,8 @@ import test from 'node:test';
 
 // The archive cache touches storage only through these globals; each test sees what it used.
 const storage = new Map();
-globalThis.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key) };
+let storageReads = 0;
+globalThis.localStorage = { getItem: key => { storageReads++; return storage.get(key) ?? null; }, setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key) };
 const idb = { opened: 0, deleted: [] };
 // A database that never opens: every cache read must fall back to the network.
 globalThis.indexedDB = {
@@ -26,7 +27,7 @@ const item = (id, text = id) => ({ id, kind: 'assistant', text, time: '2026-09-2
 const page = (items, before, extra = {}) => ({ seq: 40, epoch: 'e1', representation: 'compact-v1', items, before, after: '', ...extra });
 
 test('keys name the task, agent, representation and cursor; the schema is versioned', () => {
-  assert.deepEqual(cacheKey('task', 'agent', 'arc.x'), ['task', 'agent', 'compact-v1', 'arc.x']);
+  assert.deepEqual(cacheKey('task', 'agent', 'a.eA'), ['task', 'agent', 'compact-v1', 'a.eA']);
   assert.equal(REPRESENTATION, 'compact-v1');
   assert.ok(Number.isInteger(SCHEMA) && SCHEMA >= 1);
 });
@@ -64,54 +65,61 @@ test('pages of a task without a mark go; unreadable marks spare them', () => {
 });
 
 test('a cached page keeps its cursors and claims no frames, so live updates survive it', () => {
-  const stamped = stamp({ items: [item('old'), item('held', 'stale')], before: 'arc.2', after: 'x' }, 'e2');
-  assert.deepEqual({ ...stamped, items: stamped.items.length }, { items: 2, before: 'arc.2', after: 'x', seq: -1, epoch: 'e2', representation: 'compact-v1', archive: true });
-  let state = reducer({ ...initialState, selectedId: 'task' }, { type: 'snapshot', data: { seq: 10, sessions: [], projects: [], session: { id: 'task', representation: 'compact-v1', epoch: 'e2', items: [item('held')], interactions: [], subagents: [], history_before: 'arc.1' } } });
-  state = reducer(state, { type: 'history_loading', sessionId: 'task', before: 'arc.1' });
+  const stamped = stamp({ items: [item('old'), item('held', 'stale')], before: 'a.2', after: 'x' }, 'e2');
+  assert.deepEqual({ ...stamped, items: stamped.items.length }, { items: 2, before: 'a.2', after: 'x', seq: -1, epoch: 'e2', representation: 'compact-v1', archive: true });
+  let state = reducer({ ...initialState, selectedId: 'task' }, { type: 'snapshot', data: { seq: 10, sessions: [], projects: [], session: { id: 'task', representation: 'compact-v1', epoch: 'e2', items: [item('held')], interactions: [], subagents: [], history_before: 'a.1' } } });
+  state = reducer(state, { type: 'history_loading', sessionId: 'task', before: 'a.1' });
   state = reducer(state, { type: 'update', data: { name: 'delta', seq: 11, session_id: 'task', item_id: 'held', kind: 'assistant', text: ' live' } });
-  state = reducer(state, { type: 'history_loaded', sessionId: 'task', before: 'arc.1', page: stamped });
+  state = reducer(state, { type: 'history_loaded', sessionId: 'task', before: 'a.1', page: stamped });
   assert.deepEqual(state.detail.items.map(i => [i.id, i.text]), [['old', 'old'], ['held', 'held live']]);
-  assert.equal(state.detail.history_before, 'arc.2');
+  assert.equal(state.detail.history_before, 'a.2');
   assert.equal(state.historyItemSeq.held, 11);
 });
 
-test('held pages pass through without a mark or a database', async () => {
+test('held pages pass through without storage or a database', async () => {
   let fetched = 0;
-  const held = page([item('h1')], 'arc.entry');
-  assert.equal(await historyPage('held-task', '', 'c1', 'older', 'e1', async () => { fetched++; return held; }), held);
-  assert.equal(await historyPage('held-task', '', 'c2', 'newer', 'e1', async () => { fetched++; return held; }), held);
+  const held = page([item('h1')], 'a.aDE');
+  const reads = storageReads;
+  assert.equal(await historyPage('held-task', '', 'aDI', 'older', 'e1', async () => { fetched++; return held; }), held);
+  // An archive cursor paged newer passes through too.
+  assert.equal(await historyPage('held-task', '', 'a.aDE', 'newer', 'e1', async () => { fetched++; return held; }), held);
   assert.equal(fetched, 2);
+  assert.equal(storageReads, reads);
   assert.deepEqual(marks(), {});
   assert.equal(idb.opened, 0);
 });
 
-test('archive cursors are learned from pages, and a failing cache reads from the network', async () => {
-  const first = page([item('a2')], 'arc.2', { archive: true });
-  assert.equal(await historyPage('t1', 'agent', 'arc.1', 'older', 'e1', async () => first), first);
-  // The way in from held history is marked for the next page load; pages in any other representation are not.
-  assert.deepEqual(marks(), { t1: [['agent', 'arc.1']] });
-  await historyPage('t9', '', 'arc.x', 'older', 'e1', async () => ({ ...first, representation: undefined }));
-  assert.equal('t9' in marks(), false);
+test('archive cursors are known by their prefix, and a failing cache reads from the network', async () => {
   let fetched = 0;
-  const second = page([item('a1')], '', { archive: true });
-  assert.equal(await historyPage('t1', 'agent', 'arc.2', 'older', 'e1', async () => { fetched++; return second; }), second);
-  assert.equal(fetched, 1);
+  const first = page([item('a2')], 'a.YTI', { archive: true });
+  // The first retained item's archive cursor leads into the record.
+  assert.equal(await historyPage('t1', 'agent', 'a.aDE', 'older', 'e1', async () => { fetched++; return first; }), first);
   assert.ok(idb.opened >= 1);
+  // A Task is marked before its first write; pages in any other representation are not stored.
+  assert.deepEqual(Object.keys(marks()), ['t1']);
+  await historyPage('t9', '', 'a.eA', 'older', 'e1', async () => ({ ...first, representation: undefined }));
+  assert.equal('t9' in marks(), false);
+  const second = page([item('a1')], '', { archive: true });
+  assert.equal(await historyPage('t1', 'agent', 'a.YTI', 'older', 'e1', async () => { fetched++; return second; }), second);
+  assert.equal(fetched, 2);
 });
 
-test('a task keeps its four latest ways in; a 409 under an archive cursor forgets the task', async () => {
-  for (const n of [1, 2, 3, 4, 5]) await historyPage('t2', '', `entry${n}`, 'older', 'e1', async () => page([], `arc.${n}`, { archive: true }));
-  assert.deepEqual(marks().t2.map(([, cursor]) => cursor), ['entry2', 'entry3', 'entry4', 'entry5']);
+test('a 409 under an archive cursor forgets the task; one under a retained cursor does not', async () => {
+  await historyPage('t2', '', 'a.NQ', 'older', 'e1', async () => page([], 'a.NA', { archive: true }));
   const conflict = Object.assign(new Error('history changed; reload the task'), { status: 409 });
-  await assert.rejects(historyPage('t2', '', 'arc.5', 'older', 'e1', async () => { throw conflict; }), conflict);
+  await assert.rejects(historyPage('t2', '', 'NQ', 'older', 'e1', async () => { throw conflict; }), conflict);
+  assert.equal('t2' in marks(), true);
+  await assert.rejects(historyPage('t2', '', 'a.NA', 'older', 'e1', async () => { throw conflict; }), conflict);
   assert.equal('t2' in marks(), false);
 });
 
 test('tasks the service no longer lists are forgotten, and a sign-out deletes everything', async () => {
-  await historyPage('kept', '', 'k1', 'older', 'e1', async () => page([], 'arc.k', { archive: true }));
-  await historyPage('gone', '', 'g1', 'older', 'e1', async () => page([], 'arc.g', { archive: true }));
-  retainArchive(['kept', 't1']);
-  assert.deepEqual(Object.keys(marks()).sort(), ['kept', 't1']);
+  await historyPage('kept', '', 'a.aw', 'older', 'e1', async () => page([], 'a.a2s', { archive: true }));
+  await historyPage('gone', '', 'a.Zw', 'older', 'e1', async () => page([], 'a.Z2c', { archive: true }));
+  // Marks of the earlier format, which kept cursors per Task, still name their Tasks.
+  storage.set('uam.history-archive', JSON.stringify({ ...marks(), old: [['', 'b2xk']], stale: [['', 'c3Rh']] }));
+  retainArchive(['kept', 't1', 'old']);
+  assert.deepEqual(Object.keys(marks()).sort(), ['kept', 'old', 't1']);
   clearArchive();
   assert.equal(storage.has('uam.history-archive'), false);
   assert.deepEqual(idb.deleted, [ARCHIVE_DB]);

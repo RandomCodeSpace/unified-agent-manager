@@ -611,17 +611,24 @@ are logged only at debug level (`UAM_DEBUG=1`).
   it is in use. Deleting a Task leaves Copilot's conversation and any saved
   legacy terminal record intact. UAM no longer probes old terminal hosts or
   shows a terminal-host badge.
-- **Older history**: scrolling up past what the service holds in memory
-  loads older messages from Copilot's record, a page at a time, down to the
-  start of the conversation; a subagent's transcript does the same once you
-  open it. These older pages never change, so this browser keeps the ones you
-  have read in its own storage (IndexedDB), and reading them again later,
-  even after a reload or a service restart, needs no request. The cache holds
-  at most 64 MiB (less when the browser gives this site little space) and
-  16 MiB per Task, drops the least recently read Tasks first, and drops a
-  Task not read here for 14 days. Signing out, or losing the sign-in, clears
-  it; deleting a Task removes that Task's pages. Newer messages and item
-  details always come from the service.
+- **Older history**: scrolling up in a Task, or in an open subagent, keeps
+  loading until its first recorded message, even when the service keeps only
+  the newest part in memory. Older pages are read from Copilot's record on
+  demand. The first such read of a long Task can take a second or two; later
+  pages come from the service's cache. These pages never change, so this
+  browser also keeps the ones you have read in its own storage (IndexedDB),
+  and reading them again, even after a reload or a service restart, needs no
+  request. That cache holds at most 64 MiB (less when the browser gives this
+  site little space) and 16 MiB per Task, drops the least recently read Tasks
+  first, and drops a Task not read here for 14 days. Signing out, or losing
+  the sign-in, clears it; deleting a Task removes that Task's pages. Newer
+  messages and item details always come from the service. Long tool output
+  and thinking shortened in the transcript show whole when expanded or
+  copied. A message too long to keep whole shows its start and "Show full
+  message", which reads the whole text and shows it as plain text; copying
+  it copies the whole text either way. "Earlier history was truncated"
+  appears only when the record itself is gone or the provider cannot page
+  it.
 - **Changes**: the "Changes" button in the Task header shows how many files
   differ from `HEAD` in the project directory and opens them beside the
   conversation with the diff (a full-screen sheet on a narrow window). That

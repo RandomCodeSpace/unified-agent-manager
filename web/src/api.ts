@@ -371,6 +371,8 @@ export interface Item {
   images?: ToolImage[];
   /** Why some of a tool item's images were left out. */
   images_note?: string;
+  /** The service holds this item's texts shortened; its body (the item route, detail `body` frames) is whole. */
+  clipped?: boolean;
 }
 
 /** `idle` is not terminal: the subagent finished and accepts a follow-up (see promptSubagent). */
