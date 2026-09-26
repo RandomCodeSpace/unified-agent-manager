@@ -407,9 +407,9 @@ export default function App() {
     confirmedDetail.current = null;
     void api.logout().finally(() => { dispatch({ type: 'reset' }); setAuth('out'); });
   }, [recentTasks]);
-  const onSheet = useCallback((open: boolean) => {
+  const onSheet = useCallback((open: boolean, restoreFocus = true) => {
     setSheetOpen(open);
-    if (!open) document.getElementById('changes-link')?.focus();
+    if (!open && restoreFocus) document.getElementById('changes-link')?.focus();
   }, []);
   const onSessionUpdate = useCallback((s: SessionSummary) => dispatch({ type: 'upsert_session', session: s }), []);
   const onInteractionUpdate = useCallback((sessionId: string, interaction: Interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction }), []);

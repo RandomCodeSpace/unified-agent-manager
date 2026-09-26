@@ -163,6 +163,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.handleCommands)
 	mux.HandleFunc("GET /api/sessions/{id}/files", s.handleFileList((*Manager).Files))
 	mux.HandleFunc("POST /api/sessions/{id}/files/resolve", s.handleResolveFiles)
+	mux.HandleFunc("GET /api/sessions/{id}/files/tree", s.handleTree)
 	mux.HandleFunc("GET /api/sessions/{id}/files/raw", s.handleRawImage)
 	mux.HandleFunc("GET /api/sessions/{id}/files/view/{path...}", s.handleViewFile)
 	mux.HandleFunc(fileKeyRoute, s.handleViewFile)
@@ -779,6 +780,17 @@ func (s *Server) handleFileList(list func(*Manager, context.Context, string, str
 		}
 		writeJSON(w, http.StatusOK, files)
 	}
+}
+
+// handleTree lists one folder of the Task's directory, named by the dir
+// query parameter relative to it, for the Files panel.
+func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
+	list, err := s.m.Tree(r.Context(), r.PathValue("id"), r.URL.Query().Get("dir"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 // handleRawImage serves an image file of the Task's directory, named by the

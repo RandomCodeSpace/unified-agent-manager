@@ -135,6 +135,54 @@ func TestFilesOutsideGitGiveAReason(t *testing.T) {
 	}
 }
 
+func TestTreeListsOneFolderFoldersFirstWithoutLinks(t *testing.T) {
+	m, _, sum, _ := composerTask(t, composerRepo(t))
+	tree := func(dir string) ([]string, error) {
+		list, err := m.Tree(context.Background(), sum.ID, dir)
+		return filePaths(list), err
+	}
+	got, err := tree("")
+	if want := []string{"src:directory", ".gitignore:file", "README.md:file", "bin.dat:file", "notes.txt:file"}; err != nil || !slices.Equal(got, want) {
+		t.Fatalf("top = %v, %v; want %v", got, err, want)
+	}
+	got, err = tree("src")
+	if want := []string{"src/util:directory", "src/main.go:file"}; err != nil || !slices.Equal(got, want) {
+		t.Fatalf("src = %v, %v; want %v", got, err, want)
+	}
+	for dir, status := range map[string]int{
+		"../x": http.StatusBadRequest, "/etc": http.StatusBadRequest, "src/": http.StatusBadRequest,
+		"./src": http.StatusBadRequest, "src/../src": http.StatusBadRequest,
+		"linkdir": http.StatusNotFound, "linkdir/util": http.StatusNotFound, "outside": http.StatusNotFound,
+		"missing": http.StatusNotFound, "README.md": http.StatusNotFound,
+	} {
+		var e *Error
+		if _, err := tree(dir); !errors.As(err, &e) || e.Status != status {
+			t.Fatalf("dir %q: err = %v, want status %d", dir, err, status)
+		}
+	}
+
+	ts := newTestServer(t, ServerConfig{})
+	web, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: addProject(t, ts.m, composerRepo(t))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := "/api/sessions/" + web.ID + "/files/tree?dir=src"
+	if w := ts.do(http.MethodGet, route, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("without cookie = %d", w.Code)
+	}
+	w := ts.do(http.MethodGet, route, "", withCookie(ts))
+	var body FileList
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &body) != nil || !slices.Equal(filePaths(body), []string{"src/util:directory", "src/main.go:file"}) {
+		t.Fatalf("route = %d %s", w.Code, w.Body)
+	}
+
+	m, _, sum, _ = composerTask(t, t.TempDir())
+	list, err := m.Tree(context.Background(), sum.ID, "")
+	if err != nil || len(list.Files) != 0 || !strings.Contains(list.Reason, "not in a Git working tree") {
+		t.Fatalf("non-git tree = %+v, %v", list, err)
+	}
+}
+
 func TestPromptFilesAreCheckedInsideTheProject(t *testing.T) {
 	dir := composerRepo(t)
 	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o600); err != nil {

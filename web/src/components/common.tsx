@@ -460,7 +460,7 @@ function hastToReact(nodes: HighlightTree['children'], prefix = ''): ReactNode[]
 }
 
 /** The code with `hljs-*` spans once the highlighter has loaded and knows the language; plain until then. */
-function Highlighted({ language, code }: { language: string; code: string }) {
+export function Highlighted({ language, code }: { language: string; code: string }) {
   const h = useHighlighter();
   const tree = useMemo(() => (h && code.length <= MAX_HIGHLIGHT ? h.highlight(language, code) : null), [h, language, code]);
   return tree ? <>{hastToReact(tree.children)}</> : <>{code}</>;

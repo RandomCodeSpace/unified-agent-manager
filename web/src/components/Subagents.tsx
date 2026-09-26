@@ -2,7 +2,7 @@ import { flushSync } from 'react-dom';
 import { HistoryAnchor } from './HistoryAnchor';
 import { windowInteractions } from '../lib/transcript';
 import { BodyNotice, DetailVisibility, useDetailAgent, useItemBody } from './Details';
-import { ArrowLeft, Bot, Copy, Crosshair, Ellipsis, Square, X } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronRight, Copy, Crosshair, Ellipsis, Square, X } from 'lucide-react';
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
 import { useCopied } from '../lib/clipboard';
@@ -14,7 +14,7 @@ import { useFileHintItems } from './FileReferences';
 import { Markdown, Note, Skeleton, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
-import { EXIT_MS } from './ui/collapse';
+import { Collapse, EXIT_MS } from './ui/collapse';
 import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
@@ -149,6 +149,7 @@ export function SubagentPanel({
   const { meta, narrow } = useApp();
   const lead = useRef<HTMLButtonElement>(null);
   const [stops, stopNow] = useStops(session.id);
+  const [expanded, setExpanded] = useState<Partial<Record<SubagentStatus, boolean>>>({});
   const current = view.view === 'agent' ? session.subagents.find((s) => s.id === view.id) : undefined;
   // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations); one dialog serves the list and the transcript header.
   const stopConfirm = useConfirm<Subagent>();
@@ -240,18 +241,41 @@ export function SubagentPanel({
         {GROUPS.map(({ status, label }) => {
           const rows = session.subagents.filter((s) => s.status === status);
           if (!rows.length) return null;
+          const list = (
+            <ul className="flex flex-col gap-px">
+              {rows.map((s) => (
+                <SubagentRow key={s.id} session={session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} stopping={stops[s.id] ?? NOT_STOPPING} onStop={() => stop(s.id)} />
+              ))}
+            </ul>
+          );
+          if (status === 'running') {
+            return (
+              <section key={status} aria-label={label} className="mb-3">
+                <div className="flex h-7 items-center gap-2 px-2 text-caption text-muted">
+                  <span>{label}</span>
+                  <span className="tabular-nums text-muted">{rows.length}</span>
+                  <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
+                </div>
+                {list}
+              </section>
+            );
+          }
+          // Only running subagents show by default; the others wait behind their count.
+          const shown = !!expanded[status];
           return (
-            <section key={status} aria-label={label} className="mb-3">
-              <div className="flex h-7 items-center gap-2 px-2 text-caption text-muted">
+            <section key={status} aria-label={label} className="mb-1">
+              <button
+                type="button"
+                aria-expanded={shown}
+                className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11"
+                onClick={() => setExpanded((e) => ({ ...e, [status]: !shown }))}
+              >
                 <span>{label}</span>
                 <span className="tabular-nums text-muted">{rows.length}</span>
                 <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
-              </div>
-              <ul className="flex flex-col gap-px">
-                {rows.map((s) => (
-                  <SubagentRow key={s.id} session={session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} stopping={stops[s.id] ?? NOT_STOPPING} onStop={() => stop(s.id)} />
-                ))}
-              </ul>
+                <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', shown && 'rotate-90')} />
+              </button>
+              <Collapse open={shown}>{list}</Collapse>
             </section>
           );
         })}

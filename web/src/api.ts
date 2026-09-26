@@ -789,6 +789,8 @@ export const api = {
   files: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
   /** The same listing for a Project's directory: a new Task's `@` picker, before the Task exists. */
   projectFiles: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/projects/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
+  /** The entries directly inside one folder of the Task's directory ("" is the top), folders first; git decides what is listed. */
+  tree: (id: string, dir: string, signal?: AbortSignal) => call<FileList>('GET', `/api/sessions/${enc(id)}/files/tree?dir=${enc(dir)}`, undefined, false, signal),
   upload: uploadFile,
   filePreview,
   createFileGrant: (id: string, path: string, signal: AbortSignal) => call<FileGrant>('POST', `/api/sessions/${enc(id)}/file-grants`, { path }, false, signal),

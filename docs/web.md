@@ -312,7 +312,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   the duration once it ended) and a "Subagents" button in the header with
   the total and how many are running. The button opens a panel beside the
   conversation that lists the subagents grouped by status (running, idle,
-  failed, completed, cancelled) with their start time and duration; "Spawned
+  failed, completed, cancelled) with their start time and duration. Only the
+  running group is open; the others show their count and open on a click. "Spawned
   by" jumps to the tool call in the conversation. Opening a row, or "Open" on
   its row in the conversation, shows that subagent's own prompt, replies,
   and tool calls in the panel, live while it runs. The panel uses the same
@@ -621,9 +622,21 @@ are logged only at debug level (`UAM_DEBUG=1`).
   every five seconds and when the browser tab becomes visible again. The
   previous diff remains visible while an update loads. Closing or hiding the
   panel cancels its reads; manual Refresh remains available.
+- **Files**: the "Files" button beside Changes opens the project directory as
+  a read-only tree in the same place (a full-screen sheet on a narrow
+  window). Git decides what is listed, so `.gitignore` applies; symbolic
+  links and special files are left out, and a directory outside a Git working
+  tree shows why instead. Each folder is read when you expand it, and nothing
+  refreshes on its own: use Refresh. Choosing a file shows it below the tree:
+  text highlighted and wrapped (at most its first 64 KiB), images inline, and
+  anything else with Open in new tab and Download. Only one of Changes, Files,
+  Subagents and a file preview is open at a time. On a wide window, a click in
+  the conversation or the composer closes whichever of them is open.
 - **Sidebar**: Tasks form one flat list with a compact card for each Task,
-  followed by collapsible "Settled" and "Archived" shelves. A card shows its
-  Project, state or last activity, title, provider icon and branch when known.
+  with collapsible "Settled" and "Archived" shelves at the foot of the list.
+  A card shows its Project, state or last activity, title, provider icon and
+  branch when known; hovering an active card that can settle shows Settle.
+  A shelf row shows only the title, faded until hovered or selected.
   A settled or archived Task opens read-only. Search matches Task names and
   titles, Project names and branches within the chosen Project filter.
   Right-click a card, press Shift+F10 or the Menu key, or long-press on touch

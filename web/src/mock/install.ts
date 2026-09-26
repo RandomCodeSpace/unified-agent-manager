@@ -728,6 +728,31 @@ export function install(): void {
       if (!/\.png$/i.test(abs)) return fail(415, 'only png, jpeg, gif and webp images are served');
       return new Response(screenshotPng(abs.slice(t.workdir.length + 1)).slice(), { status: 200, headers: { 'Content-Type': 'image/png', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-cache' } });
     }
+    // One folder of a Task's directory for the Files panel: folders first, then files.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/files\/tree$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const tree = st.files[t.project_id];
+      if (!tree) return json(200, { files: [], reason: 'this directory is not in a Git working tree' });
+      const dir = url.searchParams.get('dir') ?? '';
+      if (dir && !isDir(t.project_id, dir)) return fail(404, 'folder not found');
+      const prefix = dir ? `${dir}/` : '';
+      const names = new Set(tree.filter((f) => f.startsWith(prefix)).map((f) => f.slice(prefix.length).split('/')[0]));
+      const files = [...names]
+        .map((name) => ({ path: prefix + name, type: isDir(t.project_id, prefix + name) ? 'directory' : 'file' }))
+        .sort((a, b) => (a.type === b.type ? (a.path < b.path ? -1 : 1) : a.type === 'directory' ? -1 : 1));
+      return json(200, { files, reason: '' });
+    }
+    // The view route for a listed file: text made up from its path, enough for previews.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/files\/view\/(.+)$/)) && (method === 'GET' || method === 'HEAD')) {
+      const t = find(decodeURIComponent(r[1]));
+      const path = r[2].split('/').map(decodeURIComponent).join('/');
+      if (!t || !(st.files[t.project_id] ?? []).includes(path)) return fail(404, 'file not found');
+      if (/\.png$/i.test(path)) return new Response(method === 'HEAD' ? null : screenshotPng(path).slice(), { status: 200, headers: { 'Content-Type': 'image/png' } });
+      const text = `// ${path}\n${Array.from({ length: 40 }, (_, i) => `const line${i + 1} = ${JSON.stringify(`${path} `.repeat(i % 7 === 3 ? 12 : 1).trim())};`).join('\n')}\n`;
+      const body = new TextEncoder().encode(text);
+      return new Response(method === 'HEAD' ? null : body, { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': String(body.length) } });
+    }
     // The `@` listing of a Task's directory, or of a Project's for a new Task that does not exist yet.
     if ((r = m(/^\/api\/(sessions|projects)\/([^/]+)\/files$/)) && method === 'GET') {
       const id = decodeURIComponent(r[2]);

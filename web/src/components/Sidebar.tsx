@@ -1,4 +1,4 @@
-import { ChevronRight, FolderPlus, GitBranch, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
+import { ChevronRight, CircleCheck, FolderPlus, GitBranch, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
 import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -96,7 +96,9 @@ function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
   const target = e.target as HTMLElement;
   if (target.tagName === 'INPUT') return;
   const rows = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(NAV)).filter((el) => el.offsetParent !== null);
-  const i = rows.indexOf(target.closest<HTMLElement>('[data-nav]') as HTMLElement);
+  // From a row's hover action (Settle), move relative to that row.
+  const current = target.closest('[data-task-row]')?.querySelector<HTMLElement>('[data-nav]') ?? target.closest<HTMLElement>('[data-nav]');
+  const i = rows.indexOf(current as HTMLElement);
   const focus = (n: number) => {
     rows[Math.max(0, Math.min(rows.length - 1, n))]?.focus();
     e.preventDefault();
@@ -131,7 +133,8 @@ const ROW_TRANSITION = { sessions: 'vt-row', default: 'none' } as const;
 const ROW_ENTER = { sessions: 'vt-row-enter', default: 'none' } as const;
 const ROW_EXIT = { sessions: 'vt-row-exit', default: 'none' } as const;
 
-function TaskRow({ session: s, project, selected }: { session: SessionSummary; project: Project; selected: boolean }) {
+/** `compact`: a Settled or Archived shelf row, the title alone on one line, faded until hovered, focused or selected. */
+function TaskRow({ session: s, project, selected, compact = false }: { session: SessionSummary; project: Project; selected: boolean; compact?: boolean }) {
   const { hasNews } = useApp();
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
@@ -140,23 +143,31 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
   const attention = needsYou(s) && !readOnly(s);
   const strong = selected || attention || unread;
   const items = taskMenuItems(s, a, 'row');
+  // The menu's own Settle item, shown on hover only while its rules allow it.
+  const settle = compact ? undefined : items.find((item) => item.key === 'settle' && !item.disabled);
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
   const meta = rowMeta(s, unread);
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
-  // A card on the rail: `raised` with the soft ring, lifting on hover (`lift`: transform and a pre-drawn shadow's opacity).
-  const rowClass = cn(
-    'lift flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color,color,transform] duration-100 focus-visible:-outline-offset-2',
-    selected ? 'bg-tint-selected text-ink' : 'hover:bg-raised',
-    readOnly(s) && !selected && 'text-muted',
-    strong ? 'font-medium text-ink' : 'text-body',
-  );
+  // A card on the rail: `raised` with the soft ring; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
+  const rowClass = compact
+    ? cn(
+        'flex h-8 w-full items-center rounded-sm px-2 text-left text-ui transition-[background-color,color,opacity] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
+        selected ? 'bg-tint-selected' : 'opacity-60 hover:bg-tint-hover hover:opacity-100 focus-within:opacity-100',
+        strong ? 'font-medium text-ink' : 'text-body',
+      )
+    : cn(
+        'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color,color] duration-100 focus-visible:-outline-offset-2',
+        selected ? 'bg-tint-selected text-ink' : 'hover:bg-raised',
+        readOnly(s) && !selected && 'text-muted',
+        strong ? 'font-medium text-ink' : 'text-body',
+      );
 
   const row = (
-    <div data-task-row={s.id}>
+    <div data-task-row={s.id} className={compact ? undefined : 'lift group/row rounded-md'}>
       {renaming ? (
         // Not a button while the input is inside: interactive content cannot nest in one.
         <div className={rowClass}>
-          <span className="flex w-full min-w-0 items-center gap-1.5 text-meta text-muted"><ProjectBadge badge={project.badge} /><span className="truncate text-caption" title={project.name}>{project.name}</span></span>
+          {!compact && <span className="flex w-full min-w-0 items-center gap-1.5 text-meta text-muted"><ProjectBadge badge={project.badge} /><span className="truncate text-caption" title={project.name}>{project.name}</span></span>}
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
         </div>
       ) : (
@@ -178,25 +189,46 @@ function TaskRow({ session: s, project, selected }: { session: SessionSummary; p
             }
           }}
         >
-          <span className="flex w-full min-w-0 items-center gap-1.5 text-meta font-normal text-muted">
-            <ProjectBadge badge={project.badge} />
-            <span className={cn('min-w-0 flex-1 truncate text-caption', selected && 'font-semibold')} title={project.dir}>{project.name}</span>
-            {project.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
-            {readOnly(s) && <span className="shrink-0">{s.stage === 'archived' ? 'Archived' : 'Settled'}</span>}
-          </span>
-          <span className="flex w-full min-w-0 items-center gap-1.5">
-            <span className={cn('flex shrink-0 items-center gap-1 text-caption font-normal tabular-nums whitespace-nowrap transition-colors duration-160', meta.tone)}>
-              {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
-              {meta.text}
-            </span>
-            <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
-            {s.provider && <span className="shrink-0 text-meta font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
-              {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
-            </span>}
-          </span>
+          {compact ? (
+            <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate', selected && 'font-semibold')} />
+          ) : (
+            <>
+              <span className="flex w-full min-w-0 items-center gap-1.5 text-meta font-normal text-muted">
+                <ProjectBadge badge={project.badge} />
+                <span className={cn('min-w-0 flex-1 truncate text-caption', selected && 'font-semibold')} title={project.dir}>{project.name}</span>
+                {project.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
+                {readOnly(s) && <span className="shrink-0">{s.stage === 'archived' ? 'Archived' : 'Settled'}</span>}
+              </span>
+              <span className="flex w-full min-w-0 items-center gap-1.5">
+                <span className={cn('flex shrink-0 items-center gap-1 text-caption font-normal tabular-nums whitespace-nowrap transition-colors duration-160', meta.tone)}>
+                  {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
+                  {meta.text}
+                </span>
+                <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
+                {s.provider && <span className="shrink-0 text-meta font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
+                  {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
+                </span>}
+              </span>
+            </>
+          )}
         </button>
       )}
-
+      {settle && !renaming && (
+        // A sibling of the row button, not inside it, so clicking Settle never selects the row. It sits over the provider icon.
+        <Tip label="Settle">
+          <Button
+            size="icon-sm"
+            aria-label={`Settle ${taskName(s) || 'New task'}`}
+            className={cn(
+              'absolute right-1.5 bottom-1.5 text-muted opacity-0 transition-[opacity,background-color,color] group-hover/row:opacity-100 group-has-focus-visible/row:opacity-100 pointer-coarse:opacity-100',
+              selected ? 'bg-tint-selected' : 'bg-raised',
+            )}
+            onClick={settle.onSelect}
+          >
+            <CircleCheck />
+          </Button>
+        </Tip>
+      )}
     </div>
   );
 
@@ -238,13 +270,13 @@ function Shelf({ projects, label, tasks, selectedId, open, onToggle }: { project
         <ul className="flex flex-col gap-px pt-px">
           {/* The pinned copy below owns the selected row while the shelf is closed: one view-transition name each. */}
           {tasks.filter((t) => t !== pinned).map((t) => (
-            <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />
+            <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} compact />
           ))}
         </ul>
       </Collapse>
       {pinned && (
         <ul className="flex flex-col gap-px">
-          <TaskRow project={projects.get(pinned.project_id)!} session={pinned} selected />
+          <TaskRow project={projects.get(pinned.project_id)!} session={pinned} selected compact />
         </ul>
       )}
     </div>
@@ -347,12 +379,15 @@ export const Sidebar = memo(function Sidebar({
             <ul className="flex flex-col gap-1 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
           </>
         ) : (
-          <>
+          // The shelves sit at the foot of the list while the active Tasks are few, and follow them once they scroll.
+          <div className="flex min-h-full flex-col">
             <ul className="flex flex-col gap-1 animate-fade-in">{active.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
             {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
-            <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${shelfScope}:settled`]} onToggle={() => toggleShelf(`${shelfScope}:settled`)} />
-            <Shelf projects={projectMap} label="Archived" tasks={archived} selectedId={selectedId} open={!!shelves[`${shelfScope}:archived`]} onToggle={() => toggleShelf(`${shelfScope}:archived`)} />
-          </>
+            <div className="mt-auto">
+              <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${shelfScope}:settled`]} onToggle={() => toggleShelf(`${shelfScope}:settled`)} />
+              <Shelf projects={projectMap} label="Archived" tasks={archived} selectedId={selectedId} open={!!shelves[`${shelfScope}:archived`]} onToggle={() => toggleShelf(`${shelfScope}:archived`)} />
+            </div>
+          </div>
         )}
       </div>
 
