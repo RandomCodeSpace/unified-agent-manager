@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -322,6 +323,11 @@ type webProvider struct {
 	// with mu, which a CLI start holds for long.
 	customMu sync.Mutex
 	custom   []agentapi.CustomModel
+	// quotaMu guards live, the quota snapshots by type from the latest model
+	// call's response since this CLI started. account.getQuota keeps
+	// returning what the CLI read at sign-in, so these supersede it.
+	quotaMu sync.Mutex
+	live    map[string]rpc.AssistantUsageQuotaSnapshot
 }
 
 // NewWebProvider returns the Copilot integration for the web service.
@@ -492,8 +498,10 @@ func costTier(c *rpc.ModelPickerPriceCategory) string {
 	return ""
 }
 
-// Quota reads the account's quotas through account.getQuota. An entitlement
-// of -1 means unlimited, as does the unlimited flag.
+// Quota reads the account's quotas through account.getQuota. The CLI answers
+// that from the copilot user it read at sign-in, so a type a model call has
+// since reported takes that call's snapshot. An entitlement of -1 means
+// unlimited, as does the unlimited flag.
 func (p *webProvider) Quota(ctx context.Context) ([]agentapi.Quota, error) {
 	client, err := p.ensureStarted(ctx)
 	if err != nil {
@@ -504,8 +512,16 @@ func (p *webProvider) Quota(ctx context.Context) ([]agentapi.Quota, error) {
 		p.poke()
 		return nil, fmt.Errorf("read copilot quota: %s", errText(err))
 	}
+	p.quotaMu.Lock()
+	defer p.quotaMu.Unlock()
 	out := make([]agentapi.Quota, 0, len(snaps))
 	for kind, q := range snaps {
+		if l, ok := p.live[kind]; ok {
+			q = rpc.AccountQuotaSnapshot{
+				EntitlementRequests: l.EntitlementRequests, IsUnlimitedEntitlement: l.IsUnlimitedEntitlement, Overage: l.Overage,
+				RemainingPercentage: l.RemainingPercentage, ResetDate: l.ResetDate, UsedRequests: l.UsedRequests,
+			}
+		}
 		quota := agentapi.Quota{
 			Type: kind, Used: q.UsedRequests, Entitlement: q.EntitlementRequests, Unlimited: q.IsUnlimitedEntitlement || q.EntitlementRequests < 0,
 			RemainingPercent: q.RemainingPercentage, Overage: q.Overage,
@@ -520,6 +536,19 @@ func (p *webProvider) Quota(ctx context.Context) ([]agentapi.Quota, error) {
 	}
 	slices.SortFunc(out, func(a, b agentapi.Quota) int { return strings.Compare(a.Type, b.Type) })
 	return out, nil
+}
+
+// noteQuota keeps the quota snapshots a model call's response carried.
+func (p *webProvider) noteQuota(snaps map[string]rpc.AssistantUsageQuotaSnapshot) {
+	if len(snaps) == 0 {
+		return
+	}
+	p.quotaMu.Lock()
+	defer p.quotaMu.Unlock()
+	if p.live == nil {
+		p.live = make(map[string]rpc.AssistantUsageQuotaSnapshot, len(snaps))
+	}
+	maps.Copy(p.live, snaps)
 }
 
 // titleDeleteTimeout bounds deleting a title session, whatever ended it.
@@ -914,6 +943,10 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 		p.importProbed = true
 	}
 	p.client, p.stop = c, make(chan struct{})
+	// This CLI's sign-in read is newer than any call of the one before.
+	p.quotaMu.Lock()
+	p.live = nil
+	p.quotaMu.Unlock()
 	go p.watch(c, p.stop) // #nosec G118 -- provider-owned watchdog outlives requests; Shutdown/fail closes stop and each ping has a timeout.
 	return c, nil
 }
@@ -2182,6 +2215,8 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.emitLocked(deltaEvent(agentID, reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.DeltaContent))
 		return
 	case *rpc.AssistantUsageData:
+		// The account's quotas as of this call, a subagent's included.
+		c.p.noteQuota(d.QuotaSnapshots)
 		if agentID == "" && d.Model != "" {
 			c.turnModel = d.Model
 			if d.IsByok != nil && *d.IsByok {

@@ -110,6 +110,54 @@ func TestWebQuotaFromAccountGetQuota(t *testing.T) {
 	}
 }
 
+// quotaCall is an assistant.usage carrying the quota snapshots of its
+// response. It is shaped after the SDK schema, not recorded.
+const quotaCall = `{"type":"assistant.usage","ephemeral":true,"agentId":"agent-1","data":{"model":"claude-haiku-4.5","quotaSnapshots":{
+ "premium_interactions":{"entitlementRequests":1500,"isUnlimitedEntitlement":false,"overage":0,"overageAllowedWithExhaustedQuota":false,"remainingPercentage":86,"resetDate":"2026-10-01T00:00:00Z","usageAllowedWithExhaustedQuota":false,"usedRequests":210},
+ "weekly":{"entitlementRequests":0,"isUnlimitedEntitlement":false,"overage":0,"overageAllowedWithExhaustedQuota":false,"remainingPercentage":40,"usageAllowedWithExhaustedQuota":false,"usedRequests":0}}},"id":"e9","timestamp":"2026-09-24T17:40:00.000Z"}`
+
+// The CLI answers account.getQuota from the copilot user it read at sign-in
+// (CLI 1.0.80 probe, 2026-09-26: one fetch, the same counts for 12 minutes),
+// so the quotas a model call reports win until the CLI restarts.
+func TestWebQuotaFollowsModelCalls(t *testing.T) {
+	var res rpc.AccountGetQuotaResult
+	if err := json.Unmarshal([]byte(recordedQuota), &res); err != nil {
+		t.Fatal(err)
+	}
+	h := openWeb(t)
+	h.fc.mu.Lock()
+	h.fc.quota = res.QuotaSnapshots
+	h.fc.mu.Unlock()
+	premium := func() agentapi.Quota {
+		t.Helper()
+		got, err := h.p.Quota(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Only the types account.getQuota reports are shown.
+		if len(got) != 3 || got[2].Type != "premium_interactions" {
+			t.Fatalf("quotas = %+v", got)
+		}
+		return got[2]
+	}
+	if q := premium(); q.Used != 180 || q.RemainingPercent != 88 {
+		t.Fatalf("before a call: %+v", q)
+	}
+	var call copilot.SessionEvent
+	if err := json.Unmarshal([]byte(quotaCall), &call); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.onEvent(call)
+	if q := premium(); q.Used != 210 || q.Entitlement != 1500 || q.RemainingPercent != 86 || !q.ResetAt.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("after a call: %+v", q)
+	}
+	// A new CLI reads the account again at sign-in.
+	h.p.fail(h.fc, "Copilot CLI stopped")
+	if q := premium(); q.Used != 180 {
+		t.Fatalf("after a restart: %+v", q)
+	}
+}
+
 func TestWebModelsCostTierAndDiscount(t *testing.T) {
 	var models []rpc.Model
 	if err := json.Unmarshal([]byte(recordedModels), &models); err != nil {

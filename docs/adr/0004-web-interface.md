@@ -1380,7 +1380,12 @@ The browser shows usage only for a provider with the capability.
   2026-09-24 Copilot returned a `resetDate` a few minutes before the call.
   Copilot's `account.getQuota` is experimental. In the same probe, the
   premium request count did not change in a read a few seconds after a 1x
-  turn, so a count can lag the turn that used it.
+  turn. A 2026-09-26 probe of CLI 1.0.80 showed why: the CLI answers it from
+  the copilot user it read at sign-in: against a stub API it fetched
+  `/copilot_internal/user` once, and three reads over 12 minutes returned
+  the same counts (its `resetDate` is that read's `timestamp_utc`). The adapter
+  therefore lets the quota snapshots of the latest `assistant.usage` since
+  the CLI started replace those types.
 - **Per Task.** A Task's `usage: {ai_units}` is its conversation's AI units
   so far, main agent and subagents together, once the provider reports them;
   it is absent before that, never zero. Each report is the conversation's
@@ -1436,8 +1441,9 @@ The browser shows usage only for a provider with the capability.
 | `Model.Prices` → `Prices{BatchSize, TierPrices, LongContext *TierPrices}`, `TierPrices{Input, Output, CacheRead, CacheWrite, MaxPromptTokens}` | Token prices per batch in AI Credits; nil prices were not reported. |
 | `Context.Prompt`, `Context.Cached` | The latest main-agent call's input tokens and how many of them were read from the cache. |
 
-Copilot mapping: `Quota` sends `account.getQuota`; an entitlement of -1 or
-`isUnlimitedEntitlement` means unlimited. `CostTier` comes from
+Copilot mapping: `Quota` sends `account.getQuota`, then takes each type the
+latest `assistant.usage` reported in `quotaSnapshots` from that call; an
+entitlement of -1 or `isUnlimitedEntitlement` means unlimited. `CostTier` comes from
 `modelPickerPriceCategory`, `DiscountPercent` from `billing.discountPercent`.
 
 ### HTTP additions and changes
