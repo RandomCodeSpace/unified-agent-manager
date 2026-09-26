@@ -13,7 +13,7 @@ import (
 
 // omp (Oh My Pi, github.com/can1357/oh-my-pi) launches bare: a plain `omp`
 // with no subcommand opens its TUI, the default surface (the other modes are
-// explicit — `omp -p`, `omp --mode rpc`, `omp acp`). Unlike hermes/opencode,
+// explicit — `omp -p`, `omp --mode rpc`, `omp acp`). Unlike Hermes,
 // omp does expose a real auto-approve flag (`--auto-approve`, per `omp
 // --help`), so it is wired as the yolo arg and appended in non-safe mode so
 // dispatched sessions skip tool-call approval prompts, matching

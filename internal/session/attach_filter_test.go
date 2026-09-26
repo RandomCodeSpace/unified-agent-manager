@@ -60,7 +60,7 @@ func filterHostOutput(t *testing.T, mouse bool, chunks ...[]byte) []byte {
 	return out.Bytes()
 }
 
-func TestAttachDefaultSSHPreservesOpenCodeMouseModes(t *testing.T) {
+func TestAttachDefaultSSHPreservesProviderMouseModes(t *testing.T) {
 	env := map[string]string{
 		AttachMouseEnv:   "",
 		"SSH_CONNECTION": "client 123 server 22",
@@ -69,7 +69,7 @@ func TestAttachDefaultSSHPreservesOpenCodeMouseModes(t *testing.T) {
 	mouse := attachMouseEnabled(func(key string) string { return env[key] })
 	input := []byte("\x1b[?1000;1002;1003;1006h")
 	if got := filterHostOutput(t, mouse, input); !bytes.Equal(got, input) {
-		t.Fatalf("default SSH attach changed OpenCode mouse modes: got %q, want %q", got, input)
+		t.Fatalf("default SSH attach changed Provider mouse modes: got %q, want %q", got, input)
 	}
 }
 

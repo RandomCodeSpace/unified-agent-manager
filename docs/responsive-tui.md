@@ -180,7 +180,7 @@ visible as height changes. UAM does not assume a fixed phone aspect ratio.
 ## SSH, mouse, and paste
 
 Mouse reporting defaults on for local and SSH attachments alike so wheel and
-touch gestures reach mouse-aware providers such as OpenCode and OMP. Override it
+touch gestures reach mouse-aware providers such as OMP. Override it
 with `UAM_ATTACH_MOUSE=on|off|auto`, where `auto` is the default and `on` is an
 alias for it — the policy does not vary by transport. Set it to `off` when
 terminal-owned selection or right-click paste is more important than provider
@@ -233,7 +233,6 @@ role, dimensions, protocol, and capabilities do not.
 |---|---|---|
 | Claude Code | Exact when its seeded ID is retained; otherwise guarded latest continuation | UAM |
 | GitHub Copilot CLI | Exact for UAM-created records | UAM |
-| OpenCode | Exact with a retained valid root `ses_…` ID; otherwise create a new Managed Session | UAM |
 | Oh My Pi | Exact with its dedicated state; legacy records use guarded latest continuation | Primary |
 | OpenAI Codex | Guarded latest continuation | Primary |
 | Hermes Agent | Unsupported; create a new Managed Session | UAM |

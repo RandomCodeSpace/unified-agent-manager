@@ -188,7 +188,7 @@ test('a question interaction alone drives the block, so any provider gets it', (
   assert.equal(questionOf(undefined, { ...two, state: 'rejected', resolution: 'Dismissed' }, false).outcome, 'declined');
   assert.equal(questionOf(undefined, { ...two, state: 'pending', resolution: undefined }, false).outcome, 'pending');
   assert.equal(questionOf(undefined, { ...two, kind: 'permission' }, false), null);
-  // Linked to an OpenCode tool part by tool_call_id, it sits on that row like any request.
+  // Linked to a tool part by tool_call_id, it sits on that row like any request.
   const { linked, questions } = linkInteractions([item('prt_q', undefined, '', tool('question', '{}'))], [{ ...two, tool_call_id: 'prt_q' }]);
   assert.equal(linked.get('prt_q')[0].id, 'que_1');
   assert.deepEqual(questions, []);
@@ -327,8 +327,8 @@ test('a question that no longer waits is work: it joins its run and merges the r
   const { isWork, segmentActivity } = await import('../src/lib/transcript.ts');
   // Copilot's ask_user calls are tool items; other providers' questions are interactions.
   const items = [prose('u1', at(0), 'user'), reasoning('r1', at(1)), item('c1', undefined, at(2)), asked('a1', 'Which?', at(3)), item('c2', undefined, at(4)), asked('a2', 'Then?', at(5)), reasoning('r2', at(7)), prose('m1', at(9))];
-  const opencode = q('q1', 'And?', { time: at(6) });
-  const segments = segmentActivity(mergeByTime(items, [opencode]));
+  const answered = q('q1', 'And?', { time: at(6) });
+  const segments = segmentActivity(mergeByTime(items, [answered]));
   assert.deepEqual(segments.map((s) => [s.key, s.work, s.entries.map((e) => e.item?.id ?? e.interaction.id)]), [
     ['u1', false, ['u1']],
     ['r1', true, ['r1', 'c1', 'a1', 'c2', 'a2', 'q1', 'r2']],

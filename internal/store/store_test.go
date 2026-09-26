@@ -24,11 +24,53 @@ func TestLoadMissingReturnsDefaultConfig(t *testing.T) {
 	if cfg.SchemaVersion != CurrentSchemaVersion {
 		t.Fatalf("schema = %d, want %d", cfg.SchemaVersion, CurrentSchemaVersion)
 	}
-	if cfg.DefaultAgent != "opencode" {
+	if cfg.DefaultAgent != "copilot" {
 		t.Fatalf("default agent = %q", cfg.DefaultAgent)
 	}
 	if cfg.Sessions == nil {
 		t.Fatal("sessions map is nil")
+	}
+}
+
+func TestRetiredOpenCodeDefaultPreservesSavedData(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{"legacy":{"provider":"opencode","mode":"safe"}},"sessions":{"opencode:deadbeef":{"id":"deadbeef","agent":"opencode","session_name":"uam-opencode-deadbeef","provider_session_id":"ses_legacy123","name":"retained work","mode":"safe","status":"active"}},"ui":{"sort":"state","peek_width":60},"future_setting":{"keep":true}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultAgent != "copilot" {
+		t.Fatalf("retired default = %q", cfg.DefaultAgent)
+	}
+	before, err := os.ReadFile(s.Path())
+	if err != nil || string(before) != raw {
+		t.Fatalf("loading rewrote saved data: %v", err)
+	}
+	PruneOld(&cfg, time.Hour, func(string) bool { return false })
+	if err := s.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := cfg.Sessions["opencode:deadbeef"]
+	if len(cfg.Sessions) != 1 || record.Agent != "opencode" || record.Name != "retained work" || record.ProviderSessionID != "ses_legacy123" || record.Mode != ModeSafe {
+		t.Fatalf("retired record changed: %+v", record)
+	}
+	profile := cfg.Profiles["legacy"]
+	if profile.Provider == nil || *profile.Provider != "opencode" || profile.Mode == nil || *profile.Mode != ModeSafe {
+		t.Fatalf("retired profile changed: %+v", profile)
+	}
+	var unknown map[string]bool
+	if err := json.Unmarshal(cfg.unknown["future_setting"], &unknown); err != nil || !unknown["keep"] {
+		t.Fatalf("unknown data changed: %s", cfg.unknown["future_setting"])
 	}
 }
 

@@ -343,20 +343,6 @@ func TestProjectFilesRoute(t *testing.T) {
 	}
 }
 
-func TestOpenCodeCommandArgumentsRefuseShellExpansion(t *testing.T) {
-	prov := agenttest.NewProvider(agentapi.ProviderOpenCode, allCaps)
-	m := startManager(t, openTestStore(t), prov)
-	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: addProject(t, m, t.TempDir())})
-	if err != nil {
-		t.Fatal(err)
-	}
-	prov.SetCommands([]agentapi.Command{{Name: "probe-cmd"}}, nil)
-	_, err = m.Command(sum.ID, CommandRequest{RequestID: mustUUID(t), Name: "probe-cmd", Arguments: "!`touch ARG-MARKER`"})
-	if statusOf(err) != http.StatusBadRequest || len(prov.Last().CommandRuns()) != 0 {
-		t.Fatalf("shell expansion = %v, runs %d", err, len(prov.Last().CommandRuns()))
-	}
-}
-
 func TestComposerRoutes(t *testing.T) {
 	dir := composerRepo(t)
 	ts := newTestServer(t, ServerConfig{})

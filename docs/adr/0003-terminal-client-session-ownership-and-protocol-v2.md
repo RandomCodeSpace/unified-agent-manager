@@ -82,7 +82,6 @@ Every provider keeps native provider input. The current outer-screen policy is:
 | GitHub Copilot CLI | UAM | Native |
 | Hermes Agent | UAM | Native |
 | Oh My Pi | Primary | Native |
-| OpenCode | UAM | Native |
 
 `TERM` supplied to the provider is fixed to the UAM-supported value; a client
 TERM hint does not override it. Profiles may select provider, approval mode,

@@ -44,11 +44,11 @@ test: web
 test-e2e: build
 	UAM_E2E_BIN=$(CURDIR)/bin/$(BINARY) go test ./internal/session/ ./internal/app/ -run TestE2E -count=1 -v
 
-# Real-provider end-to-end tests launch the installed opencode, copilot and
+# Real-provider end-to-end tests launch the installed copilot and
 # codex CLIs and make model calls on the operator's accounts. Opt in with
 # UAM_E2E_REAL_PROVIDERS (comma-separated); provider state is isolated per run.
 test-e2e-real: build
-	UAM_E2E_BIN=$(CURDIR)/bin/$(BINARY) UAM_E2E_REAL_PROVIDERS=$${UAM_E2E_REAL_PROVIDERS:-opencode,copilot,codex} go test ./internal/e2e/ -run TestRealProvider -count=1 -v -timeout 30m
+	UAM_E2E_BIN=$(CURDIR)/bin/$(BINARY) UAM_E2E_REAL_PROVIDERS=$${UAM_E2E_REAL_PROVIDERS:-copilot,codex} go test ./internal/e2e/ -run TestRealProvider -count=1 -v -timeout 30m
 
 # Dashboard pointer checks on a real PTY (and over ssh to localhost when a
 # key-based login is available); needs no provider account.

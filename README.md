@@ -23,7 +23,7 @@ Start agents, leave them running, and reconnect when you are ready. No tmux requ
 
 <p align="center"><em>Dashboard preview</em></p>
 
-UAM gives Claude Code, Codex, Copilot, Hermes, Oh My Pi, and OpenCode one
+UAM gives Claude Code, Codex, Copilot, Hermes, and Oh My Pi one
 session list. Close the dashboard or lose an SSH connection and your agents
 keep running. Open UAM later to attach, resume, stop, or remove them.
 
@@ -86,12 +86,16 @@ dashboard instead of causing an error.
 | GitHub Copilot CLI | `copilot` |
 | Hermes Agent | `hermes` |
 | Oh My Pi | `omp` |
-| OpenCode | `opencode` |
 
-OpenCode 1.18.1 or newer is required.
-UAM verifies the owner of OpenCode's local connections before sending credentials.
-This requires access to the TCP tables in `/proc/net` on Linux or the system
-`/usr/sbin/lsof` on macOS; startup fails if the connection owner cannot be verified.
+New configurations default to Copilot. If it is unavailable, the provider selector
+falls back to an installed provider.
+
+OpenCode support has been removed from the CLI, TUI and web code. Existing
+OpenCode session records and profiles remain on disk, but sessions are excluded
+from CLI/TUI lists and cannot be dispatched, attached or resumed. An old saved
+OpenCode default becomes Copilot; a saved profile naming OpenCode must be edited
+before reuse. This change does not uninstall the separate OpenCode executable
+or delete its conversation data.
 
 Continuing a stopped session varies by agent. Some return to an exact
 conversation, while others may ask before continuing the latest one. Hermes

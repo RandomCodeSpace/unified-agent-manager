@@ -17,7 +17,6 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/codex"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/omp"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
@@ -102,6 +101,39 @@ func (f *svcFakeAdapter) Stop(ctx adapter.Context, id string) error {
 		f.sessions = nil
 	}
 	return f.stopErr
+}
+
+func TestRetiredOpenCodeRecordsHaveNoTerminalActions(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired := store.SessionRecord{ID: "deadbeef", Agent: "opencode", SessionName: "uam-opencode-deadbeef", Name: "retained work", ProviderSessionID: "ses_legacy123", Mode: store.ModeSafe, Status: store.StatusActive}
+	if err := st.Update(func(cfg *store.Config) error {
+		cfg.PutSession("opencode:deadbeef", retired)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	provider := &svcFakeAdapter{name: "copilot", available: true}
+	svc := NewService(st, adapter.NewRegistry([]adapter.AgentAdapter{provider}))
+	rows, _, err := svc.LoadSessions(context.Background())
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("retired session is listed: rows=%v error=%v", rows, err)
+	}
+	if err := svc.ResumeBackgroundExact(context.Background(), "opencode", "deadbeef"); err == nil {
+		t.Fatal("retired session resumed")
+	}
+	if _, err := svc.DispatchNamed(context.Background(), "opencode", "retired", "prompt", ".", string(store.ModeSafe)); err == nil {
+		t.Fatal("retired provider dispatched")
+	}
+	if provider.resumed != nil || provider.dispatched != nil {
+		t.Fatal("retired task was redirected to another provider")
+	}
+	cfg, err := st.Load()
+	if err != nil || cfg.Sessions["opencode:deadbeef"].ProviderSessionID != retired.ProviderSessionID {
+		t.Fatalf("retired record was lost: %v", err)
+	}
 }
 
 func TestRestartCarriesInitialResumeDecisionPastConcurrentRetainedRecord(t *testing.T) {
@@ -1003,8 +1035,6 @@ func TestProductionProviderResumeKindMatrixThroughAmbiguityGuard(t *testing.T) {
 		wantAmbiguous              bool
 		wantUnsupported            bool
 	}{
-		{name: "opencode exact", provider: "opencode", providerID: "ses_known123", newAdapter: func() adapter.AgentAdapter { return opencode.New(nil) }},
-		{name: "opencode missing identity", provider: "opencode", newAdapter: func() adapter.AgentAdapter { return opencode.New(nil) }, wantUnsupported: true},
 		{name: "claude exact", provider: "claude", providerID: "abc12345-dead-beef-cafe-0123456789ab", newAdapter: func() adapter.AgentAdapter { return claude.New(nil) }},
 		{name: "claude fallback", provider: "claude", newAdapter: func() adapter.AgentAdapter { return claude.New(nil) }, wantAmbiguous: true},
 		{name: "omp isolated", provider: "omp", newAdapter: func() adapter.AgentAdapter { return omp.New(nil) }, isolatedOMP: true},

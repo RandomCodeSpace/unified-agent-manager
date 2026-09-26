@@ -8,7 +8,7 @@ import (
 )
 
 // F14 — Default is the single source of truth for the adapter list. It must
-// build all six providers (claude, codex, copilot, hermes, omp, opencode)
+// build all five providers (claude, codex, copilot, hermes, omp)
 // regardless of whether their CLI is installed, because the names are compared
 // on the raw pre-availability list (Enabled() would be LookPath-filtered to
 // empty in CI).
@@ -20,7 +20,7 @@ func TestDefaultBuildsAllProviders(t *testing.T) {
 	}
 	sort.Strings(got)
 
-	want := []string{"claude", "codex", "copilot", "hermes", "omp", "opencode"}
+	want := []string{"claude", "codex", "copilot", "hermes", "omp"}
 	if len(got) != len(want) {
 		t.Fatalf("Default built %d adapters %v, want %d %v", len(got), got, len(want), want)
 	}

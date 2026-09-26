@@ -193,7 +193,8 @@ func (s *Service) mergeStoredSessions(live map[string]adapter.Session, cfg store
 		// Records owned by another surface (the web service) have no terminal
 		// host; listing them here would let attach/resume/stop take over a
 		// conversation the other owner drives.
-		if rec.Surface != "" {
+		// Retired OpenCode records stay on disk but have no CLI or TUI actions.
+		if rec.Surface != "" || rec.Agent == "opencode" {
 			continue
 		}
 		if sess, ok := live[key]; ok {

@@ -14,7 +14,6 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/hermes"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/omp"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
 )
 
 // Default returns every supported agent adapter, built against the shared
@@ -28,6 +27,5 @@ func Default(backend adapter.Backend) []adapter.AgentAdapter {
 		copilot.New(backend),
 		hermes.New(backend),
 		omp.New(backend),
-		opencode.New(backend),
 	}
 }

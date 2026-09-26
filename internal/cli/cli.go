@@ -15,7 +15,6 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/opencode"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agents"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/app"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
@@ -162,8 +161,6 @@ func runWithoutStore(ctx context.Context, args []string) (bool, error) {
 		return true, session.RunHost(args[1:])
 	case "__attach":
 		return true, session.RunAttach(args[1:])
-	case "__opencode":
-		return true, opencode.RunSupervisorCommand(args[1:])
 	case "web":
 		return true, runWeb(ctx, args[1:])
 	case "__web":

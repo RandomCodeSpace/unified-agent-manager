@@ -5,12 +5,11 @@ import "fmt"
 type ProviderIdentity string
 
 const (
-	ProviderClaude   ProviderIdentity = "claude"
-	ProviderCodex    ProviderIdentity = "codex"
-	ProviderCopilot  ProviderIdentity = "copilot"
-	ProviderHermes   ProviderIdentity = "hermes"
-	ProviderOMP      ProviderIdentity = "omp"
-	ProviderOpenCode ProviderIdentity = "opencode"
+	ProviderClaude  ProviderIdentity = "claude"
+	ProviderCodex   ProviderIdentity = "codex"
+	ProviderCopilot ProviderIdentity = "copilot"
+	ProviderHermes  ProviderIdentity = "hermes"
+	ProviderOMP     ProviderIdentity = "omp"
 )
 
 type OuterScreenPolicy string

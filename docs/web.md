@@ -443,7 +443,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   chooses that model; `"none"` opts the provider out, so it keeps its own
   title and UAM makes no AI call; an empty ID removes the entry, back to
   the cheapest. Only a provider with the `titles` capability can have a
-  model (Copilot, not OpenCode), and the model must be in its current list.
+  model, and the model must be in its current list.
   In Settings the **Utility model** section shows "Cheapest (currently
   GPT-6 Luna)", the provider's own title (no AI), then each visible model
   with its prices. UAM asks the model in a separate short Copilot session
@@ -553,9 +553,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   session's model when Copilot still offers it, otherwise it takes the
   defaults for new tasks from Settings, and it takes their mode. It starts closed: your
   next message opens the session. Import is offered when the installed
-  Copilot CLI supports both history reading and in-use detection;
-  OpenCode cannot tell when another program uses a session, so it offers no
-  import.
+  Copilot CLI supports both history reading and in-use detection.
 - **Another program using the session**: a session that another program has
   open, such as a terminal `copilot --resume` or a uam terminal session, is
   marked in use and cannot be imported. Before every message, command, steer,

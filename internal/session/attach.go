@@ -476,7 +476,7 @@ func resizePayload(cols, rows int) []byte {
 // stdinFilter is the attach client's input state machine. Besides the detach
 // chord and Ctrl+Z swallowing, it implements the quick detach: pressing
 // Ctrl+Left detaches when the agent's input box is (believed) empty. Bare
-// arrows are never taken — providers bind them (opencode switches subagents
+// arrows are never taken — providers bind them (for example, to switch views
 // with left/right, copilot opens its sidebar on left) — while Ctrl+Left is
 // word-left in every composer, a no-op on an empty box.
 //

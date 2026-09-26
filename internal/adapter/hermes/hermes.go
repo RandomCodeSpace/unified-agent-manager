@@ -4,8 +4,8 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter"
 )
 
-// hermes is launched bare. `--tui` fails to start the agent, and like
-// opencode hermes has no recognised auto-approve/yolo flag — passing an
+// hermes is launched bare. `--tui` fails to start the agent, and Hermes
+// has no recognised auto-approve/yolo flag — passing an
 // unknown flag makes the pane exit immediately and drop the user back to the
 // session list. Launch as plain `hermes` until a real flag is confirmed.
 var yoloArgs []string
