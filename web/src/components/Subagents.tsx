@@ -9,6 +9,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
+import { useFileHintItems } from './FileReferences';
 import { Markdown, Note, Skeleton, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
@@ -389,6 +390,7 @@ function AgentTranscriptView({
 
   // Follow new output only while the reader is at the bottom.
   const items: Item[] = transcript?.items ?? NO_ITEMS;
+  useFileHintItems(subagent.id, items, open);
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
