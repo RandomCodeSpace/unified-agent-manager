@@ -6,12 +6,12 @@ import { modelName, type Interaction, type Item, type Subagent, type SubagentSta
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
-import { approvalMark, askedOn, changedFiles, currentStep, duration, elapsedSince, foregroundItems, foregroundStart, itemTook, completedDuration, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, changedFiles, currentStep, declarationIdentity, duration, elapsedSince, foregroundItems, foregroundStart, itemTook, completedDuration, isDeclarationBoundary, isFileDeclaration, isWork, newestFileDeclarations, promoted, segmentActivity, summarizeActivity, summarizeTurn, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { turnVerb } from '../lib/verbs';
 import type { AgentTranscript } from '../state';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { CodeBlock, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkdirContext, WorkingMark, useApp } from './common';
+import { CodeBlock, DeclaredFileCard, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkdirContext, WorkingMark, useApp } from './common';
 import { DecidedRow } from './Interactions';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -22,6 +22,8 @@ import { Tip } from './ui/tooltip';
 interface Props {
   /** The Task, for the attachment routes. */
   sessionId: string;
+  /** Child transcripts retain their own interaction ownership. */
+  agentId?: string;
   items: Item[];
   identityItems?: Item[];
   liveItems?: Item[];
@@ -43,7 +45,7 @@ interface Props {
   /** The Task's directory, for links to its files. */
   workdir: string;
   /** Open a subagent's transcript in the side panel; `opener` gets focus back when it closes. */
-  onOpenAgent: (agentId: string, opener: HTMLElement) => void;
+  onOpenAgent?: (agentId: string, opener: HTMLElement) => void;
   /** Compact folds a turn's work into its head row (DESIGN.md turn line); detailed draws one activity row per run. */
   density?: Density;
   /** Open the Changes sheet from a turn's "Changed n files" line. */
@@ -63,22 +65,31 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges }: Props) {
+export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = new Map<string, Subagent>();
   for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
-  const { linked, loose, questions } = linkInteractions(items, interactions);
+  const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
+  const declarations = useMemo(() => newestFileDeclarations(items), [items]);
+  const showDeclaration = (item: Item) => isFileDeclaration(item) && declarations.has(declarationIdentity(item));
+  const declarationBoundary = (item: Item) => isDeclarationBoundary(item) && declarations.has(declarationIdentity(item));
   const groupItems = useIdentityEntries(identityItems, loose, questions);
   const turnIds = useGroupIdentities(groupItems, 'turn');
-  const groupIds = useGroupIdentities(groupItems, false, item => byParent.has(item.id));
-  const toolGroupIds = useGroupIdentities(identityItems, true, item => byParent.has(item.id) || !!endedQuestion(item, linked, live), [...loose, ...questions].filter(interaction => interaction.state !== 'pending').map(interaction => interaction.time));
+  const groupIds = useGroupIdentities(groupItems, false, item => byParent.has(item.id) || declarationBoundary(item));
+  const toolGroupIds = useGroupIdentities(identityItems, true, item => byParent.has(item.id) || declarationBoundary(item) || !!endedQuestion(item, linked, live), [...loose, ...questions].filter(interaction => interaction.state !== 'pending').map(interaction => interaction.time));
   const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds };
   const compact = density === 'compact';
   const special = (item: Item) => {
+    if (showDeclaration(item) && item.tool?.declaration) return (
+      <div key={`${item.agent_id ?? 'main'}:${item.id}`} data-history-anchor={item.id} className="flex flex-col gap-1">
+        <DeclaredFileCard declaration={item.tool.declaration} />
+        <ToolRow item={item} live={live} sessionId={sessionId} approvals={linked.get(item.id)} />
+      </div>
+    );
     const agent = byParent.get(item.id);
-    return agent ? <SubagentRow key={item.id} item={item} subagent={agent} agentItems={agents[agent.id]?.items ?? (agentSteps[agent.id] ? [agentSteps[agent.id]] : undefined)} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
+    return agent && onOpenAgent ? <SubagentRow key={item.id} item={item} subagent={agent} agentItems={agents[agent.id]?.items ?? (agentSteps[agent.id] ? [agentSteps[agent.id]] : undefined)} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
   };
-  const own = (item: Item) => byParent.has(item.id);
+  const own = (item: Item) => byParent.has(item.id) || showDeclaration(item);
 
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
   const out: ReactNode[] = [];
@@ -109,7 +120,7 @@ export function Transcript({ sessionId, items, identityItems = items, liveItems 
       const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
       out.push(
         <div key={`turn-${id}`} className="flex flex-col gap-3">
-          {(last && working) || showEnd || summary.count > 0 ? <TurnHead id={id} working={last && working} start={foregroundStart(turnTimings)} timing={timing} summary={summary} entries={group} ctx={gctx} /> : null}
+          {(last && working) || showEnd || summary.count > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} start={foregroundStart(turnTimings)} timing={timing} summary={summary} entries={group} ctx={gctx} /> : null}
           {renderCompact(group, gctx, special, own)}
           {changed.length > 0 && <ChangedLine files={changed} onOpen={onOpenChanges} />}
         </div>,
@@ -194,8 +205,11 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
  * mounted on the first open only; the counts turn `error` after a failure and `attention`
  * while a call waits for the user.
  */
-function TurnHead({ id, working, start, timing, summary, entries, ctx }: { id: string; working: boolean; start?: string; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext }) {
-  const [open, setOpen] = useDisclosure(`turn:${id}`);
+function TurnHead({ id, agentId, working, start, timing, summary, entries, ctx }: { id: string; agentId?: string; working: boolean; start?: string; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext }) {
+  // Item IDs are local to their agent; main-turn identities stay unchanged.
+  const scope = agentId ? 'agent-turn' : 'turn';
+  const scopedId = agentId ? encodeURIComponent(JSON.stringify([agentId, id])) : id;
+  const [open, setOpen] = useDisclosure(`${scope}:${scopedId}`);
   const [opened, setOpened] = useState(open);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -206,13 +220,14 @@ function TurnHead({ id, working, start, timing, summary, entries, ctx }: { id: s
   const elapsed = working ? elapsedSince(start, now) : completedDuration(timing);
   const head = working ? (elapsed ? `Busy for ${elapsed}` : 'Busy') : elapsed ? `Took ${elapsed}` : '';
   const text = [head, ...summary.parts.map((p) => p.text)].filter(Boolean).join(' · ');
-  const timelineId = `turn-${id}-timeline`;
+  const domId = `${scope}-${scopedId}`;
+  const timelineId = `${domId}-timeline`;
   const toggle = () => {
     setOpened(true);
     setOpen((o) => !o);
   };
   return (
-    <div id={`turn-${id}`} className="flex flex-col rounded-sm">
+    <div id={domId} className="flex flex-col rounded-sm">
       <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
         {working && <WorkingMark />}
         {working && <span role="status" className="sr-only">Busy</span>}
@@ -583,6 +598,8 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className }: { it
         <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised">
           <span className="sr-only">You: </span>
           {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
+          {item.steer_status === 'accepted' && <span className="block text-caption text-muted">Accepted · delivery unconfirmed</span>}
+          {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
           {item.text && <Markdown text={item.text} />}
           {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
         </div>
@@ -989,22 +1006,11 @@ function SubagentRow({ item, subagent, agentItems, provider, onOpen }: { item: I
 }
 
 /** A subagent's own transcript at 13px: the same rows, blocks and bubbles as the main one, with its own requests. */
-export function AgentItems({ sessionId, workdir, agentId, items, identityItems = items, historyItemSeq, interactions, live }: { sessionId: string; workdir: string; agentId: string; items: Item[]; identityItems?: Item[]; historyItemSeq?: Record<string, number>; interactions: Interaction[]; live: boolean }) {
-  const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
-  const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
-  const groupItems = useIdentityEntries(identityItems, loose, questions);
-  const groupIds = useGroupIdentities(groupItems);
-  const toolGroupIds = useGroupIdentities(identityItems, true, item => !!endedQuestion(item, linked, live), [...loose, ...questions].filter(interaction => interaction.state !== 'pending').map(interaction => interaction.time));
-  const ctx: RenderContext = { sessionId, live, streamingId: live ? items[items.length - 1]?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds };
+export function AgentItems({ sessionId, workdir, provider, agentId, items, identityItems = items, historyItemSeq, interactions, live, density }: { sessionId: string; workdir: string; provider: string; agentId: string; items: Item[]; identityItems?: Item[]; historyItemSeq?: Record<string, number>; interactions: Interaction[]; live: boolean; density: Density }) {
   return (
-    <SessionContext.Provider value={sessionId}>
-      <WorkdirContext.Provider value={workdir}>
-        <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
-          {renderEntries(mergeByTime(items, [...loose, ...questions]), ctx)}
-          {live && <TurnStatus working />}
-        </div>
-      </WorkdirContext.Provider>
-    </SessionContext.Provider>
+    <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
+      <Transcript sessionId={sessionId} agentId={agentId} provider={provider} workdir={workdir} items={items} identityItems={identityItems} historyItemSeq={historyItemSeq} interactions={interactions} subagents={[]} live={live} working={live} density={density} />
+    </div>
   );
 }
 

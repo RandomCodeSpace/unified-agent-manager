@@ -46,11 +46,11 @@ const (
 	frameDocument = "diagram-frame.html"
 	frameSecurity = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 	// viewSecurity replaces the policy for a file of a Task's directory opened
-	// in its own tab, such as an HTML report the agent wrote: its scripts run
+	// in its own tab or the app's preview, such as an HTML report: its scripts run
 	// and it loads what it likes, but without allow-same-origin its origin is
 	// opaque, so it holds no cookie, cannot read this service's responses and
 	// cannot reach the opener or navigate the top level.
-	viewSecurity = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+	viewSecurity = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; frame-ancestors 'self'"
 	// fileKeyRoute is the view route under a file key (fileKey), the one
 	// route that checks its own credential instead of the cookie.
 	fileKeyRoute = "GET /api/sessions/{id}/files/key/{key}/{path...}"
@@ -82,6 +82,7 @@ type Server struct {
 	version   string
 	mux       *http.ServeMux
 	heartbeat time.Duration
+	grants    *tempGrants
 }
 
 // NewServer validates cfg and builds the handler.
@@ -111,6 +112,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		}
 		s.assets = sub
 	}
+	s.grants = newTempGrants(s.m)
 	s.routes()
 	return s, nil
 }
@@ -164,6 +166,9 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/files/raw", s.handleRawImage)
 	mux.HandleFunc("GET /api/sessions/{id}/files/view/{path...}", s.handleViewFile)
 	mux.HandleFunc(fileKeyRoute, s.handleViewFile)
+	mux.HandleFunc("POST /api/sessions/{id}/file-grants", s.handleCreateGrant)
+	mux.HandleFunc("DELETE /api/sessions/{id}/file-grants/{grant_id}", s.handleDeleteGrant)
+	mux.HandleFunc(grantKeyRoute, s.handleGrantFile)
 	mux.HandleFunc("POST /api/sessions/{id}/attachments", s.handleUpload)
 	mux.HandleFunc("GET /api/sessions/{id}/attachments/{attachment_id}", s.handleAttachment)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/resume", s.handleQueueResume)
@@ -243,7 +248,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // checks the key.
 func (s *Server) fileKeyRequest(r *http.Request) bool {
 	_, pattern := s.mux.Handler(r)
-	return pattern == fileKeyRoute
+	return pattern == fileKeyRoute || pattern == grantKeyRoute
 }
 
 // refuse answers a request the checks turn away.
@@ -268,7 +273,7 @@ func (s *Server) logRequest(r *http.Request, outcome string, status int) {
 		}
 		headers[name] = logged
 	}
-	args := []any{"method", r.Method, "path", capLogValue(r.URL.RequestURI()), "remote", r.RemoteAddr,
+	args := []any{"method", r.Method, "path", capLogValue(redactGrantURL(r.URL.RequestURI())), "remote", r.RemoteAddr,
 		"host", capLogValue(r.Host), "headers", headers, "outcome", outcome}
 	if status != 0 {
 		args = append(args, "status", status)
@@ -290,7 +295,7 @@ func redactHeaderValue(name, value string) string {
 			return "[redacted]"
 		}
 	}
-	return capLogValue(value)
+	return capLogValue(redactGrantURL(value))
 }
 
 func capLogValue(v string) string {
@@ -390,7 +395,11 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	s.m.RefreshModels()
-	writeJSON(w, http.StatusOK, Meta{Version: s.version, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs()})
+	meta := Meta{Version: s.version, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs()}
+	if roots, err := s.grants.rootsForUse(); err == nil {
+		meta.TempRoot, meta.TempRootAliases = roots.canonical, roots.aliases
+	}
+	writeJSON(w, http.StatusOK, meta)
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, _ *http.Request) {
@@ -799,8 +808,8 @@ func (s *Server) handleRawImage(w http.ResponseWriter, r *http.Request) {
 
 // handleViewFile serves any file of the Task's directory, named by the path
 // after view/ so that a page's relative links resolve to its siblings. Every
-// response is sandboxed (viewSecurity), which Chromium's PDF viewer renders
-// under too; a type the route does not display is a download. Files change,
+// response is sandboxed (viewSecurity); browser support for embedding a type
+// varies, and a type the route does not display is a download. Files change,
 // so each load revalidates. The cookie-checked view
 // route redirects to the same path under a file key, which the sandboxed
 // page's own requests then carry.
@@ -814,7 +823,11 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 	} else {
 		key := fileKey(s.token, r.Host, id, time.Now().Add(fileKeyTTL).Unix())
 		// The id segment is escaped, so the first /files/view/ is the route's.
-		http.Redirect(w, r, strings.Replace(r.URL.EscapedPath(), "/files/view/", "/files/key/"+key+"/", 1), http.StatusFound) // #nosec G710 -- the request's own path, which this route matched under /api/sessions/; never another host.
+		target := strings.Replace(r.URL.EscapedPath(), "/files/view/", "/files/key/"+key+"/", 1)
+		if r.URL.Query().Get("download") == "1" {
+			target += "?download=1"
+		}
+		http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- the request's own path, which this route matched under /api/sessions/; never another host.
 		return
 	}
 	f, err := s.m.ViewFile(id, r.PathValue("path"))
@@ -828,8 +841,9 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "private, no-cache")
 	h.Set("ETag", fmt.Sprintf(`"%x-%x"`, f.Info.Size(), f.Info.ModTime().UnixNano()))
 	h.Set("Content-Security-Policy", viewSecurity)
+	h.Set("X-Frame-Options", "SAMEORIGIN")
 	disposition := "inline"
-	if f.MIME == "application/octet-stream" {
+	if f.MIME == "application/octet-stream" || r.URL.Query().Get("download") == "1" {
 		disposition = "attachment"
 	}
 	if value := mime.FormatMediaType(disposition, map[string]string{"filename": f.Info.Name()}); value != "" {
@@ -853,7 +867,12 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "could not read the upload")
 		return
 	}
-	att, err := s.m.Upload(r.PathValue("id"), r.URL.Query().Get("name"), data)
+	var model *string
+	if r.URL.Query().Has("model") {
+		value := r.URL.Query().Get("model")
+		model = &value
+	}
+	att, err := s.m.upload(r.PathValue("id"), r.URL.Query().Get("name"), data, model)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -874,7 +893,7 @@ func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {
 	if att.MIME == mimeText {
 		contentType = "text/plain; charset=utf-8"
 	}
-	if isImage(att.MIME) {
+	if isImage(att.MIME) && r.URL.Query().Get("download") != "1" {
 		disposition = "inline"
 	}
 	h.Set("Content-Type", contentType)

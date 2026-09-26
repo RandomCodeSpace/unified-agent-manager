@@ -1,6 +1,40 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, firstLine, foldWindow, linkInteractions, mainArgument, mergeByTime, questionOf, subagentSummary, summarizeTools, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, declarationIdentity, firstLine, foldWindow, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, newestFileDeclarations, promoted, questionOf, subagentSummary, summarizeTools, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+
+test('only a successful recorded file declaration stands outside compact activity', () => {
+  const declaration = { artifact_id: 'artifact-1', path: '/repo/README' };
+  const call = { id: 'call-1', agent_id: 'child-1', kind: 'tool', tool: { name: 'uam_show_file', status: 'completed', declaration } };
+  assert.equal(isFileDeclaration(call), true);
+  assert.equal(promoted({ item: call }, { live: false, approvals: new Map() }, isFileDeclaration), true);
+  assert.equal(call.agent_id, 'child-1');
+  for (const tool of [
+    { ...call.tool, status: 'running' },
+    { ...call.tool, status: 'failed' },
+    { ...call.tool, declaration: undefined },
+    { ...call.tool, declaration: { ...declaration, path: '' } },
+    { ...call.tool, declaration: { ...declaration, path: 'README' } },
+    { ...call.tool, name: 'foreign_tool' },
+  ]) assert.equal(isFileDeclaration({ ...call, tool }), false);
+});
+
+test('only the newest 128 declarations in a transcript window get cards', () => {
+  const call = (id, agent_id = undefined) => ({ id, agent_id, kind: 'tool', tool: { name: 'uam_show_file', status: 'completed', declaration: { artifact_id: `artifact-${id}`, path: `/repo/${id}` } } });
+  const items = Array.from({ length: 129 }, (_, index) => call(`call-${index}`));
+  const cards = newestFileDeclarations(items);
+  assert.equal(cards.size, 128);
+  assert.equal(cards.has(declarationIdentity(items[0])), false);
+  assert.equal(cards.has(declarationIdentity(items[1])), true);
+  assert.equal(cards.has(declarationIdentity(items[128])), true);
+  const context = { live: false, approvals: new Map() };
+  assert.equal(promoted({ item: items[0] }, context, item => cards.has(declarationIdentity(item))), false);
+  assert.equal(promoted({ item: items[1] }, context, item => cards.has(declarationIdentity(item))), true);
+  const agent = call('call-0', 'child-1');
+  assert.notEqual(declarationIdentity(agent), declarationIdentity(items[0]));
+  const replay = newestFileDeclarations([...items, { ...items[128], tool: { ...items[128].tool, status: 'failed' } }]);
+  assert.equal(replay.has(declarationIdentity(items[128])), false);
+  assert.equal(replay.has(declarationIdentity(items[0])), true);
+});
 
 test('recent history starts at a whole turn and paging reveals every retained item', () => {
   const items = Array.from({ length: 345 }, (_, index) => ({ id: String(index), kind: index % 30 === 0 ? 'user' : 'assistant' }));
@@ -473,4 +507,16 @@ test('compact completed subagent previews preserve the meaningful plain report l
   for (const status of ['completed', 'idle', 'failed']) {
     assert.equal(subagentSummary({ status, result_summary }, undefined, undefined), 'Two templates changed.');
   }
+});
+
+
+test('utility summaries describe only successful completed results and preserve live/error fallbacks', () => {
+  const child = { summary: 'Verified the cache stays bounded.', result_summary: '## Report\nExisting report line.', preview: 'Checking file references', error: 'The check failed.' };
+  for (const status of ['completed', 'idle']) {
+    assert.equal(subagentSummary({ ...child, status }, undefined, undefined), 'Verified the cache stays bounded.');
+    assert.equal(subagentSummary({ ...child, status, summary: undefined }, undefined, undefined), 'Existing report line.');
+  }
+  assert.equal(subagentSummary({ ...child, status: 'running' }, undefined, undefined), 'Checking file references');
+  assert.equal(subagentSummary({ ...child, status: 'failed' }, undefined, undefined), 'The check failed.');
+  assert.equal(subagentSummary({ ...child, status: 'cancelled' }, undefined, undefined), 'Existing report line.');
 });

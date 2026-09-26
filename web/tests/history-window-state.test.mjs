@@ -205,6 +205,31 @@ test('overlapping page corrections yield to a newer live item before or during t
   }
 });
 
+test('older and newer page fetches place a confirmed idle steer before retained later content', () => {
+  const start = { id: 'start', kind: 'user', time: '2026-09-26T10:00:00Z' };
+  const receipt = { id: 'steer', kind: 'user', delivery: 'steer', steer_status: 'accepted', text: 'next', time: '2026-09-26T10:00:01Z' };
+  const oldAnswer = { id: 'old-answer', kind: 'assistant', text: 'live correction', time: '2026-09-26T10:00:02Z' };
+  const echo = { id: 'steer', kind: 'user', text: 'next', time: '2026-09-26T10:00:03Z' };
+  const newAnswer = { id: 'new-answer', kind: 'assistant', text: 'new turn', time: '2026-09-26T10:00:04Z' };
+  const held = [start, receipt, oldAnswer, newAnswer];
+  const page = [start, { ...oldAnswer, text: 'stale page' }, echo, newAnswer];
+  for (const direction of ['older', 'newer']) {
+    const boundary = itemCursor('start');
+    let state = { ...initialState, selectedId: 'task', detailSeq: 10, historyItemSeq: { 'old-answer': 25 }, detail: {
+      ...session(held, direction === 'older' ? boundary : ''),
+      history_after: direction === 'newer' ? boundary : '',
+      recent_items: held, history_index: held,
+    } };
+    state = begin(state, direction);
+    state = deliver(state, page, '', '', 20);
+    for (const items of [state.detail.items, state.detail.recent_items, state.detail.history_index]) {
+      assert.deepEqual(ids(items), ['start', 'old-answer', 'steer', 'new-answer'], `${direction} page order`);
+    }
+    assert.equal(state.detail.items[1].text, 'live correction', `${direction} kept a newer live correction`);
+    assert.equal(state.detail.items[2].time, echo.time, `${direction} used provider echo time`);
+  }
+});
+
 test('an HTTP page covering future SSE updates suppresses only its own items', () => {
   let state = begin(loaded(transcript(200)));
   state = deliver(state, transcript(150).slice(100), itemCursor('100'), '', 20);

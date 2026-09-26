@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { DiagramError, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
+import { usePreview } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
 import { CodeBlock, Note, Spinner } from './common';
 import { Button } from './ui/button';
@@ -14,6 +15,7 @@ type View = 'diagram' | 'code';
  * does not parse, the code shows instead, the latter with a quiet note.
  */
 export function DiagramCard({ source, ready, children }: { source: string; ready: boolean; children: ReactNode }) {
+  const preview = usePreview();
   const [view, setView] = useState<View>('diagram');
   const [result, setResult] = useState<{ source: string; rendered?: Rendered; error?: string } | null>(null);
   const [open, setOpen] = useState(false);
@@ -40,7 +42,11 @@ export function DiagramCard({ source, ready, children }: { source: string; ready
       type="button"
       className="block w-full cursor-zoom-in px-3 py-3 outline-hidden focus-visible:outline-2 focus-visible:-outline-offset-2 animate-fade-in"
       aria-label="Open diagram"
-      onClick={() => {
+      onClick={event => {
+        if (preview) {
+          preview({ url, name: 'Diagram', description: 'mermaid', image: true, original: false }, event.currentTarget);
+          return;
+        }
         setShown(true);
         setOpen(true);
       }}
@@ -74,7 +80,7 @@ export function DiagramCard({ source, ready, children }: { source: string; ready
       >
         {children}
       </CodeBlock>
-      {shown && rendered && <Lightbox open={open} onOpenChange={setOpen} onClosed={() => setShown(false)} title="Diagram" description="mermaid" src={url} alt="Diagram" />}
+      {!preview && shown && rendered && <Lightbox open={open} onOpenChange={setOpen} onClosed={() => setShown(false)} title="Diagram" description="mermaid" src={url} alt="Diagram" />}
     </>
   );
 }

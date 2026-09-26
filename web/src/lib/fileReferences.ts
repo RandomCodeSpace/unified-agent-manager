@@ -1,12 +1,13 @@
 import type { Item } from '../api';
 import { taskFile } from './markdown.ts';
+import { isFileDeclaration } from './transcript.ts';
 
 export const FILE_CACHE_ENTRIES = 256;
 export const FILE_CACHE_BYTES = 256 * 1024;
 export const FILE_BATCH_PATHS = 64;
 export const FILE_BODY_BYTES = 512 * 1024;
 const encoder = new TextEncoder();
-const localTools = new Set(['view', 'create', 'edit', 'apply_patch']);
+const localTools = new Set(['view', 'create', 'edit', 'apply_patch', 'uam_show_file']);
 const changingTools = new Set(['create', 'edit', 'apply_patch']);
 
 export function hintPath(path: string, workdir: string): string | undefined {
@@ -15,7 +16,11 @@ export function hintPath(path: string, workdir: string): string | undefined {
 }
 export function localHints(item: Item, workdir: string): string[] {
   if (!item.tool || !localTools.has(item.tool.name)) return [];
-  return (item.tool.file_paths ?? []).flatMap(path => {
+  if (item.tool.name === 'uam_show_file' && !isFileDeclaration(item)) return [];
+  const paths = item.tool.name === 'uam_show_file'
+    ? (item.tool.file_paths ?? []).filter(path => path === item.tool?.declaration?.path)
+    : item.tool.file_paths ?? [];
+  return paths.flatMap(path => {
     const normalized = hintPath(path, workdir);
     return normalized ? [normalized] : [];
   });

@@ -73,6 +73,70 @@ func TestTurnTimingForegroundBoundarySurvivesBackgroundAndReload(t *testing.T) {
 	}
 }
 
+func TestTurnTimingSteerReceiptOnlyAnchorsAfterIdleEcho(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	start, advance := turnClock(m)
+	sum, conv := createSession(t, m, prov)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.EmitItem(agentapi.Item{ID: "start", Kind: agentapi.ItemUser, Time: start})
+	conv.EmitItem(agentapi.Item{ID: "late-steer", Kind: agentapi.ItemUser, Text: "later", Time: start.Add(time.Second), Delivery: agentapi.DeliverySteer, SteerStatus: agentapi.SteerAccepted})
+	conv.EmitItem(agentapi.Item{ID: "old-answer", Kind: agentapi.ItemAssistant, Text: "old turn", Time: start.Add(2 * time.Second)})
+	if got := detail(t, m, sum.ID).TurnTimings; len(got) != 1 || got[0].UserItemID != "start" {
+		t.Fatalf("receipt changed the running turn: %+v", got)
+	}
+	advance(3 * time.Second)
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	conv.EmitTurn(agentapi.TurnWorking, "") // Copilot delivered the steer after idle.
+	conv.EmitItem(agentapi.Item{ID: "late-steer", Kind: agentapi.ItemUser, Text: "later", Time: start.Add(3 * time.Second)})
+	got := detail(t, m, sum.ID)
+	if len(got.TurnTimings) != 2 || got.TurnTimings[1].UserItemID != "late-steer" {
+		t.Fatalf("idle echo did not anchor its real turn: %+v", got.TurnTimings)
+	}
+	if len(got.Items) != 3 || got.Items[0].ID != "start" || got.Items[1].ID != "old-answer" || got.Items[2].ID != "late-steer" || !got.Items[2].Time.Equal(start.Add(3*time.Second)) {
+		t.Fatalf("idle echo kept receipt before old-turn content or time: %+v", got.Items)
+	}
+	var echoes int
+	for _, item := range got.Items {
+		if item.ID == "late-steer" {
+			echoes++
+			if item.SteerStatus != "" || item.Delivery != "" {
+				t.Fatalf("provider echo did not replace receipt: %+v", item)
+			}
+		}
+	}
+	if echoes != 1 {
+		t.Fatalf("receipt and echo made %d rows", echoes)
+	}
+}
+
+func TestSteerReceiptEchoKeepsKnownUploadWhenProviderOmitsIt(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	known := agentapi.Attachment{ID: "upload-1", Name: "note.txt", MIME: "text/plain", Size: 7}
+	at := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+	conv.EmitItem(agentapi.Item{ID: "steer", Kind: agentapi.ItemUser, Text: "read note", Time: at, Delivery: agentapi.DeliverySteer, SteerStatus: agentapi.SteerAccepted, Attachments: []agentapi.Attachment{known}})
+	conv.EmitItem(agentapi.Item{ID: "old-answer", Kind: agentapi.ItemAssistant, Text: "old turn", Time: at.Add(time.Second)})
+	conv.EmitItem(agentapi.Item{ID: "steer", Kind: agentapi.ItemUser, Text: "read note", Time: at.Add(2 * time.Second), Delivery: agentapi.DeliverySteer})
+	items := detail(t, m, sum.ID).Items
+	if len(items) != 2 || items[0].ID != "steer" || !items[0].Time.Equal(at) || items[1].ID != "old-answer" || items[0].SteerStatus != "" || len(items[0].Attachments) != 1 || items[0].Attachments[0] != known {
+		t.Fatalf("provider echo lost the known upload or did not replace receipt: %+v", items)
+	}
+}
+
+func TestSteerReceiptHistoryKeepsKnownUploadWhenProviderOmitsIt(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	known := agentapi.Attachment{ID: "upload-1", Name: "note.txt", MIME: "text/plain", Size: 7}
+	conv.EmitItem(agentapi.Item{ID: "steer", Kind: agentapi.ItemUser, Text: "read note", Delivery: agentapi.DeliverySteer, SteerStatus: agentapi.SteerAccepted, Attachments: []agentapi.Attachment{known}})
+	m.mu.Lock()
+	m.applyHistoryLocked(m.sessions[sum.ID], agentapi.History{Items: []agentapi.Item{{ID: "steer", Kind: agentapi.ItemUser, Text: "read note", Delivery: agentapi.DeliverySteer}}}, false)
+	m.mu.Unlock()
+	items := detail(t, m, sum.ID).Items
+	if len(items) != 1 || items[0].SteerStatus != "" || len(items[0].Attachments) != 1 || items[0].Attachments[0] != known {
+		t.Fatalf("provider history lost known receipt upload: %+v", items)
+	}
+}
+
 func TestTurnTimingStopAndFailureWaitForTerminalEvidence(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	start, advance := turnClock(m)

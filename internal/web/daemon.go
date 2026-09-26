@@ -358,6 +358,7 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 		_ = mgr.Shutdown(context.Background())
 		return err
 	}
+	defer srv.Close()
 	ln, err := net.Listen(listenNetwork(listen), listen)
 	if err != nil {
 		_ = mgr.Shutdown(context.Background())
@@ -419,6 +420,7 @@ wait:
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	srv.Close()
 	if err := httpSrv.Shutdown(ctx); err != nil {
 		log.Warn("uam web http shutdown", "error", err)
 	}

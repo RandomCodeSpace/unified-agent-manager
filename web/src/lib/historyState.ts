@@ -1,23 +1,39 @@
 import type { HistoryPage, Item, SessionDetail } from '../api';
-import { boundItems, itemCursor, mergeItems, TAIL_ITEMS } from './historyWindow.ts';
-import { questionOf } from './transcript.ts';
+import { boundItems, idleSteerEcho, itemCursor, mergeItems, placeIdleSteerEchoes, TAIL_ITEMS } from './historyWindow.ts';
+import { isFileDeclaration, questionOf } from './transcript.ts';
 
 /** Identity/grouping records survive page eviction; no deferred or chat text does. */
 export function indexItem(item: Item): Item {
   const tool = item.tool;
   return {
     id: item.id, kind: item.kind, time: item.time, ended_at: item.ended_at, agent_id: item.agent_id, delivery: item.delivery,
+    ...(item.steer_status ? { steer_status: item.steer_status } : {}),
     compact: item.compact,
-    ...(tool ? { tool: { name: tool.name, status: tool.status, question_outcome: tool.question_outcome ?? questionOf(tool, undefined, true)?.outcome } } : {}),
+    ...(tool ? { tool: { name: tool.name, status: tool.status, question_outcome: tool.question_outcome ?? questionOf(tool, undefined, true)?.outcome, ...(isFileDeclaration(item) ? { declaration_boundary: true } : {}) } } : {}),
 
   };
 }
+/** A provider idle echo starts a new turn at its actual position, after any old-turn output. */
+export function upsertTranscriptItem(items: Item[], item: Item): Item[] {
+  const at = items.findIndex(previous => previous.id === item.id);
+  if (at < 0) return [...items, item];
+  if (idleSteerEcho(items[at], item)) return [...items.slice(0, at), ...items.slice(at + 1), item];
+  const next = items.slice();
+  next[at] = item;
+  return next;
+}
 export function indexPage(index: Item[] = [], items: Item[], direction: 'older' | 'newer' = 'newer'): Item[] {
   const incoming = items.map(indexItem), fresh = new Map(incoming.map(item => [item.id, item]));
-  const known = new Set(index.map(item => item.id));
+  const known = new Map(index.map(item => [item.id, item]));
+  const moved = new Set(incoming.filter(item => {
+    const previous = known.get(item.id);
+    return previous && idleSteerEcho(previous, item);
+  }).map(item => item.id));
   const added = incoming.filter(item => !known.has(item.id));
-  const updated = index.map(item => fresh.get(item.id) ?? item);
-  return (direction === 'older' ? [...added, ...updated] : [...updated, ...added]).slice(-2000);
+  const updated = index.filter(item => !moved.has(item.id)).map(item => fresh.get(item.id) ?? item);
+  const echoes = incoming.filter(item => moved.has(item.id));
+  const merged = direction === 'older' ? [...added, ...updated, ...echoes] : [...updated, ...incoming.filter(item => !known.has(item.id) || moved.has(item.id))];
+  return placeIdleSteerEchoes(merged, incoming, moved).slice(-2000);
 }
 export function initialWindow(detail: SessionDetail): SessionDetail {
   if (detail.representation !== 'compact-v1') return detail;

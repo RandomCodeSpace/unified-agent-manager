@@ -390,10 +390,10 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current === UTILITY_NONE ? '' : current);
               const cost = (m: Model) => (p.capabilities.usage ? modelCostLine(m) : '');
               const cheapest = p.models.find((m) => m.id === p.cheapest_model);
-              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses for its own small AI jobs, such as titling new tasks from their first message. Pick the cheapest that does the job.">
+              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses to title new tasks and summarize completed subagent results. None keeps provider titles and result excerpts without utility AI calls.">
                 <Select aria-label={`${p.display_name} utility model`} aria-describedby={`utility-${p.name}-help`} value={current} disabled={saving} className="sm:w-72" items={[
                   { value: '', label: cheapestLabel(p), description: cheapest && cost(cheapest) },
-                  { value: UTILITY_NONE, label: `${p.display_name}'s own title (no AI)` },
+                  { value: UTILITY_NONE, label: 'None (no utility AI)' },
                   ...choices.map(({ model, note }) => ({ value: model.id, label: `${model.name}${note ? ` (${note.toLowerCase()})` : ''}`, description: cost(model), hidden: !!note })),
                 ]} onValueChange={(id) => void save({ title_model: { ...settings.title_model, [p.name]: id } })} />
               </Row>;

@@ -5,6 +5,7 @@
 
 import { visibleModels } from './lib/models';
 import { foregroundRead } from './lib/reads';
+import { PREVIEW_BYTES, previewMetadata, readTextPreview, type PreviewMetadata, type TextPreview } from './lib/preview';
 
 export type SessionState =
   | 'idle'
@@ -201,6 +202,18 @@ export interface Meta {
   version: string;
   providers: ProviderInfo[];
   recent_workdirs: string[];
+  /** Syntax-only temporary-file eligibility; availability is checked only on Open. */
+  temp_root?: string;
+  temp_root_aliases?: string[];
+}
+
+export interface FileGrant {
+  id: string;
+  url: string;
+  name: string;
+  mime: string;
+  size: number;
+  expires_at: string;
 }
 
 /** Settings a new Task starts with. `context_size` is `default` when unset; `effort` may be empty. */
@@ -302,6 +315,14 @@ export interface SessionSummary {
 export type ItemKind = 'user' | 'assistant' | 'reasoning' | 'tool' | 'notice';
 export type ToolStatus = 'pending' | 'running' | 'completed' | 'failed';
 
+/** Display metadata from a successful local file declaration; opening still checks the file. */
+export interface FileDeclaration {
+  artifact_id: string;
+  path: string;
+  title?: string;
+  type_hint?: string;
+}
+
 export interface ToolCall {
   name: string;
   title?: string;
@@ -310,6 +331,9 @@ export interface ToolCall {
   output?: string;
   /** Exact local tool metadata; eligibility only, never proof that a file exists. */
   file_paths?: string[];
+  declaration?: FileDeclaration;
+  /** Client-only marker for stable history grouping after declaration metadata leaves the item window. */
+  declaration_boundary?: boolean;
   display_arg?: string;
   path?: string;
   has_input?: boolean;
@@ -331,6 +355,8 @@ export interface Item {
   id: string;
   kind: ItemKind;
   delivery?: 'steer' | 'autopilot';
+  /** A local steer receipt; absent after the provider records its user message. */
+  steer_status?: 'accepted' | 'not_delivered';
   text?: string;
   tool?: ToolCall;
   /** When it began: a tool call's start, a thought's model call start. */
@@ -353,6 +379,8 @@ export type SubagentStatus = 'running' | 'idle' | 'completed' | 'failed' | 'canc
 export interface Subagent {
   preview?: string;
   result_summary?: string;
+  /** Utility-model summary of this completed result, when generation succeeded. */
+  summary?: string;
   id: string;
   /** Item id of the `task` tool call that started this subagent (a tool item's id is the provider tool call id). */
   parent_tool_call_id?: string;
@@ -423,6 +451,7 @@ export interface Answer {
 }
 
 export type PromptMode = 'send' | 'steer' | 'queue';
+export type PromptSettings = Pick<TaskDefaults, 'model' | 'effort' | 'context_size'>;
 export type SubmissionStatus = 'accepted' | 'rejected' | 'uncertain' | 'queued' | 'cancelled';
 export interface QueuedPrompt {
   request_id: string;
@@ -430,6 +459,7 @@ export interface QueuedPrompt {
   queued_at: string;
   files?: string[];
   attachments?: Attachment[];
+  settings?: PromptSettings;
 }
 
 /** Structured parts of a prompt beside its text. */
@@ -673,6 +703,30 @@ async function errorBody(res: Response): Promise<{ message: string; body: Record
   return { message: `${res.status} ${res.statusText}`.trim(), body: {} };
 }
 
+/** Click-only file reads share admission and authentication handling with other UI reads. */
+async function filePreview(url: string, signal: AbortSignal, knownMetadata?: PreviewMetadata): Promise<PreviewMetadata & Partial<TextPreview>> {
+  return foregroundRead(async () => {
+    const request = async (method: 'HEAD' | 'GET') => {
+      const response = await fetch(url, { method, credentials: 'same-origin', signal, headers: method === 'GET' ? { Range: `bytes=0-${PREVIEW_BYTES - 1}` } : undefined });
+      signal.throwIfAborted();
+      if (response.status === 401) notifyUnauthorized();
+      if (!response.ok && !(method === 'GET' && response.status === 416)) {
+        await response.body?.cancel();
+        throw new ApiError(response.status, response.status === 404 ? 'This file is no longer available.' : 'The file could not be opened.');
+      }
+      return response;
+    };
+    const metadata = knownMetadata ?? previewMetadata((await request('HEAD')).headers);
+    if (metadata.kind !== 'text') return metadata;
+    const response = await request('GET');
+    if (response.status !== 416 && previewMetadata(response.headers).kind !== 'text') {
+      await response.body?.cancel();
+      throw new Error('The file type changed. Close and open the preview again.');
+    }
+    return { ...metadata, ...await readTextPreview(response, signal) };
+  }, signal);
+}
+
 const enc = encodeURIComponent;
 
 export const api = {
@@ -726,7 +780,7 @@ export const api = {
   promptSubagent: (id: string, agentId: string, text: string, request_id: string) =>
     call<Submission>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/prompt`, { text, request_id }),
   deleteSession: (id: string) => call<void>('DELETE', `/api/sessions/${enc(id)}`),
-  prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras = {}) =>
+  prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) =>
     call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id, mode, ...extras }),
   /** Runs a listed command; the rules of a send (409 while a turn runs, no queue or steer). */
   command: (id: string, name: string, args: string, request_id: string, extras: PromptExtras = {}) =>
@@ -736,6 +790,9 @@ export const api = {
   /** The same listing for a Project's directory: a new Task's `@` picker, before the Task exists. */
   projectFiles: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/projects/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
   upload: uploadFile,
+  filePreview,
+  createFileGrant: (id: string, path: string, signal: AbortSignal) => call<FileGrant>('POST', `/api/sessions/${enc(id)}/file-grants`, { path }, false, signal),
+  revokeFileGrant: (id: string, grantId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/file-grants/${enc(grantId)}`),
   resolveFiles: (id: string, paths: string[], signal?: AbortSignal) => foregroundRead(() => call<{ files: { path: string; exists: boolean; kind: 'file' | 'unavailable' }[] }>('POST', `/api/sessions/${enc(id)}/files/resolve`, { paths }, false, signal), signal, 'low'),
   attachmentUrl: (id: string, attachmentId: string) => `/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`,
   /** An image file of the Task's directory, by absolute path or one relative to it. */
@@ -747,9 +804,9 @@ export const api = {
   close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),
   respond: (id: string, iid: string, answer: Answer) =>
     call<Interaction>('POST', `/api/sessions/${enc(id)}/interactions/${enc(iid)}`, answer),
-  changes: (id: string, scope: Scope) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`),
-  changeFile: (id: string, scope: Scope, path: string) =>
-    call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`),
+  changes: (id: string, scope: Scope, signal?: AbortSignal) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`, undefined, false, signal),
+  changeFile: (id: string, scope: Scope, path: string, signal?: AbortSignal) =>
+    call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`, undefined, false, signal),
   subagent: (id: string, agentId: string, signal?: AbortSignal) =>
     foregroundRead(() => call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal), signal),
   subagentHistory: (id: string, agentId: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),
@@ -768,10 +825,10 @@ export interface Upload {
  * XMLHttpRequest, not fetch: it is the only same-origin transport that reports upload
  * progress over HTTP/1.1. `onProgress` gets 0…1.
  */
-function uploadFile(id: string, file: File, onProgress: (fraction: number) => void): Upload {
+function uploadFile(id: string, file: File, onProgress: (fraction: number) => void, model?: string): Upload {
   const xhr = new XMLHttpRequest();
   const done = new Promise<Attachment & { id: string }>((resolve, reject) => {
-    xhr.open('POST', `/api/sessions/${enc(id)}/attachments?name=${enc(file.name)}`);
+    xhr.open('POST', `/api/sessions/${enc(id)}/attachments?name=${enc(file.name)}${model ? `&model=${enc(model)}` : ''}`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total));

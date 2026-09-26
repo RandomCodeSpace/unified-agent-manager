@@ -69,6 +69,29 @@ test('tool output deltas batch in order and a final item replaces the streamed o
   assert.equal(update(state, output(12, 'late')), state);
 });
 
+test('idle steer echo moves its receipt after old-turn content in both live views and compact index', () => {
+  const start = { id: 'start', kind: 'user', text: 'start', time: '2026-09-26T10:00:00Z' };
+  const receipt = { id: 'steer', kind: 'user', delivery: 'steer', steer_status: 'accepted', text: 'next', time: '2026-09-26T10:00:01Z' };
+  const oldAnswer = { id: 'old-answer', kind: 'assistant', text: 'old turn', time: '2026-09-26T10:00:02Z' };
+  const echo = { id: 'steer', kind: 'user', text: 'next', time: '2026-09-26T10:00:03Z' };
+  for (const compact of [false, true]) {
+    const items = [start, receipt, oldAnswer];
+    let state = { ...initialState, selectedId: 'task', detailSeq: 10, detail: { id: 'task', representation: compact ? 'compact-v1' : undefined, items,
+      ...(compact ? { recent_items: items, history_index: items, recent_before: '', history_before: '', history_after: '' } : {}) } };
+    state = update(state, { name: 'item', seq: 11, session_id: 'task', item: echo });
+    state = update(state, { name: 'item', seq: 12, session_id: 'task', item: { id: 'new-answer', kind: 'assistant', text: 'new turn', time: '2026-09-26T10:00:04Z' }, append: true });
+    assert.deepEqual(state.detail.items.map(it => it.id), ['start', 'old-answer', 'steer', 'new-answer']);
+    assert.equal(state.detail.items[2].time, echo.time);
+    if (compact) {
+      assert.deepEqual(state.detail.recent_items.map(it => it.id), ['start', 'old-answer', 'steer', 'new-answer']);
+      assert.deepEqual(state.detail.history_index.map(it => it.id), ['start', 'old-answer', 'steer', 'new-answer']);
+    }
+  }
+  let inTurn = { ...initialState, selectedId: 'task', detailSeq: 10, detail: { id: 'task', items: [start, receipt, oldAnswer] } };
+  inTurn = update(inTurn, { name: 'item', seq: 11, session_id: 'task', item: { ...echo, delivery: 'steer' } });
+  assert.deepEqual(inTurn.detail.items.map(it => it.id), ['start', 'steer', 'old-answer']);
+});
+
 test('subagent output deltas replay against fetched output and unopened agents retain no output', () => {
   const output = (seq, text) => ({ name: 'tool_output', seq, session_id: 'task', agent_id: 'helper', item_id: 'tool', text });
   let state = update(loading(), output(11, 'covered'));

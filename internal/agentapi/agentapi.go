@@ -112,6 +112,19 @@ type Titler interface {
 	Title(ctx context.Context, req TitleRequest) (string, error)
 }
 
+// SubagentSummarizer writes a brief summary of a completed subagent result.
+// Like Titler, it uses a throwaway conversation without tools or discovered
+// configuration and deletes that conversation on every outcome.
+type SubagentSummarizer interface {
+	SummarizeSubagent(context.Context, SubagentSummaryRequest) (string, error)
+}
+
+// SubagentSummaryRequest contains only bounded, sanitized result text.
+type SubagentSummaryRequest struct {
+	Model, Workdir      string
+	Description, Result string
+}
+
 // CustomModelUser is implemented by a provider that can offer custom
 // models next to its own. SetCustomModels replaces them: Models lists them,
 // and conversations opened or switched afterwards can select them.
@@ -304,6 +317,9 @@ type OpenRequest struct {
 	ContextSize string
 	// Events receives every event for this conversation until Close returns.
 	Events EventSink
+	// ValidateFile checks a declaration candidate without granting access or
+	// reading file bytes, and returns its normalized absolute display path.
+	ValidateFile func(context.Context, string) (string, error)
 }
 
 // EventSink receives adapter events. Implementations must not block.
@@ -582,6 +598,9 @@ type Item struct {
 	// Delivery is DeliverySteer on a user item that joined a running turn
 	// as a steer, and empty otherwise.
 	Delivery string `json:"delivery,omitempty"`
+	// SteerStatus marks a local receipt before the provider records a user
+	// message. The provider's item with the same ID replaces this receipt.
+	SteerStatus string `json:"steer_status,omitempty"`
 	// Attachments are the uploads a user item carried; the adapter never
 	// includes their bytes.
 	Attachments []Attachment `json:"attachments,omitempty"`
@@ -615,6 +634,11 @@ type Image struct {
 // DeliverySteer marks a user item that arrived as a steer.
 const DeliverySteer = "steer"
 
+const (
+	SteerAccepted     = "accepted"
+	SteerNotDelivered = "not_delivered"
+)
+
 // DeliveryAutopilot marks a provider-generated continuation of the same turn.
 const DeliveryAutopilot = "autopilot"
 
@@ -636,6 +660,18 @@ type ToolCall struct {
 	Status ToolStatus `json:"status"`
 	Input  string     `json:"input,omitempty"`
 	Output string     `json:"output,omitempty"`
+	// Declaration is display intent from a completed host tool call. It is
+	// neither file provenance nor authority to open the path.
+	Declaration *FileDeclaration `json:"declaration,omitempty"`
+}
+
+// FileDeclaration contains only bounded display metadata. Opening still
+// follows the current workdir resolver or exact-file temporary grant flow.
+type FileDeclaration struct {
+	ArtifactID string `json:"artifact_id"`
+	Path       string `json:"path"`
+	Title      string `json:"title,omitempty"`
+	TypeHint   string `json:"type_hint,omitempty"`
 }
 
 // Delta appends Text to the item ItemID of kind Kind.

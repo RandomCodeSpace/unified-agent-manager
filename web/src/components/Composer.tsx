@@ -1,6 +1,6 @@
 import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, Shield, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
+import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type PromptSettings, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
@@ -224,6 +224,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
   // The draft this Task left behind (text, `@` files, finished uploads); read once, on mount.
   const storageKey = newTask ? newTaskKey(newTask.projectId) : draftKey(session.id);
   const [draft] = useState(() => readDraft(storageKey));
+  const [promptSettings, setPromptSettings] = useState<PromptSettings | null>(() => draft?.settings ?? null);
   const [text, setText] = useState(draft?.text ?? '');
   const [caret, setCaret] = useState(draft?.text.length ?? 0);
   /** Prompt history browsing (Up/Down/Escape); null until Up recalls an entry. */
@@ -253,11 +254,13 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
     try { sessionStorage.setItem(resultStorageKey, JSON.stringify(ids)); }
     catch { /* Dismissal still works when browser storage is unavailable. */ }
   };
+  const selection: PromptSettings = promptSettings ?? { model: session.model, effort: session.effort ?? '', context_size: session.context_size || 'default' };
+  const selectionChanged = selection.model !== session.model || selection.effort !== (session.effort ?? '') || selection.context_size !== (session.context_size || 'default');
   const catalog = modelCatalog(meta, session.provider);
   const models = visibleModels(catalog, appSettings.hidden_models?.[session.provider]);
-  const hiddenModel = appSettings.hidden_models?.[session.provider]?.includes(session.model);
-  const selectedModel = catalog.find((m) => m.id === session.model);
-  const modelLabel = modelName(meta, session.provider, session.model);
+  const hiddenModel = appSettings.hidden_models?.[session.provider]?.includes(selection.model);
+  const selectedModel = catalog.find((m) => m.id === selection.model);
+  const modelLabel = modelName(meta, session.provider, selection.model);
   const routed = session.last_model && session.last_model !== session.model ? modelName(meta, session.provider, session.last_model) : null;
   const queue = session.queue ?? [];
   // Cancelling a queued prompt or clearing the queue loses its text, so each is confirmed first (DESIGN.md Confirmations).
@@ -274,8 +277,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
   const [shownQueue, setShownQueue] = useState(queue);
   if (queue.length > 0 && queue !== shownQueue) setShownQueue(queue);
   const [queueAtMount] = useState(queue.length > 0);
-  const effort = session.effort ?? '';
-  const contextSize = session.context_size || 'default';
+  const effort = selection.effort;
+  const contextSize = selection.context_size;
   const sizes = selectedModel?.context_sizes ?? [];
   const selectedSize = sizes.find((s) => s.id === contextSize);
   const contextLabel = selectedSize?.tokens ? compactTokens(selectedSize.tokens) : sizeLabel(contextSize);
@@ -284,7 +287,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
   // Neither can change (the Auto model): the picker shows one word and says why, instead of "Default · Default".
   const fixedTuning = !!noEffort && !!noContext;
   const tuningLabel = fixedTuning ? 'Default' : [noEffort ? '' : effort || 'Default', noContext ? '' : contextLabel].filter(Boolean).join(' · ');
-  const settingsLocked = live || !!busy || locked;
+  const settingsLocked = !!busy || locked;
   const autopilot = session.execution?.mode === 'autopilot' || session.execution?.objective?.status === 'active';
   const mode = session.mode ?? 'safe';
 
@@ -477,7 +480,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         next.push({ key, name: file.name, size: file.size, kind, progress: 1, status: 'done' });
         continue;
       }
-      const up = api.upload(session.id, file, (p) => patch(key, { progress: p }));
+      const up = api.upload(session.id, file, (p) => patch(key, { progress: p }), selection.model);
       next.push({ key, name: file.name, size: file.size, kind, progress: 0, status: 'uploading', abort: up.abort });
       inflight.current.add(up.abort);
       up.done
@@ -506,7 +509,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
 
   // The draft follows the text, the picked files and the finished uploads once typing pauses;
   // leaving the Task writes it at once. An accepted send clears it (see `send`).
-  const draftNow = useMemo<Draft>(() => ({ text, files, attachments: uploads.flatMap((u) => (u.status === 'done' && u.id ? [{ id: u.id, name: u.name, size: u.size, kind: u.kind }] : [])) }), [text, files, uploads]);
+  const draftNow = useMemo<Draft>(() => ({ text, files, ...(promptSettings ? { settings: promptSettings } : {}), attachments: uploads.flatMap((u) => (u.status === 'done' && u.id ? [{ id: u.id, name: u.name, size: u.size, kind: u.kind }] : [])) }), [text, files, uploads, promptSettings]);
   const latestDraft = useRef(draftNow);
   useEffect(() => {
     latestDraft.current = draftNow;
@@ -542,11 +545,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         : shapedCommand && commandsError
           ? 'Commands could not be loaded. Retry the command list.'
           : commandBlocked;
-  const steerBlocked = steerUnavailable;
+  const settingsSteerReason = live && selectionChanged ? 'Model, effort and context changes apply to the next turn. Steering keeps the current settings.' : '';
+  const steerBlocked = steerUnavailable || settingsSteerReason;
   const cannotSubmit = !!busy || locked || session.state === 'starting' || !text.trim() || !!blocked;
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The one send button is Enter's.
   const steerDefault = appSettings.send_default === 'steer';
-  const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
+  const { enter, modified } = enterActions(live, appSettings.send_default, !!steerUnavailable);
 
   /** A new Task's first Send: the text stays here, with the reason, unless the Task was created. */
   async function sendFirst(t: string) {
@@ -575,17 +579,17 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
     if (cannotSubmit || (!cmd && promptMode === 'send' && live)) return;
     if (newTask) return sendFirst(t);
     if (!cmd && promptMode === 'steer' && steerBlocked) {
-      setError(`${steerBlocked}.`);
+      setError(steerBlocked);
       return;
     }
-    const key = JSON.stringify([t, files, attachmentIds, cmd?.name ?? '']);
+    const key = JSON.stringify([t, files, attachmentIds, cmd?.name ?? '', cmd ? null : selection]);
     if (!pending.current || pending.current.key !== key) pending.current = { key, id: newRequestId() };
     const id = pending.current.id;
     refocus.current = true;
     setBusy(promptMode);
     setError(null);
     try {
-      const sub = cmd ? await api.command(session.id, cmd.name, cmd.args, id, extras) : await api.prompt(session.id, t, id, promptMode, extras);
+      const sub = cmd ? await api.command(session.id, cmd.name, cmd.args, id, extras) : await api.prompt(session.id, t, id, promptMode, { ...extras, settings: selection });
       setOutcome(sub);
       if (sub.status === 'accepted' || sub.status === 'queued') {
         pending.current = null;
@@ -599,6 +603,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         }
         setFiles([]);
         setUploads([]);
+        setPromptSettings(null);
         setDismissed(null);
         // Gone at once, not after the debounce: a reload right after sending must not bring the prompt back.
         writeDraft(storageKey, { text: prefill, files: [], attachments: [] });
@@ -609,7 +614,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         setError('This provider cannot steer a running turn. Your message is still here; Enter will queue it.');
         return;
       }
-      setError(`${describeError(e)}. Nothing will be retried automatically. Repeating this action with unchanged text uses the same request (${id.slice(0, 8)}).`);
+      setError(`${describeError(e)}. Nothing will be retried automatically. Repeating this action with unchanged message and settings uses the same request (${id.slice(0, 8)}).`);
     } finally {
       setBusy(null);
     }
@@ -627,10 +632,15 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       setBusy(null);
     }
   }
-  const settings = (body: Parameters<typeof api.settings>[1]) =>
-    newTask
-      ? onSessionUpdate({ ...session, ...changeSettings({ provider: session.provider, model: session.model, effort, context_size: contextSize, mode }, body, catalog.find((m) => m.id === body.model)) })
-      : action('settings', async () => onSessionUpdate(await api.settings(session.id, body)));
+  const settings = (body: Parameters<typeof api.settings>[1]) => {
+    const changed = changeSettings({ provider: session.provider, ...selection, mode }, body, catalog.find((m) => m.id === body.model));
+    if (newTask) return onSessionUpdate({ ...session, ...changed });
+    if (body.mode === undefined && (live || promptSettings)) {
+      setPromptSettings({ model: changed.model, effort: changed.effort, context_size: changed.context_size });
+      return;
+    }
+    return action('settings', async () => onSessionUpdate(await api.settings(session.id, body)));
+  };
 
   async function changeExecution(next: 'interactive' | 'autopilot') {
     if (busy || executionReason || !autopilotCommand || (session.execution?.known && session.execution.mode === next)) return;
@@ -801,7 +811,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           popupRef={popup}
         />
       )}
-      {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked)) && (
+      {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {locked && <Note>{session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.'}</Note>}
           {last?.status === 'uncertain' && (
@@ -822,6 +832,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           {commandBlocked && <Note role="status">{commandBlocked}</Note>}
           {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
           {live && steerUnavailable && !cmd && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
+          {selectionChanged && <Note>Current model: {modelName(meta, session.provider, session.model)} · {session.effort || 'Default'} effort · {sizeLabel(session.context_size || 'default')} context. Draft settings apply when its next turn starts.</Note>}
+          {settingsSteerReason && !cmd && <Note>{settingsSteerReason} <Button size="sm" variant="secondary" disabled={cannotSubmit} onClick={() => void send('queue')}>Queue next turn</Button></Note>}
           {resendable && (
             <Tip label="Puts the last prompt back here to edit or send again. Nothing is sent until you do.">
               <Button size="sm" variant="secondary" className="self-start animate-rise" onClick={resend}>
@@ -870,6 +882,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
                 <span className="mt-0.5 w-4 shrink-0 text-right text-caption tabular-nums text-muted">{i + 1}</span>
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
                   <span className="truncate" title={q.text}>{q.text}</span>
+                  {q.settings && <span className="text-caption text-muted">{modelName(meta, session.provider, q.settings.model)} · {q.settings.effort || 'Default'} effort · {sizeLabel(q.settings.context_size)} context</span>}
                   <QueuedExtras files={q.files} attachments={q.attachments} />
                 </span>
                 <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel queued prompt: ${q.text}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: q.text })}>
@@ -985,7 +998,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           id="composer-model"
           icon={<Cpu aria-hidden="true" className="text-faint" />}
           label="Model"
-          value={session.model}
+          value={selection.model}
           display={modelLabel}
           choices={models.map((m) => {
             const estimate = estimateTurnCost(m, session.context, contextSize);
@@ -994,16 +1007,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
             return { value: m.id, label: m.name, group, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
           })}
           disabled={settingsLocked}
-          reason={locked ? 'This task is read-only.' : live ? 'The model changes between turns.' : undefined}
+          reason={locked ? 'This task is read-only.' : undefined}
           hint={routed ? `Latest turn ran on ${routed}` : undefined}
           onChange={(v) => void settings({ model: v })}
         />
         {hiddenModel && <span className="text-caption text-muted max-sm:hidden">Hidden in Settings</span>}
-        <ComposerUsage session={session} model={selectedModel} />
+        <ComposerUsage session={session} model={catalog.find((m) => m.id === session.model)} />
         <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline-strong max-sm:hidden" />
         {settingsLocked || fixedTuning ? (
-          <Tip label={locked ? 'This task is read-only.' : live ? 'Effort and context change between turns.' : 'This model uses its default effort and context size.'}>
-            <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort and context size: ${tuningLabel}. ${locked ? 'This task is read-only.' : live ? 'Effort and context change between turns.' : 'This model uses its default effort and context size.'}`} className="text-muted max-sm:hidden">
+          <Tip label={locked ? 'This task is read-only.' : busy ? 'Wait for the current action to finish.' : 'This model uses its default effort and context size.'}>
+            <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort and context size: ${tuningLabel}. ${locked ? 'This task is read-only.' : busy ? 'Wait for the current action to finish.' : 'This model uses its default effort and context size.'}`} className="text-muted max-sm:hidden">
               <Gauge aria-hidden="true" className="text-faint" />
               <span>{tuningLabel}</span>
               <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
@@ -1046,7 +1059,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
               </Menu.Trigger>
             </Tip>
             <Menu.Content side="top" align="start" className="max-w-80">
-              {settingsLocked ? <p className="max-w-64 px-2 py-1 text-caption text-muted">{live ? 'Effort, context and model change between turns.' : 'Effort and context cannot change now.'}</p> : tuningItems}
+              {settingsLocked ? <p className="max-w-64 px-2 py-1 text-caption text-muted">Effort and context cannot change now.</p> : tuningItems}
               <Menu.Separator />
               <Menu.RadioGroup value={mode} onValueChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}>
                 <Menu.Label>Permissions</Menu.Label>
@@ -1091,7 +1104,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
               )
             }
           >
-            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === enter} disabled={cannotSubmit}>
+            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === enter} disabled={cannotSubmit || (!cmd && enter === 'steer' && !!settingsSteerReason)}>
               <ArrowUp aria-hidden="true" strokeWidth={2.25} />
             </Button>
           </Tip>

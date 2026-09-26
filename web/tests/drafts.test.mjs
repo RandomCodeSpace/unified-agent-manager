@@ -12,6 +12,13 @@ test('a draft round-trips through storage; an empty one serializes to nothing', 
   assert.ok(serializeDraft({ text: '', files: [], attachments: full.attachments }));
 });
 
+test('queued draft settings survive reload with text and attachments without changing task settings', () => {
+  const settings = { model: 'vision', effort: 'high', context_size: 'default' };
+  assert.deepEqual(parseDraft(serializeDraft({ ...full, settings })), { ...full, settings });
+  assert.deepEqual(parseDraft(serializeDraft({ text: '', files: [], attachments: [], settings })), { text: '', files: [], attachments: [], settings });
+  assert.deepEqual(parseDraft(JSON.stringify({ ...full, settings: { model: 3 } })), full);
+});
+
 test('malformed or empty stored values read as no draft; bad entries are dropped', () => {
   assert.equal(parseDraft(null), null);
   assert.equal(parseDraft(''), null);

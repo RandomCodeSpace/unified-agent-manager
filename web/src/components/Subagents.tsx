@@ -7,6 +7,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type Keyb
 import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
+import { useDensity } from '../lib/density';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
@@ -195,6 +196,7 @@ export function SubagentPanel({
           </Button>
         </PanelHeader>
         <DetailVisibility open={open}><AgentTranscriptView
+          provider={session.provider}
           key={current.id}
           sessionId={session.id}
           workdir={session.workdir}
@@ -333,6 +335,7 @@ function SubagentRow({
  */
 function AgentTranscriptView({
   sessionId,
+  provider,
   workdir,
   subagent,
   interactions,
@@ -343,6 +346,7 @@ function AgentTranscriptView({
   parent,
 }: {
   sessionId: string;
+  provider: string;
   workdir: string;
   subagent: Subagent;
   /** The Task's requests; this subagent's are those with its agent_id. */
@@ -355,6 +359,7 @@ function AgentTranscriptView({
   parent?: Item;
 }) {
   const { dispatch } = useApp();
+  const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const live = subagent.status === 'running';
@@ -456,7 +461,7 @@ function AgentTranscriptView({
 
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4" ref={scroller} onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder(); if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer'); }} role="log" tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined}>
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder(); if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer'); }} role="log" tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined}>
       {detail.agent?.page && <Note>Loading {detail.agent.page.direction === 'newer' ? 'newer' : 'earlier'} messages…</Note>}
       {detail.agent?.after && <Button className="sticky top-0 z-10 self-center" size="sm" variant="secondary" onClick={latest}>Jump to latest</Button>}
       {detail.agent?.pageError && <Note tone="error">{detail.agent.pageError}</Note>}
@@ -473,7 +478,7 @@ function AgentTranscriptView({
       ) : (
         <>
           <HistoryAnchor scroller={scroller} firstItem={items[0]?.id ?? ''} lastItem={items.at(-1)?.id} itemIds={detail.compact ? items.map(item => item.id) : undefined} knownIds={detail.agent?.index?.map(item => item.id)} resetKey={`${detail.store?.value.epoch}:${windowReset}`} className="flex flex-col gap-3">
-            <AgentItems sessionId={sessionId} workdir={workdir} agentId={subagent.id} items={items} identityItems={detail.agent?.index} historyItemSeq={detail.agent?.itemSeq} interactions={visibleInteractions} live={live && !detail.agent?.after} />
+            <AgentItems sessionId={sessionId} provider={provider} workdir={workdir} agentId={subagent.id} items={items} identityItems={detail.agent?.index} historyItemSeq={detail.agent?.itemSeq} interactions={visibleInteractions} live={live && !detail.agent?.after} density={density} />
           </HistoryAnchor>
           {items.length === 0 && <Note>Nothing recorded yet.</Note>}
         </>
