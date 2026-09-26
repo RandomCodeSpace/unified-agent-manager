@@ -568,7 +568,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
           <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
-            {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
+            {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
+            {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
             {(visibleStart > 0 || session.history_before) && <p role="status" className="text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading ? 'Loading earlier messages…' : 'Scroll up for earlier messages')}</p>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
             <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-6">
