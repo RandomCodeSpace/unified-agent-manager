@@ -1,19 +1,22 @@
-import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Minus, Pause, X } from 'lucide-react';
+import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, File, FileArchive, FileBraces, FileCode, FileImage, FileMusic, FileSpreadsheet, FileText, FileType, FileVideoCamera, ImageOff, Minus, Pause, X } from 'lucide-react';
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { LIVE, api, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
+import { LIVE, api, taskName, type AccountUsage, type Badge, type BadgeColor, type FileDeclaration, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
 import { fenceClosed } from '../lib/diagram';
 import { codeFile, localPath, splitBlocks, taskFile } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
+import { fileLabel, previewClick, tempFile, type FileFormat } from '../lib/preview';
+import { hintPath } from '../lib/fileReferences';
+import { TempRootContext, usePreview } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
 import { DiagramCard } from './Diagram';
 import { useFileDemand, useFileReference } from './FileReferences';
 import { Button, buttonVariants } from './ui/button';
-import { Chip } from './ui/chip';
+import { Chip, chipVariants } from './ui/chip';
 import { Input } from './ui/input';
 import { ContextMenu, type ActionItem } from './ui/menu';
 
@@ -499,12 +502,91 @@ function ImageNote({ alt, detail, href }: { alt: string; detail: string; href?: 
   );
 }
 
+/** A temporary path is an explicit owner choice, never an image or discovery request. */
+function TempFileAction({ file, children }: { file: { path: string; hash: string }; children?: ReactNode }) {
+  const preview = usePreview();
+  return (
+    <span className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5 gap-y-1">
+      {children}
+      <button type="button" className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5 rounded-xs text-left text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-current" onClick={event => {
+        event.preventDefault();
+        event.stopPropagation();
+        preview?.({ tempPath: file.path, hash: file.hash, name: file.path.split('/').pop() || file.path, description: file.path }, event.currentTarget);
+      }}>
+        <span>Open temp file</span><code className="break-all">{file.path}</code>
+      </button>
+    </span>
+  );
+}
+
+const FILE_ICONS = { image: FileImage, pdf: FileType, code: FileCode, data: FileBraces, archive: FileArchive, audio: FileMusic, video: FileVideoCamera, sheet: FileSpreadsheet, text: FileText, file: File } satisfies Record<FileFormat, typeof File>;
+
+/** A compact resolved file label. The path remains the link's identity and accessible name. */
+function FileLink({ path, url }: { path: string; url: string }) {
+  const preview = usePreview();
+  const label = fileLabel(path);
+  const Icon = FILE_ICONS[label.format];
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" title={label.path} aria-label={`Open ${label.path}`} className={cn(chipVariants({ fill: 'well', tone: 'accent' }), 'max-w-full min-w-0 align-middle hover:bg-sunken')} onClick={event => {
+      if (preview && previewClick(event)) {
+        event.preventDefault();
+        preview({ url, name: label.name, description: label.path, frameable: true }, event.currentTarget);
+      }
+    }}>
+      <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 truncate">{label.name}</span>
+    </a>
+  );
+}
+
+/** Display intent only. The resolver or exact temp-file grant checks the current file. */
+export function DeclaredFileCard({ declaration }: { declaration: FileDeclaration }) {
+  const sessionId = useContext(SessionContext);
+  const workdir = useContext(WorkdirContext);
+  const tempRoots = useContext(TempRootContext);
+  const preview = usePreview();
+  const path = declaration.path;
+  const href = path.split('/').map(encodeURIComponent).join('/');
+  const workFile = taskFile(href, workdir);
+  const temporary = tempFile(href, workdir, tempRoots);
+  const { exists } = useFileReference(workFile?.path);
+  const demand = useFileDemand(path);
+  const label = fileLabel(path);
+  const Icon = FILE_ICONS[label.format];
+  return (
+    <div ref={demand} className="rounded-md bg-raised px-3.5 py-3 shadow-raised" role="group" aria-label={`Declared file ${path}`}>
+      <div className="flex min-w-0 items-start gap-2.5">
+        <Icon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted" />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="break-all font-medium text-body">{label.name}</span>
+            <span className="text-caption text-muted">{label.format}</span>
+          </div>
+          {declaration.title && <p className="break-words text-caption text-body">{declaration.title}</p>}
+          {declaration.type_hint && <p className="break-words text-caption text-muted">Type: {declaration.type_hint}</p>}
+          <code className="block break-all text-code-sm text-muted">{path}</code>
+        </div>
+      </div>
+      <div className="mt-2 pl-6" data-file-reference={workFile?.path}>
+        {sessionId && workFile && exists ? <FileLink path={path} url={api.viewFileUrl(sessionId, workFile.path)} />
+          : sessionId && temporary && preview ? <TempFileAction file={temporary} />
+            : <span className="text-caption text-muted">File availability unknown or unavailable.</span>}
+      </div>
+    </div>
+  );
+}
+
+function containsImage(node: ExtraProps['node']): boolean {
+  return !!node && (node.tagName === 'img' || node.children.some(child => child.type === 'element' && containsImage(child)));
+}
+
 /**
  * An image the agent named by path, from the raw file route. Lazy, never wider than the
  * column; one that fails (outside the Task's folder, missing, not an image) becomes a note.
  * Clicking it opens the lightbox with the file's name.
  */
 function LocalImage({ sessionId, path, alt }: { sessionId: string; path: string; alt: string }) {
+  const preview = usePreview();
   const url = api.rawFileUrl(sessionId, path);
   const [failed, setFailed] = useState(false);
   const [size, setSize] = useState(() => imageSizes.get(url));
@@ -513,7 +595,7 @@ function LocalImage({ sessionId, path, alt }: { sessionId: string; path: string;
   const name = path.split('/').pop() || path;
   return (
     <>
-      <button type="button" className="lift block max-w-full rounded-sm text-left" aria-label={`Open ${alt || name}`} onClick={() => setOpen(true)}>
+      <button type="button" className="lift block max-w-full rounded-sm text-left" aria-label={`Open ${alt || name}`} onClick={event => preview ? preview({ url, name: alt || name, description: path, image: true }, event.currentTarget) : setOpen(true)}>
         <img
           src={url}
           alt={alt}
@@ -533,7 +615,7 @@ function LocalImage({ sessionId, path, alt }: { sessionId: string; path: string;
           }}
         />
       </button>
-      <Lightbox
+      {!preview && <Lightbox
         open={open}
         onOpenChange={setOpen}
         title={alt || name}
@@ -546,30 +628,46 @@ function LocalImage({ sessionId, path, alt }: { sessionId: string; path: string;
             Open original
           </a>
         }
-      />
+      />}
     </>
   );
 }
 
 /** A markdown image: by path from the Task's directory; `data:` inline; a web address stays a link, as the page loads nothing cross-origin. */
 function MdImage({ src, alt }: { src?: string; alt?: string }) {
+  const preview = usePreview();
+  const tempRoots = useContext(TempRootContext);
   const sessionId = useContext(SessionContext);
+  const workdir = useContext(WorkdirContext);
+  const { streaming } = useContext(MdContext);
   const text = alt ?? '';
   const path = localPath(src);
-  if (path) return sessionId ? <LocalImage sessionId={sessionId} path={path} alt={text} /> : <ImageNote alt={text} detail={path} />;
+  const file = taskFile(src, workdir);
+  const temporary = !streaming && sessionId && preview ? tempFile(src, workdir, tempRoots) : null;
+  if (temporary) return <TempFileAction file={temporary}>{text && <span>{text}</span>}</TempFileAction>;
+  if (path) return sessionId && file ? <LocalImage sessionId={sessionId} path={file.path} alt={text} /> : <ImageNote alt={text} detail={path} />;
   if (src && /^(data|blob):/i.test(src)) return <img src={src} alt={text} loading="lazy" decoding="async" className="block h-auto max-h-[480px] w-auto max-w-full rounded-sm" />;
   return <ImageNote alt={text} detail={src ?? ''} href={src && /^https?:/i.test(src) ? src : undefined} />;
 }
 
-/** A markdown link: web addresses and files of the Task's directory (the view route) open in a new tab; anything else is text. */
-function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
+/** Local available files preview on an ordinary click; modified clicks and web links stay native. */
+function MdLink({ href, children, node }: { href?: string; children?: ReactNode } & ExtraProps) {
+  const preview = usePreview();
+  const tempRoots = useContext(TempRootContext);
   const sessionId = useContext(SessionContext);
   const workdir = useContext(WorkdirContext);
   const { streaming } = useContext(MdContext);
   const file = !streaming ? taskFile(href, workdir) : null;
   const { eligible, exists } = useFileReference(file?.path);
+  const temporary = !streaming && sessionId && preview ? tempFile(href, workdir, tempRoots) : null;
+  if (temporary) return <TempFileAction file={temporary}>{children}</TempFileAction>;
   const target = localPath(href) ? (sessionId && file && exists ? api.viewFileUrl(sessionId, file.path) + file.hash : undefined) : typeof href === 'string' && /^(https?:|mailto:)/i.test(href) ? href : undefined;
-  const link = target ? <a href={target} rel="noopener noreferrer" target="_blank">{children}</a> : children;
+  const link = target && file && localPath(href) && !containsImage(node) ? <FileLink path={file.path} url={target} /> : target ? <a href={target} rel="noopener noreferrer" target="_blank" onClick={event => {
+    if (preview && file && localPath(href) && previewClick(event)) {
+      event.preventDefault();
+      preview({ url: target, name: file.path.split('/').pop() || file.path, description: file.path, frameable: true }, event.currentTarget);
+    }
+  }}>{children}</a> : children;
   return localPath(href) ? <span key={file?.path} data-file-reference={eligible ? file?.path : undefined}>{link}</span> : <>{link}</>;
 }
 
@@ -579,17 +677,22 @@ function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
  * does not, it is the same plain code. Nothing is asked while its block is still streaming.
  */
 function InlineCode({ text, className }: { text: string; className?: string }) {
+  const preview = usePreview();
+  const tempRoots = useContext(TempRootContext);
   const sessionId = useContext(SessionContext);
   const workdir = useContext(WorkdirContext);
   const { streaming } = useContext(MdContext);
-  const file = sessionId && !streaming ? codeFile(text, workdir) : null;
+  const hintedPath = sessionId && !streaming && !text.includes('/') ? hintPath(text, workdir ?? '') : undefined;
+  const file = sessionId && !streaming ? codeFile(text, workdir) ?? (hintedPath ? { path: hintedPath, hash: '' } : null) : null;
   const url = sessionId && file ? api.viewFileUrl(sessionId, file.path) : undefined;
   const { eligible, exists } = useFileReference(file?.path, text);
+  const temporary = !streaming && sessionId && preview && text.startsWith('/') ? tempFile(text.split('/').map(encodeURIComponent).join('/'), workdir, tempRoots) : null;
+  if (temporary) return <TempFileAction file={temporary} />;
   const code = <code className={className}>{text}</code>;
   if (!file) return code;
   return (
     <span key={file?.path} data-file-reference={eligible ? file?.path : undefined}>
-      {exists && url && file ? <a href={url + file.hash} rel="noopener noreferrer" target="_blank" className="md-file">{code}</a> : code}
+      {exists && url && file ? <FileLink path={file.path} url={url + file.hash} /> : code}
     </span>
   );
 }
@@ -617,6 +720,14 @@ const mdUrl = (url: string): string => (/^file:\/\//i.test(url) ? url : defaultU
 const mdComponents: Components = {
   a: MdLink,
   img: MdImage,
+  table({ children }) {
+    return (
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled table scroll region accepts keyboard scrolling.
+      <div role="region" aria-label="Table" tabIndex={0} className="my-2.5 max-w-full overflow-x-auto [overflow-wrap:normal]">
+        <table className="!my-0">{children}</table>
+      </div>
+    );
+  },
   code({ className, children }) {
     const language = languageOf(className);
     const code = typeof children === 'string' ? children : Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;

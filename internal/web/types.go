@@ -178,9 +178,11 @@ type Quota struct {
 
 // Meta is the /api/meta response.
 type Meta struct {
-	Version        string         `json:"version"`
-	Providers      []ProviderInfo `json:"providers"`
-	RecentWorkdirs []string       `json:"recent_workdirs"`
+	Version         string         `json:"version"`
+	Providers       []ProviderInfo `json:"providers"`
+	RecentWorkdirs  []string       `json:"recent_workdirs"`
+	TempRoot        string         `json:"temp_root,omitempty"`
+	TempRootAliases []string       `json:"temp_root_aliases,omitempty"`
 }
 
 // SessionSummary is one web session (a Task) as listed.
@@ -271,6 +273,13 @@ type PreviousConversation struct {
 	InUse          bool      `json:"in_use"`
 }
 
+// PromptSettings is the complete selection for one prompt's next turn.
+type PromptSettings struct {
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	ContextSize string `json:"context_size"`
+}
+
 // QueuedPrompt is one prompt in a Task's queue.
 type QueuedPrompt struct {
 	RequestID string    `json:"request_id"`
@@ -281,6 +290,7 @@ type QueuedPrompt struct {
 	Files []string `json:"files,omitempty"`
 	// Attachments are the uploads the prompt carries.
 	Attachments []agentapi.Attachment `json:"attachments,omitempty"`
+	Settings    PromptSettings        `json:"settings"`
 }
 
 // PromptRequest is the POST /api/sessions/{id}/prompt body.
@@ -293,6 +303,9 @@ type PromptRequest struct {
 	Files []string `json:"files"`
 	// Attachments are IDs from POST /api/sessions/{id}/attachments.
 	Attachments []string `json:"attachments"`
+	// Omitted settings snapshot the Task's current selection. A running steer
+	// may only use that same selection; new settings require a queued turn.
+	Settings *PromptSettings `json:"settings,omitempty"`
 }
 
 // CommandRequest is the POST /api/sessions/{id}/command body. Name is a

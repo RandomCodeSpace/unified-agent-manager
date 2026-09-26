@@ -501,12 +501,21 @@ func TestAttachmentRoutes(t *testing.T) {
 		h.Get("Content-Disposition") != `inline; filename=shot.png` || h.Get("Content-Security-Policy") != contentSecurity {
 		t.Fatalf("serve image = %d %v", w.Code, h)
 	}
+	for _, method := range []string{http.MethodHead, http.MethodGet} {
+		w = ts.do(method, base+"/"+att.ID+"?download=1", "", auth)
+		if h := w.Header(); w.Code != http.StatusOK || h.Get("Content-Disposition") != `attachment; filename=shot.png` || h.Get("Content-Security-Policy") != contentSecurity || h.Get("X-Frame-Options") != "DENY" {
+			t.Fatalf("%s image download = %d %v", method, w.Code, h)
+		}
+		if method == http.MethodHead && w.Body.Len() != 0 || method == http.MethodGet && !bytes.Equal(w.Body.Bytes(), img) {
+			t.Fatalf("%s image download body bytes = %d", method, w.Body.Len())
+		}
+	}
 	w = ts.do(http.MethodPost, base+"?name="+`r%C3%A9sum%C3%A9%22.html`, "<html><body>hi</body></html>", auth, octet)
 	if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &att) != nil {
 		t.Fatalf("html as text = %d %s", w.Code, w.Body)
 	}
 	w = ts.do(http.MethodGet, base+"/"+att.ID, "", auth)
-	if h := w.Header(); h.Get("Content-Type") != "text/plain; charset=utf-8" || !strings.HasPrefix(h.Get("Content-Disposition"), "attachment; filename*=utf-8''r%C3%A9sum%C3%A9%22.html") {
+	if h := w.Header(); h.Get("Content-Type") != "text/plain; charset=utf-8" || !strings.HasPrefix(h.Get("Content-Disposition"), "attachment; filename*=utf-8''r%C3%A9sum%C3%A9%22.html") || h.Get("Content-Security-Policy") != contentSecurity || h.Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("serve text = %v", h)
 	}
 	if w := ts.do(http.MethodGet, base+"/"+mustUUID(t), "", auth); w.Code != http.StatusNotFound {

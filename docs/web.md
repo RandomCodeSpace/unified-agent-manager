@@ -209,7 +209,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is
-  unavailable for `auto` or a model without them. Change it between turns.
+  unavailable for `auto` or a model without them. While a turn runs, changes
+  are saved with your draft and apply when its queued turn starts.
   Switching models keeps a supported effort and otherwise resets it to
   Default.
 - **Context size**: choose a size offered by the model, where available.
@@ -286,6 +287,26 @@ are logged only at debug level (`UAM_DEBUG=1`).
   a file outside it, reached directly or through a symbolic link, is not.
   An image at a web address stays a link, as the page loads nothing from
   other origins.
+- **File previews**: resolved file references appear as tags with a format
+  icon and the filename. Unknown formats use a default file icon; hover for
+  the full path, which is also part of the accessible link name. Click a tag
+  to open one preview beside the conversation, or in a dialog on a narrow
+  screen. Images and diagrams open
+  larger. Text files show at most the first 64 KiB as plain text, with a notice
+  when more content is available. Use **Open in new tab** or **Download** for
+  the full file; PDFs and unsupported types offer those actions too. HTML
+  reports stay interactive inside an isolated frame. The **Close preview**
+  button remains available; Escape closes the preview when focus is in the
+  app, but does not cross into the app from a focused HTML frame. Closing
+  returns focus to the opening control. Opening another preview or switching
+  Tasks discards the old preview and cancels its pending read.
+- **Declared files**: the agent can call `uam_show_file` with an existing
+  path and an optional title. Its completed tool call shows a file card on
+  that turn, including inside a subagent conversation. The card survives
+  reloading the conversation and appears in Compact and Detailed views.
+  It records display metadata only. Opening it still checks the current
+  file; a temporary file requires the same explicit grant as an ordinary
+  reference. A title or file-type hint cannot change those access rules.
 - **Subagents**: when the agent delegates work to a subagent, the Task shows
   one compact row under the tool call that started it (name, status, and
   the duration once it ended) and a "Subagents" button in the header with
@@ -294,9 +315,17 @@ are logged only at debug level (`UAM_DEBUG=1`).
   failed, completed, cancelled) with their start time and duration; "Spawned
   by" jumps to the tool call in the conversation. Opening a row, or "Open" on
   its row in the conversation, shows that subagent's own prompt, replies,
-  and tool calls in the panel, live while it runs. Subagent output never
+  and tool calls in the panel, live while it runs. The panel uses the same
+  Compact/Detailed preference as the main conversation. Prose and paths
+  wrap to fit; wide tables and code blocks scroll within their own regions.
+  Subagent output never
   appears in the Task's own conversation. Its model and effort are shown
   when Copilot reports them; they are not guessed from the parent Task.
+  Its row shows the latest activity while it works. After successful
+  completion, the Utility model generates a short saved result line. None,
+  an unavailable model or a failed request keeps the provider's report as
+  the fallback. A follow-up clears the old line until the new result is ready.
+  Opening an older conversation does not generate missing summaries.
   A subagent is "Idle" when it has finished and Copilot still accepts a
   follow-up for it. While the Task is between turns, the panel then offers a
   composer that sends a message to that subagent only. The main agent does
@@ -386,13 +415,21 @@ are logged only at debug level (`UAM_DEBUG=1`).
   - **Queue** holds the message until the turn completes, then sends it as
     the next prompt. A Task queues up to 20 messages and sends them one turn
     at a time, oldest first. You can cancel a queued message until it is
-    sent; to change one, cancel it and queue it again.
+    sent; to change one, cancel it and queue it again. Each queued message
+    retains its selected model, effort and context size. Changing the next
+    draft or the Task's settings does not change messages already queued.
   - **Steer** adds the message to the turn that is running. The agent reads
-    it before its next step, and it shows in the conversation, marked as a
-    steer, at the point where the agent took it in. A steer cannot be taken
-    back. If the turn is stopped or fails before the agent took it in, a
-    notice says the steer was not delivered and quotes it. With Copilot, a steer also moves a
+    it before its next step. Once Copilot accepts it, the conversation shows
+    the message with **Accepted · delivery unconfirmed** until Copilot records
+    delivery. That confirmation updates the same message. If it arrives as
+    a new turn after the current one ends, it moves to that turn's position.
+    A steer cannot be taken back. If the turn is stopped or fails before the
+    agent took it in, the message says **Not delivered** and a notice explains
+    why. With Copilot, a steer also moves a
     shell command that is running to the background.
+    A steer uses the current turn's model settings. If your draft selects
+    different settings, use **Queue next turn**; UAM does not silently change
+    a requested Steer into Queue or restart the running response.
   - When no turn is running, both send the message at once.
   - While a turn runs, Enter does what the Settings view says (steer by
     default) and Ctrl+Enter (⌘+Enter on a Mac) the other; the two buttons
@@ -405,6 +442,13 @@ are logged only at debug level (`UAM_DEBUG=1`).
     Editing a recalled prompt makes it the new draft. Only the text changes;
     picked files and uploads stay. When a `/`, `$` or `@` list is open, Up
     and Down move through the list instead.
+  Prompt requests accept optional `settings: {model, effort, context_size}`;
+  omitted settings snapshot the current Task selection. The service validates
+  them again before dispatch. Unsupported selections return 400; different
+  settings on an active steer return 409. A failed settings change sends no
+  prompt and pauses the remaining queue. Attachment uploads accept an optional
+  `model` query parameter for the draft's offered model; submission and dispatch
+  recheck its media support without changing the running turn.
 - **Settings**: the gear at the bottom of the sidebar opens the Settings view
   in the main pane (`#settings` in the address bar). UAM keeps the web
   interface's settings in `sessions.json`, so they apply in every browser.
@@ -430,8 +474,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   lists is kept. Hiding is only a display preference: a Task or Project
   already on a hidden model keeps it.
   The **Utility model** is the model UAM uses for its own small AI jobs,
-  such as titling a new Task from its first message; pick the cheapest that
-  does the job. It is kept per provider under `title_model` (the key keeps
+  including Task titles and completed subagent result lines. Pick the cheapest
+  that does the job. It is kept per provider under `title_model` (the key keeps
   its first name). With no entry, UAM uses the provider's cheapest priced
   model, worked out whenever it is needed: among the models `/api/meta`
   lists with input and output prices, leaving out `auto` and models hidden
@@ -441,11 +485,11 @@ are logged only at debug level (`UAM_DEBUG=1`).
   keeps its own title, which for Copilot is the first prompt. A `PATCH`
   with a model ID, e.g. `{"title_model": {"copilot": "gpt-5-mini"}}`,
   chooses that model; `"none"` opts the provider out, so it keeps its own
-  title and UAM makes no AI call; an empty ID removes the entry, back to
+  title and subagent report, and UAM makes no utility AI call; an empty ID removes the entry, back to
   the cheapest. Only a provider with the `titles` capability can have a
   model, and the model must be in its current list.
   In Settings the **Utility model** section shows "Cheapest (currently
-  GPT-6 Luna)", the provider's own title (no AI), then each visible model
+  GPT-6 Luna)", None, then each visible model
   with its prices. UAM asks the model in a separate short Copilot session
   with no tools and no session store, and deletes that session afterwards.
   It then shows the title, 60 characters at most, and writes it into the
@@ -573,6 +617,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   session. On a wide window this panel and the Subagents panel can be
   resized by dragging their inner edge (the handle also takes the arrow
   keys; double-click resets); the width is kept per browser.
+  An open panel on the active, visible Task refreshes its selected scope
+  every five seconds and when the browser tab becomes visible again. The
+  previous diff remains visible while an update loads. Closing or hiding the
+  panel cancels its reads; manual Refresh remains available.
 - **Sidebar**: Tasks form one flat list with a compact card for each Task,
   followed by collapsible "Settled" and "Archived" shelves. A card shows its
   Project, state or last activity, title, provider icon and branch when known.

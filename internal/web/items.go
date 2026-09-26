@@ -3,6 +3,7 @@ package web
 import (
 	"cmp"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -17,17 +18,18 @@ import (
 // Per-session memory bounds. Provider output is untrusted and unbounded; the
 // service keeps a bounded tail and says so (history_truncated).
 const (
-	maxItems           = 2000
-	maxItemText        = 4 << 20
-	maxToolText        = 256 << 10
-	maxLabelText       = 4 << 10
-	maxSessionBytes    = 64 << 20
-	maxInteractions    = 200
-	maxInteractionText = 256 << 10
-	maxAnswerBytes     = 64 << 10
-	maxSubagents       = 200
-	maxItemAttachments = 50
-	maxToolCallID      = 256
+	maxItems            = 2000
+	maxItemText         = 4 << 20
+	maxToolText         = 256 << 10
+	maxLabelText        = 4 << 10
+	maxSessionBytes     = 64 << 20
+	maxInteractions     = 200
+	maxInteractionText  = 256 << 10
+	maxAnswerBytes      = 64 << 10
+	maxSubagents        = 200
+	maxItemAttachments  = 50
+	maxToolCallID       = 256
+	maxDeclarationCards = 128
 )
 
 const truncatedMarker = "\n[truncated by uam]"
@@ -53,6 +55,17 @@ func clampItem(it agentapi.Item, now time.Time) agentapi.Item {
 		tool.Title = clampText(tool.Title, maxLabelText)
 		tool.Input = clampText(tool.Input, maxToolText)
 		tool.Output = clampText(tool.Output, maxToolText)
+		if d := tool.Declaration; d != nil {
+			if d.ArtifactID == "" || len(d.ArtifactID) > 64 || !utf8.ValidString(d.ArtifactID) || strings.ContainsFunc(d.ArtifactID, unicode.IsControl) ||
+				!filepath.IsAbs(d.Path) || len(d.Path) > maxGrantPathBytes || !utf8.ValidString(d.Path) || strings.ContainsFunc(d.Path, unicode.IsControl) ||
+				len(d.Title) > 128 || !utf8.ValidString(d.Title) || strings.ContainsFunc(d.Title, unicode.IsControl) ||
+				len(d.TypeHint) > 32 || !utf8.ValidString(d.TypeHint) || strings.ContainsFunc(d.TypeHint, unicode.IsControl) {
+				tool.Declaration = nil
+			} else {
+				copy := *d
+				tool.Declaration = &copy
+			}
+		}
 		it.Tool = &tool
 	}
 	if len(it.Attachments) > maxItemAttachments {
@@ -83,6 +96,9 @@ func itemSize(it agentapi.Item) int {
 	n := len(it.ID) + len(it.Text)
 	if it.Tool != nil {
 		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output)
+		if d := it.Tool.Declaration; d != nil {
+			n += len(d.ArtifactID) + len(d.Path) + len(d.Title) + len(d.TypeHint)
+		}
 	}
 	return n
 }
@@ -132,18 +148,60 @@ func (m *Manager) markItemMutationLocked(s *webSession, it agentapi.Item) {
 	s.itemSeq[itemKey(it.AgentID, it.ID)] = m.seq
 }
 
+func confirmedSteerReceipt(previous, next agentapi.Item) bool {
+	return previous.Kind == agentapi.ItemUser && previous.Delivery == agentapi.DeliverySteer && previous.SteerStatus != "" && next.Kind == agentapi.ItemUser && next.SteerStatus == ""
+}
+
 // upsertItemLocked replaces the item with the same agent and ID or appends
 // it. A replacement keeps the earliest start: a tool's completion event is
 // stamped when it finished, not when it began.
 func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool) {
 	var previous agentapi.Item
+	// Keep only the newest declaration cards. The ordinary tool rows remain
+	// available and the provider journal remains the replay source.
+	if it.Tool != nil && it.Tool.Declaration != nil {
+		oldIndex, count := -1, 0
+		for i, existing := range s.items {
+			if existing.Tool != nil && existing.Tool.Declaration != nil && itemKey(existing.AgentID, existing.ID) != itemKey(it.AgentID, it.ID) {
+				count++
+				if oldIndex < 0 {
+					oldIndex = i
+				}
+			}
+		}
+		if count >= maxDeclarationCards && oldIndex >= 0 {
+			old := s.items[oldIndex]
+			copy := *old.Tool
+			copy.Declaration = nil
+			old.Tool = &copy
+			s.itemBytes -= itemSize(s.items[oldIndex])
+			s.items[oldIndex] = old
+			s.itemBytes += itemSize(old)
+			m.markItemMutationLocked(s, old)
+			if publish {
+				m.publishItemLocked(s, old, false)
+			}
+		}
+	}
+	moveIdleSteer := false
 	if i, ok := s.itemIdx[itemKey(it.AgentID, it.ID)]; ok {
 		previous = s.items[i]
-		if prev := s.items[i].Time; !prev.IsZero() && prev.Before(it.Time) {
+		confirmedSteer := confirmedSteerReceipt(previous, it)
+		moveIdleSteer = confirmedSteer && it.Delivery == ""
+		if confirmedSteer && len(it.Attachments) == 0 {
+			it.Attachments = slices.Clone(previous.Attachments)
+		}
+		if prev := previous.Time; !moveIdleSteer && !prev.IsZero() && prev.Before(it.Time) {
 			it.Time = prev
 		}
 		s.itemBytes -= itemSize(s.items[i])
-		s.items[i] = it
+		if moveIdleSteer {
+			s.items = append(s.items[:i], s.items[i+1:]...)
+			s.items = append(s.items, it)
+			s.rebuildIndex()
+		} else {
+			s.items[i] = it
+		}
 	} else {
 		s.itemIdx[itemKey(it.AgentID, it.ID)] = len(s.items)
 		s.items = append(s.items, it)
@@ -172,7 +230,7 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 			m.itemPreviewLocked(s, it)
 			return
 		}
-		m.publishItemLocked(s, it, previous.ID == "")
+		m.publishItemLocked(s, it, previous.ID == "" || moveIdleSteer)
 	}
 }
 
@@ -263,6 +321,9 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 			continue
 		}
 		seen[key] = true
+		if i, ok := s.itemIdx[key]; ok && confirmedSteerReceipt(s.items[i], it) && len(it.Attachments) == 0 {
+			it.Attachments = slices.Clone(s.items[i].Attachments)
+		}
 		it = clampItem(it, now)
 		s.linkUploadsLocked(&it)
 		items = append(items, it)
@@ -271,6 +332,18 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 	for _, it := range s.items {
 		if !seen[itemKey(it.AgentID, it.ID)] {
 			items = append(items, it)
+		}
+	}
+	declarations := 0
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Tool == nil || items[i].Tool.Declaration == nil {
+			continue
+		}
+		declarations++
+		if declarations > maxDeclarationCards {
+			copy := *items[i].Tool
+			copy.Declaration = nil
+			items[i].Tool = &copy
 		}
 	}
 	s.items = items

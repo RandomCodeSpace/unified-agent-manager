@@ -1,5 +1,5 @@
 import { Copy, Ellipsis, FileDiff, RefreshCw, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { api, describeError, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
@@ -19,18 +19,19 @@ export function defaultScope(s: SessionSummary): Scope {
 const STATUS_TONE: Record<string, string> = { A: 'text-success', D: 'text-error', '?': 'text-success' };
 
 /**
- * The Changes sheet: file list plus one unified diff. `changes` for the default scope is
- * owned by the Task view (it feeds the composer footer count); other scopes load here. Inline beside
- * the column on wide screens (resizable), an overlay panel otherwise.
+ * The sheet owns one visible list/detail refresh cycle. The Task's event-driven default
+ * list seeds it and receives refreshed counts. Polling reads only the selected scope.
  */
 export function ChangesSheet({
   session,
   projectName,
   changes,
   changesError,
+  isDefaultPending,
   inline,
   open,
-  onRefresh,
+  active,
+  onChanges,
   onClose,
   onClosed,
 }: {
@@ -39,19 +40,26 @@ export function ChangesSheet({
   changes: ChangesData | null;
   /** Why the default scope's list failed to load; null while it loads or once it has. */
   changesError: string | null;
+  /** Read at refresh time so pending Task reads do not need to rerender the panel. */
+  isDefaultPending: () => boolean;
   inline: boolean;
   /** False while the sheet leaves; `onClosed` follows, and the owner unmounts it. */
   open: boolean;
-  onRefresh: () => void;
+  active: boolean;
+  onChanges: (changes: ChangesData) => void;
   onClose: () => void;
   onClosed: () => void;
 }) {
   const canSession = session.capabilities.session_diff;
   const [scope, setScope] = useState<Scope>(defaultScope(session));
-  const [other, setOther] = useState<ChangesData | null>(null);
-  const [otherError, setError] = useState<string | null>(null);
+  const [view, setView] = useState<{
+    sessionId: string; scope: Scope; list: ChangesData | null; path: string | null;
+    file: FileDiffData | null; error: string | null; fileError: string | null;
+  } | null>(null);
   const [path, setPath] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const request = useRef<AbortController | null>(null);
+  const observedChanges = useRef(changes);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -59,36 +67,94 @@ export function ChangesSheet({
   }, []);
 
   const isDefault = scope === defaultScope(session);
-  useEffect(() => {
-    if (isDefault) return;
-    let live = true;
-    api
-      .changes(session.id, scope)
-      .then((c) => live && setOther(c))
-      .catch((e: unknown) => live && setError(describeError(e)));
-    return () => {
-      live = false;
-    };
-  }, [session.id, scope, isDefault, tick]);
-
-  const data = isDefault ? changes : other;
-  const error = isDefault ? changesError : otherError;
+  const current = view?.sessionId === session.id && view.scope === scope ? view : null;
+  const data = current?.list ?? (isDefault ? changes : null);
+  const error = current ? current.error : isDefault ? changesError : null;
   const files = data?.supported ? data.files : [];
   const shownPath = path && files.some((f) => f.path === path) ? path : (files[0]?.path ?? null);
   const adds = files.reduce((n, f) => n + f.additions, 0);
   const dels = files.reduce((n, f) => n + f.deletions, 0);
   const label = data ? data.label : `${projectName} vs HEAD`;
 
-  function refresh() {
-    setError(null);
-    setTick((t) => t + 1);
-    if (isDefault) onRefresh();
-  }
+  const stop = useEffectEvent(() => {
+    request.current?.abort();
+    request.current = null;
+  });
+  const refresh = useEffectEvent((mode: 'read' | 'initial' | 'known' | 'selection' = 'read') => {
+    if (!open || !active || document.visibilityState !== 'visible' || request.current) return;
+    let listing = mode === 'selection' ? data : mode !== 'read' && isDefault ? changes : null;
+    // The Task may already be loading the default list. Reuse its response on arrival.
+    if (mode === 'initial' && isDefault && !listing) return;
+    if (!listing && isDefault && isDefaultPending()) return;
+    const controller = new AbortController();
+    request.current = controller;
+    let selected = shownPath;
+    let readingFile = false;
+    void Promise.resolve(listing ?? api.changes(session.id, scope, controller.signal)).then(accepted => {
+      if (controller.signal.aborted) return null;
+      listing = accepted;
+      const entries = listing.supported ? listing.files : [];
+      selected = path && entries.some(file => file.path === path) ? path : (entries[0]?.path ?? null);
+      readingFile = !!selected;
+      const next = { sessionId: session.id, scope, list: listing, path: selected,
+        file: current?.path === selected ? current.file : null, error: null,
+        fileError: current?.path === selected ? current.fileError : null };
+      setView(next);
+      if (isDefault) {
+        observedChanges.current = listing;
+        onChanges(listing);
+      }
+      return selected
+        ? api.changeFile(session.id, scope, selected, controller.signal).then(file => ({ ...next, file, fileError: null }))
+        : next;
+    }).then(next => {
+      if (controller.signal.aborted || !next) return;
+      setView(next);
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setView({ sessionId: session.id, scope, list: listing ?? data, path: selected,
+        file: current?.path === selected ? current.file : null,
+        error: readingFile ? null : describeError(error), fileError: readingFile ? describeError(error) : null });
+    }).finally(() => {
+      if (request.current === controller) request.current = null;
+    });
+  });
 
-  function changeScope(s: Scope) {
-    setError(null);
-    setScope(s);
-  }
+  useEffect(() => {
+    if (!open || !active) return;
+    let timer: number | undefined;
+    const schedule = () => { timer = window.setInterval(() => { void refresh(); }, 5000); };
+    const visibility = () => {
+      window.clearInterval(timer);
+      timer = undefined;
+      if (document.visibilityState === 'visible') {
+        void refresh();
+        schedule();
+      } else stop();
+    };
+    if (document.visibilityState === 'visible') {
+      void refresh('initial');
+      schedule();
+    }
+    document.addEventListener('visibilitychange', visibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', visibility);
+      stop();
+    };
+  }, [session.id, scope, open, active]);
+  useEffect(() => {
+    if (changes === observedChanges.current) return;
+    observedChanges.current = changes;
+    stop();
+    void refresh('known');
+  }, [changes]);
+  useEffect(() => { if (tick) void refresh(); }, [tick]);
+  useEffect(() => {
+    if (!path) return;
+    stop();
+    void refresh('selection');
+  }, [path]);
 
   return (
     <SidePanel id="changes" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Changes" defaultWidth={440}>
@@ -106,7 +172,7 @@ export function ChangesSheet({
             size="sm"
             aria-label="Scope"
             value={scope}
-            onValueChange={(s) => changeScope(s as Scope)}
+            onValueChange={(s) => setScope(s as Scope)}
             items={[
               { value: 'session', label: 'This task' },
               { value: 'workspace', label: 'Workspace' },
@@ -114,7 +180,7 @@ export function ChangesSheet({
           />
         )}
         <Tip label="Refresh">
-          <Button size="icon-md" aria-label="Refresh" className="text-muted" onClick={refresh}>
+          <Button size="icon-md" aria-label="Refresh" className="text-muted" onClick={() => setTick(t => t + 1)}>
             <RefreshCw />
           </Button>
         </Tip>
@@ -130,7 +196,7 @@ export function ChangesSheet({
           <li className="px-2 py-1">
             <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
               <span className="min-w-0 flex-1">Could not load the changes: {error}</span>
-              <Button size="sm" variant="secondary" onClick={refresh}>
+              <Button size="sm" variant="secondary" onClick={() => setTick(t => t + 1)}>
                 Retry
               </Button>
             </Note>
@@ -156,7 +222,7 @@ export function ChangesSheet({
         ))}
       </ul>
       <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
-      <div className="min-h-0 flex-1 overflow-auto">{shownPath && <FileView key={`${scope}:${shownPath}:${tick}`} sessionId={session.id} scope={scope} path={shownPath} />}</div>
+      <div className="min-h-0 flex-1 overflow-auto">{shownPath && <FileView path={shownPath} file={current?.path === shownPath ? current.file : null} error={current?.path === shownPath ? current.fileError : null} />}</div>
     </SidePanel>
   );
 }
@@ -201,21 +267,7 @@ function FileRow({ file: f, selected, onOpen }: { file: ChangeFile; selected: bo
   );
 }
 
-function FileView({ sessionId, scope, path }: { sessionId: string; scope: Scope; path: string }) {
-  const [file, setFile] = useState<FileDiffData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    api
-      .changeFile(sessionId, scope, path)
-      .then((f) => live && setFile(f))
-      .catch((e: unknown) => live && setError(describeError(e)));
-    return () => {
-      live = false;
-    };
-  }, [sessionId, scope, path]);
-
+function FileView({ path, file, error }: { path: string; file: FileDiffData | null; error: string | null }) {
   const patch = useMemo<StructuredPatch | null | Error>(() => {
     if (!file) return null;
     try {
@@ -226,22 +278,19 @@ function FileView({ sessionId, scope, path }: { sessionId: string; scope: Scope;
     }
   }, [file]);
 
-  if (error) {
-    return (
-      <Note tone="error" role="alert" className="p-3">
-        {error}
-      </Note>
-    );
-  }
-  if (!file) return <Skeleton label="Loading the diff…" rows={6} className="gap-2 p-3" />;
-  if (patch instanceof Error) return <Note tone="error" className="p-3">Could not parse diff: {patch.message}</Note>;
-  if (!patch || patch.hunks.length === 0) return <Note className="p-3">No textual changes in {file.path}.</Note>;
+  const warning = error ? <Note tone="error" role="alert" className="p-3">{error}</Note> : null;
+  if (!file) return warning ?? <Skeleton label="Loading the diff…" rows={6} className="gap-2 p-3" />;
+  if (patch instanceof Error) return <>{warning}<Note tone="error" className="p-3">Could not parse diff: {patch.message}</Note></>;
+  if (!patch || patch.hunks.length === 0) return <>{warning}<Note className="p-3">No textual changes in {path}.</Note></>;
 
   return (
-    <table className="diff animate-fade-in" translate="no">
-      <caption>{file.path}</caption>
-      <tbody>{patch.hunks.flatMap((h, hi) => renderHunk(h, hi))}</tbody>
-    </table>
+    <>
+      {warning}
+      <table className="diff animate-fade-in" translate="no">
+        <caption>{file.path}</caption>
+        <tbody>{patch.hunks.flatMap((h, hi) => renderHunk(h, hi))}</tbody>
+      </table>
+    </>
   );
 }
 

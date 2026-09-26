@@ -35,6 +35,7 @@ func newTestServer(t *testing.T, cfg ServerConfig) *testServer {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.Close)
 	return &testServer{srv: srv, m: m, prov: prov}
 }
 

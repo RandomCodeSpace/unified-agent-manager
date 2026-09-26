@@ -2,7 +2,7 @@
 // reloading keeps what was typed; a new Task's, which has no id until its first Send, per
 // Project (`uam.draft.new.<projectId>`). Pure rules; the Composer owns the storage calls.
 
-import type { Model, TaskDefaults } from '../api';
+import type { Model, PromptSettings, TaskDefaults } from '../api';
 import type { Kind } from './attachments';
 
 export const DRAFT_PREFIX = 'uam.draft.';
@@ -23,11 +23,12 @@ export interface Draft {
   text: string;
   files: string[];
   attachments: DraftAttachment[];
+  settings?: PromptSettings;
 }
 
 const KINDS: readonly string[] = ['image', 'pdf', 'text'];
 
-export const draftEmpty = (d: Draft): boolean => !d.text.trim() && d.files.length === 0 && d.attachments.length === 0;
+export const draftEmpty = (d: Draft): boolean => !d.text.trim() && d.files.length === 0 && d.attachments.length === 0 && !d.settings;
 
 /** The stored form, or null when there is nothing worth keeping (the key goes). */
 export function serializeDraft(d: Draft): string | null {
@@ -50,7 +51,11 @@ export function parseDraft(raw: string | null): Draft | null {
           return typeof id === 'string' && id && typeof name === 'string' && KINDS.includes(String(kind)) ? [{ id, name, size: typeof size === 'number' ? size : 0, kind: kind as Kind }] : [];
         })
       : [];
-    const d = { text, files, attachments };
+    const settings = o.settings && typeof o.settings === 'object' ? o.settings as Record<string, unknown> : null;
+    const d: Draft = { text, files, attachments };
+    if (settings && typeof settings.model === 'string' && typeof settings.effort === 'string' && typeof settings.context_size === 'string') {
+      d.settings = { model: settings.model, effort: settings.effort, context_size: settings.context_size };
+    }
     return draftEmpty(d) ? null : d;
   } catch {
     return null;

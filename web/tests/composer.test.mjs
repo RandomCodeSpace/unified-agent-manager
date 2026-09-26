@@ -1,6 +1,42 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
+
+test('the active composer permits draft settings and retains settings in prompt identity and payload', async () => {
+  const source = ts.createSourceFile('Composer.tsx', await readFile(new URL('../src/components/Composer.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declarations = new Map();
+  let promptCall;
+  const visit = node => {
+    if (ts.isVariableDeclaration(node)) declarations.set(node.name.getText(source), node.initializer);
+    if (ts.isCallExpression(node) && node.expression.getText(source) === 'api.prompt') promptCall = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  const evaluate = (expression, bindings) => {
+    assert.ok(expression);
+    const exports = {};
+    runInNewContext(ts.transpileModule(`exports.value = ${expression.getText(source)}`, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { ...bindings, exports });
+    return exports.value;
+  };
+  const init = (name, bindings) => evaluate(declarations.get(name), bindings);
+  assert.equal(init('settingsLocked', { live: true, busy: null, locked: false }), false);
+  assert.equal(init('settingsLocked', { live: true, busy: 'send', locked: false }), true);
+  assert.equal(init('settingsLocked', { live: true, busy: null, locked: true }), true);
+  const current = { model: 'a', effort: 'low', context_size: 'default' };
+  assert.equal(init('selectionChanged', { session: current, selection: current }), false);
+  assert.equal(init('selectionChanged', { session: current, selection: { ...current, effort: 'high' } }), true);
+  assert.deepEqual(JSON.parse(JSON.stringify(init('{ enter, modified }', { enterActions, live: true, appSettings: { send_default: 'steer' }, steerUnavailable: '', settingsSteerReason: 'Queue new settings' }))), { enter: 'steer', modified: 'queue' });
+  const input = { t: 'follow up', files: ['notes.md'], attachmentIds: ['image-id'], cmd: null, selection: current };
+  const key = init('key', input);
+  assert.equal(init('key', { ...input, selection: { ...current } }), key);
+  for (const change of [{ model: 'b' }, { effort: 'high' }, { context_size: 'long_context' }]) assert.notEqual(init('key', { ...input, selection: { ...current, ...change } }), key);
+  let sent;
+  evaluate(promptCall, { api: { prompt: (...args) => { sent = args; } }, session: { id: 'task' }, t: input.t, id: 'same-request', promptMode: 'queue', extras: { files: input.files, attachments: input.attachmentIds }, selection: current });
+  assert.deepEqual(JSON.parse(JSON.stringify(sent)), ['task', 'follow up', 'same-request', 'queue', { files: ['notes.md'], attachments: ['image-id'], settings: current }]);
+});
 
 const commands = [
   { name: 'review', description: 'Review the changes', kind: 'command', input_hint: '' },

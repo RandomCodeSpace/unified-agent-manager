@@ -6,6 +6,21 @@ const item = (id, text = id) => ({ id, kind: 'assistant', time: '', text });
 const ids = items => items.map(item => item.id);
 const accounted = items => items.reduce((bytes, item) => bytes + accountItem(item), 0);
 
+test('provider page confirms an idle steer receipt at its real position while other live items win', () => {
+  const start = { id: 'start', kind: 'user', time: '00' };
+  const receipt = { id: 'steer', kind: 'user', delivery: 'steer', steer_status: 'accepted', text: 'next', time: '01' };
+  const oldAnswer = { ...item('old-answer', 'live correction'), time: '02' };
+  const echo = { id: 'steer', kind: 'user', text: 'next', time: '03' };
+  const newAnswer = item('new-answer');
+  const incoming = [start, { ...oldAnswer, text: 'stale page' }, echo, newAnswer];
+  for (const direction of ['older', 'newer']) {
+    const merged = mergeItems([start, receipt, oldAnswer, newAnswer], incoming, direction);
+    assert.deepEqual(ids(merged), ['start', 'old-answer', 'steer', 'new-answer']);
+    assert.equal(merged[1], oldAnswer);
+    assert.equal(merged[2], echo);
+  }
+});
+
 test('a long single turn is bounded by items even without user-message boundaries', () => {
   const transcript = Array.from({ length: 1800 }, (_, index) => item(String(index)));
   const older = boundItems(transcript, 'older');
@@ -102,6 +117,43 @@ test('duplicate page records appear once and an existing live record wins in bot
 
 // Outer activity may include reasoning, but each inner tool run needs its own key.
 import { groupIdentities, indexPage } from '../src/lib/historyState.ts';
+import { declarationIdentity, isDeclarationBoundary, newestFileDeclarations } from '../src/lib/transcript.ts';
+
+test('indexed declarations keep adjacent run keys distinct across replay and older pages', () => {
+  const ordinary = id => ({ id, kind: 'tool', time: id, tool: { name: 'view', status: 'completed' } });
+  const declared = { id: 'b', kind: 'tool', time: 'b', tool: { name: 'uam_show_file', status: 'completed', declaration: { artifact_id: 'artifact-1', path: '/repo/README' } } };
+  const all = [ordinary('a'), declared, ordinary('c')];
+  const index = indexPage([], all);
+  assert.equal(index[1].tool.declaration, undefined, 'the lightweight index must not retain path metadata');
+  assert.equal(index[1].tool.declaration_boundary, true);
+  for (const toolsOnly of [false, true]) {
+    const full = groupIdentities(all, toolsOnly, isDeclarationBoundary);
+    const replay = groupIdentities(index, toolsOnly, isDeclarationBoundary);
+    assert.deepEqual([...replay], [...full]);
+    assert.equal(replay.get('a'), 'a');
+    assert.equal(replay.get('b'), undefined);
+    assert.equal(replay.get('c'), 'c');
+    const later = groupIdentities(indexPage(indexPage([], all.slice(1)), all.slice(0, 1), 'older'), toolsOnly, isDeclarationBoundary, [], replay);
+    assert.equal(later.get('a'), 'a');
+    assert.equal(later.get('c'), 'c');
+  }
+});
+
+test('the oldest declaration rejoins ordinary tool grouping when the card window exceeds 128', () => {
+  const ordinary = id => ({ id, kind: 'tool', time: id, tool: { name: 'view', status: 'completed' } });
+  const declarations = Array.from({ length: 129 }, (_, index) => ({ id: `call-${index}`, kind: 'tool', time: String(index), tool: { name: 'uam_show_file', status: 'completed', declaration: { artifact_id: `artifact-${index}`, path: `/repo/${index}` } } }));
+  const all = [ordinary('before'), ...declarations, ordinary('after')];
+  const cards = newestFileDeclarations(all);
+  const boundary = item => cards.has(declarationIdentity(item)) && isDeclarationBoundary(item);
+  const indexed = indexPage([], all);
+  for (const toolsOnly of [false, true]) {
+    const keys = groupIdentities(indexed, toolsOnly, boundary);
+    assert.equal(keys.get('call-0'), keys.get('before'));
+    assert.equal(keys.get('call-1'), undefined);
+    assert.equal(keys.get('after'), 'after');
+    assert.notEqual(keys.get('before'), keys.get('after'));
+  }
+});
 test('inner tool run identities split at reasoning and questions while retained metadata keeps adjacent keys stable', () => {
   const items = [
     { id: 'a', kind: 'tool', time: '', tool: { name: 'read', status: 'completed' } },

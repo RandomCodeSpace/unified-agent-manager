@@ -271,6 +271,7 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 		body, _ := os.ReadFile(filepath.Join(real, name))
 		if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), body) || h.Get("Content-Type") != want.mime ||
 			h.Get("Content-Security-Policy") != viewSecurity || h.Get("X-Content-Type-Options") != "nosniff" ||
+			h.Get("X-Frame-Options") != "SAMEORIGIN" ||
 			h.Get("Referrer-Policy") != "no-referrer" || h.Get("Cache-Control") != "private, no-cache" ||
 			!strings.HasPrefix(h.Get("Content-Disposition"), want.disposition+"; filename=") {
 			t.Errorf("GET %s = %d %v %q", p, w.Code, h, w.Body.String()[:min(w.Body.Len(), 80)])
@@ -295,6 +296,70 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 	}
 	if w := view(http.MethodGet, viewURL("nope", "notes.md")); w.Code != http.StatusNotFound {
 		t.Fatalf("unknown task = %d", w.Code)
+	}
+}
+
+func TestViewFilePreviewMetadataRangeAndDownload(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, dir := viewTask(t, ts)
+	view := authenticatedFileView(t, ts)
+	text := strings.Repeat("a", 64<<10) + "tail"
+	for name, data := range map[string]string{"large.txt": text, "empty.txt": ""} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := view(http.MethodHead, viewURL(sum.ID, "large.txt"))
+	if w.Code != http.StatusOK || w.Body.Len() != 0 || w.Header().Get("Content-Length") != strconv.Itoa(len(text)) || w.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Fatalf("preview metadata = %d, body bytes %d, size %q, type %q", w.Code, w.Body.Len(), w.Header().Get("Content-Length"), w.Header().Get("Content-Type"))
+	}
+	w = view(http.MethodGet, viewURL(sum.ID, "large.txt"), withHeader("Range", "bytes=0-65535"), withHeader("Accept-Encoding", "gzip"))
+	if w.Code != http.StatusPartialContent || w.Body.String() != text[:64<<10] || w.Header().Get("Content-Range") != "bytes 0-65535/65540" || w.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("preview range = %d, body bytes %d, range %q, encoding %q", w.Code, w.Body.Len(), w.Header().Get("Content-Range"), w.Header().Get("Content-Encoding"))
+	}
+	w = view(http.MethodGet, viewURL(sum.ID, "empty.txt"), withHeader("Range", "bytes=0-65535"))
+	if w.Code != http.StatusOK || w.Body.Len() != 0 || w.Header().Get("Content-Length") != "0" {
+		t.Fatalf("empty preview range = %d, body bytes %d, size %q", w.Code, w.Body.Len(), w.Header().Get("Content-Length"))
+	}
+
+	auth := ts.login(t, "127.0.0.1:8260")
+	w = ts.do(http.MethodHead, viewURL(sum.ID, "a%20b.txt")+"?download=1", "", auth)
+	target, err := url.Parse(w.Header().Get("Location"))
+	if err != nil || w.Code != http.StatusFound || target.Query().Get("download") != "1" || !strings.HasSuffix(target.EscapedPath(), "/a%20b.txt") {
+		t.Fatal("download redirect did not retain the escaped file path and download flag")
+	}
+	for _, method := range []string{http.MethodHead, http.MethodGet} {
+		w = ts.do(method, target.String(), "")
+		if w.Code != http.StatusOK || w.Header().Get("Content-Disposition") != `attachment; filename="a b.txt"` || w.Header().Get("Content-Length") != "6" {
+			t.Fatalf("%s download = %d, disposition %q, size %q", method, w.Code, w.Header().Get("Content-Disposition"), w.Header().Get("Content-Length"))
+		}
+		if method == http.MethodHead && w.Body.Len() != 0 || method == http.MethodGet && w.Body.String() != "spaced" {
+			t.Fatalf("%s download body bytes = %d", method, w.Body.Len())
+		}
+	}
+	if w = view(http.MethodGet, viewURL(sum.ID, "a%20b.txt")+"?download=0"); !strings.HasPrefix(w.Header().Get("Content-Disposition"), "inline;") {
+		t.Fatal("only download=1 should force a download")
+	}
+
+	// Framing is limited to an authorized file response, never the app, its
+	// authenticated API, a failed file lookup or a refused credential.
+	for _, response := range []*httptest.ResponseRecorder{
+		ts.do(http.MethodGet, "/", ""),
+		ts.do(http.MethodGet, "/api/meta", "", auth),
+		ts.do(http.MethodHead, viewURL(sum.ID, "large.txt"), ""),
+		ts.do(http.MethodGet, target.String(), "", withHost("other.example")),
+		view(http.MethodGet, viewURL(sum.ID, "missing.txt")),
+	} {
+		if response.Header().Get("X-Frame-Options") != "DENY" || response.Header().Get("Content-Security-Policy") != contentSecurity {
+			t.Fatalf("non-view response changed framing policy: status %d", response.Code)
+		}
+	}
+	if w = ts.do(http.MethodHead, viewURL(sum.ID, "large.txt"), ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated metadata = %d", w.Code)
+	}
+	if w = ts.do(http.MethodGet, target.String(), "", withHost("other.example")); w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong-host download = %d", w.Code)
 	}
 }
 

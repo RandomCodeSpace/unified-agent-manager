@@ -62,6 +62,10 @@ type fakeClient struct {
 	checked       [][]string
 	importSupport *bool
 	importProbes  int
+	catalog       []rpc.CurrentToolMetadata
+	catalogErr    error
+	toolCatalogs  []fakeToolCatalog
+	setToolErrors []error
 }
 
 func (f *fakeClient) ImportSupported(context.Context) bool {
@@ -143,7 +147,7 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	if id == "" {
 		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -155,7 +159,7 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	if f.resumeErr != nil {
 		return nil, f.resumeErr
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -193,6 +197,7 @@ type fakeSession struct {
 	// beforeReturn runs with the assigned message ID before Send returns it,
 	// as CLI events can be handled before the send response.
 	beforeReturn      func(id string)
+	returnID          *string
 	models            []string
 	modelErr          error
 	modelRequests     []*rpc.ModelSwitchToRequest
@@ -222,6 +227,55 @@ type fakeSession struct {
 	nameErr           error
 	added             []string // provider and model names AddProviders registered
 	addErr            error
+	catalog           []rpc.CurrentToolMetadata
+	catalogErr        error
+	catalogReads      int
+	toolCatalogs      []fakeToolCatalog
+	setToolErrors     []error
+	setTools          [][]rpc.ProtocolExternalToolDefinition
+	toolCalls         []string
+}
+
+type fakeToolCatalog struct {
+	tools []rpc.CurrentToolMetadata
+	err   error
+}
+
+func (s *fakeSession) ToolCatalog(ctx context.Context) ([]rpc.CurrentToolMetadata, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.toolCalls = append(s.toolCalls, "catalog")
+	i := s.catalogReads
+	s.catalogReads++
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if i < len(s.toolCatalogs) {
+		return s.toolCatalogs[i].tools, s.toolCatalogs[i].err
+	}
+	if len(s.setTools) == 1 {
+		return []rpc.CurrentToolMetadata{}, nil
+	}
+	return s.catalog, s.catalogErr
+}
+
+func (s *fakeSession) SetTools(ctx context.Context, tools []rpc.ProtocolExternalToolDefinition) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stage := "restore"
+	if len(tools) == 0 {
+		stage = "clear"
+	}
+	s.toolCalls = append(s.toolCalls, stage)
+	i := len(s.setTools)
+	s.setTools = append(s.setTools, tools)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if i < len(s.setToolErrors) {
+		return s.setToolErrors[i]
+	}
+	return nil
 }
 
 func (s *fakeSession) AddProviders(_ context.Context, providers []copilot.NamedProviderConfig, models []copilot.ProviderModelConfig) error {
@@ -297,6 +351,9 @@ func (s *fakeSession) Send(_ context.Context, msg copilot.MessageOptions) (strin
 	s.modes = append(s.modes, msg.Mode)
 	s.msgs = append(s.msgs, msg)
 	id := fmt.Sprintf("msg-%d", len(s.sent))
+	if s.returnID != nil {
+		id = *s.returnID
+	}
 	hook := s.beforeReturn
 	s.mu.Unlock()
 	if hook != nil {
@@ -369,6 +426,7 @@ func (s *fakeSession) RespondPermission(ctx context.Context, id string, d rpc.Pe
 func (s *fakeSession) Disconnect() error {
 	s.mu.Lock()
 	s.disconnected = true
+	s.toolCalls = append(s.toolCalls, "disconnect")
 	hook := s.disconnectHook
 	s.mu.Unlock()
 	if hook != nil {
@@ -1237,8 +1295,8 @@ func TestWebSendOmitsModeAndSteerInterjects(t *testing.T) {
 	if got := strings.Join(h.fs.modes, ","); got != ",immediate" || strings.Join(h.fs.sent, ",") != "start,also this" {
 		t.Fatalf("modes = %s, sent = %v", got, h.fs.sent)
 	}
-	if evs := h.sink.all()[before:]; len(evs) != 0 {
-		t.Fatalf("a steer reported %+v; the running turn reports its own end", evs)
+	if evs := h.sink.all()[before:]; len(evs) != 1 || evs[0].Kind != agentapi.EventItem || evs[0].Item == nil || evs[0].Item.ID != "msg-2" || evs[0].Item.Kind != agentapi.ItemUser {
+		t.Fatalf("accepted steer has no immediate user item: %+v", evs)
 	}
 	h.fs.sendErr = rejectedError{errors.New("JSON-RPC Error -32603: invalid")}
 	if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "p"}); err == nil || errors.Is(err, agentapi.ErrSubmissionUncertain) {
@@ -1247,6 +1305,67 @@ func TestWebSendOmitsModeAndSteerInterjects(t *testing.T) {
 	h.fs.sendErr = errors.New("CLI process exited: signal: killed")
 	if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "p"}); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
 		t.Fatalf("steer after CLI exit err = %v, want uncertain", err)
+	}
+}
+
+func TestWebSteerReceiptReconcilesByProviderMessageID(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "start"})
+	before := len(h.sink.all())
+	for i, text := range []string{"same text", "same text"} {
+		prompt := agentapi.Prompt{Text: text}
+		if i == 0 {
+			prompt.Attachments = []agentapi.Blob{{Name: "note.txt", MIME: "text/plain", Data: []byte("raw bytes")}}
+		}
+		if err := h.conv.Steer(ctx, prompt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evs := h.sink.all()[before:]
+	if len(evs) != 2 {
+		t.Fatalf("want two immediate accepted items before echo, got %+v", evs)
+	}
+	for i, id := range []string{"msg-2", "msg-3"} {
+		it := evs[i].Item
+		if evs[i].Kind != agentapi.EventItem || it == nil || it.ID != id || it.Text != "same text" || it.Delivery != agentapi.DeliverySteer {
+			t.Fatalf("accepted item %d = %+v", i, evs[i])
+		}
+		data, err := json.Marshal(it)
+		if err != nil || !bytes.Contains(data, []byte(`"steer_status":"accepted"`)) {
+			t.Fatalf("accepted item must say delivery is unconfirmed: %s, %v", data, err)
+		}
+	}
+	if a := evs[0].Item.Attachments; len(a) != 1 || a[0].Name != "note.txt" || a[0].MIME != "text/plain" || a[0].Size != 9 || a[0].SHA256 == "" {
+		t.Fatalf("receipt lost upload metadata: %+v", a)
+	}
+	h.fs.onEvent(ev("u2", userMessage("msg-2", rpc.UserMessageDeliverySteering, "same text")))
+	got := h.sink.last().Item
+	data, _ := json.Marshal(got)
+	if got == nil || got.ID != "msg-2" || got.Delivery != agentapi.DeliverySteer || bytes.Contains(data, []byte("steer_status")) {
+		t.Fatalf("provider echo must replace receipt without pending status: %s", data)
+	}
+	beforeClose := len(h.sink.all())
+	if err := h.conv.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("u3", userMessage("msg-3", rpc.UserMessageDeliverySteering, "same text")))
+	if got := len(h.sink.all()); got != beforeClose {
+		t.Fatalf("closed conversation claimed a late provider echo: %d events, want %d", got, beforeClose)
+	}
+}
+
+func TestWebSteerWithoutMessageIDHasUncertainOutcome(t *testing.T) {
+	h := openWeb(t)
+	_ = h.conv.Send(context.Background(), agentapi.Prompt{Text: "start"})
+	empty := ""
+	h.fs.returnID = &empty
+	before := len(h.sink.all())
+	if err := h.conv.Steer(context.Background(), agentapi.Prompt{Text: "no id"}); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		t.Fatalf("missing message ID outcome = %v, want uncertain", err)
+	}
+	if evs := h.sink.all()[before:]; len(evs) != 0 {
+		t.Fatalf("missing message ID fabricated a receipt: %+v", evs)
 	}
 }
 
@@ -1285,6 +1404,17 @@ func TestWebSteerTheTurnDidNotUseIsReportedOnce(t *testing.T) {
 	}
 	if got := notices(evs); strings.Join(got, "#") != strings.Join(want, "#") {
 		t.Fatalf("notices = %q\nwant %q", got, want)
+	}
+	for _, id := range []string{"msg-2", "msg-3"} {
+		var status string
+		for _, event := range evs {
+			if event.Kind == agentapi.EventItem && event.Item != nil && event.Item.ID == id {
+				status = event.Item.SteerStatus
+			}
+		}
+		if status != agentapi.SteerNotDelivered {
+			t.Fatalf("steer %s ended with status %q, want not delivered", id, status)
+		}
 	}
 	if last := evs[len(evs)-1]; last.Kind != agentapi.EventTurn || last.Turn.State != agentapi.TurnCancelled {
 		t.Fatalf("the notices must come before the turn ends: last event %+v", last)
@@ -1362,8 +1492,18 @@ func TestWebSteerUsedBeforeSendReturns(t *testing.T) {
 	h.fs.beforeReturn = func(id string) {
 		h.fs.onEvent(ev("u2", userMessage(id, rpc.UserMessageDeliverySteering, "quick")))
 	}
+	before := len(h.sink.all())
 	if err := h.conv.Steer(ctx, agentapi.Prompt{Text: "quick"}); err != nil {
 		t.Fatal(err)
+	}
+	var sameID []agentapi.Item
+	for _, event := range h.sink.all()[before:] {
+		if event.Kind == agentapi.EventItem && event.Item != nil && event.Item.ID == "msg-2" {
+			sameID = append(sameID, *event.Item)
+		}
+	}
+	if len(sameID) != 1 || sameID[0].SteerStatus != "" {
+		t.Fatalf("provider echo before Send return must not gain a receipt: %+v", sameID)
 	}
 	h.fs.beforeReturn = nil
 	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))

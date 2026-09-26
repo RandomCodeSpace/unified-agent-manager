@@ -3,6 +3,8 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { api, type Attachment } from '../api';
 import { formatSize, kindOf, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
+import { previewClick } from '../lib/preview';
+import { usePreview } from '../lib/previewContext';
 import { Button, buttonVariants } from './ui/button';
 import { Chip } from './ui/chip';
 import { ViewerDialog } from './ui/dialog';
@@ -132,6 +134,7 @@ export interface StoredImage {
  * **Open original**. Shared by a user turn's uploads and a tool row's images.
  */
 export function ImageThumbs({ sessionId, images, className }: { sessionId: string; images: StoredImage[]; className?: string }) {
+  const preview = usePreview();
   const [shown, setShown] = useState<StoredImage | null>(null);
   const [open, setOpen] = useState(false);
   if (!images.length) return null;
@@ -145,7 +148,11 @@ export function ImageThumbs({ sessionId, images, className }: { sessionId: strin
             type="button"
             className="lift flex max-h-40 max-w-full items-center justify-center overflow-hidden rounded-sm bg-sunken pointer-coarse:min-h-11 pointer-coarse:min-w-11"
             aria-label={`Open ${nameOf(a)}`}
-            onClick={() => {
+            onClick={event => {
+              if (preview) {
+                preview({ url: api.attachmentUrl(sessionId, a.id), name: nameOf(a), description: `${KIND_LABEL[kindOf(a.mime)]}${a.size ? ` · ${formatSize(a.size)}` : ''}`, image: true }, event.currentTarget);
+                return;
+              }
               setShown(a);
               setOpen(true);
             }}
@@ -154,7 +161,7 @@ export function ImageThumbs({ sessionId, images, className }: { sessionId: strin
           </button>
         ))}
       </div>
-      {shown && (
+      {!preview && shown && (
         <Lightbox
           open={open}
           onOpenChange={setOpen}
@@ -217,6 +224,7 @@ export function Lightbox({ open, onOpenChange, onClosed, title, description, src
 }
 
 function FileChip({ sessionId, attachment: a }: { sessionId: string; attachment: Attachment }) {
+  const preview = usePreview();
   const kind = kindOf(a.mime);
   const body: ReactNode = (
     <>
@@ -234,7 +242,12 @@ function FileChip({ sessionId, attachment: a }: { sessionId: string; attachment:
     );
   }
   return (
-    <a href={api.attachmentUrl(sessionId, a.id)} target="_blank" rel="noopener noreferrer" className={cn(cls, 'transition-colors duration-100 hover:bg-sunken')} title={`Open ${a.name}`}>
+    <a href={api.attachmentUrl(sessionId, a.id)} target="_blank" rel="noopener noreferrer" className={cn(cls, 'transition-colors duration-100 hover:bg-sunken')} title={`Open ${a.name}`} onClick={event => {
+      if (preview && a.id && previewClick(event)) {
+        event.preventDefault();
+        preview({ url: api.attachmentUrl(sessionId, a.id), name: a.name }, event.currentTarget);
+      }
+    }}>
       {body}
     </a>
   );

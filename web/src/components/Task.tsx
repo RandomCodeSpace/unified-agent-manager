@@ -6,6 +6,7 @@ import type { AgentTranscript, HistoryRequest } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
+import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
@@ -19,6 +20,7 @@ import { SubagentPanel, type PanelView } from './Subagents';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript } from './Transcript';
 import { FileReferencesProvider } from './FileReferences';
+import { FilePreview, useFilePreview } from './FilePreview';
 import { HistoryAnchor } from './HistoryAnchor';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -134,7 +136,10 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
 export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
-  const { dispatch } = useApp();
+  const { dispatch, meta } = useApp();
+  const tempRoot = meta?.temp_root;
+  const tempAlias = meta?.temp_root_aliases?.[0];
+  const tempRoots = useMemo(() => ({ temp_root: tempRoot, temp_root_aliases: tempAlias ? [tempAlias] : undefined }), [tempRoot, tempAlias]);
   const actions = useTaskActions();
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesError, setChangesError] = useState<string | null>(null);
@@ -152,6 +157,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [locateError, setLocateError] = useState('');
   const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
+  const previewOpened = useCallback(() => { setPanel(null); onSheet(false); }, [onSheet]);
+  const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
+  const closePreview = preview.close;
+  useLayoutEffect(() => { if (sheetOpen || panel) closePreview(false); }, [sheetOpen, panel, closePreview]);
   const atBottom = useRef(true);
   // Anchor by ID so incoming output cannot move the beginning while someone reads.
   const [firstVisible, setFirstVisible] = useState<string | undefined>(() => session.items[transcriptWindowStart(session.items)]?.id);
@@ -237,8 +246,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
 
-  // The "n files changed" count: fetched on open, again when a turn starts or ends, on Refresh, and a
-  // second after a file-changing tool call completes; one request at a time, a rise during one queues another.
+  // The badge count follows turn boundaries and completed file-changing tools. The open sheet
+  // also reports its refreshed default list; a tool completion during a badge read queues another.
   const fetching = useRef(false);
   const again = useRef(false);
   useEffect(() => {
@@ -319,13 +328,15 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, []);
 
   const openChanges = useCallback(() => {
+    closePreview(false);
     setPanel(null);
     onSheet(true);
-  }, [onSheet]);
+  }, [onSheet, closePreview]);
   const { startRename } = actions;
   const renameInHeader = useCallback(() => startRename(session.id, 'header'), [startRename, session.id]);
 
   function openPanel(view: PanelView, opener: HTMLElement) {
+    closePreview(false);
     panelOpener.current = opener;
     if (sheetOpen) onSheet(false);
     setPanel(view);
@@ -424,6 +435,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
+    <PreviewContext.Provider value={preview.open}>
+    <TempRootContext.Provider value={tempRoots}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
@@ -563,9 +576,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </div>
       </div>
 
-      {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} inline={sidePanelInline} open={sheetOpen} onRefresh={() => { setChangesError(null); setChangesTick((t) => t + 1); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
+      {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
       {panelPresence.mounted && panelView && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
+      {preview.selection && !sheetOpen && !shownPanel && <FilePreview selection={preview.selection} inline={sidePanelInline} onClose={() => closePreview()} />}
     </div>
+    </TempRootContext.Provider>
+    </PreviewContext.Provider>
     </FileReferencesProvider>
   );
 }

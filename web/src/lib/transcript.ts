@@ -526,8 +526,8 @@ export function elapsedSince(start: string | undefined, now: number): string | n
 /**
  * The line under a subagent's name in its row. Running: its current step from its own latest
  * item, which the browser holds only once its transcript was opened ("Running: bash npm test",
- * "Thinking…"), else nothing. Failed: its error. Otherwise the first line of its report, the
- * parent `task` call's output, as plain text; nothing when there is none yet.
+ * "Thinking…"), else nothing. Completed: its saved utility summary when available. Failed:
+ * its error. The fallback is the first plain-text line of the provider report.
  */
 export function subagentSummary(subagent: Subagent, items: readonly Item[] | undefined, parent: ToolCall | undefined): string {
   if (subagent.status === 'running') {
@@ -540,6 +540,7 @@ export function subagentSummary(subagent: Subagent, items: readonly Item[] | und
     }
     return '';
   }
+  if ((subagent.status === 'completed' || subagent.status === 'idle') && subagent.summary) return firstLine(subagent.summary);
   if (subagent.status === 'failed') return firstLine(subagent.error) || firstLine(subagent.result_summary) || firstLine(parent?.output);
   return firstLine(subagent.result_summary) || firstLine(parent?.output);
 }
@@ -761,6 +762,41 @@ export function promoted(entry: Entry, ctx: ActivityContext, own?: (item: Item) 
   if ((item.images?.length ?? 0) > 0 || !!item.images_note) return true;
   const asked = askedOn(item, ctx.approvals, ctx.live);
   return !!asked && asked.outcome !== 'pending';
+}
+
+/** Only a completed local declaration replaces its routine tool row with a file card. */
+export function isFileDeclaration(item: Item): boolean {
+  const tool = item.tool;
+  const declaration = tool?.declaration;
+  return item.kind === 'tool' && tool?.name === 'uam_show_file' && tool.status === 'completed'
+    && typeof declaration?.artifact_id === 'string' && !!declaration.artifact_id
+    && typeof declaration.path === 'string' && declaration.path.startsWith('/');
+}
+
+/** The lightweight history index keeps only this grouping fact, never declaration metadata. */
+export function isDeclarationBoundary(item: Item): boolean {
+  return isFileDeclaration(item) || item.tool?.declaration_boundary === true;
+}
+
+export const FILE_DECLARATION_LIMIT = 128;
+
+/** Call IDs are agent-local; the latest copy of each call decides whether it has a card. */
+export function declarationIdentity(item: Pick<Item, 'id' | 'agent_id'>): string {
+  return JSON.stringify([item.agent_id ?? '', item.id]);
+}
+
+/** A window keeps only its newest declaration cards; older calls remain ordinary tool rows. */
+export function newestFileDeclarations(items: readonly Item[]): Set<string> {
+  const seen = new Set<string>();
+  const cards = new Set<string>();
+  for (let index = items.length - 1; index >= 0 && cards.size < FILE_DECLARATION_LIMIT; index--) {
+    const item = items[index];
+    const key = declarationIdentity(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (isFileDeclaration(item)) cards.add(key);
+  }
+  return cards;
 }
 
 /** The distinct paths the turn's completed edit, write and create calls named, in order. */

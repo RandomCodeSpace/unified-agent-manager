@@ -171,15 +171,15 @@ func cmpName(model string) string {
 	return "model " + model
 }
 
-// mediaLocked is the gate of the Task's selected model.
-func (m *Manager) mediaLocked(s *webSession) *agentapi.Media {
-	return m.modelLocked(s.provider, s.model).Media
-}
-
 // Upload stores one file for the Task and returns its record. The type is
 // sniffed from the bytes, and images and PDFs must pass the Task's model
 // gate.
 func (m *Manager) Upload(id, name string, data []byte) (agentapi.Attachment, error) {
+	return m.upload(id, name, data, nil)
+}
+
+// A draft may target a queued model without changing the running turn.
+func (m *Manager) upload(id, name string, data []byte, selectedModel *string) (agentapi.Attachment, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return agentapi.Attachment{}, err
@@ -189,14 +189,20 @@ func (m *Manager) Upload(id, name string, data []byte) (agentapi.Attachment, err
 		return agentapi.Attachment{}, err
 	}
 	m.mu.Lock()
+	model := s.model
+	if selectedModel != nil {
+		model = *selectedModel
+	}
 	switch {
 	case s.removed:
 		err = newError(http.StatusNotFound, "session not found")
 	case m.closed:
 		err = errShuttingDown
+	case selectedModel != nil && (model == "" || m.modelLocked(s.provider, model).ID == ""):
+		err = newError(http.StatusBadRequest, "model must be an offered model ID")
 	default:
 		if err = s.readOnlyLocked(); err == nil {
-			err = mediaAllowed(s.model, m.mediaLocked(s), mime)
+			err = mediaAllowed(model, m.modelLocked(s.provider, model).Media, mime)
 		}
 	}
 	m.mu.Unlock()
@@ -412,6 +418,10 @@ func (m *Manager) sweepLoop() {
 // maxAttachments, each stored for this Task, within the model's gate and
 // image count.
 func (m *Manager) checkUploadsLocked(s *webSession, ids []string) ([]*upload, error) {
+	return m.checkUploadsForModelLocked(s, ids, s.model)
+}
+
+func (m *Manager) checkUploadsForModelLocked(s *webSession, ids []string, model string) ([]*upload, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -429,10 +439,10 @@ func (m *Manager) checkUploadsLocked(s *webSession, ids []string) ([]*upload, er
 	if len(out) > maxAttachments {
 		return nil, newError(http.StatusBadRequest, "a prompt can carry at most %d attachments", maxAttachments)
 	}
-	media := m.mediaLocked(s)
+	media := m.modelLocked(s.provider, model).Media
 	images := 0
 	for _, u := range out {
-		if err := mediaAllowed(s.model, media, u.MIME); err != nil {
+		if err := mediaAllowed(model, media, u.MIME); err != nil {
 			return nil, err
 		}
 		if isImage(u.MIME) {
@@ -444,7 +454,7 @@ func (m *Manager) checkUploadsLocked(s *webSession, ids []string) ([]*upload, er
 		if media.MaxImages == 1 {
 			noun = "image"
 		}
-		return nil, newError(http.StatusBadRequest, "%s accepts at most %d %s per prompt", cmpName(s.model), media.MaxImages, noun)
+		return nil, newError(http.StatusBadRequest, "%s accepts at most %d %s per prompt", cmpName(model), media.MaxImages, noun)
 	}
 	return out, nil
 }

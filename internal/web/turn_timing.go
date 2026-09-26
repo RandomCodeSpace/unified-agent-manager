@@ -44,8 +44,11 @@ func (m *Manager) linkTurnTimingLocked(s *webSession, item agentapi.Item) {
 	if item.AgentID != "" || item.Kind != agentapi.ItemUser || item.Delivery != "" {
 		return
 	}
-	if _, exists := s.itemIdx[item.ID]; exists {
-		return
+	if i, exists := s.itemIdx[item.ID]; exists {
+		previous := s.items[i]
+		if previous.Delivery != agentapi.DeliverySteer || previous.SteerStatus == "" {
+			return
+		}
 	}
 	if s.activeTiming < 0 {
 		s.pendingTimingUser = item.ID

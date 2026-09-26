@@ -49,18 +49,52 @@ export function boundItems(items: Item[], direction: 'older' | 'newer', maxItems
   return { items: items.slice(start, end), droppedBefore: items.slice(0, start), droppedAfter: items.slice(end) };
 }
 
+/** Only a confirmed idle echo moves a provisional steer into a new turn. */
+export const idleSteerEcho = (previous: Item, next: Item) => previous.kind === 'user' && previous.delivery === 'steer' && !!previous.steer_status && next.kind === 'user' && !next.delivery && !next.steer_status;
+
+/** Place only confirmed receipts by the surrounding IDs in the provider page. */
+export function placeIdleSteerEchoes(items: Item[], page: Item[], moved: Set<string>): Item[] {
+  if (!moved.size) return items;
+  const result = items.slice();
+  // Reverse order lets an earlier echo use a later echo as its next anchor.
+  for (let at = page.length - 1; at >= 0; at--) {
+    const echo = page[at];
+    if (!moved.has(echo.id)) continue;
+    const old = result.findIndex(item => item.id === echo.id);
+    if (old >= 0) result.splice(old, 1);
+    let position = -1;
+    for (let next = at + 1; next < page.length; next++) {
+      position = result.findIndex(item => item.id === page[next].id);
+      if (position >= 0) break;
+    }
+    if (position < 0) {
+      for (let previous = at - 1; previous >= 0; previous--) {
+        position = result.findIndex(item => item.id === page[previous].id);
+        if (position >= 0) { position++; break; }
+      }
+    }
+    result.splice(position < 0 ? result.length : position, 0, echo);
+  }
+  return result;
+}
+
 /** Page overlaps keep their timeline position and the existing live value. */
 export function mergeItems(existing: Item[], incoming: Item[], direction: 'older' | 'newer'): Item[] {
   const live = new Map(existing.map(item => [item.id, item]));
+  const moved = new Set(incoming.filter(item => {
+    const previous = live.get(item.id);
+    return previous && idleSteerEcho(previous, item);
+  }).map(item => item.id));
   const seen = new Set<string>();
   const merged: Item[] = [];
-  const pages = direction === 'older' ? [incoming, existing] : [existing, incoming];
-  for (const page of pages) {
+  const pages: Array<[Item[], boolean]> = direction === 'older' ? [[incoming, false], [existing, true]] : [[existing, true], [incoming, false]];
+  for (const [page, fromLive] of pages) {
     for (const item of page) {
+      if (fromLive && moved.has(item.id)) continue;
       if (seen.has(item.id)) continue;
       seen.add(item.id);
-      merged.push(live.get(item.id) ?? item);
+      merged.push(moved.has(item.id) ? item : live.get(item.id) ?? item);
     }
   }
-  return merged;
+  return placeIdleSteerEchoes(merged, incoming, moved);
 }

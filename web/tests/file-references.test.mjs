@@ -20,6 +20,31 @@ test('only exact local hints authorize bare inline names; paths remain literal',
   assert.equal(hintPath('/elsewhere/package.json', '/repo'), undefined);
 });
 
+test('a completed declaration hints only its exact workdir path without asserting existence', () => {
+  const owner = new FileReferences('/repo', async paths => answer(paths));
+  const declaration = { artifact_id: 'artifact-1', path: '/repo/README', title: 'Untrusted display' };
+  const item = { id: 'call-1', kind: 'tool', tool: { name: 'uam_show_file', status: 'completed', declaration, file_paths: ['/repo/README', '/repo/other'] } };
+  owner.setItems('main', [item]);
+  assert.equal(owner.eligible('README', 'README'), true);
+  assert.equal(owner.eligible('other', 'other'), false);
+  assert.equal(owner.cache.get('README'), undefined);
+  owner.setItems('main', [{ ...item, tool: { ...item.tool, status: 'failed' } }]);
+  assert.equal(owner.eligible('README', 'README'), false);
+  owner.setItems('main', [{ ...item, tool: { ...item.tool, declaration: undefined } }]);
+  assert.equal(owner.eligible('README', 'README'), false);
+  owner.setItems('main', [{ ...item, tool: { ...item.tool, file_paths: ['/tmp/README'] } }]);
+  assert.equal(owner.eligible('README', 'README'), false);
+  for (const bad of [
+    { ...declaration, artifact_id: '' },
+    { ...declaration, artifact_id: undefined },
+    { ...declaration, path: 'README' },
+    { ...declaration, path: '' },
+  ]) {
+    owner.setItems('main', [{ ...item, tool: { ...item.tool, declaration: bad, file_paths: [bad.path] } }]);
+    assert.equal(owner.eligible('README', 'README'), false);
+  }
+});
+
 test('positive/negative TTLs and both LRU caps are enforced', () => {
   const cache = new FileCache();
   cache.set('yes', true, 0); cache.set('no', false, 0);

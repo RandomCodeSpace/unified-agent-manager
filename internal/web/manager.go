@@ -133,11 +133,15 @@ type Manager struct {
 	quotaTick time.Duration
 	// titles counts title jobs, which Shutdown waits for before providers
 	// stop: a job deletes its throwaway conversation on the way out.
-	// titleSlots holds one token per job calling its provider.
-	titles     sync.WaitGroup
-	titleSlots chan struct{}
+	// titleSlots bounds provider calls shared by titles and subagent summaries.
+	titles         sync.WaitGroup
+	titleSlots     chan struct{}
+	summaryJobs    chan subagentSummaryJob
+	summaryWorkers sync.WaitGroup
 	// reads holds a slot for each read-only transcript load in progress.
 	reads chan struct{}
+	// Active Server registries; publication/removal is ordered by mu.
+	fileGrants map[*tempGrants]struct{}
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -165,9 +169,10 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		quotaKick: make(chan struct{}, 1),
 		quotaTick: quotaCheck,
 
-		titleSlots: make(chan struct{}, maxTitleJobs),
-		imageJobs:  make(chan imageJob, maxImageJobs),
-		reads:      make(chan struct{}, maxHistoryReads),
+		titleSlots:  make(chan struct{}, maxTitleJobs),
+		summaryJobs: make(chan subagentSummaryJob, maxSubagents),
+		imageJobs:   make(chan imageJob, maxImageJobs),
+		reads:       make(chan struct{}, maxHistoryReads),
 	}
 	for _, p := range providers {
 		if p == nil {
@@ -245,11 +250,14 @@ type webSession struct {
 	interactions []*interaction
 	ixIdx        map[string]*interaction
 
-	subagents        []*agentapi.Subagent
-	subIdx           map[string]*agentapi.Subagent
-	stoppedSubagents map[string]bool // accepted stops awaiting the provider event
-	backgroundTasks  *agentapi.BackgroundTasks
-	execution        *agentapi.ExecutionState
+	subagents         []*agentapi.Subagent
+	subIdx            map[string]*agentapi.Subagent
+	stoppedSubagents  map[string]bool // accepted stops awaiting the provider event
+	summaryRuns       map[string]*subagentSummaryRun
+	subagentSummaries map[string]store.SubagentSummary
+	summaryRevision   uint64
+	backgroundTasks   *agentapi.BackgroundTasks
+	execution         *agentapi.ExecutionState
 
 	commandSubmissions []Submission
 	commandLedger      string
@@ -320,6 +328,7 @@ func (ix *interaction) public() agentapi.Interaction {
 // persistKey is the durable part of a session; sessions.json is written only
 // when it changes, never per streamed token.
 type persistKey struct {
+	summaryRevision                                                                                                  uint64
 	timingRevision                                                                                                   uint64
 	commandResult                                                                                                    *agentapi.CommandResult
 	turn, detail, name, convID, reqID, reqStatus, commandLedger, projectID, model, effort, contextSize, title, stage string
@@ -332,6 +341,7 @@ func newSession(id, provider, name, workdir, convID string, created time.Time) *
 		id: id, provider: provider, name: name, workdir: workdir, convID: convID,
 		createdAt: created, updatedAt: created, base: StateIdle, mode: store.ModeSafe, activeTiming: -1,
 		itemIdx: map[string]int{}, ixIdx: map[string]*interaction{}, subIdx: map[string]*agentapi.Subagent{},
+		summaryRuns: map[string]*subagentSummaryRun{}, subagentSummaries: map[string]store.SubagentSummary{},
 	}
 }
 
@@ -381,7 +391,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
+	k := persistKey{summaryRevision: s.summaryRevision, timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
@@ -482,6 +492,10 @@ func (m *Manager) Start(ctx context.Context) error {
 		go m.usageLoop()
 	}
 	go m.imageLoop()
+	m.summaryWorkers.Add(maxTitleJobs)
+	for range maxTitleJobs {
+		go m.subagentSummaryLoop()
+	}
 	if err := m.flush(); err != nil {
 		log.Warn("persist interrupted web sessions failed", "error", err)
 	}
@@ -570,6 +584,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.mode = store.ModeYolo
 	}
 	if web := rec.Web; web != nil {
+		s.loadSubagentSummaries(web.SubagentSummaries)
 		s.turnTimings = slices.Clone(web.TurnTimings)
 		if len(s.turnTimings) > maxTurnTimings {
 			s.turnTimings = s.turnTimings[len(s.turnTimings)-maxTurnTimings:]
@@ -1412,9 +1427,13 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 	s.conv = nil
 	s.gen++
 	s.removed = true
+	s.cancelSubagentSummaries()
 	m.cancelHistoryLocked(s)
 	s.stopPreviews()
 	delete(m.sessions, s.id)
+	for grants := range m.fileGrants {
+		grants.revokeTask(s.id)
+	}
 	delete(m.dirty, s.id)
 	m.broadcastLocked("session_removed", "", func(seq uint64) any { return sessionRemovedEvent{Seq: seq, SessionID: s.id} })
 	return conv
@@ -1504,7 +1523,8 @@ func (m *Manager) flush() error {
 		patches = append(patches, recordPatch{
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
-				Turn: key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
+				SubagentSummaries: s.savedSubagentSummaries(),
+				Turn:              key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 			},
@@ -1673,6 +1693,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			s.linkUploadsLocked(&it)
 			m.linkTurnTimingLocked(s, it)
 			m.upsertItemLocked(s, it, true)
+			m.subagentSummaryItemLocked(s, it)
 		}
 	case agentapi.EventDelta:
 		if ev.Delta != nil && ev.Delta.ItemID != "" {
@@ -1688,7 +1709,12 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		}
 	case agentapi.EventSubagent:
 		if ev.Subagent != nil && ev.Subagent.ID != "" {
+			var previous agentapi.SubagentStatus
+			if sa := s.subIdx[ev.Subagent.ID]; sa != nil {
+				previous = sa.Status
+			}
 			m.upsertSubagentLocked(s, *ev.Subagent, true)
+			m.subagentSummaryStatusLocked(s, ev.Subagent.ID, previous)
 		}
 	case agentapi.EventExecution:
 		if ev.Execution != nil {
@@ -1849,7 +1875,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	s.history = HistoryLoaded
 	s.gen = 1
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
-	conv, err := prov.Open(ctx, agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}})
+	conv, err := prov.Open(ctx, agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)})
 	cancel()
 	if err != nil {
 		log.Warn("open web conversation failed", "provider", prov.Name(), "error", err)
@@ -2097,7 +2123,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.cancelHistoryLocked(s)
 	s.gen++
 	gen := s.gen
-	req := agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}}
+	req := agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
 	s.context = nil
@@ -2211,6 +2237,7 @@ func validRequestID(id string) bool { return requestIDRE.MatchString(id) }
 type turnInput struct {
 	text, command      string
 	files, attachments []string
+	settings           *PromptSettings
 }
 
 // Submit sends one prompt in mode: ModeSend ("" too), ModeQueue or
@@ -2238,7 +2265,7 @@ func (m *Manager) Submit(id string, req PromptRequest) (Submission, error) {
 	if err != nil {
 		return Submission{}, err
 	}
-	return m.submit(s, turnInput{text: req.Text, files: req.Files, attachments: req.Attachments}, req.RequestID, mode)
+	return m.submit(s, turnInput{text: req.Text, files: req.Files, attachments: req.Attachments, settings: req.Settings}, req.RequestID, mode)
 }
 
 // Command runs one of the provider's listed commands. It follows the rules
@@ -2394,16 +2421,42 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		return Submission{}, err
 	}
 	m.mu.Lock()
-	uploads, err := m.checkUploadsLocked(s, in.attachments)
+	state, conv := s.state(), s.conv
+	willQueue := mode == ModeQueue && (turnRunning(state) || s.queueSending != "" || (len(s.queue) > 0 && !s.queuePaused))
+	current := PromptSettings{Model: s.model, Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default")}
+	selection := current
+	if in.command == "" {
+		if in.settings != nil {
+			selection = *in.settings
+			selection.ContextSize = cmp.Or(selection.ContextSize, "default")
+		}
+		// An immediate continuation keeps the persisted provider selection.
+		// New selections and queued snapshots must use the current catalog.
+		if selection != current || willQueue {
+			if err := m.validateSelectionLocked(s.provider, selection.Model, selection.Effort, selection.ContextSize); err != nil {
+				m.mu.Unlock()
+				return Submission{}, err
+			}
+		}
+		if selection.Model == "" && s.model != "" {
+			m.mu.Unlock()
+			return Submission{}, newError(http.StatusBadRequest, "model must be an offered model ID")
+		}
+		in.settings = &selection
+	}
+	if mode == ModeSteer && turnRunning(state) && selection != current {
+		m.mu.Unlock()
+		return Submission{}, newError(http.StatusConflict, "a running steer uses the current model settings; queue a next turn to change them")
+	}
+	uploads, err := m.checkUploadsForModelLocked(s, in.attachments, selection.Model)
 	if err != nil {
 		m.mu.Unlock()
 		return Submission{}, err
 	}
-	state, conv := s.state(), s.conv
 	switch {
 	// Behind queued prompts that are about to be sent, a queued prompt waits
 	// its turn even when no turn is running.
-	case mode == ModeQueue && (turnRunning(state) || s.queueSending != "" || (len(s.queue) > 0 && !s.queuePaused)):
+	case willQueue:
 		defer m.mu.Unlock()
 		return m.enqueueLocked(s, in, uploads, reqID)
 	case mode == ModeSteer && turnRunning(state):
@@ -2414,6 +2467,11 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		return Submission{}, errTurnRunning
 	}
 	m.mu.Unlock()
+	if selection == current {
+		// Let checkedPrompt/openLocked retain their saved-model and holder
+		// checks. A queued snapshot keeps settings for dispatch validation.
+		in.settings = nil
+	}
 	return m.send(s, in, reqID)
 }
 
@@ -2430,6 +2488,28 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 		}
 		_, msg := errorStatus(err)
 		return m.recordSubmission(s, reqID, SubmissionRejected, msg, true), nil
+	}
+	if in.settings != nil {
+		m.mu.Lock()
+		running := busy(s.state())
+		current := PromptSettings{Model: s.model, Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default")}
+		selectionErr := m.validateSelectionLocked(s.provider, in.settings.Model, in.settings.Effort, in.settings.ContextSize)
+		m.mu.Unlock()
+		if running {
+			return Submission{}, errTurnRunning
+		}
+		if selectionErr != nil {
+			_, msg := errorStatus(selectionErr)
+			return m.recordSubmission(s, reqID, SubmissionRejected, msg, true), nil
+		}
+		// An unchanged empty model is a legacy provider-default selection.
+		// It needs no switch (SetModel intentionally rejects a new empty ID).
+		if current != *in.settings {
+			if _, err := m.setModelLocked(s, &in.settings.Model, &in.settings.Effort, &in.settings.ContextSize); err != nil {
+				_, msg := errorStatus(err)
+				return m.recordSubmission(s, reqID, SubmissionRejected, msg, true), nil
+			}
+		}
 	}
 
 	m.mu.Lock()
@@ -2634,7 +2714,7 @@ func (m *Manager) enqueueLocked(s *webSession, in turnInput, uploads []*upload, 
 		return Submission{}, newError(http.StatusConflict, "the queue is full (%d prompts)", maxQueue)
 	}
 	before := m.summaryLocked(s)
-	q := QueuedPrompt{RequestID: reqID, Text: in.text, QueuedAt: m.now(), Files: in.files, Attachments: uploadInfos(uploads)}
+	q := QueuedPrompt{RequestID: reqID, Text: in.text, QueuedAt: m.now(), Files: in.files, Attachments: uploadInfos(uploads), Settings: *in.settings}
 	s.queue = append(s.queue, q)
 	s.queueChanged = true
 	m.changedLocked(s, before)
@@ -2684,7 +2764,7 @@ func (m *Manager) drain(s *webSession) {
 	s.queueChanged = true
 	m.changedLocked(s, before)
 	m.mu.Unlock()
-	in := turnInput{text: head.Text, files: head.Files}
+	in := turnInput{text: head.Text, files: head.Files, settings: &head.Settings}
 	for _, a := range head.Attachments {
 		in.attachments = append(in.attachments, a.ID)
 	}
@@ -3568,11 +3648,13 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		m.dropLocked(sub)
 	}
 	m.mu.Unlock()
-	// Abort in-flight opens, sends and title jobs; their outcome is
-	// recorded as usual. Title jobs delete their throwaway conversations
+	// Abort in-flight opens, sends and utility jobs; their outcome is
+	// recorded as usual. Utility jobs delete their throwaway conversations
 	// before the providers stop.
 	m.cancel()
 	wait(ctx, &m.titles)
+	wait(ctx, &m.summaryWorkers)
+	m.discardSubagentSummaryJobs()
 	for _, conv := range convs {
 		m.closeConversation(conv)
 	}

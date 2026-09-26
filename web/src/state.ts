@@ -1,5 +1,5 @@
-import { initialWindow, liveWindow, recentProjection, windowPage } from './lib/historyState.ts';
-import { boundItems, itemCursor, TAIL_ITEMS } from './lib/historyWindow.ts';
+import { initialWindow, liveWindow, recentProjection, upsertTranscriptItem, windowPage } from './lib/historyState.ts';
+import { boundItems, idleSteerEcho, itemCursor, mergeItems, TAIL_ITEMS } from './lib/historyWindow.ts';
 import type { AccountUsage, HistoryPage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, SubagentDetail, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
@@ -195,11 +195,19 @@ export function reducer(state: State, action: Action): State {
       const historyItemSeq = { ...state.historyItemSeq };
       const held = new Map([...(detail.recent_items ?? []), ...detail.items].map(item => [item.id, item]));
       const received = new Map(older.map(item => [item.id, item]));
-      const reconciled = detail.items.map(item => (historyItemSeq[item.id] ?? -1) > action.page.seq ? item : received.get(item.id) ?? item);
+      const reconciled = detail.items.map(item => {
+        const replacement = received.get(item.id);
+        return (historyItemSeq[item.id] ?? -1) > action.page.seq || replacement && idleSteerEcho(item, replacement) ? item : replacement ?? item;
+      });
       older = older.map(item => (historyItemSeq[item.id] ?? -1) > action.page.seq ? held.get(item.id) ?? item : item);
       for (const item of older) historyItemSeq[item.id] = Math.max(historyItemSeq[item.id] ?? -1, action.page.seq);
       const refreshed = new Map(older.map(item => [item.id, item]));
-      const recent = detail.recent_items ? boundItems(detail.recent_items.map(item => refreshed.get(item.id) ?? item), 'newer', TAIL_ITEMS) : undefined;
+      const recentBase = detail.recent_items?.map(item => {
+        const replacement = refreshed.get(item.id);
+        return replacement && idleSteerEcho(item, replacement) ? item : replacement ?? item;
+      });
+      const recentIDs = new Set(recentBase?.map(item => item.id));
+      const recent = recentBase ? boundItems(mergeItems(recentBase, older.filter(item => recentIDs.has(item.id)), 'newer'), 'newer', TAIL_ITEMS) : undefined;
       let next = windowPage({ ...detail, items: reconciled, recent_items: recent?.items, recent_before: recent?.droppedBefore.length ? itemCursor(recent.items[0].id) : detail.recent_before }, { ...action.page, items: older }, request.direction ?? 'older');
       if (request.direction === 'newer' && action.page.after === '') {
         const ids = new Set(next.items.map(item => item.id));
@@ -302,7 +310,7 @@ export function reducer(state: State, action: Action): State {
         case 'item':
           if (d.item.compact) state = { ...state, bodyVersions: { ...state.bodyVersions, [JSON.stringify([d.agent_id ?? '', d.item.id])]: d.seq } };
           if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
-          return withWindow(state, liveWindow(detail, detail.representation === 'compact-v1' && !detail.items.some(item => item.id === d.item.id) && (detail.history_after || !d.append) ? detail.items : upsert(detail.items, d.item), d.append || detail.recent_items?.some(item => item.id === d.item.id) ? upsert(detail.recent_items ?? detail.items, d.item) : detail.recent_items ?? detail.items, [d.item]));
+          return withWindow(state, liveWindow(detail, detail.representation === 'compact-v1' && !detail.items.some(item => item.id === d.item.id) && (detail.history_after || !d.append) ? detail.items : upsertTranscriptItem(detail.items, d.item), d.append || detail.recent_items?.some(item => item.id === d.item.id) ? upsertTranscriptItem(detail.recent_items ?? detail.items, d.item) : detail.recent_items ?? detail.items, [d.item]));
         case 'delta':
           if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
           return withWindow(state, liveWindow(detail, detail.representation !== 'compact-v1' || detail.items.some(item => item.id === d.item_id) ? appendDelta(detail.items, d.item_id, d.kind, d.text) : detail.items, detail.recent_items?.some(item => item.id === d.item_id) ? appendDelta(detail.recent_items, d.item_id, d.kind, d.text) : detail.recent_items ?? detail.items));

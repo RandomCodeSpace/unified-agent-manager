@@ -262,6 +262,7 @@ func (m *Manager) cancelHistoryLocked(s *webSession) {
 }
 
 func (m *Manager) dropHistoryLocked(s *webSession) {
+	s.cancelSubagentSummaries()
 	s.stopPreviews()
 	s.itemSeq = nil
 	s.items, s.itemIdx, s.itemBytes, s.truncated = nil, map[string]int{}, 0, false

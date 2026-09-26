@@ -144,3 +144,69 @@ func TestSetTitleNamesTheSession(t *testing.T) {
 		t.Fatalf("SetTitle after Close = %v", err)
 	}
 }
+
+func TestSubagentSummarySharesToollessUtilitySessionAndCleanup(t *testing.T) {
+	for _, outcome := range []string{"success", "failure", "cancelled"} {
+		t.Run(outcome, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var prompt string
+			p, fc := titleProvider(func(_ context.Context, msg copilot.MessageOptions) (string, error) {
+				prompt = msg.Prompt
+				switch outcome {
+				case "failure":
+					return "", errors.New("model failed")
+				case "cancelled":
+					cancel()
+					return "", ctx.Err()
+				default:
+					return "Verified the implementation.", nil
+				}
+			})
+			t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+			var _ agentapi.SubagentSummarizer = p
+			reply, err := p.SummarizeSubagent(ctx, agentapi.SubagentSummaryRequest{Model: "gpt-6-luna", Workdir: "/work", Description: "Review", Result: "All checks passed"})
+			if (err == nil) != (outcome == "success") || outcome == "success" && reply != "Verified the implementation." {
+				t.Fatalf("reply %q, error %v", reply, err)
+			}
+			if prompt != "<description>\nReview\n</description>\n<result>\nAll checks passed\n</result>" {
+				t.Fatalf("prompt = %q", prompt)
+			}
+			cfg := fc.create[0]
+			off := func(b *bool) bool { return b != nil && !*b }
+			if cfg.ClientName != "uam-subagent-summary" || cfg.Model != "gpt-6-luna" || cfg.ReasoningEffort != "none" || cfg.WorkingDirectory != "/work" || cfg.SessionID != "" {
+				t.Fatalf("utility session = %+v", cfg)
+			}
+			if cfg.AvailableTools == nil || len(cfg.AvailableTools) != 0 || len(cfg.Tools) != 0 {
+				t.Fatal("summary session enabled tools")
+			}
+			if !off(cfg.EnableConfigDiscovery) || cfg.SkipCustomInstructions == nil || !*cfg.SkipCustomInstructions || !off(cfg.EnableOnDemandInstructionDiscovery) || !off(cfg.EnableFileHooks) || !off(cfg.EnableHostGitOperations) || !off(cfg.EnableSessionStore) || !off(cfg.EnableSkills) || !off(cfg.Streaming) {
+				t.Fatal("summary session enabled discovered configuration or persistence")
+			}
+			if cfg.InfiniteSessions == nil || !off(cfg.InfiniteSessions.Enabled) || cfg.Memory == nil || cfg.Memory.Enabled {
+				t.Fatal("summary session retained memory")
+			}
+			if cfg.SystemMessage == nil || cfg.SystemMessage.Mode != "replace" || cfg.SystemMessage.Content != subagentSummarySystem {
+				t.Fatal("summary session did not replace the system prompt")
+			}
+			decision, err := cfg.OnPermissionRequest(&rpc.PermissionRequestShell{FullCommandText: "ls"}, copilot.PermissionInvocation{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := decision.(*rpc.PermissionDecisionReject); !ok {
+				t.Fatal("utility permission was not rejected")
+			}
+			if !fc.sessions[0].disconnected || !slices.Equal(fc.deleted, []string{"created-1"}) || fc.deleteCtx[0] != nil {
+				t.Fatalf("cleanup = %v, %v", fc.deleted, fc.deleteCtx)
+			}
+			// A subsequent utility call reuses the same started SDK client.
+			fc.reply = func(context.Context, copilot.MessageOptions) (string, error) { return "Title", nil }
+			if _, err := p.Title(context.Background(), agentapi.TitleRequest{Model: "gpt-6-luna", Text: "Task"}); err != nil {
+				t.Fatal(err)
+			}
+			if len(fc.create) != 2 || len(fc.deleted) != 2 {
+				t.Fatal("utilities did not use the shared client")
+			}
+		})
+	}
+}

@@ -36,6 +36,7 @@ type compactSubagent struct {
 	agentapi.Subagent
 	Preview       string `json:"preview"`
 	ResultSummary string `json:"result_summary"`
+	Summary       string `json:"summary,omitempty"`
 }
 type compactSessionDetail struct {
 	SessionDetail
@@ -157,7 +158,14 @@ func projectItem(it agentapi.Item) compactItem {
 		arg, path := compactArgument(&tool)
 		out.Compact = &compactBody{HasText: it.Text != ""}
 		out.Text = ""
-		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path, FilePaths: localToolFilePaths(&tool)}
+		paths := localToolFilePaths(&tool)
+		if tool.Name == "uam_show_file" {
+			paths = nil
+			if tool.Declaration != nil {
+				paths = []string{tool.Declaration.Path}
+			}
+		}
+		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path, FilePaths: paths}
 		// Question text and its recorded answer are semantic UI, including after reload.
 		if tool.Name != "ask_user" {
 			tool.Input, tool.Output = "", ""
@@ -251,7 +259,7 @@ func (s *webSession) compactSubagent(sa agentapi.Subagent) compactSubagent {
 			}
 		}
 	}
-	return compactSubagent{Subagent: sa, Preview: boundedPreview(preview, 512), ResultSummary: boundedResultSummary(result)}
+	return compactSubagent{Subagent: sa, Preview: boundedPreview(preview, 512), ResultSummary: boundedResultSummary(result), Summary: s.generatedSubagentSummary(sa)}
 }
 func (s *webSession) compactSubagents() []compactSubagent {
 	out := make([]compactSubagent, 0, len(s.subagents))
