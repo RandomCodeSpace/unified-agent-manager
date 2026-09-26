@@ -22,27 +22,9 @@ import (
 
 	"github.com/creack/pty"
 
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/daemonruntime"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/web"
 )
-
-func TestLastSeenIDIgnoresWebRecords(t *testing.T) {
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	cfg := store.Config{Sessions: map[string]store.SessionRecord{
-		store.Key("fake", "aaaaaaaa"):    {ID: "aaaaaaaa", Agent: "fake", SessionName: "uam-fake-aaaaaaaa", LastSeenAt: base},
-		store.Key("copilot", "bbbbbbbb"): {ID: "bbbbbbbb", Agent: "copilot", Surface: store.SurfaceWeb, LastSeenAt: base.Add(time.Hour)},
-	}}
-	if got := lastSeenID(cfg); got != "aaaaaaaa" {
-		t.Fatalf("lastSeenID = %q, want the terminal record", got)
-	}
-	webOnly := store.Config{Sessions: map[string]store.SessionRecord{
-		store.Key("copilot", "bbbbbbbb"): {ID: "bbbbbbbb", Agent: "copilot", Surface: store.SurfaceWeb, LastSeenAt: base},
-	}}
-	if got := lastSeenID(webOnly); got != "" {
-		t.Fatalf("lastSeenID = %q, want none", got)
-	}
-}
 
 func TestWebCommandsRouteBeforeStoreAndRejectHostNames(t *testing.T) {
 	t.Setenv("UAM_SESSION_DIR", secureSessionDir(t))
@@ -53,23 +35,23 @@ func TestWebCommandsRouteBeforeStoreAndRejectHostNames(t *testing.T) {
 	// An unusable config directory must not matter for argument errors.
 	t.Setenv("UAM_CONFIG_DIR", blocked)
 	for _, listen := range []string{"example.com:8260", "uam.local:8260"} {
-		err := RunWithTUI(context.Background(), []string{"web", "--listen", listen}, noopRunTUI)
+		err := Run(context.Background(), []string{"web", "--listen", listen})
 		if err == nil || !strings.Contains(err.Error(), "not an IP address") {
 			t.Fatalf("uam web --listen %s = %v, want a host name error", listen, err)
 		}
 	}
-	if err := RunWithTUI(context.Background(), []string{"web", "--public-origin", "ftp://x"}, noopRunTUI); err == nil {
+	if err := Run(context.Background(), []string{"web", "--public-origin", "ftp://x"}); err == nil {
 		t.Fatal("an invalid public origin must be rejected")
 	}
-	out := captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "status"}, noopRunTUI)) })
+	out := captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "status"})) })
 	if strings.TrimSpace(out) != "uam web is not running" {
 		t.Fatalf("status = %q", out)
 	}
-	out = captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "status", "--json"}, noopRunTUI)) })
+	out = captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "status", "--json"})) })
 	if strings.TrimSpace(out) != `{"running":false}` {
 		t.Fatalf("status --json = %q", out)
 	}
-	out = captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "stop"}, noopRunTUI)) })
+	out = captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "stop"})) })
 	if strings.TrimSpace(out) != "uam web is not running" {
 		t.Fatalf("stop = %q", out)
 	}
@@ -85,13 +67,18 @@ func TestWebServiceOutlivesLauncherTerminal(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the uam binary")
 	}
-	binary := filepath.Join(t.TempDir(), "uam")
-	buildCtx, cancelBuild := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancelBuild()
-	build := exec.CommandContext(buildCtx, "go", "build", "-o", binary, "./cmd/uam")
-	build.Dir = todo7RepoRoot(t)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build uam: %v\n%s", err, out)
+	binary := os.Getenv("UAM_WEB_TEST_BIN")
+	if binary == "" {
+		binary = filepath.Join(t.TempDir(), "uam")
+		buildCtx, cancelBuild := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancelBuild()
+		build := exec.CommandContext(buildCtx, "go", "build", "-o", binary, "./cmd/uam")
+		build.Dir = repoRoot(t)
+		if out, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build uam: %v\n%s", err, out)
+		}
+	} else if !filepath.IsAbs(binary) {
+		t.Fatal("UAM_WEB_TEST_BIN must be an absolute path")
 	}
 	root := t.TempDir()
 	sessionDir := filepath.Join(root, "run")
@@ -250,7 +237,7 @@ func TestWebStatusReportsLegacyInsecureDaemon(t *testing.T) {
 	t.Setenv("UAM_CONFIG_DIR", t.TempDir())
 	listen := "0.0.0.0:" + freeTCPPort(t)
 	for _, legacy := range []bool{true, false} {
-		st := web.DaemonState{PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: listen, LegacyNoAuth: legacy, Version: "test"}
+		st := web.DaemonState{PID: os.Getpid(), StartTime: daemonruntime.ProcStartTime(os.Getpid()), Listen: listen, LegacyNoAuth: legacy, Version: "test"}
 		data, err := json.Marshal(st)
 		must(t, err)
 		statePath := filepath.Join(sessionDir, "web.json")
@@ -307,13 +294,13 @@ func TestWebStatusWarnsBeyondLoopback(t *testing.T) {
 		{"[::]:" + port, "http://[::1]:" + port + "/"},
 	} {
 		// A state file naming this test process stands in for a running service.
-		st := web.DaemonState{PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: tc.listen, Version: "test"}
+		st := web.DaemonState{PID: os.Getpid(), StartTime: daemonruntime.ProcStartTime(os.Getpid()), Listen: tc.listen, Version: "test"}
 		data, err := json.Marshal(st)
 		must(t, err)
 		must(t, os.WriteFile(filepath.Join(sessionDir, "web.json"), data, 0o600))
 		beyond := !strings.HasPrefix(tc.listen, "127.")
 
-		out := captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "status", "--json"}, noopRunTUI)) })
+		out := captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "status", "--json"})) })
 		var status struct {
 			URL    string `json:"url"`
 			Listen string `json:"listen"`
@@ -321,8 +308,8 @@ func TestWebStatusWarnsBeyondLoopback(t *testing.T) {
 		if err := json.Unmarshal([]byte(out), &status); err != nil || status.URL != tc.url || status.Listen != tc.listen {
 			t.Fatalf("%+v: status --json = %q", tc, out)
 		}
-		statusOut := captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "status"}, noopRunTUI)) })
-		startOut := captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "--listen", tc.listen}, noopRunTUI)) })
+		statusOut := captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "status"})) })
+		startOut := captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "--listen", tc.listen})) })
 		for name, out := range map[string]string{"status": statusOut, "uam web": startOut} {
 			if !strings.Contains(out, tc.url) || !strings.Contains(out, tc.listen) {
 				t.Fatalf("%+v: %s must show the URL and the listen address: %q", tc, name, out)
@@ -355,15 +342,15 @@ func TestWebLogHeadersReachesServiceArgsAndStatus(t *testing.T) {
 	t.Setenv("UAM_SESSION_DIR", sessionDir)
 	t.Setenv("UAM_CONFIG_DIR", t.TempDir())
 	for _, on := range []bool{true, false} {
-		st := web.DaemonState{PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: "127.0.0.1:" + freeTCPPort(t), LogHeaders: on, Version: "test"}
+		st := web.DaemonState{PID: os.Getpid(), StartTime: daemonruntime.ProcStartTime(os.Getpid()), Listen: "127.0.0.1:" + freeTCPPort(t), LogHeaders: on, Version: "test"}
 		data, err := json.Marshal(st)
 		must(t, err)
 		must(t, os.WriteFile(filepath.Join(sessionDir, "web.json"), data, 0o600))
-		out := captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "status", "--json"}, noopRunTUI)) })
+		out := captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "status", "--json"})) })
 		if strings.Contains(out, `"log_headers":true`) != on {
 			t.Fatalf("log_headers=%v: status --json = %q", on, out)
 		}
-		out = captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "status"}, noopRunTUI)) })
+		out = captureCLIStdout(t, func() { must(t, Run(context.Background(), []string{"web", "status"})) })
 		if strings.Contains(out, logHeadersNotice) != on {
 			t.Fatalf("log_headers=%v: status = %q", on, out)
 		}
@@ -384,7 +371,7 @@ func TestWebTokenSet(t *testing.T) {
 		var runErr error
 		out := captureCLIStdout(t, func() {
 			withCLIStdin(t, input, func() {
-				runErr = RunWithTUI(context.Background(), append([]string{"web", "token", "set"}, args...), noopRunTUI)
+				runErr = Run(context.Background(), append([]string{"web", "token", "set"}, args...))
 			})
 		})
 		return out, runErr
@@ -395,7 +382,7 @@ func TestWebTokenSet(t *testing.T) {
 			t.Fatalf("token set %q = %v, %q; want a refusal that does not echo the token", args, err, out)
 		}
 	}
-	if err := RunWithTUI(context.Background(), []string{"web", "token", chosen}, noopRunTUI); err == nil || strings.Contains(err.Error(), chosen) {
+	if err := Run(context.Background(), []string{"web", "token", chosen}); err == nil || strings.Contains(err.Error(), chosen) {
 		t.Fatalf("uam web token <token> = %v", err)
 	}
 	for input, want := range map[string]string{
@@ -421,7 +408,7 @@ func TestWebTokenSet(t *testing.T) {
 		t.Fatalf("LoadOrCreateToken = %q, %v; want the set token", got, err)
 	}
 	// A state file naming this test process stands in for a running service.
-	st := web.DaemonState{PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: "127.0.0.1:" + freeTCPPort(t), Version: "test"}
+	st := web.DaemonState{PID: os.Getpid(), StartTime: daemonruntime.ProcStartTime(os.Getpid()), Listen: "127.0.0.1:" + freeTCPPort(t), Version: "test"}
 	data, err := json.Marshal(st)
 	must(t, err)
 	must(t, os.WriteFile(filepath.Join(sessionDir, "web.json"), data, 0o600))
@@ -446,7 +433,7 @@ func TestWebTokenSetPromptDoesNotEcho(t *testing.T) {
 	t.Cleanup(func() { os.Stdin, os.Stderr = oldIn, oldErr })
 	const chosen = "Typed-At-The-Prompt_0123456789"
 	done := make(chan error, 1)
-	go func() { done <- RunWithTUI(context.Background(), []string{"web", "token", "set"}, noopRunTUI) }()
+	go func() { done <- Run(context.Background(), []string{"web", "token", "set"}) }()
 	var seen []byte
 	buf := make([]byte, 256)
 	for !strings.Contains(string(seen), "New access token") {

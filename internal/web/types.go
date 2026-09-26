@@ -257,16 +257,6 @@ type SessionDetail struct {
 	HistoryReason string `json:"history_reason,omitempty"`
 	// Present for paged clients, empty when all retained items are included.
 	HistoryBefore *string `json:"history_before,omitempty"`
-	// TerminalSession is the uam terminal session tied to the same
-	// conversation, present while its host runs.
-	TerminalSession *TerminalSession `json:"terminal_session,omitempty"`
-}
-
-// TerminalSession is a uam terminal session tied to a Task's conversation.
-// It stays the terminal's: the Task only records the link.
-type TerminalSession struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
 }
 
 // PreviousConversation is a provider conversation recorded for a Project's

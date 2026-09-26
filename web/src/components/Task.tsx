@@ -508,7 +508,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
           <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
-            {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
             {(visibleStart > 0 || session.history_before) && <p role="status" className="text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading ? 'Loading earlier messages…' : 'Scroll up for earlier messages')}</p>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}

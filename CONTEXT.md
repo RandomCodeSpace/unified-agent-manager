@@ -1,25 +1,17 @@
 # UAM terminology
 
-This glossary distinguishes the process that UAM manages from the conversation
-state owned by an agent provider.
-
 | Term | Meaning |
 |---|---|
-| **Managed Session** | One persistent UAM record and its detached terminal host. It has a UAM ID, provider, name, workspace, prompt metadata, and lifecycle state. |
-| **Provider Conversation** | Conversation state owned by Claude Code, Codex, Copilot, Oh My Pi, or another provider. A provider conversation may have its own identifier and resume rules. It is not the same object as a Managed Session. |
-| **Attach** | Connect the current terminal to an already-running Managed Session. The attach operation itself does not start or resume a provider process, although the `uam attach` command first resumes a selected Stopped session when supported. Detaching leaves the running process in place. |
-| **Resume** | Start a stopped Managed Session's provider process again, preserving the UAM identity and asking the provider to continue an earlier Provider Conversation. |
-| **Workspace** | The working directory shared by a Managed Session and its provider process. Multiple Managed Sessions may use the same Workspace and therefore edit the same files. UAM does not create a worktree or other filesystem isolation automatically. |
-| **Project** | A named Workspace the user adds to the web interface. It groups the Tasks that work in that directory. A Project can be removed only when every Task in it is **Archived**, or it has none; removing it removes it and those Tasks from UAM, and never touches the directory or deletes provider conversations. |
-| **Task** | A Managed Session started from a Project in the web interface or imported into it from an existing Provider Conversation. It has a provider, a model, and a name; the name is either typed by the user or, when left blank, the title the provider generates for the conversation. A Task is driven through the provider's structured API, not a terminal. |
-| **Settled** | A Task the user marked complete. It is read-only until the user reopens it, and its provider conversation is closed. Reopening makes it active again, and its next prompt reopens the same conversation. |
-| **Archived** | The final stage of any Task, settled or not. It is read-only and cannot be reopened. It is the only stage from which a Task can be deleted. |
-| **Explicitly Stopped** | A Managed Session whose provider process was stopped through UAM. This is retained as reason metadata; it still appears in the **Stopped** lifecycle group. |
-| **Running** | The Managed Session's provider process is alive. This is based on process liveness, not interpretation of terminal text. |
-| **Stopped** | The provider process is not alive. The session record remains available and may be resumable. A clean exit, explicit stop, signal, or nonzero exit all belong to this group; exit detail distinguishes failures where known. |
-| **Exact resume** | Resume targets a known Provider Conversation or a provider state directory dedicated to the Managed Session. Other sessions in the same Workspace cannot change the target. |
-| **Heuristic resume** | The provider can only continue its most recent conversation or equivalent. When several retained sessions for that provider share a Workspace, UAM requires explicit confirmation because the target cannot be proven. |
+| **Provider** | GitHub Copilot, the agent integration supported by UAM. Custom model endpoints still run through Copilot. |
+| **Provider Conversation** | Conversation state owned by Copilot, with its own identifier and history. Removing a UAM Task does not delete this conversation. |
+| **Workspace** | A working directory used by tasks. Tasks sharing a workspace may edit the same files; UAM does not create filesystem isolation. |
+| **Project** | A named workspace that groups Tasks. It can be removed only when it has no Tasks or all its Tasks are Archived. Removal leaves the directory and provider conversations intact. |
+| **Task** | A UAM record for a conversation in a Project. It has a model, a name, and lifecycle state. It can be created in UAM or imported from an existing Copilot conversation. |
+| **Active** | A Task that can accept work. Its execution state may be idle, working, or waiting for the user. |
+| **Settled** | A Task marked complete by the user. It is read-only and its conversation is closed. Reopening makes it active; the next prompt continues the same conversation. |
+| **Archived** | The final stage of a Task. It is read-only, cannot be reopened, and can be deleted. |
+| **Imported Task** | A Task linked to an existing Copilot conversation. UAM checks whether another client holds that conversation before importing or sending work. |
+| **Legacy terminal record** | Saved metadata from UAM's retired terminal support. It remains on disk but is not an active Task and has no terminal controls in current UAM. |
 
-See [Managed Session vs. Provider Conversation](docs/adr/0001-managed-session-vs-provider-conversation.md)
-for the decision behind these definitions and [Responsive TUI operations](docs/responsive-tui.md)
-for day-to-day controls.
+See the [web guide](docs/web.md) for current behavior. Earlier terminal ADRs
+remain historical records of the retired interface.

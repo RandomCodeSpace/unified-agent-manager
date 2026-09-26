@@ -427,7 +427,7 @@ func TestWebCreatedTasksDoNotCheckForAnotherHolder(t *testing.T) {
 	}
 }
 
-func TestImportedTaskRecordsTheTerminalSessionAndKeepsIt(t *testing.T) {
+func TestImportedTaskPreservesLegacyTerminalRecord(t *testing.T) {
 	m, prov, st, p := importManager(t)
 	const termID = "0da22111-aaaa-4bbb-8ccc-dddddddddddd"
 	now := time.Now().UTC()
@@ -438,21 +438,14 @@ func TestImportedTaskRecordsTheTerminalSessionAndKeepsIt(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	var live sync.Map
-	live.Store("uam-fake-0da22111", true)
-	m.SetHostProbe(func(name string) bool { v, ok := live.Load(name); return ok && v.(bool) })
 	prov.SetPrevious([]agentapi.PreviousConversation{{ID: prevA}}, nil)
 	prov.SetHistory(prevA, agentapi.History{})
 	sum, err := m.Import(context.Background(), p.ID, prevA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d := detail(t, m, sum.ID); d.TerminalSession == nil || *d.TerminalSession != (TerminalSession{ID: termID, Name: "fix build"}) {
-		t.Fatalf("terminal session = %+v", d.TerminalSession)
-	}
-	live.Store("uam-fake-0da22111", false)
-	if d := detail(t, m, sum.ID); d.TerminalSession != nil {
-		t.Fatalf("a stopped host is shown: %+v", d.TerminalSession)
+	if got := m.sessions[sum.ID].terminalID; got != termID {
+		t.Fatalf("legacy terminal link = %q, want %q", got, termID)
 	}
 
 	// The link survives a restart.
@@ -462,14 +455,18 @@ func TestImportedTaskRecordsTheTerminalSessionAndKeepsIt(t *testing.T) {
 	prov2 := agenttest.NewProvider("fake", importCaps)
 	prov2.SetHistory(prevA, agentapi.History{})
 	m2 := NewManager(st, []agentapi.Provider{prov2})
-	m2.SetHostProbe(func(name string) bool { return name == "uam-fake-0da22111" })
 	if err := m2.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = m2.Shutdown(context.Background()) })
-	if d := detail(t, m2, sum.ID); d.TerminalSession == nil || d.TerminalSession.ID != termID {
-		t.Fatalf("terminal session after restart = %+v", d.TerminalSession)
+	if got := m2.sessions[sum.ID].terminalID; got != termID {
+		t.Fatalf("legacy terminal link after restart = %q, want %q", got, termID)
 	}
+	prov2.SetInUse([]string{prevA}, nil)
+	if _, err := m2.Submit(sum.ID, PromptRequest{Text: "do not send", RequestID: mustUUID(t), Mode: ModeSend}); !errors.Is(err, errHeldElsewhere) {
+		t.Fatalf("retired terminal link bypassed provider holder check: %v", err)
+	}
+
 	// Deleting the Task leaves the terminal's record alone.
 	if _, err := m2.Archive(sum.ID); err != nil {
 		t.Fatal(err)

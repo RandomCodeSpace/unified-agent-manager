@@ -202,12 +202,6 @@ func (m *Manager) subscribeHistory(sessionID string, toolDeltas, recentHistory b
 
 func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, compact bool) (*Subscriber, []byte, error) {
 	m.refreshBranches(m.ctx, false)
-	terminal := false
-	if sessionID != "" {
-		if s, err := m.lookup(sessionID); err == nil {
-			terminal = m.terminalLive(s)
-		}
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -220,7 +214,7 @@ func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, com
 			return nil, nil, newError(http.StatusNotFound, "session not found")
 		}
 		m.viewHistoryLocked(s)
-		d := m.detailLocked(s, terminal)
+		d := m.detailLocked(s)
 		if recentHistory && !compact {
 			d = recentDetail(d)
 		}

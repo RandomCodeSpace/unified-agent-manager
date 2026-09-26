@@ -494,7 +494,6 @@ export interface SessionDetail extends SessionSummary, Representation {
   recent_items?: Item[];
   recent_before?: string;
   history_index?: Item[];
-  terminal_session?: { id: string; name: string };
   queue?: QueuedPrompt[];
   queue_paused?: boolean;
   /** Main agent items only; subagent items come from the subagent route. */

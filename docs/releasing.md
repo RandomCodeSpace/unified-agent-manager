@@ -45,7 +45,7 @@ go install github.com/RandomCodeSpace/unified-agent-manager/cmd/uam@v0.8.0-beta.
 The version above is an example until published. `@beta` is not an alias created
 by this workflow. Use the exact beta tag. For a source checkout use `make build`
 or `make install`; `make web` followed by Go commands also works. A source-only
-binary's terminal commands work, while `uam web` explains that the UI must be
+binary's help and version commands work, while `uam web` explains that the UI must be
 built. `internal/web/dist.placeholder` makes that source-only compilation
 intentional without tracking a fake UI.
 

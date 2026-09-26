@@ -16,7 +16,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/daemonruntime"
 )
 
 func TestAcceptanceSpawnReadinessProtocol(t *testing.T) {
@@ -135,7 +135,7 @@ func TestAcceptanceStaleDaemonIdentityDoesNotStopAnotherProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
-	start := session.ProcStartTime(child.Process.Pid)
+	start := daemonruntime.ProcStartTime(child.Process.Pid)
 	if start == 0 {
 		t.Skip("process start identity is unavailable")
 	}
@@ -149,7 +149,7 @@ func TestAcceptanceStaleDaemonIdentityDoesNotStopAnotherProcess(t *testing.T) {
 	if running, err := Stop(context.Background(), dir); running || err != nil {
 		t.Fatalf("stale service stop = %v, %v", running, err)
 	}
-	if !session.ProcAlive(child.Process.Pid) {
+	if !daemonruntime.ProcAlive(child.Process.Pid) {
 		t.Fatal("stale service state stopped an unrelated process")
 	}
 	if _, err := os.Stat(statePath(dir)); !errors.Is(err, os.ErrNotExist) {

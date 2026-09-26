@@ -26,18 +26,6 @@ var (
 	errAlreadyTask   = newError(http.StatusConflict, "this conversation is already a task")
 )
 
-// SetHostProbe sets how the service tells that a terminal session host runs,
-// for Tasks tied to a terminal session. Call it before Start.
-func (m *Manager) SetHostProbe(live func(sessionName string) bool) { m.hostLive = live }
-
-// terminalLive reports whether the host of s's terminal session runs.
-func (m *Manager) terminalLive(s *webSession) bool {
-	m.mu.Lock()
-	host := s.terminalHost
-	m.mu.Unlock()
-	return host != "" && m.hostLive != nil && m.hostLive(host)
-}
-
 // checkHolder refuses a write to s's conversation while another client holds
 // it open, for a provider that can tell (Capabilities.Import). The check is a
 // snapshot: a client that opens the conversation right after it, or during
@@ -329,7 +317,7 @@ func (m *Manager) Import(ctx context.Context, projectID, convID string) (Session
 	// The conversation is not open: viewing reads it, and a prompt opens it.
 	s.base = StateClosed
 	if term, ok := m.terminalRecord(name, convID); ok {
-		s.terminalID, s.terminalHost, s.terminalName = term.ID, term.SessionName, term.Name
+		s.terminalID = term.ID
 	}
 	for i := range h.Items {
 		if h.Items[i].Kind == agentapi.ItemTool {
