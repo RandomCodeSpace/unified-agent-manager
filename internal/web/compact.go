@@ -26,10 +26,11 @@ type compactItem struct {
 }
 type compactTool struct {
 	agentapi.ToolCall
-	DisplayArg string `json:"display_arg,omitempty"`
-	Path       string `json:"path,omitempty"`
-	HasInput   bool   `json:"has_input"`
-	HasOutput  bool   `json:"has_output"`
+	DisplayArg string   `json:"display_arg,omitempty"`
+	Path       string   `json:"path,omitempty"`
+	FilePaths  []string `json:"file_paths,omitempty"`
+	HasInput   bool     `json:"has_input"`
+	HasOutput  bool     `json:"has_output"`
 }
 type compactSubagent struct {
 	agentapi.Subagent
@@ -156,7 +157,7 @@ func projectItem(it agentapi.Item) compactItem {
 		arg, path := compactArgument(&tool)
 		out.Compact = &compactBody{HasText: it.Text != ""}
 		out.Text = ""
-		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path}
+		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path, FilePaths: localToolFilePaths(&tool)}
 		// Question text and its recorded answer are semantic UI, including after reload.
 		if tool.Name != "ask_user" {
 			tool.Input, tool.Output = "", ""

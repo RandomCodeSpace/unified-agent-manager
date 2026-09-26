@@ -1,6 +1,7 @@
 import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody } from './Details';
 import { Bot, Check, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -512,30 +513,64 @@ function TurnStatus({ working = false, start, timing }: { working?: boolean; sta
   );
 }
 
+type CopyableMenuEvents = Pick<ComponentProps<'div'>, 'onContextMenu' | 'onTouchStart' | 'onTouchMove' | 'onTouchEnd' | 'onTouchCancel'>;
+
+/** Attach Base UI's handlers to the stable message shell without replaying DOM events. */
+function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & { handlersRef: RefObject<CopyableMenuEvents | null> }) {
+  useLayoutEffect(() => {
+    handlersRef.current = props;
+    return () => { handlersRef.current = null; };
+  }, [handlersRef, props]);
+  return <div {...props} />;
+}
+
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
 function Copyable({ text, label, className, side = 'right', children, extra = [] }: { text: string; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; children: ReactNode; extra?: ActionItem[] }) {
   const [copied, copy] = useCopied();
+  const [menuReady, setMenuReady] = useState(false);
+  const menuHandlers = useRef<CopyableMenuEvents | null>(null);
   const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: () => copy(text) }, ...extra];
+
+  function menuEvents(event: SyntheticEvent<HTMLDivElement>) {
+    // Portalled menu interactions do not originate in the message.
+    if (!event.currentTarget.contains(event.target as Node)) return null;
+    // Keep message/button parents stable. Base UI receives the original event once,
+    // including its native target, coordinates, modifiers and touch cancellation.
+    if (!menuReady) flushSync(() => setMenuReady(true));
+    return menuHandlers.current;
+  }
+
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger render={<div className={cn('group/copy relative', className)} />}>
-        {children}
-        <Tip label={copied ? 'Copied' : label}>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={copied ? 'Copied' : label}
-            className={cn('absolute top-0 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', side === 'right' ? '-right-1' : '-left-7', copied && 'opacity-100 text-success')}
-            onClick={() => copy(text)}
-          >
-            {copied ? <Check /> : <Copy />}
-          </Button>
-        </Tip>
-      </ContextMenu.Trigger>
-      <ContextMenu.Content>
-        <ContextMenu.Actions items={items} />
-      </ContextMenu.Content>
-    </ContextMenu.Root>
+    <div
+      className={cn('group/copy relative', className)}
+      style={{ WebkitTouchCallout: 'none' }}
+      onContextMenu={event => menuEvents(event)?.onContextMenu?.(event)}
+      onTouchStart={event => menuEvents(event)?.onTouchStart?.(event)}
+      onTouchMove={menuReady ? event => menuEvents(event)?.onTouchMove?.(event) : undefined}
+      onTouchEnd={menuReady ? event => menuEvents(event)?.onTouchEnd?.(event) : undefined}
+      onTouchCancel={menuReady ? event => menuEvents(event)?.onTouchCancel?.(event) : undefined}
+    >
+      {children}
+      <Tip label={copied ? 'Copied' : label}>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label={copied ? 'Copied' : label}
+          className={cn('absolute top-0 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', side === 'right' ? '-right-1' : '-left-7', copied && 'opacity-100 text-success')}
+          onClick={() => copy(text)}
+        >
+          {copied ? <Check /> : <Copy />}
+        </Button>
+      </Tip>
+      {menuReady && (
+        <ContextMenu.Root>
+          <ContextMenu.Trigger render={<CopyableMenuTarget handlersRef={menuHandlers} />} className="contents" />
+          <ContextMenu.Content>
+            <ContextMenu.Actions items={items} />
+          </ContextMenu.Content>
+        </ContextMenu.Root>
+      )}
+    </div>
   );
 }
 

@@ -1,5 +1,5 @@
 import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, ImageOff, Minus, Pause, X } from 'lucide-react';
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { LIVE, api, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
@@ -11,6 +11,7 @@ import { codeFile, localPath, splitBlocks, taskFile } from '../lib/markdown';
 import type { HighlightTree } from '../lib/highlight';
 import { Lightbox } from './Attachments';
 import { DiagramCard } from './Diagram';
+import { useFileDemand, useFileReference } from './FileReferences';
 import { Button, buttonVariants } from './ui/button';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
@@ -564,58 +565,12 @@ function MdImage({ src, alt }: { src?: string; alt?: string }) {
 function MdLink({ href, children }: { href?: string; children?: ReactNode }) {
   const sessionId = useContext(SessionContext);
   const workdir = useContext(WorkdirContext);
-  const file = taskFile(href, workdir);
-  const target = localPath(href) ? (sessionId && file ? api.viewFileUrl(sessionId, file.path) + file.hash : undefined) : typeof href === 'string' && /^(https?:|mailto:)/i.test(href) ? href : undefined;
-  return target ? (
-    <a href={target} rel="noopener noreferrer" target="_blank">
-      {children}
-    </a>
-  ) : (
-    <span>{children}</span>
-  );
-}
-
-/** Whether a view-route URL answered 200, by URL, for the page's life (false while asked): a missing file is asked about once too. */
-const knownFiles = new Map<string, boolean>();
-const fileListeners = new Set<() => void>();
-const fileQueue: string[] = [];
-let filesProbing = 0;
-/** HEAD requests in flight at once, so a long transcript full of file names is no request storm. */
-const MAX_FILE_PROBES = 4;
-
-function subscribeFiles(listener: () => void) {
-  fileListeners.add(listener);
-  return () => void fileListeners.delete(listener);
-}
-
-function probeFiles() {
-  while (filesProbing < MAX_FILE_PROBES && fileQueue.length) {
-    const url = fileQueue.shift() as string;
-    filesProbing++;
-    void fetch(url, { method: 'HEAD' })
-      .then(
-        (res) => res.status === 200,
-        () => false,
-      )
-      .then((ok) => {
-        knownFiles.set(url, ok);
-        filesProbing--;
-        for (const listener of fileListeners) listener();
-        probeFiles();
-      });
-  }
-}
-
-/** Whether the file at a view-route URL exists (a directory does not); false until the one HEAD request answers. */
-function useFileExists(url: string | undefined): boolean {
-  const exists = useSyncExternalStore(subscribeFiles, () => (url ? knownFiles.get(url) === true : false));
-  useEffect(() => {
-    if (!url || knownFiles.has(url)) return;
-    knownFiles.set(url, false);
-    fileQueue.push(url);
-    probeFiles();
-  }, [url]);
-  return exists;
+  const { streaming } = useContext(MdContext);
+  const file = !streaming ? taskFile(href, workdir) : null;
+  const { eligible, exists } = useFileReference(file?.path);
+  const target = localPath(href) ? (sessionId && file && exists ? api.viewFileUrl(sessionId, file.path) + file.hash : undefined) : typeof href === 'string' && /^(https?:|mailto:)/i.test(href) ? href : undefined;
+  const link = target ? <a href={target} rel="noopener noreferrer" target="_blank">{children}</a> : children;
+  return localPath(href) ? <span key={file?.path} data-file-reference={eligible ? file?.path : undefined}>{link}</span> : <>{link}</>;
 }
 
 /**
@@ -629,14 +584,13 @@ function InlineCode({ text, className }: { text: string; className?: string }) {
   const { streaming } = useContext(MdContext);
   const file = sessionId && !streaming ? codeFile(text, workdir) : null;
   const url = sessionId && file ? api.viewFileUrl(sessionId, file.path) : undefined;
-  const exists = useFileExists(url);
+  const { eligible, exists } = useFileReference(file?.path, text);
   const code = <code className={className}>{text}</code>;
-  return exists && url && file ? (
-    <a href={url + file.hash} rel="noopener noreferrer" target="_blank" className="md-file">
-      {code}
-    </a>
-  ) : (
-    code
+  if (!file) return code;
+  return (
+    <span key={file?.path} data-file-reference={eligible ? file?.path : undefined}>
+      {exists && url && file ? <a href={url + file.hash} rel="noopener noreferrer" target="_blank" className="md-file">{code}</a> : code}
+    </span>
   );
 }
 
@@ -697,8 +651,9 @@ const mdComponents: Components = {
  */
 export function Markdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
   const blocks = useMemo(() => splitBlocks(text), [text]);
+  const fileDemand = useFileDemand(text);
   return (
-    <div className={cn('md', className)}>
+    <div ref={fileDemand} className={cn('md', className)}>
       {blocks.map((block, i) => (
         <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} />
       ))}

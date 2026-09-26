@@ -22,3 +22,18 @@ test('foreground reads share two slots and cancelled queued work never starts', 
   await Promise.all([first, second, fourth, rejected]);
   assert.equal(maximum, 2);
 });
+
+test('queued history/body reads precede resolver reads without preempting active work', async () => {
+  const releases = [], starts = [];
+  const read = name => () => new Promise(resolve => { starts.push(name); releases.push(resolve); });
+  const first = foregroundRead(read('first')), second = foregroundRead(read('second'));
+  const resolver = foregroundRead(read('resolver'), undefined, 'low');
+  const history = foregroundRead(read('history'));
+  assert.deepEqual(starts, ['first', 'second']);
+  releases.shift()(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(starts, ['first', 'second', 'history']);
+  releases.shift()(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(starts, ['first', 'second', 'history', 'resolver']);
+  releases.splice(0).forEach(release => release());
+  await Promise.all([first, second, resolver, history]);
+});

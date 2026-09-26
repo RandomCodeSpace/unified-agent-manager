@@ -6,6 +6,7 @@ import { itemCursor } from '../lib/historyWindow';
 
 /** Mounted children of a collapsing group retain their preference, but no interest. */
 const Visible = createContext(true);
+export const useDetailVisibility = () => useContext(Visible);
 export function DetailVisibility({ open, children }: { open: boolean; children: ReactNode }) {
   const parent = useContext(Visible);
   return <Visible.Provider value={parent && open}>{children}</Visible.Provider>;

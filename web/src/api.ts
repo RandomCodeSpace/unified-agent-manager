@@ -308,6 +308,8 @@ export interface ToolCall {
   status: ToolStatus;
   input?: string;
   output?: string;
+  /** Exact local tool metadata; eligibility only, never proof that a file exists. */
+  file_paths?: string[];
   display_arg?: string;
   path?: string;
   has_input?: boolean;
@@ -609,6 +611,15 @@ export class ApiError extends Error {
 }
 
 let unauthorized: () => void = () => {};
+const authLossListeners = new Set<() => void>();
+export function subscribeAuthLoss(listener: () => void): () => void {
+  authLossListeners.add(listener);
+  return () => { authLossListeners.delete(listener); };
+}
+function notifyUnauthorized() {
+  authLossListeners.forEach(listener => listener());
+  unauthorized();
+}
 
 /** Registers the handler run when any request (other than login) gets a 401. */
 export function onUnauthorized(fn: () => void): void {
@@ -640,7 +651,7 @@ async function call<T>(method: Method, path: string, body?: unknown, omitBody = 
   } catch {
     throw new ApiError(0, 'Could not reach the server');
   }
-  if (res.status === 401 && path !== '/api/login') unauthorized();
+  if (res.status === 401 && path !== '/api/login') notifyUnauthorized();
   if (!res.ok) {
     const parsed = await errorBody(res);
     throw new ApiError(res.status, parsed.message, parsed.body);
@@ -725,6 +736,7 @@ export const api = {
   /** The same listing for a Project's directory: a new Task's `@` picker, before the Task exists. */
   projectFiles: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/projects/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
   upload: uploadFile,
+  resolveFiles: (id: string, paths: string[], signal?: AbortSignal) => foregroundRead(() => call<{ files: { path: string; exists: boolean; kind: 'file' | 'unavailable' }[] }>('POST', `/api/sessions/${enc(id)}/files/resolve`, { paths }, false, signal), signal, 'low'),
   attachmentUrl: (id: string, attachmentId: string) => `/api/sessions/${enc(id)}/attachments/${enc(attachmentId)}`,
   /** An image file of the Task's directory, by absolute path or one relative to it. */
   rawFileUrl: (id: string, path: string) => `/api/sessions/${enc(id)}/files/raw?path=${enc(path)}`,
@@ -771,7 +783,7 @@ function uploadFile(id: string, file: File, onProgress: (fraction: number) => vo
       } catch {
         // not JSON
       }
-      if (xhr.status === 401) unauthorized();
+      if (xhr.status === 401) notifyUnauthorized();
       if (xhr.status < 200 || xhr.status >= 300) {
         const message = typeof body.error === 'string' && body.error ? body.error : `${xhr.status} ${xhr.statusText}`.trim();
         reject(new ApiError(xhr.status, message, body));
