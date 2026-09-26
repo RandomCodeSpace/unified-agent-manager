@@ -397,7 +397,6 @@ func (s *Server) handleDetailEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	initial = nil
 	ticker := time.NewTicker(s.heartbeat)
 	defer ticker.Stop()
 	for {

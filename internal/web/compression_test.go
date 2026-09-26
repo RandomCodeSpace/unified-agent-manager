@@ -56,7 +56,7 @@ func gunzipResponse(t *testing.T, body io.Reader) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	decoded, err := io.ReadAll(reader)
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +210,7 @@ func TestCompressionStaticHTTPAndSecurity(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer resp.Body.Close()
+				defer func() { _ = resp.Body.Close() }()
 				if resp.StatusCode != 200 || resp.Header.Get("Content-Encoding") != "gzip" || resp.Uncompressed {
 					t.Fatalf("response = %d %v", resp.StatusCode, resp.Header)
 				}
@@ -312,7 +312,7 @@ func TestCompressionStreamsFlushBeforeHandlerReturns(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != 200 || resp.Header.Get("Content-Encoding") != "gzip" || resp.Header.Get("Content-Type") != "text/event-stream" || resp.Header.Get("X-Accel-Buffering") != "no" || resp.Uncompressed {
 				t.Fatalf("stream response = %d %v", resp.StatusCode, resp.Header)
 			}
@@ -320,7 +320,7 @@ func TestCompressionStreamsFlushBeforeHandlerReturns(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer decoded.Close()
+			defer func() { _ = decoded.Close() }()
 			reader := bufio.NewReader(decoded)
 			next := func() string {
 				var frame strings.Builder
