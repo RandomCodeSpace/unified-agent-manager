@@ -152,7 +152,7 @@ func grantFileInfo(f *os.File) (os.FileInfo, error) {
 		return nil, errGrantUnavailable
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || st.Uid != uint32(os.Getuid()) ||
+	if !ok || !info.Mode().IsRegular() || int64(st.Uid) != int64(os.Getuid()) ||
 		st.Nlink != 1 || info.Mode().Perm()&0400 == 0 {
 		return nil, errGrantUnavailable
 	}
