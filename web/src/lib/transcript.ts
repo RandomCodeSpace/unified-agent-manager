@@ -65,7 +65,7 @@ function inputOf(tool: ToolCall): Record<string, unknown> | null {
 export function toolLabel(tool: ToolCall | undefined): { name: string; arg: string } {
   const name = tool?.name?.trim() ?? '';
   const title = tool?.title?.trim() ?? '';
-  const arg = mainArgument(name, tool?.input);
+  const arg = tool?.display_arg ?? mainArgument(name, tool?.input);
   if (name) {
     const rest = title.toLowerCase().startsWith(`${name.toLowerCase()} `) ? title.slice(name.length + 1) : title;
     return { name, arg: arg || (rest && rest !== name ? oneLine(rest) : '') };
@@ -109,12 +109,14 @@ export function transcriptWindowStart(items: Item[], before = items.length): num
 }
 
 /** Hidden rows keep their decisions; they must not reappear as unrelated loose requests. */
-export function windowInteractions(items: Item[], interactions: Interaction[], start: number): Interaction[] {
-  if (start === 0) return interactions;
+export function windowInteractions(items: Item[], interactions: Interaction[], start: number, hasEarlier = false, hasLater = false): Interaction[] {
+  if (start === 0 && !hasEarlier && !hasLater) return interactions;
+  if (!items[start]) return [];
   const indices = new Map(items.map((it, index) => [it.id, index]));
   return interactions.filter((ix) => {
+    if (hasLater && ix.time > items.at(-1)!.time) return false;
     const index = ix.tool_call_id ? indices.get(ix.tool_call_id) : undefined;
-    return index === undefined ? ix.time >= items[start].time : index >= start;
+    return index === undefined ? (!hasEarlier || !ix.tool_call_id) && ix.time >= items[start].time : index >= start;
   });
 }
 
@@ -267,6 +269,7 @@ export function questionOf(tool: ToolCall | undefined, interaction: Interaction 
   const isAsk = tool?.name === ASK_TOOL;
   if (!isAsk && interaction?.kind !== 'question') return null;
   const q: AskedQuestion = { questions: [], chosen: [], outcome: 'pending' };
+  if (tool?.question_outcome && !tool.input && !interaction) return { ...q, outcome: tool.question_outcome === 'pending' && !live ? 'none' : tool.question_outcome };
   if (interaction?.questions?.length) {
     q.questions = interaction.questions.map((x) => ({ text: x.text, header: x.header || undefined, choices: x.choices ?? [] }));
   } else if (isAsk) {
@@ -350,7 +353,7 @@ function toolCounts(items: Item[], live: boolean): { done: string[]; active: num
     const name = t.name.toLowerCase();
     if (['bash', 'shell', 'powershell'].includes(name)) { commands++; continue; }
     const input = inputOf(t);
-    const path = input && [input.path, input.file_path, input.filePath].find((v): v is string => typeof v === 'string' && !!v.trim());
+    const path = t.path || (input && [input.path, input.file_path, input.filePath].find((v): v is string => typeof v === 'string' && !!v.trim()));
     if (path && CHANGE_TOOLS.includes(name)) changed.add(path);
     else if (path && ['read', 'view'].includes(name)) read.add(path);
     else other++;
@@ -439,7 +442,7 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
   const items = entries.flatMap((e) => (e.item ? [e.item] : []));
   const tools = items.filter((it) => it.kind === 'tool');
   const thinking = items.some((it) => it.kind === 'reasoning' && it.id === streamingId);
-  const thoughts = items.filter((it) => it.kind === 'reasoning' && it.id !== streamingId && it.text?.trim()).length;
+  const thoughts = items.filter((it) => it.kind === 'reasoning' && it.id !== streamingId && (it.text?.trim() || it.compact?.has_reasoning)).length;
   // A question that no longer waits counts as a question, never as a tool call; one still waiting stays a call.
   const outcomes: AskedQuestion['outcome'][] = [];
   const calls = tools.filter((it) => {
@@ -528,6 +531,7 @@ export function elapsedSince(start: string | undefined, now: number): string | n
  */
 export function subagentSummary(subagent: Subagent, items: readonly Item[] | undefined, parent: ToolCall | undefined): string {
   if (subagent.status === 'running') {
+    if (subagent.preview) return subagent.preview;
     const last = items?.at(-1);
     if (last?.kind === 'reasoning') return 'Thinking…';
     if (last?.kind === 'tool') {
@@ -536,8 +540,8 @@ export function subagentSummary(subagent: Subagent, items: readonly Item[] | und
     }
     return '';
   }
-  if (subagent.status === 'failed') return firstLine(subagent.error) || firstLine(parent?.output);
-  return firstLine(parent?.output);
+  if (subagent.status === 'failed') return firstLine(subagent.error) || firstLine(subagent.result_summary) || firstLine(parent?.output);
+  return firstLine(subagent.result_summary) || firstLine(parent?.output);
 }
 
 /**
@@ -648,7 +652,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     }
     const item = entry.item;
     if (item.kind === 'reasoning') {
-      if (item.id === ctx.streamingId || !item.text?.trim()) continue;
+      if (item.id === ctx.streamingId || (!item.text?.trim() && !item.compact?.has_reasoning)) continue;
       thoughts++;
       if (item.ended_at) thinkMs += Math.max(0, Date.parse(item.ended_at) - Date.parse(item.time));
       continue;
@@ -675,7 +679,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
         commands++;
         break;
       case 'file': {
-        const path = mainArgument(name, t.input);
+        const path = t.path ?? mainArgument(name, t.input);
         if (CHANGE_TOOLS.includes(name)) changed.add(path || item.id);
         else read.add(path || item.id);
         break;
@@ -765,9 +769,8 @@ export function changedFiles(entries: Entry[]): string[] {
   for (const { item } of entries) {
     const t = item?.tool;
     if (item?.kind !== 'tool' || t?.status !== 'completed' || !CHANGE_TOOLS.includes(t.name.toLowerCase())) continue;
-    const path = mainArgument(t.name, t.input);
+    const path = t.path ?? mainArgument(t.name, t.input);
     if (path && !out.includes(path)) out.push(path);
   }
   return out;
 }
-

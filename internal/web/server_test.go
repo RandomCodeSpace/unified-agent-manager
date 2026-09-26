@@ -50,6 +50,16 @@ func withCookie(ts *testServer) reqOpt {
 	return func(r *http.Request) { r.AddCookie(&http.Cookie{Name: cookieName, Value: validCookie(r.Host)}) }
 }
 
+func (ts *testServer) login(t *testing.T, host string) reqOpt {
+	t.Helper()
+	w := ts.do(http.MethodPost, "/api/login", `{"token":"`+testToken+`"}`, withHost(host))
+	cookies := w.Result().Cookies()
+	if w.Code != http.StatusNoContent || len(cookies) != 1 {
+		t.Fatalf("fixture sign-in failed: status %d", w.Code)
+	}
+	return func(r *http.Request) { r.AddCookie(cookies[0]) }
+}
+
 func (ts *testServer) do(method, target, body string, opts ...reqOpt) *httptest.ResponseRecorder {
 	var reader io.Reader
 	if body != "" {
@@ -71,7 +81,7 @@ func (ts *testServer) do(method, target, body string, opts ...reqOpt) *httptest.
 func TestAPIRequiresLoginAndCookieWorks(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	createSession(t, ts.m, ts.prov)
-	for _, target := range []string{"/api/sessions", "/api/meta", "/api/events"} {
+	for _, target := range []string{"/api/sessions", "/api/meta", "/api/events", "/api/events/detail", "/api/sessions/missing/history", "/api/sessions/missing/items/item", "/api/sessions/missing/subagents/helper", "/api/sessions/missing/files/raw?path=notes.md", "/api/sessions/missing/files/view/notes.md", "/api/sessions/missing/files/key/invalid/notes.md"} {
 		w := ts.do(http.MethodGet, target, "")
 		if w.Code != http.StatusUnauthorized || strings.Contains(w.Body.String(), "task") || !strings.Contains(w.Body.String(), `"error"`) {
 			t.Fatalf("GET %s unauthenticated = %d %s", target, w.Code, w.Body)
@@ -95,6 +105,9 @@ func TestAPIRequiresLoginAndCookieWorks(t *testing.T) {
 	if w := ts.do(http.MethodPost, "/api/login", `{"token":"`+testToken+`"}`, withHeader("X-Forwarded-Proto", "https")); !w.Result().Cookies()[0].Secure {
 		t.Fatal("cookie behind an HTTPS proxy must be Secure")
 	}
+	if w := ts.do(http.MethodGet, "/api/auth", "", func(r *http.Request) { r.AddCookie(c[0]) }); w.Body.String() != "{\"authenticated\":true,\"required\":true}\n" {
+		t.Fatalf("signed-in auth = %s", w.Body)
+	}
 	w = ts.do(http.MethodGet, "/api/sessions", "", func(r *http.Request) { r.AddCookie(c[0]) })
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"name":"task"`) {
 		t.Fatalf("authenticated list = %d %s", w.Code, w.Body)
@@ -115,57 +128,28 @@ func TestAPIRequiresLoginAndCookieWorks(t *testing.T) {
 	}
 }
 
-// --no-auth drops only the cookie requirement; every other check still runs.
-func TestNoAuthSkipsLoginButKeepsOtherChecks(t *testing.T) {
-	ts := newTestServer(t, ServerConfig{NoAuth: true})
-	createSession(t, ts.m, ts.prov)
-	w := ts.do(http.MethodGet, "/api/sessions", "")
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"name":"task"`) || w.Header().Get("Content-Security-Policy") != contentSecurity {
-		t.Fatalf("list without cookie = %d %s", w.Code, w.Body)
-	}
-	if w := ts.do(http.MethodGet, "/api/auth", ""); w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"authenticated":true,"required":false}` {
-		t.Fatalf("auth = %d %s", w.Code, w.Body)
-	}
-	if w := ts.do(http.MethodGet, "/api/sessions", "", withHost("evil.example")); w.Code != http.StatusForbidden {
-		t.Fatalf("foreign Host = %d, want 403", w.Code)
-	}
-	create := `{"provider":"fake","workdir":"` + t.TempDir() + `","name":"x"}`
-	if w := ts.do(http.MethodPost, "/api/sessions", create, withHeader("Sec-Fetch-Site", "cross-site")); w.Code != http.StatusForbidden {
-		t.Fatalf("cross-site POST = %d, want 403", w.Code)
-	}
-	if w := ts.do(http.MethodPost, "/api/sessions", create, withHeader("Origin", "https://evil.example")); w.Code != http.StatusForbidden {
-		t.Fatalf("foreign Origin POST = %d, want 403", w.Code)
-	}
-	if w := ts.do(http.MethodPost, "/api/sessions", create, withHeader("Content-Type", "text/plain")); w.Code != http.StatusUnsupportedMediaType {
-		t.Fatalf("text/plain POST = %d, want 415", w.Code)
-	}
-	if w := ts.do(http.MethodPost, "/api/sessions", strings.Repeat(" ", maxBodyBytes+10)+create); w.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("oversized body = %d, want 413", w.Code)
-	}
-	if n := len(ts.m.List()); n != 1 {
-		t.Fatalf("rejected requests created sessions: %d sessions", n)
+func TestServerRejectsInvalidTokens(t *testing.T) {
+	for _, token := range []string{"", "too-short", strings.Repeat("x", 257), strings.Repeat("x", 24) + " ", strings.Repeat("x", 24) + "\x01"} {
+		if srv, err := NewServer(ServerConfig{Manager: &Manager{}, Token: token, Assets: frameAssets()}); err == nil || srv != nil {
+			t.Fatal("invalid token created a server")
+		} else if token != "" && strings.Contains(err.Error(), token) {
+			t.Fatal("validation error disclosed the token")
+		}
 	}
 }
 
 func TestHostOriginAndContentTypeChecks(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{PublicOrigins: []string{"https://uam.example.com"}})
-	noAuth := newTestServer(t, ServerConfig{PublicOrigins: []string{"https://uam.example.com"}, NoAuth: true})
 	login := `{"token":"` + testToken + `"}`
-	// With sign-in on, any Host reaches the sign-in check; without it, a
-	// name that is not loopback or a public origin is refused.
+	// Any Host reaches sign-in. Authentication remains bound to that Host.
 	for _, host := range []string{"evil.example", "evil.example:8260", "127.0.0.1.evil.example"} {
 		if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"authenticated":false,"required":true}` {
 			t.Fatalf("Host %q = %d %s, want 200 signed out", host, w.Code, w.Body)
 		}
-		if w := noAuth.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusForbidden {
-			t.Fatalf("no-auth Host %q = %d, want 403", host, w.Code)
-		}
 	}
 	for _, host := range []string{"localhost:9999", "[::1]:8260", "127.0.0.1", "uam.example.com"} {
-		for _, srv := range []*testServer{ts, noAuth} {
-			if w := srv.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK {
-				t.Fatalf("Host %q = %d, want 200", host, w.Code)
-			}
+		if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK {
+			t.Fatalf("Host %q = %d, want 200", host, w.Code)
 		}
 	}
 	if w := ts.do(http.MethodPost, "/api/login", login, withHeader("Sec-Fetch-Site", "cross-site")); w.Code != http.StatusForbidden {
@@ -194,58 +178,6 @@ func TestHostOriginAndContentTypeChecks(t *testing.T) {
 	}
 	if _, err := NewServer(ServerConfig{Manager: ts.m, Token: testToken, PublicOrigins: []string{"https://host/path"}}); err == nil {
 		t.Fatal("a public origin with a path must be rejected")
-	}
-}
-
-// Without sign-in, the service also answers IP-literal Hosts (the LAN
-// address) beyond loopback; a name stays refused on every bind, and the
-// cross-origin and JSON checks do not change. With sign-in on, every Host
-// passes on every bind.
-func TestHostRuleFollowsTheBind(t *testing.T) {
-	for _, tc := range []struct {
-		listen  string
-		ipHosts bool
-	}{{"", false}, {"127.0.0.1:8260", false}, {"[::1]:8260", false}, {"0.0.0.0:8260", true}, {"[::]:8260", true}, {"192.0.2.10:8260", true}} {
-		ts := newTestServer(t, ServerConfig{Listen: tc.listen, PublicOrigins: []string{"https://uam.example.com"}, NoAuth: true})
-		authed := newTestServer(t, ServerConfig{Listen: tc.listen})
-		for _, host := range []string{"evil.example", "192.0.2.10.nip.io:8260", "[fe80::1%25eth0]:8260", "10.1.2.3:9999"} {
-			if w := authed.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK {
-				t.Fatalf("listen %q, sign-in on: Host %q = %d, want 200", tc.listen, host, w.Code)
-			}
-		}
-		for _, host := range []string{"localhost:8260", "127.0.0.1:8260", "[::1]:8260", "uam.example.com"} {
-			if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusOK {
-				t.Fatalf("listen %q: Host %q = %d, want 200", tc.listen, host, w.Code)
-			}
-		}
-		for _, host := range []string{"evil.example", "evil.example:8260", "127.0.0.1.evil.example", "192.0.2.10.nip.io:8260", "[fe80::1%25eth0]:8260"} {
-			if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != http.StatusForbidden {
-				t.Fatalf("listen %q: Host %q = %d, want 403", tc.listen, host, w.Code)
-			}
-		}
-		for _, host := range []string{"192.0.2.10:8260", "192.0.2.10", "10.1.2.3:9999", "[2001:db8::1]:8260", "0.0.0.0:8260"} {
-			want := http.StatusForbidden
-			if tc.ipHosts {
-				want = http.StatusOK
-			}
-			if w := ts.do(http.MethodGet, "/api/auth", "", withHost(host)); w.Code != want {
-				t.Fatalf("listen %q: Host %q = %d, want %d", tc.listen, host, w.Code, want)
-			}
-		}
-		if !tc.ipHosts {
-			continue
-		}
-		login := `{"token":"` + testToken + `"}`
-		lan := []reqOpt{withHost("192.0.2.10:8260")}
-		if w := ts.do(http.MethodPost, "/api/login", login, append(lan, withHeader("Origin", "https://evil.example"))...); w.Code != http.StatusForbidden {
-			t.Fatalf("listen %q: foreign Origin POST at the LAN address = %d, want 403", tc.listen, w.Code)
-		}
-		if w := ts.do(http.MethodPost, "/api/login", login, append(lan, withHeader("Content-Type", "text/plain"))...); w.Code != http.StatusUnsupportedMediaType {
-			t.Fatalf("listen %q: text/plain POST at the LAN address = %d, want 415", tc.listen, w.Code)
-		}
-		if w := ts.do(http.MethodPost, "/api/login", login, append(lan, withHeader("Origin", "http://192.0.2.10:8260"))...); w.Code != http.StatusNoContent || w.Result().Cookies()[0].Secure {
-			t.Fatalf("listen %q: same-origin login at the LAN address = %d %v", tc.listen, w.Code, w.Result().Cookies())
-		}
 	}
 }
 
@@ -334,12 +266,11 @@ func TestLogHeaders(t *testing.T) {
 			t.Fatalf("%s: a request body reached the log: %q", tc.name, raw)
 		}
 	}
-	// Only a server without sign-in refuses a foreign Host.
-	noAuth := newTestServer(t, ServerConfig{LogHeaders: true, NoAuth: true})
-	if w := noAuth.do(http.MethodGet, "/api/auth", "", withHost("evil.example")); w.Code != http.StatusForbidden {
-		t.Fatalf("no-auth foreign Host = %d, want 403", w.Code)
+	// A foreign Host can reach sign-in but cannot use another Host's cookie.
+	if w := ts.do(http.MethodGet, "/api/sessions", "", withCookie(ts), withHost("evil.example")); w.Code != http.StatusUnauthorized {
+		t.Fatalf("foreign Host with loopback cookie = %d, want 401", w.Code)
 	}
-	if got := records(); len(got) != 1 || got[0]["outcome"] != "host not allowed" || got[0]["host"] != "evil.example" || got[0]["status"] != float64(http.StatusForbidden) {
+	if got := records(); len(got) != 1 || got[0]["outcome"] != "authentication required" || got[0]["host"] != "evil.example" || got[0]["status"] != float64(http.StatusUnauthorized) {
 		t.Fatalf("foreign Host: records = %v", got)
 	}
 }

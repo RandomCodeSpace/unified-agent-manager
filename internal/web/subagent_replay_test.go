@@ -9,7 +9,8 @@ import (
 )
 
 func TestSubagentSnapshotSeparatesCapturedAndLaterEvents(t *testing.T) {
-	ts := newTestServer(t, ServerConfig{NoAuth: true})
+	ts := newTestServer(t, ServerConfig{})
+	auth := ts.login(t, "127.0.0.1:8260")
 	sum, conv := createSession(t, ts.m, ts.prov)
 	sub, _, err := ts.m.Subscribe(sum.ID)
 	if err != nil {
@@ -21,7 +22,7 @@ func TestSubagentSnapshotSeparatesCapturedAndLaterEvents(t *testing.T) {
 	var capturedSeq uint64
 	decodeField(t, frameOf(t, sub, "item"), "seq", &capturedSeq)
 	path := "/api/sessions/" + sum.ID + "/subagents/helper"
-	w := ts.do(http.MethodGet, path, "")
+	w := ts.do(http.MethodGet, path, "", auth)
 	// Decode the wire contract independently so a missing seq is a failure,
 	// including when the manager's service-wide sequence is zero.
 	var snapshot struct {
@@ -52,7 +53,7 @@ func TestSubagentSnapshotSeparatesCapturedAndLaterEvents(t *testing.T) {
 	if completedSeq <= delta.Seq {
 		t.Fatalf("completion seq = %d, delta seq = %d", completedSeq, delta.Seq)
 	}
-	w = ts.do(http.MethodGet, path, "")
+	w = ts.do(http.MethodGet, path, "", auth)
 	if err := json.Unmarshal(w.Body.Bytes(), &snapshot); err != nil || w.Code != http.StatusOK || snapshot.Seq == nil || *snapshot.Seq < completedSeq {
 		t.Fatalf("next snapshot = %d %s, %v", w.Code, w.Body, err)
 	}

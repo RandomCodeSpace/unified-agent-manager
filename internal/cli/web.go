@@ -36,9 +36,8 @@ type originList []string
 func (o *originList) String() string     { return strings.Join(*o, ",") }
 func (o *originList) Set(v string) error { *o = append(*o, v); return nil }
 
-// noAuthNotice is printed wherever the service's settings are shown while
-// authentication is disabled.
-const noAuthNotice = "Authentication: disabled — anyone who can reach this service can use it"
+// legacyNoAuthNotice explains why an older insecure service cannot be reused.
+const legacyNoAuthNotice = "Authentication: disabled by an unsupported legacy service; run uam web stop, then uam web to restart with sign-in required"
 
 // logHeadersNotice is printed wherever the service's settings are shown while
 // --log-headers is on.
@@ -48,7 +47,6 @@ const logHeadersNotice = "Header logging: on — every request's headers go to t
 type webOptions struct {
 	listen     string
 	origins    []string
-	noAuth     bool
 	logHeaders bool
 }
 
@@ -57,9 +55,6 @@ func (o webOptions) args() []string {
 	args := []string{"--listen", o.listen}
 	for _, origin := range o.origins {
 		args = append(args, "--public-origin", origin)
-	}
-	if o.noAuth {
-		args = append(args, "--no-auth")
 	}
 	if o.logHeaders {
 		args = append(args, "--log-headers")
@@ -73,7 +68,6 @@ func webFlags(name string, args []string) (webOptions, error) {
 	listen := fs.String("listen", web.DefaultListen, "IP address and port to serve on; beyond loopback, other machines can reach it")
 	var origins originList
 	fs.Var(&origins, "public-origin", "origin of a same-host reverse proxy, e.g. https://host (repeatable)")
-	noAuth := fs.Bool("no-auth", false, "disable authentication: anyone who can reach the service can use it")
 	logHeaders := fs.Bool("log-headers", false, "debug: log each request's method, path, remote address and headers (credential headers redacted) to the uam log")
 	if err := fs.Parse(args); err != nil {
 		return webOptions{}, err
@@ -93,10 +87,10 @@ func webFlags(name string, args []string) (webOptions, error) {
 		}
 		normalized = append(normalized, n)
 	}
-	return webOptions{listen: addr, origins: normalized, noAuth: *noAuth, logHeaders: *logHeaders}, nil
+	return webOptions{listen: addr, origins: normalized, logHeaders: *logHeaders}, nil
 }
 
-// runWeb is `uam web [--listen addr] [--public-origin url]... [--no-auth]
+// runWeb is `uam web [--listen addr] [--public-origin url]...
 // [--log-headers]`, `uam web status [--json]`, `uam web stop` and
 // `uam web token set`.
 func runWeb(ctx context.Context, args []string) error {
@@ -118,12 +112,16 @@ func runWeb(ctx context.Context, args []string) error {
 	if err != nil {
 		return ignoreHelp(err)
 	}
+	dir := session.DefaultDir()
+	st, running := web.ReadRunning(dir)
+	if running && st.LegacyNoAuth {
+		return fmt.Errorf("uam web (pid %d): %s", st.PID, legacyNoAuthNotice)
+	}
 	token, err := web.LoadOrCreateToken(web.TokenPath())
 	if err != nil {
 		return err
 	}
-	dir := session.DefaultDir()
-	if st, running := web.ReadRunning(dir); running {
+	if running {
 		fmt.Printf("uam web is already running (pid %d); stop it first to change its settings\n", st.PID)
 		printWebAccess(st, token)
 		return nil
@@ -138,9 +136,12 @@ func runWeb(ctx context.Context, args []string) error {
 	if err := web.Spawn(ctx, exe, opts.args()); err != nil {
 		return err
 	}
-	st, running := web.ReadRunning(dir)
+	st, running = web.ReadRunning(dir)
 	if !running {
 		return errors.New("uam web reported ready but is not running")
+	}
+	if st.LegacyNoAuth {
+		return fmt.Errorf("uam web (pid %d): %s", st.PID, legacyNoAuthNotice)
 	}
 	fmt.Printf("uam web started (pid %d)\n", st.PID)
 	printWebAccess(st, token)
@@ -154,11 +155,7 @@ func printWebAccess(st web.DaemonState, token string) {
 	}
 	fmt.Printf("  URL:           %s\n", st.URL())
 	fmt.Printf("  Listen:        %s\n", st.Listen)
-	if st.NoAuth {
-		fmt.Printf("  %s\n", noAuthNotice)
-	} else {
-		fmt.Printf("  Access token:  %s\n", token)
-	}
+	fmt.Printf("  Access token:  %s\n", token)
 	for _, o := range st.PublicOrigins {
 		fmt.Printf("  Public origin: %s\n", o)
 	}
@@ -169,38 +166,34 @@ func printWebAccess(st web.DaemonState, token string) {
 	fmt.Println()
 	fmt.Println("From another computer, forward the port over SSH (for example in PowerShell):")
 	fmt.Printf("  ssh -N -L 127.0.0.1:%s:%s <user>@<host>\n", port, net.JoinHostPort(host, port))
-	if st.NoAuth {
-		fmt.Printf("then open http://127.0.0.1:%s/.\n", port)
-		return
-	}
 	fmt.Printf("then open http://127.0.0.1:%s/ and sign in with the access token.\n", port)
 }
 
 // printExposure warns wherever the service's settings are shown while it
-// listens beyond loopback, with one more line when --no-auth is in use.
+// listens beyond loopback. Legacy insecure services must not claim sign-in.
 func printExposure(st web.DaemonState) {
 	if !web.BeyondLoopback(st.Listen) {
 		return
 	}
 	exposed := "Warning: listening on " + st.Listen + ", so other machines can reach this service"
-	if !st.NoAuth {
-		fmt.Printf("  %s; sign-in is required (--no-auth is not in use)\n", exposed)
+	if st.LegacyNoAuth {
+		fmt.Printf("  %s; legacy service has no authentication; restart required\n", exposed)
 		return
 	}
-	fmt.Printf("  %s\n", exposed)
-	fmt.Printf("  Warning: --no-auth is in use: anyone who can reach %s can run agents on this host with your credentials\n", st.Listen)
+	fmt.Printf("  %s; sign-in is required\n", exposed)
 }
 
 type webStatus struct {
-	Running       bool      `json:"running"`
-	PID           int       `json:"pid,omitempty"`
-	URL           string    `json:"url,omitempty"`
-	Listen        string    `json:"listen,omitempty"`
-	PublicOrigins []string  `json:"public_origins,omitempty"`
-	NoAuth        *bool     `json:"no_auth,omitempty"`
-	LogHeaders    bool      `json:"log_headers,omitempty"`
-	Version       string    `json:"version,omitempty"`
-	StartedAt     time.Time `json:"started_at,omitzero"`
+	Running         bool      `json:"running"`
+	PID             int       `json:"pid,omitempty"`
+	URL             string    `json:"url,omitempty"`
+	Listen          string    `json:"listen,omitempty"`
+	PublicOrigins   []string  `json:"public_origins,omitempty"`
+	NoAuth          *bool     `json:"no_auth,omitempty"`
+	RestartRequired bool      `json:"restart_required,omitempty"`
+	LogHeaders      bool      `json:"log_headers,omitempty"`
+	Version         string    `json:"version,omitempty"`
+	StartedAt       time.Time `json:"started_at,omitzero"`
 }
 
 func runWebStatus(args []string) error {
@@ -215,7 +208,7 @@ func runWebStatus(args []string) error {
 	st, running := web.ReadRunning(session.DefaultDir())
 	status := webStatus{Running: running}
 	if running {
-		status = webStatus{Running: true, PID: st.PID, URL: st.URL(), Listen: st.Listen, PublicOrigins: st.PublicOrigins, NoAuth: &st.NoAuth, LogHeaders: st.LogHeaders, Version: st.Version, StartedAt: st.StartedAt}
+		status = webStatus{Running: true, PID: st.PID, URL: st.URL(), Listen: st.Listen, PublicOrigins: st.PublicOrigins, NoAuth: &st.LegacyNoAuth, RestartRequired: st.LegacyNoAuth, LogHeaders: st.LogHeaders, Version: st.Version, StartedAt: st.StartedAt}
 	}
 	if *asJSON {
 		return json.NewEncoder(os.Stdout).Encode(status)
@@ -230,8 +223,8 @@ func runWebStatus(args []string) error {
 	for _, o := range st.PublicOrigins {
 		fmt.Printf("  Public origin: %s\n", o)
 	}
-	if st.NoAuth {
-		fmt.Printf("  %s\n", noAuthNotice)
+	if st.LegacyNoAuth {
+		fmt.Printf("  %s\n", legacyNoAuthNotice)
 	}
 	if st.LogHeaders {
 		fmt.Printf("  %s\n", logHeadersNotice)
@@ -321,5 +314,5 @@ func runWebDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
-	return web.RunDaemon(web.DaemonConfig{Listen: opts.listen, PublicOrigins: opts.origins, NoAuth: opts.noAuth, LogHeaders: opts.logHeaders, Providers: webProviders(), Version: version.String()})
+	return web.RunDaemon(web.DaemonConfig{Listen: opts.listen, PublicOrigins: opts.origins, LogHeaders: opts.logHeaders, Providers: webProviders(), Version: version.String()})
 }

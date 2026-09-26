@@ -1,4 +1,6 @@
-import type { AccountUsage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, SubagentDetail, UpdateData } from './api';
+import { initialWindow, liveWindow, recentProjection, windowPage } from './lib/historyState.ts';
+import { boundItems, itemCursor, TAIL_ITEMS } from './lib/historyWindow.ts';
+import type { AccountUsage, HistoryPage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, SubagentDetail, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 
@@ -11,7 +13,10 @@ export type Buffered = Extract<UpdateData, { name: 'item' | 'delta' | 'tool_outp
 // A stalled HTTP fetch must not retain an unlimited stream. Retry from a fresh
 // snapshot on overflow; dropping individual deltas would corrupt the transcript.
 const MAX_BUFFERED_FRAMES = 256;
-const MAX_BUFFERED_CHARS = 4 * 1024 * 1024;
+// Reserve the other 2 MiB for detail-stream page hydration.
+const MAX_BUFFERED_CHARS = 2 * 1024 * 1024;
+const frameBytes = (frame: Buffered) => JSON.stringify(frame).length * 2;
+const bufferedBytes = (state: State) => (state.historyRequest?.bufferedChars ?? 0) + Object.values(state.agents).reduce((sum, agent) => sum + agent.bufferedChars, 0);
 
 /** A subagent transcript, present once its block was expanded. Live frames with that agent_id land here. */
 export interface AgentTranscript {
@@ -24,6 +29,15 @@ export interface AgentTranscript {
   bufferedChars: number;
 }
 
+export interface HistoryRequest {
+  before: string;
+  direction?: 'older' | 'newer';
+  loading: boolean;
+  error?: string;
+  buffered: Buffered[];
+  bufferedChars: number;
+}
+
 export interface State {
   /** Whether a snapshot has arrived at least once: until then the Projects and Tasks are unknown, not absent (loading, never the empty state). */
   loaded: boolean;
@@ -32,12 +46,19 @@ export interface State {
   selectedId: string | null;
   /** Detail of the selected session, from the latest snapshot; null until it arrives. */
   detail: SessionDetail | null;
-  /** The Task that was on screen before the selection changed, kept until the new detail arrives. Frozen: no frames apply to it. */
+  /** Frozen presentation while detail loads: the selected task's cached page, or the previous task. */
   previous: SessionDetail | null;
+  /** A cache hit can remain visible through a slow refresh; it never confirms detail or permits actions. */
+  previousCached: boolean;
   /** seq of the latest snapshot; updates with seq <= this are ignored. -1 before any snapshot. */
   snapshotSeq: number;
   /** Newest selected-task frame or detail response, used to reject stale reloads. */
   detailSeq: number;
+  detailGeneration: number;
+  bodyVersions: Record<string, number>;
+  historyRequest: HistoryRequest | null;
+  /** Older-page items already include frames through their HTTP snapshot. */
+  historyItemSeq: Record<string, number>;
   connection: Connection;
   agents: Record<string, AgentTranscript>;
   /** Each subagent's latest step, kept from live frames even while its transcript is not open: kind and call only, never output. */
@@ -55,8 +76,13 @@ export const initialState: State = {
   selectedId: null,
   detail: null,
   previous: null,
+  previousCached: false,
   snapshotSeq: -1,
   detailSeq: -1,
+  detailGeneration: 0,
+  bodyVersions: {},
+  historyRequest: null,
+  historyItemSeq: {},
   connection: 'connecting',
   agents: {},
   agentSteps: {},
@@ -65,7 +91,8 @@ export const initialState: State = {
 };
 
 export type Action =
-  | { type: 'select'; id: string | null }
+  | { type: 'reset' }
+  | { type: 'select'; id: string | null; cached?: SessionDetail }
   | { type: 'connection'; status: Connection }
   | { type: 'snapshot'; data: SnapshotData }
   | { type: 'update'; data: UpdateData }
@@ -73,6 +100,10 @@ export type Action =
   | { type: 'updates'; data: UpdateData[] }
   | { type: 'settings'; settings: Settings }
   | { type: 'detail_loaded'; detail: SessionDetail }
+  | { type: 'history_loading'; sessionId: string; before: string; direction?: 'older' | 'newer' }
+  | { type: 'history_latest'; sessionId: string }
+  | { type: 'history_loaded'; sessionId: string; before: string; page: HistoryPage }
+  | { type: 'history_failed'; sessionId: string; before: string; error: string }
   /** A session from an HTTP reply; ignored when the live state is already newer (by updated_at). */
   | { type: 'upsert_session'; session: SessionSummary }
   | { type: 'remove_session'; id: string }
@@ -86,9 +117,12 @@ export type Action =
 
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case 'select':
+    case 'reset': return { ...initialState };
+    case 'select': {
       if (action.id === state.selectedId) return state;
-      return { ...state, selectedId: action.id, detail: null, previous: action.id ? (state.detail ?? state.previous) : null, detailSeq: -1, agents: {}, agentSteps: {} };
+      const cached = action.cached?.id === action.id && action.cached.representation === 'compact-v1' && action.cached.epoch ? action.cached : undefined;
+      return { ...state, selectedId: action.id, detail: null, previous: action.id ? (cached ?? state.detail ?? state.previous) : null, previousCached: !!cached, detailSeq: -1, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {} };
+    }
     case 'connection': {
       if (state.connection === action.status) return state;
       const detail = action.status !== 'connected' && state.detail
@@ -98,7 +132,7 @@ export function reducer(state: State, action: Action): State {
     }
     case 'snapshot': {
       const { seq, sessions, session, projects, settings, usage } = action.data;
-      const detail = session && session.id === state.selectedId ? session : null;
+      const detail = session && session.id === state.selectedId ? initialWindow(session) : null;
       // A fresh snapshot invalidates subagent transcripts loaded under the old stream;
       // expanded blocks reload them (see SubagentBlock).
       return {
@@ -108,8 +142,13 @@ export function reducer(state: State, action: Action): State {
         sessions,
         detail,
         previous: null,
+        previousCached: false,
         snapshotSeq: seq,
         detailSeq: seq,
+        bodyVersions: {},
+        detailGeneration: state.detailGeneration + 1,
+        historyRequest: null,
+        historyItemSeq: {},
         connection: 'connected',
         agents: {},
         agentSteps: {},
@@ -120,9 +159,57 @@ export function reducer(state: State, action: Action): State {
     case 'settings':
       return { ...state, settings: action.settings };
     case 'detail_loaded': {
-      const detail = action.detail;
+      const detail = initialWindow(action.detail);
       if (detail.id !== state.selectedId || detail.seq === undefined || detail.seq <= state.detailSeq) return state;
-      return { ...withSession(state, detail), detail, previous: null, detailSeq: detail.seq, agents: {}, agentSteps: {} };
+      // A reply started before navigation cannot activate a cached revisit.
+      if (state.previousCached && !state.detail) return state;
+      if (state.detail?.epoch && detail.epoch && detail.epoch !== state.detail.epoch) return state;
+      return { ...withSession(state, detail), detail, previous: null, previousCached: false, detailSeq: detail.seq, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {} };
+    }
+    case 'history_latest':
+      if (state.detail?.id !== action.sessionId || !state.detail.recent_items) return state;
+      return { ...state, detail: { ...state.detail, ...recentProjection(state.detail), history_index: state.detail.history_index }, historyRequest: null };
+    case 'history_loading':
+      if (state.detail?.id !== action.sessionId || (action.direction === 'newer' ? state.detail.history_after : state.detail.history_before) !== action.before || !action.before || state.historyRequest?.loading) return state;
+      return { ...state, historyRequest: { before: action.before, direction: action.direction, loading: true, buffered: [], bufferedChars: 0 } };
+    case 'history_failed':
+      if (state.detail?.id !== action.sessionId || !state.historyRequest?.loading || state.historyRequest.before !== action.before) return state;
+      return { ...state, historyRequest: { before: action.before, loading: false, error: action.error, buffered: [], bufferedChars: 0 } };
+    case 'history_loaded': {
+      const detail = state.detail;
+      const request = state.historyRequest;
+      if (detail?.id !== action.sessionId || (request?.direction === 'newer' ? detail.history_after : detail.history_before) !== action.before || !request?.loading || request.before !== action.before) return state;
+      if (detail.epoch && action.page.epoch && action.page.epoch !== detail.epoch) return state;
+      let older = detail.representation === 'compact-v1' ? action.page.items : action.page.items.filter(item => !detail.items.some(held => held.id === item.id));
+      for (const frame of request.buffered) {
+        if (frame.seq <= action.page.seq) continue;
+        if (frame.name === 'items_trimmed') older = trimItems(older, frame.items, '');
+        else if (frame.name !== 'subagent' && !frame.agent_id) {
+          const id = frame.name === 'item' ? frame.item.id : frame.item_id;
+          if (!older.some(i => i.id === id)) continue;
+          if (frame.name === 'item') older = upsert(older, frame.item);
+          else if (frame.name === 'delta') older = appendDelta(older, id, frame.kind, frame.text);
+          else older = appendToolOutput(older, id, frame.text);
+        }
+      }
+      const historyItemSeq = { ...state.historyItemSeq };
+      const held = new Map([...(detail.recent_items ?? []), ...detail.items].map(item => [item.id, item]));
+      const received = new Map(older.map(item => [item.id, item]));
+      const reconciled = detail.items.map(item => (historyItemSeq[item.id] ?? -1) > action.page.seq ? item : received.get(item.id) ?? item);
+      older = older.map(item => (historyItemSeq[item.id] ?? -1) > action.page.seq ? held.get(item.id) ?? item : item);
+      for (const item of older) historyItemSeq[item.id] = Math.max(historyItemSeq[item.id] ?? -1, action.page.seq);
+      const refreshed = new Map(older.map(item => [item.id, item]));
+      const recent = detail.recent_items ? boundItems(detail.recent_items.map(item => refreshed.get(item.id) ?? item), 'newer', TAIL_ITEMS) : undefined;
+      let next = windowPage({ ...detail, items: reconciled, recent_items: recent?.items, recent_before: recent?.droppedBefore.length ? itemCursor(recent.items[0].id) : detail.recent_before }, { ...action.page, items: older }, request.direction ?? 'older');
+      if (request.direction === 'newer' && action.page.after === '') {
+        const ids = new Set(next.items.map(item => item.id));
+        const newerLive = (recent?.items ?? []).filter(item => !ids.has(item.id) && (historyItemSeq[item.id] ?? -1) > action.page.seq);
+        const latest = boundItems([...next.items, ...newerLive], 'newer', TAIL_ITEMS);
+        next = { ...next, history_after: newerLive.length && next.items.length ? itemCursor(next.items.at(-1)!.id) : next.history_after, recent_items: latest.items, recent_before: latest.items.length && (latest.droppedBefore.length || next.history_before) ? itemCursor(latest.items[0].id) : '' };
+      }
+      const retained = new Set([...next.items, ...(next.recent_items ?? [])].map(item => item.id));
+      for (const id of Object.keys(historyItemSeq)) if (!retained.has(id)) delete historyItemSeq[id];
+      return { ...state, detail: next, historyRequest: null, historyItemSeq };
     }
     case 'upsert_session': {
       // An HTTP reply can land after live frames that already carry a newer state.
@@ -171,6 +258,9 @@ export function reducer(state: State, action: Action): State {
     case 'update': {
       const d = action.data;
       if (d.seq <= state.snapshotSeq) return state;
+      if ((d.name === 'history' || d.name === 'items_trimmed') && state.previousCached && state.previous?.id === d.session_id) {
+        state = { ...state, previous: null, previousCached: false };
+      }
       switch (d.name) {
         case 'session':
           if (d.session.id === state.selectedId) {
@@ -192,20 +282,39 @@ export function reducer(state: State, action: Action): State {
       const detail = state.detail;
       if (!detail || d.session_id !== detail.id || d.seq <= state.detailSeq) return state;
       state = { ...state, detailSeq: d.seq };
+      if (state.historyRequest?.loading && (d.name === 'items_trimmed' || ((d.name === 'item' || d.name === 'delta' || d.name === 'tool_output') && !d.agent_id))) {
+        const request = state.historyRequest;
+        const size = frameBytes(d);
+        state = { ...state, historyRequest: request.buffered.length >= MAX_BUFFERED_FRAMES || bufferedBytes(state) + size > MAX_BUFFERED_CHARS
+          ? { ...request, loading: false, error: 'History changed too quickly. Scroll up to retry.', buffered: [], bufferedChars: 0 }
+          : { ...request, buffered: [...request.buffered, d], bufferedChars: request.bufferedChars + size } };
+      }
+      if ((d.name === 'item' || d.name === 'delta' || d.name === 'tool_output') && !d.agent_id) {
+        const id = d.name === 'item' ? d.item.id : d.item_id;
+        if (d.seq <= (state.historyItemSeq[id] ?? -1)) return state;
+        // Updates to items not fetched yet belong to a future history page.
+        if (detail.history_before !== undefined && !detail.items.some(i => i.id === id) && !detail.recent_items?.some(i => i.id === id) && !detail.history_index?.some(i => i.id === id) && !(d.name === 'item' && d.append)) return state;
+        state = { ...state, historyItemSeq: { ...state.historyItemSeq, [id]: d.seq } };
+      }
       switch (d.name) {
         case 'history':
-          return { ...state, detail: { ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents }, agents: {}, agentSteps: {} };
+          return { ...state, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, detail: initialWindow({ ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_before: d.history_before, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents }), agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {} };
         case 'item':
+          if (d.item.compact) state = { ...state, bodyVersions: { ...state.bodyVersions, [JSON.stringify([d.agent_id ?? '', d.item.id])]: d.seq } };
           if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
-          return { ...state, detail: { ...detail, items: upsert(detail.items, d.item) } };
+          return withWindow(state, liveWindow(detail, detail.representation === 'compact-v1' && !detail.items.some(item => item.id === d.item.id) && (detail.history_after || !d.append) ? detail.items : upsert(detail.items, d.item), d.append || detail.recent_items?.some(item => item.id === d.item.id) ? upsert(detail.recent_items ?? detail.items, d.item) : detail.recent_items ?? detail.items, [d.item]));
         case 'delta':
           if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
-          return { ...state, detail: { ...detail, items: appendDelta(detail.items, d.item_id, d.kind, d.text) } };
+          return withWindow(state, liveWindow(detail, detail.representation !== 'compact-v1' || detail.items.some(item => item.id === d.item_id) ? appendDelta(detail.items, d.item_id, d.kind, d.text) : detail.items, detail.recent_items?.some(item => item.id === d.item_id) ? appendDelta(detail.recent_items, d.item_id, d.kind, d.text) : detail.recent_items ?? detail.items));
         case 'tool_output':
           if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
-          return { ...state, detail: { ...detail, items: appendToolOutput(detail.items, d.item_id, d.text) } };
+          return withWindow(state, liveWindow(detail, appendToolOutput(detail.items, d.item_id, d.text), appendToolOutput(detail.recent_items ?? detail.items, d.item_id, d.text)));
         case 'items_trimmed': {
-          state = { ...state, detail: { ...detail, history_truncated: true, items: trimItems(detail.items, d.items, '') } };
+          const historyItemSeq = { ...state.historyItemSeq };
+          const bodyVersions = { ...state.bodyVersions };
+          for (const item of d.items) delete bodyVersions[JSON.stringify([item.agent_id ?? '', item.id])];
+          for (const item of d.items) if (!item.agent_id) delete historyItemSeq[item.id];
+          state = { ...state, bodyVersions, historyItemSeq, detail: { ...detail, history_truncated: true, items: trimItems(detail.items, d.items, ''), recent_items: detail.recent_items ? trimItems(detail.recent_items, d.items, '') : undefined, history_index: detail.history_index ? trimItems(detail.history_index, d.items, '') : undefined } };
           for (const agentId of new Set(d.items.flatMap((it) => it.agent_id ? [it.agent_id] : []))) {
             state = withAgentFrame(state, agentId, d);
           }
@@ -259,8 +368,8 @@ function withAgentFrame(state: State, agentId: string, frame: Buffered): State {
   state = withAgentStep(state, agentId, frame);
   if (!a || a.error) return state;
   if (a.loading) {
-    const bufferedChars = a.bufferedChars + JSON.stringify(frame).length;
-    if (a.buffered.length >= MAX_BUFFERED_FRAMES || bufferedChars > MAX_BUFFERED_CHARS) {
+    const bufferedChars = a.bufferedChars + frameBytes(frame);
+    if (a.buffered.length >= MAX_BUFFERED_FRAMES || bufferedBytes(state) + frameBytes(frame) > MAX_BUFFERED_CHARS) {
       return { ...state, agents: { ...state.agents, [agentId]: { loading: false, snapshotSeq: -1, items: [], buffered: [], bufferedChars: 0, error: 'Too much output arrived while loading. Retry to load the latest transcript.' } } };
     }
     const items = frame.name === 'items_trimmed' ? applyFrame(a.items, frame, agentId) : a.items;
@@ -316,8 +425,8 @@ function withSession(state: State, s: SessionSummary): State {
 function withoutSession(state: State, id: string): State {
   const sessions = state.sessions.filter((s) => s.id !== id);
   const previous = state.previous?.id === id ? null : state.previous;
-  if (state.selectedId === id) return { ...state, sessions, selectedId: null, detail: null, previous: null, agents: {} };
-  return { ...state, sessions, previous };
+  if (state.selectedId === id) return { ...state, sessions, selectedId: null, detail: null, previous: null, previousCached: false, agents: {}, historyRequest: null, historyItemSeq: {} };
+  return { ...state, sessions, previous, previousCached: !!previous && state.previousCached };
 }
 
 function withoutProject(state: State, id: string): State {
@@ -326,4 +435,12 @@ function withoutProject(state: State, id: string): State {
   const gone = state.sessions.filter((s) => s.project_id === id).map((s) => s.id);
   const next = gone.reduce((st, sid) => withoutSession(st, sid), state);
   return { ...next, projects: next.projects.filter((p) => p.id !== id) };
+}
+
+function withWindow(state: State, detail: SessionDetail): State {
+  if (detail.representation !== 'compact-v1') return { ...state, detail };
+  const retained = new Set([...detail.items, ...(detail.recent_items ?? [])].map(item => item.id));
+  const historyItemSeq = Object.fromEntries(Object.entries(state.historyItemSeq).filter(([id]) => retained.has(id)));
+  const bodyVersions = Object.fromEntries(Object.entries(state.bodyVersions).slice(-2000));
+  return { ...state, detail, historyItemSeq, bodyVersions };
 }

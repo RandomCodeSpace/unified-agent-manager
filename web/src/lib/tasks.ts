@@ -2,6 +2,12 @@ import type { Project, SessionSummary } from '../api';
 
 const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
 
+/** Keep this closure outside App: otherwise differently memoized callbacks can
+ * chain shared App render contexts and retain prior transcripts on navigation. */
+export function newsReader(selectedId: string | null, viewed: Readonly<Record<string, string>>, loadedAt: string) {
+  return (session: SessionSummary) => session.id !== selectedId && session.updated_at > (viewed[session.id] ?? loadedAt);
+}
+
 /** The sidebar's "Needs permission/answer" rows (`needsYou` in api.ts, minus the shelves): the count the tab title and app badge carry. */
 export function needsYouCount(sessions: readonly SessionSummary[]): number {
   return sessions.filter((s) => !readOnly(s) && (s.state === 'awaiting_permission' || s.state === 'awaiting_answer' || (typeof s.pending === 'number' ? s.pending : s.pending ? 1 : 0) > 0)).length;

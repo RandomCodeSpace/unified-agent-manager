@@ -67,27 +67,31 @@ opening it for a Task whose conversation is not open (see Task lifecycle).
 
 ### Access
 
-The service binds to a loopback address only. Access is by SSH local
-forwarding or a same-host reverse proxy. Every API request must carry a
-session cookie obtained by presenting the access token stored owner-only next
-to `sessions.json`; the cookie is bound to the `Host` it was issued for.
-With `--no-auth`, requests are rejected when the `Host` header is not
-loopback or a configured public origin's host. State-changing requests are
-rejected unless they are same-origin (`net/http.CrossOriginProtection`) and
-JSON. There is no CORS. `uam web --no-auth`, off by default, treats every
-request as authenticated; the other checks stay, but it removes the only
-barrier for anyone who can reach the service, including through a public
-reverse proxy.
+The service binds to loopback by default and can explicitly bind another IP
+address. Access requires a session cookie obtained by presenting the access
+token stored owner-only next to `sessions.json`, or a task-scoped signed file
+key on the file-view route. Both credentials are bound to the request `Host`.
+Any Host may reach the sign-in page and static assets. State-changing requests
+must pass `net/http.CrossOriginProtection` and use the route's required content
+type. There is no CORS and no supported anonymous mode.
+
+Both public and private CLI entry points reject `--no-auth`; server and daemon
+configuration have no authentication bypass. Token load, creation or validation
+failure stops startup before listening. A legacy `web.json` with `no_auth: true`
+is retained only for detection: status reports an unsupported insecure process
+and `restart_required: true`, and `uam web` refuses to reuse it. The owner must
+stop it and start the secure service; no restart or token replacement is automatic.
 
 ## HTTP contract
 
-All JSON. All `/api/*` routes except `/api/auth` and `/api/login` require the
-cookie, unless the service runs with `--no-auth`. Errors are
+All JSON. All `/api/*` routes except `/api/auth` and `/api/login` require a
+cookie, apart from the file-key route which validates its own signed credential.
+Errors are
 `{"error": "<message>"}` with a 4xx/5xx status.
 
 | Method and path | Body | Result |
 |---|---|---|
-| `GET /api/auth` | – | `{"authenticated": bool, "required": bool}`; with `--no-auth`, `required` is false and `authenticated` true |
+| `GET /api/auth` | – | `{"authenticated": bool, "required": true}` |
 | `POST /api/login` | `{"token"}` | 204, sets cookie; 401 on mismatch |
 | `POST /api/logout` | – | 204, clears cookie |
 | `GET /api/meta` | – | `{"version", "providers": [ProviderInfo], "recent_workdirs": [string]}` |
@@ -154,14 +158,185 @@ absent `agent_id` identifying the main agent. Browsers remove those items from
 the main and open subagent transcripts. A subagent fetch replays newer trims
 alongside other buffered frames; trims already covered by its snapshot are
 ignored. Closing its panel aborts the fetch and releases its transcript and
-buffer. A pending fetch buffers at most 256 frames and 4 Mi UTF-16 code units of
-serialized frame data; overflow discards the buffer and offers an explicit Retry
+buffer. Main history and detail hydration each reserve at most 256 frames and
+2 MiB of serialized string data, charged at two bytes per UTF-16 code unit. The
+two owners therefore share a 4 MiB allowance. Overflow discards the affected
+buffer and offers an explicit Retry
 from a fresh snapshot instead of displaying incomplete output.
 
-On opening a long transcript, the browser initially renders roughly the latest
-100 items, extending back to the beginning of the first turn. “Show earlier
-messages” reveals preceding turns without discarding retained history or moving
-the reader's current content. Locating an older subagent reveals its parent row.
+The browser negotiates `history=recent` on `GET /api/events?session={id}` and
+`GET /api/sessions/{id}`. Initial snapshots and replacement `history` frames
+then carry only the newest page plus `history_before`, an opaque cursor. An
+empty cursor means the beginning of retained history; an absent cursor means
+the server uses the legacy full-history contract. Other clients retain that
+contract unless they opt in.
+
+`GET /api/sessions/{id}/history?before={cursor}` uses the same session-cookie
+authentication as the detail route and returns `{seq, items, before}`. Pages
+are oldest first, at most 50 complete items with a 64 KiB item-data target.
+One oversized item is returned alone and unmodified to guarantee progress.
+The cursor names an item boundary, so concurrent appends cannot shift pages.
+Invalid cursors return 400, missing tasks 404, and an evicted/replaced boundary
+409, using the existing `{error}` response shape. A 409 starts a fresh recent
+snapshot. Reads do not open or prompt a provider conversation.
+
+Approaching the top while scrolling fetches the preceding page automatically;
+there is no “Show earlier messages” button. One page loads at a time, with a
+10-second timeout, cancellation on navigation, and the visible message anchored
+when rows are prepended. A failed read reports an inline status and retries on
+the next upward scroll. Older servers reveal already-downloaded rows through
+the same scrolling behavior. Locating an older subagent also loads preceding
+pages until its parent row is available.
+
+Paged clients distinguish new `item` frames by `append: true`; updates to
+unfetched items wait for their page. During a page read the browser buffers
+main-agent item/output/trim frames within its 256-frame and 2 MiB reservation.
+It replays only frames newer than the response's `seq`, and
+ignores subsequently delivered frames already represented by each older item.
+The response never advances the live stream's sequence watermark. Replacement
+history and reconnect snapshots invalidate pending pages. Existing server
+retention limits still apply; pagination cannot recover history already trimmed
+by the provider or service.
+
+### Compact transcript and revealed bodies
+
+The web client also requests `view=compact-v1`. The existing snapshot and task
+detail declare `representation: "compact-v1"`, `detail_stream: true`, and an
+opaque service-instance `epoch`. No marker means the legacy path; empty tasks
+negotiate through the envelope too. Legacy callers retain their full items and
+completion frames. API reads keep the existing authentication, host checks and
+`Cache-Control: no-store` behavior.
+
+Compact items retain user/assistant text and tool identity, state, timestamps,
+images and display fields. Tool input/output and reasoning text are deferred.
+`tool.display_arg` is for labels, while `tool.path` preserves full file identity.
+`has_input`, `has_output`, and `item.compact` presence flags distinguish an
+unloaded body from an empty result. Question tools retain the input/output needed
+to show their questions and answers. These semantic exceptions still use the
+existing retention limits and may exceed a page's soft byte target.
+
+Closed subagents receive bounded `preview` and `result_summary` fields, not their
+transcript events. Text preview publication is coalesced; actionable status and
+final changes are immediate. An opened subagent uses recent compact history and
+loads older pages through the same upward-scroll behavior as the main task.
+
+One main EventSource owns the selected task's chat, compact records, interactions,
+status and global state. At most one optional detail EventSource owns revealed
+bodies and one open subagent transcript. Opening a detail does not reconnect the
+main stream. The detail URL is `/api/events/detail?session={id}`, with optional
+`agent={id}` and up to eight repeated `item` parameters. Each parameter is a
+URL-encoded JSON pair `[agent_id,item_id]`; an empty agent ID means the main
+agent. The browser canonicalizes the interest set and suspends child interests
+when a parent disclosure closes.
+
+The detail subscriber registers and captures data under one manager lock.
+`detail_snapshot`, individual `body` frames, optional `detail_page` frames, and
+`detail_ready` share that snapshot barrier; later queued events follow them.
+A reconnect supplies inclusive `agent_before` and `agent_until` boundaries for
+the held subagent window. The server sends a recent-tail `detail_snapshot` with
+`range: true`, then `detail_page` frames with `scope: "window"` and both boundary
+cursors. It refreshes that window without hydrating the gap between it and the
+recent tail. Missing boundaries or an over-budget range produce an explicit
+`range_reset` and a bounded recent fallback. All pages share one captured barrier
+and are staged until readiness. Live compact agent events
+use `item`, `delta`, and `items_trimmed`; revealed bodies use `body` replacement,
+`body_delta`, or `body_output`. A real history replacement sends `detail_reset`.
+
+Sequences are comparable only within one epoch. A compact mutation precedes its
+authoritative body replacement, and the browser tracks each affected body's
+coverage separately from unrelated main or detail events. Completion does not
+make a body immutable: final-only output, final suffixes, rewrites and later
+corrections still reach an open view. Request/connection identity also prevents
+callbacks from abandoned loads applying to a new selection.
+
+Recreating the detail connection originally resent every continuing body. The
+measured large-body expansion fixture transferred 27.9 MB for 21 snapshots,
+compared with a 1.33 MB legacy snapshot. Continuing bodies can therefore supply a
+third tuple member, their fully applied sequence, plus the matching `epoch`
+query. A bounded server map records each retained item's last mutation sequence.
+When that proves the held body current, `body_current` acknowledges it at the new
+barrier; otherwise the full body is sent. Every mutation updates the evidence,
+and trimming/history eviction removes it. Closed bodies retain no reusable
+coverage. The same fixture then transferred 1.34 MB total, including about 15 KB
+for the 20 reconfigurations after initial delivery.
+
+`GET /api/sessions/{id}/items/{item_id}?agent_id={id}` returns a complete retained
+item with task/agent identity, epoch and sequence for one-off copy actions. Its
+response is a point-in-time value and never hydrates the live body store. Compact
+subagent reads accept `view=compact-v1`; their older-page route is
+`/api/sessions/{id}/subagents/{agent_id}/history?before={cursor}`. Reads never open
+or prompt a provider conversation.
+
+Compact main and subagent history routes accept either `before` or `after`, and
+return both boundary cursors. The named boundary is exclusive. Supplying both
+directions, a repeated cursor, or a malformed cursor returns 400; a missing task
+returns 404 and an evicted boundary returns 409. Legacy responses keep their
+existing shape.
+
+Each active transcript keeps a contiguous reading window of at most 150 items
+and 4 MiB of accounted data, plus a separate recent tail of at most 50 items
+under the same byte allowance. One oversized item remains intact to allow
+progress. Compact metadata preserves IDs, order, kinds and required semantic
+state for up to 2,000 retained items; it excludes chat and body text, images and
+display strings. Live corrections update held items without resurrecting
+evicted rows. Scrolling back toward newer history refetches evicted pages.
+Jump to latest uses the current tail.
+
+Evicted rows leave bounded spacer records containing IDs and measured heights.
+Partial reloads estimate the remaining spacer height, then compensate using the
+visible row's actual position. Disclosure identities survive backward extension
+and discovery of an earlier user prompt. Evicting the focused row returns focus
+to the conversation unless the user has moved it to another control.
+
+### Recent task presentation and scroll commits
+
+The browser retains at most five recent compact task pages, with a 16 MiB
+accounted-data limit. Entries contain at most 50 recent items under the same
+64 KiB soft page target. One oversized item remains complete, but an entry that
+exceeds the cache allowance is not admitted. String and object accounting bounds
+cache-owned data; it is not a measurement of total JavaScript heap. Older pages,
+revealed bodies and subagent transcripts are excluded. Entries are projected
+when leaving a confirmed task, avoiding full-page serialization per token.
+
+A cached selection shows matching content and a "Refreshing task..." status
+until the main snapshot confirms it. Cached status cannot enable sending,
+stopping, approvals, history reads or detail subscriptions. The current pane
+guard also keeps typing inactive until confirmation. Drafts stay in their
+existing storage and survive cache eviction. Authentication, capability or epoch
+changes clear the cache; history replacement, trims and deletion invalidate
+affected entries. A late HTTP page cannot merge across epochs.
+
+Ordinary history prepends use a React transition. `HistoryAnchor` captures the
+visible row immediately before React commits and restores its offset afterward,
+so a slow response anchors to the reader's current position. Parent-locate keeps
+the synchronous commit needed to find its target. Upward wheel, touch or keyboard
+demand can fetch one earlier page within three viewport heights, capped at
+1,600 pixels. There is no initial or recursive history prefetch.
+
+The unread-state callback is created outside the App render scope. Heap snapshots
+showed that otherwise shared callback contexts could retain previous App renders
+and their transcripts after navigation. The extracted factory captures only the
+selected ID, visit times and mount time.
+
+### HTTP compression
+
+After the existing security checks, the routing boundary negotiates gzip for
+API JSON, both event streams and embedded text, JavaScript and SVG assets.
+It uses the standard library's `gzip.BestSpeed`; no dependency or configuration
+setting is added. Missing or refused gzip support retains identity responses.
+An explicit gzip exclusion overrides a wildcard. Responses preserve existing
+`Vary` fields and include `Accept-Encoding` when needed.
+
+Compressed responses discard the original `Content-Length`. HEAD describes the
+negotiated representation without allocating a compressor or sending a body.
+Binary, already encoded, bodyless, range and `Content-Disposition` responses
+remain identity, preserving task-file and attachment validators and ranges.
+
+Each SSE flush first flushes gzip, then the HTTP response. The wrapper exposes
+the underlying writer to `ResponseController`, preserving the existing write
+deadlines and cancellation. Compression therefore does not wait for a stream
+to close before delivering an event or heartbeat. On return, pooled writers are
+closed and reset to `io.Discard` so they retain no response or connection.
 
 ## Consequences
 
@@ -791,29 +966,20 @@ carries the Project again.
 
 - Date: 2026-09-24 (decided in #174)
 
-The owner asked for `uam web` to listen on `0.0.0.0` and to run without an
-access token. This replaces the loopback-only rule in [Access](#access);
-`--no-auth` already existed. The owner accepts that `--listen 0.0.0.0:PORT
---no-auth` lets anyone who can reach the port run agents with the owner's
-Copilot credential in the owner's directories, and shell commands in yolo
-mode. Nothing else is relaxed. The owner also asked to see the headers the
-web UI sends, for debugging, and to set a static token.
+The original #174 decision allowed listening beyond loopback and optional
+unauthenticated access. The secure-only decision in #227 on 2026-09-26 supersedes
+that optional access mode. Non-loopback binds, header logging and owner-set tokens
+remain supported; sign-in is mandatory on every bind.
 
 - **Listen.** `--listen` takes any IP literal: loopback, the unspecified
   address (`0.0.0.0` or `::`), or an interface address. `localhost` means
   `127.0.0.1`; other host names are refused. The default stays
   `127.0.0.1:8260`. The service binds exactly the literal's address family,
   so `0.0.0.0` does not become a dual-stack `[::]` listener.
-- **Rebinding rule.** With sign-in on, any `Host` is accepted: a rebound
-  website holds no cookie for its own name, so it reaches only the sign-in
-  page and static assets. The rest of this rule applies with `--no-auth`.
-  With a loopback bind the accepted `Host`s do not
-  change: `localhost`, loopback IPs and the configured public origins. With a
-  non-loopback bind, a `Host` that is an IP literal, such as the LAN address,
-  is accepted as well. A domain name that is not a configured public origin
-  gets 403 on every bind, so a website whose name resolves to the host cannot
-  drive the service. The cross-origin, JSON, CSP and cookie rules do not
-  change; the cookie is `Secure` only behind TLS or an HTTPS proxy.
+- **Rebinding rule.** Any `Host` can reach sign-in and static assets. A rebound
+  website has no cookie or file key for its own Host. Credentials are Host-bound;
+  cross-origin, JSON and CSP checks remain. The cookie is `Secure` behind TLS
+  or an HTTPS proxy.
 - **Local URL.** `uam web` and `uam web status` show the listen address and a
   URL this host can use: a wildcard bind maps to loopback on the same port
   (`0.0.0.0` to `127.0.0.1`, `::` to `::1`), and any other address is used
@@ -821,10 +987,8 @@ web UI sends, for debugging, and to set a static token.
   `web.json` and signal the verified PID; they never connect to the service.
 - **Warning.** Whenever the listen address is not loopback, `uam web` and
   `uam web status` print `Warning: listening on <addr>, so other machines can
-  reach this service`, ending in `; sign-in is required (--no-auth is not in
-  use)` while sign-in is on. With `--no-auth`, one more line follows:
-  `Warning: --no-auth is in use: anyone who can reach <addr> can run agents on
-  this host with your credentials`.
+  reach this service; sign-in is required`. Status for an unsupported legacy
+  daemon instead says it has no authentication and requires restart.
 - **Header logging.** `--log-headers`, off by default, logs one JSON record
   per request where the checks decide: method, path, remote address, `Host`,
   every header and the outcome. Headers that can carry a credential are
@@ -1364,16 +1528,14 @@ symbolic links as before.
 | `GET /api/fs/dirs?path=&hidden=` | – | `{"path", "parent"?, "entries": [{"name", "path", "git", "hidden", "link"}], "truncated"}`; dot-folders only with `hidden=1`; 400 relative, unclean, not displayable, too long, a link loop or not a directory; 403 permission denied; 404 missing |
 | `POST /api/fs/dirs` | `{"parent", "name"}` | 201 `{"path"}`; 400 invalid name or parent, or parent not a directory; 403 permission denied or a read-only file system; 404 missing parent; 409 the name exists; 507 disk full or quota exceeded |
 
-Both routes need sign-in and pass the `Host` check; the POST also passes the
+Both routes need a Host-bound session cookie; the POST also passes the
 cross-origin and JSON checks.
 
 ### Security
 
 The routes show the service user's directory tree and create folders in it,
 as the service user. That is no more than a signed-in browser can already do
-through a Task. With `--no-auth` on an address others can reach, including
-behind a public reverse proxy, anyone who can reach the service can browse
-the tree and create folders, the same exposure as the rest of the service.
+through a Task. Anonymous requests cannot browse the tree or create folders.
 
 ## Diagrams in a sandboxed frame
 
@@ -1456,7 +1618,7 @@ while transient failures can be retried when the block mounts again.
   session cookie (same-site); the frame's own subresource requests carry
   none (cross-site). The document is static and unauthenticated like
   `index.html` and `/assets/*`; it holds no secret, so the auth model does
-  not change. The Host check applies to it as to every request.
+  not change. Protected API calls still require Host-bound authentication.
 - Mermaid measures text in the frame, and gantt and the charts take their
   width from it, so the frame is laid out at 800×600, invisible, not
   `display: none`.

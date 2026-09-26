@@ -42,7 +42,7 @@ func (w *streamFailureWriter) FlushError() error {
 func TestAcceptanceStreamFailureReleasesSubscriptionAndReconnects(t *testing.T) {
 	for _, failure := range []string{"snapshot", "flush", "event", "heartbeat", "shutdown"} {
 		t.Run(failure, func(t *testing.T) {
-			ts := newTestServer(t, ServerConfig{NoAuth: true})
+			ts := newTestServer(t, ServerConfig{})
 			ts.srv.heartbeat = time.Hour
 			sum, conv := createSession(t, ts.m, ts.prov)
 			w := &streamFailureWriter{header: make(http.Header), ready: make(chan struct{})}
@@ -59,6 +59,7 @@ func TestAcceptanceStreamFailureReleasesSubscriptionAndReconnects(t *testing.T) 
 			}
 			r := httptest.NewRequest(http.MethodGet, "/api/events?session="+sum.ID, nil)
 			r.Host = "127.0.0.1:8260"
+			ts.login(t, r.Host)(r)
 			done := make(chan struct{})
 			go func() { defer close(done); ts.srv.ServeHTTP(w, r) }()
 			select {

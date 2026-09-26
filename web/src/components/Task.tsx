@@ -1,8 +1,8 @@
 import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, api, describeError, provider, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
-import type { AgentTranscript } from '../state';
+import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
+import type { AgentTranscript, HistoryRequest } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
@@ -18,6 +18,7 @@ import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript } from './Transcript';
+import { HistoryAnchor } from './HistoryAnchor';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Menu } from './ui/menu';
@@ -30,6 +31,11 @@ interface Props {
   /** Each subagent's latest step from live frames, for its row's summary before its transcript is open. */
   agentSteps: Record<string, Item>;
   snapshotSeq: number;
+  historyGeneration: number;
+  active: boolean;
+  historyRequest: HistoryRequest | null;
+  historyItemSeq: Record<string, number>;
+  onHistoryReset: () => void;
   sheetOpen: boolean;
   /** Side panels (Changes, Subagents) sit beside the column (wide) rather than over it. */
   sidePanelInline: boolean;
@@ -126,7 +132,8 @@ function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string
 }
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
+  const { dispatch } = useApp();
   const actions = useTaskActions();
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesError, setChangesError] = useState<string | null>(null);
@@ -136,6 +143,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
   const working = session.state === 'working' || session.state === 'starting';
+  const compactWindow = session.representation === 'compact-v1';
+  const liveItems = session.recent_items ?? session.items;
+  const latestSession = useRef(session);
+  useLayoutEffect(() => { latestSession.current = session; }, [session]);
+  const [windowReset, setWindowReset] = useState(0);
+  const [locateError, setLocateError] = useState('');
   const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -147,25 +160,77 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
     const next = session.items[visibleStart]?.id;
     if (next !== firstVisible) setFirstVisible(next);
   }
+  if (compactWindow) visibleStart = 0;
   const visibleItems = useMemo(() => session.items.slice(visibleStart), [session.items, visibleStart]);
-  const visibleInteractions = useMemo(() => windowInteractions(session.items, session.interactions, visibleStart), [session.items, session.interactions, visibleStart]);
-  const prependScroll = useRef<{ height: number; top: number } | null>(null);
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    const previous = prependScroll.current;
-    if (!el || !previous) return;
-    el.scrollTop = previous.top + el.scrollHeight - previous.height;
-    prependScroll.current = null;
-  }, [firstVisible]);
+  const visibleInteractions = useMemo(() => windowInteractions(session.items, session.interactions, visibleStart, !!session.history_before, !!session.history_after), [session.items, session.interactions, session.history_before, session.history_after, visibleStart]);
 
-  function showEarlier() {
-    const el = scroller.current;
-    if (!el) return;
-    const start = transcriptWindowStart(session.items, visibleStart);
-    prependScroll.current = { height: el.scrollHeight, top: el.scrollTop };
+  const historyAbort = useRef<AbortController | null>(null);
+  const historyLive = useRef(active);
+  const historyRetryAt = useRef(0);
+  useLayoutEffect(() => {
+    historyLive.current = active;
+    return () => {
+      historyLive.current = false;
+      historyAbort.current?.abort();
+      historyAbort.current = null;
+    };
+  }, [active, session.id, snapshotSeq, historyGeneration]);
+  useEffect(() => {
+    if (!historyRequest?.loading) return;
+    // A page commit may start the next read before passive cleanup runs.
+    // Cancel only the controller owned by this request, never that next read.
+    const controller = historyAbort.current;
+    return () => {
+      controller?.abort();
+      if (historyAbort.current === controller) historyAbort.current = null;
+    };
+  }, [historyRequest?.loading, historyRequest?.before, historyRequest?.direction]);
+
+  // Rendering older history may yield between rows. HistoryAnchor reads the
+  // actual visible position immediately before commit and restores it afterward.
+  function prepend(update: () => void, synchronous = false) {
+    if (synchronous) flushSync(update); // Parent locate needs its target in the DOM.
+    else startTransition(update);
+  }
+
+  async function loadEarlier(before = session.history_before, synchronous = false, direction: 'older' | 'newer' = 'older') {
+    if (!historyLive.current || historyAbort.current || historyRequest?.loading || Date.now() < historyRetryAt.current) return null;
     atBottom.current = false;
-    setFirstVisible(session.items[start]?.id);
-    if (start === 0) el.focus({ preventScroll: true });
+    if (direction === 'older' && visibleStart > 0 && before === session.history_before) {
+      const start = transcriptWindowStart(session.items, visibleStart);
+      prepend(() => setFirstVisible(session.items[start]?.id), synchronous);
+      return null;
+    }
+    if (!before) return null;
+    const controller = new AbortController();
+    historyAbort.current = controller;
+    dispatch({ type: 'history_loading', sessionId: session.id, before, direction });
+    const timeout = window.setTimeout(() => {
+      controller.abort();
+      dispatch({ type: 'history_failed', sessionId: session.id, before, error: 'History took too long to load. Scroll up to retry.' });
+    }, 10000);
+    try {
+      const page = await api.history(session.id, before, controller.signal, direction);
+      if (controller.signal.aborted) return null;
+      if (session.epoch && page.epoch && session.epoch !== page.epoch) {
+        onHistoryReset();
+        return null;
+      }
+      prepend(() => {
+        dispatch({ type: 'history_loaded', sessionId: session.id, before, page });
+        if (!compactWindow && page.items.length) setFirstVisible(page.items[0].id);
+      }, synchronous);
+      return page;
+    } catch (error) {
+      if (controller.signal.aborted) return null;
+      historyRetryAt.current = Date.now() + 1000;
+      dispatch({ type: 'history_failed', sessionId: session.id, before, error: `${describeError(error)}. Scroll up to retry.` });
+      if (isStatus(error, 409)) onHistoryReset();
+      return null;
+    } finally {
+      window.clearTimeout(timeout);
+      if (historyAbort.current === controller) historyAbort.current = null;
+    }
   }
   const [scrolled, sentinel] = useScrolled();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
@@ -202,11 +267,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
       alive = false;
     };
   }, [session.id, session.capabilities.session_diff, live, changesTick]);
-  const edits = completedChanges(session.items);
-  const seenEdits = useRef(edits);
+  const edits = liveItems.filter(item => completedChanges([item]) > 0).map(item => item.id).join('\n');
+  const seenEdits = useRef(new Set(edits.split('\n')));
   useEffect(() => {
-    if (edits <= seenEdits.current) return;
-    seenEdits.current = edits;
+    const current = new Set(edits.split('\n'));
+    const changed = [...current].some(id => id && !seenEdits.current.has(id));
+    seenEdits.current = current;
+    if (!changed) return;
     const timer = window.setTimeout(() => {
       if (fetching.current) again.current = true;
       else setChangesTick((t) => t + 1);
@@ -217,18 +284,21 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const scrollToBottom = useCallback(() => {
     const el = scroller.current;
     if (!el) return;
+    historyAbort.current?.abort();
+    historyAbort.current = null;
+    if (session.history_after) flushSync(() => { dispatch({ type: 'history_latest', sessionId: session.id }); setWindowReset(value => value + 1); });
     el.scrollTop = el.scrollHeight;
     atBottom.current = true;
     setShowJump(false);
-  }, []);
+  }, [dispatch, session.id, session.history_after]);
 
   // Follow new content only while the reader is at the bottom; otherwise offer a way back.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    if (atBottom.current) el.scrollTop = el.scrollHeight;
-    else if (el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setShowJump(true);
-  }, [session.id, session.items, session.interactions]);
+    if (atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
+    else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setShowJump(true);
+  }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
 
   // One side panel at a time: the Changes sheet wins while it is open; opening the other closes it.
   const shownPanel = sheetOpen ? null : panel;
@@ -241,7 +311,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
 
   const closePanel = useCallback(() => {
     setPanel(null);
-    panelOpener.current?.focus();
+    const opener = panelOpener.current;
+    if (opener?.isConnected) opener.focus();
+    else scroller.current?.focus({ preventScroll: true });
     panelOpener.current = null;
   }, []);
 
@@ -269,11 +341,28 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   }, [shownPanel, closePanel]);
 
   /** Scroll the transcript to the `task` row that spawned a subagent and flash it. */
-  function locate(toolCallId: string) {
-    const index = session.items.findIndex((it) => it.id === toolCallId);
-    if (index >= 0 && index < visibleStart) {
+  async function locate(toolCallId: string) {
+    setLocateError('');
+    let current = latestSession.current;
+    let index = current.items.findIndex(item => item.id === toolCallId);
+    const known = current.history_index ?? current.items;
+    const target = known.findIndex(item => item.id === toolCallId);
+    const end = known.findIndex(item => item.id === current.items.at(-1)?.id);
+    const direction = target > end && end >= 0 ? 'newer' : 'older';
+    const visited = new Set<string>();
+    while (index < 0 && visited.size < 200) {
+      const cursor = direction === 'older' ? current.history_before : current.history_after;
+      if (!cursor || visited.has(cursor)) break;
+      visited.add(cursor);
+      const page = await loadEarlier(cursor, true, direction);
+      if (!page) break;
+      current = latestSession.current;
+      index = current.items.findIndex(item => item.id === toolCallId);
+    }
+    if (index < 0) { setLocateError('The parent call is not in the retained history.'); return; }
+    if (!compactWindow && index < visibleStart) {
       atBottom.current = false;
-      flushSync(() => setFirstVisible(session.items[transcriptWindowStart(session.items, index + 1)]?.id));
+      flushSync(() => setFirstVisible(current.items[transcriptWindowStart(current.items, index + 1)]?.id));
     }
     const el = document.getElementById(`item-${toolCallId}`);
     if (!el) return;
@@ -282,11 +371,28 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
     window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
   }
 
+  const lastScrollTop = useRef(0);
+  const touchY = useRef(0);
+  // A single upward-demand read can start three viewports ahead. This gives
+  // slow responses time to arrive without fetching anything on initial open.
+  const nearEdge = (el: HTMLElement, direction: 'older' | 'newer') => {
+    const content = el.querySelector('[data-history-window]');
+    const edge = el.getBoundingClientRect();
+    const rect = content?.getBoundingClientRect();
+    const distance = direction === 'older' ? rect ? edge.top - rect.top : el.scrollTop : rect ? rect.bottom - edge.bottom : el.scrollHeight - el.scrollTop - el.clientHeight;
+    return distance < Math.min(1600, Math.max(200, el.clientHeight * 3));
+  };
+  const nearEarlier = (el: HTMLElement) => nearEdge(el, 'older');
+  const loadNewer = () => session.history_after ? loadEarlier(session.history_after, false, 'newer') : Promise.resolve(null);
   function onScroll() {
     const el = scroller.current;
     if (!el) return;
-    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
+    atBottom.current = !session.history_after && el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
     if (atBottom.current) setShowJump(false);
+    const upwards = el.scrollTop < lastScrollTop.current;
+    lastScrollTop.current = el.scrollTop;
+    if (upwards && nearEarlier(el)) void loadEarlier();
+    else if (!upwards && nearEdge(el, 'newer')) void loadNewer();
   }
 
   // A decided card collapses in place (its last pending look, inert) instead of vanishing; it leaves once the collapse has run.
@@ -304,7 +410,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
 
   // The provider's own notice about a failure already stands in the transcript: the failed line is not repeated under it.
   const failure = session.state === 'failed' ? session.state_detail?.toLowerCase() ?? '' : '';
-  const noticed = !!failure && foregroundItems(session.items).some((i) => i.kind === 'notice' && (i.text ?? '').toLowerCase().includes(failure));
+  const noticed = !!failure && foregroundItems(liveItems).some((i) => i.kind === 'notice' && (i.text ?? '').toLowerCase().includes(failure));
 
   const name = taskName(session);
   // Recorded history still on its way with nothing to show yet: a skeleton, not the "New task" intro.
@@ -316,7 +422,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
   const renamable = canRename(session, actions);
 
   return (
-    <div className="flex min-h-0 flex-1 animate-rise">
+    <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
           {leading}
@@ -391,7 +497,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
           </Menu.Root>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={-1}>
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
+        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0}
+          onKeyDown={e => { if (e.defaultPrevented) return; if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) && nearEarlier(e.currentTarget)) void loadEarlier(); if (['ArrowDown', 'PageDown', 'End'].includes(e.key) && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
+          onWheel={e => { if (e.deltaY < 0 && nearEarlier(e.currentTarget)) void loadEarlier(); if (e.deltaY > 0 && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
+          onTouchStart={e => { touchY.current = e.touches[0]?.clientY ?? 0; }}
+          onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current && nearEarlier(e.currentTarget)) void loadEarlier(); if (y < touchY.current && nearEdge(e.currentTarget, 'newer')) void loadNewer(); touchY.current = y; }}>
           <ScrollSentinel sentinelRef={sentinel} />
           {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
           {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
@@ -399,24 +510,31 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, sheetO
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {session.terminal_session && <Note>Also open in the terminal{session.terminal_session.name ? `: ${session.terminal_session.name}` : ''}</Note>}
             {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
-            {visibleStart > 0 && <Button variant="secondary" size="sm" className="self-center" onClick={showEarlier}>Show earlier messages</Button>}
+            {(visibleStart > 0 || session.history_before) && <p role="status" className="text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading ? 'Loading earlier messages…' : 'Scroll up for earlier messages')}</p>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
+            <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-6">
             <Transcript
               sessionId={session.id}
               items={visibleItems}
+              identityItems={session.history_index}
+              liveItems={liveItems}
+              historyItemSeq={historyItemSeq}
               turnTimings={session.turn_timings}
               interactions={visibleInteractions}
               subagents={session.subagents}
               agents={agents}
               agentSteps={agentSteps}
-              live={live}
-              working={working}
+              live={live && !session.history_after}
+              working={working && !session.history_after}
               provider={session.provider}
               workdir={session.workdir}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
               density={density}
               onOpenChanges={openChanges}
             />
+            </HistoryAnchor>
+            {session.history_after && <p role="status" className="text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? 'Loading newer messages…' : 'Scroll down for newer messages'}</p>}
+            {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (
               <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && awaitsUser(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
                 <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />

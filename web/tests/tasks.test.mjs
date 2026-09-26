@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { filteredProject, groupTasks, mostRecentProject, tasksOf, visibleProjects } from '../src/lib/tasks.ts';
+import { filteredProject, groupTasks, mostRecentProject, newsReader, tasksOf, visibleProjects } from '../src/lib/tasks.ts';
 
 const p1 = { id: 'p1', name: 'one', dir: '/one', created_at: '2026-09-20T10:00:00Z' };
 const p2 = { id: 'p2', name: 'two', dir: '/two', created_at: '2026-09-23T10:00:00Z' };
@@ -109,4 +109,13 @@ test('the palette starts on the filtered project, else the most recently active 
   // A filter naming a removed Project counts as none.
   assert.equal(newTaskProject([p1, p2], sessions, 'gone', null)?.id, 'p1');
   assert.equal(newTaskProject([p1, p2], sessions, null, 'x')?.id, 'p1');
+});
+
+test('unread checks use only the selected ID and recorded visit times', () => {
+  const hasNews = newsReader('selected', { visited: '2026-09-25T10:00:00Z' }, '2026-09-25T09:00:00Z');
+  assert.equal(hasNews({ id: 'selected', updated_at: '2026-09-25T11:00:00Z' }), false);
+  assert.equal(hasNews({ id: 'visited', updated_at: '2026-09-25T10:00:00Z' }), false);
+  assert.equal(hasNews({ id: 'visited', updated_at: '2026-09-25T10:00:01Z' }), true);
+  assert.equal(hasNews({ id: 'unvisited', updated_at: '2026-09-25T08:59:59Z' }), false);
+  assert.equal(hasNews({ id: 'unvisited', updated_at: '2026-09-25T09:00:01Z' }), true);
 });

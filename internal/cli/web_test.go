@@ -203,39 +203,37 @@ func TestWebServiceOutlivesLauncherTerminal(t *testing.T) {
 		t.Fatalf("status after stop = %q", out)
 	}
 
-	// --no-auth reaches the service: no sign-in, no token printed, and the
-	// setting is reported until the service is stopped.
-	if out := runUAM(t, binary, env, "web", "--listen", listen, "--no-auth"); !strings.Contains(out, "uam web started") ||
-		!strings.Contains(out, "Authentication: disabled") || strings.Contains(out, token) {
-		t.Fatalf("uam web --no-auth = %q", out)
-	}
-	resp, err = http.Get(base + "/api/auth")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if strings.TrimSpace(string(body)) != `{"authenticated":true,"required":false}` {
-		t.Fatalf("/api/auth with --no-auth = %d %s", resp.StatusCode, body)
-	}
-	if !strings.Contains(runUAM(t, binary, env, "web", "status", "--json"), `"no_auth":true`) {
-		t.Fatal("status --json must report no_auth")
-	}
-	if again := runUAM(t, binary, env, "web", "--listen", listen); !strings.Contains(again, "already running") ||
-		!strings.Contains(again, "Authentication: disabled") || strings.Contains(again, token) {
-		t.Fatalf("uam web while --no-auth runs = %q", again)
-	}
-	if out := runUAM(t, binary, env, "web", "stop"); strings.TrimSpace(out) != "uam web stopped" {
-		t.Fatalf("stop = %q", out)
+	// Both entry points reject the removed flag without starting a listener.
+	for _, command := range []string{"web", "__web"} {
+		cmd := exec.Command(binary, command, "--listen", listen, "--no-auth")
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "flag provided but not defined: -no-auth") || strings.Contains(string(out), token) {
+			t.Fatalf("%s accepted the removed flag or returned the wrong error", command)
+		}
+		if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s created running state: %v", command, err)
+		}
+		if resp, err := http.Get(base + "/api/auth"); err == nil {
+			_ = resp.Body.Close()
+			t.Fatalf("%s started a listener for the removed flag", command)
+		}
 	}
 }
 
-func TestWebFlagsNoAuthReachesServiceArgs(t *testing.T) {
-	opts, err := webFlags("web", []string{"--listen", "localhost:9000", "--public-origin", "https://UAM.example.com/", "--no-auth"})
-	if err != nil || !opts.noAuth || opts.listen != "127.0.0.1:9000" {
+func TestWebFlagsRequireAuthentication(t *testing.T) {
+	for _, command := range []string{"web", "__web"} {
+		for _, flag := range []string{"--no-auth", "--no-auth=true", "--no-auth=false"} {
+			if _, err := webFlags(command, []string{flag}); err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -no-auth") {
+				t.Fatalf("%s %s = %v, want unknown flag", command, flag, err)
+			}
+		}
+	}
+	opts, err := webFlags("web", []string{"--listen", "localhost:9000", "--public-origin", "https://UAM.example.com/"})
+	if err != nil || opts.listen != "127.0.0.1:9000" {
 		t.Fatalf("webFlags = %+v, %v", opts, err)
 	}
-	want := []string{"--listen", "127.0.0.1:9000", "--public-origin", "https://uam.example.com", "--no-auth"}
+	want := []string{"--listen", "127.0.0.1:9000", "--public-origin", "https://uam.example.com"}
 	if got := opts.args(); !slices.Equal(got, want) {
 		t.Fatalf("service args = %q, want %q", got, want)
 	}
@@ -243,68 +241,73 @@ func TestWebFlagsNoAuthReachesServiceArgs(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(service, opts) {
 		t.Fatalf("__web parsed %+v, %v; want %+v", service, err, opts)
 	}
-	def, err := webFlags("web", nil)
-	if err != nil || def.noAuth || slices.Contains(def.args(), "--no-auth") {
-		t.Fatalf("default = %+v %q, %v", def, def.args(), err)
-	}
 }
 
-// Status and the already-running message report the running service's
-// setting; with auth disabled the token is never printed.
-func TestWebStatusReportsNoAuth(t *testing.T) {
+// Old state remains visible for diagnosis and stop, but cannot be reused.
+func TestWebStatusReportsLegacyInsecureDaemon(t *testing.T) {
 	sessionDir := secureSessionDir(t)
 	t.Setenv("UAM_SESSION_DIR", sessionDir)
 	t.Setenv("UAM_CONFIG_DIR", t.TempDir())
-	listen := "127.0.0.1:" + freeTCPPort(t)
-	for _, noAuth := range []bool{true, false} {
-		// A state file naming this test process stands in for a running service.
-		st := web.DaemonState{PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: listen, NoAuth: noAuth, Version: "test"}
+	listen := "0.0.0.0:" + freeTCPPort(t)
+	for _, legacy := range []bool{true, false} {
+		st := web.DaemonState{PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: listen, LegacyNoAuth: legacy, Version: "test"}
 		data, err := json.Marshal(st)
 		must(t, err)
-		must(t, os.WriteFile(filepath.Join(sessionDir, "web.json"), data, 0o600))
-
-		out := captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "status", "--json"}, noopRunTUI)) })
+		statePath := filepath.Join(sessionDir, "web.json")
+		must(t, os.WriteFile(statePath, data, 0o600))
+		out := captureCLIStdout(t, func() { must(t, runWebStatus([]string{"--json"})) })
 		var status struct {
-			Running bool  `json:"running"`
-			NoAuth  *bool `json:"no_auth"`
+			Running         bool  `json:"running"`
+			NoAuth          *bool `json:"no_auth"`
+			RestartRequired bool  `json:"restart_required"`
 		}
-		if err := json.Unmarshal([]byte(out), &status); err != nil || !status.Running || status.NoAuth == nil || *status.NoAuth != noAuth {
-			t.Fatalf("no_auth=%v: status --json = %q", noAuth, out)
+		if err := json.Unmarshal([]byte(out), &status); err != nil || !status.Running || status.NoAuth == nil || *status.NoAuth != legacy || status.RestartRequired != legacy {
+			t.Fatalf("legacy=%v: status --json = %q", legacy, out)
 		}
-		out = captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "status"}, noopRunTUI)) })
-		if strings.Contains(out, noAuthNotice) != noAuth {
-			t.Fatalf("no_auth=%v: status = %q", noAuth, out)
+		out = captureCLIStdout(t, func() { must(t, runWebStatus(nil)) })
+		if strings.Contains(out, legacyNoAuthNotice) != legacy || strings.Contains(out, "sign-in is required") == legacy {
+			t.Fatalf("legacy=%v: misleading status = %q", legacy, out)
 		}
-		// Only reached with the fake service verified as running, so this
-		// never spawns anything.
-		out = captureCLIStdout(t, func() { must(t, RunWithTUI(context.Background(), []string{"web", "--listen", listen}, noopRunTUI)) })
-		token, err := web.LoadOrCreateToken(web.TokenPath())
-		must(t, err)
-		if !strings.Contains(out, "stop it first to change its settings") || strings.Contains(out, noAuthNotice) != noAuth || strings.Contains(out, token) == noAuth {
-			t.Fatalf("no_auth=%v: uam web = %q", noAuth, out)
+		var startErr error
+		out = captureCLIStdout(t, func() { startErr = runWeb(context.Background(), []string{"--listen", listen}) })
+		if legacy {
+			if startErr == nil || !strings.Contains(startErr.Error(), legacyNoAuthNotice) || out != "" {
+				t.Fatal("legacy daemon was not rejected before printing access details")
+			}
+			if _, err := os.Stat(web.TokenPath()); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("legacy refusal must not create or read a token: %v", err)
+			}
+		} else {
+			must(t, startErr)
+			token, err := web.LoadOrCreateToken(web.TokenPath())
+			must(t, err)
+			if !strings.Contains(out, "stop it first to change its settings") || !strings.Contains(out, token) {
+				t.Fatal("secure running service did not report access details")
+			}
+		}
+		if after, err := os.ReadFile(statePath); err != nil || string(after) != string(data) {
+			t.Fatalf("status/start changed the existing service state: %v", err)
 		}
 	}
 }
 
 // Wherever the settings are shown, a bind beyond loopback is named, reached
-// over loopback on this host, and warned about; --no-auth adds one line.
+// over loopback on this host, and reported as requiring sign-in.
 func TestWebStatusWarnsBeyondLoopback(t *testing.T) {
 	sessionDir := secureSessionDir(t)
 	t.Setenv("UAM_SESSION_DIR", sessionDir)
 	t.Setenv("UAM_CONFIG_DIR", t.TempDir())
 	port := freeTCPPort(t)
-	const exposed, open = "so other machines can reach this service", "can run agents on this host with your credentials"
+	const exposed = "so other machines can reach this service"
 	for _, tc := range []struct {
 		listen, url string
-		noAuth      bool
 	}{
-		{"127.0.0.1:" + port, "http://127.0.0.1:" + port + "/", true},
-		{"0.0.0.0:" + port, "http://127.0.0.1:" + port + "/", false},
-		{"0.0.0.0:" + port, "http://127.0.0.1:" + port + "/", true},
-		{"[::]:" + port, "http://[::1]:" + port + "/", true},
+		{"127.0.0.1:" + port, "http://127.0.0.1:" + port + "/"},
+		{"0.0.0.0:" + port, "http://127.0.0.1:" + port + "/"},
+		{"[::]:" + port, "http://[::1]:" + port + "/"},
 	} {
 		// A state file naming this test process stands in for a running service.
-		st := web.DaemonState{PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: tc.listen, NoAuth: tc.noAuth, Version: "test"}
+		st := web.DaemonState{PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: tc.listen, Version: "test"}
 		data, err := json.Marshal(st)
 		must(t, err)
 		must(t, os.WriteFile(filepath.Join(sessionDir, "web.json"), data, 0o600))
@@ -327,11 +330,8 @@ func TestWebStatusWarnsBeyondLoopback(t *testing.T) {
 			if strings.Contains(out, "Warning: listening on "+tc.listen+", "+exposed) != beyond {
 				t.Fatalf("%+v: %s exposure warning: %q", tc, name, out)
 			}
-			if strings.Contains(out, "--no-auth is not in use") != (beyond && !tc.noAuth) {
+			if strings.Contains(out, "sign-in is required") != beyond {
 				t.Fatalf("%+v: %s sign-in note: %q", tc, name, out)
-			}
-			if strings.Contains(out, "anyone who can reach "+tc.listen+" "+open) != (beyond && tc.noAuth) {
-				t.Fatalf("%+v: %s --no-auth warning: %q", tc, name, out)
 			}
 		}
 		if hostPort := strings.TrimSuffix(strings.TrimPrefix(tc.url, "http://"), "/"); !strings.Contains(startOut, "ssh -N -L 127.0.0.1:"+port+":"+hostPort+" ") {

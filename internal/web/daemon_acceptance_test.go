@@ -61,7 +61,7 @@ func TestAcceptanceSpawnReadinessProtocol(t *testing.T) {
 }
 
 func TestAcceptanceDaemonStartupFailureLeavesNoRunningState(t *testing.T) {
-	for _, failure := range []string{"listen syntax", "public origin", "token", "store", "occupied port", "state publication"} {
+	for _, failure := range []string{"listen syntax", "public origin", "token", "token read", "token creation", "store", "occupied port", "state publication"} {
 		t.Run(failure, func(t *testing.T) {
 			runtimeDir, configDir := t.TempDir(), t.TempDir()
 			t.Setenv("UAM_SESSION_DIR", runtimeDir)
@@ -82,6 +82,18 @@ func TestAcceptanceDaemonStartupFailureLeavesNoRunningState(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(configDir, tokenFileName), []byte("bad token"), 0o600); err != nil {
 					t.Fatal(err)
 				}
+			case "token read":
+				want = "not a regular file"
+				if err := os.Mkdir(filepath.Join(configDir, tokenFileName), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			case "token creation":
+				want = "create token directory"
+				blocked := filepath.Join(configDir, "not-a-directory")
+				if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("UAM_CONFIG_DIR", blocked)
 			case "store":
 				want = "load web sessions"
 				if err := os.Mkdir(filepath.Join(configDir, "sessions.json"), 0o700); err != nil {

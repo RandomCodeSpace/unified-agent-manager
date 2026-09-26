@@ -165,10 +165,28 @@ func (m *Manager) openedHistoryLocked(s *webSession, withHistory bool, err error
 // and its subagents, to the viewers of s.
 func (m *Manager) publishHistoryLocked(s *webSession) {
 	m.boundHistoryLocked(s)
-	m.broadcastLocked("history", s.id, func(seq uint64) any {
+	m.broadcastFilteredLocked("history", s.id, func(sub *Subscriber) bool { return legacySubscriber(sub) && !sub.recentHistory }, func(seq uint64) any {
 		return historyEvent{Seq: seq, SessionID: s.id, History: s.historyState(), HistoryReason: s.historyReason,
 			Truncated: s.truncated, Items: s.agentItems(""), Subagents: s.subagentList()}
 	})
+	m.broadcastFilteredLocked("history", s.id, func(sub *Subscriber) bool { return legacySubscriber(sub) && sub.recentHistory }, func(seq uint64) any {
+		items := s.agentItems("")
+		page := historyPage(items, len(items))
+		return historyEvent{Seq: seq, SessionID: s.id, History: s.historyState(), HistoryReason: s.historyReason,
+			Truncated: s.truncated, Items: page.Items, Subagents: s.subagentList(), Before: &page.Before}
+	})
+	m.broadcastFilteredLocked("history", s.id, compactMain, func(seq uint64) any {
+		items := s.agentItems("")
+		page := compactPage(items, len(items))
+		return struct {
+			historyEvent
+			Epoch          string            `json:"epoch"`
+			Representation string            `json:"representation"`
+			Items          []compactItem     `json:"items"`
+			Subagents      []compactSubagent `json:"subagents"`
+		}{historyEvent{Seq: seq, SessionID: s.id, History: s.historyState(), HistoryReason: s.historyReason, Truncated: s.truncated, Before: &page.Before}, m.epoch, compactRepresentation, page.Items, s.compactSubagents()}
+	})
+	m.broadcastFilteredLocked("detail_reset", s.id, func(sub *Subscriber) bool { return sub.detail }, func(seq uint64) any { return detailBarrier{seq, m.epoch, s.id} })
 }
 
 // evictHistories drops the transcripts read without opening their
@@ -244,6 +262,8 @@ func (m *Manager) cancelHistoryLocked(s *webSession) {
 }
 
 func (m *Manager) dropHistoryLocked(s *webSession) {
+	s.stopPreviews()
+	s.itemSeq = nil
 	s.items, s.itemIdx, s.itemBytes, s.truncated = nil, map[string]int{}, 0, false
 	s.subagents, s.subIdx = nil, map[string]*agentapi.Subagent{}
 	s.history, s.historyReason, s.historyRead, s.historyBytes = "", "", false, 0
