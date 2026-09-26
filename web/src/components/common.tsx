@@ -646,11 +646,14 @@ const mdComponents: Components = {
 
 /**
  * Markdown for untrusted provider text: no raw HTML, safe links only, images by path served
- * from the Task's directory (`SessionContext`) and no image from another origin. Rendered
- * in top-level blocks, so while it streams only the last block is parsed again per delta.
+ * from the Task's directory (`SessionContext`) and no image from another origin. Completed
+ * messages mount as one document. Streaming text uses top-level blocks so only the last block
+ * is parsed again per delta; it keeps those boundaries after completion to retain DOM state.
  */
 export function Markdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
-  const blocks = useMemo(() => splitBlocks(text), [text]);
+  const [hasStreamed, setHasStreamed] = useState(streaming);
+  if (streaming && !hasStreamed) setHasStreamed(true);
+  const blocks = useMemo(() => hasStreamed ? splitBlocks(text) : [text], [text, hasStreamed]);
   const fileDemand = useFileDemand(text);
   return (
     <div ref={fileDemand} className={cn('md', className)}>
