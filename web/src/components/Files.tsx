@@ -192,7 +192,7 @@ function FileView({ sessionId, shown: { path, file, error } }: { sessionId: stri
       <CodeBlock
         language={lang}
         text={file.text}
-        className="my-0"
+        className="my-0 shrink-0"
         body={<pre translate="no" className="px-3 pt-0.5 pb-2.5 font-mono text-code whitespace-pre-wrap text-ink [overflow-wrap:anywhere]"><code><Highlighted language={lang} code={file.text} /></code></pre>}
       >
         {null}
