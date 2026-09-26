@@ -265,8 +265,7 @@ func (m *Manager) compactDetailLocked(s *webSession, d SessionDetail) compactSes
 	return compactSessionDetail{SessionDetail: d, Representation: compactRepresentation, Epoch: m.epoch, DetailStream: true, Items: page.Items, Subagents: s.compactSubagents()}
 }
 func (m *Manager) CompactDetail(id string) (compactSessionDetail, error) {
-	d, err := m.Detail(id)
-	if err != nil {
+	if _, err := m.Detail(id); err != nil {
 		return compactSessionDetail{}, err
 	}
 	m.mu.Lock()
@@ -276,7 +275,7 @@ func (m *Manager) CompactDetail(id string) (compactSessionDetail, error) {
 		return compactSessionDetail{}, newError(http.StatusNotFound, "session not found")
 	}
 	// Recapture transcript and barrier together after Detail's provider-free view work.
-	d = m.detailLocked(s, d.TerminalSession != nil)
+	d := m.detailLocked(s)
 	return m.compactDetailLocked(s, d), nil
 }
 func (m *Manager) CompactSubagent(id, agent string) (compactSubagentDetail, error) {

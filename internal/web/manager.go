@@ -138,8 +138,6 @@ type Manager struct {
 	titleSlots chan struct{}
 	// reads holds a slot for each read-only transcript load in progress.
 	reads chan struct{}
-	// hostLive reports whether a terminal session host runs; nil means none.
-	hostLive func(sessionName string) bool
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -294,11 +292,10 @@ type webSession struct {
 	historyGen                 uint64
 	historyBytes               int
 	historyUsed, historyFailed time.Time
-	// terminalID is the terminal session record tied to the same
-	// conversation; terminalHost and terminalName are its host session and
-	// name, when that record was found.
-	terminalID, terminalHost, terminalName string
-	imported                               bool
+	// terminalID preserves links imported before terminal support was retired.
+	// It still requires the provider's external-holder check before sending.
+	terminalID string
+	imported   bool
 
 	persisted persistKey
 }
@@ -458,20 +455,11 @@ func (m *Manager) Start(ctx context.Context) error {
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
-	terminals := map[string]store.SessionRecord{}
-	for _, rec := range cfg.Sessions {
-		if rec.Surface == "" && rec.ID != "" {
-			terminals[rec.ID] = rec
-		}
-	}
 	for _, rec := range cfg.Sessions {
 		if rec.Surface != store.SurfaceWeb || rec.ID == "" {
 			continue
 		}
 		s := sessionFromRecord(rec)
-		if t, ok := terminals[s.terminalID]; ok && s.terminalID != "" {
-			s.terminalHost, s.terminalName = t.SessionName, t.Name
-		}
 		// A turn cannot survive the service that drove it: report it as
 		// interrupted, never resume or replay it.
 		if busy(s.base) {
@@ -806,9 +794,8 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	}
 }
 
-// detailLocked builds s's detail; terminal says whether the host of its
-// terminal session runs.
-func (m *Manager) detailLocked(s *webSession, terminal bool) SessionDetail {
+// detailLocked builds the retained web transcript and controls.
+func (m *Manager) detailLocked(s *webSession) SessionDetail {
 	d := SessionDetail{
 		SessionSummary:   m.summaryLocked(s),
 		Seq:              m.seq,
@@ -821,9 +808,6 @@ func (m *Manager) detailLocked(s *webSession, terminal bool) SessionDetail {
 		QueuePaused:      s.queuePaused,
 		History:          s.historyState(),
 		HistoryReason:    s.historyReason,
-	}
-	if terminal {
-		d.TerminalSession = &TerminalSession{ID: s.terminalID, Name: cleanTitle(s.terminalName)}
 	}
 	for _, ix := range s.interactions {
 		d.Interactions = append(d.Interactions, ix.public())
@@ -880,14 +864,13 @@ func (m *Manager) Detail(id string) (SessionDetail, error) {
 	if err != nil {
 		return SessionDetail{}, err
 	}
-	terminal := m.terminalLive(s)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s.removed {
 		return SessionDetail{}, newError(http.StatusNotFound, "session not found")
 	}
 	m.viewHistoryLocked(s)
-	return m.detailLocked(s, terminal), nil
+	return m.detailLocked(s), nil
 }
 
 // Subagent returns one subagent of a session with its retained transcript.

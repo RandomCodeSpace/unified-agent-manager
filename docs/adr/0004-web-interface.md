@@ -1,5 +1,12 @@
 # ADR 0004: Web interface through provider APIs
 
+> Current scope, 2026-09-26: Copilot web/SDK only. The TUI, terminal provider
+> adapters, PTY hosts, and attach protocol are retired. Earlier descriptions
+> of a separate UAM terminal interface are historical. The optional API
+> `terminal_session` status field and its badge are removed. Saved terminal
+> links remain as compatibility metadata and still require Copilot's in-use
+> check; provider conversation import remains supported.
+
 - Status: Accepted
 - Date: 2026-09-23
 

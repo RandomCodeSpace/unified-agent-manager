@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/daemonruntime"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
@@ -125,7 +125,7 @@ func statePath(dir string) string { return filepath.Join(dir, stateFileName) }
 // PID still names the same process. A stale file reports not running.
 func ReadRunning(dir string) (DaemonState, bool) {
 	var st DaemonState
-	if err := session.VerifyDir(dir); err != nil {
+	if err := daemonruntime.VerifyDir(dir); err != nil {
 		return st, false
 	}
 	data, err := os.ReadFile(statePath(dir)) // #nosec G304 -- fixed file name inside the verified owner-only runtime dir.
@@ -144,10 +144,10 @@ func ReadRunning(dir string) (DaemonState, bool) {
 // processMatches is fail-closed: both the recorded and live start identity
 // must be known and equal before the PID is trusted, let alone signalled.
 func processMatches(pid int, start int64) bool {
-	if pid <= 0 || start == 0 || !session.ProcAlive(pid) {
+	if pid <= 0 || start == 0 || !daemonruntime.ProcAlive(pid) {
 		return false
 	}
-	return session.ProcStartTime(pid) == start
+	return daemonruntime.ProcStartTime(pid) == start
 }
 
 func writeStateFile(dir string, st DaemonState) error {
@@ -332,8 +332,8 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 		}
 		origins = append(origins, normalized)
 	}
-	dir := session.DefaultDir()
-	if err := session.EnsureDir(dir); err != nil {
+	dir := daemonruntime.DefaultDir()
+	if err := daemonruntime.EnsureDir(dir); err != nil {
 		return err
 	}
 	lock, err := lockDaemon(dir)
@@ -350,8 +350,6 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 		return err
 	}
 	mgr := NewManager(st, cfg.Providers)
-	hosts := session.NewClient()
-	mgr.SetHostProbe(func(name string) bool { return hosts.HasSession(context.Background(), name) })
 	if err := mgr.Start(context.Background()); err != nil {
 		return err
 	}
@@ -366,7 +364,7 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 		return fmt.Errorf("listen on %s: %w", listen, err)
 	}
 	state := DaemonState{
-		PID: os.Getpid(), StartTime: session.ProcStartTime(os.Getpid()), Listen: ln.Addr().String(),
+		PID: os.Getpid(), StartTime: daemonruntime.ProcStartTime(os.Getpid()), Listen: ln.Addr().String(),
 		PublicOrigins: origins, LogHeaders: cfg.LogHeaders, Version: cfg.Version, StartedAt: time.Now().UTC(),
 	}
 	if err := writeStateFile(dir, state); err != nil {

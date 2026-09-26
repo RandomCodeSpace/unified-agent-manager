@@ -1,5 +1,8 @@
 # ADR 0002: Terminal ownership over SSH
 
+> Historical: UAM's terminal runtime and TUI were retired on 2026-09-26.
+> Current UAM supports Copilot through the web/SDK only. See [the web guide](../web.md).
+
 - Status: Accepted
 - Date: 2026-07-12
 - Amended: 2026-07-14 — provider scrolling now takes priority over terminal-owned mouse gestures by default.

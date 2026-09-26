@@ -1,70 +1,46 @@
-# Testing uam
+# Testing UAM
 
-`make test` runs everything that needs no setup. Two further layers exist and
-both are opt-in, because they build and run the binary or write artifacts.
+UAM now supports the Copilot web/SDK interface. Terminal host, attach, dashboard,
+and other-provider suites were removed with those implementations.
 
-## Layers
+## Focused checks
 
-| Layer | Command | What it covers |
-|---|---|---|
-| Unit and integration | `make test` | Every package, including in-process hosts and real PTY fixtures that need no external binary. |
-| End-to-end | `make test-e2e` | The shipped binary: a real `uam __host`, a real `uam __attach`, a real dashboard, each on its own PTY. |
-| Evidence collectors | see below | Manual/CI artifact capture for the multiplexer contracts. |
-| Coverage | `make cover` | Writes `coverage.out` and prints the total. |
+Build the embedded frontend first with `make web`. Then run tests for the
+changed packages, for example:
 
-## End-to-end tests
-
+```sh
+go test -race ./internal/cli ./internal/daemonruntime ./internal/web ./internal/adapter/copilot ./internal/store
 ```
+
+The web and Copilot adapter tests use deterministic provider doubles. They do
+not send prompts to real models. Each lifecycle test uses disposable config,
+runtime directories, and tokens.
+
+`make test` runs the repository tests. `make cover` records coverage, and
+`make lint` runs the Go linter. Frontend commands live in `web/package.json`.
+
+## Built-binary lifecycle
+
+```sh
 make test-e2e
 ```
 
-They are skipped unless `UAM_E2E_BIN` points at an absolute path to a built
-binary, which is why the target builds first. To run one group directly:
+This verifies authenticated startup, survival after the launcher's terminal
+closes, sign-in, status, reuse, stop, and rejection of `--no-auth`. To test a
+specific binary on Linux:
 
-```
-UAM_E2E_BIN=$(pwd)/bin/uam go test ./internal/session/ -run TestE2E -v
-UAM_E2E_BIN=$(pwd)/bin/uam go test ./internal/app/ -run TestE2E -v
-```
-
-The agent under test is a shell script, never a provider, so no API calls or
-credentials are involved. Each test gets its own runtime and config directory,
-so a run never touches your real sessions.
-
-What only this layer can catch: the wiring between `__host` and `__attach`,
-terminal setup and teardown ordering, the control-prefix chord under the
-keyboard encodings a provider switches on, mouse-mode replay, role handover
-between two live clients, and the dashboard's modal key contract.
-
-A pty master here does **not** honour read deadlines, so the harnesses read on a
-background goroutine and poll the recording. A blocking read on the test
-goroutine hangs the run instead of failing it.
-
-## Evidence collectors
-
-Several tests capture artifacts for the multiplexer contracts and skip unless
-told where to write them. Each requires an **absolute** path, and two also
-require an exact final path element:
-
-| Environment variable | Required directory name |
-|---|---|
-| `UAM_TASK9_EVIDENCE_DIR` | must end in `task-9-ownership` |
-| `UAM_TASK11_EVIDENCE_DIR` | must end in `task-11-compat` |
-| `UAM_TASK10_EVIDENCE_DIR` | any absolute path |
-| `UAM_TASK1_EVIDENCE_DIR` … `UAM_TASK8_EVIDENCE_DIR` | any absolute path |
-
-```
-out=$(mktemp -d)
-UAM_TASK9_EVIDENCE_DIR=$out/task-9-ownership \
-UAM_TASK11_EVIDENCE_DIR=$out/task-11-compat \
-  go test ./internal/session/
+```sh
+UAM_WEB_TEST_BIN=/absolute/path/to/uam go test ./internal/cli -run '^TestWebServiceOutlivesLauncherTerminal$' -count=1
 ```
 
-A wrong name is a hard failure rather than a skip, on purpose: it means the
-collector would otherwise scatter artifacts somewhere unintended.
+The PTY fixture here tests daemon detachment and the token prompt; it does not
+implement a UAM terminal harness. Linux distro CI runs the same static binary
+and CLI tests. macOS CI checks the runtime directory, process identity, web
+startup failure paths, and CLI behavior. The `/proc` launcher-detachment test
+is Linux-only.
 
 ## Environment sensitivities
 
-- `t.TempDir()` honours the umask. Under `umask 0002` a fixture directory is
-  group-writable, which matters to any test asserting on ancestry warnings.
-- Tests that assert a read-only directory blocks writes skip when run as root.
-- Liveness tests that read `/proc` skip on platforms without it.
+- `t.TempDir()` honors the umask; runtime-directory fixtures explicitly set 0700.
+- Tests for an unwritable directory skip when running as root.
+- Tests that inspect `/proc` skip on platforms without it.

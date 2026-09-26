@@ -7,8 +7,8 @@ stop it; when you reconnect, the page shows the current progress or the
 finished result.
 
 The web interface talks to Copilot through its structured API (the Copilot
-SDK). It is not a terminal in a browser, and it does not use the terminal
-sessions that `uam` and `uam attach` manage.
+SDK). Copilot is the only supported integration. The former UAM TUI and
+terminal session harnesses have been removed; `uam` now prints help.
 See [ADR 0004](adr/0004-web-interface.md) for the design.
 
 ## Requirements
@@ -546,7 +546,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   truncation note.
 - **Previous sessions**: each Project can list the Copilot sessions started
   in exactly its directory outside the web interface, for example with
-  `copilot` in a terminal or in a uam terminal session: newest first, at
+  `copilot` in a terminal: newest first, at
   most 100, with their title and date, leaving out the ones that are already
   Tasks. A session appears once it has a first message. Importing one makes
   it a Task with its whole conversation; nothing is sent. The Task keeps the
@@ -555,7 +555,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   next message opens the session. Import is offered when the installed
   Copilot CLI supports both history reading and in-use detection.
 - **Another program using the session**: a session that another program has
-  open, such as a terminal `copilot --resume` or a uam terminal session, is
+  open, such as a terminal `copilot --resume`, is
   marked in use and cannot be imported. Before every message, command, steer,
   queued message and subagent follow-up of an imported or terminal-linked
   Task, UAM checks that no other program has the session open, and refuses while one does; a queued
@@ -563,9 +563,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   program that opens the session after it, for example during the turn, is
   not caught, and both then write to the same session without an error.
   While UAM has a session open, `copilot --resume` in a terminal warns that
-  it is in use. A Task imported from a uam terminal session shows that it is
-  also open in the terminal while that session runs. Deleting the Task never
-  deletes the terminal session or Copilot's session.
+  it is in use. Deleting a Task leaves Copilot's conversation and any saved
+  legacy terminal record intact. UAM no longer probes old terminal hosts or
+  shows a terminal-host badge.
 - **Changes**: the "Changes" button in the Task header shows how many files
   differ from `HEAD` in the project directory and opens them beside the
   conversation with the diff (a full-screen sheet on a narrow window). That
@@ -756,12 +756,10 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
 - **Reboot.** A reboot ends the service and every running turn. Records keep
   the exact conversation IDs, so conversations can be reopened afterwards, but
   the interrupted turn is not continued. UAM does not install a boot service.
-- **Separate from terminal sessions.** The dashboard, `uam ls`, and
-  `uam attach` do not show web sessions, and the web interface does not show
-  terminal sessions. `uam attach <id>` on a web session explains this.
-  Neither side takes over the other's records. The web interface can import
-  the Copilot conversation of a terminal session as a Task (see Previous
-  sessions); the terminal session stays the terminal's.
+- **Retired UAM terminal sessions.** Saved terminal records and profiles stay
+  on disk but have no controls in current UAM. Use the older binary to stop
+  existing terminal hosts before replacing it. Copilot conversations can
+  still be imported as Tasks after the in-use check.
 - **Copilot sessions without a prompt.** Copilot saves a conversation only
   after its first message. A session created without a prompt cannot be
   reopened after the service restarts.

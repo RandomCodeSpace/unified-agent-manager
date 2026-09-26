@@ -1002,9 +1002,8 @@ func reclassifyV1Closed(cfg *Config, exists func(string) bool) {
 // and real Key-derived values can carry it.
 const unsafeArgvChars = "'\"`;&|$<>(){}[]*?!#\\~/ \t\n\r"
 
-// prURLRE mirrors the GitHub PR URL shape recognized by the adapter's
-// ExtractPR (internal/adapter/detect.go), anchored end-to-end so a record
-// cannot smuggle in an unrelated or malformed URL.
+// prURLRE validates GitHub PR metadata retained in legacy session records.
+// Anchoring rejects unrelated or malformed URLs.
 var prURLRE = regexp.MustCompile(`^https://github\.com/[^/\s]+/[^/\s]+/pull/\d+$`)
 
 // dropInvalidRecords removes any session record whose untrusted on-disk fields

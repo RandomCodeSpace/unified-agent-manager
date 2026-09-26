@@ -17,16 +17,15 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/adapter/copilot"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/daemonruntime"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/session"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/version"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/web"
 )
 
 // webProviders lists the structured provider integrations the web service
 // drives. A provider whose Check fails is shown as unavailable, not fatal.
-// Only Copilot is offered: a provider is added once it supports the web
-// features the same way (docs/adr/0004-web-interface.md).
+// Copilot is the only supported integration, including custom models.
 func webProviders() []agentapi.Provider {
 	return []agentapi.Provider{copilot.NewWebProvider()}
 }
@@ -112,7 +111,7 @@ func runWeb(ctx context.Context, args []string) error {
 	if err != nil {
 		return ignoreHelp(err)
 	}
-	dir := session.DefaultDir()
+	dir := daemonruntime.DefaultDir()
 	st, running := web.ReadRunning(dir)
 	if running && st.LegacyNoAuth {
 		return fmt.Errorf("uam web (pid %d): %s", st.PID, legacyNoAuthNotice)
@@ -205,7 +204,7 @@ func runWebStatus(args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("web status: unexpected arguments %q", fs.Args())
 	}
-	st, running := web.ReadRunning(session.DefaultDir())
+	st, running := web.ReadRunning(daemonruntime.DefaultDir())
 	status := webStatus{Running: running}
 	if running {
 		status = webStatus{Running: true, PID: st.PID, URL: st.URL(), Listen: st.Listen, PublicOrigins: st.PublicOrigins, NoAuth: &st.LegacyNoAuth, RestartRequired: st.LegacyNoAuth, LogHeaders: st.LogHeaders, Version: st.Version, StartedAt: st.StartedAt}
@@ -239,7 +238,7 @@ func runWebStop(ctx context.Context, args []string) error {
 	if len(args) > 0 {
 		return fmt.Errorf("web stop: unexpected arguments %q", args)
 	}
-	stopped, err := web.Stop(ctx, session.DefaultDir())
+	stopped, err := web.Stop(ctx, daemonruntime.DefaultDir())
 	if err != nil {
 		return err
 	}
@@ -274,7 +273,7 @@ again. The new token signs out every browser.`)
 	}
 	// A running service keeps the token it started with; replacing the file
 	// under it would leave no copy of the token it accepts.
-	if st, running := web.ReadRunning(session.DefaultDir()); running {
+	if st, running := web.ReadRunning(daemonruntime.DefaultDir()); running {
 		return fmt.Errorf("uam web is running (pid %d); run uam web stop first, then set the token and start uam web again", st.PID)
 	}
 	token, err := readTokenInput(os.Stdin)

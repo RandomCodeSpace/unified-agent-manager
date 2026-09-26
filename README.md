@@ -2,9 +2,9 @@
 
 # Unified Agent Manager
 
-**One terminal dashboard for every coding-agent session.**
+**A browser workspace for GitHub Copilot.**
 
-Start agents, leave them running, and reconnect when you are ready. No tmux required.
+Run tasks, follow tool calls and subagents, and return after closing the browser.
 
 <p>
   <a href="https://github.com/RandomCodeSpace/unified-agent-manager/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/unified-agent-manager/ci.yml?branch=main&label=ci&style=for-the-badge&logo=githubactions&logoColor=white"></a>
@@ -17,186 +17,98 @@ Start agents, leave them running, and reconnect when you are ready. No tmux requ
 
 </div>
 
-<p align="center">
-  <img src="docs/assets/uam-dashboard.svg" width="100%" alt="UAM dashboard preview showing running, stopped, and failed coding-agent sessions">
-</p>
-
-<p align="center"><em>Dashboard preview</em></p>
-
-UAM gives Claude Code, Codex, Copilot, Hermes, and Oh My Pi one
-session list. Close the dashboard or lose an SSH connection and your agents
-keep running. Open UAM later to attach, resume, stop, or remove them.
-
-## Why use UAM
-
-- **Keep agents running.** Closing your terminal does not end their work.
-- **See everything together.** Running, stopped, and failed sessions share one clear roster.
-- **Return without guesswork.** Reconnect to a live session or resume a stopped one.
-- **Use the terminal you already have.** Mouse and keyboard controls work locally and over SSH.
-- **Skip tmux setup.** UAM owns the detached session for you.
-
-UAM manages agent processes and terminal connections. It does not create Git
-branches, worktrees, commits, or filesystem isolation.
+UAM runs Copilot through its SDK and serves an authenticated web interface.
+Projects group tasks by working directory. Tasks keep their conversations,
+model choices, history, and lifecycle state across browser reconnects.
+Custom models, including Ollama endpoints, use the same Copilot SDK integration.
 
 ## Install
 
-UAM runs on Linux and macOS. Download a ready-to-run archive from
+UAM runs on Linux and macOS. Download an archive from
 [GitHub Releases](https://github.com/RandomCodeSpace/unified-agent-manager/releases),
-or install it with Go:
+or install a published version with Go:
 
 ```sh
 go install github.com/RandomCodeSpace/unified-agent-manager/cmd/uam@latest
 uam version
 ```
 
-Native Windows is not supported. A Windows terminal can still use UAM by
-connecting to a Linux or macOS host over SSH.
+This README describes the current source. Older published versions may still
+include terminal features that have since been retired.
 
-## Start your first agent
+## Start the web workspace
 
-1. Install and sign in to at least one [supported agent](#supported-agents).
-2. Check your setup, then open the guided session creator:
+1. Install GitHub Copilot CLI and Node.js, and sign in to Copilot.
+2. Start the service:
 
    ```sh
-   uam doctor
-   uam new
+   uam web
    ```
 
-3. When you want to leave, press `Ctrl+B`, then `d`. Your agent stays running.
-   Run `uam` whenever you want to return.
+3. Open the printed URL and sign in with the access token. Add a Project,
+   create a Task, choose a model, and send a message.
 
-`uam new` asks which agent to use, where it should work, what to call the
-session, and what task to start. It then connects you to the new session.
+The service keeps working after its launching terminal or browser closes.
+For a remote host, use the printed SSH forwarding command or configure an
+authenticated deployment as described in the [web guide](docs/web.md).
+Authentication is required; there is no `--no-auth` mode.
 
-Prefer one command? Flags go before the provider name:
-
-```sh
-uam dispatch --cwd /path/to/project codex "review this package"
-```
-
-## Supported agents
-
-UAM detects installed agent CLIs automatically. Missing agents stay out of the
-dashboard instead of causing an error.
-
-| Agent | Command |
-|---|---|
-| Claude Code | `claude` |
-| OpenAI Codex | `codex` |
-| GitHub Copilot CLI | `copilot` |
-| Hermes Agent | `hermes` |
-| Oh My Pi | `omp` |
-
-New configurations default to Copilot. If it is unavailable, the provider selector
-falls back to an installed provider.
-
-OpenCode support has been removed from the CLI, TUI and web code. Existing
-OpenCode session records and profiles remain on disk, but sessions are excluded
-from CLI/TUI lists and cannot be dispatched, attached or resumed. An old saved
-OpenCode default becomes Copilot; a saved profile naming OpenCode must be edited
-before reuse. This change does not uninstall the separate OpenCode executable
-or delete its conversation data.
-
-Continuing a stopped session varies by agent. Some return to an exact
-conversation, while others may ask before continuing the latest one. Hermes
-requires a new Managed Session. See the
-[provider resume table](docs/responsive-tui.md#provider-resume-and-terminal-policy)
-for the exact behavior.
-
-## Everyday commands
+## Commands
 
 | Command | What it does |
 |---|---|
-| `uam` | Open the dashboard |
-| `uam new` | Create a session with a guided form |
-| `uam dispatch <agent> "<task>"` | Start a session directly |
-| `uam ls` | List every saved session |
-| `uam last` | Attach to the most recent session |
-| `uam doctor` | Check providers, sessions, and configuration |
-| `uam web` | Start the browser interface for Copilot ([guide](docs/web.md)) |
-| `uam --help` | Show the full command reference |
+| `uam`, `uam help`, `uam --help` | Show help |
+| `uam web` | Start the web service or show the running service |
+| `uam web status [--json]` | Show service status |
+| `uam web stop` | Stop the service and its Copilot runtimes |
+| `uam web token set` | Set the access token from stdin |
+| `uam version`, `uam --version`, `uam -v` | Print the version |
 
-## Essential controls
+`uam web` accepts `--listen`, repeatable `--public-origin`, and `--log-headers`.
+See the [web guide](docs/web.md) for their behavior and deployment details.
 
-In the dashboard:
+## Retired terminal support
 
-| Input | Action |
-|---|---|
-| Click a row or press `Up` / `Down` | Select a session |
-| Click `Attach` / `Resume` or press `Enter` | Open the selected session |
-| `/` | Filter sessions |
-| `e` | Create a session |
-| `Ctrl+X` | Stop or remove the selected session after confirmation |
-| `?` | Show more shortcuts |
-| `Esc` | Close the current view or leave the dashboard |
+UAM supports Copilot through the web/SDK only. Its dashboard, terminal host,
+attach protocol, and terminal provider adapters have been removed, including
+the terminal adapter for Copilot. Claude Code, Codex, Hermes, Oh My Pi, and
+OpenCode are no longer UAM integrations. The Copilot executable is still
+required by the SDK.
 
-While attached, the default prefix is `Ctrl+B`:
+The former `new`, `dispatch`, `attach`, `last`, `ls`, `stop`, `restart`, `rm`,
+`kill-all`, `profile`, and `doctor` commands return a retirement error. Use the
+web interface for task controls and `uam web status` for service status.
 
-| Input | Action |
-|---|---|
-| `Ctrl+B`, then `d` | Detach and leave the agent running |
-| `Ctrl+B`, then `c` | Send `Ctrl+C` to the agent |
-| `Ctrl+B`, then `i` | Show connection and profile details |
-| `Ctrl+Left` | Detach when the agent's input box is empty (word-left otherwise) |
+Existing terminal records and profiles remain on disk and are not converted
+into web tasks or deleted. Previous Copilot conversations can still be imported
+through the web interface after its in-use check. Other providers' history is
+not imported. This source change does not stop existing processes or uninstall
+provider binaries. Stop any old UAM terminal sessions with the older binary
+before replacing it; the new binary cannot attach to or stop those hosts.
 
-Bare arrow keys always reach the agent. On uam's own alternate screen the last
-terminal row is a persistent status bar: your role, the session as
-`<name> · <provider> · <id>`, the keys above, the working directory, the
-profile, and a note when mouse passthrough is off. The agent gets the rows
-above it, and narrower terminals drop the trailing items. Providers that draw
-on the primary screen (codex, omp) keep every row so their terminal scrollback
-stays intact.
+## Task permissions
 
-Plain `Ctrl+C` and `Ctrl+Z` are held back while attached so they do not
-accidentally terminate or suspend the detached agent.
+Tasks use the permission mode selected in the web interface. This is not an
+operating-system sandbox. Multiple tasks can edit the same directory, so use
+separate worktrees or checkouts when tasks need filesystem isolation. UAM does
+not create that isolation automatically.
 
-## Safety
-
-By default, UAM uses an agent's broad-access or auto-approve option when one is
-available. Use `--safe` to keep the agent's normal approval prompts:
-
-```sh
-uam dispatch --safe codex "review this repository"
-```
-
-`--safe` changes the agent's launch options. It is not an operating-system
-sandbox. Multiple sessions can also edit the same directory at once, so use
-separate Git worktrees or checkouts when tasks need isolation.
-
-## Need help?
-
-- Run `uam doctor` for a quick local diagnosis.
-- Read the [dashboard and remote-use guide](docs/responsive-tui.md) for small terminals, mouse behavior, filtering, and SSH use.
-- Read [terminal and OS support](docs/terminals.md) for compatibility and troubleshooting.
-- Open a [bug report or feature request](https://github.com/RandomCodeSpace/unified-agent-manager/issues).
-
-## Build and contribute
+## Build and test
 
 ```sh
 make build
-make test
 make test-e2e
 ```
 
-Source builds require Go 1.25.14 or newer and Node.js with npm (the tested
-Node version is in `web/.node-version`). `make build` and `make install`
-install the locked frontend dependencies, build the UI, then embed it in the
-Go binary. Generated bundles are ignored on source branches. A plain
-`go build` or `go install ./cmd/uam` without first running `make web` builds
-the terminal commands, but `uam web` reports that its UI has not been built.
+Source builds require Go 1.25.14 or newer and Node.js with npm. The tested Node
+version is in `web/.node-version`. `make build` and `make install` use the locked
+frontend dependencies, build the UI, and embed it in the Go binary. Generated
+bundles are ignored on source branches. Without `make web`, a plain Go build
+can show help/version, but `uam web` reports that its UI has not been built.
 
-Release tags contain a generated UI commit, so
-`go install github.com/RandomCodeSpace/unified-agent-manager/cmd/uam@<version>`
-includes the web UI without Node.js. Use `@v0.8.0` for this stable release,
-or `@latest` for the newest stable release. A beta requires its exact published
-tag, such as `@v0.8.0-beta.1`. See [release preparation](docs/releasing.md) for the local,
-reviewable tag workflow.
-
-Read [Testing UAM](docs/testing.md)
-before changing terminal, attach, or session-host behavior.
-
-Prebuilt binaries, checksums, SBOMs, and signing material are available on the
-[releases page](https://github.com/RandomCodeSpace/unified-agent-manager/releases).
+Release tags contain the generated UI, so installing a published tag does not
+require Node.js to build UAM. See [release preparation](docs/releasing.md),
+[testing](docs/testing.md), and the [web command reference](docs/web-commands.md).
 
 ### Verify a release
 

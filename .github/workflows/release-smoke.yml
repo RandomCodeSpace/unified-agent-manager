@@ -106,11 +106,8 @@ jobs:
       - name: Build web assets
         run: make web
 
-      - name: Run native session lifecycle tests
-        run: go test -race -count=1 -timeout=4m ./internal/session
-
-      - name: Run stop, restart, and resume tests
-        run: go test -race -count=1 -timeout=2m ./internal/app
+      - name: Run web runtime and lifecycle tests
+        run: go test -race -count=1 -timeout=4m ./internal/daemonruntime ./internal/cli ./internal/web -run 'Test(Web|Main|RunDefaults|OnlyCopilot|TerminalCommands|Acceptance.*(Daemon|Spawn)|VerifyDir|EnsureDir|DefaultDir|ProcStartTime)'
 
       - name: Build and run version command
         run: |

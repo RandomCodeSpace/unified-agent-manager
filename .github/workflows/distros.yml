@@ -1,11 +1,7 @@
 name: Distros
 
-# The support promise is "same behavior on Ubuntu, Debian, Arch, UBI8 and
-# RHEL". The binary is CGO_ENABLED=0 static, so distro independence holds by
-# construction — this matrix exists to keep that construction honest: the same
-# static uam and the same statically-built e2e test binaries run their real-PTY
-# suites inside each distro's userland. Anything PTY-, procfs- or
-# signal-shaped that a distro does differently fails here, not on a user's VPS.
+# Run the same static binary and authenticated web lifecycle tests on every
+# supported Linux distro. Tests use disposable runtime/config directories.
 
 on:
   push:
@@ -42,14 +38,13 @@ jobs:
       - name: Build web assets
         run: make web
 
-      - name: Build uam and e2e test binaries (static)
+      - name: Build uam and web test binaries (static)
         env:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist
           go build -trimpath -o dist/uam ./cmd/uam
-          go test -c -o dist/app.test ./internal/app/
-          go test -c -o dist/session.test ./internal/session/
+          go test -c -o dist/cli.test ./internal/cli/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -86,21 +81,15 @@ jobs:
         shell: sh
         run: |
           set -eu
-          chmod +x dist/uam dist/app.test dist/session.test
+          chmod +x dist/uam dist/cli.test
           mkdir -p tmp/cfg tmp/run tmp/cache
           UAM_CONFIG_DIR="$PWD/tmp/cfg" UAM_SESSION_DIR="$PWD/tmp/run" UAM_CACHE_DIR="$PWD/tmp/cache" \
-            ./dist/uam doctor
+            ./dist/uam web status --json
           UAM_CONFIG_DIR="$PWD/tmp/cfg" UAM_SESSION_DIR="$PWD/tmp/run" UAM_CACHE_DIR="$PWD/tmp/cache" \
             ./dist/uam help
 
-      - name: TUI e2e suite on a real PTY
+      - name: Authenticated web lifecycle and CLI tests
         shell: sh
         run: |
           set -eu
-          UAM_E2E_BIN="$PWD/dist/uam" ./dist/app.test -test.run '^TestE2E' -test.v
-
-      - name: Attach e2e suite on a real PTY
-        shell: sh
-        run: |
-          set -eu
-          UAM_E2E_BIN="$PWD/dist/uam" ./dist/session.test -test.run '^TestE2E' -test.v
+          UAM_WEB_TEST_BIN="$PWD/dist/uam" ./dist/cli.test -test.v
