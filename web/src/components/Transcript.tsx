@@ -1,5 +1,5 @@
 import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
-import { Bot, Check, CheckCheck, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
@@ -642,35 +642,21 @@ interface MessageParts { item: Item; text: string; sessionId?: string; streaming
 
 function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   const attachments = item.attachments ?? [];
+  const accepted = item.steer_status === 'accepted';
   return (
     <div data-history-anchor={item.id} className={cn('flex justify-end', className)}>
       <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" side="left" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
-        <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised">
-          <span className="sr-only">You: </span>
+        {/* A steer the provider accepted but has not recorded yet reads bold italic; delivered, it settles to normal text. */}
+        <div className={cn('flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised', accepted && 'font-semibold italic')} title={accepted ? 'Accepted: sent to the agent, delivery not confirmed yet' : undefined}>
+          <span className="sr-only">{accepted ? 'You (accepted, not delivered yet): ' : 'You: '}</span>
           {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
           {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
           {text && (whole?.status === 'whole' ? plainText(text) : <Markdown text={text} />)}
           {whole && <WholeNote whole={whole} />}
           {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
-          {deliveryTick(item)}
         </div>
       </Copyable>
     </div>
-  );
-}
-
-/** A steer's receipt, as in a messenger: one tick once the provider accepted it, two once it recorded the message. */
-function deliveryTick(item: Item) {
-  if (item.delivery !== 'steer' || item.steer_status === 'not_delivered') return null;
-  const delivered = !item.steer_status;
-  const Tick = delivered ? CheckCheck : Check;
-  return (
-    <Tip label={delivered ? 'Delivered: the agent received it' : 'Accepted: sent to the agent, delivery not confirmed yet'}>
-      <span className="-mt-1 flex self-end text-faint">
-        <Tick aria-hidden="true" className="size-3.5" />
-        <span className="sr-only">{delivered ? 'Delivered' : 'Accepted'}</span>
-      </span>
-    </Tip>
   );
 }
 
