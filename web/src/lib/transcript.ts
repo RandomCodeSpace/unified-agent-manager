@@ -748,9 +748,10 @@ export function currentStep(items: readonly Item[], ctx: ActivityContext, own?: 
 
 /**
  * Whether an entry stands in the answer at its place (DESIGN.md promotion) rather than folding
- * into the turn line: prose, notices and steer bubbles always; a failed call; a question that
- * no longer waits; a call whose result returned images; a call `own` takes over (a subagent
- * row); a question request. Thoughts, routine calls and decided permissions never do.
+ * into the turn line: prose, notices and steer bubbles always; a question that no longer waits;
+ * a call whose result returned images; a call `own` takes over (a subagent row); a question
+ * request. Thoughts, calls (failed ones too: the turn line counts them) and decided permissions
+ * never do.
  */
 export function promoted(entry: Entry, ctx: ActivityContext, own?: (item: Item) => boolean): boolean {
   if (entry.interaction) return entry.interaction.kind === 'question';
@@ -758,7 +759,6 @@ export function promoted(entry: Entry, ctx: ActivityContext, own?: (item: Item) 
   if (item.kind === 'reasoning') return false;
   if (item.kind !== 'tool') return true;
   if (own?.(item)) return true;
-  if (item.tool?.status === 'failed') return true;
   if ((item.images?.length ?? 0) > 0 || !!item.images_note) return true;
   const asked = askedOn(item, ctx.approvals, ctx.live);
   return !!asked && asked.outcome !== 'pending';

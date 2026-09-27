@@ -162,9 +162,9 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
 
 /**
  * Compact (DESIGN.md turn line): the entries that stand in the answer, in order. Prose,
- * notices and steer bubbles; the promoted work, that is a failed call, a question that no
- * longer waits, a call that returned images (each as its own row, the same row as inside a
- * run) and a subagent row. Everything else is in the turn line and its timeline.
+ * notices and steer bubbles; the promoted work, that is a question that no longer waits, a
+ * call that returned images (its own row, the same row as inside a run) and a subagent row.
+ * Everything else, failed calls included, is in the turn line and its timeline.
  */
 function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Item) => ReactNode | null, own: (item: Item) => boolean): ReactNode[] {
   const out: ReactNode[] = [];
