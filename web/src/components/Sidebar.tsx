@@ -147,6 +147,8 @@ function TaskRow({ session: s, project, selected, compact = false }: { session: 
   const settle = compact ? undefined : items.find((item) => item.key === 'settle' && !item.disabled);
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
   const meta = rowMeta(s, unread);
+  // Working and Completed (its time, or the word while unread) carry weight so they read at a glance; a Settled or Archived card stays quiet.
+  const heavy = !readOnly(s) && (s.state === 'working' || s.state === 'completed');
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   // A card on the rail: `raised` with the soft ring; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
   const rowClass = compact
@@ -200,7 +202,7 @@ function TaskRow({ session: s, project, selected, compact = false }: { session: 
                 {readOnly(s) && <span className="shrink-0">{s.stage === 'archived' ? 'Archived' : 'Settled'}</span>}
               </span>
               <span className="flex w-full min-w-0 items-center gap-1.5">
-                <span className={cn('flex shrink-0 items-center gap-1 text-caption font-normal tabular-nums whitespace-nowrap transition-colors duration-160', meta.tone)}>
+                <span className={cn('flex shrink-0 items-center gap-1 text-caption tabular-nums whitespace-nowrap transition-colors duration-160', heavy ? 'font-semibold' : 'font-normal', meta.tone)}>
                   {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
                   {meta.text}
                 </span>
