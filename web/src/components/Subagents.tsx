@@ -2,19 +2,20 @@ import { flushSync } from 'react-dom';
 import { HistoryAnchor } from './HistoryAnchor';
 import { windowInteractions } from '../lib/transcript';
 import { BodyNotice, DetailVisibility, useDetailAgent, useItemBody } from './Details';
-import { ArrowLeft, Bot, Copy, Crosshair, Ellipsis, Square, X } from 'lucide-react';
+import { ArrowLeft, Bot, ChevronRight, Copy, Crosshair, Ellipsis, Square, X } from 'lucide-react';
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type Meta, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
+import { historyPage } from '../lib/historyArchive';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
-import { Markdown, Note, Skeleton, useApp } from './common';
+import { Markdown, Note, Skeleton, Spinner, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
-import { EXIT_MS } from './ui/collapse';
+import { Collapse, EXIT_MS } from './ui/collapse';
 import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
@@ -149,6 +150,7 @@ export function SubagentPanel({
   const { meta, narrow } = useApp();
   const lead = useRef<HTMLButtonElement>(null);
   const [stops, stopNow] = useStops(session.id);
+  const [expanded, setExpanded] = useState<Partial<Record<SubagentStatus, boolean>>>({});
   const current = view.view === 'agent' ? session.subagents.find((s) => s.id === view.id) : undefined;
   // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations); one dialog serves the list and the transcript header.
   const stopConfirm = useConfirm<Subagent>();
@@ -227,6 +229,7 @@ export function SubagentPanel({
         <span className="text-title text-ink">Subagents</span>
         <span className="text-caption tabular-nums text-muted">
           {session.subagents.length}
+          {session.subagents_before && '+'}
           {running > 0 && ` · ${running} running`}
         </span>
         <span className="flex-1" />
@@ -240,24 +243,73 @@ export function SubagentPanel({
         {GROUPS.map(({ status, label }) => {
           const rows = session.subagents.filter((s) => s.status === status);
           if (!rows.length) return null;
+          const list = (
+            <ul className="flex flex-col gap-px">
+              {rows.map((s) => (
+                <SubagentRow key={s.id} session={session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} stopping={stops[s.id] ?? NOT_STOPPING} onStop={() => stop(s.id)} />
+              ))}
+            </ul>
+          );
+          if (status === 'running') {
+            return (
+              <section key={status} aria-label={label} className="mb-3">
+                <div className="flex h-7 items-center gap-2 px-2 text-caption text-muted">
+                  <span>{label}</span>
+                  <span className="tabular-nums text-muted">{rows.length}</span>
+                  <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
+                </div>
+                {list}
+              </section>
+            );
+          }
+          // Only running subagents show by default; the others wait behind their count.
+          const shown = !!expanded[status];
           return (
-            <section key={status} aria-label={label} className="mb-3">
-              <div className="flex h-7 items-center gap-2 px-2 text-caption text-muted">
+            <section key={status} aria-label={label} className="mb-1">
+              <button
+                type="button"
+                aria-expanded={shown}
+                className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11"
+                onClick={() => setExpanded((e) => ({ ...e, [status]: !shown }))}
+              >
                 <span>{label}</span>
                 <span className="tabular-nums text-muted">{rows.length}</span>
                 <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
-              </div>
-              <ul className="flex flex-col gap-px">
-                {rows.map((s) => (
-                  <SubagentRow key={s.id} session={session} subagent={s} setup={setupOf(meta, session.provider, s)} onOpen={() => onView({ view: 'agent', id: s.id })} onLocate={onLocate} stopping={stops[s.id] ?? NOT_STOPPING} onStop={() => stop(s.id)} />
-                ))}
-              </ul>
+                <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', shown && 'rotate-90')} />
+              </button>
+              <Collapse open={shown}>{list}</Collapse>
             </section>
           );
         })}
+        {session.subagents_before && <OlderSubagents key={`${session.id}:${session.subagents_before}`} sessionId={session.id} before={session.subagents_before} />}
       </div>
       {stopDialog}
     </SidePanel>
+  );
+}
+
+/** Subagents only Copilot's record still lists: read a page at a time, only when asked, and merged into the groups above. */
+function OlderSubagents({ sessionId, before }: { sessionId: string; before: string }) {
+  const { dispatch } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function load() {
+    setBusy(true);
+    setError(null);
+    try {
+      const page = await api.olderSubagents(sessionId, before);
+      dispatch({ type: 'subagents_older', sessionId, before, page });
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-col items-start gap-1 px-2 pt-1">
+      <Button size="sm" loading={busy} onClick={() => void load()}>Show older subagents</Button>
+      {error && <Note tone="error" role="alert">Could not load older subagents: {error}</Note>}
+    </div>
   );
 }
 
@@ -422,7 +474,7 @@ function AgentTranscriptView({
       store.action({ type: 'page_failed', agentId: subagent.id, token, error: 'Loading earlier messages timed out. Scroll up to retry.' });
       controller.abort();
     }, 10000);
-    void api.subagentHistory(sessionId, subagent.id, before, controller.signal, direction).then(page => {
+    void historyPage(sessionId, subagent.id, before, direction, store.value.epoch, () => api.subagentHistory(sessionId, subagent.id, before, controller.signal, direction)).then(page => {
       if (controller.signal.aborted || pageRead.current?.token !== token || store.value.agent?.page?.token !== token) return;
       atBottom.current = false;
       store.action({ type: 'page_done', agentId: subagent.id, before, token, page });
@@ -462,7 +514,7 @@ function AgentTranscriptView({
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder(); if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer'); }} role="log" tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined}>
-      {detail.agent?.page && <Note>Loading {detail.agent.page.direction === 'newer' ? 'newer' : 'earlier'} messages…</Note>}
+      {detail.agent?.page && <Note role="status"><Spinner /> Loading {detail.agent.page.direction === 'newer' ? 'newer' : 'earlier'} messages…</Note>}
       {detail.agent?.after && <Button className="sticky top-0 z-10 self-center" size="sm" variant="secondary" onClick={latest}>Jump to latest</Button>}
       {detail.agent?.pageError && <Note tone="error">{detail.agent.pageError}</Note>}
       {subagent.description && <Note>{subagent.description}</Note>}

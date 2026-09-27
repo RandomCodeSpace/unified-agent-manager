@@ -269,7 +269,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   a reload or restart. An interrupted question without a recorded answer
   shows "No answer." Copilot's recorded thinking also returns after a restart.
   If you scroll up while text arrives, the view stays put
-  and offers "New output".
+  and offers "Jump to bottom".
 - **Diagrams and code**: a fenced ` ```mermaid ` block in a reply renders as
   a diagram once its fence has closed, with a Diagram / Code toggle and Copy
   code in its header; clicking the diagram opens it larger. A block Mermaid
@@ -312,7 +312,11 @@ are logged only at debug level (`UAM_DEBUG=1`).
   the duration once it ended) and a "Subagents" button in the header with
   the total and how many are running. The button opens a panel beside the
   conversation that lists the subagents grouped by status (running, idle,
-  failed, completed, cancelled) with their start time and duration; "Spawned
+  failed, completed, cancelled) with their start time and duration. Only the
+  running group is open; the others show their count and open on a click. The
+  list holds the newest 200 subagents; when Copilot's record has older ones,
+  the count reads "200+" and the list ends with "Show older subagents", which
+  loads the next 100 from the record. Nothing older is read until you click. "Spawned
   by" jumps to the tool call in the conversation. Opening a row, or "Open" on
   its row in the conversation, shows that subagent's own prompt, replies,
   and tool calls in the panel, live while it runs. The panel uses the same
@@ -610,6 +614,25 @@ are logged only at debug level (`UAM_DEBUG=1`).
   it is in use. Deleting a Task leaves Copilot's conversation and any saved
   legacy terminal record intact. UAM no longer probes old terminal hosts or
   shows a terminal-host badge.
+- **Older history**: scrolling up in a Task, or in an open subagent, keeps
+  loading until its first recorded message, even when the service keeps only
+  the newest part in memory. Older pages are read from Copilot's record on
+  demand. The first such read of a long Task can take a second or two; later
+  pages come from the service's cache. On an iPhone or iPad a loaded page
+  appears once scrolling stops, so the view never moves under your finger. These pages never change, so this
+  browser also keeps the ones you have read in its own storage (IndexedDB),
+  and reading them again, even after a reload or a service restart, needs no
+  request. That cache holds at most 64 MiB (less when the browser gives this
+  site little space) and 16 MiB per Task, drops the least recently read Tasks
+  first, and drops a Task not read here for 14 days. Signing out, or losing
+  the sign-in, clears it; deleting a Task removes that Task's pages. Newer
+  messages and item details always come from the service. Long tool output
+  and thinking shortened in the transcript show whole when expanded or
+  copied. A message too long to keep whole shows its start and "Show full
+  message", which reads the whole text and shows it as plain text; copying
+  it copies the whole text either way. "Earlier history was truncated"
+  appears only when the record itself is gone or the provider cannot page
+  it.
 - **Changes**: the "Changes" button in the Task header shows how many files
   differ from `HEAD` in the project directory and opens them beside the
   conversation with the diff (a full-screen sheet on a narrow window). That
@@ -621,9 +644,21 @@ are logged only at debug level (`UAM_DEBUG=1`).
   every five seconds and when the browser tab becomes visible again. The
   previous diff remains visible while an update loads. Closing or hiding the
   panel cancels its reads; manual Refresh remains available.
+- **Files**: the "Files" button beside Changes opens the project directory as
+  a read-only tree in the same place (a full-screen sheet on a narrow
+  window). Git decides what is listed, so `.gitignore` applies; symbolic
+  links and special files are left out, and a directory outside a Git working
+  tree shows why instead. Each folder is read when you expand it, and nothing
+  refreshes on its own: use Refresh. Choosing a file shows it below the tree:
+  text highlighted and wrapped (at most its first 64 KiB), images inline, and
+  anything else with Open in new tab and Download. Only one of Changes, Files,
+  Subagents and a file preview is open at a time. On a wide window, a click in
+  the conversation or the composer closes whichever of them is open.
 - **Sidebar**: Tasks form one flat list with a compact card for each Task,
-  followed by collapsible "Settled" and "Archived" shelves. A card shows its
-  Project, state or last activity, title, provider icon and branch when known.
+  with collapsible "Settled" and "Archived" shelves at the foot of the list.
+  A card shows its Project, state or last activity, title, provider icon and
+  branch when known; hovering an active card that can settle shows Settle.
+  A shelf row shows only the title, faded until hovered or selected.
   A settled or archived Task opens read-only. Search matches Task names and
   titles, Project names and branches within the chosen Project filter.
   Right-click a card, press Shift+F10 or the Menu key, or long-press on touch

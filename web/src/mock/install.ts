@@ -4,9 +4,21 @@
 // workspace feels alive. Not part of the production bundle.
 
 import { BADGE_COLORS, LIVE, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { itemCursor } from '../lib/historyWindow';
 import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
+
+/** The service's history page size, and how many of its newest items a compact Task's main transcript keeps in memory; subagents keep none (read on open). */
+const PAGE = 50;
+const HELD = 200;
+/** Archive cursors are `a.` and the item cursor, as on the service. */
+const ARCHIVE_CURSOR = 'a.';
+
+function decodeCursor(cursor: string): string {
+  const raw = cursor.startsWith(ARCHIVE_CURSOR) ? cursor.slice(ARCHIVE_CURSOR.length) : cursor;
+  return new TextDecoder().decode(Uint8Array.from(atob(raw.replaceAll('-', '+').replaceAll('_', '/')), (c) => c.charCodeAt(0)));
+}
 
 const THINKING =
   'The user wants a small, safe change. I should check the existing tests first, then edit the one function involved and run the package tests rather than the whole suite.';
@@ -56,11 +68,15 @@ class FakeEventSource extends EventTarget {
   onerror: ((e: Event) => void) | null = null;
   onmessage: ((e: MessageEvent) => void) | null = null;
   readonly session: string | null;
+  /** The query of a detail stream (`/api/events/detail`), null on the main stream. */
+  readonly detail: URLSearchParams | null;
   private detach: () => void = () => {};
 
   constructor(url: string, hooks: { attach: (src: FakeEventSource) => () => void }) {
     super();
-    this.session = new URL(url, window.location.origin).searchParams.get('session');
+    const parsed = new URL(url, window.location.origin);
+    this.session = parsed.searchParams.get('session');
+    this.detail = parsed.pathname === '/api/events/detail' ? parsed.searchParams : null;
     window.setTimeout(() => {
       if (this.readyState === 2) return;
       this.readyState = 1;
@@ -87,14 +103,50 @@ export function install(): void {
   const createdBy = new Map<string, string>();
   const sources = new Set<FakeEventSource>();
   let seq = 1;
+  // A reload is a service restart: a new instance, while archive cursors stay valid.
+  const epoch = `mock-${Date.now().toString(36)}`;
 
   const summary = (t: MockTask): SessionSummary => {
-    const { items: _i, interactions: _n, subagents: _s, history_truncated: _h, last_submission: _l, agentItems: _a, ...rest } = t;
+    const { items: _i, interactions: _n, subagents: _s, history_truncated: _h, last_submission: _l, agentItems: _a, representation: _r, detail_stream: _d, ...rest } = t;
     return rest;
   };
+  // A compact Task's detail carries its newest page and a cursor for the rest.
   const detail = (t: MockTask): SessionDetail => {
     const { agentItems: _a, ...rest } = t;
-    return rest;
+    if (t.representation !== 'compact-v1') return rest;
+    const start = Math.max(0, t.items.length - PAGE);
+    const older = t.recordSubagents?.length && t.subagents.length ? { subagents_before: `a.${itemCursor(t.subagents[0].id)}` } : {};
+    return { ...rest, ...older, epoch, items: t.items.slice(start), history_before: start > 0 ? itemCursor(t.items[start].id) : '' };
+  };
+  /**
+   * One history page the way the service pages: the `held` newest items come from memory; older
+   * ones from Copilot's record, as pages marked `archive` whose cursors survive a restart. Neither
+   * kind of page crosses into the other, and every page carries the current seq and epoch.
+   */
+  const historyPage = (items: Item[], held: number, url: URL): Response => {
+    const before = url.searchParams.get('before');
+    const cursor = before ?? url.searchParams.get('after') ?? '';
+    let at: number;
+    try {
+      const id = decodeCursor(cursor);
+      at = items.findIndex((i) => i.id === id);
+    } catch {
+      return fail(400, 'invalid history cursor');
+    }
+    if (at < 0) return fail(409, 'history changed; reload the task');
+    const boundary = Math.max(0, items.length - held);
+    const start = before !== null ? Math.max(at - PAGE, at > boundary ? boundary : 0) : at + 1;
+    const end = before !== null ? at : Math.min(start + PAGE, start < boundary ? boundary : items.length);
+    const mark = (i: number) => (i <= boundary ? ARCHIVE_CURSOR : '') + itemCursor(items[i].id);
+    return json(200, {
+      seq,
+      epoch,
+      representation: 'compact-v1',
+      items: items.slice(start, end),
+      before: start > 0 ? mark(start) : '',
+      after: start < end && end < items.length ? itemCursor(items[end - 1].id) : '',
+      ...(end <= boundary ? { archive: true } : {}),
+    });
   };
   const find = (id: string) => st.tasks.find((t) => t.id === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
@@ -289,6 +341,20 @@ export function install(): void {
         src.onerror?.(new Event('error'));
         return () => sources.delete(src);
       }
+      // A detail stream: an open subagent's first window. The mock's items carry their bodies, so no
+      // body interest needs an answer. A subagent is read from Copilot's record on open, hence the wait.
+      if (src.detail) {
+        const agent = src.detail.get('agent');
+        const items = t && agent ? t.agentItems[agent] : undefined;
+        if (t && agent && items) {
+          window.setTimeout(() => {
+            const start = Math.max(0, items.length - PAGE);
+            src.emit('detail_snapshot', { seq, epoch, session_id: t.id, agent_id: agent, items: items.slice(start), before: start > 0 ? ARCHIVE_CURSOR + itemCursor(items[start].id) : '', archive: true });
+            src.emit('detail_ready', { seq, epoch, session_id: t.id });
+          }, 600 + slow);
+        }
+        return () => sources.delete(src);
+      }
       const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
       if (slow) window.setTimeout(emitSnapshot, slow);
       else emitSnapshot();
@@ -321,6 +387,8 @@ export function install(): void {
     await wait(url.pathname === '/api/auth' ? 60 : 60 + slow);
     // An import reads history on the host: slow enough here to watch "Import all" progress.
     if (/\/previous\/[^/]+\/import$/.test(url.pathname)) await wait(500);
+    // A clipped item's whole text is read from the record.
+    if (/\/items\/[^/]+$/.test(url.pathname)) await wait(600);
     return route(method, url, body);
   };
 
@@ -728,6 +796,31 @@ export function install(): void {
       if (!/\.png$/i.test(abs)) return fail(415, 'only png, jpeg, gif and webp images are served');
       return new Response(screenshotPng(abs.slice(t.workdir.length + 1)).slice(), { status: 200, headers: { 'Content-Type': 'image/png', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-cache' } });
     }
+    // One folder of a Task's directory for the Files panel: folders first, then files.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/files\/tree$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const tree = st.files[t.project_id];
+      if (!tree) return json(200, { files: [], reason: 'this directory is not in a Git working tree' });
+      const dir = url.searchParams.get('dir') ?? '';
+      if (dir && !isDir(t.project_id, dir)) return fail(404, 'folder not found');
+      const prefix = dir ? `${dir}/` : '';
+      const names = new Set(tree.filter((f) => f.startsWith(prefix)).map((f) => f.slice(prefix.length).split('/')[0]));
+      const files = [...names]
+        .map((name) => ({ path: prefix + name, type: isDir(t.project_id, prefix + name) ? 'directory' : 'file' }))
+        .sort((a, b) => (a.type === b.type ? (a.path < b.path ? -1 : 1) : a.type === 'directory' ? -1 : 1));
+      return json(200, { files, reason: '' });
+    }
+    // The view route for a listed file: text made up from its path, enough for previews.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/files\/view\/(.+)$/)) && (method === 'GET' || method === 'HEAD')) {
+      const t = find(decodeURIComponent(r[1]));
+      const path = r[2].split('/').map(decodeURIComponent).join('/');
+      if (!t || !(st.files[t.project_id] ?? []).includes(path)) return fail(404, 'file not found');
+      if (/\.png$/i.test(path)) return new Response(method === 'HEAD' ? null : screenshotPng(path).slice(), { status: 200, headers: { 'Content-Type': 'image/png' } });
+      const text = `// ${path}\n${Array.from({ length: 40 }, (_, i) => `const line${i + 1} = ${JSON.stringify(`${path} `.repeat(i % 7 === 3 ? 12 : 1).trim())};`).join('\n')}\n`;
+      const body = new TextEncoder().encode(text);
+      return new Response(method === 'HEAD' ? null : body, { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': String(body.length) } });
+    }
     // The `@` listing of a Task's directory, or of a Project's for a new Task that does not exist yet.
     if ((r = m(/^\/api\/(sessions|projects)\/([^/]+)\/files$/)) && method === 'GET') {
       const id = decodeURIComponent(r[2]);
@@ -890,9 +983,37 @@ export function install(): void {
       if (!f) return fail(404, 'file not found');
       return json(200, f);
     }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/history$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      return historyPage(t.items, HELD, url);
+    }
+    // An item's body: whole, a clipped item's from `wholeTexts`.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/items\/([^/]+)$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      const agent = url.searchParams.get('agent_id') ?? '';
+      const id = decodeURIComponent(r[2]);
+      const found = t && (agent ? t.agentItems[agent] : t.items)?.find((i) => i.id === id);
+      if (!t || !found) return fail(404, 'item is no longer retained');
+      const { clipped: _c, ...item } = found;
+      return json(200, { seq, epoch, session_id: t.id, agent_id: agent, item: id in st.wholeTexts ? { ...item, text: st.wholeTexts[id] } : item });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)\/history$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      const items = t?.agentItems[decodeURIComponent(r[2])];
+      if (!t || !items) return fail(404, 'subagent not found');
+      return historyPage(items, 0, url);
+    }
+    // Older subagents from "Copilot's record", one page, only when asked for.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      if (!url.searchParams.get('before')) return fail(400, 'provide a subagents cursor');
+      return json(200, { seq, epoch, representation: 'compact-v1', subagents: t.recordSubagents ?? [], before: '' });
+    }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)$/))) {
       const t = find(decodeURIComponent(r[1]));
-      const s = t?.subagents.find((x) => x.id === decodeURIComponent(r![2]));
+      const s = [...(t?.subagents ?? []), ...(t?.recordSubagents ?? [])].find((x) => x.id === decodeURIComponent(r![2]));
       if (!t || !s) return fail(404, 'subagent not found');
       return json(200, { seq, subagent: s, items: t.agentItems[s.id] ?? [] });
     }

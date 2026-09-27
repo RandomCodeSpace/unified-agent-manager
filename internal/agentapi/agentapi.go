@@ -31,6 +31,9 @@ var (
 	// ErrConversationNotFound reports that an exact conversation ID does not
 	// exist in the provider's store. The caller must not create a replacement.
 	ErrConversationNotFound = errors.New("provider conversation not found")
+	// ErrItemNotFound reports that a conversation's record has no item with
+	// the requested agent and ID.
+	ErrItemNotFound = errors.New("recorded item not found")
 	// ErrInteractionGone reports that the provider no longer considers an
 	// interaction pending (answered elsewhere, expired, or the turn ended).
 	ErrInteractionGone = errors.New("interaction is no longer pending")
@@ -199,6 +202,68 @@ type HistoryReader interface {
 type ReadRequest struct {
 	ConversationID string
 	Workdir        string
+}
+
+// HistoryPager is implemented by a HistoryReader that can read one agent's
+// recorded transcript a window at a time, so items too many or too long to
+// keep in memory stay reachable. Like ReadHistory it sends nothing and
+// changes nothing, and it also reads the record of an open conversation.
+// ErrConversationNotFound means the record is gone; ErrItemNotFound that it
+// has no item req.ItemID of req.AgentID.
+type HistoryPager interface {
+	ReadHistoryWindow(ctx context.Context, req WindowRequest) (HistoryWindow, error)
+}
+
+// WindowRequest names one recorded item and how many of its agent's items
+// around it to read. An empty ItemID stands for the end of the record.
+type WindowRequest struct {
+	ReadRequest
+	// AgentID is "" for the main agent, otherwise a subagent instance ID.
+	// Only that agent's items are read.
+	AgentID string
+	ItemID  string
+	// Before and After bound the items read before and after ItemID.
+	Before, After int
+}
+
+// HistoryWindow is a contiguous run of one agent's recorded items, oldest
+// first and whole: no text is clipped.
+type HistoryWindow struct {
+	Items []Item
+	// At is the index of the requested item in Items, len(Items) for the
+	// end of the record.
+	At int
+	// Start is set when Items begins with the agent's first recorded item.
+	Start bool
+	// Next is the ID of the item recorded right after Items, or "" when
+	// Items ends with the newest one.
+	Next string
+}
+
+// SubagentPager is implemented by a HistoryReader that can read a
+// conversation's recorded subagents a window at a time, so every one stays
+// listable when only the newest are kept in memory. Like ReadHistory it
+// sends nothing and changes nothing. ErrConversationNotFound means the
+// record is gone; ErrItemNotFound that it records no subagent req.AgentID.
+type SubagentPager interface {
+	ReadSubagents(ctx context.Context, req SubagentRequest) (SubagentWindow, error)
+}
+
+// SubagentRequest names one recorded subagent and how many of those
+// recorded before it to read.
+type SubagentRequest struct {
+	ReadRequest
+	AgentID string
+	Before  int
+}
+
+// SubagentWindow is a contiguous run of a conversation's subagents in the
+// order they were first recorded, ending with the requested one. Each record
+// is as ReadHistory reports it.
+type SubagentWindow struct {
+	Subagents []Subagent
+	// Start is set when Subagents begins with the first recorded subagent.
+	Start bool
 }
 
 // Importer is implemented by a provider whose Capabilities.Import is set.
@@ -611,6 +676,9 @@ type Item struct {
 	// ImagesNote is set by the web service when it did not keep some of a
 	// tool item's images, and says why. Adapters leave it empty.
 	ImagesNote string `json:"images_note,omitempty"`
+	// Clipped is set when a text of the item was shortened to bound memory.
+	// A HistoryPager reads the item whole.
+	Clipped bool `json:"-"`
 }
 
 // Image is one image a tool's result returned. Adapters fill Data, MIME and
@@ -823,6 +891,9 @@ type Subagent struct {
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"started_at,omitzero"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
+	// Result is the start of the output its parent tool call recorded, when
+	// a read record has it but not that tool call's item.
+	Result string `json:"-"`
 }
 
 // BackgroundTasks describes provider-owned shell processes independently of

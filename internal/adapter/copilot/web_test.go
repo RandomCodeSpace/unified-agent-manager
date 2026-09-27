@@ -66,6 +66,11 @@ type fakeClient struct {
 	catalogErr    error
 	toolCatalogs  []fakeToolCatalog
 	setToolErrors []error
+	// expireRead makes the read with that number (from 1) append grow to
+	// the journal and report its cursor expired, as when the CLI replaced
+	// the journal a read had pinned.
+	expireRead int
+	grow       []copilot.SessionEvent
 }
 
 func (f *fakeClient) ImportSupported(context.Context) bool {
@@ -76,13 +81,30 @@ func (f *fakeClient) ImportSupported(context.Context) bool {
 }
 
 // ReadEvents serves journal newest page first, as the CLI does for a
-// backward read. The cursor is the index older events end at.
+// backward read. The cursor is the index older events end at. A forward
+// read's cursor is "f" and the index newer events start at.
 func (f *fakeClient) ReadEvents(_ context.Context, req *rpc.SessionsReadPersistedEventsRequest) (*rpc.EventsReadResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads = append(f.reads, *req)
 	if f.readErr != nil {
 		return nil, f.readErr
+	}
+	if len(f.reads) == f.expireRead {
+		f.journal = append(f.journal, f.grow...)
+		return &rpc.EventsReadResult{Events: []copilot.SessionEvent{}, CursorStatus: rpc.EventsCursorStatusExpired}, nil
+	}
+	if req.Direction != nil && *req.Direction == rpc.EventsReadDirectionForward {
+		start := 0
+		if req.Cursor != nil {
+			start, _ = strconv.Atoi(strings.TrimPrefix(*req.Cursor, "f"))
+		}
+		end := len(f.journal)
+		if f.pageSize > 0 {
+			end = min(end, start+f.pageSize)
+		}
+		return &rpc.EventsReadResult{Events: append([]copilot.SessionEvent(nil), f.journal[start:end]...), Cursor: "f" + strconv.Itoa(end),
+			CursorStatus: rpc.EventsCursorStatusOk, HasMore: end < len(f.journal)}, nil
 	}
 	end := len(f.journal)
 	if req.Cursor != nil {

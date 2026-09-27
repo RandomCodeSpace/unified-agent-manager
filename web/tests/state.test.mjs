@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { initialState, reducer } from '../src/state.ts';
+import { initialState, reducer, withOlderSubagents } from '../src/state.ts';
 
 const running = { id: 'helper', name: 'Helper', status: 'running' };
 const completed = { ...running, status: 'completed', ended_at: '2026-09-24T12:00:00Z' };
@@ -345,4 +345,25 @@ test('nothing counts as loaded until the first snapshot, and a lost connection d
   assert.deepEqual(state.projects, []);
   state = reducer(state, { type: 'connection', status: 'reconnecting' });
   assert.equal(state.loaded, true);
+});
+
+test('older subagent pages go before the held list until the first recorded one, held records winning', () => {
+  const sa = (id, status = 'completed') => ({ id, name: id, status });
+  assert.deepEqual(withOlderSubagents([sa('c'), sa('d')], [sa('a'), sa('b')]).map((s) => s.id), ['a', 'b', 'c', 'd']);
+  let state = reducer(initialState, { type: 'select', id: 'task' });
+  state = reducer(state, { type: 'snapshot', data: { seq: 10, projects: [], sessions: [], session: { id: 'task', items: [], interactions: [], subagents: [sa('a0', 'running'), sa('c'), sa('d')], subagents_before: 'a.c' } } });
+  const page = (subagents, before) => ({ seq: 11, subagents, before });
+  // A reply for another task, or for a cursor already used, changes nothing.
+  assert.equal(reducer(state, { type: 'subagents_older', sessionId: 'other', before: 'a.c', page: page([sa('b')], '') }), state);
+  assert.equal(reducer(state, { type: 'subagents_older', sessionId: 'task', before: 'a.x', page: page([sa('b')], '') }), state);
+  state = reducer(state, { type: 'subagents_older', sessionId: 'task', before: 'a.c', page: page([sa('a0', 'cancelled'), sa('b')], 'a.a0') });
+  assert.deepEqual(state.detail.subagents.map((s) => `${s.id}:${s.status}`), ['b:completed', 'a0:running', 'c:completed', 'd:completed']);
+  assert.equal(state.detail.subagents_before, 'a.a0');
+  state = reducer(state, { type: 'subagents_older', sessionId: 'task', before: 'a.a0', page: page([sa('a')], '') });
+  assert.deepEqual(state.detail.subagents.map((s) => s.id), ['a', 'b', 'a0', 'c', 'd']);
+  assert.equal(state.detail.subagents_before, '');
+  // A replaced history replaces the list and its cursor.
+  state = update(state, { name: 'history', seq: 12, session_id: 'task', history: 'loaded', history_truncated: false, items: [], subagents: [sa('d')], subagents_before: 'a.d' });
+  assert.deepEqual(state.detail.subagents.map((s) => s.id), ['d']);
+  assert.equal(state.detail.subagents_before, 'a.d');
 });

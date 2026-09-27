@@ -8,6 +8,7 @@ package agenttest
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,9 @@ type Provider struct {
 	opened      chan *Conversation
 	readHook    func(ctx context.Context, req agentapi.ReadRequest) (agentapi.History, error)
 	reads       []agentapi.ReadRequest
+	windowHook  func(ctx context.Context, req agentapi.WindowRequest) error
+	windows     []agentapi.WindowRequest
+	subReads    []agentapi.SubagentRequest
 	previous    []agentapi.PreviousConversation
 	previousErr error
 	listDirs    []string
@@ -224,6 +228,98 @@ func (p *Provider) Reads() []agentapi.ReadRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]agentapi.ReadRequest(nil), p.reads...)
+}
+
+// Pager is a Provider whose records can also be paged
+// (agentapi.HistoryPager). Their items are whole: a read hook may return
+// clipped copies, as an adapter keeping bounded text does.
+type Pager struct{ *Provider }
+
+// NewPager returns a fake provider with the given name and capabilities
+// whose records can be paged.
+func NewPager(name string, caps agentapi.Capabilities) *Pager {
+	return &Pager{NewProvider(name, caps)}
+}
+
+// ReadHistoryWindow reads a window of a known record, or fails with
+// agentapi.ErrConversationNotFound or agentapi.ErrItemNotFound. An error
+// from the hook SetWindowHook installed is returned instead. Every call is
+// recorded.
+func (p *Pager) ReadHistoryWindow(ctx context.Context, req agentapi.WindowRequest) (agentapi.HistoryWindow, error) {
+	p.mu.Lock()
+	p.windows = append(p.windows, req)
+	hook := p.windowHook
+	h, ok := p.known[req.ConversationID]
+	p.mu.Unlock()
+	if hook != nil {
+		if err := hook(ctx, req); err != nil {
+			return agentapi.HistoryWindow{}, err
+		}
+	}
+	if !ok {
+		return agentapi.HistoryWindow{}, fmt.Errorf("read %s: %w", req.ConversationID, agentapi.ErrConversationNotFound)
+	}
+	var items []agentapi.Item
+	for _, it := range h.Items {
+		if it.AgentID == req.AgentID {
+			items = append(items, it)
+		}
+	}
+	at, end := len(items), len(items)
+	if req.ItemID != "" {
+		at = slices.IndexFunc(items, func(it agentapi.Item) bool { return it.ID == req.ItemID })
+		if at < 0 {
+			return agentapi.HistoryWindow{}, fmt.Errorf("read %s: %w", req.ItemID, agentapi.ErrItemNotFound)
+		}
+		end = min(len(items), at+1+req.After)
+	}
+	start := max(0, at-req.Before)
+	w := agentapi.HistoryWindow{Items: slices.Clone(items[start:end]), At: at - start, Start: start == 0}
+	if end < len(items) {
+		w.Next = items[end].ID
+	}
+	return w, nil
+}
+
+// ReadSubagents reads the subagents of a known record up to req.AgentID
+// (agentapi.SubagentPager), or fails with agentapi.ErrConversationNotFound
+// or agentapi.ErrItemNotFound. Every call is recorded.
+func (p *Pager) ReadSubagents(_ context.Context, req agentapi.SubagentRequest) (agentapi.SubagentWindow, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.subReads = append(p.subReads, req)
+	h, ok := p.known[req.ConversationID]
+	if !ok {
+		return agentapi.SubagentWindow{}, fmt.Errorf("read %s: %w", req.ConversationID, agentapi.ErrConversationNotFound)
+	}
+	at := slices.IndexFunc(h.Subagents, func(sa agentapi.Subagent) bool { return sa.ID == req.AgentID })
+	if at < 0 {
+		return agentapi.SubagentWindow{}, fmt.Errorf("read %s: %w", req.AgentID, agentapi.ErrItemNotFound)
+	}
+	start := max(0, at-req.Before)
+	return agentapi.SubagentWindow{Subagents: slices.Clone(h.Subagents[start : at+1]), Start: start == 0}, nil
+}
+
+// SubagentReads returns every ReadSubagents request, oldest first.
+func (p *Pager) SubagentReads() []agentapi.SubagentRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]agentapi.SubagentRequest(nil), p.subReads...)
+}
+
+// SetWindowHook runs hook before each ReadHistoryWindow: a non-nil error
+// fails the read, and the hook may block until the test releases it.
+func (p *Pager) SetWindowHook(hook func(ctx context.Context, req agentapi.WindowRequest) error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.windowHook = hook
+}
+
+// WindowReads returns every ReadHistoryWindow request, oldest first.
+func (p *Pager) WindowReads() []agentapi.WindowRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]agentapi.WindowRequest(nil), p.windows...)
 }
 
 // SetPrevious decides what Previous returns for any directory.

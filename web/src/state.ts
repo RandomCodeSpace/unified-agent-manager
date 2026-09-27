@@ -1,6 +1,6 @@
 import { initialWindow, liveWindow, recentProjection, upsertTranscriptItem, windowPage } from './lib/historyState.ts';
 import { boundItems, idleSteerEcho, itemCursor, mergeItems, TAIL_ITEMS } from './lib/historyWindow.ts';
-import type { AccountUsage, HistoryPage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, SubagentDetail, UpdateData } from './api';
+import type { AccountUsage, HistoryPage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, Subagent, SubagentDetail, SubagentPage, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 
@@ -113,7 +113,15 @@ export type Action =
   | { type: 'agent_loading'; sessionId: string; agentId: string }
   | ({ type: 'agent_loaded'; sessionId: string; agentId: string } & SubagentDetail)
   | { type: 'agent_failed'; sessionId: string; agentId: string; error: string }
-  | { type: 'agent_unloaded'; sessionId: string; agentId: string };
+  | { type: 'agent_unloaded'; sessionId: string; agentId: string }
+  /** A page of older subagents, read with the detail's `subagents_before`. */
+  | { type: 'subagents_older'; sessionId: string; before: string; page: SubagentPage };
+
+/** Older subagents go before the held ones; a held record is fresher than its recorded copy. */
+export function withOlderSubagents(held: Subagent[], older: Subagent[]): Subagent[] {
+  const known = new Set(held.map((s) => s.id));
+  return [...older.filter((s) => !known.has(s.id)), ...held];
+}
 
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -249,6 +257,11 @@ export function reducer(state: State, action: Action): State {
       // after the server's snapshot, retaining their original order.
       return (state.agents[action.agentId]?.buffered ?? []).reduce((next, frame) => withAgentFrame(next, action.agentId, frame), loaded);
     }
+    case 'subagents_older': {
+      const detail = state.detail;
+      if (detail?.id !== action.sessionId || !action.before || detail.subagents_before !== action.before) return state;
+      return { ...state, detail: { ...detail, subagents: withOlderSubagents(detail.subagents, action.page.subagents), subagents_before: action.page.before } };
+    }
     case 'agent_failed':
       if (state.selectedId !== action.sessionId || !state.agents[action.agentId]?.loading) return state;
       return {
@@ -306,7 +319,7 @@ export function reducer(state: State, action: Action): State {
       }
       switch (d.name) {
         case 'history':
-          return { ...state, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, detail: initialWindow({ ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_before: d.history_before, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents }), agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {} };
+          return { ...state, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, detail: initialWindow({ ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_before: d.history_before, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents, subagents_before: d.subagents_before }), agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {} };
         case 'item':
           if (d.item.compact) state = { ...state, bodyVersions: { ...state.bodyVersions, [JSON.stringify([d.agent_id ?? '', d.item.id])]: d.seq } };
           if (d.agent_id) return withAgentFrame(state, d.agent_id, d);

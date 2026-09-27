@@ -95,7 +95,8 @@ test('promotion: failures, answered questions, images, subagents, question reque
   assert.equal(promoted({ item: bash('c1', 'ls') }, ctx), false);
   assert.equal(promoted({ item: read('c2', 'a.ts') }, ctx), false);
   assert.equal(promoted({ item: edit('c3', 'a.ts') }, ctx), false);
-  assert.equal(promoted({ item: bash('c4', 'ls', at(2), { status: 'failed' }) }, ctx), true);
+  // A failed call folds like any other; the turn line's "1 failed" carries it.
+  assert.equal(promoted({ item: bash('c4', 'ls', at(2), { status: 'failed' }) }, ctx), false);
   assert.equal(promoted({ item: { ...read('c5', 'x.png'), images: [{ id: 'i1' }] } }, ctx), true);
   assert.equal(promoted({ item: { ...read('c6', 'x.png'), images_note: '1 image was left out' } }, ctx), true);
   assert.equal(promoted({ item: asked('a1', 'Which?', at(3)) }, ctx), true);

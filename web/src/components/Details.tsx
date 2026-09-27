@@ -182,11 +182,12 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
   }, [compact, active, session.id, session.epoch, generation, interestKey, retryRevision, store, changed]);
 
   const read = useCallback((item: Item): Promise<Item> => {
-    if (!item.compact) return Promise.resolve(item);
+    if (!item.compact && !item.clipped) return Promise.resolve(item);
     const ref = { agentId: item.agent_id ?? '', itemId: item.id };
     const key = bodyKey(ref);
     const current = store.value.bodies[key];
-    if (current?.status === 'loaded' && current.item) return Promise.resolve(current.item);
+    // A clipped item's streamed body may be the held copy (a body over the frame limit); the route serves it whole.
+    if (current?.status === 'loaded' && current.item && !item.clipped) return Promise.resolve(current.item);
     const pending = reads.current.get(key);
     if (pending) return pending.promise;
     const controller = new AbortController();
@@ -237,6 +238,51 @@ export function useBodyCopy(item: Item, copy: (text: string) => void) {
   };
   return { copyBody: run, copyError: error };
 }
+/** How the service marks the end of a text it shortened. */
+const CUT = '\n[truncated by uam]';
+/** At most this much of a clipped message renders, as Markdown, before its whole text is asked for: the service may hold megabytes of it, and parsing that would hold the page for seconds. */
+const HELD_PREVIEW = 64 << 10;
+
+/** `text` cut to HELD_PREVIEW, at a line break when one is near, never inside a surrogate pair. */
+function heldPreview(text: string): string {
+  if (text.length <= HELD_PREVIEW) return text;
+  const line = text.lastIndexOf('\n', HELD_PREVIEW);
+  let cut = line > HELD_PREVIEW / 2 ? line : HELD_PREVIEW;
+  const unit = text.charCodeAt(cut - 1);
+  if (unit >= 0xd800 && unit <= 0xdbff) cut--;
+  return text.slice(0, cut);
+}
+
+export type WholeText = ReturnType<typeof useWholeText>;
+/**
+ * A message the service holds shortened (`clipped`): `text` is the part held, without the cut
+ * marker, until `show` reads the whole text from the item route. Nothing is read before that, as
+ * the whole text can run to many megabytes; `read` reads it for a copy without showing it.
+ */
+export function useWholeText(item: Item) {
+  const context = useContext(Details);
+  const [state, setState] = useState<{ status: 'held' | 'loading' | 'whole' | 'error'; text?: string; error?: string }>({ status: 'held' });
+  const held = useMemo(() => heldPreview(item.text?.endsWith(CUT) ? item.text.slice(0, -CUT.length) : item.text ?? ''), [item.text]);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const read = async () => {
+    try {
+      const text = (await (context?.read(item) ?? item)).text ?? '';
+      // The route answers with the held copy when the record cannot be read.
+      if (text.endsWith(CUT)) throw new Error('The full message could not be read.');
+      return text;
+    } catch (reason) {
+      if (alive.current) setState(reason instanceof DOMException && reason.name === 'AbortError' ? { status: 'held' } : { status: 'error', error: describeError(reason) });
+      throw reason;
+    }
+  };
+  const show = () => {
+    setState({ status: 'loading' });
+    read().then(text => { if (alive.current) setState({ status: 'whole', text }); }, () => {});
+  };
+  return { ...state, text: state.status === 'whole' ? state.text! : held, show, read };
+}
+
 export function useDetailAgent(id: string, open: boolean) {
   const context = useContext(Details);
   const visible = useContext(Visible);

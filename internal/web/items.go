@@ -47,14 +47,30 @@ func clampText(s string, limit int) string {
 	return s[:cut] + truncatedMarker
 }
 
+// clampItem bounds an item's texts, marking it Clipped when it cuts one, and
+// checks the rest as checkItem does.
 func clampItem(it agentapi.Item, now time.Time) agentapi.Item {
-	it.Text = clampText(it.Text, maxItemText)
+	it = checkItem(it, now)
+	clamp := func(s *string, limit int) {
+		if len(*s) > limit {
+			*s, it.Clipped = clampText(*s, limit), true
+		}
+	}
+	clamp(&it.Text, maxItemText)
+	if it.Tool != nil {
+		clamp(&it.Tool.Name, maxLabelText)
+		clamp(&it.Tool.Title, maxLabelText)
+		clamp(&it.Tool.Input, maxToolText)
+		clamp(&it.Tool.Output, maxToolText)
+	}
+	return it
+}
+
+// checkItem copies an item with its declaration, attachments and images
+// checked, and its texts whole.
+func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 	if it.Tool != nil {
 		tool := *it.Tool
-		tool.Name = clampText(tool.Name, maxLabelText)
-		tool.Title = clampText(tool.Title, maxLabelText)
-		tool.Input = clampText(tool.Input, maxToolText)
-		tool.Output = clampText(tool.Output, maxToolText)
 		if d := tool.Declaration; d != nil {
 			if d.ArtifactID == "" || len(d.ArtifactID) > 64 || !utf8.ValidString(d.ArtifactID) || strings.ContainsFunc(d.ArtifactID, unicode.IsControl) ||
 				!filepath.IsAbs(d.Path) || len(d.Path) > maxGrantPathBytes || !utf8.ValidString(d.Path) || strings.ContainsFunc(d.Path, unicode.IsControl) ||
@@ -303,6 +319,7 @@ func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
 // streamed while it was read) are kept after it. publish sends each item and
 // subagent to viewers; without it the caller publishes the result.
 func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, publish bool) {
+	s.subagentsArchived, s.subagentTails = false, nil
 	m.applyUsageLocked(s, history.Usage)
 	for _, sa := range history.Subagents {
 		if sa.ID != "" {
@@ -533,12 +550,7 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 	if in.Status != agentapi.SubagentRunning && in.Status != agentapi.SubagentIdle && !in.Status.Terminal() {
 		return
 	}
-	in.Name = clampText(displaytext.Sanitize(in.Name), maxLabelText)
-	in.Description = clampText(displaytext.Sanitize(in.Description), maxLabelText)
-	in.Model = clampText(displaytext.Sanitize(in.Model), maxLabelText)
-	in.Effort = clampText(displaytext.Sanitize(in.Effort), maxLabelText)
-	in.Error = clipRunes(displaytext.Sanitize(in.Error), maxDetailRunes)
-	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
+	in = clampSubagent(in)
 	cur := s.subIdx[in.ID]
 	if cur == nil {
 		cur = &agentapi.Subagent{}
@@ -552,6 +564,7 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 		in.Name = cmp.Or(in.Name, cur.Name)
 		in.Description = cmp.Or(in.Description, cur.Description)
 		in.Model = cmp.Or(in.Model, cur.Model)
+		in.Result = cmp.Or(in.Result, cur.Result)
 		if in.StartedAt.IsZero() {
 			in.StartedAt = cur.StartedAt
 		}
@@ -564,6 +577,18 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 	if publish {
 		m.publishSubagentLocked(s, cur)
 	}
+}
+
+// clampSubagent bounds and sanitizes a provider's subagent record.
+func clampSubagent(in agentapi.Subagent) agentapi.Subagent {
+	in.Name = clampText(displaytext.Sanitize(in.Name), maxLabelText)
+	in.Description = clampText(displaytext.Sanitize(in.Description), maxLabelText)
+	in.Model = clampText(displaytext.Sanitize(in.Model), maxLabelText)
+	in.Effort = clampText(displaytext.Sanitize(in.Effort), maxLabelText)
+	in.Error = clipRunes(displaytext.Sanitize(in.Error), maxDetailRunes)
+	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
+	in.Result = boundedResultSummary(in.Result)
+	return in
 }
 
 // subagentList returns a copy of s's subagent records.
@@ -637,15 +662,19 @@ func (m *Manager) forgetBackgroundTaskStateLocked(s *webSession) {
 	}
 }
 
-// trimSubagents forgets the oldest finished subagents beyond the cap.
+// trimSubagents forgets the oldest finished subagents beyond the cap. The
+// newest record stays, so every forgotten one is followed by a held one:
+// the list head, before which the record is paged.
 func (s *webSession) trimSubagents() {
 	excess := len(s.subagents) - maxSubagents
 	if excess <= 0 {
 		return
 	}
+	head, dropped := s.subagentHead, 0
 	kept := s.subagents[:0]
-	for _, sa := range s.subagents {
-		if excess > 0 && sa.Status.Terminal() {
+	for i, sa := range s.subagents {
+		if excess > 0 && sa.Status.Terminal() && i < len(s.subagents)-1 {
+			head, dropped = max(head, i+1), dropped+1
 			delete(s.subIdx, sa.ID)
 			if state := s.previews[sa.ID]; state != nil {
 				if state.timer != nil {
@@ -659,6 +688,10 @@ func (s *webSession) trimSubagents() {
 		kept = append(kept, sa)
 	}
 	s.subagents = kept
+	if dropped > 0 {
+		// Every forgotten record came before head.
+		s.subagentHead, s.subagentsOlder = head-dropped, true
+	}
 }
 
 // validateAnswer checks an answer against what the provider offered, so an

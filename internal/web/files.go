@@ -171,6 +171,104 @@ func matchScore(p, q string) (int, bool) {
 	return 0, false
 }
 
+// maxTreeEntries caps one folder of the file tree.
+const maxTreeEntries = 2000
+
+// Tree lists the entries directly inside dir, relative to the Task's
+// directory ("" is the top), for the Files panel: folders first, then files,
+// each by path. Git lists them, so .gitignore applies; symbolic links and
+// special files are left out, and a dir that passes through a link is a 404.
+func (m *Manager) Tree(ctx context.Context, id, dir string) (FileList, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return FileList{}, err
+	}
+	m.mu.Lock()
+	workdir := s.workdir
+	m.mu.Unlock()
+	return listDir(ctx, workdir, dir)
+}
+
+func listDir(ctx context.Context, workdir, dir string) (FileList, error) {
+	out := FileList{Files: []FileEntry{}}
+	if dir != "" && (len(dir) > 4096 || !utf8.ValidString(dir) || strings.ContainsRune(dir, 0) || !filepath.IsLocal(dir) || path.Clean(dir) != dir) {
+		return out, newError(http.StatusBadRequest, "dir must be a relative folder path")
+	}
+	repo, reason, err := openRepo(ctx, workdir)
+	if err != nil {
+		return out, err
+	}
+	if repo == nil {
+		out.Reason = reason
+		return out, nil
+	}
+	root, err := os.OpenRoot(workdir)
+	if err != nil {
+		return out, newError(http.StatusBadGateway, "could not open the project directory: %s", shortError(err))
+	}
+	defer func() { _ = root.Close() }()
+	// Every component must be a real folder: git refuses paths beyond a link.
+	for p := dir; p != "" && p != "."; p = path.Dir(p) {
+		if info, err := root.Lstat(p); err != nil || !info.IsDir() {
+			return out, newError(http.StatusNotFound, "folder not found")
+		}
+	}
+	args := []string{"--literal-pathspecs", "ls-files", "--cached", "--others", "--exclude-standard", "-z"}
+	prefix := ""
+	if dir != "" {
+		prefix = dir + "/"
+		args = append(args, "--", prefix)
+	}
+	raw, code, stderr, err := runGit(ctx, repo.git, workdir, maxListBytes+1, args...)
+	if err != nil {
+		return out, err
+	}
+	if code != 0 {
+		return out, newError(http.StatusBadGateway, "git ls-files failed: %s", gitMessage(stderr))
+	}
+	if len(raw) > maxListBytes {
+		raw = raw[:bytes.LastIndexByte(raw[:maxListBytes], 0)+1]
+		out.Reason = "the project has more files than uam lists; some are missing"
+	}
+	seen := map[string]bool{}
+	var names []string
+	for p := range strings.SplitSeq(string(raw), "\x00") {
+		rest, ok := strings.CutPrefix(p, prefix)
+		if !ok || rest == "" {
+			continue
+		}
+		name, _, _ := strings.Cut(rest, "/")
+		if seen[name] {
+			continue
+		}
+		if len(names) == maxTreeEntries {
+			out.Reason = "this folder has more entries than uam lists; some are missing"
+			break
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	for _, name := range names {
+		rel := path.Join(dir, name)
+		info, err := root.Lstat(rel)
+		switch {
+		case err != nil:
+		case info.IsDir():
+			out.Files = append(out.Files, FileEntry{Path: rel, Type: "directory"})
+		case info.Mode().IsRegular():
+			out.Files = append(out.Files, FileEntry{Path: rel, Type: "file"})
+		}
+	}
+	sort.Slice(out.Files, func(i, j int) bool {
+		a, b := out.Files[i], out.Files[j]
+		if a.Type != b.Type {
+			return a.Type == "directory"
+		}
+		return a.Path < b.Path
+	})
+	return out, nil
+}
+
 // checkFiles validates the files a prompt references, relative to workdir,
 // and returns them with absolute paths. Every path is resolved inside the
 // directory through os.Root; a bad one is a 400 that names it.

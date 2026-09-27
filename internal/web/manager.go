@@ -140,6 +140,8 @@ type Manager struct {
 	summaryWorkers sync.WaitGroup
 	// reads holds a slot for each read-only transcript load in progress.
 	reads chan struct{}
+	// archive caches windows of records read past the retained transcript.
+	archive archiveCache
 	// Active Server registries; publication/removal is ordered by mu.
 	fileGrants map[*tempGrants]struct{}
 }
@@ -246,12 +248,24 @@ type webSession struct {
 	itemIdx   map[string]int
 	itemBytes int
 	truncated bool
+	// archiveGone is set once the record cannot page back from the oldest
+	// retained items. subagentsArchived marks a record read without its
+	// subagents' items, which pages read when a subagent is opened;
+	// subagentTails keeps what their list entries show.
+	archiveGone       bool
+	subagentsArchived bool
+	subagentTails     map[string]subagentTail
 
 	interactions []*interaction
 	ixIdx        map[string]*interaction
 
-	subagents         []*agentapi.Subagent
-	subIdx            map[string]*agentapi.Subagent
+	subagents []*agentapi.Subagent
+	subIdx    map[string]*agentapi.Subagent
+	// subagentsOlder is set once held subagent records were forgotten.
+	// Every subagent recorded after subagents[subagentHead] is held; the
+	// ones before it that are not are paged from the record.
+	subagentsOlder    bool
+	subagentHead      int
 	stoppedSubagents  map[string]bool // accepted stops awaiting the provider event
 	summaryRuns       map[string]*subagentSummaryRun
 	subagentSummaries map[string]store.SubagentSummary
@@ -1430,6 +1444,7 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 	s.cancelSubagentSummaries()
 	m.cancelHistoryLocked(s)
 	s.stopPreviews()
+	m.archive.forget(s.id)
 	delete(m.sessions, s.id)
 	for grants := range m.fileGrants {
 		grants.revokeTask(s.id)

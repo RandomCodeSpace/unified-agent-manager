@@ -1,11 +1,12 @@
-import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, GitBranch, Pencil } from 'lucide-react';
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil } from 'lucide-react';
+import { Suspense, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
 import type { AgentTranscript, HistoryRequest } from '../state';
 import { popupOpen } from '../App';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
+import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { ChangesSheet } from './Changes';
@@ -27,6 +28,9 @@ import { AlertDialog, useConfirm } from './ui/dialog';
 import { Menu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
+/** The Files sheet loads with its first opening, never with the Task. */
+const FilesSheet = lazy(() => import('./Files'));
+
 interface Props {
   session: SessionDetail;
   project: Project | undefined;
@@ -42,7 +46,7 @@ interface Props {
   sheetOpen: boolean;
   /** Side panels (Changes, Subagents) sit beside the column (wide) rather than over it. */
   sidePanelInline: boolean;
-  onSheet: (open: boolean) => void;
+  onSheet: (open: boolean, restoreFocus?: boolean) => void;
   onSessionUpdate: (s: SessionSummary) => void;
   onInteractionUpdate: (sessionId: string, i: Interaction) => void;
   /** Leading header control (the drawer button on narrow screens). */
@@ -51,6 +55,8 @@ interface Props {
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
 const BOTTOM_SLACK = 32;
+/** iOS WebKit: a scroll-position write under a finger or during momentum fights the scroller and jumps. */
+const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-callout', 'none');
 
 function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string; snapshot: BackgroundTasks | undefined; locked: boolean }) {
   const [response, setResponse] = useState<{ source: BackgroundTasks | undefined; snapshot: BackgroundTasks } | null>(null);
@@ -144,7 +150,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesError, setChangesError] = useState<string | null>(null);
   const [changesTick, setChangesTick] = useState(0);
-  const [showJump, setShowJump] = useState(false);
+  /** The jump-to-bottom control shows while the reader is away from the bottom. */
+  const [jump, setJump] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [panel, setPanel] = useState<PanelView | null>(null);
   const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
@@ -157,11 +165,16 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [locateError, setLocateError] = useState('');
   const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
-  const previewOpened = useCallback(() => { setPanel(null); onSheet(false); }, [onSheet]);
+  const previewOpened = useCallback(() => { setPanel(null); setFilesOpen(false); onSheet(false); }, [onSheet]);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
-  useLayoutEffect(() => { if (sheetOpen || panel) closePreview(false); }, [sheetOpen, panel, closePreview]);
+  useLayoutEffect(() => { if (sheetOpen || panel || filesOpen) closePreview(false); }, [sheetOpen, panel, filesOpen, closePreview]);
+  // The Changes sheet can open from outside the header (the composer's count); it replaces Files.
+  if (sheetOpen && filesOpen) setFilesOpen(false);
   const atBottom = useRef(true);
+  const lastScrollTop = useRef(0);
+  const touching = useRef(false);
+  const lastScrollAt = useRef(0);
   // Anchor by ID so incoming output cannot move the beginning while someone reads.
   const [firstVisible, setFirstVisible] = useState<string | undefined>(() => session.items[transcriptWindowStart(session.items)]?.id);
   let visibleStart = firstVisible === undefined ? -1 : session.items.findIndex((it) => it.id === firstVisible);
@@ -202,6 +215,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (synchronous) flushSync(update); // Parent locate needs its target in the DOM.
     else startTransition(update);
   }
+  /** Resolves once no finger is down and the view has stopped moving, so a page can land without a write mid-scroll. */
+  const scrollSettled = (signal: AbortSignal) => new Promise<void>((resolve) => {
+    const check = () => {
+      if (signal.aborted || (!touching.current && performance.now() - lastScrollAt.current > 150)) resolve();
+      else window.setTimeout(check, 50);
+    };
+    check();
+  });
 
   async function loadEarlier(before = session.history_before, synchronous = false, direction: 'older' | 'newer' = 'older') {
     if (!historyLive.current || historyAbort.current || historyRequest?.loading || Date.now() < historyRetryAt.current) return null;
@@ -220,11 +241,16 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       dispatch({ type: 'history_failed', sessionId: session.id, before, error: 'History took too long to load. Scroll up to retry.' });
     }, 10000);
     try {
-      const page = await api.history(session.id, before, controller.signal, direction);
+      const page = await historyPage(session.id, '', before, direction, session.epoch, () => api.history(session.id, before, controller.signal, direction));
       if (controller.signal.aborted) return null;
       if (session.epoch && page.epoch && session.epoch !== page.epoch) {
         onHistoryReset();
         return null;
+      }
+      if (TOUCH_WEBKIT && !synchronous) {
+        window.clearTimeout(timeout);
+        await scrollSettled(controller.signal);
+        if (controller.signal.aborted) return null;
       }
       prepend(() => {
         dispatch({ type: 'history_loaded', sessionId: session.id, before, page });
@@ -298,8 +324,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     historyAbort.current = null;
     if (session.history_after) flushSync(() => { dispatch({ type: 'history_latest', sessionId: session.id }); setWindowReset(value => value + 1); });
     el.scrollTop = el.scrollHeight;
+    lastScrollTop.current = el.scrollTop;
     atBottom.current = true;
-    setShowJump(false);
+    setJump(false);
   }, [dispatch, session.id, session.history_after]);
 
   // Follow new content only while the reader is at the bottom; otherwise offer a way back.
@@ -307,14 +334,25 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const el = scroller.current;
     if (!el) return;
     if (atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
-    else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setShowJump(true);
+    else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump(true);
   }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
+  // Rows also grow after their own commits (a body arriving, a row expanding); a pinned view follows them.
+  const log = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scroller.current, content = log.current;
+    if (!el || !content) return;
+    const observer = new ResizeObserver(() => { if (atBottom.current) el.scrollTop = el.scrollHeight; });
+    observer.observe(content);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // One side panel at a time: the Changes sheet wins while it is open; opening the other closes it.
   const shownPanel = sheetOpen ? null : panel;
   // A closing panel stays mounted, showing its last view, until its exit has run.
   const panelPresence = usePresence(!!shownPanel);
   const sheetPresence = usePresence(sheetOpen);
+  const filesPresence = usePresence(filesOpen);
   const [lastPanel, setLastPanel] = useState<PanelView | null>(null);
   if (shownPanel && shownPanel !== lastPanel) setLastPanel(shownPanel);
   const panelView = shownPanel ?? lastPanel;
@@ -330,8 +368,16 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const openChanges = useCallback(() => {
     closePreview(false);
     setPanel(null);
+    setFilesOpen(false);
     onSheet(true);
   }, [onSheet, closePreview]);
+  const toggleFiles = useCallback(() => {
+    closePreview(false);
+    setPanel(null);
+    onSheet(false);
+    setFilesOpen((open) => !open);
+  }, [onSheet, closePreview]);
+  const closeFiles = useCallback(() => setFilesOpen(false), []);
   const { startRename } = actions;
   const renameInHeader = useCallback(() => startRename(session.id, 'header'), [startRename, session.id]);
 
@@ -339,8 +385,31 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closePreview(false);
     panelOpener.current = opener;
     if (sheetOpen) onSheet(false);
+    setFilesOpen(false);
     setPanel(view);
   }
+
+  // Closes every right side panel without returning focus to its opener.
+  const closeSidePanels = useCallback(() => {
+    closePreview(false);
+    setPanel(null);
+    setFilesOpen(false);
+    panelOpener.current = null;
+    onSheet(false, false);
+  }, [closePreview, onSheet]);
+  // A primary press in the conversation, outside any popup (a hover tooltip does not count), closes the
+  // inline side panels. It is judged on pointerdown, before the press can open a popup, and applied on
+  // click (capture): closing mid-press would widen the column under the pointer and lose the click, and
+  // a click that opens a panel batches after it.
+  const conversationPress = useRef(false);
+  const onConversationPointerDown = (e: PointerEvent) => {
+    conversationPress.current = sidePanelInline && e.button === 0 && e.currentTarget.contains(e.target as Node) && !document.querySelector('[data-popup]:not([data-popup="tooltip"])');
+  };
+  const onConversationClick = (e: MouseEvent) => {
+    if (!conversationPress.current || e.detail === 0) return;
+    conversationPress.current = false;
+    closeSidePanels();
+  };
 
   // Esc closes the panel when no popup owns the key.
   useEffect(() => {
@@ -383,7 +452,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
   }
 
-  const lastScrollTop = useRef(0);
   const touchY = useRef(0);
   // A single upward-demand read can start three viewports ahead. This gives
   // slow responses time to arrive without fetching anything on initial open.
@@ -399,10 +467,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   function onScroll() {
     const el = scroller.current;
     if (!el) return;
-    atBottom.current = !session.history_after && el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
-    if (atBottom.current) setShowJump(false);
     const upwards = el.scrollTop < lastScrollTop.current;
     lastScrollTop.current = el.scrollTop;
+    lastScrollAt.current = performance.now();
+    // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
+    atBottom.current = !session.history_after && (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK || (atBottom.current && !upwards));
+    setJump(!atBottom.current);
     if (upwards && nearEarlier(el)) void loadEarlier();
     else if (!upwards && nearEdge(el, 'newer')) void loadNewer();
   }
@@ -485,19 +555,25 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
             </Button>
           </Tip>
+          <Tip label={`Files in ${project?.name ?? 'the project'}`}>
+            <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={toggleFiles}>
+              <FolderTree />
+              <span className="max-sm:hidden">Files</span>
+            </Button>
+          </Tip>
           {session.subagents.length > 0 && (
             <Tip label="Subagents">
               <Button
                 id="subagents-link"
                 size="md"
                 aria-pressed={!!shownPanel}
-                aria-label={`Subagents, ${session.subagents.length}${agentsRunning ? `, ${agentsRunning} running` : ''}`}
+                aria-label={`Subagents, ${session.subagents.length}${session.subagents_before ? ' or more' : ''}${agentsRunning ? `, ${agentsRunning} running` : ''}`}
                 className="px-2 text-muted"
                 onClick={(e) => (shownPanel ? closePanel() : openPanel({ view: 'list' }, e.currentTarget))}
               >
                 <Bot />
                 <span className="max-sm:hidden">Subagents</span>
-                <span className="tabular-nums text-ink">{session.subagents.length}</span>
+                <span className="tabular-nums text-ink">{session.subagents.length}{session.subagents_before && '+'}</span>
                 {agentsRunning > 0 && <WorkingMark />}
               </Button>
             </Tip>
@@ -513,18 +589,21 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </header>
 
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
-        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0}
+        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}
           onKeyDown={e => { if (e.defaultPrevented) return; if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) && nearEarlier(e.currentTarget)) void loadEarlier(); if (['ArrowDown', 'PageDown', 'End'].includes(e.key) && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
           onWheel={e => { if (e.deltaY < 0 && nearEarlier(e.currentTarget)) void loadEarlier(); if (e.deltaY > 0 && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
-          onTouchStart={e => { touchY.current = e.touches[0]?.clientY ?? 0; }}
+          onTouchStart={e => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0; }}
+          onTouchEnd={e => { touching.current = e.touches.length > 0; }}
+          onTouchCancel={e => { touching.current = e.touches.length > 0; }}
           onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current && nearEarlier(e.currentTarget)) void loadEarlier(); if (y < touchY.current && nearEdge(e.currentTarget, 'newer')) void loadNewer(); touchY.current = y; }}>
           <ScrollSentinel sentinelRef={sentinel} />
           {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
           {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
-          <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
+          <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
-            {session.history_truncated && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
-            {(visibleStart > 0 || session.history_before) && <p role="status" className="text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading ? 'Loading earlier messages…' : 'Scroll up for earlier messages')}</p>}
+            {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
+            {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
+            {(visibleStart > 0 || session.history_before) && <p role="status" className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</p>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
             <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-6">
             <Transcript
@@ -547,7 +626,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               onOpenChanges={openChanges}
             />
             </HistoryAnchor>
-            {session.history_after && <p role="status" className="text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? 'Loading newer messages…' : 'Scroll down for newer messages'}</p>}
+            {session.history_after && <p role="status" className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</p>}
             {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (
               <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && awaitsUser(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
@@ -564,11 +643,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </div>
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
-        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
-          <Appear show={showJump} className="absolute top-0 left-1/2 -translate-x-1/2">
+        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}>
+          <Appear show={jump} className="absolute top-0 left-1/2 -translate-x-1/2">
             <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
               <ArrowDown />
-              New output
+              Jump to bottom
             </Button>
           </Appear>
           <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
@@ -577,6 +656,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       </div>
 
       {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
+      {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
       {panelPresence.mounted && panelView && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
       {preview.selection && !sheetOpen && !shownPanel && <FilePreview selection={preview.selection} inline={sidePanelInline} onClose={() => closePreview()} />}
     </div>

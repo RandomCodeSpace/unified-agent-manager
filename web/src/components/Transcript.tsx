@@ -1,4 +1,4 @@
-import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody } from './Details';
+import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
 import { Bot, Check, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
@@ -162,9 +162,9 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
 
 /**
  * Compact (DESIGN.md turn line): the entries that stand in the answer, in order. Prose,
- * notices and steer bubbles; the promoted work, that is a failed call, a question that no
- * longer waits, a call that returned images (each as its own row, the same row as inside a
- * run) and a subagent row. Everything else is in the turn line and its timeline.
+ * notices and steer bubbles; the promoted work, that is a question that no longer waits, a
+ * call that returned images (its own row, the same row as inside a run) and a subagent row.
+ * Everything else, failed calls included, is in the turn line and its timeline.
  */
 function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Item) => ReactNode | null, own: (item: Item) => boolean): ReactNode[] {
   const out: ReactNode[] = [];
@@ -540,11 +540,12 @@ function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & {
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, label, className, side = 'right', children, extra = [] }: { text: string; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; children: ReactNode; extra?: ActionItem[] }) {
+function Copyable({ text, read, label, className, side = 'right', children, extra = [] }: { text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; children: ReactNode; extra?: ActionItem[] }) {
   const [copied, copy] = useCopied();
   const [menuReady, setMenuReady] = useState(false);
   const menuHandlers = useRef<CopyableMenuEvents | null>(null);
-  const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: () => copy(text) }, ...extra];
+  const run = () => { if (read) void read().then(copy, () => {}); else copy(text); };
+  const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: run }, ...extra];
 
   function menuEvents(event: SyntheticEvent<HTMLDivElement>) {
     // Portalled menu interactions do not originate in the message.
@@ -572,7 +573,7 @@ function Copyable({ text, label, className, side = 'right', children, extra = []
           variant="ghost"
           aria-label={copied ? 'Copied' : label}
           className={cn('absolute top-0 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', side === 'right' ? '-right-1' : '-left-7', copied && 'opacity-100 text-success')}
-          onClick={() => copy(text)}
+          onClick={run}
         >
           {copied ? <Check /> : <Copy />}
         </Button>
@@ -591,22 +592,72 @@ function Copyable({ text, label, className, side = 'right', children, extra = []
 
 /** The user's turn: a bubble with the text as typed, then its uploads. The item carries no list of its `@path` references, so those stay plain text. */
 const UserBubble = memo(function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
+  return item.clipped ? <ClippedMessage item={item} sessionId={sessionId} className={className} /> : userBubble({ item, text: item.text ?? '', sessionId, className });
+});
+
+/** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText }
+
+function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   const attachments = item.attachments ?? [];
   return (
     <div data-history-anchor={item.id} className={cn('flex justify-end', className)}>
-      <Copyable text={item.text ?? ''} label="Copy message" side="left" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
+      <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" side="left" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
         <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised">
           <span className="sr-only">You: </span>
           {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
           {item.steer_status === 'accepted' && <span className="block text-caption text-muted">Accepted · delivery unconfirmed</span>}
           {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
-          {item.text && <Markdown text={item.text} />}
+          {text && (whole?.status === 'whole' ? plainText(text) : <Markdown text={text} />)}
+          {whole && <WholeNote whole={whole} />}
           {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
         </div>
       </Copyable>
     </div>
   );
-});
+}
+
+function assistantMessage({ item, text, streaming = false, className, whole }: MessageParts) {
+  return (
+    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" className={cn('pr-6', className)}>
+      <div data-history-anchor={item.id} className="text-chat text-body">
+        {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
+        {whole && <WholeNote whole={whole} />}
+      </div>
+    </Copyable>
+  );
+}
+
+function noticeRow({ text, className, whole }: MessageParts) {
+  return (
+    <div className={cn('flex min-h-8 items-center gap-2 text-caption text-muted', whole && 'flex-wrap', className)}>
+      {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} className="[&_p]:m-0" />}
+      {whole && <WholeNote whole={whole} />}
+    </div>
+  );
+}
+
+/** A clipped message's whole text, plain: as Markdown, megabytes of it would hold the page for seconds. */
+const plainText = (text: string) => <p className="break-words whitespace-pre-wrap">{text}</p>;
+
+/** A message the service holds shortened (`clipped`, a text over its memory bound): the part held, then the way to the whole text, read only on request. */
+function ClippedMessage({ item, sessionId, streaming, className }: { item: Item; sessionId?: string; streaming?: boolean; className?: string }) {
+  const whole = useWholeText(item);
+  const parts = { item, text: whole.text, sessionId, streaming, className, whole };
+  return item.kind === 'user' ? userBubble(parts) : item.kind === 'notice' ? noticeRow(parts) : assistantMessage(parts);
+}
+
+function WholeNote({ whole }: { whole: WholeText }) {
+  if (whole.status === 'whole') return null;
+  if (whole.status === 'loading') return <p role="status" className="text-caption text-muted">Loading the full message…</p>;
+  if (whole.status === 'error') return <p role="alert" className="text-caption text-error">{whole.error} <button type="button" onClick={whole.show} className="rounded-xs underline">Retry</button></p>;
+  return (
+    <p className="text-caption text-muted">
+      Shortened here to save memory.{' '}
+      <button type="button" onClick={whole.show} className="rounded-xs text-accent hover:underline">Show full message</button>
+    </p>
+  );
+}
 
 interface ToolRunProps {
   identity: string;
@@ -853,21 +904,11 @@ export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, cl
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
     case 'assistant':
-      return (
-        <Copyable text={item.text ?? ''} label="Copy message" className={cn('pr-6', className)}>
-          <div data-history-anchor={item.id} className="text-chat text-body">
-            <Markdown text={item.text ?? ''} streaming={streaming} />
-          </div>
-        </Copyable>
-      );
+    case 'notice':
+      if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
-    case 'notice':
-      return (
-        <div className={cn('flex min-h-8 items-center gap-2 text-caption text-muted', className)}>
-          <Markdown text={item.text ?? ''} className="[&_p]:m-0" />
-        </div>
-      );
     case 'tool':
       return <ToolRow item={item} live={false} sessionId={sessionId} />;
     default:

@@ -1,6 +1,10 @@
 import { Component, createRef, type ReactNode, type RefObject } from 'react';
 import { bandHeight, retainBands, windowEdges, type HistoryBand } from '../lib/historyBands';
 
+/** Without CSS scroll anchoring (WebKit), rows settling above the view after a commit push it. */
+const NATIVE_ANCHORING = typeof CSS === 'undefined' || CSS.supports('overflow-anchor', 'auto');
+const SETTLE_MS = 1000;
+
 interface Props {
   scroller: RefObject<HTMLElement | null>;
   firstItem: string;
@@ -35,6 +39,7 @@ export class HistoryAnchor extends Component<Props, Record<string, never>, Ancho
   private bottomSpacer = createRef<HTMLDivElement>();
   private before: HistoryBand[] = [];
   private after: HistoryBand[] = [];
+  private release?: () => void;
 
   private row(id: string): HTMLElement | null {
     const content = this.content.current;
@@ -149,6 +154,31 @@ export class HistoryAnchor extends Component<Props, Record<string, never>, Ancho
     el.scrollTop = kept && anchor.offset !== undefined
       ? el.scrollTop + kept.getBoundingClientRect().top - anchor.offset
       : anchor.top + el.scrollHeight - anchor.height;
+    if (!NATIVE_ANCHORING && kept && anchor.offset !== undefined) this.hold(el, kept, anchor.offset);
+  }
+
+  componentWillUnmount() { this.release?.(); }
+
+  /** Keeps the anchor row in place while the new rows settle, until the reader scrolls or a second passes. */
+  private hold(el: HTMLElement, node: HTMLElement, offset: number) {
+    this.release?.();
+    const content = this.content.current;
+    if (!content) return;
+    const input = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+    const observer = new ResizeObserver(() => {
+      const delta = node.isConnected ? node.getBoundingClientRect().top - offset : 0;
+      if (Math.abs(delta) >= 1) el.scrollTop += delta;
+    });
+    const release = () => {
+      observer.disconnect();
+      window.clearTimeout(timer);
+      for (const type of input) el.removeEventListener(type, release);
+      if (this.release === release) this.release = undefined;
+    };
+    const timer = window.setTimeout(release, SETTLE_MS);
+    for (const type of input) el.addEventListener(type, release, { passive: true });
+    observer.observe(content);
+    this.release = release;
   }
 
   render() {
