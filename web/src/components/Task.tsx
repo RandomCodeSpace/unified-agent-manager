@@ -470,8 +470,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const content = el.querySelector('[data-history-window]');
     const edge = el.getBoundingClientRect();
     const rect = content?.getBoundingClientRect();
-    const distance = direction === 'older' ? rect ? edge.top - rect.top : el.scrollTop : rect ? rect.bottom - edge.bottom : el.scrollHeight - el.scrollTop - el.clientHeight;
-    return distance < Math.min(1600, Math.max(200, el.clientHeight * 3));
+    const above = rect ? edge.top - rect.top : el.scrollTop;
+    const below = rect ? rect.bottom - edge.bottom : el.scrollHeight - el.scrollTop - el.clientHeight;
+    const [distance, other] = direction === 'older' ? [above, below] : [below, above];
+    // A page read at one end drops rows at the other. In a window shorter than both reaches (folded
+    // Compact turns), that is the end in view: read only at the end the reader is closer to.
+    return distance < Math.min(1600, Math.max(200, el.clientHeight * 3)) && distance <= other;
   };
   const nearEarlier = (el: HTMLElement) => nearEdge(el, 'older');
   const loadNewer = () => session.history_after ? loadEarlier(session.history_after, false, 'newer') : Promise.resolve(null);
