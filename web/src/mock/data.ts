@@ -844,6 +844,42 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         },
       ],
     }),
+    // A long question with many options: the composer's extension scrolls inside its cap.
+    task({
+      id: 't19',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'claude-haiku-4.5',
+      last_model: 'claude-haiku-4.5',
+      name: '',
+      title: 'Cross-compile the release binaries',
+      state: 'awaiting_answer',
+      pending: 1,
+      created_at: ago(40),
+      updated_at: ago(2),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(40), text: 'Build release binaries for every platform we support and attach them to the GitHub release.' },
+        { id: 'i2', kind: 'assistant', time: ago(3), text: 'The release workflow builds `linux/amd64` only. Before I widen the matrix I need the platform list, since each one adds a CI job.' },
+      ],
+      interactions: [
+        {
+          id: 'q19',
+          kind: 'question',
+          title: 'Which platforms should the release build?',
+          state: 'pending',
+          time: ago(2),
+          questions: [
+            {
+              header: 'Release matrix',
+              text: 'Pick every platform the release should ship. Each one is a CI job of about four minutes, and a `darwin` target needs the signing step, which is **not** set up yet.\n\nNotes on the choices:\n\n- `linux/*` builds are static and need no runtime\n- `windows/arm64` has no tester on the team\n- `freebsd` and `openbsd` are best effort',
+              choices: ['linux/amd64', 'linux/arm64', 'linux/armv7', 'linux/riscv64', 'darwin/amd64', 'darwin/arm64', 'windows/amd64', 'windows/arm64', 'freebsd/amd64', 'freebsd/arm64', 'openbsd/amd64', 'netbsd/amd64'],
+              multiple: true,
+              custom: true,
+            },
+          ],
+        },
+      ],
+    }),
   ];
 
   const changes: Record<string, MockChange[]> = {

@@ -1,4 +1,4 @@
-import { ArrowUp, Check, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, MessageCircleQuestion, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer } from '../lib/answer';
@@ -15,6 +15,7 @@ import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from
 import { Markdown, Note, Skeleton, Spinner, useApp } from './common';
 import { ExecutionItems } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
+import { ComposerQuestion } from './Interactions';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -220,28 +221,16 @@ const NO_COMMANDS: Command[] = [];
 
 /**
  * A pending question with one question, answered from the composer (DESIGN.md Composer, answer
- * mode): the options its card has staged, and where the answered interaction goes.
+ * mode): the question it shows, and where the answered or declined interaction goes.
  */
 export interface Answering {
   interaction: Interaction;
   question: Question;
-  staged: string[];
-  onStage: (choices: string[]) => void;
   onAnswered: (i: Interaction) => void;
 }
 
-/** A staged option: a chip in the composer's row, removable, until the answer is sent. */
-function AnswerChip({ choice, onRemove }: Readonly<{ choice: string; onRemove: () => void }>) {
-  return (
-    <span className="inline-flex h-7 max-w-full min-w-0 items-center gap-1 rounded-sm bg-tint-well pl-1.5 text-caption text-ink animate-rise">
-      <Check aria-hidden="true" className="size-3 shrink-0 text-faint" strokeWidth={2.5} />
-      <span className="truncate" title={choice}>{choice}</span>
-      <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Remove answer ${choice}`} onClick={onRemove}>
-        <X className="!size-3.5" />
-      </Button>
-    </span>
-  );
-}
+/** No option chosen: one array, so nothing derived from it changes between renders. */
+const NO_CHOICES: string[] = [];
 
 interface ComposerProps {
   session: SessionDetail;
@@ -578,6 +567,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // when the question arrives and comes back when it resolves, however it resolves. The parked draft
   // is what the storage keeps meanwhile. An answer left unsent stays only where the draft was empty.
   const answeringId = answering?.interaction.id ?? null;
+  // The options chosen on the question, its own: another question starts with none.
+  const [chosen, setChosen] = useState<{ id: string; choices: string[] }>({ id: '', choices: [] });
+  const staged = answeringId && chosen.id === answeringId ? chosen.choices : NO_CHOICES;
   const [parked, setParked] = useState<{ id: string; text: string; files: string[]; uploads: Pending[] } | null>(null);
   if (answeringId && parked?.id !== answeringId) {
     setParked(parked ? { ...parked, id: answeringId } : { id: answeringId, text, files, uploads });
@@ -646,7 +638,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const blocked = describeBlocked();
   const settingsSteerReason = live && selectionChanged ? 'Model, effort and context changes apply to the next turn. Steering keeps the current settings.' : '';
   const steerBlocked = steerUnavailable || settingsSteerReason;
-  const empty = answering ? !canAnswer(answering.question, answering.staged, text) : !text.trim();
+  const empty = answering ? !canAnswer(answering.question, staged, text) : !text.trim();
   const cannotSubmit = !!busy || locked || session.state === 'starting' || empty || !!blocked;
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The one send button is Enter's.
   const steerDefault = appSettings.send_default === 'steer';
@@ -693,10 +685,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
    */
   async function sendAnswer() {
     if (!answering || cannotSubmit) return;
-    const composed = answerFromComposer(answering.question, { text, staged: answering.staged, files, attachments: attachmentIds });
+    const composed = answerFromComposer(answering.question, { text, staged, files, attachments: attachmentIds });
     if (!composed) return;
     // As `send`: the same steer repeats under the same request id.
-    const key = JSON.stringify([answering.interaction.id, text, files, attachmentIds, answering.staged]);
+    const key = JSON.stringify([answering.interaction.id, text, files, attachmentIds, staged]);
     if (pending.current?.key !== key) pending.current = { key, id: newRequestId() };
     const id = pending.current.id;
     refocus.current = true;
@@ -730,6 +722,23 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       steered.current = null;
     } catch (e) {
       setError(describeError(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Declines the question from the action row; the card's rules (a 409 or 410 is a note, not a failure). */
+  async function decline() {
+    if (!answering || busy) return;
+    setBusy('decline');
+    setError(null);
+    setNotice(null);
+    try {
+      answering.onAnswered(await api.respond(session.id, answering.interaction.id, { reject: true }));
+    } catch (e) {
+      if (isStatus(e, 409)) setNotice('This request was already answered elsewhere.');
+      else if (isStatus(e, 410)) setNotice('This request expired before it was answered.');
+      else setError(describeError(e));
     } finally {
       setBusy(null);
     }
@@ -971,7 +980,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** The textarea's placeholder: what Enter does while a turn runs, else the invitation. */
   function describePlaceholder(): string {
     if (locked) return '';
-    if (answering) return answerPlaceholder(answering.question, answering.staged.length > 0);
+    if (answering) return answerPlaceholder(answering.question, staged.length > 0);
     if (!live) return 'Ask anything, @ files, $ skills, / commands';
     return steerDefault ? 'Steer this turn, or queue a follow-up…' : 'Queue a follow-up, or steer this turn…';
   }
@@ -1087,12 +1096,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         />
       )}
       {answering && (
-        // Answer mode's head (DESIGN.md Composer): the question this composer answers, in the attention tone.
-        <div className="flex items-center gap-1.5 px-3.5 pt-2.5 text-caption text-attention">
-          <MessageCircleQuestion aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="shrink-0">Answering</span>
-          <span className="min-w-0 truncate" title={answering.question.text}>{answering.question.text.split('\n').find((l) => l.trim()) ?? ''}</span>
-        </div>
+        // Answer mode (DESIGN.md Composer): the question is the composer's extension, above what answers it.
+        <ComposerQuestion interactionId={answering.interaction.id} question={answering.question} chosen={staged} disabled={!!busy || locked} onChoose={(choices) => setChosen({ id: answering.interaction.id, choices })} />
       )}
       {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
@@ -1204,11 +1209,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </AlertDialog>
       )}
 
-      {(uploads.length > 0 || files.length > 0 || !!answering?.staged.length) && (
+      {(uploads.length > 0 || files.length > 0) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3.5 pt-3">
-          {answering?.staged.map((c) => (
-            <AnswerChip key={c} choice={c} onRemove={() => answering.onStage(answering.staged.filter((x) => x !== c))} />
-          ))}
           {uploads.map((u) => (
             <UploadChip key={u.key} item={u} onRemove={() => removeUpload(u.key)} />
           ))}
@@ -1386,13 +1388,20 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         )}
           </>
         )}
-        {/* The actions: the send button keeps the far right, so Stop rises in beside it and nothing else moves. */}
+        {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
         <span className="ml-auto flex shrink-0 items-center gap-0.5">
         {busy === 'settings' && <Spinner className="mr-1" />}
         <Appear show={live || session.execution?.objective?.status === 'active'}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop execution and pause queued follow-ups'}>
             <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
               <Square className="!size-3" fill="currentColor" />
+            </Button>
+          </Tip>
+        </Appear>
+        <Appear show={!!answering}>
+          <Tip label="Decline to answer this question">
+            <Button variant="danger" className="ml-1" loading={busy === 'decline'} disabled={!!busy || locked} onClick={() => void decline()}>
+              Decline
             </Button>
           </Tip>
         </Appear>
