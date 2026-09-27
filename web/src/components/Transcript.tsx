@@ -1,5 +1,5 @@
 import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
-import { Bot, Check, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
@@ -231,11 +231,20 @@ function TurnHead({ id, agentId, working, timing, summary, entries, ctx }: { id:
     setOpened(true);
     setOpen((o) => !o);
   };
+  const headButton = useRef<HTMLButtonElement>(null);
+  // The foot of an open timeline folds it too: the turn line comes back into view, so a long timeline
+  // never has to be scrolled back up to close, and focus returns to the line.
+  const collapse = () => {
+    headButton.current?.scrollIntoView({ block: 'nearest' });
+    headButton.current?.focus({ preventScroll: true });
+    setOpen(false);
+  };
   return (
     <div id={domId} className="flex flex-col rounded-sm">
       <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
         {summary.count > 0 ? (
           <button
+            ref={headButton}
             type="button"
             aria-expanded={open}
             aria-controls={opened ? timelineId : undefined}
@@ -262,6 +271,10 @@ function TurnHead({ id, agentId, working, timing, summary, entries, ctx }: { id:
       {opened && (
         <Collapse open={open} appear>
           <DetailVisibility open={open}><Timeline id={timelineId} entries={entries} ctx={ctx} /></DetailVisibility>
+          <button type="button" aria-controls={timelineId} className="mt-1 ml-1.5 flex h-6 w-fit items-center gap-1 rounded-sm px-1.5 text-caption text-muted transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11" onClick={collapse}>
+            <ChevronUp aria-hidden="true" className="size-3" />
+            Collapse
+          </button>
         </Collapse>
       )}
     </div>
