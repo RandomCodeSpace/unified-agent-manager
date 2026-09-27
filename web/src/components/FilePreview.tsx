@@ -106,7 +106,14 @@ export function FilePreview({ selection, inline, onClose }: { selection: Selecti
         {temporary && <Note>{limitation}</Note>}
         {error ? <Note tone="error">{error}</Note> : !file ? <p role="status" className="flex items-center gap-2 text-caption text-muted"><Spinner />Opening file…</p> : file.kind === 'text' ? <>
           {file.truncated && <Note>Showing a text preview of at most 64 KiB. Open or download the full file to read the rest.</Note>}
-          {file.text ? <CodeBlock language="text" text={file.text}><code>{file.text}</code></CodeBlock> : <Note>This file is empty.</Note>}
+          {file.text ? <CodeBlock
+            language="text"
+            text={file.text}
+            className="my-0 flex min-h-64 flex-1 flex-col"
+            body={<pre translate="no" className="flex-1 overflow-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink"><code>{file.text}</code></pre>}
+          >
+            {null}
+          </CodeBlock> : <Note>This file is empty.</Note>}
         </> : file.kind === 'html' && target.frameable ? <iframe
           key={target.url}
           src={target.url}
