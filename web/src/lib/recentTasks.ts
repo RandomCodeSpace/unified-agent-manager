@@ -8,7 +8,7 @@ const encoder = new TextEncoder();
 
 /** In-memory presentation only. A hit never confirms status or permits an action. */
 export class RecentTasks {
-  private entries = new Map<string, { detail: SessionDetail; bytes: number }>();
+  private readonly entries = new Map<string, { detail: SessionDetail; bytes: number }>();
   private epoch = '';
   private retained = 0;
 
@@ -105,7 +105,8 @@ export class RecentTasks {
 }
 
 function cursor(id: string) {
-  return btoa(String.fromCharCode(...encoder.encode(id))).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+  // base64 pads with at most two `=`; the bounded count keeps the scan linear.
+  return btoa(String.fromCodePoint(...encoder.encode(id))).replaceAll('+', '-').replaceAll('/', '_').replace(/={1,2}$/, '');
 }
 
 // String lengths are constant-time, so accounting a large chat does not copy

@@ -13,13 +13,17 @@ export function ringFraction(context: Pick<ContextUsage, 'used' | 'limit'> | und
 
 /** The ring's colour: `accent`, `attention` from 80% and `danger` from 95% (#186). */
 export function ringTone(fraction: number): Tone {
-  return fraction >= 0.95 ? 'danger' : fraction >= 0.8 ? 'attention' : 'accent';
+  if (fraction >= 0.95) return 'danger';
+  if (fraction >= 0.8) return 'attention';
+  return 'accent';
 }
 
 /** The credits chip's colour: `attention` at 20% left or less, `danger` at 5% or less (#188); unlimited quotas stay quiet. */
 export function creditsTone(quota: Pick<Quota, 'unlimited' | 'remaining_percent'>): Tone {
   if (quota.unlimited) return 'muted';
-  return quota.remaining_percent <= 5 ? 'danger' : quota.remaining_percent <= 20 ? 'attention' : 'muted';
+  if (quota.remaining_percent <= 5) return 'danger';
+  if (quota.remaining_percent <= 20) return 'attention';
+  return 'muted';
 }
 
 /** 31K, 200K, 1.2M. */
@@ -92,7 +96,7 @@ export function providerQuota(quotas: readonly Quota[] | undefined, provider: st
 
 /** "premium requests" for Copilot's premium_interactions; other types read as words. */
 export function quotaLabel(type: string): string {
-  return type === 'premium_interactions' ? 'premium requests' : type.replace(/_/g, ' ');
+  return type === 'premium_interactions' ? 'premium requests' : type.replaceAll('_', ' ');
 }
 
 /** The chip's face: "88% left", or "Unlimited". */

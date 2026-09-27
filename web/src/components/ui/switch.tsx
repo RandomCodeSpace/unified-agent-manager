@@ -14,14 +14,14 @@ export function Switch({
   className,
   'aria-label': ariaLabel,
   'aria-describedby': describedBy,
-}: {
+}: Readonly<{
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
   className?: string;
   'aria-label': string;
   'aria-describedby'?: string;
-}) {
+}>) {
   return (
     <BaseSwitch.Root
       checked={checked}

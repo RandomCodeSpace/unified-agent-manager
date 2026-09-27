@@ -34,7 +34,7 @@ export function ChangesSheet({
   onChanges,
   onClose,
   onClosed,
-}: {
+}: Readonly<{
   session: SessionSummary;
   projectName: string;
   changes: ChangesData | null;
@@ -49,7 +49,7 @@ export function ChangesSheet({
   onChanges: (changes: ChangesData) => void;
   onClose: () => void;
   onClosed: () => void;
-}) {
+}>) {
   const canSession = session.capabilities.session_diff;
   const [scope, setScope] = useState<Scope>(defaultScope(session));
   const [view, setView] = useState<{
@@ -69,7 +69,9 @@ export function ChangesSheet({
   const isDefault = scope === defaultScope(session);
   const current = view?.sessionId === session.id && view.scope === scope ? view : null;
   const data = current?.list ?? (isDefault ? changes : null);
-  const error = current ? current.error : isDefault ? changesError : null;
+  let error: string | null = null;
+  if (current) error = current.error;
+  else if (isDefault) error = changesError;
   const files = data?.supported ? data.files : [];
   const shownPath = path && files.some((f) => f.path === path) ? path : (files[0]?.path ?? null);
   const adds = files.reduce((n, f) => n + f.additions, 0);
@@ -82,7 +84,9 @@ export function ChangesSheet({
   });
   const refresh = useEffectEvent((mode: 'read' | 'initial' | 'known' | 'selection' = 'read') => {
     if (!open || !active || document.visibilityState !== 'visible' || request.current) return;
-    let listing = mode === 'selection' ? data : mode !== 'read' && isDefault ? changes : null;
+    let listing: ChangesData | null = null;
+    if (mode === 'selection') listing = data;
+    else if (mode !== 'read' && isDefault) listing = changes;
     // The Task may already be loading the default list. Reuse its response on arrival.
     if (mode === 'initial' && isDefault && !listing) return;
     if (!listing && isDefault && isDefaultPending()) return;
@@ -123,17 +127,17 @@ export function ChangesSheet({
   useEffect(() => {
     if (!open || !active) return;
     let timer: number | undefined;
-    const schedule = () => { timer = window.setInterval(() => { void refresh(); }, 5000); };
+    const schedule = () => { timer = window.setInterval(() => { refresh(); }, 5000); };
     const visibility = () => {
       window.clearInterval(timer);
       timer = undefined;
       if (document.visibilityState === 'visible') {
-        void refresh();
+        refresh();
         schedule();
       } else stop();
     };
     if (document.visibilityState === 'visible') {
-      void refresh('initial');
+      refresh('initial');
       schedule();
     }
     document.addEventListener('visibilitychange', visibility);
@@ -147,13 +151,13 @@ export function ChangesSheet({
     if (changes === observedChanges.current) return;
     observedChanges.current = changes;
     stop();
-    void refresh('known');
+    refresh('known');
   }, [changes]);
-  useEffect(() => { if (tick) void refresh(); }, [tick]);
+  useEffect(() => { if (tick) refresh(); }, [tick]);
   useEffect(() => {
     if (!path) return;
     stop();
-    void refresh('selection');
+    refresh('selection');
   }, [path]);
 
   return (
@@ -227,7 +231,7 @@ export function ChangesSheet({
   );
 }
 
-function FileRow({ file: f, selected, onOpen }: { file: ChangeFile; selected: boolean; onOpen: () => void }) {
+function FileRow({ file: f, selected, onOpen }: Readonly<{ file: ChangeFile; selected: boolean; onOpen: () => void }>) {
   const [, copy] = useCopied();
   const items: ActionItem[] = [
     { key: 'open', label: 'Open diff', icon: <FileDiff />, onSelect: onOpen },
@@ -267,7 +271,7 @@ function FileRow({ file: f, selected, onOpen }: { file: ChangeFile; selected: bo
   );
 }
 
-function FileView({ path, file, error }: { path: string; file: FileDiffData | null; error: string | null }) {
+function FileView({ path, file, error }: Readonly<{ path: string; file: FileDiffData | null; error: string | null }>) {
   const patch = useMemo<StructuredPatch | null | Error>(() => {
     if (!file) return null;
     try {

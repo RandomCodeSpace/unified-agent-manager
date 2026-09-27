@@ -1,5 +1,5 @@
 import { Download, ExternalLink, X } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { api, describeError, subscribeAuthLoss } from '../api';
 import { popupOpen } from '../App';
 import { formatSize } from '../lib/attachments';
@@ -70,7 +70,7 @@ export function useFilePreview(sessionId: string, lifetime: string, active: bool
   return { open, close, selection: active && selection?.owner === owner ? selection : null };
 }
 
-export function FilePreview({ selection, inline, onClose }: { selection: Selection; inline: boolean; onClose: () => void }) {
+export function FilePreview({ selection, inline, onClose }: Readonly<{ selection: Selection; inline: boolean; onClose: () => void }>) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const { target, file, error } = selection;
   useEffect(() => { closeButton.current?.focus({ preventScroll: true }); }, [selection.target]);
@@ -95,6 +95,32 @@ export function FilePreview({ selection, inline, onClose }: { selection: Selecti
       {actions && <div className="flex flex-wrap justify-end gap-2">{actions}</div>}
     </div>} />;
   }
+  // The body: the failure, the wait, the text (or that there is none), the page in its frame, or the way out.
+  let body: ReactNode;
+  if (error) body = <Note tone="error">{error}</Note>;
+  else if (!file) body = <output className="flex items-center gap-2 text-caption text-muted"><Spinner />Opening file…</output>;
+  else if (file.kind === 'text') {
+    body = <>
+      {file.truncated && <Note>Showing a text preview of at most 64 KiB. Open or download the full file to read the rest.</Note>}
+      {file.text ? <CodeBlock
+        language="text"
+        text={file.text}
+        className="my-0 flex min-h-64 flex-1 flex-col"
+        body={<pre translate="no" className="flex-1 overflow-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink"><code>{file.text}</code></pre>}
+      >
+        {null}
+      </CodeBlock> : <Note>This file is empty.</Note>}
+    </>;
+  } else if (file.kind === 'html' && target.frameable) {
+    body = <iframe
+      key={target.url}
+      src={target.url}
+      title={`Preview ${target.name}`}
+      sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+      referrerPolicy="no-referrer"
+      className="min-h-64 w-full flex-1 rounded-sm bg-raised"
+    />;
+  } else body = <Note>Open this file in a new tab or download it.</Note>;
   return (
     <SidePanel id="file-preview" inline={inline} open onClose={onClose} onClosed={() => {}} label={`Preview ${target.name}`}>
       <PanelHeader>
@@ -104,24 +130,7 @@ export function FilePreview({ selection, inline, onClose }: { selection: Selecti
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
         <p className="break-all text-caption text-muted">{target.description ?? target.name}{file?.size !== undefined ? ` · ${formatSize(file.size)}` : ''}</p>
         {temporary && <Note>{limitation}</Note>}
-        {error ? <Note tone="error">{error}</Note> : !file ? <p role="status" className="flex items-center gap-2 text-caption text-muted"><Spinner />Opening file…</p> : file.kind === 'text' ? <>
-          {file.truncated && <Note>Showing a text preview of at most 64 KiB. Open or download the full file to read the rest.</Note>}
-          {file.text ? <CodeBlock
-            language="text"
-            text={file.text}
-            className="my-0 flex min-h-64 flex-1 flex-col"
-            body={<pre translate="no" className="flex-1 overflow-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink"><code>{file.text}</code></pre>}
-          >
-            {null}
-          </CodeBlock> : <Note>This file is empty.</Note>}
-        </> : file.kind === 'html' && target.frameable ? <iframe
-          key={target.url}
-          src={target.url}
-          title={`Preview ${target.name}`}
-          sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-          referrerPolicy="no-referrer"
-          className="min-h-64 w-full flex-1 rounded-sm bg-raised"
-        /> : <Note>Open this file in a new tab or download it.</Note>}
+        {body}
       </div>
       <div className="flex shrink-0 flex-wrap gap-2 p-3">{actions}</div>
     </SidePanel>

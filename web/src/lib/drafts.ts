@@ -26,7 +26,7 @@ export interface Draft {
   settings?: PromptSettings;
 }
 
-const KINDS: readonly string[] = ['image', 'pdf', 'text'];
+const KINDS: ReadonlySet<string> = new Set(['image', 'pdf', 'text']);
 
 export const draftEmpty = (d: Draft): boolean => !d.text.trim() && d.files.length === 0 && d.attachments.length === 0 && !d.settings;
 
@@ -48,7 +48,7 @@ export function parseDraft(raw: string | null): Draft | null {
       ? o.attachments.flatMap((a): DraftAttachment[] => {
           if (!a || typeof a !== 'object') return [];
           const { id, name, size, kind } = a as Record<string, unknown>;
-          return typeof id === 'string' && id && typeof name === 'string' && KINDS.includes(String(kind)) ? [{ id, name, size: typeof size === 'number' ? size : 0, kind: kind as Kind }] : [];
+          return typeof id === 'string' && id && typeof name === 'string' && KINDS.has(String(kind)) ? [{ id, name, size: typeof size === 'number' ? size : 0, kind: kind as Kind }] : [];
         })
       : [];
     const settings = o.settings && typeof o.settings === 'object' ? o.settings as Record<string, unknown> : null;

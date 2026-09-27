@@ -28,7 +28,7 @@ export function localHints(item: Item, workdir: string): string[] {
 
 /** Only resolver answers enter this cache. Errors remain unknown. */
 export class FileCache {
-  private entries = new Map<string, { exists: boolean; until: number; bytes: number }>();
+  private readonly entries = new Map<string, { exists: boolean; until: number; bytes: number }>();
   bytes = 0;
   get size() { return this.entries.size; }
   get(path: string, now = Date.now()): boolean | undefined {
@@ -65,12 +65,12 @@ interface Root { visible: boolean }
 /** One selected task. Candidate text stays in the rendered DOM, never an unbounded request queue. */
 export class FileReferences {
   readonly cache = new FileCache();
-  private sources = new Map<string, { items: readonly Item[]; hints: Set<string> }>();
-  private roots = new Map<Element, Root>();
+  private readonly sources = new Map<string, { items: readonly Item[]; hints: Set<string> }>();
+  private readonly roots = new Map<Element, Root>();
   private attempted = new WeakSet<Element>();
   private nearby = new WeakSet<Element>();
   private visibilityChanged = false;
-  private listeners = new Set<() => void>();
+  private readonly listeners = new Set<() => void>();
   private observer?: IntersectionObserver;
   private controller?: AbortController;
   private resolving = new Set<string>();
@@ -80,7 +80,7 @@ export class FileReferences {
   private revision = 0;
   private active = false;
   readonly workdir: string;
-  private resolve: Resolve;
+  private readonly resolve: Resolve;
   constructor(workdir: string, resolve: Resolve) { this.workdir = workdir; this.resolve = resolve; }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   snapshot = () => this.revision;
@@ -172,8 +172,9 @@ export class FileReferences {
     if (!this.active || this.timer !== undefined) return;
     this.timer = setTimeout(() => { this.timer = undefined; void this.scan(); }, 0);
   };
-  private forCandidates(root: Element, visit: (element: Element) => void) {
-    root.querySelectorAll('[data-file-reference]').forEach(visit);
+  private forCandidates(root: Element, visit: (element: HTMLElement) => void) {
+    // The candidates are the transcript's own spans and divs (common.tsx), so `dataset` is there.
+    root.querySelectorAll<HTMLElement>('[data-file-reference]').forEach(visit);
   }
   private near(candidate: Element): boolean {
     const rect = candidate.getBoundingClientRect();
@@ -196,7 +197,7 @@ export class FileReferences {
       let wanted = false;
       for (const [element, root] of this.roots) {
         if (root.visible) this.forCandidates(element, candidate => {
-          if (this.resolving.has(candidate.getAttribute('data-file-reference') ?? '') && this.near(candidate)) wanted = true;
+          if (this.resolving.has(candidate.dataset.fileReference ?? '') && this.near(candidate)) wanted = true;
         });
       }
       if (!wanted) { this.epoch++; this.controller.abort(); }
@@ -207,7 +208,7 @@ export class FileReferences {
     for (const [element, root] of this.roots) {
       if (!root.visible) continue;
       this.forCandidates(element, candidate => {
-        const path = candidate.getAttribute('data-file-reference');
+        const path = candidate.dataset.fileReference;
         if (!path || this.attempted.has(candidate)) return;
         // Keep marking duplicates after a full batch so a failed answer cannot retry
         // through another spelling of the same visible candidate. No layout reads then.

@@ -1,6 +1,6 @@
-import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX } from 'lucide-react';
-import { useId, useState, type FormEvent } from 'react';
-import { api, describeError, isStatus, type Answer, type Interaction, type Question, type SessionDetail } from '../api';
+import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, type LucideIcon } from 'lucide-react';
+import { useId, useState, type SubmitEvent } from 'react';
+import { api, describeError, isStatus, type Answer, type Interaction, type Option, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { approvalMark } from '../lib/transcript';
 import { Note } from './common';
@@ -13,9 +13,18 @@ import { Input } from './ui/input';
  * turn at its time. The title, the first line of the request, and the outcome word; the
  * full resolution in the tooltip and the accessible name.
  */
-export function DecidedRow({ interaction, className }: { interaction: Interaction; className?: string }) {
+/** The shield for a decided permission: crossed when denied, plain when it lapsed, checked otherwise. */
+export const APPROVAL_ICONS: Record<'ok' | 'denied' | 'gone', LucideIcon> = { ok: ShieldCheck, denied: ShieldX, gone: Shield };
+
+/** Reject reads as danger, the default option as the primary, the rest secondary. */
+function optionVariant(option: Option, primary: Option | undefined): 'danger' | 'primary' | 'secondary' {
+  if (option.reject) return 'danger';
+  return option === primary ? 'primary' : 'secondary';
+}
+
+export function DecidedRow({ interaction, className }: Readonly<{ interaction: Interaction; className?: string }>) {
   const { word, full, tone } = approvalMark(interaction);
-  const Icon = interaction.kind === 'question' ? MessageCircleQuestion : tone === 'denied' ? ShieldX : tone === 'gone' ? Shield : ShieldCheck;
+  const Icon = interaction.kind === 'question' ? MessageCircleQuestion : APPROVAL_ICONS[tone];
   const detail = interaction.detail
     ?.split('\n')
     .map((l) => l.trim())
@@ -38,7 +47,7 @@ export function DecidedRow({ interaction, className }: { interaction: Interactio
  * else answered, a 410 means the provider withdrew the request. While pending the header
  * carries the attention chip; that is the only orange on the card.
  */
-export function InteractionCard({ session, interaction, onUpdate }: { session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }) {
+export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }>) {
   /** The action in flight: a permission option's id, `answer` or `decline`. */
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -92,7 +101,7 @@ export function InteractionCard({ session, interaction, onUpdate }: { session: S
           {permitted && ordered.length > 0 && (
             <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
               {ordered.map((o) => (
-                <Button key={o.id} variant={o.reject ? 'danger' : o === primary ? 'primary' : 'secondary'} loading={busy === o.id} disabled={!!busy} onClick={() => respond({ decision: o.id }, o.id)}>
+                <Button key={o.id} variant={optionVariant(o, primary)} loading={busy === o.id} disabled={!!busy} onClick={() => respond({ decision: o.id }, o.id)}>
                   {o.label}
                 </Button>
               ))}
@@ -119,7 +128,7 @@ function QuestionForm({
   sending,
   onSubmit,
   onDecline,
-}: {
+}: Readonly<{
   interactionId: string;
   questions: Question[];
   /** The provider takes no answers from UAM. */
@@ -128,7 +137,7 @@ function QuestionForm({
   sending: 'answer' | 'decline' | null;
   onSubmit: (answers: string[][]) => void;
   onDecline: () => void;
-}) {
+}>) {
   const [chosen, setChosen] = useState<string[][]>(() => questions.map(() => []));
   const [custom, setCustom] = useState<string[]>(() => questions.map(() => ''));
 
@@ -155,7 +164,7 @@ function QuestionForm({
   });
   const complete = answers.every((a) => a.length > 0);
 
-  function submit(e: FormEvent) {
+  function submit(e: SubmitEvent) {
     e.preventDefault();
     if (complete && !sending) onSubmit(answers);
   }

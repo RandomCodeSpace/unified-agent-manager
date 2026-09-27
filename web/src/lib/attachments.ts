@@ -20,9 +20,16 @@ export interface FileLike {
   size: number;
 }
 
-const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const TEXT_APP_TYPES = /^application\/(json|xml|javascript|ecmascript|x-sh|x-shellscript|x-yaml|yaml|toml|x-httpd-php|sql|x-python|x-perl|x-ruby|x-tex|typescript|x-typescript)$/;
-const TEXT_EXT = /\.(txt|md|markdown|rst|adoc|csv|tsv|log|json|jsonc|ya?ml|toml|ini|cfg|conf|env|xml|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|go|rs|py|rb|php|java|kt|swift|c|h|cc|cpp|hpp|cs|sh|bash|zsh|fish|ps1|sql|proto|graphql|gql|tf|dockerfile|makefile|mod|sum|lock|diff|patch|vue|svelte|astro)$/i;
+/** Extensions (lower case) of files stored as text. */
+const TEXT_EXT = new Set(['txt', 'md', 'markdown', 'rst', 'adoc', 'csv', 'tsv', 'log', 'json', 'jsonc', 'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'env', 'xml', 'html', 'htm', 'css', 'scss', 'less', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'go', 'rs', 'py', 'rb', 'php', 'java', 'kt', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'sh', 'bash', 'zsh', 'fish', 'ps1', 'sql', 'proto', 'graphql', 'gql', 'tf', 'dockerfile', 'makefile', 'mod', 'sum', 'lock', 'diff', 'patch', 'vue', 'svelte', 'astro']);
+
+/** The extension after the last dot, or '' without one (`.txt` has `txt`). */
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot < 0 ? '' : name.slice(dot + 1);
+}
 
 /**
  * The kind UAM would store this file as, or why it cannot: `svg` (refused by name) or
@@ -35,8 +42,8 @@ export function fileKind(f: Pick<FileLike, 'name' | 'type'>): Kind | 'svg' | 'un
   const name = f.name.toLowerCase();
   if (type === 'image/svg+xml' || name.endsWith('.svg') || name.endsWith('.svgz')) return 'svg';
   if (name.endsWith('.pdf')) return 'pdf';
-  if (TEXT_EXT.test(name)) return 'text';
-  if (IMAGE_TYPES.includes(type)) return 'image';
+  if (TEXT_EXT.has(extensionOf(name))) return 'text';
+  if (IMAGE_TYPES.has(type)) return 'image';
   if (type === 'application/pdf') return 'pdf';
   if (type.startsWith('image/') || type.startsWith('audio/') || type.startsWith('video/') || type.startsWith('font/')) return 'unknown';
   if (type.startsWith('text/') || TEXT_APP_TYPES.test(type)) return 'text';

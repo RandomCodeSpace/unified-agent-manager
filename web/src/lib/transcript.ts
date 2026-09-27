@@ -35,7 +35,7 @@ const MAX_ARG = 300;
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, MAX_ARG);
 
 function parseObject(input: string | undefined): Record<string, unknown> | null {
-  if (!input || input[0] !== '{') return null;
+  if (!input?.startsWith('{')) return null;
   try {
     const v: unknown = JSON.parse(input);
     return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -129,10 +129,14 @@ export const STATE_TEXT: Record<InteractionState, string> = {
 
 export const YOLO_RESOLUTION = 'allowed (yolo)';
 
+/** A question's mark by its state: answered is fine, declined is a denial, the rest is gone. */
+const QUESTION_TONE: Record<InteractionState, 'ok' | 'denied' | 'gone'> = { pending: 'gone', answered: 'ok', rejected: 'denied', expired: 'gone' };
+
 /** The word on a tool row's approval mark and the full resolution behind it. */
 export function approvalMark(ix: Interaction): { word: string; full: string; tone: 'ok' | 'denied' | 'gone' } {
-  const full = `${ix.title} · ${STATE_TEXT[ix.state]}${ix.resolution ? ` · ${ix.resolution}` : ''}`;
-  if (ix.kind === 'question') return { word: STATE_TEXT[ix.state].toLowerCase(), full, tone: ix.state === 'answered' ? 'ok' : ix.state === 'rejected' ? 'denied' : 'gone' };
+  const resolution = ix.resolution ? ` · ${ix.resolution}` : '';
+  const full = `${ix.title} · ${STATE_TEXT[ix.state]}${resolution}`;
+  if (ix.kind === 'question') return { word: STATE_TEXT[ix.state].toLowerCase(), full, tone: QUESTION_TONE[ix.state] };
   if (ix.resolution === YOLO_RESOLUTION) return { word: 'auto', full, tone: 'ok' };
   switch (ix.state) {
     case 'answered':
@@ -318,9 +322,9 @@ export function askedOn(item: Item, approvals: Map<string, Interaction[]> | unde
 function answered(q: AskedQuestion, answer: string): AskedQuestion {
   q.outcome = 'answered';
   q.answer = answer;
-  const parts = answer.split(/;\s*|,\s*/).map((s) => s.trim());
+  const parts = new Set(answer.split(/;\s*|,\s*/).map((s) => s.trim()));
   const all = q.questions.flatMap((x) => x.choices);
-  q.chosen = all.filter((c) => c === answer || parts.includes(c));
+  q.chosen = all.filter((c) => c === answer || parts.has(c));
   return q;
 }
 
@@ -349,7 +353,11 @@ function toolCounts(items: Item[], live: boolean): { done: string[]; active: num
   for (const item of items) {
     const t = item.tool;
     if (t?.status === 'failed') { failed++; continue; }
-    if (t?.status !== 'completed') { if (live) active++; else noResult++; continue; }
+    if (t?.status !== 'completed') {
+      if (live) active++;
+      else noResult++;
+      continue;
+    }
     const name = t.name.toLowerCase();
     if (['bash', 'shell', 'powershell'].includes(name)) { commands++; continue; }
     const input = inputOf(t);
@@ -389,6 +397,12 @@ export function formatMs(ms: number): string | null {
 
 /** The request waits for the user: pending, and not one yolo mode is already answering. */
 export const awaitsUser = (ix: Interaction) => ix.state === 'pending' && !ix.auto;
+
+/** A run's tone: a failure first, then a call waiting for the user, else quiet. */
+function activityTone(failed: number, waiting: boolean): 'muted' | 'error' | 'attention' {
+  if (failed) return 'error';
+  return waiting ? 'attention' : 'muted';
+}
 
 const isActiveTool = (item: Item) => item.tool?.status === 'pending' || item.tool?.status === 'running';
 
@@ -467,8 +481,16 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
   const images = tools.reduce((n, it) => n + (it.images?.length ?? 0), 0);
   const active = !!running || thinking;
   const took = !active && endedAt && items[0] ? duration(items[0].time, endedAt) : null;
-  const call = running && toolLabel(running.tool);
-  const now = running ? `${waiting ? `Waiting for your ${pending.kind === 'question' ? 'answer' : 'approval'}` : 'Running'}: ${call!.arg ? `${call!.name} ${call!.arg}` : call!.name}` : thinking ? 'Thinking…' : '';
+  let now = '';
+  if (running) {
+    const { name, arg } = toolLabel(running.tool);
+    const need = pending?.kind === 'question' ? 'answer' : 'approval';
+    const lead = pending ? `Waiting for your ${need}` : 'Running';
+    const call = arg ? `${name} ${arg}` : name;
+    now = `${lead}: ${call}`;
+  } else if (thinking) {
+    now = 'Thinking…';
+  }
   const label = [
     sentence([thoughts && (thoughts === 1 ? 'thought' : `thought ${thoughts}×`), ...done, answeredQs && `answered ${noun(answeredQs, 'question')}`, declinedQs && `declined ${noun(declinedQs, 'question')}`, decided && `decided ${noun(decided, 'request')}`].filter(Boolean) as string[]),
     failed && `${failed} failed`,
@@ -478,7 +500,7 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
     now,
     took,
   ].filter(Boolean).join(' · ');
-  return { label, tone: failed ? 'error' : waiting ? 'attention' : 'muted', active };
+  return { label, tone: activityTone(failed, waiting), active };
 }
 
 /** The current turn includes every segment across steer messages. */
@@ -520,7 +542,9 @@ export function elapsedSince(start: string | undefined, now: number): string | n
   if (!Number.isFinite(ms) || ms < 0) return null;
   if (ms < 1000) return '<1s';
   const seconds = Math.floor(ms / 1000);
-  return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
 }
 
 /**
@@ -536,13 +560,24 @@ export function subagentSummary(subagent: Subagent, items: readonly Item[] | und
     if (last?.kind === 'reasoning') return 'Thinking…';
     if (last?.kind === 'tool') {
       const { name, arg } = toolLabel(last.tool);
-      return `Running: ${name}${arg ? ` ${arg}` : ''}`;
+      const call = arg ? `${name} ${arg}` : name;
+      return `Running: ${call}`;
     }
     return '';
   }
   if ((subagent.status === 'completed' || subagent.status === 'idle') && subagent.summary) return firstLine(subagent.summary);
   if (subagent.status === 'failed') return firstLine(subagent.error) || firstLine(subagent.result_summary) || firstLine(parent?.output);
   return firstLine(subagent.result_summary) || firstLine(parent?.output);
+}
+
+/** One leading heading, quote, bullet or ordered-list mark. */
+const LEADING_MARK = /^(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/;
+
+/** The line without its leading marks, however many ("> - # x" is "x"). */
+function stripMarks(line: string): string {
+  let rest = line;
+  for (let m = LEADING_MARK.exec(rest); m; m = LEADING_MARK.exec(rest)) rest = rest.slice(m[0].length);
+  return rest;
 }
 
 /**
@@ -562,9 +597,9 @@ export function firstLine(text: string | undefined): string {
       continue;
     }
     if (fenced || /^[-*_=]{3,}$/.test(line)) continue;
-    const plain = line
-      .replace(/^(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)+/, '')
-      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    // A `[` right after another `[` cannot start a link the earlier one did not, so the scan stays linear.
+    const plain = stripMarks(line)
+      .replace(/(?<!\[)!?\[([^\]]*)\]\([^)]*\)/g, '$1')
       .replace(/(\*\*|__)(.+?)\1/g, '$2')
       .replace(/(^|[^\w])[*_](.+?)[*_](?=[^\w]|$)/g, '$1$2')
       .replace(/~~(.+?)~~/g, '$1')
@@ -587,16 +622,16 @@ export function firstLine(text: string | undefined): string {
 
 export type ActivityKind = 'command' | 'file' | 'search' | 'question' | 'subagent' | 'tool';
 
-const COMMAND_TOOLS: readonly string[] = ['bash', 'shell', 'powershell'];
-const READ_TOOLS: readonly string[] = ['view', 'read', 'list'];
-const SEARCH_TOOLS: readonly string[] = ['grep', 'glob', 'web_fetch', 'webfetch', 'fetch', 'web_search', 'websearch'];
+const COMMAND_TOOLS: ReadonlySet<string> = new Set(['bash', 'shell', 'powershell']);
+const READ_TOOLS: ReadonlySet<string> = new Set(['view', 'read', 'list']);
+const SEARCH_TOOLS: ReadonlySet<string> = new Set(['grep', 'glob', 'web_fetch', 'webfetch', 'fetch', 'web_search', 'websearch']);
 
 /** What kind of work a tool call is, by the names providers report; anything else is a tool. */
 export function toolKind(name: string): ActivityKind {
   const n = name.toLowerCase();
-  if (COMMAND_TOOLS.includes(n)) return 'command';
-  if (READ_TOOLS.includes(n) || CHANGE_TOOLS.includes(n)) return 'file';
-  if (SEARCH_TOOLS.includes(n)) return 'search';
+  if (COMMAND_TOOLS.has(n)) return 'command';
+  if (READ_TOOLS.has(n) || CHANGE_TOOLS.includes(n)) return 'file';
+  if (SEARCH_TOOLS.has(n)) return 'search';
   if (n === 'task') return 'subagent';
   if (n === 'ask_user') return 'question';
   return 'tool';
@@ -698,9 +733,10 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
   const asked = (outcome: AskedQuestion['outcome']) => outcomes.filter((o) => o === outcome).length;
   failed += asked('failed');
   const thinkTime = thinkMs > 0 ? formatMs(thinkMs) : null;
+  const thinkSuffix = thinkTime ? ` (${thinkTime})` : '';
   const quiet = (text: string | 0): SummaryPart | null => (text ? { text, tone: 'muted' } : null);
   const parts = [
-    quiet(thoughts && `${noun(thoughts, 'thought')}${thinkTime ? ` (${thinkTime})` : ''}`),
+    quiet(thoughts && `${noun(thoughts, 'thought')}${thinkSuffix}`),
     quiet(commands && noun(commands, 'command')),
     quiet(changed.size && `${noun(changed.size, 'file')} changed`),
     quiet(read.size && `${noun(read.size, 'file')} read`),
@@ -715,7 +751,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     quiet(asked('none') && `${noun(asked('none'), 'question')} unanswered`),
     quiet(images && noun(images, 'image')),
   ].filter(Boolean) as SummaryPart[];
-  return { parts, label: parts.map((p) => p.text).join(' · '), tone: failed ? 'error' : waiting ? 'attention' : 'muted', count };
+  return { parts, label: parts.map((p) => p.text).join(' · '), tone: activityTone(failed, waiting), count };
 }
 
 export interface Step {
@@ -733,7 +769,7 @@ export interface Step {
  * call `own` claims (a subagent's) is its own row and never a step.
  */
 export function currentStep(items: readonly Item[], ctx: ActivityContext, own?: (item: Item) => boolean): Step | null {
-  const last = items[items.length - 1];
+  const last = items.at(-1);
   if (!last) return null;
   if (last.kind === 'reasoning') return last.id === ctx.streamingId ? { label: 'Thinking…', tone: 'muted', shimmer: true } : null;
   if (last.kind !== 'tool' || own?.(last)) return null;

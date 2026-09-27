@@ -57,7 +57,9 @@ export function intrinsicSize(svg: string): { svg: string; width: number; height
   const open = /<svg\b[^>]*>/.exec(svg);
   if (!open) return null;
   const tag = open[0];
-  const box = /\bviewBox\s*=\s*["']\s*-?[\d.]+[\s,]+-?[\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)\s*["']/.exec(tag);
+  // Two steps, the attribute then its four numbers, so neither pattern is too complex.
+  const boxValue = /\bviewBox\s*=\s*["']([^"']*)["']/.exec(tag)?.[1] ?? '';
+  const box = /^\s*-?[\d.]+[\s,]+-?[\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)\s*$/.exec(boxValue);
   const px = (name: string) => /^[\d.]+(?:px)?$/.test(attr(tag, name)) ? Number.parseFloat(attr(tag, name)) : 0;
   const width = Math.ceil(box ? Number(box[1]) : px('width'));
   const height = Math.ceil(box ? Number(box[2]) : px('height'));
@@ -66,7 +68,7 @@ export function intrinsicSize(svg: string): { svg: string; width: number; height
   return { svg: sized + svg.slice(open.index + tag.length), width, height };
 }
 
-const attr = (tag: string, name: string): string => new RegExp(`\\s${name}\\s*=\\s*["']([^"']*)["']`).exec(tag)?.[1]?.trim() ?? '';
+const attr = (tag: string, name: string): string => new RegExp(String.raw`\s${name}\s*=\s*["']([^"']*)["']`).exec(tag)?.[1]?.trim() ?? '';
 
 export const FRAME_PATH = '/diagram-frame.html';
 const RENDER_TIMEOUT = 10_000;
@@ -102,7 +104,7 @@ interface Pending {
  * replace the frame.
  */
 export class DiagramQueue {
-  private waiting: Pending[] = [];
+  private readonly waiting: Pending[] = [];
   private current: Pending | null = null;
   private seq = 0;
   private readonly send: (req: DiagramRequest) => void;
@@ -170,7 +172,7 @@ export function fenceClosed(text: string, start: number, end: number): boolean {
   const open = /^[ \t>]*(`{3,}|~{3,})/.exec(block);
   if (!open) return true; // an indented code block has no fence to close
   const close = /\n[ \t>]*(`{3,}|~{3,})[ \t]*$/.exec(block);
-  return !!close && close[1][0] === open[1][0] && close[1].length >= open[1].length;
+  return !!close && close[1].startsWith(open[1][0]) && close[1].length >= open[1].length;
 }
 
 export const svgDataUrl = (svg: string): string => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);

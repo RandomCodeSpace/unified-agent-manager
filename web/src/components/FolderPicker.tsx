@@ -25,6 +25,14 @@ interface Listing extends DirList {
 
 const TYPEAHEAD_MS = 700;
 
+/** The row an arrow or Home/End moves the selection to. */
+function nextIndex(key: string, current: number, last: number): number {
+  if (key === 'Home') return 0;
+  if (key === 'End') return last;
+  if (key === 'ArrowDown') return Math.min(current + 1, last);
+  return Math.max(current - 1, 0);
+}
+
 /**
  * The Add project dialog's inline folder browser (DESIGN.md: Folder picker). A breadcrumb, a
  * listbox of folders in a `canvas` well, and a footer. The selection is the target: **Use this
@@ -33,7 +41,7 @@ const TYPEAHEAD_MS = 700;
  * name, Ctrl/Cmd+Enter uses. Escape cancels the New folder row first, then closes the picker;
  * the dialog stays open either way.
  */
-export function FolderPicker({ id, start, onUse, onClose }: { id: string; start: string; onUse: (path: string) => void; onClose: () => void }) {
+export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: string; start: string; onUse: (path: string) => void; onClose: () => void }>) {
   const root = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
@@ -169,7 +177,7 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
         e.preventDefault();
         if (entries.length === 0) return;
         const last = entries.length - 1;
-        const next = e.key === 'Home' ? 0 : e.key === 'End' ? last : e.key === 'ArrowDown' ? Math.min(selIndex + 1, last) : Math.max(selIndex - 1, 0);
+        const next = nextIndex(e.key, selIndex, last);
         setSelected(entries[next].path);
         return;
       }
@@ -288,9 +296,9 @@ export function FolderPicker({ id, start, onUse, onClose }: { id: string; start:
         )}
         {loading && !listing && <Loading className="shrink-0 px-2" />}
         {listing?.error && (
-          <p role="status" className={statusClass}>
+          <output className={statusClass}>
             {listing.error}
-          </p>
+          </output>
         )}
         {listing && !listing.error && !loading && entries.length === 0 && <p className={statusClass}>No folders here</p>}
         <div

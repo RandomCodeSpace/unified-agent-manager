@@ -7,7 +7,7 @@ export interface CustomProvider {
   name: string;
   base_url: string;
   api_key_env: string;
-  wire_api?: CustomModel['wire_api'];
+  wire_api?: NonNullable<CustomModel['wire_api']>;
   key_present?: boolean;
   models: CustomModel[];
 }

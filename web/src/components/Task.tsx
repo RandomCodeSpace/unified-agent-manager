@@ -11,6 +11,7 @@ import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, w
 import { shownState } from '../lib/tasks';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useMedia, useScrolled } from './common';
+import { byCodeUnit } from '../lib/order';
 import { Chip } from './ui/chip';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
@@ -64,7 +65,7 @@ const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-c
 const PHONE = '(width < 40rem)';
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading }: Props) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading }: Readonly<Props>) {
   const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
   const tempAlias = meta?.temp_root_aliases?.[0];
@@ -87,7 +88,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [windowReset, setWindowReset] = useState(0);
   const [locateError, setLocateError] = useState('');
   const density = useDensity();
-  const scroller = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLElement>(null);
   const previewOpened = useCallback(() => { setPanel(null); setFilesOpen(false); onSheet(false); }, [onSheet]);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
@@ -136,12 +137,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     };
   }, [historyRequest?.loading, historyRequest?.before, historyRequest?.direction]);
 
-  // Rendering older history may yield between rows. HistoryAnchor reads the
-  // actual visible position immediately before commit and restores it afterward.
-  function prepend(update: () => void, synchronous = false) {
-    if (synchronous) flushSync(update); // Parent locate needs its target in the DOM.
-    else startTransition(update);
-  }
   /** Resolves once no finger is down and the view has stopped moving, so a page can land without a write mid-scroll. */
   const scrollSettled = (signal: AbortSignal) => new Promise<void>((resolve) => {
     const check = () => {
@@ -154,9 +149,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   async function loadEarlier(before = session.history_before, synchronous = false, direction: 'older' | 'newer' = 'older') {
     if (!historyLive.current || historyAbort.current || historyRequest?.loading || Date.now() < historyRetryAt.current) return null;
     atBottom.current = false;
+    // Rendering older history may yield between rows (a transition). HistoryAnchor reads the
+    // actual visible position immediately before commit and restores it afterward. A parent
+    // locate needs its target in the DOM at once, so it commits synchronously.
+    const commit: (update: () => void) => void = synchronous ? flushSync : startTransition;
     if (direction === 'older' && visibleStart > 0 && before === session.history_before) {
       const start = transcriptWindowStart(session.items, visibleStart);
-      prepend(() => setFirstVisible(session.items[start]?.id), synchronous);
+      commit(() => setFirstVisible(session.items[start]?.id));
       return null;
     }
     if (!before) return null;
@@ -179,10 +178,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         await scrollSettled(controller.signal);
         if (controller.signal.aborted) return null;
       }
-      prepend(() => {
+      commit(() => {
         dispatch({ type: 'history_loaded', sessionId: session.id, before, page });
         if (!compactWindow && page.items.length) setFirstVisible(page.items[0].id);
-      }, synchronous);
+      });
       landed.current = direction;
       return page;
     } catch (error) {
@@ -445,7 +444,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const state = shownState(session);
   // Then the floating label stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
-  const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort()[0];
+  const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
   // Below `sm` the title keeps the row: the state shows its glyph alone, and Files and Terminal move into the actions menu.
   const phone = useMedia(PHONE);
   const folded: ActionItem[] = [];
@@ -453,6 +452,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (phone && settings.terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
   const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
   const renamable = canRename(session, actions);
+  const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
+  const changesLabel = fileCount === null ? 'Open changes' : `Open changes, ${fileCount} files`;
+  const runningSuffix = agentsRunning ? `, ${agentsRunning} running` : '';
+  const subagentsLabel = `Subagents, ${session.subagents.length}${session.subagents_before ? ' or more' : ''}${runningSuffix}`;
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
@@ -467,20 +470,18 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {renaming ? (
               <InlineName initial={session.name} label="Task name" className="h-8 max-w-md text-display-sm font-semibold" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
             ) : (
-              <>
-                <h1
-                  className="min-w-0 truncate text-display-sm text-ink"
-                  title={name || undefined}
-                  onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
-                >
-                  <TaskTitle session={session} />
-                </h1>
-              </>
+              <h1
+                className="min-w-0 truncate text-display-sm text-ink"
+                title={name || undefined}
+                onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
+              >
+                <TaskTitle session={session} />
+              </h1>
             )}
             {readOnly(session) ? (
               <Chip fill="outline">{stageLabel(session)}</Chip>
             ) : (
-              <StateMark state={state} label={!phone} title={state !== session.state ? `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running` : detail} className="shrink-0" />
+              <StateMark state={state} label={!phone} title={state !== session.state ? runningTitle : detail} className="shrink-0" />
             )}
             {busy && <Spinner className="shrink-0" />}
             {/* The pencil takes no room until the title is hovered or it is focused, so the state chip sits by the title. */}
@@ -515,7 +516,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           ) : (
             <>
               <Tip label={`Changes in ${project?.name ?? 'the project'}`}>
-                <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={`Open changes${fileCount !== null ? `, ${fileCount} files` : ''}`} className="px-2 text-muted" onClick={openChanges}>
+                <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={changesLabel} className="px-2 text-muted" onClick={openChanges}>
                   <FileDiff />
                   <span className="max-sm:hidden">Changes</span>
                   {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
@@ -545,7 +546,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 id="subagents-link"
                 size="md"
                 aria-pressed={!!shownPanel}
-                aria-label={`Subagents, ${session.subagents.length}${session.subagents_before ? ' or more' : ''}${agentsRunning ? `, ${agentsRunning} running` : ''}`}
+                aria-label={subagentsLabel}
                 className="px-2 text-muted"
                 onClick={(e) => (shownPanel ? closePanel() : openPanel({ view: 'list' }, e.currentTarget))}
               >
@@ -567,8 +568,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </header>
 
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
-        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
-          onKeyDown={e => { if (e.defaultPrevented) return; if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (['ArrowDown', 'PageDown', 'End'].includes(e.key)) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
+        <section aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
+          onKeyDown={e => {
+            if (e.defaultPrevented) return;
+            if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); }
+            if (['ArrowDown', 'PageDown', 'End'].includes(e.key)) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); }
+          }}
           onWheel={e => { if (e.deltaY < 0) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (e.deltaY > 0) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
           onTouchStart={e => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0; }}
           onTouchEnd={e => { touching.current = e.touches.length > 0; }}
@@ -581,7 +586,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
             {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
-            {(visibleStart > 0 || session.history_before) && <p role="status" className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</p>}
+            {(visibleStart > 0 || session.history_before) && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</output>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
             <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-6">
             <Transcript
@@ -606,7 +611,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               changedLine={!noGit}
             />
             </HistoryAnchor>
-            {session.history_after && <p role="status" className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</p>}
+            {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
             {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (
               <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && awaitsUser(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
@@ -620,7 +625,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Note>
             )}
           </div>
-        </div>
+        </section>
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}>
@@ -658,7 +663,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   );
 }
 
-function NewTaskIntro({ project }: { project: Project | undefined }) {
+function NewTaskIntro({ project }: Readonly<{ project: Project | undefined }>) {
   return (
     <div className="flex flex-col items-center gap-1 py-10 text-center animate-rise">
       <p className="text-title text-ink">New task in {project?.name ?? 'this project'}</p>
@@ -674,7 +679,7 @@ const noRename = () => {};
  * state, Changes or menu, only the Project's badge and a composer on the Project's
  * defaults. `onSend` creates the Task and delivers the message (App `createTask`).
  */
-export function NewTaskPane({ project, defaults, onSend, leading }: { project: Project; defaults: TaskDefaults; onSend: (projectId: string, first: FirstMessage) => Promise<void>; leading?: ReactNode }) {
+export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ project: Project; defaults: TaskDefaults; onSend: (projectId: string, first: FirstMessage) => Promise<void>; leading?: ReactNode }>) {
   const { meta } = useApp();
   const [session, setSession] = useState<SessionDetail>(() => ({
     id: '', project_id: project.id, provider: defaults.provider, name: '', title: '', workdir: project.dir, conversation_id: '',

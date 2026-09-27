@@ -250,6 +250,8 @@
 @layer base {
   :root {
     color-scheme: light;
+    /* View transitions (React <ViewTransition>): the page itself never snapshots (see the view transition rules below). */
+    view-transition-name: none;
   }
   html,
   body,
@@ -367,11 +369,8 @@
   }
 
   /* View transitions (React <ViewTransition>): only the parts React names take part; the page itself
-     never snapshots, so streamed text keeps painting live during one. The classes are React's
+     never snapshots (`:root` above), so streamed text keeps painting live during one. The classes are React's
      `view-transition-class` values; the keyframes are the theme's. */
-  :root {
-    view-transition-name: none;
-  }
   ::view-transition-group(.vt-row) {
     animation-duration: 240ms;
     animation-timing-function: var(--ease-app);

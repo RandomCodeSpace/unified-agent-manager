@@ -26,7 +26,7 @@ export function Segmented({
   'aria-label': ariaLabel,
   'aria-labelledby': labelledBy,
   'aria-describedby': describedBy,
-}: {
+}: Readonly<{
   value: string;
   onValueChange: (value: string) => void;
   items: Segment[];
@@ -36,7 +36,7 @@ export function Segmented({
   'aria-label'?: string;
   'aria-labelledby'?: string;
   'aria-describedby'?: string;
-}) {
+}>) {
   const index = Math.max(0, items.findIndex((it) => it.value === value));
   const vars = { '--seg-n': items.length, '--seg-i': index } as CSSProperties;
   return (

@@ -14,7 +14,7 @@ type View = 'diagram' | 'code';
  * clicking it opens the lightbox. Until the fence has closed (`ready`), and whenever the source
  * does not parse, the code shows instead, the latter with a quiet note.
  */
-export function DiagramCard({ source, ready, children }: { source: string; ready: boolean; children: ReactNode }) {
+export function DiagramCard({ source, ready, children }: Readonly<{ source: string; ready: boolean; children: ReactNode }>) {
   const preview = usePreview();
   const [view, setView] = useState<View>('diagram');
   const [result, setResult] = useState<{ source: string; rendered?: Rendered; error?: string } | null>(null);

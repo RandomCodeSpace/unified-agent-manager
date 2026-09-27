@@ -140,7 +140,7 @@ export function reducer(state: State, action: Action): State {
     }
     case 'snapshot': {
       const { seq, sessions, session, projects, settings, usage } = action.data;
-      const detail = session && session.id === state.selectedId ? initialWindow(session) : null;
+      const detail = session?.id === state.selectedId ? initialWindow(session) : null;
       // A fresh snapshot invalidates subagent transcripts loaded under the old stream;
       // expanded blocks reload them (see SubagentBlock).
       return {
@@ -241,7 +241,7 @@ export function reducer(state: State, action: Action): State {
       return withoutProject(state, action.id);
     case 'upsert_interaction': {
       const detail = state.detail;
-      if (!detail || detail.id !== action.sessionId) return state;
+      if (detail?.id !== action.sessionId) return state;
       return { ...state, detail: { ...detail, interactions: upsert(detail.interactions, action.interaction) } };
     }
     case 'agent_loading':
@@ -301,7 +301,7 @@ export function reducer(state: State, action: Action): State {
           return { ...state, usage: d.usage };
       }
       const detail = state.detail;
-      if (!detail || d.session_id !== detail.id || d.seq <= state.detailSeq) return state;
+      if (d.session_id !== detail?.id || d.seq <= state.detailSeq) return state;
       state = { ...state, detailSeq: d.seq };
       if (state.historyRequest?.loading && (d.name === 'items_trimmed' || ((d.name === 'item' || d.name === 'delta' || d.name === 'tool_output') && !d.agent_id))) {
         const request = state.historyRequest;
@@ -406,9 +406,9 @@ function withAgentStep(state: State, agentId: string, frame: Buffered): State {
   if (frame.name === 'item') {
     const { id, kind, time, tool } = frame.item;
     step = { id, kind, time, agent_id: agentId, ...(tool ? { tool: { name: tool.name, title: tool.title, status: tool.status, input: tool.input?.slice(0, 500) } } : {}) };
-    if (prev && prev.id === id && prev.kind === kind && prev.tool?.status === step.tool?.status) return state;
+    if (prev?.id === id && prev.kind === kind && prev.tool?.status === step.tool?.status) return state;
   } else if (frame.name === 'delta') {
-    if (prev && prev.id === frame.item_id && prev.kind === frame.kind) return state;
+    if (prev?.id === frame.item_id && prev.kind === frame.kind) return state;
     step = { id: frame.item_id, kind: frame.kind, time: new Date().toISOString(), agent_id: agentId };
   }
   return step ? { ...state, agentSteps: { ...state.agentSteps, [agentId]: step } } : state;
@@ -439,7 +439,7 @@ function withSession(state: State, s: SessionSummary): State {
   const detail = state.detail;
   // state_detail, last_model, context and usage are omitempty on the wire: an absent key must clear the old value.
   const merged =
-    detail && detail.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context, usage: s.usage, execution: s.execution } : detail;
+    detail?.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context, usage: s.usage, execution: s.execution } : detail;
   return { ...state, sessions: upsert(state.sessions, s), detail: merged };
 }
 

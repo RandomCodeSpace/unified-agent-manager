@@ -19,7 +19,7 @@ const LABELS: Record<string, string> = { connecting: 'Connecting…', connected:
  * uses Button and plain markup rather than PanelHeader, Note or Tip: the bundler moves modules that
  * two lazy chunks (this and Files) share with the page out of the page's bundle into another request.
  */
-export default function TerminalPanel({ project, onClose }: { project: Project; onClose: () => void }) {
+export default function TerminalPanel({ project, onClose }: Readonly<{ project: Project; onClose: () => void }>) {
   const [status, setStatus] = useState<Status>('connecting');
   // Each shell is one mount of the screen: Restart and Retry remount it, which closes the old socket first.
   const [shell, setShell] = useState(0);
@@ -34,7 +34,7 @@ export default function TerminalPanel({ project, onClose }: { project: Project; 
         <SquareTerminal aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <span className="text-title text-ink">Terminal</span>
         <span className="min-w-0 flex-1 truncate text-meta text-muted" title={project.dir}>{project.dir}</span>
-        <span role="status" className="shrink-0 text-meta text-muted">{typeof status === 'number' ? `Exited (code ${status})` : LABELS[status]}</span>
+        <output className="shrink-0 text-meta text-muted">{typeof status === 'number' ? `Exited (code ${status})` : LABELS[status]}</output>
         <Button size="sm" className="text-muted" onClick={restart}>
           <RotateCcw />
           <span className="max-sm:sr-only">Restart</span>
@@ -57,7 +57,7 @@ export default function TerminalPanel({ project, onClose }: { project: Project; 
 }
 
 /** One shell: the terminal canvas and its socket, from mount to unmount. */
-function Screen({ projectId, onStatus }: { projectId: string; onStatus: (status: Status) => void }) {
+function Screen({ projectId, onStatus }: Readonly<{ projectId: string; onStatus: (status: Status) => void }>) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -178,7 +178,7 @@ function connect(host: HTMLElement, projectId: string, onStatus: (status: Status
     if (ws.readyState === WebSocket.OPEN) ws.send(bytes);
   };
   term.onData((data) => send(encoder.encode(data)));
-  term.onBinary((data) => send(Uint8Array.from(data, (c) => c.charCodeAt(0))));
+  term.onBinary((data) => send(Uint8Array.from(data, (c) => c.codePointAt(0) ?? 0)));
   term.onResize(resize);
   let frame = 0;
   const observer = new ResizeObserver(() => {

@@ -20,7 +20,7 @@ export function usePresence(open: boolean): { mounted: boolean; onClosed: () => 
  * rows track goes 0fr ↔ 1fr over `slow`, so nothing is measured and nothing snaps. Closed
  * content is inert. `onClosed` fires once the exit is over, so the owner can unmount.
  */
-export function Collapse({ open, appear = false, onClosed, className, inner, children }: { open: boolean; /** Mounted open, grow from nothing (the first paint is at 0fr). */ appear?: boolean; onClosed?: () => void; className?: string; inner?: string; children: ReactNode }) {
+export function Collapse({ open, appear = false, onClosed, className, inner, children }: Readonly<{ open: boolean; /** Mounted open, grow from nothing (the first paint is at 0fr). */ appear?: boolean; onClosed?: () => void; className?: string; inner?: string; children: ReactNode }>) {
   const closed = useEffectEvent(() => onClosed?.());
   useEffect(() => {
     if (open) return;

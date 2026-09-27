@@ -1,5 +1,5 @@
 import { ChevronRight, CircleCheck, FolderPlus, GitBranch, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
-import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { filteredProject, groupTasks, shownState, sidebarTasks } from '../lib/tasks';
@@ -35,7 +35,7 @@ export interface WorkspaceActions {
  * of the main pane's header, once hidden, it brings it back. On a narrow screen it opens
  * and closes the drawer instead.
  */
-export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = false, className }: { id?: string; open: boolean; onToggle: () => void; size?: 'icon' | 'icon-md'; wordmark?: boolean; className?: string }) {
+export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = false, className }: Readonly<{ id?: string; open: boolean; onToggle: () => void; size?: 'icon' | 'icon-md'; wordmark?: boolean; className?: string }>) {
   const label = open ? 'Hide sidebar' : 'Show sidebar';
   return (
     <Tip
@@ -73,7 +73,7 @@ function readShelves(): Record<string, boolean> {
 }
 
 /** Two-pane mark: the host's sessions side by side, in ink. */
-export function Brand({ className, markOnly = false }: { className?: string; markOnly?: boolean }) {
+export function Brand({ className, markOnly = false }: Readonly<{ className?: string; markOnly?: boolean }>) {
   return (
     <span className={cn('inline-flex items-center gap-2', className)}>
       <svg aria-hidden="true" viewBox="0 0 20 20" className="size-4 shrink-0">
@@ -151,7 +151,7 @@ function shelfTip(s: SessionSummary, project: Project) {
 }
 
 /** `compact`: a Settled or Archived shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest. */
-function TaskRow({ session: s, project, selected, compact = false }: { session: SessionSummary; project: Project; selected: boolean; compact?: boolean }) {
+function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean }>) {
   const { hasNews } = useApp();
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
@@ -169,18 +169,22 @@ function TaskRow({ session: s, project, selected, compact = false }: { session: 
   const heavy = !readOnly(s) && (state === 'working' || state === 'completed');
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   // A card on the rail: `raised` with the soft ring; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
-  const rowClass = compact
-    ? cn(
-        'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-ui transition-[background-color,color,opacity] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
-        selected ? 'bg-tint-selected' : 'opacity-60 hover:bg-tint-hover hover:opacity-100 focus-within:opacity-100',
-        strong ? 'font-medium text-ink' : 'text-body',
-      )
-    : cn(
-        'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color,color] duration-100 focus-visible:-outline-offset-2',
-        selected ? 'bg-tint-selected text-ink' : 'hover:bg-raised',
-        readOnly(s) && !selected && 'text-muted',
-        strong ? 'font-medium text-ink' : 'text-body',
-      );
+  const weight = strong ? 'font-medium text-ink' : 'text-body';
+  let rowClass: string;
+  if (compact) {
+    rowClass = cn(
+      'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-ui transition-[background-color,color,opacity] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
+      selected ? 'bg-tint-selected' : 'opacity-60 hover:bg-tint-hover hover:opacity-100 focus-within:opacity-100',
+      weight,
+    );
+  } else {
+    rowClass = cn(
+      'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color,color] duration-100 focus-visible:-outline-offset-2',
+      selected ? 'bg-tint-selected text-ink' : 'hover:bg-raised',
+      readOnly(s) && !selected && 'text-muted',
+      weight,
+    );
+  }
 
   const row = (
     <div data-task-row={s.id} className={compact ? undefined : 'lift group/row rounded-md'}>
@@ -274,7 +278,7 @@ function TaskRow({ session: s, project, selected, compact = false }: { session: 
 
 /* ---------- Shelf (Settled / Archived) ---------- */
 
-function Shelf({ projects, label, tasks, selectedId, open, onToggle }: { projects: ReadonlyMap<string, Project>; label: string; tasks: SessionSummary[]; selectedId: string | null; open: boolean; onToggle: () => void }) {
+function Shelf({ projects, label, tasks, selectedId, open, onToggle }: Readonly<{ projects: ReadonlyMap<string, Project>; label: string; tasks: SessionSummary[]; selectedId: string | null; open: boolean; onToggle: () => void }>) {
   if (tasks.length === 0) return null;
   const pinned = !open ? tasks.find((t) => t.id === selectedId) : undefined;
   return (
@@ -357,6 +361,41 @@ export const Sidebar = memo(function Sidebar({
 
   const conn = CONNECTION_TONE[connection];
 
+  // The list: a skeleton before the first snapshot, the invitation without a Project, the search's matches, or the Tasks and their shelves.
+  let body: ReactNode;
+  if (!loaded) {
+    body = <Skeleton label="Loading tasks…" rows={5} className="gap-1" rowClassName="h-14 w-full rounded-md" />;
+  } else if (projects.length === 0) {
+    body = (
+      <div className="flex flex-col items-start gap-3 px-2 pt-6">
+        <p className="text-ui text-muted">No projects yet. A project is a directory on this host.</p>
+        <Button variant="secondary" size="sm" onClick={actions.onAddProject}>
+          <FolderPlus />
+          Add project
+        </Button>
+      </div>
+    );
+  } else if (query.trim()) {
+    body = (
+      <>
+        <p className="px-2 py-2 text-caption text-muted" role="status">{tasks.length} matching tasks</p>
+        <ul className="flex flex-col gap-1 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+      </>
+    );
+  } else {
+    body = (
+      // The shelves sit at the foot of the list while the active Tasks are few, and follow them once they scroll.
+      <div className="flex min-h-full flex-col">
+        <ul className="flex flex-col gap-1 animate-fade-in">{active.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+        {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
+        <div className="mt-auto">
+          <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${shelfScope}:settled`]} onToggle={() => toggleShelf(`${shelfScope}:settled`)} />
+          <Shelf projects={projectMap} label="Archived" tasks={archived} selectedId={selectedId} open={!!shelves[`${shelfScope}:archived`]} onToggle={() => toggleShelf(`${shelfScope}:archived`)} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <nav aria-label="Tasks" className="flex h-full min-h-0 flex-col bg-rail text-body">
       <header className="flex h-header shrink-0 items-center gap-0.5 px-2">
@@ -375,8 +414,7 @@ export const Sidebar = memo(function Sidebar({
           <Tip
             label={
               <>
-                New task
-                <span className="block text-on-primary/70">Alt+N</span>
+                New task<span className="block text-on-primary/70">Alt+N</span>
               </>
             }
           >
@@ -389,39 +427,14 @@ export const Sidebar = memo(function Sidebar({
 
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
       <div ref={list} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-1 pb-3" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)}>
-        {!loaded ? (
-          <Skeleton label="Loading tasks…" rows={5} className="gap-1" rowClassName="h-14 w-full rounded-md" />
-        ) : projects.length === 0 ? (
-          <div className="flex flex-col items-start gap-3 px-2 pt-6">
-            <p className="text-ui text-muted">No projects yet. A project is a directory on this host.</p>
-            <Button variant="secondary" size="sm" onClick={actions.onAddProject}>
-              <FolderPlus />
-              Add project
-            </Button>
-          </div>
-        ) : query.trim() ? (
-          <>
-            <p className="px-2 py-2 text-caption text-muted" role="status">{tasks.length} matching tasks</p>
-            <ul className="flex flex-col gap-1 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
-          </>
-        ) : (
-          // The shelves sit at the foot of the list while the active Tasks are few, and follow them once they scroll.
-          <div className="flex min-h-full flex-col">
-            <ul className="flex flex-col gap-1 animate-fade-in">{active.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
-            {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
-            <div className="mt-auto">
-              <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${shelfScope}:settled`]} onToggle={() => toggleShelf(`${shelfScope}:settled`)} />
-              <Shelf projects={projectMap} label="Archived" tasks={archived} selectedId={selectedId} open={!!shelves[`${shelfScope}:archived`]} onToggle={() => toggleShelf(`${shelfScope}:archived`)} />
-            </div>
-          </div>
-        )}
+        {body}
       </div>
 
       {connection !== 'connected' && (
-        <p role="status" className={cn('mx-2 mb-2 flex items-start gap-2 rounded-sm px-2 py-1.5 text-caption', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
+        <output className={cn('mx-2 mb-2 flex items-start gap-2 rounded-sm px-2 py-1.5 text-caption', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
           <Dot tone={conn} pulse className="mt-1.5" />
           {CONNECTION_TEXT[connection]}
-        </p>
+        </output>
       )}
       <footer className="flex min-h-9 shrink-0 items-center gap-2 px-3 text-caption text-muted">
         <Tip label="Settings">
@@ -430,10 +443,10 @@ export const Sidebar = memo(function Sidebar({
           </Button>
         </Tip>
         <Tip label={connection === 'connected' ? 'Connected' : CONNECTION_TEXT[connection]}>
-          <span role="status" className="flex size-7 items-center justify-center">
+          <output className="flex size-7 items-center justify-center">
             <Dot tone={conn} pulse={connection !== 'connected'} />
             <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
-          </span>
+          </output>
         </Tip>
         {version && <span className="truncate text-meta" title={version}>{version}</span>}
         <span className="flex-1" />

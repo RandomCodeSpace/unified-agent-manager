@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { api, describeError, isStatus } from '../api';
 import { Note } from './common';
 import { Brand } from './Sidebar';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 
-export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
+export function Login({ onLoggedIn }: Readonly<{ onLoggedIn: () => void }>) {
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -15,7 +15,7 @@ export function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
     field.current?.focus();
   }, []);
 
-  async function submit(e: FormEvent) {
+  async function submit(e: SubmitEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);

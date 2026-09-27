@@ -35,7 +35,7 @@ export interface DialogProps {
   footer?: ReactNode;
 }
 
-export function Dialog({ open, onOpenChange, onClosed, initialFocus, title, description, children, footer, className }: DialogProps) {
+export function Dialog({ open, onOpenChange, onClosed, initialFocus, title, description, children, footer, className }: Readonly<DialogProps>) {
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>
       <BaseDialog.Portal>
@@ -65,7 +65,7 @@ export function Dialog({ open, onOpenChange, onClosed, initialFocus, title, desc
  * An image viewer: no surface, the content on a dark see-through scrim, the title and close
  * in light text above it and `footer` right-aligned under it. A press outside the content closes it.
  */
-export function ViewerDialog({ open, onOpenChange, onClosed, title, description, children, footer }: Omit<DialogProps, 'initialFocus' | 'className'>) {
+export function ViewerDialog({ open, onOpenChange, onClosed, title, description, children, footer }: Readonly<Omit<DialogProps, 'initialFocus' | 'className'>>) {
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>
       <BaseDialog.Portal>
@@ -142,7 +142,7 @@ export function useConfirm<T>() {
 }
 
 /** Confirmation with the safe action focused first (DESIGN.md: initial focus on the least destructive button). */
-export function AlertDialog({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel' }: AlertDialogProps) {
+export function AlertDialog({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel' }: Readonly<AlertDialogProps>) {
   const cancel = useRef<HTMLButtonElement>(null);
   return (
     <BaseAlertDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>

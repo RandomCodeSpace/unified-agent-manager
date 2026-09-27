@@ -1,12 +1,13 @@
 // ESLint flat config: TypeScript, React hooks and JSX accessibility. `npm run lint` runs
 // as part of `prebuild`, so `make web` and CI enforce it.
 import js from '@eslint/js';
+import { defineConfig } from 'eslint/config';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
 import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
+export default defineConfig(
   { ignores: ['../internal/web/dist/**', 'node_modules/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,

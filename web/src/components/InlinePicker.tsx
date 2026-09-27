@@ -29,7 +29,7 @@ export function InlinePicker({
   onHighlight,
   onPick,
   popupRef,
-}: {
+}: Readonly<{
   id: string;
   title: string;
   items: PickerItem[];
@@ -42,10 +42,11 @@ export function InlinePicker({
   onHighlight: (index: number) => void;
   onPick: (item: PickerItem) => void;
   popupRef: React.RefObject<HTMLDivElement | null>;
-}) {
+}>) {
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    list.current?.querySelector<HTMLElement>(`#${CSS.escape(`${id}-${items[highlighted]?.key ?? ''}`)}`)?.scrollIntoView({ block: 'nearest' });
+    const optionId = `${id}-${items[highlighted]?.key ?? ''}`;
+    list.current?.querySelector<HTMLElement>(`#${CSS.escape(optionId)}`)?.scrollIntoView({ block: 'nearest' });
   }, [highlighted, id, items]);
   // A press anywhere in the popover (rows, header, scrollbar) must not take focus from the textarea.
   useEffect(() => {
@@ -114,6 +115,6 @@ export function InlinePicker({
 }
 
 /** A keycap in a hint line. */
-export function Key({ children }: { children: ReactNode }) {
+export function Key({ children }: Readonly<{ children: ReactNode }>) {
   return <kbd className="inline-flex h-4 min-w-4 items-center justify-center rounded-xs bg-sunken px-1 text-keycap text-muted">{children}</kbd>;
 }

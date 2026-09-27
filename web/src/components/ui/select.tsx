@@ -27,7 +27,7 @@ export function Select({
   className,
   'aria-label': ariaLabel,
   'aria-describedby': describedBy,
-}: {
+}: Readonly<{
   id?: string;
   value: string;
   onValueChange: (value: string) => void;
@@ -36,7 +36,7 @@ export function Select({
   className?: string;
   'aria-label'?: string;
   'aria-describedby'?: string;
-}) {
+}>) {
   const plain = items.map(({ value: v, label }) => ({ value: v, label: typeof label === 'string' ? label : v }));
   return (
     <BaseSelect.Root value={value} onValueChange={(v) => onValueChange(v as string)} items={plain} disabled={disabled}>

@@ -10,7 +10,7 @@ import { Tip } from './ui/tooltip';
 
 const tones = { accent: 'text-accent', attention: 'text-attention', danger: 'text-error', muted: 'text-muted' };
 
-function Value({ id, label, title, face, children, className }: { id?: string; label: string; title: string; face: ReactNode; children: ReactNode; className?: string }) {
+function Value({ id, label, title, face, children, className }: Readonly<{ id?: string; label: string; title: string; face: ReactNode; children: ReactNode; className?: string }>) {
   return (
     <Popover.Root>
       <Tip label={label}>
@@ -27,7 +27,7 @@ function Value({ id, label, title, face, children, className }: { id?: string; l
 }
 
 /** Usage belongs beside the model; unknown values never become a zero estimate. */
-export function ComposerUsage({ session, model }: { session: SessionDetail; model?: Model }) {
+export function ComposerUsage({ session, model }: Readonly<{ session: SessionDetail; model?: Model }>) {
   const { usage } = useApp();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -39,7 +39,8 @@ export function ComposerUsage({ session, model }: { session: SessionDetail; mode
   const contextLabel = context && context.limit > 0 ? contextText(context) : 'Context usage not reported yet';
   const quota = providerQuota(usage?.quotas, session.provider);
   const cost = estimateTurnCost(model, context, session.context_size);
-  const quotaLabel = quota ? `${quotaFace(quota)}${usage?.stale ? ' · stale' : ''}` : 'Usage unavailable';
+  const stale = usage?.stale ? ' · stale' : '';
+  const quotaLabel = quota ? `${quotaFace(quota)}${stale}` : 'Usage unavailable';
   const reset = quota?.reset_at && Date.parse(quota.reset_at) > now ? new Date(quota.reset_at).toLocaleString() : null;
   // The ring waits for a reported value; on a phone the credits are a glyph. The per-turn estimate lives in the credits
   // popover at every width, so the control row stays one row.
@@ -55,7 +56,7 @@ export function ComposerUsage({ session, model }: { session: SessionDetail; mode
         {context?.prompt !== undefined && <p className="text-caption text-muted">Latest prompt: {compactTokens(context.prompt)} tokens</p>}
         {context?.cached !== undefined && <p className="text-caption text-muted">Cached in latest call: {compactTokens(context.cached)} tokens</p>}
       </Value>}
-      {session.capabilities.usage && <>
+      {session.capabilities.usage && (
         <Value id="composer-usage" label={`AI credits: ${quotaLabel}`} title="AI credits" face={<><Coins aria-hidden="true" className="size-4 text-faint sm:hidden" /><span className="max-sm:hidden">{quotaLabel}</span></>} className={quota ? tones[creditsTone(quota)] : 'text-muted'}>
           <p>{quota ? quotaText(quota) : 'The provider has not reported account usage.'}</p>
           {reset && <p className="text-caption text-muted">Resets {reset}</p>}
@@ -63,7 +64,7 @@ export function ComposerUsage({ session, model }: { session: SessionDetail; mode
           {cost !== null && <p className="text-caption">≈ {formatCredits(cost)} credits per turn at {compactTokens(context!.used)} context tokens, input only. Reported cached tokens use the cache-read price; actual usage may differ.</p>}
           {usage?.stale && <p className="text-caption text-attention">The last refresh failed. Showing the previous quota.</p>}
         </Value>
-      </>}
+      )}
     </>
   );
 }

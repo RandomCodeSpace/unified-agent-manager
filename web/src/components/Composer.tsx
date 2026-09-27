@@ -34,7 +34,11 @@ export const MODE_TEXT = {
   yolo: 'Allows permission requests automatically. Questions and managed-policy requests still need you.',
 } as const;
 
-export const sizeLabel = (id: string) => (id === 'long_context' ? 'Long context' : id === 'default' ? 'Default' : id);
+export function sizeLabel(id: string): string {
+  if (id === 'long_context') return 'Long context';
+  if (id === 'default') return 'Default';
+  return id;
+}
 
 /** Why effort or context size cannot be chosen for this model and provider; empty when they can. */
 export function effortReason(model?: Model): string {
@@ -97,7 +101,7 @@ function Picker({
   compact = false,
   className,
   onChange,
-}: {
+}: Readonly<{
   id: string;
   icon: ReactNode;
   label: string;
@@ -111,7 +115,7 @@ function Picker({
   compact?: boolean;
   className?: string;
   onChange: (value: string) => void;
-}) {
+}>) {
   const face = (
     <>
       {icon}
@@ -126,9 +130,10 @@ function Picker({
   );
   const tip = (first: string) => (hint ? <>{first}<span className="block text-on-primary/70">{hint}</span></> : first);
   if (disabled) {
+    const hintSuffix = hint ? ` ${hint}.` : '';
     return (
       <Tip label={tip(reason ?? `${label} cannot change now`)}>
-        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hint ? ` ${hint}.` : ''}`} className={cn('min-w-0 shrink text-muted', className)}>
+        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hintSuffix}`} className={cn('min-w-0 shrink text-muted', className)}>
           {face}
         </Button>
       </Tip>
@@ -156,7 +161,13 @@ function Picker({
   );
 }
 
-function CommandRow({ c }: { c: Command }) {
+/** The row's accessible name: the command, its aliases, and why it cannot run or what it does. */
+function commandLabel(c: Command, live: boolean): string {
+  const aliases = c.aliases?.length ? `, aliases ${c.aliases.map((name) => '/' + name).join(', ')}` : '';
+  return `/${c.name}${aliases}. ${commandReason(c, live) || c.description}`;
+}
+
+function CommandRow({ c }: Readonly<{ c: Command }>) {
   return (
     <>
       <span className="shrink-0 text-caption font-medium text-ink">/{c.name}</span>
@@ -167,7 +178,7 @@ function CommandRow({ c }: { c: Command }) {
   );
 }
 
-function FileRow({ f }: { f: FileEntry }) {
+function FileRow({ f }: Readonly<{ f: FileEntry }>) {
   const cut = f.path.lastIndexOf('/');
   const dir = cut >= 0 ? f.path.slice(0, cut + 1) : '';
   const base = f.path.slice(cut + 1);
@@ -226,7 +237,7 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
 
 export const Composer = memo(ComposerView, sameComposerProps);
 
-function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerProps) {
+function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<ComposerProps>) {
   const { meta, metaError, settings: appSettings, dispatch } = useApp();
   // The catalogs are still on their way: the pickers' slot holds a skeleton, since their values would be a guess.
   const catalogPending = !meta && !metaError;
@@ -314,7 +325,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
   const pendingExecution = useRef<{ mode: 'interactive' | 'autopilot'; id: string } | null>(null);
   const commandKey = `${session.id}:${session.open}:${live}:${session.mode}:${session.execution?.mode}:${commandVersion}`;
   const [commandList, setCommandList] = useState<{ key: string; commands: Command[] | null; error: string | null } | null>(null);
-  const commands = newTask ? NO_COMMANDS : commandList?.key === commandKey ? commandList.commands : null;
+  let commands: Command[] | null = null;
+  if (newTask) commands = NO_COMMANDS;
+  else if (commandList?.key === commandKey) commands = commandList.commands;
   const commandsError = commandList?.key === commandKey ? commandList.error : null;
   const [fileList, setFileList] = useState<{ q: string; files: FileEntry[]; reason: string } | null>(null);
   const fileSeq = useRef(0);
@@ -327,7 +340,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
   const pendingCommand = commandPending(text, commands, commandsError);
   const wantCommands = !locked && (executionOpen || trigger?.kind === '/' || trigger?.kind === '$' || pendingCommand);
   const autopilotCommand = commands?.find((c) => c.kind === 'command' && (c.name === 'autopilot' || c.aliases?.includes('autopilot')));
-  const executionReason = locked ? 'This task is read-only.' : session.state === 'starting' ? 'Wait for this task to start.' : commandsError || (!commands ? 'Loading execution controls…' : !autopilotCommand ? 'Autopilot is unavailable for this provider.' : commandReason(autopilotCommand, LIVE.includes(session.state)));
+  /** Why the execution mode cannot change now; empty when it can. */
+  function describeExecutionReason(): string {
+    if (locked) return 'This task is read-only.';
+    if (session.state === 'starting') return 'Wait for this task to start.';
+    if (commandsError) return commandsError;
+    if (!commands) return 'Loading execution controls…';
+    if (!autopilotCommand) return 'Autopilot is unavailable for this provider.';
+    return commandReason(autopilotCommand, LIVE.includes(session.state));
+  }
+  const executionReason = describeExecutionReason();
 
   // Fetching can reopen an exact closed conversation, but never submits a prompt.
   // Catalogue failures hold slash-shaped input instead of falling through to a prompt.
@@ -386,7 +408,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       return [...matched.filter((c) => c.kind !== 'skill'), ...matched.filter((c) => c.kind === 'skill')].map((c) => ({
         key: c.name,
         group: c.kind === 'skill' ? 'Skills' : 'Commands',
-        label: `/${c.name}${c.aliases?.length ? `, aliases ${c.aliases.map((name) => `/${name}`).join(', ')}` : ''}. ${commandReason(c, live) || c.description}`,
+        label: commandLabel(c, live),
         disabled: !!commandReason(c, live),
         render: <CommandRow c={c} />,
       }));
@@ -482,7 +504,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       kinds.push(kind);
       if (kind === 'image') {
         const reader = new FileReader();
-        reader.onload = () => patch(key, { preview: String(reader.result) });
+        reader.onload = () => { if (typeof reader.result === 'string') patch(key, { preview: reader.result }); };
         reader.readAsDataURL(file);
       }
       if (newTask) {
@@ -546,15 +568,15 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
   const cmd = commands ? parseCommand(text, commands) : null;
   const descriptor = commands?.find((c) => c.name === cmd?.name);
   const commandBlocked = commandReason(descriptor, live) || (descriptor?.input_required && !cmd?.args ? `/${descriptor.name} needs ${descriptor.input_hint || 'an argument'}.` : '');
-  const blocked = uploading
-    ? 'Wait for the upload to finish'
-    : refused
-      ? 'Remove the attachment that was refused'
-      : pendingCommand
-        ? 'Wait for the command list to load'
-        : shapedCommand && commandsError
-          ? 'Commands could not be loaded. Retry the command list.'
-          : commandBlocked;
+  /** Why nothing can be sent now; empty when it can. */
+  function describeBlocked(): string {
+    if (uploading) return 'Wait for the upload to finish';
+    if (refused) return 'Remove the attachment that was refused';
+    if (pendingCommand) return 'Wait for the command list to load';
+    if (shapedCommand && commandsError) return 'Commands could not be loaded. Retry the command list.';
+    return commandBlocked;
+  }
+  const blocked = describeBlocked();
   const settingsSteerReason = live && selectionChanged ? 'Model, effort and context changes apply to the next turn. Steering keeps the current settings.' : '';
   const steerBlocked = steerUnavailable || settingsSteerReason;
   const cannotSubmit = !!busy || locked || session.state === 'starting' || !text.trim() || !!blocked;
@@ -597,7 +619,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       return;
     }
     const key = JSON.stringify([t, files, attachmentIds, cmd?.name ?? '', cmd ? null : selection]);
-    if (!pending.current || pending.current.key !== key) pending.current = { key, id: newRequestId() };
+    if (pending.current?.key !== key) pending.current = { key, id: newRequestId() };
     const id = pending.current.id;
     refocus.current = true;
     setBusy(promptMode);
@@ -721,25 +743,44 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
     }
   }
 
-  const sendLabel = busy === enter ? 'Submitting…' : cmd ? `Run /${cmd.name}` : live ? (enter === 'steer' ? 'Steer' : 'Queue') : 'Send';
-  const pickerNote =
-    (trigger?.kind === '/' || trigger?.kind === '$') ? (newTask && !argument ? `${trigger.kind === '$' ? 'Skills are' : 'Commands are'} available after the first message.` : commandsError || (items[hi]?.disabled ? commandReason(commands?.find((c) => c.name === items[hi].key), live) : null)) : trigger?.kind === '@' && fileList?.q === trigger.query && fileList.reason ? sentence(fileList.reason) : null;
-  const pickerEmpty =
-    (trigger?.kind === '/' || trigger?.kind === '$')
-      ? argument
-        ? 'Type arguments, then press Enter to run.'
-        : newTask
-        ? null
-        : commands && commands.length === 0
-        ? 'This task has no commands.'
-        : trigger.query
-          ? `No command matches “/${trigger.query}”. Enter closes the list; Enter again sends it as text.`
-          : null
-      : trigger?.kind === '@'
-        ? trigger.query
-          ? `No file matches “${trigger.query}”.`
-          : 'No files to reference.'
-        : null;
+  /** The send button's name: what Enter does now. */
+  function describeSend(): string {
+    if (busy === enter) return 'Submitting…';
+    if (cmd) return `Run /${cmd.name}`;
+    if (!live) return 'Send';
+    return enter === 'steer' ? 'Steer' : 'Queue';
+  }
+  const sendLabel = describeSend();
+  /** The line under the picker's rows: a reason, an error; none when there is nothing to say. */
+  function describePickerNote(): string | null {
+    if (trigger?.kind === '/' || trigger?.kind === '$') {
+      if (newTask && !argument) return `${trigger.kind === '$' ? 'Skills are' : 'Commands are'} available after the first message.`;
+      if (commandsError) return commandsError;
+      return items[hi]?.disabled ? commandReason(commands?.find((c) => c.name === items[hi].key), live) : null;
+    }
+    if (trigger?.kind === '@' && fileList?.q === trigger.query && fileList.reason) return sentence(fileList.reason);
+    return null;
+  }
+  const pickerNote = describePickerNote();
+  /** What the picker says instead of rows when there are none. */
+  function describePickerEmpty(): string | null {
+    if (trigger?.kind === '/' || trigger?.kind === '$') {
+      if (argument) return 'Type arguments, then press Enter to run.';
+      if (newTask) return null;
+      if (commands?.length === 0) return 'This task has no commands.';
+      return trigger.query ? `No command matches “/${trigger.query}”. Enter closes the list; Enter again sends it as text.` : null;
+    }
+    if (trigger?.kind === '@') return trigger.query ? `No file matches “${trigger.query}”.` : 'No files to reference.';
+    return null;
+  }
+  const pickerEmpty = describePickerEmpty();
+  /** The picker's heading: the command's arguments, skills, commands or files. */
+  function describePickerTitle(): string {
+    if (argument) return `/${argument.command.name} arguments`;
+    if (trigger?.kind === '$') return 'Skills';
+    if (trigger?.kind === '/') return 'Commands';
+    return 'Files';
+  }
   const modeChoices: Choice[] = [
     { value: 'safe', label: 'Safe', description: MODE_TEXT.safe },
     { value: 'yolo', label: 'Yolo', description: MODE_TEXT.yolo },
@@ -792,6 +833,62 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       </Menu.Group>
     </>
   );
+  /** Why effort and context cannot change now, or that this model has nothing to change. */
+  function describeTuningReason(): string {
+    if (locked) return 'This task is read-only.';
+    if (busy) return 'Wait for the current action to finish.';
+    return 'This model uses its default effort and context size.';
+  }
+  const tuningReason = describeTuningReason();
+  const objectiveSuffix = executionKnown && session.execution?.objective ? ` · ${session.execution.objective.status}` : '';
+  /** The textarea's placeholder: what Enter does while a turn runs, else the invitation. */
+  function describePlaceholder(): string {
+    if (locked) return '';
+    if (!live) return 'Ask anything, @ files, $ skills, / commands';
+    return steerDefault ? 'Steer this turn, or queue a follow-up…' : 'Queue a follow-up, or steer this turn…';
+  }
+  /** The send button's tip: why it is blocked, or what Enter and Ctrl+Enter do. */
+  function describeSendTip(): ReactNode {
+    if (blocked) return blocked;
+    if (live && !cmd) {
+      return (
+        <>
+          {enter === 'steer' ? 'Steer this turn (Enter)' : 'Queue for the next turn (Enter)'}
+          <span className="block text-on-primary/70">{steerBlocked || (enter === 'steer' ? 'Ctrl+Enter queues' : 'Ctrl+Enter steers')} · Shift+Enter adds a line</span>
+        </>
+      );
+    }
+    return (
+      <>
+        {cmd ? `Run /${cmd.name} (Enter)` : 'Send (Enter)'}
+        <span className="block text-on-primary/70">Shift+Enter adds a line</span>
+      </>
+    );
+  }
+  /** The confirmation for a discard: the one prompt, or the whole queue. */
+  function describeDiscard(): string {
+    if (discard.target?.kind !== 'all') return 'Cancel this queued prompt?';
+    return discard.target.count === 1 ? 'Clear the queued prompt?' : `Clear ${discard.target.count} queued prompts?`;
+  }
+  // A command's result under the composer: choices to pick from, Markdown, or plain text.
+  let resultBody: ReactNode = null;
+  if (commandResult?.kind === 'select') {
+    resultBody = (
+      <>
+        <p className="text-caption text-muted">{commandResult.title}</p>
+        <div className="max-h-40 overflow-y-auto">
+          {commandResult.options.map((choice) => <Button key={choice.name} size="sm" variant="subtle" disabled={!!busy || locked} className="h-auto min-h-8 w-full justify-start whitespace-normal text-left pointer-coarse:min-h-11" onClick={() => {
+            const next = `/${commandResult.command} ${choice.name} `;
+            updateText(next, next.length); pendingCaret.current = next.length; dismissResult(); textarea.current?.focus();
+          }}><span>{choice.name}</span><span className="text-caption text-muted">{choice.description}</span></Button>)}
+        </div>
+      </>
+    );
+  } else if (commandResult?.kind === 'text' && commandResult.markdown) {
+    resultBody = <Markdown text={commandResult.text} />;
+  } else if (commandResult && commandResult.kind !== 'action') {
+    resultBody = <p className="whitespace-pre-wrap" role="status">{commandResult.text || 'Command completed.'}</p>;
+  }
   const combo = trigger
     ? {
         role: 'combobox' as const,
@@ -842,7 +939,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       {trigger && (
         <InlinePicker
           id={LIST_ID}
-          title={argument ? `/${argument.command.name} arguments` : trigger.kind === '$' ? 'Skills' : trigger.kind === '/' ? 'Commands' : 'Files'}
+          title={describePickerTitle()}
           items={items}
           highlighted={hi}
           loading={trigger.kind !== '@' ? commandsLoading : filesLoading && !fileList}
@@ -889,15 +986,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       {commandResult && commandResult.kind !== 'action' && (
         <div className="px-3.5 py-2 text-ui text-body">
           <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon-sm" variant="subtle" aria-label="Dismiss command result" onClick={() => dismissResult()}><X /></Button></div>
-          {commandResult.kind === 'select' ? <>
-            <p className="text-caption text-muted">{commandResult.title}</p>
-            <div className="max-h-40 overflow-y-auto">
-              {commandResult.options.map((choice) => <Button key={choice.name} size="sm" variant="subtle" disabled={!!busy || locked} className="h-auto min-h-8 w-full justify-start whitespace-normal text-left pointer-coarse:min-h-11" onClick={() => {
-                const next = `/${commandResult.command} ${choice.name} `;
-                updateText(next, next.length); pendingCaret.current = next.length; dismissResult(); textarea.current?.focus();
-              }}><span>{choice.name}</span><span className="text-caption text-muted">{choice.description}</span></Button>)}
-            </div>
-          </> : commandResult.kind === 'text' && commandResult.markdown ? <Markdown text={commandResult.text} /> : <p className="whitespace-pre-wrap" role="status">{commandResult.text || 'Command completed.'}</p>}
+          {resultBody}
         </div>
       )}
       {queueStrip.mounted && (
@@ -952,7 +1041,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
       {(discard.target || discard.props.open) && (
         <AlertDialog
           {...discard.props}
-          title={discard.target?.kind === 'all' ? `Clear ${discard.target.count === 1 ? 'the queued prompt' : `${discard.target.count} queued prompts`}?` : 'Cancel this queued prompt?'}
+          title={describeDiscard()}
           description={discard.target?.kind === 'all' ? 'Their text is not kept; nothing else changes.' : 'Its text is not kept; nothing else changes.'}
           confirmLabel={discard.target?.kind === 'all' ? 'Clear queue' : 'Cancel prompt'}
           cancelLabel="Keep"
@@ -985,7 +1074,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         id="composer-text"
         rows={2}
         value={text}
-        placeholder={locked ? '' : live ? (steerDefault ? 'Steer this turn, or queue a follow-up…' : 'Queue a follow-up, or steer this turn…') : 'Ask anything, @ files, $ skills, / commands'}
+        placeholder={describePlaceholder()}
         onChange={(e) => updateText(e.target.value, e.target.selectionStart ?? e.target.value.length)}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
         onKeyDown={onKeyDown}
@@ -1070,8 +1159,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         <ComposerUsage session={session} model={catalog.find((m) => m.id === session.model)} />
         <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline-strong max-sm:hidden" />
         {settingsLocked || fixedTuning ? (
-          <Tip label={locked ? 'This task is read-only.' : busy ? 'Wait for the current action to finish.' : 'This model uses its default effort and context size.'}>
-            <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort and context size: ${tuningLabel}. ${locked ? 'This task is read-only.' : busy ? 'Wait for the current action to finish.' : 'This model uses its default effort and context size.'}`} className="text-muted max-sm:hidden">
+          <Tip label={tuningReason}>
+            <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort and context size: ${tuningLabel}. ${tuningReason}`} className="text-muted max-sm:hidden">
               <Gauge aria-hidden="true" className="text-faint" />
               <span>{tuningLabel}</span>
               <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
@@ -1101,7 +1190,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           </Tip>
         ) : (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
-            <Tip label={<>{`Permissions and execution: ${runLabel}${executionKnown && session.execution?.objective ? ` · ${session.execution.objective.status}` : ''}`}<span className="block text-on-primary/70">{risk.text}</span></>}>
+            <Tip label={<>{`Permissions and execution: ${runLabel}${objectiveSuffix}`}<span className="block text-on-primary/70">{risk.text}</span></>}>
               <Menu.Trigger render={<Button id="composer-mode" size="sm" variant="subtle" aria-label={`Permissions and execution: ${runLabel}`} aria-busy={!!busy} className="min-w-0 shrink max-sm:hidden" />}>
                 {runIcon}
                 <span className="max-w-40 truncate">{runLabel}</span>
@@ -1156,23 +1245,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           </Tip>
         </Appear>
         {!locked && (
-          <Tip
-            label={
-              blocked ? (
-                blocked
-              ) : live && !cmd ? (
-                <>
-                  {enter === 'steer' ? 'Steer this turn (Enter)' : 'Queue for the next turn (Enter)'}
-                  <span className="block text-on-primary/70">{steerBlocked || (enter === 'steer' ? 'Ctrl+Enter queues' : 'Ctrl+Enter steers')} · Shift+Enter adds a line</span>
-                </>
-              ) : (
-                <>
-                  {cmd ? `Run /${cmd.name} (Enter)` : 'Send (Enter)'}
-                  <span className="block text-on-primary/70">Shift+Enter adds a line</span>
-                </>
-              )
-            }
-          >
+          <Tip label={describeSendTip()}>
             <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === enter} disabled={cannotSubmit || (!cmd && enter === 'steer' && !!settingsSteerReason)}>
               <ArrowUp aria-hidden="true" strokeWidth={2.25} />
             </Button>
@@ -1181,9 +1254,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         </span>
       </div>
       {busy && busy !== 'settings' && (
-        <span className="sr-only" role="status">
+        <output className="sr-only">
           Updating {busy}…
-        </span>
+        </output>
       )}
     </form>
   );

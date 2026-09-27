@@ -1,3 +1,4 @@
+import { byCodeUnit } from './order.ts';
 import type { HistoryPage, Item, SessionDetail } from '../api';
 import { boundItems, idleSteerEcho, itemCursor, mergeItems, placeIdleSteerEchoes, TAIL_ITEMS } from './historyWindow.ts';
 import { questionOf } from './transcript.ts';
@@ -22,7 +23,8 @@ export function upsertTranscriptItem(items: Item[], item: Item): Item[] {
   next[at] = item;
   return next;
 }
-export function indexPage(index: Item[] = [], items: Item[], direction: 'older' | 'newer' = 'newer'): Item[] {
+export function indexPage(held: Item[] | undefined, items: Item[], direction: 'older' | 'newer' = 'newer'): Item[] {
+  const index = held ?? [];
   const incoming = items.map(indexItem), fresh = new Map(incoming.map(item => [item.id, item]));
   const known = new Map(index.map(item => [item.id, item]));
   const moved = new Set(incoming.filter(item => {
@@ -45,8 +47,12 @@ export function windowPage(detail: SessionDetail, page: HistoryPage, direction: 
   if (detail.representation !== 'compact-v1' || page.after === undefined) return { ...detail, items: mergeItems(detail.items, page.items, direction), history_before: page.before };
   const merged = mergeItems(detail.items, page.items, direction);
   const bounded = boundItems(merged, direction);
-  const before = bounded.droppedBefore.length ? itemCursor(bounded.items[0].id) : direction === 'older' ? page.before : detail.history_before;
-  const after = bounded.droppedAfter.length ? itemCursor(bounded.items.at(-1)!.id) : direction === 'newer' ? page.after ?? '' : detail.history_after ?? '';
+  let before = detail.history_before;
+  if (bounded.droppedBefore.length) before = itemCursor(bounded.items[0].id);
+  else if (direction === 'older') before = page.before;
+  let after = detail.history_after ?? '';
+  if (bounded.droppedAfter.length) after = itemCursor(bounded.items.at(-1)!.id);
+  else if (direction === 'newer') after = page.after ?? '';
   return { ...detail, items: bounded.items, history_before: before, history_after: after, history_index: indexPage(detail.history_index, page.items, direction) };
 }
 export function recentProjection(detail: SessionDetail): SessionDetail {
@@ -80,7 +86,8 @@ export function groupIdentities(items: Item[], toolsOnly: boolean | 'turn' = fal
     for (const id of group) identities.set(id, key);
     group = [];
   };
-  const times = [...interruptions].sort();
+  // Code-unit order, as `<` compares the ISO times below; a locale order need not agree with it.
+  const times = [...interruptions].sort(byCodeUnit);
   let interruption = 0;
   for (const item of items) {
     while (interruption < times.length && times[interruption] < item.time) { flush(); interruption++; }
