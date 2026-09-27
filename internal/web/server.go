@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,10 +42,12 @@ const (
 	// Mermaid renders in (ADR 0004, "Diagrams in a sandboxed frame"). The page
 	// embeds it with sandbox="allow-scripts" and no allow-same-origin, so its
 	// origin is opaque: it holds no cookie and, with connect-src 'none', can
-	// reach no route. 'self' resolves to this service's origin for the script;
-	// inline styles are allowed because Mermaid's SVG needs them.
+	// reach no route. Its requests carry no cookie either, so a sign-in proxy in
+	// front of the service would answer a separate script with a redirect to
+	// its login page: the one script is inline, and framePolicy allows exactly
+	// that script by its hash. Inline styles are allowed because Mermaid's SVG
+	// needs them.
 	frameDocument = "diagram-frame.html"
-	frameSecurity = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 	// viewSecurity replaces the policy for a file of a Task's directory opened
 	// in its own tab or the app's preview, such as an HTML report: its scripts run
 	// and it loads what it likes, but without allow-same-origin its origin is
@@ -85,6 +88,8 @@ type Server struct {
 	grants    *tempGrants
 	// terminalOrigins are the public origins as WebSocket origin patterns.
 	terminalOrigins []string
+	// frameSecurity and frameETag are framePolicy's for the embedded frame document.
+	frameSecurity, frameETag string
 }
 
 // NewServer validates cfg and builds the handler.
@@ -116,6 +121,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		}
 		s.assets = sub
 	}
+	frame, _ := fs.ReadFile(s.assets, frameDocument)
+	s.frameSecurity, s.frameETag = framePolicy(frame)
 	s.grants = newTempGrants(s.m)
 	s.routes()
 	return s, nil
@@ -1097,6 +1104,22 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// framePolicy returns the frame document's policy, which allows the document's
+// one inline script by its SHA-256 (no script without one), and a weak
+// validator for the document; weak, since it may be sent gzipped.
+func framePolicy(doc []byte) (policy, etag string) {
+	script := "'none'"
+	if _, rest, ok := bytes.Cut(doc, []byte("<script>")); ok {
+		if code, _, ok := bytes.Cut(rest, []byte("</script>")); ok {
+			sum := sha256.Sum256(code)
+			script = "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+		}
+	}
+	sum := sha256.Sum256(doc)
+	return "default-src 'none'; script-src " + script + "; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+		fmt.Sprintf(`W/"%x"`, sum[:12])
+}
+
 // handleStatic serves the embedded single-page application: real files as
 // themselves, anything else that looks like an app route as index.html, and
 // never a directory listing.
@@ -1145,10 +1168,12 @@ func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string)
 		w.Header().Set("Content-Type", "application/manifest+json")
 		w.Header().Set("Cache-Control", "no-cache")
 	case frameDocument:
+		// The document carries the whole renderer: revalidated, it costs a 304.
 		h := w.Header()
-		h.Set("Content-Security-Policy", frameSecurity)
+		h.Set("Content-Security-Policy", s.frameSecurity)
 		h.Set("X-Frame-Options", "SAMEORIGIN")
 		h.Set("Cache-Control", "no-cache")
+		h.Set("ETag", s.frameETag)
 	default:
 		switch ext := path.Ext(name); {
 		case strings.HasPrefix(name, "assets/"):

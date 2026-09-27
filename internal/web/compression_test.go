@@ -216,7 +216,7 @@ func TestCompressionStaticHTTPAndSecurity(t *testing.T) {
 				}
 				wantCSP, wantFrame := contentSecurity, "DENY"
 				if path == "/diagram-frame.html" {
-					wantCSP, wantFrame = frameSecurity, "SAMEORIGIN"
+					wantCSP, wantFrame = ts.srv.frameSecurity, "SAMEORIGIN"
 				}
 				if resp.Header.Get("Content-Security-Policy") != wantCSP || resp.Header.Get("X-Frame-Options") != wantFrame {
 					t.Fatal("security policy changed")

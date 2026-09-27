@@ -1,4 +1,4 @@
-import { build, defineConfig, type Plugin, type ResolvedConfig } from 'vite';
+import { build, defineConfig, type Plugin, type ResolvedConfig, type Rollup } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -20,7 +20,8 @@ export default defineConfig({
 const FRAME_DOCUMENT = 'diagram-frame.html';
 const FRAME_ENTRY = 'src/diagram-frame/main.ts';
 
-const frameHtml = (script: string, module = false) =>
+/** The frame document around its one script element: inline in a build (see diagramFrame), the source module in dev. */
+const frameHtml = (script: string) =>
   [
     '<!doctype html>',
     '<html lang="en">',
@@ -31,7 +32,7 @@ const frameHtml = (script: string, module = false) =>
     '    <title>Diagram renderer</title>',
     '  </head>',
     '  <body>',
-    `    <script${module ? ' type="module"' : ''} src="${script}"></script>`,
+    `    ${script}`,
     '  </body>',
     '</html>',
     '',
@@ -42,9 +43,11 @@ const frameHtml = (script: string, module = false) =>
  * because the page embeds the document sandboxed without `allow-same-origin`, its origin is
  * opaque, and a module script from an opaque origin needs CORS headers the service never
  * sends. An IIFE entry cannot join the code-split app build, so the frame is built on its own
- * after it, into the same directory, with Mermaid's lazy diagram chunks inlined; the document
- * that loads it is emitted with the hashed script name. In dev the same document loads the
- * source as a module (see `server.cors`).
+ * after it, into the same directory, with Mermaid's lazy diagram chunks inlined. The script
+ * goes inside the document rather than beside it: the frame's requests carry no cookie, so a
+ * sign-in proxy in front of the service would answer a separate script with its login
+ * redirect. The service allows the inline script by its hash. In dev the same document loads
+ * the source as a module (see `server.cors`).
  */
 function diagramFrame(): Plugin {
   let config: ResolvedConfig;
@@ -75,9 +78,14 @@ function diagramFrame(): Plugin {
           {
             name: 'uam-diagram-frame-document',
             generateBundle(_options, bundle) {
-              const entry = Object.values(bundle).find((f) => f.type === 'chunk' && f.isEntry);
+              const entry = Object.values(bundle).find((f): f is Rollup.OutputChunk => f.type === 'chunk' && f.isEntry);
               if (!entry) throw new Error('diagram frame: no entry chunk');
-              this.emitFile({ type: 'asset', fileName: FRAME_DOCUMENT, source: frameHtml(`${config.base}${entry.fileName}`) });
+              // A script tag would end or nest the element early; a CR or NUL is rewritten by the
+              // HTML parser, so the browser would hash other text than the service does.
+              const unsafe = /<\/?script|[\r\0]/i.exec(entry.code);
+              if (unsafe) throw new Error(`diagram frame: cannot inline the script, it contains ${JSON.stringify(unsafe[0])}`);
+              delete bundle[entry.fileName];
+              this.emitFile({ type: 'asset', fileName: FRAME_DOCUMENT, source: frameHtml(`<script>${entry.code}</script>`) });
             },
           },
         ],
@@ -89,7 +97,7 @@ function diagramFrame(): Plugin {
         const res = rawRes as unknown as { setHeader(name: string, value: string): void; end(body: string): void };
         if ((req.url ?? '').split('?')[0] !== `/${FRAME_DOCUMENT}`) return next();
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.end(frameHtml(`/${FRAME_ENTRY}`, true));
+        res.end(frameHtml(`<script type="module" src="/${FRAME_ENTRY}"></script>`));
       });
     },
   };
