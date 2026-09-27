@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, Shield, ShieldOff, Square, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, Plane, RotateCcw, Shield, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type PromptSettings, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
@@ -12,7 +12,7 @@ import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type 
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Markdown, Note, Skeleton, Spinner, useApp } from './common';
-import { ExecutionItems, ExecutionStatus } from './ExecutionStatus';
+import { ExecutionItems } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
@@ -731,6 +731,22 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
     { value: 'safe', label: 'Safe', description: MODE_TEXT.safe },
     { value: 'yolo', label: 'Yolo', description: MODE_TEXT.yolo },
   ];
+  // The permission group, shared by the toolbar's permissions and execution menu and the phone's More menu.
+  const permissionItems = (
+    <Menu.RadioGroup value={mode} onValueChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}>
+      <Menu.Label>Permissions</Menu.Label>
+      {modeChoices.map((c) => <Menu.RadioItem key={c.value} value={c.value} description={c.description} disabled={!!busy}>{c.label}</Menu.RadioItem>)}
+    </Menu.RadioGroup>
+  );
+  const executionSupported = !newTask && !!session.capabilities.execution_modes;
+  const executionKnown = executionSupported && session.execution?.known === true && !!session.execution.mode;
+  const autopilotOn = executionKnown && session.execution?.mode === 'autopilot';
+  const executionMode = executionKnown ? session.execution!.mode! : '';
+  const runLabel = [mode === 'yolo' ? 'Yolo' : 'Safe', executionMode.charAt(0).toUpperCase() + executionMode.slice(1)].filter(Boolean).join(' · ');
+  // Autopilot keeps working between turns (a plane); otherwise the shield, broken for yolo. Yolo is always `attention`.
+  const runIcon = autopilotOn
+    ? <Plane aria-hidden="true" className={mode === 'yolo' ? 'text-attention' : 'text-faint'} />
+    : mode === 'yolo' ? <ShieldOff aria-hidden="true" className="text-attention" /> : <Shield aria-hidden="true" className="text-faint" />;
   // The effort and context groups, shared by the toolbar picker and the phone's More menu.
   const tuningItems = (
     <>
@@ -1036,22 +1052,35 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           </Menu.Root>
         )}
         <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline-strong max-sm:hidden" />
-        <Picker
-          id="composer-mode"
-          icon={mode === 'yolo' ? <ShieldOff aria-hidden="true" className="text-attention" /> : <Shield aria-hidden="true" className="text-faint" />}
-          label="Permissions"
-          value={mode}
-          display={mode === 'yolo' ? 'Yolo' : 'Safe'}
-          choices={modeChoices}
-          disabled={!!busy || locked}
-          reason={locked ? 'This task is read-only.' : undefined}
-          className="max-sm:hidden"
-          onChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}
-        />
-        <ExecutionStatus execution={session.execution} supported={!newTask && !!session.capabilities.execution_modes}
-          reason={executionReason} busy={!!busy} onOpenChange={setExecutionOpen}
-          onChange={(next) => void changeExecution(next)}
-          onRetry={commandsError && !locked ? () => setCommandVersion((v) => v + 1) : undefined} />
+        {/* Permissions and execution: one menu, since both say how freely the agent acts; its glyph follows both. */}
+        {locked ? (
+          <Tip label="This task is read-only.">
+            <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}. This task is read-only.`} className="min-w-0 shrink text-muted max-sm:hidden">
+              {runIcon}
+              <span className="max-w-40 truncate">{runLabel}</span>
+              <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+            </Button>
+          </Tip>
+        ) : (
+          <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
+            <Tip label={`Permissions and execution: ${runLabel}${executionKnown && session.execution?.objective ? ` · ${session.execution.objective.status}` : ''}`}>
+              <Menu.Trigger render={<Button id="composer-mode" size="sm" variant="subtle" aria-label={`Permissions and execution: ${runLabel}`} aria-busy={!!busy} className="min-w-0 shrink max-sm:hidden" />}>
+                {runIcon}
+                <span className="max-w-40 truncate">{runLabel}</span>
+                <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+              </Menu.Trigger>
+            </Tip>
+            <Menu.Content side="top" align="start" className="max-w-80">
+              {permissionItems}
+              {executionSupported && (
+                <>
+                  <Menu.Separator />
+                  <ExecutionItems execution={session.execution} reason={executionReason} busy={!!busy} onChange={(next) => void changeExecution(next)} onRetry={commandsError ? () => setCommandVersion((v) => v + 1) : undefined} />
+                </>
+              )}
+            </Menu.Content>
+          </Menu.Root>
+        )}
         {!newTask && <BackgroundTasks key={session.id} sessionId={session.id} snapshot={session.background_tasks} locked={locked} />}
         {!locked && (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
@@ -1063,11 +1092,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
             <Menu.Content side="top" align="start" className="max-w-80">
               {settingsLocked ? <p className="max-w-64 px-2 py-1 text-caption text-muted">Effort and context cannot change now.</p> : tuningItems}
               <Menu.Separator />
-              <Menu.RadioGroup value={mode} onValueChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}>
-                <Menu.Label>Permissions</Menu.Label>
-                {modeChoices.map((c) => <Menu.RadioItem key={c.value} value={c.value} description={c.description} disabled={!!busy}>{c.label}</Menu.RadioItem>)}
-              </Menu.RadioGroup>
-              {!newTask && session.capabilities.execution_modes && (
+              {permissionItems}
+              {executionSupported && (
                 <>
                   <Menu.Separator />
                   <ExecutionItems execution={session.execution} reason={executionReason} busy={!!busy} onChange={(next) => void changeExecution(next)} onRetry={commandsError ? () => setCommandVersion((v) => v + 1) : undefined} />

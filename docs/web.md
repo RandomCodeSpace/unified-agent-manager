@@ -384,7 +384,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   See [Web commands and execution state](web-commands.md) for the exact supported
   command list, limits and retry behavior.
 - **Execution mode**: supported providers report Interactive, Plan or Autopilot
-  separately from permissions. The composer shows the runtime's objective
+  separately from permissions. Both share one toolbar menu, whose label reads
+  them together ("Safe · Interactive") and whose icon changes for Yolo and
+  Autopilot. The composer shows the runtime's objective
   status and, on expansion, reported turns, credits, limits and pause or
   completion details. Missing or stale observations say Status unavailable.
   Stop remains available between autopilot turns, disables continuation and
