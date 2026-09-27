@@ -707,7 +707,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   with collapsible "Settled" and "Archived" shelves at the foot of the list.
   A card shows its Project, state or last activity, title, provider icon and
   branch when known; hovering an active card that can settle shows Settle.
-  A shelf row shows only the title, faded until hovered or selected.
+  A shelf row shows the Project badge and title, faded until hovered or
+  selected; its tooltip adds the Project name and directory and when the Task
+  was created, settled and archived.
   A settled or archived Task opens read-only. Search matches Task names and
   titles, Project names and branches within the chosen Project filter.
   Right-click a card, press Shift+F10 or the Menu key, or long-press on touch

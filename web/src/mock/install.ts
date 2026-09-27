@@ -803,16 +803,16 @@ export function install(): void {
         case 'settle':
           if (stage !== 'active') return fail(409, `a ${stage} task cannot be settled`);
           if (blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
-          touch(t, { stage: 'settled', state: 'closed', open: false });
+          touch(t, { stage: 'settled', settled_at: now(), state: 'closed', open: false });
           return json(200, summary(t));
         case 'reopen':
           if (stage !== 'settled') return fail(409, `a ${stage} task cannot be reopened`);
-          touch(t, { stage: 'active' });
+          touch(t, { stage: 'active', settled_at: undefined });
           return json(200, summary(t));
         case 'archive':
           if (stage === 'archived') return fail(409, 'the task is already archived');
           if (stage === 'active' && blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
-          touch(t, { stage: 'archived', state: 'closed', open: false });
+          touch(t, { stage: 'archived', archived_at: now(), state: 'closed', open: false });
           return json(200, summary(t));
       }
     }

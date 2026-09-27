@@ -595,8 +595,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       title: 'Explain the attach status bar design',
       state: 'closed',
       stage: 'settled',
+      settled_at: ago(60 * 47),
       created_at: ago(60 * 50),
-      updated_at: ago(60 * 48),
+      updated_at: ago(60 * 47),
       items: [
         { id: 'i1', kind: 'user', time: ago(60 * 50), text: 'Explain why the attach status bar sits on a reserved row and never on codex.' },
         {
@@ -617,8 +618,10 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       title: '',
       state: 'closed',
       stage: 'archived',
+      settled_at: ago(60 * 24 * 2),
+      archived_at: ago(60 * 24),
       created_at: ago(60 * 24 * 3),
-      updated_at: ago(60 * 24 * 3 - 20),
+      updated_at: ago(60 * 24),
       items: [
         { id: 'i1', kind: 'user', time: ago(60 * 24 * 3), text: 'Move every workflow to the Node 24 action releases and keep the SHA pins.' },
         tool('i2', 60 * 24 * 3 - 5, { name: 'edit', title: 'Edit .github/workflows/ci.yml', status: 'completed', output: '@@ -30,2 +30,2 @@\n-        uses: actions/setup-node@v4\n+        uses: actions/setup-node@v5' }),
@@ -634,8 +637,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       title: 'Migrate the RSS template to Atom',
       state: 'closed',
       stage: 'archived',
+      archived_at: ago(60 * 24 * 5),
       created_at: ago(60 * 24 * 6),
-      updated_at: ago(60 * 24 * 6 - 30),
+      updated_at: ago(60 * 24 * 5),
       items: [
         { id: 'i1', kind: 'user', time: ago(60 * 24 * 6), text: 'Replace the RSS 2.0 feed template with Atom and keep the same URL.' },
         { id: 'i2', kind: 'assistant', time: ago(60 * 24 * 6 - 30), text: 'Switched `templates/feed.xml` to Atom 1.0. The URL is unchanged and the validator passes.' },

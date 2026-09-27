@@ -308,6 +308,9 @@ export interface SessionSummary {
   mode?: 'safe' | 'yolo';
   execution?: ExecutionState | null;
   stage?: 'active' | 'settled' | 'archived';
+  /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
+  settled_at?: string;
+  archived_at?: string;
   queued?: number;
   state: SessionState;
   state_detail?: string;
