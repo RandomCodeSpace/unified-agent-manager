@@ -118,11 +118,11 @@ function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
 
 /* ---------- Task row ---------- */
 
-/** Right-slot text: the header's status word for act-now, in-motion, broken and unread rows; the relative time otherwise. */
+/** Right-slot text: the header's status word for act-now, in-motion, completed, broken and unread rows; the relative time otherwise. */
 function rowMeta(s: SessionSummary, unread: boolean): { text: string; tone: string } {
   if (readOnly(s)) return { text: relTime(s.updated_at), tone: 'text-muted' };
   const tone = STATE_TONE[s.state];
-  if (needsYou(s) || LIVE.includes(s.state) || s.state === 'failed' || s.state === 'interrupted' || unread) {
+  if (needsYou(s) || LIVE.includes(s.state) || s.state === 'completed' || s.state === 'failed' || s.state === 'interrupted' || unread) {
     return { text: STATE_LABELS[s.state], tone: TONE_TEXT[tone] };
   }
   return { text: relTime(s.updated_at), tone: 'text-muted' };
