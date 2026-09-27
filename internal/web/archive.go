@@ -162,7 +162,7 @@ func (m *Manager) windowReadLocked(s *webSession, agent, item string, before, af
 // does, and caches it.
 func (m *Manager) readArchive(r *archiveRead) (*archiveWindow, error) {
 	if r.pager == nil {
-		return nil, newError(http.StatusConflict, "history changed; reload the task")
+		return nil, newError(http.StatusConflict, msgHistoryChanged)
 	}
 	release, err := m.readSlot(m.ctx)
 	if err != nil {
@@ -202,7 +202,7 @@ func (m *Manager) archiveFailure(r *archiveRead, err error) error {
 			r.s.archiveGone = true
 		}
 		m.mu.Unlock()
-		return newError(http.StatusConflict, "history changed; reload the task")
+		return newError(http.StatusConflict, msgHistoryChanged)
 	}
 	var webErr *Error
 	if errors.As(err, &webErr) {
@@ -360,7 +360,7 @@ func (m *Manager) historyPageLocked(s *webSession, agent, boundary string, forwa
 		case !v.archived && (index > 0 || index == 0 && !v.archive):
 			return v.page(index), nil, nil
 		case !v.archive:
-			return compactHistoryPage{}, nil, newError(http.StatusConflict, "history changed; reload the task")
+			return compactHistoryPage{}, nil, newError(http.StatusConflict, msgHistoryChanged)
 		}
 		w, at := m.archive.find(fresh, key, boundary, func(w *archiveWindow, at int) bool { return at >= historyPageItems || w.start })
 		if w == nil {
@@ -372,7 +372,7 @@ func (m *Manager) historyPageLocked(s *webSession, agent, boundary string, forwa
 		return v.forward(index + 1), nil, nil
 	}
 	if !v.archive {
-		return compactHistoryPage{}, nil, newError(http.StatusConflict, "history changed; reload the task")
+		return compactHistoryPage{}, nil, newError(http.StatusConflict, msgHistoryChanged)
 	}
 	held := map[string]bool{}
 	if !v.archived {
@@ -551,7 +551,7 @@ func (m *Manager) subagentReadLocked(s *webSession, agent string, before int) *s
 // Manager.mu, in a history read slot, into the shared cache.
 func (m *Manager) readSubagents(r *subagentRead) (*archiveWindow, error) {
 	if r.pager == nil {
-		return nil, newError(http.StatusConflict, "history changed; reload the task")
+		return nil, newError(http.StatusConflict, msgHistoryChanged)
 	}
 	release, err := m.readSlot(m.ctx)
 	if err != nil {
@@ -566,9 +566,9 @@ func (m *Manager) readSubagents(r *subagentRead) (*archiveWindow, error) {
 		m.mu.Lock()
 		r.s.archiveGone = true
 		m.mu.Unlock()
-		return nil, newError(http.StatusConflict, "history changed; reload the task")
+		return nil, newError(http.StatusConflict, msgHistoryChanged)
 	case errors.Is(err, agentapi.ErrItemNotFound):
-		return nil, newError(http.StatusNotFound, "subagent not found")
+		return nil, newError(http.StatusNotFound, msgSubagentNotFound)
 	case err != nil:
 		var webErr *Error
 		if errors.As(err, &webErr) {
@@ -648,7 +648,7 @@ func (m *Manager) OlderSubagents(id, before string) (compactSubagentPage, error)
 		s := m.sessions[id]
 		if s == nil {
 			m.mu.Unlock()
-			return compactSubagentPage{}, newError(http.StatusNotFound, "session not found")
+			return compactSubagentPage{}, newError(http.StatusNotFound, msgSessionNotFound)
 		}
 		s.historyUsed = m.now()
 		read := m.subagentReadLocked(s, boundary, subagentWindowRecords)
@@ -677,7 +677,7 @@ func (m *Manager) OlderSubagents(id, before string) (compactSubagentPage, error)
 		}
 		if fresh, err = m.readSubagents(read); err != nil {
 			if status, _ := errorStatus(err); status == http.StatusNotFound {
-				return compactSubagentPage{}, newError(http.StatusConflict, "history changed; reload the task")
+				return compactSubagentPage{}, newError(http.StatusConflict, msgHistoryChanged)
 			}
 			return compactSubagentPage{}, err
 		}

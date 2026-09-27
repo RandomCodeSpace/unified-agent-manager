@@ -3,7 +3,9 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -719,5 +721,353 @@ func TestSubagentListPagesAnOpenConversation(t *testing.T) {
 	}
 	if d, _ := plain.CompactDetail(other.ID); d.SubagentsBefore != "" {
 		t.Fatalf("cursor %q without a pager", d.SubagentsBefore)
+	}
+}
+
+// The shared window cache stays within maxArchiveBytes: a window larger than
+// all of it is served but not kept, and adding past the budget evicts the
+// least recently used windows first.
+func TestArchiveCacheStaysWithinItsBudget(t *testing.T) {
+	var c archiveCache
+	window := func(key string, bytes int) *archiveWindow {
+		return &archiveWindow{key: key, items: []agentapi.Item{{ID: "x"}}, index: map[string]int{"x": 0}, bytes: bytes}
+	}
+	c.add(window("huge", maxArchiveBytes+1))
+	if w, _ := c.find(nil, "huge", "x", nil); w != nil || c.bytes != 0 {
+		t.Fatalf("an oversized window was cached: %d bytes", c.bytes)
+	}
+	a, b := window("a", maxArchiveBytes/2), window("b", maxArchiveBytes/2)
+	c.add(a)
+	c.add(b)
+	if w, _ := c.find(nil, "a", "x", nil); w != a {
+		t.Fatal("a was not cached")
+	}
+	c.add(window("c", 1))
+	if w, _ := c.find(nil, "b", "x", nil); w != nil {
+		t.Fatal("the least recently used window survived")
+	}
+	if w, _ := c.find(nil, "a", "x", nil); w != a || c.bytes != maxArchiveBytes/2+1 || c.windows.Len() != 2 {
+		t.Fatalf("cache holds %d windows, %d bytes", c.windows.Len(), c.bytes)
+	}
+}
+
+// A record read that fails for another reason than a vanished record or
+// item leaves the record reachable: an error the service made passes
+// through, any other is a 503 naming it. Once the service stops, a read that
+// finds every slot taken fails at once.
+func TestArchiveReadFailuresKeepTheRecordReachable(t *testing.T) {
+	m, pager, _, sum := archivedTask(t, archiveRecord(2500), true)
+	for _, tc := range []struct {
+		err    error
+		status int
+		msg    string
+	}{
+		{errors.New("disk on fire"), http.StatusServiceUnavailable, "could not read the recorded transcript: disk on fire"},
+		{newError(http.StatusTooManyRequests, "slow down"), http.StatusTooManyRequests, "slow down"},
+	} {
+		pager.SetWindowHook(func(context.Context, agentapi.WindowRequest) error { return tc.err })
+		_, err := m.ItemBody(sum.ID, "", "item-0005")
+		if status, msg := errorStatus(err); status != tc.status || msg != tc.msg {
+			t.Fatalf("body after %v = %d %q", tc.err, status, msg)
+		}
+		if d, err := m.CompactDetail(sum.ID); err != nil || d.HistoryTruncated {
+			t.Fatalf("after %v: detail %v, truncated %v", tc.err, err, d.HistoryTruncated)
+		}
+	}
+	pager.SetWindowHook(nil)
+	if body, err := m.ItemBody(sum.ID, "", "item-0005"); err != nil || body.Item.Text != "answer 5" {
+		t.Fatalf("body once reads work = %v, %+v", err, body)
+	}
+
+	m.archive.forget(sum.ID)
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for len(m.reads) < cap(m.reads) {
+		m.reads <- struct{}{}
+	}
+	windows, subagents := len(pager.WindowReads()), len(pager.SubagentReads())
+	if _, err := m.ItemBody(sum.ID, "", "item-0005"); statusOf(err) != http.StatusServiceUnavailable {
+		t.Fatalf("body while stopping = %v", err)
+	}
+	if _, err := m.OlderSubagents(sum.ID, archiveCursor("sa1")); statusOf(err) != http.StatusServiceUnavailable {
+		t.Fatalf("subagents while stopping = %v", err)
+	}
+	if len(pager.WindowReads()) != windows || len(pager.SubagentReads()) != subagents {
+		t.Fatal("a read ran without a slot")
+	}
+}
+
+// A retained transcript that begins with reasoning is paged from the record
+// before the first item after it, since a reasoning item's recorded ID can
+// differ from the one it streamed with; the walk still reaches every
+// recorded item once.
+func TestArchivePagingStartsAfterLeadingReasoning(t *testing.T) {
+	record := archiveRecord(2500)
+	for i := 600; i <= 710; i++ {
+		record.Items[i].Kind = agentapi.ItemReasoning
+	}
+	m, _, _, sum := archivedTask(t, record, true)
+	held, _ := m.heldItems(sum.ID)
+	if held[0].Kind != agentapi.ItemReasoning {
+		t.Fatalf("first retained item %s is %s", held[0].ID, held[0].Kind)
+	}
+	d, err := m.CompactDetail(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, cursors, _ := walkBack(t, m, sum.ID, "", d.Items, *d.HistoryBefore)
+	if !slices.Equal(ids, recordIDs(record, "")) || !slices.Contains(cursors, archiveCursor("item-0711")) {
+		t.Fatalf("walked %d items with cursors %v", len(ids), cursors)
+	}
+}
+
+// Paging forward from the last recorded item leads into the retained items
+// the record does not have yet, and past the end of a transcript only the
+// record holds, to an empty page.
+func TestArchiveForwardPagingPastTheRecordEnd(t *testing.T) {
+	record := archiveRecord(2500)
+	m, pager, _, sum := archivedTask(t, record, true)
+	held, _ := m.heldItems(sum.ID)
+	behind := record
+	behind.Items = slices.Clone(record.Items[:600])
+	pager.SetHistory(sum.ConversationID, behind)
+	page, err := m.CompactHistoryPage(sum.ID, "", "", archiveCursor("item-0599"))
+	if err != nil || page.Archive || len(page.Items) == 0 || page.Items[0].ID != held[0].ID || page.Before != archiveCursor(held[0].ID) {
+		t.Fatalf("page after the record = %v, %+v", err, page)
+	}
+
+	pager.SetHistory(sum.ConversationID, record)
+	cursor := archiveCursor("s-119")
+	end, err := m.CompactHistoryPage(sum.ID, "sa1", "", cursor)
+	if err != nil || !end.Archive || len(end.Items) != 0 || end.Before != cursor || end.After != "" {
+		t.Fatalf("page after the subagent's record = %v, %+v", err, end)
+	}
+}
+
+// Warming a detail stream reads the record for at most the first
+// maxDetailReads bodies it names, and not again for a body an earlier read
+// already holds.
+func TestWarmDetailBodiesBoundsItsReads(t *testing.T) {
+	m, pager, _, sum := archivedTask(t, archiveRecord(2500), true)
+	before := len(pager.WindowReads())
+	m.warmDetailBodies(sum.ID, "", []bodyRef{{"", "item-0100"}, {"", "item-0101"}, {"", "item-0300"}, {"", "item-0500"}, {"", "item-0600"}})
+	reads := pager.WindowReads()[before:]
+	if len(reads) != 2 || reads[0].ItemID != "item-0100" || reads[1].ItemID != "item-0300" {
+		t.Fatalf("window reads = %+v", reads)
+	}
+}
+
+// A clipped item that settles is sent whole only from a record that can be
+// read, and only while that version of the item is current.
+func TestSettledClippedBodyNeedsAUsableRecord(t *testing.T) {
+	output := strings.Repeat("o", 100<<10)
+	for _, tc := range []string{"record gone", "read fails", "item changed"} {
+		t.Run(tc, func(t *testing.T) {
+			pager := agenttest.NewPager("fake", allCaps)
+			m := startManager(t, openTestStore(t), pager)
+			sum, conv := createSession(t, m, pager.Provider)
+			running := agentapi.Item{ID: "tool", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolRunning}}
+			conv.EmitItem(running)
+			sub, _, err := m.subscribeDetail(sum.ID, "", []bodyRef{{"", "tool"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorded := running
+			recorded.Tool = &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Output: "recorded " + output}
+			pager.SetHistory(sum.ConversationID, agentapi.History{Items: []agentapi.Item{recorded}})
+			entered, release := make(chan struct{}, 1), make(chan struct{})
+			switch tc {
+			case "record gone":
+				// The record is found gone by a subagent read, and then not
+				// read again.
+				pager.ForgetConversation(sum.ConversationID)
+				for range 2 {
+					if _, err := m.OlderSubagents(sum.ID, archiveCursor("sa")); statusOf(err) != http.StatusConflict {
+						t.Fatalf("subagents of a gone record = %v", err)
+					}
+				}
+				if reads := pager.SubagentReads(); len(reads) != 1 {
+					t.Fatalf("subagent reads = %+v", reads)
+				}
+			case "read fails":
+				pager.SetWindowHook(func(context.Context, agentapi.WindowRequest) error { return errors.New("disk on fire") })
+			case "item changed":
+				pager.SetWindowHook(func(context.Context, agentapi.WindowRequest) error {
+					select {
+					case entered <- struct{}{}:
+					default:
+					}
+					<-release
+					return nil
+				})
+			}
+			clipped := running
+			clipped.Tool, clipped.Clipped = &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Output: output[:64<<10]}, true
+			conv.EmitItem(clipped)
+			want := []string{output[:64<<10]}
+			switch tc {
+			case "read fails":
+				waitUntil(t, "record read", func() bool { return len(pager.WindowReads()) == 1 })
+			case "item changed":
+				<-entered
+				newer := running
+				newer.Tool = &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Output: "newer"}
+				conv.EmitItem(newer)
+				want = append(want, "newer")
+				close(release)
+				waitUntil(t, "record read", func() bool {
+					w, _ := m.archive.find(nil, archiveKey(sum.ID, sum.ConversationID, ""), "tool", nil)
+					return w != nil
+				})
+			}
+			// Shutdown waits for a record read the settled item started.
+			if err := m.Shutdown(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			var outputs []string
+			for drained := false; !drained; {
+				select {
+				case raw := <-sub.Frames():
+					if f := parseFrame(t, raw); f.event == "body" {
+						var it agentapi.Item
+						decodeField(t, f, "item", &it)
+						outputs = append(outputs, it.Tool.Output)
+					}
+				default:
+					drained = true
+				}
+			}
+			if !slices.Equal(outputs, want) {
+				t.Fatalf("body outputs = %d, want %d", len(outputs), len(want))
+			}
+			wantReads := 1
+			if tc == "record gone" {
+				wantReads = 0
+			}
+			if reads := len(pager.WindowReads()); reads != wantReads {
+				t.Fatalf("window reads = %d, want %d", reads, wantReads)
+			}
+		})
+	}
+}
+
+// failingSubagents is a Pager whose subagent reads fail, or hold only their
+// boundary, for the boundaries a test names.
+type failingSubagents struct {
+	*agenttest.Pager
+	errs  map[string]error
+	short string
+}
+
+func (p *failingSubagents) ReadSubagents(ctx context.Context, req agentapi.SubagentRequest) (agentapi.SubagentWindow, error) {
+	w, err := p.Pager.ReadSubagents(ctx, req)
+	switch {
+	case p.errs[req.AgentID] != nil:
+		return agentapi.SubagentWindow{}, p.errs[req.AgentID]
+	case req.AgentID == p.short && err == nil:
+		return agentapi.SubagentWindow{Subagents: w.Subagents[len(w.Subagents)-1:]}, nil
+	}
+	return w, err
+}
+
+// Pages of recorded subagents: the first recorded one has an empty page, one
+// the record leaves idle shows completed, a failed read is a 503 naming it
+// or the service's own error and leaves the record reachable, and a record
+// that keeps coming back short fails after a bounded number of reads.
+func TestOlderSubagentsEdgesAndFailures(t *testing.T) {
+	record := subagentRecord(250)
+	record.Subagents[20].Status = agentapi.SubagentIdle
+	first, pager, st, sum := archivedTask(t, record, true)
+	if err := first.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m := startManager(t, st, &failingSubagents{Pager: pager, errs: map[string]error{
+		"sa-030": errors.New("disk on fire"),
+		"sa-031": newError(http.StatusTooManyRequests, "slow down"),
+	}, short: "sa-032"})
+	waitHistory(t, m, sum.ID, HistoryLoaded)
+
+	empty, err := m.OlderSubagents(sum.ID, archiveCursor("sa-000"))
+	raw, _ := json.Marshal(empty)
+	if err != nil || empty.Before != "" || !strings.Contains(string(raw), `"subagents":[]`) {
+		t.Fatalf("page before the first = %v, %s", err, raw)
+	}
+	page, err := m.OlderSubagents(sum.ID, archiveCursor("sa-025"))
+	if err != nil || len(page.Subagents) != 25 || page.Subagents[20].ID != "sa-020" || page.Subagents[20].Status != agentapi.SubagentCompleted {
+		t.Fatalf("page = %v, %+v", err, page.Subagents)
+	}
+	for _, tc := range []struct {
+		boundary string
+		status   int
+		msg      string
+		reads    int
+	}{
+		{"sa-030", http.StatusServiceUnavailable, "could not read the recorded subagents: disk on fire", 1},
+		{"sa-031", http.StatusTooManyRequests, "slow down", 1},
+		{"sa-032", http.StatusServiceUnavailable, "the recorded subagents changed while they were read; try again", 2},
+	} {
+		_, err := m.OlderSubagents(sum.ID, archiveCursor(tc.boundary))
+		if status, msg := errorStatus(err); status != tc.status || msg != tc.msg {
+			t.Fatalf("page before %s = %d %q", tc.boundary, status, msg)
+		}
+		reads := 0
+		for _, r := range pager.SubagentReads() {
+			if r.AgentID == tc.boundary {
+				reads++
+			}
+		}
+		if reads != tc.reads {
+			t.Fatalf("page before %s read the record %d times, want %d", tc.boundary, reads, tc.reads)
+		}
+	}
+	if d, err := m.CompactDetail(sum.ID); err != nil || d.SubagentsBefore == "" {
+		t.Fatalf("failed reads made the record unreachable: %v", err)
+	}
+	if _, err := m.OlderSubagents(mustUUID(t), archiveCursor("sa-000")); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("missing task = %v", err)
+	}
+}
+
+// Without a record to page, a subagent the Task does not hold is not found
+// and older subagents cannot be read; the subagents route reports a bad
+// cursor or a missing Task.
+func TestSubagentsWithoutARecordAndRouteFailures(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, _ := createSession(t, ts.m, ts.prov)
+	for _, agent := range []string{"", "nobody"} {
+		if _, err := ts.m.CompactSubagent(sum.ID, agent); statusOf(err) != http.StatusNotFound {
+			t.Fatalf("subagent %q = %v", agent, err)
+		}
+	}
+	if _, err := ts.m.OlderSubagents(sum.ID, archiveCursor("sa-000")); statusOf(err) != http.StatusConflict {
+		t.Fatalf("older subagents without a pager = %v", err)
+	}
+	for _, tc := range []struct {
+		path string
+		code int
+		msg  string
+	}{
+		{"/api/sessions/" + sum.ID + "/subagents?before=a.", http.StatusBadRequest, "invalid history cursor"},
+		{"/api/sessions/" + mustUUID(t) + "/subagents?before=" + url.QueryEscape(archiveCursor("sa-000")), http.StatusNotFound, "session not found"},
+	} {
+		if w := ts.do(http.MethodGet, tc.path, "", withCookie(ts)); w.Code != tc.code || !strings.Contains(w.Body.String(), tc.msg) {
+			t.Fatalf("%s = %d %s", tc.path, w.Code, w.Body)
+		}
+	}
+}
+
+// The summary input kept for a subagent whose transcript is not retained is
+// its last message cut to maxSummaryInputRunes runes, unmarked.
+func TestUnretainedSubagentResultIsBounded(t *testing.T) {
+	record := archiveRecord(100)
+	long := strings.Repeat("é", maxSummaryInputRunes+10)
+	record.Items[slices.IndexFunc(record.Items, func(it agentapi.Item) bool { return it.ID == "s-119" })].Text = long
+	m, _, _, sum := archivedTask(t, record, true)
+	m.mu.Lock()
+	got := m.sessions[sum.ID].subagentResult("s-119", "sa1")
+	m.mu.Unlock()
+	if got != strings.Repeat("é", maxSummaryInputRunes) {
+		t.Fatalf("summary input = %d runes", len([]rune(got)))
 	}
 }

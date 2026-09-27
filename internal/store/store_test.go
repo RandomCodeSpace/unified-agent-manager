@@ -151,6 +151,20 @@ func TestTryMarkSessionClosedReportsWhetherRecordMatched(t *testing.T) {
 	}
 }
 
+// An exit without a session name matches no record and writes nothing.
+func TestTryRecordSessionExitWithoutSessionNameWritesNothing(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matched, err := s.TryRecordSessionExit(SessionExit{ExitCode: 1, UAMInitiated: true}); matched || err != nil {
+		t.Fatalf("TryRecordSessionExit = %v, %v; want no match", matched, err)
+	}
+	if _, err := os.Stat(s.Path()); !os.IsNotExist(err) {
+		t.Fatalf("config written for a nameless exit: %v", err)
+	}
+}
+
 func TestTryRecordSessionExitPreservesResumeLifecycle(t *testing.T) {
 	tests := []struct {
 		name       string

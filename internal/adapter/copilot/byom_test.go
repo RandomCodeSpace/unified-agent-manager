@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -143,6 +144,31 @@ func TestWebCustomModelTurnKeepsSelectionID(t *testing.T) {
 	c.mu.Unlock()
 	if got != "acme/coder" {
 		t.Fatalf("turn model = %q", got)
+	}
+	// A model no custom model serves keeps its own name.
+	c.onEvent(copilot.SessionEvent{Data: &rpc.AssistantUsageData{Model: "elsewhere", IsByok: copilot.Bool(true)}})
+	c.mu.Lock()
+	got = c.turnModel
+	c.mu.Unlock()
+	if got != "elsewhere" {
+		t.Fatalf("unmatched turn model = %q", got)
+	}
+}
+
+// A custom model the open session refuses is not switched to, and is
+// registered on the next try.
+func TestWebCustomModelRegistrationFailure(t *testing.T) {
+	t.Setenv("UAM_TEST_ACME_KEY", "acme-secret")
+	h := openWeb(t)
+	h.p.SetCustomModels(testCustom)
+	ctx := context.Background()
+	h.fs.addErr = errors.New("provider refused")
+	if err := h.conv.SetModel(ctx, "acme/coder", "", "default"); err == nil || !strings.Contains(err.Error(), "register custom model acme/coder: provider refused") || len(h.fs.models) != 0 {
+		t.Fatalf("SetModel = %v, switched to %v", err, h.fs.models)
+	}
+	h.fs.addErr = nil
+	if err := h.conv.SetModel(ctx, "acme/coder", "", "default"); err != nil || !slices.Equal(h.fs.models, []string{"acme/coder"}) {
+		t.Fatalf("retry = %v, switched to %v", err, h.fs.models)
 	}
 }
 

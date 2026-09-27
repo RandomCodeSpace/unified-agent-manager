@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,6 +14,17 @@ func TestDefaultPathBranches(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	if got := DefaultPath(); got != filepath.Join(dir, "uam", "sessions.json") {
 		t.Fatalf("xdg path=%s", got)
+	}
+	// Without either variable the user config directory under HOME is used,
+	// and without HOME a relative directory.
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", dir)
+	if base, err := os.UserConfigDir(); err != nil || !strings.HasPrefix(base, dir) || DefaultPath() != filepath.Join(base, "uam", "sessions.json") {
+		t.Fatalf("home path=%s (user config dir %s, %v)", DefaultPath(), base, err)
+	}
+	t.Setenv("HOME", "")
+	if got := DefaultPath(); got != filepath.Join(".uam", "sessions.json") {
+		t.Fatalf("fallback path=%s", got)
 	}
 }
 

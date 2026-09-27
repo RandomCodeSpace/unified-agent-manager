@@ -19,29 +19,29 @@ import (
 func rawImageTask(t *testing.T, ts *testServer) (SessionSummary, string, string) {
 	t.Helper()
 	base := t.TempDir()
-	real := filepath.Join(base, "real")
+	realDir := filepath.Join(base, "real")
 	outside := filepath.Join(base, "outside")
-	for _, d := range []string{filepath.Join(real, "shots"), outside} {
+	for _, d := range []string{filepath.Join(realDir, "shots"), outside} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	link := filepath.Join(base, "link")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realDir, link); err != nil {
 		t.Fatal(err)
 	}
 	png := pngBytes(t)
 	files := map[string][]byte{
-		filepath.Join(real, "sky-dodge.png"):  png,
-		filepath.Join(real, "shots", "a.PNG"): png,
-		filepath.Join(real, "tiny.webp"):      webpBytes,
-		filepath.Join(real, "fake.png"):       []byte("<html><script>alert(1)</script></html>"),
-		filepath.Join(real, "notes.txt"):      []byte("plain text"),
-		filepath.Join(real, "logo.svg"):       []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`),
-		filepath.Join(real, "wrong-ext.jpg"):  png,
-		filepath.Join(real, "empty.png"):      nil,
-		filepath.Join(outside, "secret.png"):  png,
-		filepath.Join(real, "shots", "x.txt"): []byte("x"),
+		filepath.Join(realDir, "sky-dodge.png"):  png,
+		filepath.Join(realDir, "shots", "a.PNG"): png,
+		filepath.Join(realDir, "tiny.webp"):      webpBytes,
+		filepath.Join(realDir, "fake.png"):       []byte("<html><script>alert(1)</script></html>"),
+		filepath.Join(realDir, "notes.txt"):      []byte("plain text"),
+		filepath.Join(realDir, "logo.svg"):       []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`),
+		filepath.Join(realDir, "wrong-ext.jpg"):  png,
+		filepath.Join(realDir, "empty.png"):      nil,
+		filepath.Join(outside, "secret.png"):     png,
+		filepath.Join(realDir, "shots", "x.txt"): []byte("x"),
 	}
 	for name, data := range files {
 		if err := os.WriteFile(name, data, 0o644); err != nil {
@@ -49,9 +49,9 @@ func rawImageTask(t *testing.T, ts *testServer) (SessionSummary, string, string)
 		}
 	}
 	for link, target := range map[string]string{
-		filepath.Join(real, "inside-link.png"):  filepath.Join(real, "sky-dodge.png"),
-		filepath.Join(real, "outside-link.png"): filepath.Join(outside, "secret.png"),
-		filepath.Join(real, "outside-dir"):      outside,
+		filepath.Join(realDir, "inside-link.png"):  filepath.Join(realDir, "sky-dodge.png"),
+		filepath.Join(realDir, "outside-link.png"): filepath.Join(outside, "secret.png"),
+		filepath.Join(realDir, "outside-dir"):      outside,
 	} {
 		if err := os.Symlink(target, link); err != nil {
 			t.Fatal(err)
@@ -61,7 +61,7 @@ func rawImageTask(t *testing.T, ts *testServer) (SessionSummary, string, string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sum, real, outside
+	return sum, realDir, outside
 }
 
 func rawURL(id, p string) string {
@@ -71,7 +71,7 @@ func rawURL(id, p string) string {
 func TestRawImageServesImagesInsideTheTaskDirectory(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)
-	sum, real, _ := rawImageTask(t, ts)
+	sum, realDir, _ := rawImageTask(t, ts)
 	png := pngBytes(t)
 
 	allowed := map[string]struct {
@@ -84,8 +84,8 @@ func TestRawImageServesImagesInsideTheTaskDirectory(t *testing.T) {
 		"shots/../sky-dodge.png":                  {png, "image/png"},
 		"tiny.webp":                               {webpBytes, "image/webp"},
 		"inside-link.png":                         {png, "image/png"},
-		filepath.Join(real, "sky-dodge.png"):      {png, "image/png"},
-		filepath.Join(real, "inside-link.png"):    {png, "image/png"},
+		filepath.Join(realDir, "sky-dodge.png"):   {png, "image/png"},
+		filepath.Join(realDir, "inside-link.png"): {png, "image/png"},
 		filepath.Join(sum.Workdir, "shots/a.PNG"): {png, "image/png"},
 	}
 	for p, want := range allowed {
@@ -113,7 +113,7 @@ func TestRawImageServesImagesInsideTheTaskDirectory(t *testing.T) {
 func TestRawImageRefusesEverythingElse(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)
-	sum, real, outside := rawImageTask(t, ts)
+	sum, realDir, outside := rawImageTask(t, ts)
 
 	rejected := map[string]int{
 		"":                                   http.StatusBadRequest,
@@ -139,17 +139,17 @@ func TestRawImageRefusesEverythingElse(t *testing.T) {
 		"fake.png":                           http.StatusUnsupportedMediaType,
 		"wrong-ext.jpg":                      http.StatusUnsupportedMediaType,
 		"empty.png":                          http.StatusUnsupportedMediaType,
-		filepath.Join(real, "notes.txt"):     http.StatusUnsupportedMediaType,
+		filepath.Join(realDir, "notes.txt"):  http.StatusUnsupportedMediaType,
 	}
 	for p, want := range rejected {
 		w := ts.do(http.MethodGet, rawURL(sum.ID, p), "", auth)
-		if w.Code != want || !strings.Contains(w.Body.String(), `"error"`) || strings.Contains(w.Body.String(), real) {
+		if w.Code != want || !strings.Contains(w.Body.String(), `"error"`) || strings.Contains(w.Body.String(), realDir) {
 			t.Errorf("GET %q = %d %s, want %d", p, w.Code, w.Body, want)
 		}
 	}
 
 	// A file over the cap is refused before any byte is read.
-	big := filepath.Join(real, "big.png")
+	big := filepath.Join(realDir, "big.png")
 	f, err := os.Create(big)
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestRawImageRefusesEverythingElse(t *testing.T) {
 	}
 	// Another Task's directory does not hold the file.
 	other, _ := createSession(t, ts.m, ts.prov)
-	if w := ts.do(http.MethodGet, rawURL(other.ID, filepath.Join(real, "sky-dodge.png")), "", auth); w.Code != http.StatusNotFound {
+	if w := ts.do(http.MethodGet, rawURL(other.ID, filepath.Join(realDir, "sky-dodge.png")), "", auth); w.Code != http.StatusNotFound {
 		t.Fatalf("another task = %d", w.Code)
 	}
 }
@@ -188,9 +188,9 @@ func TestRawImageRefusesEverythingElse(t *testing.T) {
 func viewTask(t *testing.T, ts *testServer) (SessionSummary, string) {
 	t.Helper()
 	base := t.TempDir()
-	real := filepath.Join(base, "real")
+	realDir := filepath.Join(base, "real")
 	outside := filepath.Join(base, "outside")
-	for _, d := range []string{filepath.Join(real, "out"), filepath.Join(real, "assets"), outside} {
+	for _, d := range []string{filepath.Join(realDir, "out"), filepath.Join(realDir, "assets"), outside} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -210,24 +210,24 @@ func viewTask(t *testing.T, ts *testServer) (SessionSummary, string) {
 		"../outside/secret.x": []byte("secret"),
 	}
 	for name, data := range files {
-		if err := os.WriteFile(filepath.Join(real, name), data, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(realDir, name), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for link, target := range map[string]string{
-		"inside-link.md": filepath.Join(real, "notes.md"),
+		"inside-link.md": filepath.Join(realDir, "notes.md"),
 		"outside-link.x": filepath.Join(outside, "secret.x"),
 		"outside-dir":    outside,
 	} {
-		if err := os.Symlink(target, filepath.Join(real, link)); err != nil {
+		if err := os.Symlink(target, filepath.Join(realDir, link)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	sum, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: addProject(t, ts.m, real), Name: "task"})
+	sum, err := ts.m.Create(CreateRequest{Provider: ts.prov.Name(), ProjectID: addProject(t, ts.m, realDir), Name: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sum, real
+	return sum, realDir
 }
 
 func viewURL(id, p string) string { return "/api/sessions/" + id + "/files/view/" + p }
@@ -247,7 +247,7 @@ func authenticatedFileView(t *testing.T, ts *testServer) func(string, string, ..
 
 func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
-	sum, real := viewTask(t, ts)
+	sum, realDir := viewTask(t, ts)
 	view := authenticatedFileView(t, ts)
 
 	served := map[string]struct{ mime, disposition string }{
@@ -268,7 +268,7 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 		w := view(http.MethodGet, viewURL(sum.ID, p))
 		h := w.Header()
 		name, _ := url.PathUnescape(p)
-		body, _ := os.ReadFile(filepath.Join(real, name))
+		body, _ := os.ReadFile(filepath.Join(realDir, name))
 		if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), body) || h.Get("Content-Type") != want.mime ||
 			h.Get("Content-Security-Policy") != viewSecurity || h.Get("X-Content-Type-Options") != "nosniff" ||
 			h.Get("X-Frame-Options") != "SAMEORIGIN" ||
@@ -286,7 +286,7 @@ func TestViewFileServesAnyFileOfTheTaskDirectorySandboxed(t *testing.T) {
 		"..%2Foutside%2Fsecret.x", "out%2F..%2F..%2Foutside%2Fsecret.x", "%2Fetc%2Fpasswd", "%00",
 	} {
 		w := view(http.MethodGet, viewURL(sum.ID, p))
-		if w.Code != http.StatusNotFound && w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), real) {
+		if w.Code != http.StatusNotFound && w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "secret") || strings.Contains(w.Body.String(), realDir) {
 			t.Errorf("GET %q = %d %s", p, w.Code, w.Body)
 		}
 	}
@@ -499,5 +499,47 @@ func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 	}
 	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/files/raw?path=shot.png&key="+key, ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("key on the raw route = %d", w.Code)
+	}
+}
+
+// The view redirect is built from the route's values: the escaped Task id,
+// a key for it and the file path escaped segment by segment. The companion
+// cookie is scoped to the same prefix, and the key route accepts the target.
+func TestViewFileRedirectTargetIsBuiltFromTheRoute(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	https := withHeader("X-Forwarded-Proto", "https")
+	for _, c := range []struct{ name, id, escapedID, path, want string }{
+		{"plain", "task", "task", "out/report.html", "out/report.html"},
+		{"escaped name", "task", "task", "a%20b.txt", "a%20b.txt"},
+		{"nested escaped segments", "task", "task", "my%20dir/sub/r%23%3F.html", "my%20dir/sub/r%23%3F.html"},
+		{"encoded separators", "task", "task", "dir%2Fx.html", "dir/x.html"},
+		{"encoded dot segments", "task", "task", "..%2Foutside%2Fsecret.x", "%2E%2E/outside/secret.x"},
+		{"empty path", "task", "task", "", ""},
+		{"id with a space", "a b", "a%20b", "x.html", "x.html"},
+		{"id with a slash", "a/b", "a%2Fb", "x.html", "x.html"},
+		{"id with a question mark", "a?b", "a%3Fb", "x.html", "x.html"},
+	} {
+		w := ts.do(http.MethodGet, "/api/sessions/"+c.escapedID+"/files/view/"+c.path+"?download=1", "", auth, https)
+		prefix := "/api/sessions/" + c.escapedID + "/files/key/"
+		loc := w.Header().Get("Location")
+		key, rest, _ := strings.Cut(strings.TrimPrefix(loc, prefix), "/")
+		if w.Code != http.StatusFound || !strings.HasPrefix(loc, prefix) || !ts.srv.validFileKey(key, "127.0.0.1:8260", c.id) || rest != c.want+"?download=1" {
+			t.Errorf("%s: redirect = %d %q", c.name, w.Code, loc)
+			continue
+		}
+		var cookiePath string
+		for _, cookie := range w.Result().Cookies() {
+			if cookie.Name == fileCookieName {
+				cookiePath = cookie.Path
+			}
+		}
+		if cookiePath != prefix {
+			t.Errorf("%s: companion cookie path = %q, want %q", c.name, cookiePath, prefix)
+		}
+		// Over plain HTTP the key alone opens; no such Task, so not found.
+		if w := ts.do(http.MethodGet, loc, ""); w.Code != http.StatusNotFound {
+			t.Errorf("%s: following %q = %d", c.name, loc, w.Code)
+		}
 	}
 }

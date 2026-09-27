@@ -738,9 +738,9 @@ func TestCreateValidatesProjectModelAndProvider(t *testing.T) {
 			t.Fatalf("AddProject(%q) = %v, want 400", dir, err)
 		}
 	}
-	real := t.TempDir()
+	realDir := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realDir, link); err != nil {
 		t.Fatal(err)
 	}
 	project := addProject(t, m, link)
@@ -762,7 +762,7 @@ func TestCreateValidatesProjectModelAndProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical, _ := filepath.EvalSymlinks(real)
+	canonical, _ := filepath.EvalSymlinks(realDir)
 	if sum.Workdir != canonical || sum.ProjectID != project || sum.Name != "" || sum.Model != "" || prov.Last().Request().Workdir != canonical || prov.Last().Request().Model != "" {
 		t.Fatalf("created task = %+v, open %+v", sum, prov.Last().Request())
 	}
