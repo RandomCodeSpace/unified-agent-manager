@@ -67,8 +67,11 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  */
 export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
-  const byParent = new Map<string, Subagent>();
-  for (const s of subagents) if (s.parent_tool_call_id) byParent.set(s.parent_tool_call_id, s);
+  const byParent = useMemo(() => {
+    const map = new Map<string, Subagent>();
+    for (const s of subagents) if (s.parent_tool_call_id) map.set(s.parent_tool_call_id, s);
+    return map;
+  }, [subagents]);
   const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
   const declarations = useMemo(() => newestFileDeclarations(items), [items]);
   const showDeclaration = (item: Item) => isFileDeclaration(item) && declarations.has(declarationIdentity(item));
@@ -77,7 +80,14 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   const turnIds = useGroupIdentities(groupItems, 'turn');
   const groupIds = useGroupIdentities(groupItems, false, item => byParent.has(item.id) || declarationBoundary(item));
   const toolGroupIds = useGroupIdentities(identityItems, true, item => byParent.has(item.id) || declarationBoundary(item) || !!endedQuestion(item, linked, live), [...loose, ...questions].filter(interaction => interaction.state !== 'pending').map(interaction => interaction.time));
-  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds };
+  // A subagent's row in any state: it stands in the answer while it runs and folds into the
+  // turn's collapsed activity once it is idle, completed, failed or cancelled.
+  const subagentRow = (item: Item) => {
+    const agent = byParent.get(item.id);
+    return agent && onOpenAgent ? <SubagentRow key={item.id} item={item} subagent={agent} agentItems={agents[agent.id]?.items ?? (agentSteps[agent.id] ? [agentSteps[agent.id]] : undefined)} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
+  };
+  const running = (item: Item) => byParent.get(item.id)?.status === 'running';
+  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => byParent.get(item.id), foldedSubagentRow: (item) => (running(item) ? null : subagentRow(item)) };
   const compact = density === 'compact';
   const special = (item: Item) => {
     if (showDeclaration(item) && item.tool?.declaration) return (
@@ -86,10 +96,9 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
         <ToolRow item={item} live={live} sessionId={sessionId} approvals={linked.get(item.id)} />
       </div>
     );
-    const agent = byParent.get(item.id);
-    return agent && onOpenAgent ? <SubagentRow key={item.id} item={item} subagent={agent} agentItems={agents[agent.id]?.items ?? (agentSteps[agent.id] ? [agentSteps[agent.id]] : undefined)} provider={provider} onOpen={(el) => onOpenAgent(agent.id, el)} /> : null;
+    return running(item) ? subagentRow(item) : null;
   };
-  const own = (item: Item) => byParent.has(item.id) || showDeclaration(item);
+  const own = (item: Item) => running(item) || showDeclaration(item);
 
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
   const out: ReactNode[] = [];
@@ -296,7 +305,7 @@ function Timeline({ id, entries, ctx }: { id: string; entries: Entry[]; ctx: Ren
     }
     const asked = askedOn(item, ctx.approvals, ctx.live);
     const question = asked && asked.outcome !== 'pending' ? ctx.approvals.get(item.id)?.find((ix) => ix.kind === 'question') : undefined;
-    row(item.id, item.time, took, question ? <DecidedRow interaction={question} /> : <ToolRow item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} />);
+    row(item.id, item.time, took, ctx.foldedSubagentRow?.(item) ?? (question ? <DecidedRow interaction={question} /> : <ToolRow item={item} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals.get(item.id)} />));
   }
   return (
     <div id={id} className="relative mb-2 ml-1.5 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-px before:fade-rule-y before:content-['']">
@@ -380,6 +389,9 @@ interface RenderContext {
   approvals: Map<string, Interaction[]>;
   groupIds?: Map<string, string>;
   toolGroupIds?: Map<string, string>;
+  /** The subagent a `task` call spawned, and the row of one no longer running, which it keeps inside its turn's activity. */
+  subagentOf?: (item: Item) => Subagent | undefined;
+  foldedSubagentRow?: (item: Item) => ReactNode | null;
 }
 
 
@@ -465,8 +477,6 @@ function renderRows(entries: Entry[], ctx: RenderContext, own: Map<string, React
   return out;
 }
 
-const NO_OWN = new Map<string, ReactNode>();
-
 /** The streaming item's id when it is in `entries`; the row only cares about its own. */
 const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries.some((e) => e.item?.id === id) ? id : undefined);
 
@@ -494,7 +504,7 @@ const ActivityRun = memo(function ActivityRun({ identity, entries, ctx, endedAt,
       </button>
       {opened && (
         <Collapse open={open} appear>
-          <DetailVisibility open={open}><div className="mt-1 flex flex-col gap-1 pl-5.5">{renderRows(entries, ctx, NO_OWN)}</div></DetailVisibility>
+          <DetailVisibility open={open}><div className="mt-1 flex flex-col gap-1 pl-5.5">{renderRows(entries, ctx, subagentRows(entries, ctx))}</div></DetailVisibility>
         </Collapse>
       )}
     </div>
@@ -503,8 +513,19 @@ const ActivityRun = memo(function ActivityRun({ identity, entries, ctx, endedAt,
   const same = (x: Entry, y: Entry) => (x.item ?? x.interaction) === (y.item ?? y.interaction);
   // `thoughtEnd` is rebuilt every render; what it says about these entries changes only with them or with `endedAt`.
   return a.endedAt === b.endedAt && a.className === b.className && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.approvals === b.ctx.approvals && a.ctx.arrival === b.ctx.arrival
-    && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]));
+    && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]))
+    && a.entries.every((e) => !e.item || a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item));
 });
+
+/** The rows of the folded subagents among `entries`, which take their `task` calls over. */
+function subagentRows(entries: Entry[], ctx: RenderContext): Map<string, ReactNode> {
+  const rows = new Map<string, ReactNode>();
+  for (const { item } of entries) {
+    const row = item?.kind === 'tool' ? ctx.foldedSubagentRow?.(item) : null;
+    if (row) rows.set(item!.id, row);
+  }
+  return rows;
+}
 
 /**
  * The row that heads a turn (DESIGN.md turn status), in one slot for both states: the

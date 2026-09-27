@@ -445,6 +445,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       atBottom.current = false;
       flushSync(() => setFirstVisible(current.items[transcriptWindowStart(current.items, index + 1)]?.id));
     }
+    if (!document.getElementById(`item-${toolCallId}`)) {
+      // A settled subagent's row folds into its turn's activity: open the fold that holds it.
+      const fold = [...(log.current?.querySelectorAll<HTMLElement>('[data-history-items]') ?? [])].find(node => (JSON.parse(node.dataset.historyItems ?? '[]') as string[]).includes(toolCallId));
+      const toggle = fold?.matches('button') ? fold : fold?.querySelector('button');
+      if (toggle?.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
+    }
     const el = document.getElementById(`item-${toolCallId}`);
     if (!el) return;
     el.scrollIntoView({ block: 'center' });

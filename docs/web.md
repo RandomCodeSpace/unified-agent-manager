@@ -313,7 +313,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   reference. A title or file-type hint cannot change those access rules.
 - **Subagents**: when the agent delegates work to a subagent, the Task shows
   one compact row under the tool call that started it (name, status, and
-  the duration once it ended) and a "Subagents" button in the header with
+  the duration once it ended) while the subagent runs. Once it is idle or has
+  ended, the row folds into the turn's collapsed activity, in place of that
+  tool call. There is also a "Subagents" button in the header with
   the total and how many are running. The button opens a panel beside the
   conversation that lists the subagents grouped by status (running, idle,
   failed, completed, cancelled) with their start time and duration. Only the
