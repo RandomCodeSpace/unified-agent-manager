@@ -274,8 +274,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   shows "No answer." Copilot's recorded thinking also returns after a restart.
   If you scroll up while text arrives, the view stays put
   and offers "Jump to bottom". While the agent works, a label above the
-  composer says what it is doing and for how long; it stays in view as you
-  scroll.
+  composer shows that it is working and for how long, and stays in view as
+  you scroll; what it is doing shows at the end of the conversation.
 - **Diagrams and code**: a fenced ` ```mermaid ` block in a reply renders as
   a diagram once its fence has closed, with a Diagram / Code toggle and Copy
   code in its header; clicking the diagram opens it larger. A block Mermaid

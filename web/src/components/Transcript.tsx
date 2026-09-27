@@ -51,8 +51,8 @@ interface Props {
   density?: Density;
   /** Open the Changes sheet from a turn's "Changed n files" line. */
   onOpenChanges?: () => void;
-  /** Draw the live foot line; the main pane draws the floating `WorkingLabel` over its composer instead. */
-  footLine?: boolean;
+  /** Name the turn's verb on the foot line between steps; the main pane's floating `WorkingLabel` carries it instead, and its foot line names only the current step (Compact). */
+  footVerb?: boolean;
 }
 
 /** Rows that arrive after mount rise in; rows present at mount appear at once. Stable, so memoised rows hold. */
@@ -68,7 +68,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges, footLine = true }: Props) {
+export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges, footVerb = true }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = useMemo(() => {
     const map = new Map<string, Subagent>();
@@ -156,13 +156,13 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   });
   flush(true);
   // Compact draws no live activity row, so the foot line names the current step itself.
-  const step = footLine && compact && working ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
+  const step = compact && working ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
   return (
     <SessionContext.Provider value={sessionId}>
       <WorkdirContext.Provider value={workdir}>
         {out}
         {working && !showedWorking && <TurnStatus working />}
-        {footLine && <WorkingTail working={working && (compact || !liveAtFoot(items, byParent))} turnId={userItemId ?? 'start'} step={step} />}
+        <WorkingTail working={working && (compact || (footVerb && !liveAtFoot(items, byParent)))} turnId={userItemId ?? 'start'} step={step} verb={footVerb} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
@@ -352,16 +352,17 @@ function liveAtFoot(items: Item[], byParent: Map<string, Subagent>): boolean {
  * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
  * status row already announces the state, so this one is not read out again.
  */
-function WorkingTail({ working, turnId, step }: { working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null }) {
+function WorkingTail({ working, turnId, step, verb = true }: { working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null; /** Between steps, the verb; without it the line stays blank, so it does not fold and grow back at every step. */ verb?: boolean }) {
   const { mounted, onClosed } = usePresence(working);
   if (!mounted) return null;
+  const text = step ? step.label : verb ? `${turnVerb(turnId)}…` : '';
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
-      {working && <span role="status" className="sr-only">Busy</span>}
+      {working && verb && <span role="status" className="sr-only">Busy</span>}
       <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
-        <WorkingMark />
+        {text && <WorkingMark />}
         <span className={cn('min-w-0 truncate', (!step || step.shimmer) && 'animate-shimmer motion-reduce:animate-none', step?.tone === 'attention' && 'text-attention')} title={step?.label}>
-          {step ? step.label : `${turnVerb(turnId)}…`}
+          {text}
         </span>
       </div>
     </Collapse>
@@ -370,11 +371,12 @@ function WorkingTail({ working, turnId, step }: { working: boolean; turnId: stri
 
 /**
  * The main pane's working label (DESIGN.md working label), floating over the composer: while a
- * turn runs, the working mark, the turn's verb (in Compact the current step, as the foot line
- * names it) and how long the turn has been busy. It sits outside the transcript, so it stays in
- * view at any scroll position and whichever history page is loaded; `items` is the live tail.
+ * turn runs, the working mark, the turn's verb and how long the turn has been busy; what the
+ * agent is doing stays in the transcript. It sits outside the transcript, so it stays in view at
+ * any scroll position and whichever history page is loaded; `items` is the live tail. Its width
+ * holds while the time counts up, so it never shifts.
  */
-export function WorkingLabel({ working, items, identityItems = items, interactions, subagents, turnTimings = [], compact }: { working: boolean; items: Item[]; identityItems?: Item[]; interactions: Interaction[]; subagents: Subagent[]; turnTimings?: TurnTiming[]; compact: boolean }) {
+export function WorkingLabel({ working, items, identityItems = items, turnTimings = [] }: { working: boolean; items: Item[]; identityItems?: Item[]; turnTimings?: TurnTiming[] }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!working) return;
@@ -383,18 +385,15 @@ export function WorkingLabel({ working, items, identityItems = items, interactio
   }, [working]);
   const lastUser = (list: Item[]) => [...list].reverse().find((item) => item.kind === 'user' && !item.delivery)?.id;
   const turnId = lastUser(items) ?? lastUser(identityItems) ?? 'start';
-  const running = (item: Item) => subagents.some((s) => s.parent_tool_call_id === item.id && s.status === 'running');
-  const step = compact && working ? currentStep(items, { live: true, streamingId: items.at(-1)?.id, approvals: linkInteractions(items, interactions).linked }, running) : null;
   const elapsed = working ? elapsedSince(foregroundStart(turnTimings), now) : null;
   return (
-    <Appear show={working} className="min-w-0">
+    <Appear show={working}>
       {working && <span role="status" className="sr-only">Busy</span>}
-      <span aria-hidden="true" className="flex h-7 min-w-0 items-center gap-2 rounded-sm bg-raised px-2.5 text-caption text-muted shadow-float">
+      <span aria-hidden="true" className="flex h-7 items-center gap-2 rounded-sm bg-raised px-2.5 text-caption text-muted shadow-float">
         <WorkingMark />
-        <span className={cn('min-w-0 truncate', (!step || step.shimmer) && 'animate-shimmer motion-reduce:animate-none', step?.tone === 'attention' && 'text-attention')} title={step?.label}>
-          {step ? step.label : `${turnVerb(turnId)}…`}
-        </span>
-        {elapsed && <span className="shrink-0 tabular-nums text-faint">{elapsed}</span>}
+        <span className="animate-shimmer whitespace-nowrap motion-reduce:animate-none">{turnVerb(turnId)}…</span>
+        {/* Under an hour the time is at most three characters wide: the slot holds them all. */}
+        {elapsed && <span className="min-w-[3ch] text-right tabular-nums text-faint">{elapsed}</span>}
       </span>
     </Appear>
   );
