@@ -283,6 +283,13 @@ export function seed(): MockState {
       name: 'Fix re-attach redraw regression',
       title: '',
       state: 'working',
+      background_tasks: {
+        known: true,
+        tasks: [
+          { id: 'bg-watch', description: 'Repeat the redraw tests', command: 'go test ./internal/vterm/... -run Redraw -count=200', status: 'running', started_at: ago(3) },
+          { id: 'bg-docs', description: 'Serve the docs preview', command: 'npx vite --host 127.0.0.1 --port 8765 docs', status: 'completed', started_at: ago(8), ended_at: ago(5) },
+        ],
+      },
       queued: 1,
       queue: [
         {

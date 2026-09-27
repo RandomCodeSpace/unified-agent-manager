@@ -390,8 +390,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   Stop remains available between autopilot turns, disables continuation and
   pauses queued follow-ups through the existing cancellation operation. Partial
   cancellation failures remain errors rather than a claimed stopped state.
-- **Background tasks**: running provider shells appear above the composer with
-  their own Stop action. Stopping one shell does not stop the foreground turn.
+- **Background tasks**: a chip in the composer's toolbar counts the Task's
+  running provider shells; click it to see each shell's status and command
+  and to stop one. Stopping one shell does not stop the foreground turn.
   Stop requested means the provider accepted cancellation; the list waits for
   a reported terminal state. Unknown or read-only tasks cannot be stopped.
   Subagents retain their Stop action in the subagent panel and context menu.

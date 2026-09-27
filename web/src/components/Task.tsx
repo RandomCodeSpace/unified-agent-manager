@@ -1,10 +1,9 @@
-import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil } from 'lucide-react';
+import { ArrowDown, Bot, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
+import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
 import type { AgentTranscript, HistoryRequest } from '../state';
 import { popupOpen } from '../App';
-import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -24,7 +23,6 @@ import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
 import { HistoryAnchor } from './HistoryAnchor';
 import { Button } from './ui/button';
-import { AlertDialog, useConfirm } from './ui/dialog';
 import { Menu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -57,88 +55,6 @@ interface Props {
 const BOTTOM_SLACK = 32;
 /** iOS WebKit: a scroll-position write under a finger or during momentum fights the scroller and jumps. */
 const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-callout', 'none');
-
-function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string; snapshot: BackgroundTasks | undefined; locked: boolean }) {
-  const [response, setResponse] = useState<{ source: BackgroundTasks | undefined; snapshot: BackgroundTasks } | null>(null);
-  const [requests, setRequests] = useState<Record<string, { pending?: boolean; requested?: boolean; error?: string }>>({});
-  // A newer SSE observation wins over a cancellation response started from an older snapshot.
-  const shown = response && response.source === snapshot ? response.snapshot : snapshot;
-  const running = shown?.tasks.filter((task) => task.status === 'running').length ?? 0;
-  const [open, setOpen] = useState(running > 0);
-  // Opens itself when a background task starts, as the list did before; closing it stays the user's choice.
-  const [wasRunning, setWasRunning] = useState(running);
-  if (running !== wasRunning) {
-    setWasRunning(running);
-    if (wasRunning === 0 && running > 0) setOpen(true);
-  }
-  // A stop kills the shell, so it is confirmed first (DESIGN.md Confirmations).
-  const stopConfirm = useConfirm<{ id: string; description: string; command: string }>();
-  if (!shown?.tasks.length) return null;
-  async function stop(id: string) {
-    if (requests[id]?.pending || locked || !shown?.known) return;
-    setRequests((r) => ({ ...r, [id]: { pending: true } }));
-    try {
-      const result = await api.cancelBackgroundTask(sessionId, id);
-      setResponse({ source: snapshot, snapshot: result.background_tasks });
-      setRequests((r) => ({ ...r, [id]: { requested: result.accepted } }));
-    } catch (e) {
-      setRequests((r) => ({ ...r, [id]: { error: describeError(e) } }));
-    }
-  }
-  return (
-    <div className="mb-2 text-caption text-muted">
-      <button type="button" aria-expanded={open} className="flex h-8 items-center gap-1.5 rounded-sm text-left transition-colors duration-100 hover:text-body" onClick={() => setOpen((o) => !o)}>
-        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
-        Background tasks · {shown.known ? `${running} running` : 'Status unavailable'}
-        {shown.known && running > 0 && <WorkingMark />}
-      </button>
-      <Collapse open={open}>
-      {!shown.known && <p className="pb-2">Last reported tasks. Their current status is unavailable.</p>}
-      <ul className="max-h-40 space-y-2 overflow-y-auto overscroll-contain pb-2">
-        {shown.tasks.map((task) => (
-          <li key={task.id} className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
-              {shown.known && task.status === 'running' ? (
-                <Chip tone="accent">
-                  <WorkingMark />
-                  Running
-                </Chip>
-              ) : (
-                <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
-              )}
-              {task.status === 'running' && <Tip label={locked ? 'This task is read-only.' : !shown.known ? 'Refresh the connection to check this task before stopping it.' : 'Stop this background shell'}>
-                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => stopConfirm.ask({ id: task.id, description: task.description || 'Shell task', command: task.command })}>
-                  {requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
-                </Button>
-              </Tip>}
-            </div>
-            <code className="block truncate font-sans text-caption" title={task.command}>{task.command}</code>
-            {requests[task.id]?.error && <p role="alert" className="pt-1 text-error">{requests[task.id].error}</p>}
-          </li>
-        ))}
-      </ul>
-      </Collapse>
-      <AlertDialog
-        {...stopConfirm.props}
-        title={`Stop ${stopConfirm.target ? `“${stopConfirm.target.description}”` : 'this background task'}?`}
-        description="This kills the process. Output it has not written yet is lost, and the agent is not told."
-        confirmLabel="Stop task"
-        onConfirm={() => {
-          const id = stopConfirm.target?.id;
-          stopConfirm.close();
-          if (id) void stop(id);
-        }}
-      >
-        {stopConfirm.target && (
-          <code className="mt-3 block truncate rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink" title={stopConfirm.target.command}>
-            {stopConfirm.target.command}
-          </code>
-        )}
-      </AlertDialog>
-    </div>
-  );
-}
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
 export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
@@ -680,7 +596,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </Appear>
           </div>
-          <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
         </div>
       </div>

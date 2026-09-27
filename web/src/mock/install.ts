@@ -889,6 +889,14 @@ export function install(): void {
       return new Response(u.bytes.slice(), { status: 200, headers: { 'Content-Type': u.mime, 'X-Content-Type-Options': 'nosniff' } });
     }
 
+    // Stopping a background shell: accepted at once, reported as cancelled.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/background-tasks\/([^/]+)\/cancel$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      const id = decodeURIComponent(r[2]);
+      if (!t?.background_tasks?.tasks.some((task) => task.id === id)) return fail(404, 'background task not found');
+      t.background_tasks = { ...t.background_tasks, tasks: t.background_tasks.tasks.map((task) => (task.id === id ? { ...task, status: 'cancelled', ended_at: new Date().toISOString() } : task)) };
+      return json(200, { accepted: true, background_tasks: t.background_tasks });
+    }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/(prompt|cancel|close)$/)) && method === 'POST') {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');

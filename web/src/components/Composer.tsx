@@ -5,6 +5,7 @@ import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind 
 import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
+import { BackgroundTasks } from './BackgroundTasks';
 import { ComposerUsage } from './ComposerUsage';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
@@ -1051,6 +1052,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           reason={executionReason} busy={!!busy} onOpenChange={setExecutionOpen}
           onChange={(next) => void changeExecution(next)}
           onRetry={commandsError && !locked ? () => setCommandVersion((v) => v + 1) : undefined} />
+        {!newTask && <BackgroundTasks key={session.id} sessionId={session.id} snapshot={session.background_tasks} locked={locked} />}
         {!locked && (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
             <Tip label="Effort, context, permissions and execution">
