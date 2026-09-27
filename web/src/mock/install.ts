@@ -377,6 +377,57 @@ export function install(): void {
     }
   } as unknown as typeof EventSource;
 
+  // A Project's terminal socket gets a fake shell; every other socket is real.
+  const RealWebSocket = window.WebSocket;
+  window.WebSocket = Object.assign(function (url: string | URL, protocols?: string | string[]) {
+    return /\/api\/projects\/.+\/terminal/.test(String(url)) ? fakeShell() : new RealWebSocket(url, protocols);
+  }, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 }) as unknown as typeof WebSocket;
+
+  /** Prompts `mock$ `, echoes what is typed, answers each line with `you typed: <line>`; `exit` exits with code 0. */
+  function fakeShell(): WebSocket {
+    let line = '';
+    const socket = {
+      readyState: 0,
+      binaryType: 'blob',
+      onopen: null as ((e: Event) => void) | null,
+      onmessage: null as ((e: MessageEvent) => void) | null,
+      onclose: null as ((e: CloseEvent) => void) | null,
+      send(data: string | Uint8Array) {
+        if (typeof data === 'string') return; // resize
+        for (const ch of new TextDecoder().decode(data)) {
+          if (ch === '\x7f') {
+            if (line) out('\b \b');
+            line = line.slice(0, -1);
+          } else if (ch !== '\r') {
+            if (ch < ' ') continue; // Esc, Ctrl keys
+            line += ch;
+            out(ch);
+          } else if (line.trim() === 'exit') {
+            out('\r\n');
+            socket.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ type: 'exit', code: 0 }) }));
+            socket.close();
+          } else {
+            out(`\r\nyou typed: ${line}\r\nmock$ `);
+            line = '';
+          }
+        }
+      },
+      close() {
+        if (socket.readyState === 3) return;
+        socket.readyState = 3;
+        window.setTimeout(() => socket.onclose?.(new CloseEvent('close')), 0);
+      },
+    };
+    const out = (text: string) => socket.readyState === 1 && socket.onmessage?.(new MessageEvent('message', { data: new TextEncoder().encode(text).buffer }));
+    window.setTimeout(() => {
+      if (socket.readyState !== 0) return;
+      socket.readyState = 1;
+      socket.onopen?.(new Event('open'));
+      out('mock$ ');
+    }, 30);
+    return socket as unknown as WebSocket;
+  }
+
   const realFetch = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, window.location.origin);
@@ -554,7 +605,12 @@ export function install(): void {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal') return fail(400, `unknown setting "${key}"`);
+      if (body.terminal !== undefined) {
+        if (typeof body.terminal !== 'boolean') return fail(400, 'terminal must be true or false');
+        st.settings = { ...st.settings, terminal: body.terminal };
+        broadcast('settings', { settings: st.settings });
+      }
       if (body.task_defaults !== undefined) {
         const defaults = checkSelection(body.task_defaults);
         if (typeof defaults === 'string') return fail(400, defaults);

@@ -435,6 +435,11 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
               </div>;
             })}
           </Section>}
+          {loaded && <Section id="shell" title="Shell access">
+            <Row id="terminal" label="Terminal" help="Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on this machine as the uam user, without the agent's permission prompts.">
+              <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />
+            </Row>
+          </Section>}
           <Section id="browser" title="This browser">
             <Row id="motion" label="Motion" help="Always on animates even when the OS asks for reduced motion; Match system follows your OS setting.">
               <Segmented

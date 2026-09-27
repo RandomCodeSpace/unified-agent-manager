@@ -727,4 +727,15 @@
     width: 1.2em;
     font-weight: 500;
   }
+  /* The terminal's scrollbar slider (components/Terminal.tsx): xterm.js puts these colours in a <style>
+     element the CSP blocks (DESIGN.md CSP constraints), so they live here, from its foreground `ink`. */
+  .xterm .xterm-scrollable-element > .scrollbar > .slider {
+    background: #25262b33;
+  }
+  .xterm .xterm-scrollable-element > .scrollbar > .slider:hover {
+    background: #25262b66;
+  }
+  .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
+    background: #25262b80;
+  }
 }

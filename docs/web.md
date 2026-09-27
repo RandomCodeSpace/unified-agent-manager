@@ -679,6 +679,24 @@ are logged only at debug level (`UAM_DEBUG=1`).
   anything else with Open in new tab and Download. Only one of Changes, Files,
   Subagents and a file preview is open at a time. On a wide window, a click in
   the conversation or the composer closes whichever of them is open.
+- **Terminal**: off by default. Turn on Settings → Terminal and the Task
+  header shows a "Terminal" button after Files, also when the project has no
+  Git and on settled and archived Tasks. It opens a shell in the project
+  folder, running on the server as the user the service runs as, beside the
+  conversation (a full-screen sheet on a narrow window). Anyone signed in can
+  then run commands on the machine without the agent's permission prompts;
+  agents do not use it. The panel's header shows the folder and whether the
+  shell is connecting, connected, exited (with its exit code) or
+  disconnected; Restart starts a new shell and × closes the panel. The shell
+  lives only as long as the panel: closing it, Restart, opening another Task,
+  reloading the page or turning the setting off ends the shell and
+  everything it runs, and there is no reattaching. Esc goes to the terminal,
+  so only × closes the panel, and a click in the conversation leaves it
+  open; opening Changes, Files, Subagents or a file preview closes it. At
+  most eight terminals run at once. When the service refuses one (too many,
+  the folder is gone, or the setting is off) the panel says "Could not open a
+  terminal." with Retry. The terminal draws with WebGL; in a browser with
+  WebGL turned off the panel says so instead.
 - **No Git**: when the project directory is not in a Git repository, or git
   is not installed on the server, the Task header shows a warning in place of
   Changes and Files, and turns leave out their "Changed n files" line. Click

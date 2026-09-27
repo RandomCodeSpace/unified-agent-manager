@@ -251,6 +251,8 @@ export interface Settings {
   custom_models?: CustomModel[];
   /** What a new Task starts with, shared by every browser; omitted until set, and the provider's own defaults apply then. */
   task_defaults?: TaskDefaults;
+  /** Whether a Task's header offers a shell in its Project folder; off by default. Turning it off ends every open shell. */
+  terminal: boolean;
 }
 
 /**

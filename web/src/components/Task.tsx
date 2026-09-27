@@ -1,4 +1,4 @@
-import { ArrowDown, Bot, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, TriangleAlert } from 'lucide-react';
+import { ArrowDown, Bot, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, SquareTerminal, TriangleAlert } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
@@ -18,7 +18,7 @@ import { Collapse, usePresence } from './ui/collapse';
 import { Composer, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
-import { SubagentPanel, type PanelView } from './Subagents';
+import { SidePanel, SubagentPanel, type PanelView } from './Subagents';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript, WorkingLabel } from './Transcript';
 import { FileReferencesProvider } from './FileReferences';
@@ -30,6 +30,10 @@ import { Tip } from './ui/tooltip';
 
 /** The Files sheet loads with its first opening, never with the Task. */
 const FilesSheet = lazy(() => import('./Files'));
+/** So does the terminal's content, which brings xterm.js. */
+const TerminalPanel = lazy(() => import('./Terminal'));
+/** Esc and a press outside never close the terminal: terminal programs need Esc, and closing ends the shell. */
+const stay = () => {};
 
 interface Props {
   session: SessionDetail;
@@ -60,7 +64,7 @@ const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-c
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
 export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
-  const { dispatch, meta } = useApp();
+  const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
   const tempAlias = meta?.temp_root_aliases?.[0];
   const tempRoots = useMemo(() => ({ temp_root: tempRoot, temp_root_aliases: tempAlias ? [tempAlias] : undefined }), [tempRoot, tempAlias]);
@@ -71,6 +75,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   /** The jump-to-bottom control shows while the reader is away from the bottom. */
   const [jump, setJump] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [panel, setPanel] = useState<PanelView | null>(null);
   const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
@@ -83,12 +88,15 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [locateError, setLocateError] = useState('');
   const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
-  const previewOpened = useCallback(() => { setPanel(null); setFilesOpen(false); onSheet(false); }, [onSheet]);
+  const previewOpened = useCallback(() => { setPanel(null); setFilesOpen(false); setTerminalOpen(false); onSheet(false); }, [onSheet]);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
-  useLayoutEffect(() => { if (sheetOpen || panel || filesOpen) closePreview(false); }, [sheetOpen, panel, filesOpen, closePreview]);
+  useLayoutEffect(() => { if (sheetOpen || panel || filesOpen || terminalOpen) closePreview(false); }, [sheetOpen, panel, filesOpen, terminalOpen, closePreview]);
   // The Changes sheet can open from outside the header (the composer's count); it replaces Files.
   if (sheetOpen && filesOpen) setFilesOpen(false);
+  if (sheetOpen && terminalOpen) setTerminalOpen(false);
+  // Turning Settings → Terminal off ends every shell on the service; the panel leaves with its button.
+  if (terminalOpen && !(settings.terminal && project)) setTerminalOpen(false);
   const atBottom = useRef(true);
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
@@ -276,6 +284,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const panelPresence = usePresence(!!shownPanel);
   const sheetPresence = usePresence(sheetOpen);
   const filesPresence = usePresence(filesOpen);
+  const terminalPresence = usePresence(terminalOpen);
   const [lastPanel, setLastPanel] = useState<PanelView | null>(null);
   if (shownPanel && shownPanel !== lastPanel) setLastPanel(shownPanel);
   const panelView = shownPanel ?? lastPanel;
@@ -292,15 +301,28 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closePreview(false);
     setPanel(null);
     setFilesOpen(false);
+    setTerminalOpen(false);
     onSheet(true);
   }, [onSheet, closePreview]);
   const toggleFiles = useCallback(() => {
     closePreview(false);
     setPanel(null);
+    setTerminalOpen(false);
     onSheet(false);
     setFilesOpen((open) => !open);
   }, [onSheet, closePreview]);
   const closeFiles = useCallback(() => setFilesOpen(false), []);
+  const toggleTerminal = useCallback(() => {
+    closePreview(false);
+    setPanel(null);
+    setFilesOpen(false);
+    onSheet(false);
+    setTerminalOpen((open) => !open);
+  }, [onSheet, closePreview]);
+  const closeTerminal = useCallback(() => {
+    setTerminalOpen(false);
+    document.getElementById('terminal-link')?.focus();
+  }, []);
   const { startRename } = actions;
   const renameInHeader = useCallback(() => startRename(session.id, 'header'), [startRename, session.id]);
 
@@ -309,6 +331,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     panelOpener.current = opener;
     if (sheetOpen) onSheet(false);
     setFilesOpen(false);
+    setTerminalOpen(false);
     setPanel(view);
   }
 
@@ -519,6 +542,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Tip>
             </>
           )}
+          {settings.terminal && project && (
+            <Tip label={`Terminal in ${project.name}`}>
+              <Button id="terminal-link" size="md" aria-pressed={terminalOpen} aria-label="Terminal" className="px-2 text-muted" onClick={toggleTerminal}>
+                <SquareTerminal />
+                <span className="max-sm:hidden">Terminal</span>
+              </Button>
+            </Tip>
+          )}
           {session.subagents.length > 0 && (
             <Tip label="Subagents">
               <Button
@@ -629,6 +660,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
       {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
       {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
+      {terminalPresence.mounted && project && <SidePanel id="terminal" inline={sidePanelInline} open={terminalOpen} onClose={stay} onClosed={terminalPresence.onClosed} label="Terminal"><Suspense fallback={null}><TerminalPanel project={project} onClose={closeTerminal} /></Suspense></SidePanel>}
       {panelPresence.mounted && panelView && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
       {preview.selection && !sheetOpen && !shownPanel && <FilePreview selection={preview.selection} inline={sidePanelInline} onClose={() => closePreview()} />}
     </div>
