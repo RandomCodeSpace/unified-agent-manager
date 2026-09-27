@@ -81,7 +81,7 @@ func (m *Manager) resolveFiles(ctx context.Context, id string, paths []string) (
 	s := m.sessions[id]
 	if s == nil {
 		m.mu.Unlock()
-		return nil, newError(http.StatusNotFound, "session not found")
+		return nil, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	workdir := s.workdir
 	m.mu.Unlock()

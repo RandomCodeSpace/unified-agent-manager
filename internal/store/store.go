@@ -1235,7 +1235,7 @@ func normalize(cfg Config) Config {
 	}
 	cfg.UI.PeekWidth = clampPeekWidth(cfg.UI.PeekWidth)
 	for k, rec := range cfg.Sessions {
-		if changed := coerceRecord(&rec); changed {
+		if coerceRecord(&rec) {
 			cfg.Sessions[k] = rec
 		}
 	}

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -2217,4 +2218,237 @@ func TestWebStepTimesComeFromTheRecord(t *testing.T) {
 		live = append(live, it)
 	}
 	check("live", live)
+}
+
+// Unmatched question events, waiting questions and spent counts each stay
+// within maxQuestionLinks, the oldest giving way, and expire.
+func TestWebQuestionLinksStayBounded(t *testing.T) {
+	h := openWeb(t)
+	c := h.conv.(*conversation)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	q := &c.questions
+	now := time.Now()
+	at := func(i int) time.Time { return now.Add(time.Duration(i) * time.Millisecond) }
+	link := func(text, call string, i int) {
+		c.linkQuestionLocked(&rpc.UserInputRequestedData{Question: text, ToolCallID: &call}, "", at(i))
+	}
+	question := func(text string) *interaction {
+		return &interaction{Interaction: agentapi.Interaction{Questions: []agentapi.Question{{Text: text}}}}
+	}
+
+	link("blank", " ", 0)
+	link("q0", "c0", 0)
+	link("q0", "c0b", 1)
+	for i := 1; i < maxQuestionLinks; i++ {
+		link(fmt.Sprintf("q%d", i), fmt.Sprintf("c%d", i), i+1)
+	}
+	if q.count() != maxQuestionLinks || len(q.events["q0"]) != 1 || q.events["q0"][0].toolCallID != "c0b" || q.events["blank"] != nil {
+		t.Fatalf("events past the bound = %+v", q.events)
+	}
+	link("q16", "c16", maxQuestionLinks+1)
+	if q.count() != maxQuestionLinks || q.events["q0"] != nil {
+		t.Fatalf("oldest event kept = %+v", q.events)
+	}
+
+	var asked []*interaction
+	for i := 0; i <= maxQuestionLinks; i++ {
+		in := question(fmt.Sprintf("w%d", i))
+		asked = append(asked, in)
+		c.askedLocked(in, at(20))
+	}
+	if len(q.waiting) != maxQuestionLinks || q.waiting[0] != asked[1] {
+		t.Fatalf("waiting past the bound = %d, first %+v", len(q.waiting), q.waiting[0].Questions)
+	}
+	// An event links the waiting question with its text, past the others.
+	link(fmt.Sprintf("w%d", maxQuestionLinks), "cw", 21)
+	if last := asked[maxQuestionLinks]; last.ToolCallID != "cw" || slices.Contains(q.waiting, last) {
+		t.Fatalf("linked question = %+v", last.Interaction)
+	}
+
+	// Two same-text questions answered before their events: each late
+	// event is spent on one of them, not kept for the next question.
+	dup1, dup2 := question("dup"), question("dup")
+	c.askedLocked(dup1, at(22))
+	c.askedLocked(dup2, at(22))
+	c.settledLocked(dup1, at(23))
+	c.settledLocked(dup2, at(23))
+	link("dup", "late1", 24)
+	if q.spent["dup"].n != 1 || q.events["dup"] != nil {
+		t.Fatalf("after one late event: spent %+v, events %+v", q.spent, q.events["dup"])
+	}
+	link("dup", "late2", 25)
+	if _, ok := q.spent["dup"]; ok || q.events["dup"] != nil {
+		t.Fatalf("after both late events: spent %+v, events %+v", q.spent, q.events["dup"])
+	}
+
+	// Spent counts past the bound start over.
+	for _, in := range slices.Clone(q.waiting) {
+		c.settledLocked(in, at(26))
+	}
+	for i := range maxQuestionLinks - len(q.spent) + 1 {
+		in := question(fmt.Sprintf("x%d", i))
+		c.askedLocked(in, at(27))
+		c.settledLocked(in, at(27))
+	}
+	if len(q.spent) != 1 {
+		t.Fatalf("spent past the bound = %d: %+v", len(q.spent), q.spent)
+	}
+
+	q.expire(now.Add(questionLinkTTL + time.Second))
+	if len(q.events) != 0 || len(q.spent) != 0 {
+		t.Fatalf("after expiry: events %+v, spent %+v", q.events, q.spent)
+	}
+}
+
+// A window keeps at most webWindowBytes after its item; the item that would
+// pass the bound is where the next read starts.
+func TestWindowFoldBoundsBytesAfterTheItem(t *testing.T) {
+	f := newWindowFold(agentapi.WindowRequest{ItemID: "b", Before: 10, After: 10})
+	for _, it := range []agentapi.Item{
+		{ID: "a"}, {ID: "b"},
+		{ID: "c", Images: []agentapi.Image{{MIME: "image/png", Data: make([]byte, 16)}}},
+		{ID: "d", Text: strings.Repeat("x", webWindowBytes)},
+		{ID: "e"},
+	} {
+		f.add(it)
+	}
+	w, err := f.window()
+	if err != nil || len(w.Items) != 3 || w.Items[2].ID != "c" || w.At != 1 || !w.Start || w.Next != "d" {
+		t.Fatalf("window = %+v, %v", w, err)
+	}
+	if f.bytes[1] != len("c")+16 {
+		t.Fatalf("bytes after the item = %d", f.bytes[1])
+	}
+}
+
+// Calls that need the CLI report one that cannot start; incomplete requests
+// are refused without starting it.
+func TestWebProviderCallsReportACLIThatCannotStart(t *testing.T) {
+	var starts atomic.Int32
+	p := newWebProvider(func() (sdkClient, error) {
+		starts.Add(1)
+		return nil, errors.New("copilot is not installed")
+	}, time.Hour)
+	ctx := context.Background()
+	if p.DisplayName() != "GitHub Copilot" {
+		t.Fatalf("DisplayName = %q", p.DisplayName())
+	}
+	if _, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work"}); err == nil || !strings.Contains(err.Error(), "Events is required") {
+		t.Fatalf("Open without events = %v", err)
+	}
+	if _, err := p.ReadHistoryWindow(ctx, agentapi.WindowRequest{ItemID: "i-1"}); err == nil || !strings.Contains(err.Error(), "ConversationID is required") {
+		t.Fatalf("ReadHistoryWindow without a conversation = %v", err)
+	}
+	if _, err := p.ReadSubagents(ctx, agentapi.SubagentRequest{AgentID: "agent-1"}); err == nil || !strings.Contains(err.Error(), "ConversationID is required") {
+		t.Fatalf("ReadSubagents without a conversation = %v", err)
+	}
+	if n := starts.Load(); n != 0 {
+		t.Fatalf("incomplete requests started the CLI %d times", n)
+	}
+	read := agentapi.ReadRequest{ConversationID: "s-1", Workdir: "/work"}
+	for name, call := range map[string]func() error{
+		"Models": func() error { _, err := p.Models(ctx); return err },
+		"Quota":  func() error { _, err := p.Quota(ctx); return err },
+		"Title": func() error {
+			_, err := p.Title(ctx, agentapi.TitleRequest{Workdir: "/work", Text: "fix it"})
+			return err
+		},
+		"ReadHistory": func() error { _, err := p.ReadHistory(ctx, read); return err },
+		"ReadHistoryWindow": func() error {
+			_, err := p.ReadHistoryWindow(ctx, agentapi.WindowRequest{ReadRequest: read, ItemID: "i-1"})
+			return err
+		},
+		"ReadSubagents": func() error {
+			_, err := p.ReadSubagents(ctx, agentapi.SubagentRequest{ReadRequest: read, AgentID: "agent-1"})
+			return err
+		},
+		"Previous": func() error { _, err := p.Previous(ctx, "/work"); return err },
+		"InUse":    func() error { _, err := p.InUse(ctx, []string{"s-1"}); return err },
+	} {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "not installed") {
+			t.Errorf("%s err = %v", name, err)
+		}
+	}
+
+	// A journal that cannot be read fails the subagent read at once.
+	fc := &fakeClient{readErr: errors.New("disk failure")}
+	p = newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	if _, err := p.ReadSubagents(ctx, agentapi.SubagentRequest{ReadRequest: read, AgentID: "agent-1"}); err == nil || !strings.Contains(err.Error(), "read copilot history: disk failure") || len(fc.reads) != 1 {
+		t.Fatalf("ReadSubagents = %v after %d reads", err, len(fc.reads))
+	}
+}
+
+func TestCostTierMapsTheCatalogTiers(t *testing.T) {
+	for tier, want := range map[rpc.ModelPickerPriceCategory]string{
+		rpc.ModelPickerPriceCategoryLow:      agentapi.CostLow,
+		rpc.ModelPickerPriceCategoryMedium:   agentapi.CostMedium,
+		rpc.ModelPickerPriceCategoryHigh:     agentapi.CostHigh,
+		rpc.ModelPickerPriceCategoryVeryHigh: agentapi.CostVeryHigh,
+		"priceless":                          "",
+	} {
+		if got := costTier(&tier); got != want {
+			t.Errorf("costTier(%s) = %q, want %q", tier, got, want)
+		}
+	}
+	if got := costTier(nil); got != "" {
+		t.Errorf("costTier(nil) = %q", got)
+	}
+}
+
+// stopStub is a client whose Stop is stop.
+type stopStub struct {
+	*fakeClient
+	stop func() error
+}
+
+func (s *stopStub) Stop() error { return s.stop() }
+
+// Shutdown reports a conversation or CLI that failed to stop; a CLI that
+// does not stop in time is killed, and a conversation that does not
+// disconnect in time is left.
+func TestWebShutdownReportsStopFailures(t *testing.T) {
+	ctx := context.Background()
+	fc := &fakeClient{}
+	p := newWebProvider(func() (sdkClient, error) {
+		return &stopStub{fc, func() error { return errors.New("stop refused") }}, nil
+	}, time.Hour)
+	if _, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: &recSink{}}); err != nil {
+		t.Fatal(err)
+	}
+	fc.sessions[0].disconnectHook = func() error { return errors.New("detach refused") }
+	if err := p.Shutdown(ctx); err == nil || !strings.Contains(err.Error(), "stop copilot CLI: stop refused") || !strings.Contains(err.Error(), "close copilot conversation: detach refused") {
+		t.Fatalf("Shutdown = %v", err)
+	}
+
+	release := make(chan struct{})
+	defer close(release)
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	slow := &fakeClient{}
+	if err := stopClient(cancelled, &stopStub{slow, func() error { <-release; return nil }}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("slow stop = %v", err)
+	}
+	if _, forced := slow.counts(); forced != 1 {
+		t.Fatalf("slow CLI force-stopped %d times", forced)
+	}
+
+	h := openWeb(t)
+	h.fs.disconnectHook = func() error { <-release; return nil }
+	if err := h.conv.Close(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("slow disconnect = %v", err)
+	}
+}
+
+// A failure reported for a CLI the provider no longer runs ends nothing.
+func TestWebStaleClientFailureKeepsConversations(t *testing.T) {
+	h := openWeb(t)
+	h.p.fail(&fakeClient{}, "stale watchdog")
+	if h.conv.(*conversation).isClosed() {
+		t.Fatal("stale failure closed the conversation")
+	}
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "still here"}); err != nil {
+		t.Fatalf("Send after a stale failure: %v", err)
+	}
 }

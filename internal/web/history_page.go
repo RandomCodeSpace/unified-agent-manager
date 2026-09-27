@@ -58,13 +58,13 @@ func (m *Manager) OlderHistory(id, before string) (HistoryPage, error) {
 	defer m.mu.Unlock()
 	s := m.sessions[id]
 	if s == nil {
-		return HistoryPage{}, newError(http.StatusNotFound, "session not found")
+		return HistoryPage{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	s.historyUsed = m.now()
 	items := s.agentItems("")
 	end := slices.IndexFunc(items, func(it agentapi.Item) bool { return it.ID == string(boundary) })
 	if end < 0 {
-		return HistoryPage{}, newError(http.StatusConflict, "history changed; reload the task")
+		return HistoryPage{}, newError(http.StatusConflict, msgHistoryChanged)
 	}
 	page := historyPage(items, end)
 	page.Seq = m.seq

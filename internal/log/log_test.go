@@ -192,6 +192,32 @@ func TestLoggingKeepsUntrustedFieldsInOneJSONRecord(t *testing.T) {
 	}
 }
 
+// The stderr fallback uses the same JSON handler: control characters in
+// untrusted values stay escaped inside the one record.
+func TestStderrFallbackKeepsUntrustedFieldsInOneJSONRecord(t *testing.T) {
+	previous := L()
+	t.Cleanup(func() { SetLogger(previous) })
+	var buf bytes.Buffer
+	UseStderr(&buf)
+	input := "v\r\n{\"level\":\"ERROR\",\"msg\":\"forged\"}\n\x1b[2K "
+	Info("web request", "path", input, "headers", map[string][]string{"X-Evil": {input}})
+	record := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	if bytes.ContainsAny(record, "\r\n\x1b ") {
+		t.Fatalf("raw control characters reached the log: %q", buf.Bytes())
+	}
+	var entry struct {
+		Msg     string              `json:"msg"`
+		Path    string              `json:"path"`
+		Headers map[string][]string `json:"headers"`
+	}
+	if err := json.Unmarshal(record, &entry); err != nil {
+		t.Fatalf("record is not one JSON object: %v", err)
+	}
+	if entry.Msg != "web request" || entry.Path != input || len(entry.Headers["X-Evil"]) != 1 || entry.Headers["X-Evil"][0] != input {
+		t.Fatalf("record fields changed: %+v", entry)
+	}
+}
+
 func TestInitError(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {

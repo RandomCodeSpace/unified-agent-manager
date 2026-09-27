@@ -27,7 +27,7 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 	}
 	err := s.readOnlyLocked()
 	if s.removed {
-		err = newError(http.StatusNotFound, "session not found")
+		err = newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	if m.closed {
 		err = errShuttingDown
@@ -46,7 +46,7 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 	conv, state, workdir := s.conv, s.state(), s.workdir
 	m.mu.Unlock()
 	if conv == nil {
-		return Submission{}, newError(http.StatusConflict, "the provider conversation is not open")
+		return Submission{}, newError(http.StatusConflict, msgConversationNotOpen)
 	}
 	executor, ok := conv.(agentapi.CommandExecutor)
 	if !ok { // Providers retaining the old prompt-only contract.

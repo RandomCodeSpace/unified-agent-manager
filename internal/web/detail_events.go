@@ -17,6 +17,8 @@ const maxDetailBodies = 8
 const maxDetailWindowItems = 150
 const maxDetailWindowBytes = 4 << 20
 
+const msgInvalidBodyRef = "invalid body reference"
+
 type bodyRef [2]string
 
 type detailBarrier struct {
@@ -86,7 +88,7 @@ func parseDetailInterest(r *http.Request) (string, string, []bodyRef, error) {
 		var tuple []json.RawMessage
 		var pair bodyRef
 		if json.Unmarshal([]byte(encoded), &tuple) != nil || (len(tuple) != 2 && len(tuple) != 3) {
-			return "", "", nil, newError(400, "invalid body reference")
+			return "", "", nil, newError(400, msgInvalidBodyRef)
 		}
 		if len(tuple) == 3 {
 			var covered uint64
@@ -95,7 +97,7 @@ func parseDetailInterest(r *http.Request) (string, string, []bodyRef, error) {
 			}
 		}
 		if strings.TrimSpace(string(tuple[0])) == "null" || json.Unmarshal(tuple[0], &pair[0]) != nil || json.Unmarshal(tuple[1], &pair[1]) != nil || !validDetailID(pair[0], true) || !validDetailID(pair[1], false) {
-			return "", "", nil, newError(400, "invalid body reference")
+			return "", "", nil, newError(400, msgInvalidBodyRef)
 		}
 		ref := bodyRef{pair[0], pair[1]}
 		if seen[ref] {
@@ -114,7 +116,7 @@ func parseDetailInterest(r *http.Request) (string, string, []bodyRef, error) {
 // is not retained, or retained clipped, and the record can be paged.
 func (m *Manager) ItemBody(id, agent, item string) (itemBody, error) {
 	if !validDetailID(agent, true) || !validDetailID(item, false) {
-		return itemBody{}, newError(400, "invalid body reference")
+		return itemBody{}, newError(400, msgInvalidBodyRef)
 	}
 	var fresh *archiveWindow
 	for {
@@ -122,7 +124,7 @@ func (m *Manager) ItemBody(id, agent, item string) (itemBody, error) {
 		s := m.sessions[id]
 		if s == nil {
 			m.mu.Unlock()
-			return itemBody{}, newError(404, "session not found")
+			return itemBody{}, newError(404, msgSessionNotFound)
 		}
 		s.historyUsed = m.now()
 		it, _, read, err := m.itemBodyLocked(s, agent, item, fresh)
@@ -134,7 +136,7 @@ func (m *Manager) ItemBody(id, agent, item string) (itemBody, error) {
 		case read == nil || fresh != nil && it.ID != "":
 			return body, nil
 		case fresh != nil:
-			return itemBody{}, newError(http.StatusConflict, "history changed; reload the task")
+			return itemBody{}, newError(http.StatusConflict, msgHistoryChanged)
 		}
 		if fresh, err = m.readArchive(read); err != nil {
 			// A retained copy, clipped, is still its body.
@@ -265,7 +267,7 @@ func (m *Manager) subscribeDetailWindow(id, agent string, refs []bodyRef, before
 	}
 	s := m.sessions[id]
 	if s == nil {
-		return nil, nil, newError(404, "session not found")
+		return nil, nil, newError(404, msgSessionNotFound)
 	}
 	barrier := detailBarrier{m.seq, m.epoch, id}
 	snapshot := detailSnapshot{detailBarrier: barrier, AgentID: agent}
@@ -274,7 +276,7 @@ func (m *Manager) subscribeDetailWindow(id, agent string, refs []bodyRef, before
 		// A subagent only the record lists was read before the lock.
 		sa, _, ok := m.subagentLocked(s, agent, nil)
 		if !ok {
-			return nil, nil, newError(404, "subagent not found")
+			return nil, nil, newError(404, msgSubagentNotFound)
 		}
 		projected := s.compactSubagent(sa)
 		snapshot.Subagent = &projected

@@ -152,16 +152,18 @@ func TestDeclarationCloseCancelsActiveAndDuplicateCalls(t *testing.T) {
 	}
 }
 
+// changingDeclarationCatalog reports a tool list change during catalog read
+// number at (1 when unset).
 type changingDeclarationCatalog struct {
 	*fakeSession
 	declaration *declarationTool
-	reads       int
+	reads, at   int
 }
 
 func (s *changingDeclarationCatalog) ToolCatalog(ctx context.Context) ([]rpc.CurrentToolMetadata, error) {
 	tools, err := s.fakeSession.ToolCatalog(ctx)
 	s.reads++
-	if s.reads == 1 {
+	if s.reads == max(s.at, 1) {
 		s.declaration.observe(ev("change", &rpc.MCPToolsListChangedData{}))
 	}
 	return tools, err
@@ -173,6 +175,122 @@ func TestDeclarationStartupListChangeInvalidatesCatalog(t *testing.T) {
 	s := &changingDeclarationCatalog{fakeSession: &fakeSession{id: "session", catalog: []rpc.CurrentToolMetadata{{Name: declarationToolName}}}, declaration: d}
 	if err := d.catalog(context.Background(), s, tool); err == nil || len(s.setTools) != 1 {
 		t.Fatalf("startup change accepted: %v; tool sets=%d", err, len(s.setTools))
+	}
+	// A change seen while the restored catalog is read also invalidates it.
+	d = newDeclarationTool(func(context.Context, string) (string, error) { return "/tmp/report.txt", nil })
+	s = &changingDeclarationCatalog{fakeSession: &fakeSession{id: "session", catalog: []rpc.CurrentToolMetadata{{Name: declarationToolName}}}, declaration: d, at: 2}
+	if err := d.catalog(context.Background(), s, d.tool()); err == nil || !strings.Contains(err.Error(), "invalidated") || d.ready {
+		t.Fatalf("restored-catalog change accepted: %v", err)
+	}
+}
+
+// The declaration tool is ready only when the catalog around it proves it is
+// the one uam registered: tools are compared with their MCP origin.
+func TestDeclarationCatalogRefusals(t *testing.T) {
+	server, tool, namespaced := "files", "search", "files/search"
+	mcp := rpc.CurrentToolMetadata{Name: "search", MCPServerName: &server, MCPToolName: &tool, NamespacedName: &namespaced}
+	own := rpc.CurrentToolMetadata{Name: declarationToolName}
+	shadow := rpc.CurrentToolMetadata{Name: declarationToolName, MCPServerName: &server}
+	fail := errors.New("offline")
+	for name, tc := range map[string]struct {
+		s    *fakeSession
+		want string
+	}{
+		"clear fails":        {&fakeSession{setToolErrors: []error{fail}}, "clear declaration tools"},
+		"unshadowed read":    {&fakeSession{toolCatalogs: []fakeToolCatalog{{err: fail}}}, "unshadowed declaration tool catalog is unavailable"},
+		"restore fails":      {&fakeSession{toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{mcp}}}, setToolErrors: []error{nil, fail}}, "restore declaration tool"},
+		"restored read":      {&fakeSession{toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{mcp}}, {err: fail}}}, "restored declaration tool catalog is unavailable"},
+		"ambiguous origin":   {&fakeSession{toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{mcp}}, {tools: []rpc.CurrentToolMetadata{mcp, shadow}}}}, "ambiguous tool origin"},
+		"catalog changed":    {&fakeSession{toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{mcp}}, {tools: []rpc.CurrentToolMetadata{own}}}}, "changed or is ambiguous"},
+		"MCP origin changed": {&fakeSession{toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{mcp}}, {tools: []rpc.CurrentToolMetadata{{Name: "search"}, own}}}}, "changed or is ambiguous"},
+	} {
+		tc.s.id = "session"
+		d := newDeclarationTool(func(context.Context, string) (string, error) { return "/tmp/report.txt", nil })
+		if err := d.catalog(context.Background(), tc.s, d.tool()); err == nil || !strings.Contains(err.Error(), tc.want) || d.ready {
+			t.Errorf("%s: err = %v, ready %v", name, err, d.ready)
+		}
+	}
+
+	s := &fakeSession{id: "session", toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{mcp}}, {tools: []rpc.CurrentToolMetadata{mcp, own}}}}
+	d := newDeclarationTool(func(context.Context, string) (string, error) { return "/tmp/report.txt", nil })
+	defer d.stop()
+	if err := d.catalog(context.Background(), s, d.tool()); err != nil || !d.ready {
+		t.Fatalf("unchanged MCP catalog = %v, ready %v", err, d.ready)
+	}
+	// Only a tool list change invalidates it.
+	d.observe(ev("idle", &rpc.SessionIdleData{}))
+	if !d.ready {
+		t.Fatal("an unrelated event invalidated the catalog")
+	}
+	d.observe(ev("changed", &rpc.MCPToolsListChangedData{}))
+	if d.ready {
+		t.Fatal("a tool list change kept the catalog ready")
+	}
+}
+
+// Malformed or cancelled calls declare nothing, and malformed ones never
+// reach validation.
+func TestDeclarationHandlerRefusals(t *testing.T) {
+	var validations atomic.Int32
+	d, tool := readyDeclaration(t, func(_ context.Context, path string) (string, error) {
+		validations.Add(1)
+		if path == "relative" {
+			return "relative.txt", nil
+		}
+		return "/tmp/report.txt", nil
+	})
+	defer d.stop()
+	for name, inv := range map[string]copilot.ToolInvocation{
+		"not an object": {SessionID: "session", ToolCallID: "a", Arguments: "report.txt"},
+		"no path":       {SessionID: "session", ToolCallID: "b", Arguments: map[string]any{"title": "Report"}},
+		"no call id":    {SessionID: "session", Arguments: map[string]any{"path": "report.txt"}},
+	} {
+		if result, err := tool.Handler(inv); err == nil || result.TextResultForLLM != "" {
+			t.Errorf("%s: %+v, %v", name, result, err)
+		}
+	}
+	if n := validations.Load(); n != 0 {
+		t.Fatalf("malformed calls validated %d times", n)
+	}
+	if _, err := invokeFile(tool, "relative", map[string]any{"path": "relative"}); err == nil || !strings.Contains(err.Error(), "normalized file path is unavailable") {
+		t.Fatalf("relative normalized path = %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := tool.Handler(copilot.ToolInvocation{SessionID: "session", ToolCallID: "cancelled", Arguments: map[string]any{"path": "report.txt"}, TraceContext: cancelled}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled call = %v", err)
+	}
+	// A call without a trace context still runs.
+	result, err := tool.Handler(copilot.ToolInvocation{SessionID: "session", ToolCallID: "untraced", Arguments: map[string]any{"path": "report.txt"}})
+	if err != nil || result.ResultType != "success" {
+		t.Fatalf("untraced call = %+v, %v", result, err)
+	}
+	if result, err := d.declare(declarationInput{Path: "report.txt"}, copilot.ToolInvocation{}); err != nil || result.ResultType != "success" {
+		t.Fatalf("untraced declare = %+v, %v", result, err)
+	}
+}
+
+// A repeated call waiting for the first stops waiting when it is cancelled;
+// the first still completes.
+func TestDeclarationDuplicateCallStopsWaitingWhenCancelled(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	d, tool := readyDeclaration(t, func(context.Context, string) (string, error) {
+		close(entered)
+		<-release
+		return "/tmp/report.txt", nil
+	})
+	defer d.stop()
+	first := make(chan error, 1)
+	go func() { _, err := invokeFile(tool, "same", map[string]any{"path": "report.txt"}); first <- err }()
+	<-entered
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := tool.Handler(copilot.ToolInvocation{SessionID: "session", ToolCallID: "same", Arguments: map[string]any{"path": "report.txt"}, TraceContext: cancelled}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled duplicate = %v", err)
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first call = %v", err)
 	}
 }
 

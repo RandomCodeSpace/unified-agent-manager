@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -270,5 +271,244 @@ func TestWebAutopilotContinuationItemRetainsStructuredDelivery(t *testing.T) {
 	recorded, err := h.conv.History(context.Background())
 	if err != nil || len(recorded.Items) != 1 || recorded.Items[0].Delivery != agentapi.DeliveryAutopilot {
 		t.Fatalf("recorded continuation=%+v err=%v", recorded.Items, err)
+	}
+}
+
+// A mode change shows at once, unconfirmed, and is then read back from the
+// runtime, as is an objective change; a subagent's are ignored.
+func TestWebModeAndObjectiveEventsRereadExecution(t *testing.T) {
+	h, runtime := runtimeHarness(t)
+	executions := func() []*agentapi.ExecutionState {
+		var out []*agentapi.ExecutionState
+		for _, e := range h.sink.all() {
+			if e.Kind == agentapi.EventExecution {
+				out = append(out, e.Execution)
+			}
+		}
+		return out
+	}
+	set := func(state agentapi.ExecutionState) {
+		runtime.runtimeMu.Lock()
+		defer runtime.runtimeMu.Unlock()
+		runtime.state = state
+	}
+	before := len(executions())
+	set(agentapi.ExecutionState{Known: true, Mode: "autopilot"})
+	h.fs.onEvent(ev("mode", &rpc.SessionModeChangedData{NewMode: rpc.SessionModeAutopilot, PreviousMode: rpc.SessionModeInteractive}))
+	if got := executions(); len(got) <= before || got[before].Known || got[before].Mode != "autopilot" {
+		t.Fatalf("mode change = %+v", got[before:])
+	}
+	waitFor(t, "mode read back", func() bool {
+		got := executions()
+		last := got[len(got)-1]
+		return last.Known && last.Mode == "autopilot"
+	})
+
+	set(agentapi.ExecutionState{Known: true, Mode: "autopilot", Objective: &agentapi.AutopilotObjective{ID: 1, Objective: "ship it", Status: "active"}})
+	h.fs.onEvent(ev("goal", &rpc.SessionAutopilotObjectiveChangedData{Operation: "set"}))
+	waitFor(t, "objective read back", func() bool {
+		got := executions()
+		last := got[len(got)-1]
+		return last.Known && last.Objective != nil && last.Objective.Objective == "ship it"
+	})
+
+	h.fs.onEvent(agentEv("sub-mode", "agent-1", &rpc.SessionModeChangedData{NewMode: rpc.SessionModePlan}))
+	h.fs.onEvent(agentEv("sub-goal", "agent-1", &rpc.SessionAutopilotObjectiveChangedData{Operation: "set"}))
+	for _, e := range executions() {
+		if e.Mode == "plan" {
+			t.Fatalf("subagent mode change reached the Task: %+v", e)
+		}
+	}
+
+	// Without runtime mode control the change is shown, and stays unconfirmed.
+	plain := openWeb(t)
+	plain.fs.onEvent(ev("mode", &rpc.SessionModeChangedData{NewMode: rpc.SessionModePlan}))
+	if last := plain.sink.last(); last.Kind != agentapi.EventExecution || last.Execution.Known || last.Execution.Mode != "plan" {
+		t.Fatalf("mode change without runtime = %+v", last)
+	}
+}
+
+// A failed read keeps the last known state, marked unknown; a closed
+// conversation reports none.
+func TestWebExecutionReadFailureKeepsLastState(t *testing.T) {
+	h, runtime := runtimeHarness(t)
+	c := h.conv.(*conversation)
+	runtime.readErr = errors.New("offline")
+	c.refreshExecution(context.Background())
+	if last := h.sink.last(); last.Kind != agentapi.EventExecution || last.Execution.Known || last.Execution.Mode != "interactive" {
+		t.Fatalf("failed read = %+v", last)
+	}
+	if err := h.conv.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	n := len(h.sink.all())
+	c.refreshExecution(context.Background())
+	if len(h.sink.all()) != n {
+		t.Fatalf("closed conversation emitted %+v", h.sink.all()[n:])
+	}
+}
+
+type commandListFailure struct{ *fakeSession }
+
+func (commandListFailure) ListCommands(context.Context) ([]rpc.SlashCommandInfo, error) {
+	return nil, errors.New("catalog offline")
+}
+
+// The catalog describes the commands the Task's settings handle and marks
+// those the web client cannot run; neither kind is ever invoked.
+func TestWebCommandCatalogDescribesWebHandling(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	h.fs.commands = nil
+	for _, name := range []string{"rename", allowAllCommand, "permissions", "model", "every", "share"} {
+		h.fs.commands = append(h.fs.commands, rpc.SlashCommandInfo{Name: name, Description: "native", Kind: rpc.SlashCommandKindBuiltin, Input: &rpc.SlashCommandInput{Hint: "value", Required: copilot.Bool(true)}})
+	}
+	listed, err := h.conv.Commands(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]agentapi.Command{}
+	for _, cmd := range listed {
+		byName[cmd.Name] = cmd
+	}
+	if c := byName["rename"]; c.Description != "Rename this web Task" || c.InputHint != "Task name (omit to open rename)" || c.InputRequired || c.DisabledReason != "" {
+		t.Fatalf("rename = %+v", c)
+	}
+	if c := byName[allowAllCommand]; !strings.Contains(c.Description, "permission policy") || c.DisabledReason != "" {
+		t.Fatalf("allow-all = %+v", c)
+	}
+	if c := byName["permissions"]; c.Description != "Manage this Task's Safe/Yolo permission policy" || c.DisabledReason != "" {
+		t.Fatalf("permissions = %+v", c)
+	}
+	for name, reason := range map[string]string{"every": "Scheduled commands", "share": "Publishing and remote sessions"} {
+		if !strings.Contains(byName[name].DisabledReason, reason) {
+			t.Fatalf("%s = %+v", name, byName[name])
+		}
+	}
+	for _, name := range []string{"rename", allowAllCommand, "permissions", "model", "every", "share"} {
+		if _, err := h.conv.(agentapi.CommandExecutor).ExecuteCommand(ctx, name, agentapi.Prompt{Text: "value"}); err == nil {
+			t.Fatalf("%s ran", name)
+		}
+	}
+	if len(h.fs.invoked) != 0 {
+		t.Fatalf("invoked %v", h.fs.invoked)
+	}
+}
+
+// Commands are refused before invocation when they cannot run as asked;
+// an outcome the web client cannot show is reported as uncertain.
+func TestWebCommandRefusalsAndUncertainOutcomes(t *testing.T) {
+	h, runtime := runtimeHarness(t)
+	exec := h.conv.(agentapi.CommandExecutor)
+	ctx := context.Background()
+	h.fs.commands = append(h.fs.commands, rpc.SlashCommandInfo{Name: "init", Kind: rpc.SlashCommandKindBuiltin, Input: &rpc.SlashCommandInput{Hint: "what", Required: copilot.Bool(true)}})
+	if _, err := exec.ExecuteCommand(ctx, "init", agentapi.Prompt{}); err == nil || !strings.Contains(err.Error(), "requires arguments") {
+		t.Fatalf("init without arguments = %v", err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := exec.ExecuteCommand(cancelled, "review", agentapi.Prompt{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled command = %v", err)
+	}
+	if len(h.fs.invoked) != 0 {
+		t.Fatalf("refused commands invoked %v", h.fs.invoked)
+	}
+
+	plan, autopilot, sandbox := rpc.SessionModePlan, rpc.SessionModeAutopilot, rpc.SandboxSessionChange("enabled")
+	for name, result := range map[string]rpc.SlashCommandInvocationResult{
+		"empty prompt":   &rpc.SlashCommandAgentPromptResult{Prompt: " "},
+		"sandbox change": &rpc.SlashCommandTextResult{Text: "done", SandboxSessionChange: &sandbox},
+		"no result":      nil,
+		"plan mode":      &rpc.SlashCommandCompletedResult{Mode: &plan},
+	} {
+		h.fs.invoke = result
+		if _, err := exec.ExecuteCommand(ctx, "goal", agentapi.Prompt{}); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+	}
+	// A prompt whose mode cannot be applied is not sent.
+	runtime.modeErr = errors.New("mode refused")
+	h.fs.invoke = &rpc.SlashCommandAgentPromptResult{Prompt: "complete the objective", Mode: &autopilot}
+	if _, err := exec.ExecuteCommand(ctx, "goal", agentapi.Prompt{Text: "objective"}); !errors.Is(err, agentapi.ErrSubmissionUncertain) || len(h.fs.sent) != 0 {
+		t.Fatalf("unapplied mode err = %v, sent %v", err, h.fs.sent)
+	}
+
+	// Without runtime mode control a mode change is never assumed.
+	plain := openWeb(t)
+	plain.fs.commands = []rpc.SlashCommandInfo{{Name: "autopilot", Kind: rpc.SlashCommandKindBuiltin}}
+	plain.fs.invoke = &rpc.SlashCommandCompletedResult{Mode: &autopilot}
+	if _, err := plain.conv.(agentapi.CommandExecutor).ExecuteCommand(ctx, "autopilot", agentapi.Prompt{Text: "on"}); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
+		t.Fatalf("mode without runtime control = %v", err)
+	}
+
+	// Plan exit approval is refused, never granted.
+	if res, err := plain.fc.create[0].OnExitPlanModeRequest(copilot.ExitPlanModeRequest{}, copilot.ExitPlanModeInvocation{}); err != nil || res.Approved || res.Feedback == "" {
+		t.Fatalf("plan exit = %+v, %v", res, err)
+	}
+}
+
+func TestWebCommandsFailWithTheCatalogOrConversation(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	c := h.conv.(*conversation)
+	c.mu.Lock()
+	c.sess = commandListFailure{h.fs}
+	c.mu.Unlock()
+	if _, err := h.conv.Commands(ctx); err == nil || !strings.Contains(err.Error(), "copilot commands: catalog offline") {
+		t.Fatalf("Commands = %v", err)
+	}
+	if _, err := h.conv.(agentapi.CommandExecutor).ExecuteCommand(ctx, "usage", agentapi.Prompt{}); err == nil || !strings.Contains(err.Error(), "catalog offline") {
+		t.Fatalf("ExecuteCommand = %v", err)
+	}
+	if err := h.conv.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.conv.Commands(ctx); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("closed Commands = %v", err)
+	}
+	if _, err := h.conv.(agentapi.CommandExecutor).ExecuteCommand(ctx, "usage", agentapi.Prompt{}); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("closed ExecuteCommand = %v", err)
+	}
+}
+
+// failingRefresh answers the first task listing and fails the rest.
+type failingRefresh struct {
+	*fakeSession
+	lists int
+}
+
+func (s *failingRefresh) ListTasks(ctx context.Context) ([]rpc.TaskInfo, error) {
+	s.lists++
+	if s.lists > 1 {
+		return nil, errors.New("offline")
+	}
+	return s.fakeSession.ListTasks(ctx)
+}
+
+func TestWebShellStopFailures(t *testing.T) {
+	h := openWeb(t)
+	controller := h.conv.(agentapi.BackgroundTaskController)
+	ctx := context.Background()
+	h.fs.setTasks(&rpc.TaskShellInfo{ID: "done", Command: "make", Status: rpc.TaskStatusCompleted}, &rpc.TaskShellInfo{ID: "server", Command: "server", Status: rpc.TaskStatusRunning})
+	if _, err := controller.CancelBackgroundTask(ctx, "done"); !errors.Is(err, agentapi.ErrBackgroundTaskInactive) || len(h.fs.subCancels) != 0 {
+		t.Fatalf("finished task = %v, cancels %v", err, h.fs.subCancels)
+	}
+	h.fs.subCancelErr = errors.New("refused")
+	if _, err := controller.CancelBackgroundTask(ctx, "server"); err == nil || !strings.Contains(err.Error(), "cancel shell task: refused") {
+		t.Fatalf("refused cancel = %v", err)
+	}
+	h.fs.subCancelErr = nil
+	c := h.conv.(*conversation)
+	c.mu.Lock()
+	c.sess = &failingRefresh{fakeSession: h.fs}
+	c.mu.Unlock()
+	if snapshot, err := controller.CancelBackgroundTask(ctx, "server"); err == nil || !strings.Contains(err.Error(), "refresh failed") || snapshot.Known {
+		t.Fatalf("failed refresh = %+v, %v", snapshot, err)
+	}
+	if err := h.conv.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.CancelBackgroundTask(ctx, "server"); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("closed = %v", err)
 	}
 }

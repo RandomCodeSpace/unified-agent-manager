@@ -149,7 +149,9 @@ func TestWebModelsReportTheMediaGate(t *testing.T) {
 // upload it is, hashed from disk; other files stay references.
 func TestWebSendCarriesANamedPDFAsAFile(t *testing.T) {
 	h := openWeb(t)
-	dir := filepath.Join(t.TempDir(), agentapi.UploadsDir, "task-1", "up-1.d")
+	config := t.TempDir()
+	t.Setenv("UAM_CONFIG_DIR", config)
+	dir := filepath.Join(config, agentapi.UploadsDir, "task-1", "up-1.d")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -192,6 +194,43 @@ func TestWebSendCarriesANamedPDFAsAFile(t *testing.T) {
 	history, err := h.conv.History(context.Background())
 	if err != nil || len(history.Items) != 1 || !reflect.DeepEqual(history.Items[0].Attachments, []agentapi.Attachment{{Name: "Forms.pdf", MIME: "application/pdf", NotNative: true}}) {
 		t.Fatalf("history = %+v, %v", history.Items, err)
+	}
+}
+
+// Only a named copy inside the web service's upload store is an upload; a
+// file laid out the same way anywhere else stays a reference.
+func TestUploadFileStaysInsideTheUploadStore(t *testing.T) {
+	config, elsewhere := t.TempDir(), t.TempDir()
+	t.Setenv("UAM_CONFIG_DIR", config)
+	pdf := []byte("%PDF-1.4\n%%EOF\n")
+	write := func(parts ...string) string {
+		t.Helper()
+		path := filepath.Join(parts...)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, pdf, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	stored := write(config, agentapi.UploadsDir, "task-1", "up-1.d", "Forms.pdf")
+	sum := sha256.Sum256(pdf)
+	att, ok := uploadFile(&rpc.AttachmentFile{Path: stored, DisplayName: "Forms.pdf"})
+	if want := (agentapi.Attachment{Name: "Forms.pdf", MIME: "application/pdf", Size: int64(len(pdf)), SHA256: hex.EncodeToString(sum[:])}); !ok || att != want {
+		t.Fatalf("stored upload = %+v, %v", att, ok)
+	}
+
+	outside := write(elsewhere, agentapi.UploadsDir, "task-1", "up-1.d", "Forms.pdf")
+	for _, path := range []string{
+		outside,
+		filepath.Join(config, agentapi.UploadsDir, "task-1", "..", "..", "..", filepath.Base(elsewhere), agentapi.UploadsDir, "task-1", "up-1.d", "Forms.pdf"),
+		filepath.Join(config, agentapi.UploadsDir, "task-1", "up-1", "Forms.pdf"),
+		filepath.Join(agentapi.UploadsDir, "task-1", "up-1.d", "Forms.pdf"),
+	} {
+		if att, ok := uploadFile(&rpc.AttachmentFile{Path: path, DisplayName: "Forms.pdf"}); ok {
+			t.Fatalf("%s is an upload: %+v", path, att)
+		}
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"testing/iotest"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -358,6 +360,11 @@ func TestEmbeddedIndexAndSPAFallback(t *testing.T) {
 	if w := ts2.do(http.MethodGet, "/api/nope", "", withCookie(ts2)); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), `"error"`) {
 		t.Fatalf("unknown api = %d %s", w.Code, w.Body)
 	}
+	// Without the app's page a client route has nothing to fall back to.
+	bare := newTestServer(t, ServerConfig{Assets: fstest.MapFS{"favicon.svg": {Data: []byte("<svg/>")}}})
+	if w := bare.do(http.MethodGet, "/sessions/abc", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("client route without the app's page = %d", w.Code)
+	}
 }
 
 func TestSessionRoutes(t *testing.T) {
@@ -427,6 +434,95 @@ func TestSessionRoutes(t *testing.T) {
 	canonical, _ := canonicalWorkdir(dir)
 	if len(meta.RecentWorkdirs) != 1 || meta.RecentWorkdirs[0] != canonical {
 		t.Fatalf("recent workdirs = %q", meta.RecentWorkdirs)
+	}
+}
+
+// JSON routes refuse a malformed body, or data after the JSON value, before
+// they act.
+func TestJSONRoutesRefuseMalformedBodies(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	sum, conv := createSession(t, ts.m, ts.prov)
+	projects := ts.m.Projects()
+	task := "/api/sessions/" + sum.ID
+	for _, route := range []struct{ method, target string }{
+		{http.MethodPost, "/api/projects"},
+		{http.MethodPatch, "/api/projects/" + sum.ProjectID},
+		{http.MethodPost, "/api/settings/custom-models/discover"},
+		{http.MethodPost, "/api/sessions"},
+		{http.MethodPatch, task},
+		{http.MethodPost, task + "/prompt"},
+		{http.MethodPost, task + "/command"},
+		{http.MethodPost, task + "/subagents/helper/prompt"},
+		{http.MethodPost, task + "/interactions/p1"},
+	} {
+		for _, body := range []string{`{"name":`, `{"name":"x"} {}`} {
+			if w := ts.do(route.method, route.target, body, auth); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid JSON body") {
+				t.Errorf("%s %s with %q = %d %s", route.method, route.target, body, w.Code, w.Body)
+			}
+		}
+	}
+	after := ts.m.Projects()
+	if len(after) != len(projects) || after[0].Name != projects[0].Name || len(ts.m.List()) != 1 || ts.m.List()[0].Name != sum.Name || len(conv.Sends()) != 0 {
+		t.Fatalf("a refused body changed state: projects %+v, tasks %+v, sends %d", after, ts.m.List(), len(conv.Sends()))
+	}
+}
+
+// A route answers a failure with its status and message, never a success.
+func TestRoutesReportFailures(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	sum, _ := createSession(t, ts.m, ts.prov)
+	for _, c := range []struct {
+		name, method, target, body string
+		status                     int
+		msg                        string
+	}{
+		{"previous of a missing project", http.MethodGet, "/api/projects/missing/previous", "", http.StatusNotFound, "project not found"},
+		{"command on a missing task", http.MethodPost, "/api/sessions/missing/command", `{"name":"compact","request_id":"` + mustUUID(t) + `"}`, http.StatusNotFound, "session not found"},
+		{"commands of a missing task", http.MethodGet, "/api/sessions/missing/commands", "", http.StatusNotFound, "session not found"},
+		{"files of a missing task", http.MethodGet, "/api/sessions/missing/files/tree", "", http.StatusNotFound, "session not found"},
+		{"close a missing task", http.MethodPost, "/api/sessions/missing/close", "", http.StatusNotFound, "session not found"},
+		{"events of a missing task", http.MethodGet, "/api/events?session=missing", "", http.StatusNotFound, "session not found"},
+		{"compact missing subagent", http.MethodGet, "/api/sessions/" + sum.ID + "/subagents/missing?view=" + compactRepresentation, "", http.StatusNotFound, "subagent not found"},
+		{"discover without a usable base URL", http.MethodPost, "/api/settings/custom-models/discover", `{"base_url":"not a url","api_key_env":"UAM_TEST_KEY"}`, http.StatusBadRequest, ""},
+	} {
+		w := ts.do(c.method, c.target, c.body, auth)
+		var got struct{ Error string }
+		if w.Code != c.status || json.Unmarshal(w.Body.Bytes(), &got) != nil || got.Error == "" || c.msg != "" && got.Error != c.msg {
+			t.Errorf("%s = %d %s, want %d %q", c.name, w.Code, w.Body, c.status, c.msg)
+		}
+	}
+
+	// An upload whose body cannot be read stores nothing.
+	r := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sum.ID+"/attachments?name=a.txt", iotest.ErrReader(errors.New("connection reset")))
+	r.Host = "127.0.0.1:8260"
+	r.Header.Set("Content-Type", "application/octet-stream")
+	auth(r)
+	w := httptest.NewRecorder()
+	ts.srv.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "could not read the upload") {
+		t.Fatalf("unreadable upload = %d %s", w.Code, w.Body)
+	}
+
+	// A provider that cannot list its previous sessions fails the counts.
+	m, prov, _, _ := importManager(t)
+	imp, err := NewServer(ServerConfig{Manager: m, Token: testToken, Assets: fstest.MapFS{"index.html": {Data: []byte("app")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov.SetPrevious(nil, errors.New("listing failed"))
+	w = (&testServer{srv: imp, m: m, prov: prov}).do(http.MethodGet, "/api/previous/counts", "", auth)
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "could not list previous") {
+		t.Fatalf("previous counts = %d %s", w.Code, w.Body)
+	}
+
+	// Once the service shuts down, no event stream starts.
+	if err := ts.m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if w := ts.do(http.MethodGet, "/api/events", "", auth); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("events after shutdown = %d %s", w.Code, w.Body)
 	}
 }
 

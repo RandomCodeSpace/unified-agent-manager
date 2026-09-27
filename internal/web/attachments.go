@@ -195,7 +195,7 @@ func (m *Manager) upload(id, name string, data []byte, selectedModel *string) (a
 	}
 	switch {
 	case s.removed:
-		err = newError(http.StatusNotFound, "session not found")
+		err = newError(http.StatusNotFound, msgSessionNotFound)
 	case m.closed:
 		err = errShuttingDown
 	case selectedModel != nil && (model == "" || m.modelLocked(s.provider, model).ID == ""):
@@ -217,7 +217,7 @@ func (m *Manager) upload(id, name string, data []byte, selectedModel *string) (a
 	u := &upload{ID: uid, Name: cleanUploadName(name), MIME: mime, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:]), CreatedAt: m.now()}
 	if err := m.storeUpload(s, u, data); err != nil {
 		if errors.Is(err, errTaskRemoved) {
-			return agentapi.Attachment{}, newError(http.StatusNotFound, "session not found")
+			return agentapi.Attachment{}, newError(http.StatusNotFound, msgSessionNotFound)
 		}
 		return agentapi.Attachment{}, fmt.Errorf("store attachment: %w", err)
 	}

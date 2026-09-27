@@ -78,8 +78,8 @@ func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 				len(d.TypeHint) > 32 || !utf8.ValidString(d.TypeHint) || strings.ContainsFunc(d.TypeHint, unicode.IsControl) {
 				tool.Declaration = nil
 			} else {
-				copy := *d
-				tool.Declaration = &copy
+				declaration := *d
+				tool.Declaration = &declaration
 			}
 		}
 		it.Tool = &tool
@@ -187,9 +187,9 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 		}
 		if count >= maxDeclarationCards && oldIndex >= 0 {
 			old := s.items[oldIndex]
-			copy := *old.Tool
-			copy.Declaration = nil
-			old.Tool = &copy
+			stripped := *old.Tool
+			stripped.Declaration = nil
+			old.Tool = &stripped
 			s.itemBytes -= itemSize(s.items[oldIndex])
 			s.items[oldIndex] = old
 			s.itemBytes += itemSize(old)
@@ -358,9 +358,9 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 		}
 		declarations++
 		if declarations > maxDeclarationCards {
-			copy := *items[i].Tool
-			copy.Declaration = nil
-			items[i].Tool = &copy
+			stripped := *items[i].Tool
+			stripped.Declaration = nil
+			items[i].Tool = &stripped
 		}
 	}
 	s.items = items
