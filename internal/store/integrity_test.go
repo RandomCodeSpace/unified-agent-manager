@@ -359,6 +359,14 @@ func TestNormalizeClampsNegativePeekWidth(t *testing.T) {
 	}
 }
 
+func TestNormalizeClampsPeekWidthIntoBounds(t *testing.T) {
+	for stored, want := range map[int]int{0: defaultPeekWidth, 5: minPeekWidth, 80: 80, 500: maxPeekWidth} {
+		if got := normalize(Config{UI: UISettings{PeekWidth: stored}}).UI.PeekWidth; got != want {
+			t.Errorf("peek_width %d normalized to %d, want %d", stored, got, want)
+		}
+	}
+}
+
 func TestNormalizeNeverDropsSessions(t *testing.T) {
 	cfg := Config{
 		SchemaVersion: CurrentSchemaVersion,

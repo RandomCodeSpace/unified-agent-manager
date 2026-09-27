@@ -521,7 +521,7 @@ func TestCompactSubagentResultSummaryKeepsMarkdownLines(t *testing.T) {
 	if s.items[0].Tool.Output != report {
 		t.Fatal("summary changed the retained report")
 	}
-	if short := boundedResultSummary(prefix); short != prefix {
+	if boundedResultSummary(prefix) != prefix {
 		t.Fatal("short report was changed")
 	}
 }

@@ -129,7 +129,7 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 	conv := s.conv
 	m.mu.Unlock()
 	if conv == nil {
-		return nil, out, newError(http.StatusConflict, "the provider conversation is not open")
+		return nil, out, newError(http.StatusConflict, msgConversationNotOpen)
 	}
 	diffCtx, cancel := context.WithTimeout(ctx, controlTimeout)
 	defer cancel()
@@ -251,11 +251,11 @@ func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.File
 	if entry == nil {
 		return agentapi.FileDiff{}, newError(http.StatusBadRequest, "path is not a changed file in this working tree")
 	}
-	var args []string
+	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color"}
 	if entry.untracked || !repo.hasHead {
-		args = []string{"diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-color", "--", "/dev/null", entry.path}
+		args = append(args, "--no-index", "--", "/dev/null", entry.path)
 	} else {
-		args = []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--", entry.path}
+		args = append(args, "HEAD", "--", entry.path)
 	}
 	patch, code, stderr, err := runGit(ctx, repo.git, repo.top, maxDiffBytes+1, args...)
 	if err != nil {

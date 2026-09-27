@@ -379,6 +379,19 @@ func newError(status int, format string, args ...any) *Error {
 	return &Error{Status: status, Message: fmt.Sprintf(format, args...)}
 }
 
+// Failure messages several operations report.
+const (
+	msgSessionNotFound     = "session not found"
+	msgSubagentNotFound    = "subagent not found"
+	msgHistoryChanged      = "history changed; reload the task"
+	msgConversationNotOpen = "the provider conversation is not open"
+	msgConversationClosed  = "the provider conversation is closed"
+	msgUnknownProvider     = "unknown provider %q"
+	msgPromptTooLarge      = "prompt is too large"
+	msgRequestIDNotUUID    = "request_id must be a UUID"
+	msgInteractionExpired  = "the interaction expired"
+)
+
 // errorStatus maps err to an HTTP status and message.
 func errorStatus(err error) (int, string) {
 	var webErr *Error

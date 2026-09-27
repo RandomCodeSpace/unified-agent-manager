@@ -73,15 +73,15 @@ func TestResolveFilesEnvelopeAndCaps(t *testing.T) {
 
 func TestResolveFilesConfinedReadableAndCanceled(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
-	sum, real, outside := rawImageTask(t, ts)
+	sum, realDir, outside := rawImageTask(t, ts)
 	literal := "文%#.bin"
-	if err := os.WriteFile(filepath.Join(real, literal), []byte{0, 1, 2}, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(realDir, literal), []byte{0, 1, 2}, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mkfifo(filepath.Join(real, "pipe"), 0600); err != nil {
+	if err := syscall.Mkfifo(filepath.Join(realDir, "pipe"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(real, "unreadable"), nil, 0000); err != nil {
+	if err := os.WriteFile(filepath.Join(realDir, "unreadable"), nil, 0000); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -89,7 +89,7 @@ func TestResolveFilesConfinedReadableAndCanceled(t *testing.T) {
 		available bool
 	}{
 		{literal, true}, {"./" + literal, true}, {"shots/../" + literal, true},
-		{filepath.Join(sum.Workdir, literal), true}, {filepath.Join(real, literal), true},
+		{filepath.Join(sum.Workdir, literal), true}, {filepath.Join(realDir, literal), true},
 		{"inside-link.png", true}, {"empty.png", true}, {"fake.png", true},
 		{"outside-link.png", false}, {"outside-dir/secret.png", false},
 		{filepath.Join(outside, "secret.png"), false}, {"../outside/secret.png", false},

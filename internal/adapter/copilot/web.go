@@ -29,6 +29,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 const (
@@ -814,8 +815,8 @@ func (p *webProvider) ReadHistory(ctx context.Context, req agentapi.ReadRequest)
 		return agentapi.History{}, err
 	}
 	// Newest first, so a journal cut at webReadPages keeps its latest turns.
-	backward, max := rpc.EventsReadDirectionBackward, int64(webReadEvents)
-	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Direction: &backward, Max: &max}
+	backward, perPage := rpc.EventsReadDirectionBackward, int64(webReadEvents)
+	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Direction: &backward, Max: &perPage}
 	var pages [][]copilot.SessionEvent
 	truncated := false
 	bytesKept := 0
@@ -879,7 +880,7 @@ func (p *webProvider) ReadHistory(ctx context.Context, req agentapi.ReadRequest)
 		// Finish a truncated snapshot without retaining older pages. The SDK
 		// has no release-cursor API; completion releases its pinned journal.
 		cursor := res.Cursor
-		read = &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Cursor: &cursor, Direction: &backward, Max: &max}
+		read = &rpc.SessionsReadPersistedEventsRequest{SessionID: req.ConversationID, Cursor: &cursor, Direction: &backward, Max: &perPage}
 	}
 	var evs []copilot.SessionEvent
 	for i := len(drained) - 1; i >= 0; i-- {
@@ -976,8 +977,8 @@ func (p *webProvider) readWindow(ctx context.Context, client sdkClient, req agen
 // readForward folds the whole persisted journal into fold, oldest first and
 // without its ephemeral events, in one pass.
 func (p *webProvider) readForward(ctx context.Context, client sdkClient, convID string, fold func(copilot.SessionEvent)) error {
-	forward, max := rpc.EventsReadDirectionForward, int64(webReadEvents)
-	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: convID, Direction: &forward, Max: &max}
+	forward, perPage := rpc.EventsReadDirectionForward, int64(webReadEvents)
+	read := &rpc.SessionsReadPersistedEventsRequest{SessionID: convID, Direction: &forward, Max: &perPage}
 	for {
 		res, err := p.readEvents(ctx, client, read)
 		if err != nil {
@@ -992,7 +993,7 @@ func (p *webProvider) readForward(ctx context.Context, client sdkClient, convID 
 			return nil
 		}
 		cursor := res.Cursor
-		read = &rpc.SessionsReadPersistedEventsRequest{SessionID: convID, Cursor: &cursor, Direction: &forward, Max: &max}
+		read = &rpc.SessionsReadPersistedEventsRequest{SessionID: convID, Cursor: &cursor, Direction: &forward, Max: &perPage}
 	}
 }
 
@@ -1939,14 +1940,22 @@ func blobAttachments(atts []copilot.Attachment, native, fallback []string) []age
 }
 
 // uploadFile describes a file attachment that is an upload's named copy,
-// <UploadsDir>/<task>/<id>.d/<name>; any other file is a reference, not an
-// upload. A copy no longer on disk keeps its name and type, without a hash.
+// <task>/<id>.d/<name> in the web service's upload store, UploadsDir beside
+// the uam store; any other file is a reference, not an upload. A copy no
+// longer on disk keeps its name and type, without a hash.
 func uploadFile(f *rpc.AttachmentFile) (agentapi.Attachment, bool) {
-	if filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(f.Path)))) != agentapi.UploadsDir || !strings.HasSuffix(filepath.Base(filepath.Dir(f.Path)), ".d") {
+	root, err := filepath.Abs(filepath.Join(filepath.Dir(store.DefaultPath()), agentapi.UploadsDir))
+	if err != nil {
+		return agentapi.Attachment{}, false
+	}
+	// Keep opened uploads inside the upload store.
+	rel, err := filepath.Rel(root, filepath.Clean(f.Path))
+	parts := strings.Split(rel, string(filepath.Separator))
+	if err != nil || !filepath.IsLocal(rel) || len(parts) != 3 || !strings.HasSuffix(parts[1], ".d") {
 		return agentapi.Attachment{}, false
 	}
 	att := agentapi.Attachment{Name: f.DisplayName, MIME: "application/pdf"}
-	file, err := os.Open(f.Path) // #nosec G304 -- a path under the web service's own upload store, checked above.
+	file, err := os.OpenInRoot(root, rel)
 	if err != nil {
 		return att, true
 	}

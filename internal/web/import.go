@@ -21,9 +21,10 @@ const maxPrevious = 100
 const holderTimeout = 5 * time.Second
 
 var (
-	errHeldElsewhere = newError(http.StatusConflict, "another client has this conversation open, for example copilot --resume in a terminal; close it there, then try again")
-	errHolderUnknown = newError(http.StatusBadGateway, "uam could not check whether another client has this conversation open; nothing was sent or imported")
-	errAlreadyTask   = newError(http.StatusConflict, "this conversation is already a task")
+	errHeldElsewhere   = newError(http.StatusConflict, "another client has this conversation open, for example copilot --resume in a terminal; close it there, then try again")
+	errHolderUnknown   = newError(http.StatusBadGateway, "uam could not check whether another client has this conversation open; nothing was sent or imported")
+	errAlreadyTask     = newError(http.StatusConflict, "this conversation is already a task")
+	errImportCancelled = newError(http.StatusServiceUnavailable, "import cancelled; no task was created")
 )
 
 // checkHolder refuses a write to s's conversation while another client holds
@@ -50,7 +51,7 @@ func (m *Manager) checkHolder(s *webSession) error {
 	case closed:
 		return errShuttingDown
 	case removed:
-		return newError(http.StatusNotFound, "session not found")
+		return newError(http.StatusNotFound, msgSessionNotFound)
 	case changed:
 		return newError(http.StatusConflict, "the task changed while checking whether its conversation is in use; try again")
 	case err != nil:
@@ -255,7 +256,7 @@ func (m *Manager) Import(ctx context.Context, projectID, convID string) (Session
 	}
 	name, found, err := m.findPrevious(ctx, names, p.Dir, convID)
 	if ctx.Err() != nil {
-		return SessionSummary{}, newError(http.StatusServiceUnavailable, "import cancelled; no task was created")
+		return SessionSummary{}, errImportCancelled
 	}
 	if err != nil {
 		return SessionSummary{}, err
@@ -268,7 +269,7 @@ func (m *Manager) Import(ctx context.Context, projectID, convID string) (Session
 	held, err := m.holders(checkCtx, prov, []string{convID})
 	cancel()
 	if ctx.Err() != nil {
-		return SessionSummary{}, newError(http.StatusServiceUnavailable, "import cancelled; no task was created")
+		return SessionSummary{}, errImportCancelled
 	}
 	switch {
 	case err != nil:
@@ -283,7 +284,7 @@ func (m *Manager) Import(ctx context.Context, projectID, convID string) (Session
 	h, err := m.readHistory(ctx, reader, convID, p.Dir)
 	switch {
 	case ctx.Err() != nil:
-		return SessionSummary{}, newError(http.StatusServiceUnavailable, "import cancelled; no task was created")
+		return SessionSummary{}, errImportCancelled
 	case errors.Is(err, agentapi.ErrConversationNotFound):
 		return SessionSummary{}, newError(http.StatusNotFound, "provider conversation %s no longer exists", convID)
 	case err != nil && isHistoryBusy(err):
@@ -335,7 +336,7 @@ func (m *Manager) Import(ctx context.Context, projectID, convID string) (Session
 	}
 	unlinked := func(cfg *store.Config) error {
 		if ctx.Err() != nil {
-			return newError(http.StatusServiceUnavailable, "import cancelled; no task was created")
+			return errImportCancelled
 		}
 		for _, other := range cfg.Sessions {
 			if other.Surface == store.SurfaceWeb && other.Agent == name && other.ProviderSessionID == convID {

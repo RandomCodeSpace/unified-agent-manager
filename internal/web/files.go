@@ -28,6 +28,9 @@ const (
 	// binarySniffBytes is how much of a file is searched for a NUL byte, as
 	// git does to call a file binary.
 	binarySniffBytes = 8000
+	msgFileNotFound  = "file not found"
+	// reasonUnreadable is why a declared path is refused when it cannot be read.
+	reasonUnreadable = "cannot be read"
 )
 
 // FileEntry is one project path the composer can reference.
@@ -321,7 +324,7 @@ func checkFile(root *os.Root, rel string) (dir bool, reason string) {
 		case errors.Is(err, fs.ErrNotExist):
 			return false, "does not exist"
 		case err != nil:
-			return false, "cannot be read"
+			return false, reasonUnreadable
 		case info.Mode()&fs.ModeSymlink != 0:
 			return false, "is a symbolic link or inside one"
 		case i < len(parts)-1 && !info.IsDir():
@@ -338,7 +341,7 @@ func checkFile(root *os.Root, rel string) (dir bool, reason string) {
 	// O_NOFOLLOW refuses a link swapped in.
 	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return false, "cannot be read"
+		return false, reasonUnreadable
 	}
 	defer func() { _ = f.Close() }()
 	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
@@ -346,7 +349,7 @@ func checkFile(root *os.Root, rel string) (dir bool, reason string) {
 	}
 	head, err := io.ReadAll(io.LimitReader(f, binarySniffBytes))
 	if err != nil {
-		return false, "cannot be read"
+		return false, reasonUnreadable
 	}
 	if bytes.IndexByte(head, 0) >= 0 {
 		return false, "is a binary file"
@@ -394,7 +397,7 @@ func (m *Manager) RawImage(id, p string) (*ServedFile, error) {
 // a root with the file's path in it. Anything else, missing files included,
 // is a 404 that says nothing more.
 func resolveTaskFile(workdir, p string) (*os.Root, string, error) {
-	notFound := newError(http.StatusNotFound, "file not found")
+	notFound := newError(http.StatusNotFound, msgFileNotFound)
 	if p == "" || len(p) > 4096 || !utf8.ValidString(p) || strings.ContainsRune(p, 0) {
 		return nil, "", newError(http.StatusBadRequest, "path is required")
 	}
@@ -405,11 +408,11 @@ func resolveTaskFile(workdir, p string) (*os.Root, string, error) {
 	if err != nil {
 		return nil, "", notFound
 	}
-	real, err := filepath.EvalSymlinks(filepath.Clean(p))
+	realPath, err := filepath.EvalSymlinks(filepath.Clean(p))
 	if err != nil {
 		return nil, "", notFound
 	}
-	rel, err := filepath.Rel(realDir, real)
+	rel, err := filepath.Rel(realDir, realPath)
 	if err != nil || rel == "." || !filepath.IsLocal(rel) {
 		return nil, "", notFound
 	}
@@ -440,7 +443,7 @@ func openImage(workdir, p string) (*ServedFile, error) {
 	}
 	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, newError(http.StatusNotFound, "file not found")
+		return nil, newError(http.StatusNotFound, msgFileNotFound)
 	}
 	img, err := checkImage(f, filepath.Ext(rel))
 	if err != nil {
@@ -453,7 +456,7 @@ func openImage(workdir, p string) (*ServedFile, error) {
 func checkImage(f *os.File, ext string) (*ServedFile, error) {
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return nil, newError(http.StatusNotFound, "file not found")
+		return nil, newError(http.StatusNotFound, msgFileNotFound)
 	}
 	want, ok := imageExtensions[strings.ToLower(ext)]
 	if !ok {
@@ -465,13 +468,13 @@ func checkImage(f *os.File, ext string) (*ServedFile, error) {
 	head := make([]byte, 512)
 	n, err := io.ReadFull(f, head)
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
-		return nil, newError(http.StatusNotFound, "file not found")
+		return nil, newError(http.StatusNotFound, msgFileNotFound)
 	}
-	if got := http.DetectContentType(head[:n]); got != want {
+	if http.DetectContentType(head[:n]) != want {
 		return nil, newError(http.StatusUnsupportedMediaType, "the file is not a %s image", strings.TrimPrefix(want, "image/"))
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return nil, newError(http.StatusNotFound, "file not found")
+		return nil, newError(http.StatusNotFound, msgFileNotFound)
 	}
 	return &ServedFile{File: f, Info: info, MIME: want}, nil
 }
@@ -512,7 +515,7 @@ func openView(workdir, rel string) (*ServedFile, error) {
 	defer func() { _ = root.Close() }()
 	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, newError(http.StatusNotFound, "file not found")
+		return nil, newError(http.StatusNotFound, msgFileNotFound)
 	}
 	served, err := viewType(f, rel)
 	if err != nil {
@@ -523,7 +526,7 @@ func openView(workdir, rel string) (*ServedFile, error) {
 }
 
 func viewType(f *os.File, rel string) (*ServedFile, error) {
-	notFound := newError(http.StatusNotFound, "file not found")
+	notFound := newError(http.StatusNotFound, msgFileNotFound)
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, notFound

@@ -53,6 +53,14 @@ func TestPutSessionUpdatesSameFullID(t *testing.T) {
 	}
 }
 
+func TestPutSessionCreatesMissingMap(t *testing.T) {
+	var cfg Config
+	rec := SessionRecord{ID: "abcdef12-aaaa-1111-aaaa-111111111111", Agent: "claude"}
+	if !cfg.PutSession("claude:abcdef12", rec) || cfg.Sessions["claude:abcdef12"].ID != rec.ID {
+		t.Fatalf("PutSession into a config without sessions = %+v", cfg.Sessions)
+	}
+}
+
 func TestShortKeyJoinsLiveSessionToFullUUIDStoredRecord(t *testing.T) {
 	// The short key must remain the join between a live session (keyed by its
 	// full UUID via Key) and the stored record. PutSession must not break that:

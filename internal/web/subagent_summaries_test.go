@@ -438,7 +438,7 @@ func TestSubagentSummaryReplacesCandidateBeforeStart(t *testing.T) {
 		t.Fatal("obsolete job cleanup cancelled the replacement")
 	}
 	m.generateSubagentSummary(replacement)
-	if got := generatedSummary(t, m, s.id, "child"); got == "" {
+	if generatedSummary(t, m, s.id, "child") == "" {
 		t.Fatal("final complete result has no summary")
 	}
 	emit(final)
@@ -523,7 +523,7 @@ func TestSubagentSummaryInitialLateChildKeepsAuthoritativeParent(t *testing.T) {
 			if pending {
 				m.generateSubagentSummary(job)
 			}
-			if got := generatedSummary(t, m, s.id, "child"); got == "" {
+			if generatedSummary(t, m, s.id, "child") == "" {
 				t.Fatal("late child hid the authoritative parent-result summary")
 			}
 			if calls := p.calls(); len(calls) != 1 || calls[0].Result != "Authoritative parent result" || len(m.summaryJobs) != 0 {
@@ -563,7 +563,7 @@ func TestSubagentSummaryInitialPendingIgnoresOlderRepeatedChild(t *testing.T) {
 	emit(agentapi.Event{Kind: agentapi.EventItem, Item: &agentapi.Item{ID: "final", AgentID: "child", Kind: agentapi.ItemAssistant, Text: "The completed child answer."}})
 	emit(interim)
 	m.generateSubagentSummary(job)
-	if got := generatedSummary(t, m, s.id, "child"); got == "" {
+	if generatedSummary(t, m, s.id, "child") == "" {
 		t.Fatal("older repeated child displaced the pending final identity")
 	}
 	if record := s.subagentSummaries["child"]; record.LastAssistantID != "final" {

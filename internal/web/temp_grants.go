@@ -32,6 +32,9 @@ const (
 	maxTaskGrants = 8
 	maxGrants     = 32
 	maxGrantOps   = 16
+	// redactedValue replaces a credential in a logged value.
+	redactedValue          = "[redacted]"
+	msgInvalidGrantRequest = "invalid temporary file request"
 )
 
 type fileGrant struct {
@@ -346,7 +349,7 @@ func (s *Server) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !utf8.Valid(data) {
-		writeError(w, http.StatusBadRequest, "invalid temporary file request")
+		writeError(w, http.StatusBadRequest, msgInvalidGrantRequest)
 		return
 	}
 	var body struct {
@@ -359,12 +362,12 @@ func (s *Server) handleCreateGrant(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &tooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, "temporary file request is too large")
 		} else {
-			writeError(w, http.StatusBadRequest, "invalid temporary file request")
+			writeError(w, http.StatusBadRequest, msgInvalidGrantRequest)
 		}
 		return
 	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "invalid temporary file request")
+	if decoder.Decode(new(any)) != io.EOF {
+		writeError(w, http.StatusBadRequest, msgInvalidGrantRequest)
 		return
 	}
 	grant, err := s.grants.create(r.Context(), r.Host, r.PathValue("id"), body.Path)
@@ -453,19 +456,19 @@ func redactKeyURL(value string) string {
 		// A malformed header value must not bypass redaction merely because
 		// it is not parseable as a URL.
 		if strings.Contains(value, "file-grants") || strings.Contains(value, "files/key") {
-			return "[redacted]"
+			return redactedValue
 		}
 		return value
 	}
 	parts := strings.Split(u.Path, "/")
 	for i := 0; i+4 < len(parts); i++ {
 		if parts[i] == "api" && parts[i+1] == "sessions" && parts[i+3] == "file-grants" && i+5 < len(parts) {
-			parts[i+5] = "[redacted]"
+			parts[i+5] = redactedValue
 			u.Path, u.RawPath = strings.Join(parts, "/"), ""
 			return u.String()
 		}
 		if parts[i] == "api" && parts[i+1] == "sessions" && parts[i+3] == "files" && parts[i+4] == "key" && i+5 < len(parts) {
-			parts[i+5] = "[redacted]"
+			parts[i+5] = redactedValue
 			u.Path, u.RawPath = strings.Join(parts, "/"), ""
 			return u.String()
 		}

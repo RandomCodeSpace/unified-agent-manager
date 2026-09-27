@@ -1,13 +1,16 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -253,15 +256,26 @@ func TestWorkspaceDiffTreatsGitReportedNamesAsPaths(t *testing.T) {
 // gitIn runs git in dir without the user's configuration.
 func gitIn(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	gitOutput(t, dir, args...)
+}
+
+// gitOutput runs git in dir without the user's configuration and returns
+// its trimmed standard output.
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
 	git, err := execpath.Resolve("git")
 	if err != nil {
 		t.Skip("git is not installed")
 	}
 	cmd := exec.Command(git, append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, stderr.String())
 	}
+	return strings.TrimSpace(string(out))
 }
 
 // branchRepo is a repository with one commit on branch main.
@@ -288,8 +302,11 @@ func TestProjectBranchFromGit(t *testing.T) {
 	}
 	detached := branchRepo(t)
 	gitIn(t, detached, "switch", "-q", "--detach")
+	// HEAD naming a ref outside refs/heads is no branch either.
+	remoteHead := branchRepo(t)
+	gitIn(t, remoteHead, "symbolic-ref", "HEAD", "refs/remotes/origin/main")
 	plain := t.TempDir()
-	want := map[string]string{repo: "feature/x", sub: "feature/x", linked: "topic", detached: "", plain: ""}
+	want := map[string]string{repo: "feature/x", sub: "feature/x", linked: "topic", detached: "", remoteHead: "", plain: ""}
 	for dir, branch := range want {
 		// Only a folder outside any work tree is marked; a detached HEAD is still git.
 		if p, err := m.AddProject(dir, ""); err != nil || p.Branch != branch || (p.NoGit == noGitRepository) != (dir == plain) {
@@ -388,4 +405,337 @@ func TestProjectBranchRereadAtTurnEndChangesAndListing(t *testing.T) {
 		t.Fatalf("listing kept a stale branch: %q", got)
 	}
 	expect("main")
+}
+
+// taskInDir starts a Task in dir and returns its manager and ID.
+func taskInDir(t *testing.T, dir string) (*Manager, string) {
+	t.Helper()
+	m, prov, _ := newTestManager(t)
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: addProject(t, m, dir)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m, sum.ID
+}
+
+// writeRepoFile writes text to dir/name, creating parent directories.
+func writeRepoFile(t *testing.T, dir, name, text string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// listWorkspace lists the workspace changes of a Task by path.
+func listWorkspace(t *testing.T, m *Manager, id string) (Changes, map[string]ChangedFile) {
+	t.Helper()
+	out, err := m.Changes(t.Context(), id, ScopeWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]ChangedFile{}
+	for _, f := range out.Files {
+		files[f.Path] = f
+	}
+	return out, files
+}
+
+// Unknown sessions and scopes are refused before any diff is read.
+func TestChangesRefuseUnknownSessionAndScope(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, _ := createSession(t, m, prov)
+	ctx := t.Context()
+	cases := []struct {
+		name string
+		call func() error
+		want int
+	}{
+		{"workspace list", func() error { _, err := m.Changes(ctx, "missing", ScopeWorkspace); return err }, http.StatusNotFound},
+		{"session list", func() error { _, err := m.Changes(ctx, "missing", ScopeSession); return err }, http.StatusNotFound},
+		{"workspace file", func() error { _, err := m.FileChange(ctx, "missing", ScopeWorkspace, "a.go"); return err }, http.StatusNotFound},
+		{"session file", func() error { _, err := m.FileChange(ctx, "missing", ScopeSession, "a.go"); return err }, http.StatusNotFound},
+		{"file scope", func() error { _, err := m.FileChange(ctx, sum.ID, "everything", "a.go"); return err }, http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); statusOf(err) != tc.want {
+				t.Fatalf("error = %v (status %d), want %d", err, statusOf(err), tc.want)
+			}
+		})
+	}
+}
+
+// The session view explains when the provider cannot list changes, caps a
+// huge list and refuses a conversation that is not open.
+func TestSessionScopeUnsupportedCappedAndClosed(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	ctx := t.Context()
+
+	many := make([]agentapi.FileDiff, maxChangedFiles+1)
+	for i := range many {
+		many[i] = agentapi.FileDiff{Path: fmt.Sprintf("f%04d.go", i), Status: "added", Additions: 1}
+	}
+	conv.SetDiff(many, nil)
+	out, err := m.Changes(ctx, sum.ID, ScopeSession)
+	if err != nil || !out.Supported || len(out.Files) != maxChangedFiles || out.Reason != "showing the first 1000 changed files" {
+		t.Fatalf("capped changes = %d files, %q, %v", len(out.Files), out.Reason, err)
+	}
+	if _, err := m.FileChange(ctx, sum.ID, ScopeSession, fmt.Sprintf("f%04d.go", maxChangedFiles)); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("file past the cap = %v, want 400", err)
+	}
+
+	conv.SetDiff(nil, agentapi.ErrUnsupported)
+	out, err = m.Changes(ctx, sum.ID, ScopeSession)
+	if err != nil || out.Supported || out.Reason != "the provider does not record file changes for this conversation" || len(out.Files) != 0 {
+		t.Fatalf("unsupported changes = %+v, %v", out, err)
+	}
+	if _, err := m.FileChange(ctx, sum.ID, ScopeSession, "f0000.go"); statusOf(err) != http.StatusConflict ||
+		!strings.Contains(err.Error(), "does not record file changes") {
+		t.Fatalf("unsupported file change = %v, want 409 with the reason", err)
+	}
+
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Changes(ctx, sum.ID, ScopeSession); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "not open") {
+		t.Fatalf("closed conversation changes = %v, want 409", err)
+	}
+}
+
+// Git failures surface as errors or reasons, never as a clean tree.
+func TestWorkspaceChangesGitFailures(t *testing.T) {
+	if _, err := execpath.Resolve("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	t.Run("request cancelled", func(t *testing.T) {
+		m, id := taskInDir(t, gitRepoFixture(t))
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if _, err := m.Changes(ctx, id, ScopeWorkspace); statusOf(err) != http.StatusGatewayTimeout {
+			t.Fatalf("Changes = %v, want 504", err)
+		}
+		if _, err := m.FileChange(ctx, id, ScopeWorkspace, "tracked.txt"); statusOf(err) != http.StatusGatewayTimeout {
+			t.Fatalf("FileChange = %v, want 504", err)
+		}
+	})
+	t.Run("folder removed", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "gone")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		m, id := taskInDir(t, dir)
+		if err := os.Remove(dir); err != nil {
+			t.Fatal(err)
+		}
+		out, err := m.Changes(t.Context(), id, ScopeWorkspace)
+		if err != nil || out.Supported || !strings.HasPrefix(out.Reason, "git could not read this directory: fatal: cannot change to") {
+			t.Fatalf("removed folder changes = %+v, %v", out, err)
+		}
+		if _, err := m.FileChange(t.Context(), id, ScopeWorkspace, "a.txt"); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "git could not read") {
+			t.Fatalf("removed folder file = %v, want 409 with the reason", err)
+		}
+	})
+	t.Run("corrupt index", func(t *testing.T) {
+		repo := gitRepoFixture(t)
+		m, id := taskInDir(t, repo)
+		if err := os.WriteFile(filepath.Join(repo, ".git", "index"), []byte(strings.Repeat("garbage!", 8)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// git explains a bad index over two stderr lines; only the first is shown.
+		if _, err := m.Changes(t.Context(), id, ScopeWorkspace); statusOf(err) != http.StatusBadGateway ||
+			!strings.HasPrefix(err.Error(), "git status failed: ") || strings.Contains(err.Error(), "\n") {
+			t.Fatalf("corrupt index changes = %v, want 502", err)
+		}
+		if _, err := m.FileChange(t.Context(), id, ScopeWorkspace, "tracked.txt"); statusOf(err) != http.StatusBadGateway {
+			t.Fatalf("corrupt index file = %v, want 502", err)
+		}
+	})
+	t.Run("missing object", func(t *testing.T) {
+		repo := gitRepoFixture(t)
+		blob := gitOutput(t, repo, "rev-parse", "HEAD:tracked.txt")
+		if err := os.Remove(filepath.Join(repo, ".git", "objects", blob[:2], blob[2:])); err != nil {
+			t.Fatal(err)
+		}
+		m, id := taskInDir(t, repo)
+		// Status needs no blob, so the file is still listed, without counts.
+		_, files := listWorkspace(t, m, id)
+		if f := files["tracked.txt"]; f.Status != "modified" || f.Additions != 0 || f.Deletions != 0 {
+			t.Fatalf("tracked change without its blob = %+v", f)
+		}
+		if f := files["sub/new file.txt"]; f.Additions != 3 {
+			t.Fatalf("untracked change = %+v", f)
+		}
+		if _, err := m.FileChange(t.Context(), id, ScopeWorkspace, "tracked.txt"); statusOf(err) != http.StatusBadGateway ||
+			!strings.HasPrefix(err.Error(), "git diff failed: ") {
+			t.Fatalf("diff without its blob = %v, want 502", err)
+		}
+	})
+	t.Run("tree not listable", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root lists any directory")
+		}
+		repo := gitRepoFixture(t)
+		m, id := taskInDir(t, repo)
+		if err := os.Chmod(repo, 0o100); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(repo, 0o755) })
+		if _, err := m.Changes(t.Context(), id, ScopeWorkspace); statusOf(err) != http.StatusBadGateway ||
+			!strings.Contains(err.Error(), "could not open working tree") {
+			t.Fatalf("unlistable tree = %v, want 502", err)
+		}
+	})
+}
+
+// Before the first commit every listed file is counted from disk and diffed
+// against nothing.
+func TestWorkspaceChangesBeforeFirstCommit(t *testing.T) {
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q")
+	writeRepoFile(t, dir, "staged.txt", "x\ny")
+	writeRepoFile(t, dir, "blob.bin", "a\x00b\n")
+	gitIn(t, dir, "add", "staged.txt")
+	m, id := taskInDir(t, dir)
+	out, files := listWorkspace(t, m, id)
+	if !out.Supported || len(files) != 2 {
+		t.Fatalf("changes = %+v", out)
+	}
+	if f := files["staged.txt"]; f.Status != "added" || f.Additions != 2 {
+		t.Fatalf("staged file without trailing newline = %+v", f)
+	}
+	if f := files["blob.bin"]; f.Status != "untracked" || f.Additions != 0 {
+		t.Fatalf("binary file = %+v", f)
+	}
+	d, err := m.FileChange(t.Context(), id, ScopeWorkspace, "staged.txt")
+	if err != nil || d.Status != "added" || d.Additions != 2 || !strings.Contains(d.Patch, "+y") {
+		t.Fatalf("staged diff = %+v, %v", d, err)
+	}
+}
+
+// Renames list the new path once, deletions count removed lines, and binary
+// files are listed without counts.
+func TestWorkspaceChangesRenamesDeletionsAndBinaries(t *testing.T) {
+	dir := branchRepo(t)
+	writeRepoFile(t, dir, "from.txt", "a\n")
+	writeRepoFile(t, dir, "doomed.txt", "b\nc\n")
+	writeRepoFile(t, dir, "data.bin", "\x00\x01")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-q", "-m", "files")
+	gitIn(t, dir, "mv", "from.txt", "to.txt")
+	if err := os.Remove(filepath.Join(dir, "doomed.txt")); err != nil {
+		t.Fatal(err)
+	}
+	writeRepoFile(t, dir, "data.bin", "\x00\x02")
+	m, id := taskInDir(t, dir)
+	out, files := listWorkspace(t, m, id)
+	if len(out.Files) != 3 {
+		t.Fatalf("changes = %+v", out.Files)
+	}
+	if f := files["to.txt"]; f.Status != "renamed" {
+		t.Fatalf("renamed file = %+v", f)
+	}
+	if f := files["doomed.txt"]; f.Status != "deleted" || f.Deletions != 2 || f.Additions != 0 {
+		t.Fatalf("deleted file = %+v", f)
+	}
+	if f := files["data.bin"]; f.Status != "modified" || f.Additions != 0 || f.Deletions != 0 {
+		t.Fatalf("binary file = %+v", f)
+	}
+}
+
+// A huge working tree change set is cut to the first maxChangedFiles files.
+func TestWorkspaceChangesCapsFileCount(t *testing.T) {
+	dir := branchRepo(t)
+	for i := range maxChangedFiles + 1 {
+		writeRepoFile(t, dir, fmt.Sprintf("f%04d.txt", i), "x\n")
+	}
+	m, id := taskInDir(t, dir)
+	out, _ := listWorkspace(t, m, id)
+	if !out.Supported || len(out.Files) != maxChangedFiles || out.Reason != "showing the first 1000 changed files" {
+		t.Fatalf("capped changes = %d files, %q", len(out.Files), out.Reason)
+	}
+}
+
+// parseStatus names each porcelain XY code and skips the original path of
+// renames and copies.
+func TestParseStatusNamesEveryCode(t *testing.T) {
+	out := "UU both\x00AA added-both\x00DD deleted-both\x00R  new\x00old\x00 C copy\x00orig\x00A  add\x00 D del\x00M  mod\x00?? loose\x00x\x00"
+	want := []statusEntry{
+		{path: "both", status: "conflicted"},
+		{path: "added-both", status: "conflicted"},
+		{path: "deleted-both", status: "conflicted"},
+		{path: "new", status: "renamed"},
+		{path: "copy", status: "copied"},
+		{path: "add", status: "added"},
+		{path: "del", status: "deleted"},
+		{path: "mod", status: "modified"},
+		{path: "loose", status: "untracked", untracked: true},
+	}
+	if got := parseStatus([]byte(out)); !slices.Equal(got, want) {
+		t.Fatalf("parseStatus = %+v\nwant %+v", got, want)
+	}
+}
+
+// countLines counts text only: binary data, unreadable files and a spent
+// budget add no lines.
+func TestCountLinesTextOnlyWithinBudget(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	writeRepoFile(t, dir, "text", "a\nb")
+	writeRepoFile(t, dir, "binary", "a\x00b\n")
+	cases := []struct {
+		name, path          string
+		budget, lines, left int
+	}{
+		{"last line without newline", "text", 100, 2, 97},
+		{"binary", "binary", 100, 0, 96},
+		{"budget spent", "text", 0, 0, 0},
+	}
+	for _, tc := range cases {
+		if lines, left := countLines(root, tc.path, tc.budget); lines != tc.lines || left != tc.left {
+			t.Errorf("%s: countLines = %d lines, %d left; want %d, %d", tc.name, lines, left, tc.lines, tc.left)
+		}
+	}
+	if os.Geteuid() != 0 {
+		writeRepoFile(t, dir, "locked", "a\n")
+		if err := os.Chmod(filepath.Join(dir, "locked"), 0); err != nil {
+			t.Fatal(err)
+		}
+		if lines, left := countLines(root, "locked", 100); lines != 0 || left != 100 {
+			t.Errorf("unreadable: countLines = %d lines, %d left; want 0, 100", lines, left)
+		}
+	}
+}
+
+// A git binary that cannot run is a gateway error.
+func TestRunGitReportsUnrunnableBinary(t *testing.T) {
+	_, _, _, err := runGit(t.Context(), filepath.Join(t.TempDir(), "git"), t.TempDir(), 64, "status")
+	if statusOf(err) != http.StatusBadGateway || !strings.HasPrefix(err.Error(), "git failed: ") {
+		t.Fatalf("runGit = %v, want 502", err)
+	}
+}
+
+// firstNonEmpty picks the first set value, or none.
+func TestFirstNonEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"Copilot", "copilot"}, "Copilot"},
+		{[]string{"", "copilot"}, "copilot"},
+		{[]string{"", ""}, ""},
+		{nil, ""},
+	} {
+		if got := firstNonEmpty(tc.in...); got != tc.want {
+			t.Errorf("firstNonEmpty(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }

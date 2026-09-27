@@ -302,7 +302,7 @@ func (m *Manager) CompactDetail(id string) (compactSessionDetail, error) {
 	defer m.mu.Unlock()
 	s := m.sessions[id]
 	if s == nil {
-		return compactSessionDetail{}, newError(http.StatusNotFound, "session not found")
+		return compactSessionDetail{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	// Recapture transcript and barrier together after Detail's provider-free view work.
 	d := m.detailLocked(s)
@@ -319,13 +319,13 @@ func (m *Manager) CompactSubagent(id, agent string) (compactSubagentDetail, erro
 		s := m.sessions[id]
 		if s == nil {
 			m.mu.Unlock()
-			return compactSubagentDetail{}, newError(404, "session not found")
+			return compactSubagentDetail{}, newError(404, msgSessionNotFound)
 		}
 		sa, read, ok := m.subagentLocked(s, agent, record)
 		if !ok {
 			m.mu.Unlock()
 			if read == nil || record != nil {
-				return compactSubagentDetail{}, newError(404, "subagent not found")
+				return compactSubagentDetail{}, newError(404, msgSubagentNotFound)
 			}
 			var err error
 			if record, err = m.readSubagents(read); err != nil {
@@ -372,13 +372,13 @@ func (m *Manager) CompactHistoryPage(id, agent, before, after string) (compactHi
 		s := m.sessions[id]
 		if s == nil {
 			m.mu.Unlock()
-			return compactHistoryPage{}, newError(404, "session not found")
+			return compactHistoryPage{}, newError(404, msgSessionNotFound)
 		}
 		// A subagent only the record lists is paged from it, which checks
 		// the boundary.
 		if agent != "" && s.subIdx[agent] == nil && m.subagentPagerLocked(s) == nil {
 			m.mu.Unlock()
-			return compactHistoryPage{}, newError(404, "subagent not found")
+			return compactHistoryPage{}, newError(404, msgSubagentNotFound)
 		}
 		s.historyUsed = m.now()
 		page, read, err := m.historyPageLocked(s, agent, boundary, after != "", fresh)
