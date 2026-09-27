@@ -77,7 +77,11 @@ opening it for a Task whose conversation is not open (see Task lifecycle).
 The service binds to loopback by default and can explicitly bind another IP
 address. Access requires a session cookie obtained by presenting the access
 token stored owner-only next to `sessions.json`, or a task-scoped signed file
-key on the file-view route. Both credentials are bound to the request `Host`.
+key on the file-view route. Over HTTPS the file key also needs its companion
+cookie, which the view route sets with the redirect (HttpOnly, Secure,
+`SameSite=None` so the sandboxed page's own requests carry it, and scoped to the
+Task's file-key path); plain HTTP cannot hold that cookie, so there the key
+alone is checked. Both credentials are bound to the request `Host`.
 Any Host may reach the sign-in page and static assets. State-changing requests
 must pass `net/http.CrossOriginProtection` and use the route's required content
 type. There is no CORS and no supported anonymous mode.
@@ -1080,9 +1084,9 @@ remain supported; sign-in is mandatory on every bind.
   a terminal, and atomically replaces `web-token`. It takes no argument, flag
   or environment variable, which `ps`, shell history or the agents' inherited
   environment would expose. It refuses while the service runs, so the running
-  service never holds a token the file no longer has. Cookies are HMACs keyed
-  by the token, so a service restarted with a new token rejects every earlier
-  cookie.
+  service never holds a token the file no longer has. Cookies, file keys and
+  their companion cookies are HMACs keyed by the token, so a service restarted
+  with a new token rejects every earlier one.
 
 ## Slash commands and file references
 

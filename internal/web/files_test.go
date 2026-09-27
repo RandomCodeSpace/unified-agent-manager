@@ -363,6 +363,78 @@ func TestViewFilePreviewMetadataRangeAndDownload(t *testing.T) {
 	}
 }
 
+// Over HTTPS a file key opens files only with the companion cookie the view
+// route sets, so a key copied out of a view URL is useless elsewhere.
+func TestViewFileOverHTTPSNeedsTheCompanionCookie(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, _ := viewTask(t, ts)
+	other, _ := createSession(t, ts.m, ts.prov)
+	https := withHeader("X-Forwarded-Proto", "https")
+	auth := withCookie(ts)
+
+	w := ts.do(http.MethodGet, viewURL(sum.ID, "out/report.html"), "", auth, https)
+	prefix := "/api/sessions/" + sum.ID + "/files/key/"
+	loc := w.Header().Get("Location")
+	if w.Code != http.StatusFound || !strings.HasPrefix(loc, prefix) {
+		t.Fatalf("view = %d %q", w.Code, loc)
+	}
+	var companion *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == fileCookieName {
+			companion = c
+		}
+	}
+	if companion == nil || companion.Path != prefix || !companion.HttpOnly || !companion.Secure ||
+		companion.SameSite != http.SameSiteNoneMode || companion.MaxAge != int(fileKeyTTL/time.Second) {
+		t.Fatalf("companion cookie = %+v", companion)
+	}
+	key := strings.SplitN(strings.TrimPrefix(loc, prefix), "/", 2)[0]
+	withFile := func(value string) reqOpt {
+		return func(r *http.Request) { r.AddCookie(&http.Cookie{Name: fileCookieName, Value: value}) }
+	}
+	exp := time.Now().Add(time.Hour).Unix()
+	for name, c := range map[string]struct {
+		target string
+		opts   []reqOpt
+		want   int
+	}{
+		"key with its cookie":              {loc, []reqOpt{https, withFile(companion.Value)}, http.StatusOK},
+		"sibling in another folder":        {prefix + key + "/shot.png", []reqOpt{https, withFile(companion.Value)}, http.StatusOK},
+		"key without the cookie":           {loc, []reqOpt{https}, http.StatusUnauthorized},
+		"key with the sign-in cookie only": {loc, []reqOpt{https, auth}, http.StatusUnauthorized},
+		"cookie of another Task":           {loc, []reqOpt{https, withFile(fileCookie(testToken, "127.0.0.1:8260", other.ID, exp))}, http.StatusUnauthorized},
+		"cookie of another host":           {loc, []reqOpt{https, withFile(fileCookie(testToken, "evil.example", sum.ID, exp))}, http.StatusUnauthorized},
+		"expired cookie":                   {loc, []reqOpt{https, withFile(fileCookie(testToken, "127.0.0.1:8260", sum.ID, time.Now().Add(-time.Second).Unix()))}, http.StatusUnauthorized},
+		"cookie of another secret":         {loc, []reqOpt{https, withFile(fileCookie("another-secret-token-0123456789", "127.0.0.1:8260", sum.ID, exp))}, http.StatusUnauthorized},
+		"tampered cookie":                  {loc, []reqOpt{https, withFile(companion.Value + "0")}, http.StatusUnauthorized},
+		"file key as the cookie":           {loc, []reqOpt{https, withFile(key)}, http.StatusUnauthorized},
+		// Plain HTTP (loopback, SSH) cannot hold a Secure cookie: the key alone opens.
+		"plain HTTP key alone": {loc, nil, http.StatusOK},
+	} {
+		if w := ts.do(http.MethodGet, c.target, "", c.opts...); w.Code != c.want {
+			t.Errorf("%s = %d, want %d", name, w.Code, c.want)
+		}
+	}
+	// Plain HTTP sets no companion cookie.
+	w = ts.do(http.MethodGet, viewURL(sum.ID, "out/report.html"), "", auth)
+	for _, c := range w.Result().Cookies() {
+		if c.Name == fileCookieName {
+			t.Fatalf("plain HTTP set %+v", c)
+		}
+	}
+}
+
+// Keys and cookies signed before this release's labels no longer open anything.
+func TestViewFileRefusesKeysFromBeforeTheCurrentLabel(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, _ := viewTask(t, ts)
+	e := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	old := e + "." + legacyMAC("uam-web-file-v1|127.0.0.1:8260|"+sum.ID+"|"+e)
+	if w := ts.do(http.MethodGet, "/api/sessions/"+sum.ID+"/files/key/"+old+"/notes.md", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("old file key = %d", w.Code)
+	}
+}
+
 func TestViewFileUnderAuthenticationRedirectsToAFileKey(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)

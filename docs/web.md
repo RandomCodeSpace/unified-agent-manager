@@ -101,7 +101,11 @@ Session cookies are derived from the token, so the restart signs out every
 browser.
 
 Protected API requests need a session cookie. The signed file-view route instead
-checks a task-scoped file key. Cookies and file keys are bound to the `Host`
+checks a task-scoped file key. Over HTTPS the key also needs a companion cookie
+that the view route sets in the same browser (HttpOnly, limited to that Task's
+file-key path), so a file view works only in the browser that opened it; over
+plain HTTP, where browsers refuse such a cookie, the key alone is checked. Keys
+and companion cookies last 12 hours. Cookies and file keys are bound to the `Host`
 they were issued for, so the service accepts any `Host`: a website whose name
 resolves to this host holds no credential for that name and reaches only the
 sign-in page and static assets. The service rejects cross-origin state changes
