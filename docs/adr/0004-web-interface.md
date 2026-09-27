@@ -360,9 +360,12 @@ record on demand:
   events and parent tool results and keeps at most 1,000 records and 4 MiB
   before the named one, which the same cache holds.
 
-Each active transcript keeps a contiguous reading window of at most 150 items
-and 4 MiB of accounted data, plus a separate recent tail of at most 50 items
-under the same byte allowance. One oversized item remains intact to allow
+Each active transcript keeps a contiguous reading window of at most 150 rows
+and 4 MiB of accounted data, plus a separate recent tail of at most 50 rows
+under the same byte allowance. A thought or tool call counts as a fifth of a
+row, since it draws nothing until its fold opens; counted as whole items,
+folded work left a window about two screens tall, and reading one end dropped
+rows in view at the other. One oversized item remains intact to allow
 progress. Compact metadata preserves IDs, order, kinds and required semantic
 state for up to 2,000 retained items; it excludes chat and body text, images and
 display strings. Live corrections update held items without resurrecting

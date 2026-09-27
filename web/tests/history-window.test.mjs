@@ -194,3 +194,16 @@ test('discovering the parent user preserves a partial compact turn disclosure ke
   assert.equal(after.get('d'), 'c');
   assert.equal(after.get('next-answer'), 'next-answer');
 });
+
+test('folded work takes a fifth of a row, so a window of tool calls spans more of the transcript', () => {
+  const tool = id => ({ id, kind: 'tool', time: '', tool: { name: 'bash', status: 'completed' } });
+  const work = Array.from({ length: 1000 }, (_, index) => tool(String(index)));
+  assert.equal(boundItems(work, 'newer').items.length, ACTIVE_ITEMS * 5);
+  // One answer after every four calls: the window fills to 150 rows, a call counting a fifth.
+  const turns = Array.from({ length: 1000 }, (_, index) => index % 5 === 4 ? item(String(index)) : tool(String(index)));
+  const bounded = boundItems(turns, 'newer');
+  const rows = bounded.items.reduce((sum, entry) => sum + (entry.kind === 'tool' ? 1 / 5 : 1), 0);
+  assert.ok(rows <= ACTIVE_ITEMS && rows > ACTIVE_ITEMS - 1, String(rows));
+  assert.ok(bounded.items.length > ACTIVE_ITEMS * 2);
+  assert.deepEqual(ids(bounded.items), ids(turns.slice(-bounded.items.length)));
+});
