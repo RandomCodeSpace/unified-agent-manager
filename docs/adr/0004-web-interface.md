@@ -25,8 +25,9 @@ embedded single-page application and drives providers through their
 structured APIs. When the launcher runs under the user's systemd manager
 (inside another user service), the service starts through
 `systemd-run --user --scope` in its own transient scope, so that service's
-stop or restart does not kill it; elsewhere, or when no user bus answers, it
-starts in place as before:
+stop or restart does not kill it (a launcher that cleared its environment is
+pointed at the manager's bus under `/run/user/<uid>`); elsewhere, or when no
+user bus answers, it starts in place as before:
 
 | Provider | Integration |
 |---|---|

@@ -70,17 +70,19 @@ func TestAcceptanceSpawnLeavesTheLauncherServiceUnderTheUserManager(t *testing.T
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name  string
-		bus   bool
-		scope bool
+		name    string
+		runtime func(t *testing.T) string // XDG_RUNTIME_DIR, unless nil
+		scope   bool
 	}{
-		{"own scope", true, true},
+		{"own scope", nil, true},
+		// A launcher that cleared its environment still finds the manager.
+		{"cleared environment", func(*testing.T) string { return "" }, true},
 		// Without a reachable user manager it starts in place, as before.
-		{"no user bus", false, false},
+		{"no user bus", func(t *testing.T) string { return t.TempDir() }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if !tc.bus {
-				t.Setenv("XDG_RUNTIME_DIR", "")
+			if tc.runtime != nil {
+				t.Setenv("XDG_RUNTIME_DIR", tc.runtime(t))
 				t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
 			}
 			_ = os.Remove(out)

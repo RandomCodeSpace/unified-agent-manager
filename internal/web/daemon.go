@@ -207,7 +207,15 @@ func Spawn(ctx context.Context, exe string, args []string) error {
 	argv := append([]string{exe, "__web"}, args...)
 	if run := userScope(); run != "" {
 		unit := "uam-web-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-		err := spawn(ctx, append([]string{run, "--user", "--scope", "--quiet", "--collect", "--unit=" + unit, "--"}, argv...))
+		var env []string
+		// A launcher with a cleared environment still runs under the manager,
+		// whose bus is at the standard place: point systemd-run at it.
+		if runtime := "/run/user/" + strconv.Itoa(os.Getuid()); os.Getenv("XDG_RUNTIME_DIR") == "" && os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+			if _, err := os.Stat(filepath.Join(runtime, "bus")); err == nil {
+				env = append(env, "XDG_RUNTIME_DIR="+runtime)
+			}
+		}
+		err := spawn(ctx, append([]string{run, "--user", "--scope", "--quiet", "--collect", "--unit=" + unit, "--"}, argv...), env...)
 		// systemd-run exits without a word when it cannot make the scope
 		// (no user bus here): start the service as before.
 		if !errors.Is(err, io.EOF) {
@@ -236,8 +244,9 @@ func userScope() string {
 	return run
 }
 
-// spawn runs argv detached and waits for its readiness report.
-func spawn(ctx context.Context, argv []string) error {
+// spawn runs argv detached, with env added to this process's environment,
+// and waits for its readiness report.
+func spawn(ctx context.Context, argv []string, env ...string) error {
 	devIn, err := os.Open(os.DevNull)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", os.DevNull, err)
@@ -257,7 +266,7 @@ func spawn(ctx context.Context, argv []string) error {
 	// The service must outlive the launching terminal and SSH session.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devIn, devOut, devOut
-	cmd.Env = append(os.Environ(), readyEnv+"=3")
+	cmd.Env = append(append(os.Environ(), env...), readyEnv+"=3")
 	cmd.ExtraFiles = []*os.File{w}
 	if err := cmd.Start(); err != nil {
 		_ = w.Close()
