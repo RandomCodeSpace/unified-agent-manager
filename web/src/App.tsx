@@ -4,7 +4,7 @@ import { X } from 'lucide-react';
 import { addTransitionType, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { UPDATE_EVENTS, api, describeError, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
-import { AppContext, Dot, TranscriptSkeleton, useLate, useMedia } from './components/common';
+import { AppContext, Dot, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog } from './components/Projects';
 import { NewTaskPalette } from './components/ProjectPicker';
@@ -20,6 +20,7 @@ import { NewTaskPane, Task } from './components/Task';
 import type { FirstMessage } from './components/Composer';
 import { TaskActionsContext, type Renaming, type TaskActions } from './components/taskActions';
 import { Button } from './components/ui/button';
+import { Appear } from './components/ui/appear';
 import { AlertDialog, Sheet } from './components/ui/dialog';
 import { TooltipProvider } from './components/ui/tooltip';
 
@@ -37,7 +38,7 @@ const VIEWED_KEY = 'uam.viewed';
 const SIDEBAR_KEY = 'uam.sidebar';
 const FILTER_KEY = 'uam.projectFilter';
 const HASH_PREFIX = '#task=';
-/** A wait shorter than this shows nothing new: no "Connecting…", no loading placeholder. */
+/** A wait shorter than this shows nothing new: no loading veil or placeholder, no connection banner. */
 const QUIET_MS = 600;
 const SETTINGS_HASH = '#settings';
 /** The shell fills the viewport and keeps clear of the notch, rounded corners and home indicator of an installed app (`viewport-fit=cover`). */
@@ -265,7 +266,8 @@ export default function App() {
     const es = new EventSource(api.eventsUrl(state.selectedId));
     let alive = true;
     let retry: number | undefined;
-    dispatch({ type: 'connection', status: 'connecting' });
+    // Opening a stream is a load; a retry after a failure keeps that failure on screen until the snapshot.
+    if (!wasDown.current) dispatch({ type: 'connection', status: 'connecting' });
     es.onopen = () => {
       if (!alive) return;
       // The snapshot confirms this connection; opening TCP alone does not.
@@ -387,9 +389,10 @@ export default function App() {
 
   const hasNews = useMemo(() => newsReader(state.selectedId, viewed, loadedAt), [state.selectedId, viewed, loadedAt]);
 
-  // Opening a Task reopens the stream; only a disconnect that lasts is shown as one.
+  // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
   const late = useLate(state.connection !== 'connected', QUIET_MS);
-  const connection = late ? state.connection : 'connected';
+  const loading = late && state.connection === 'connecting';
+  const connection = late && !loading ? state.connection : 'connected';
   const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen, QUIET_MS);
 
   // A refresh with the catalogs on screen keeps them on a failure (checkVersion); without them it is a retry of the first read.
@@ -786,9 +789,13 @@ export default function App() {
                   <Dot tone="accent" pulse /> Refreshing task…
                 </p>
               )}
-              {/* A cached page is presentation only; actions and typing wait for confirmation. */}
-              <div className="flex min-h-0 flex-1 flex-col" inert={stale} aria-busy={stale || undefined}>
-                {pane}
+              <div className="relative flex min-h-0 flex-1 flex-col">
+                {/* A cached page is presentation only; actions and typing wait for confirmation. */}
+                <div className="flex min-h-0 flex-1 flex-col" inert={stale} aria-busy={stale || undefined}>
+                  {pane}
+                </div>
+                {/* Settings and a new Task do not wait on the stream. */}
+                <LoadingVeil show={loading && !settingsOpen && !newTask} />
               </div>
             </main>
 
@@ -883,6 +890,21 @@ function EmptyPane({ leading, connection, children }: { leading: React.ReactNode
       {leading && <PaneHeader leading={leading} connection={connection} />}
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 pb-16 text-center animate-rise">{children}</div>
     </div>
+  );
+}
+
+/**
+ * While the stream (re)opens past the quiet period: a `canvas` veil over the pane below its header
+ * that takes the pointer, with a spinner at its centre. It fades both ways (Appear, without its scale); the header stays usable.
+ */
+function LoadingVeil({ show }: { show: boolean }) {
+  return (
+    <Appear show={show} className="absolute inset-x-0 top-header bottom-0 z-20 scale-100 items-center justify-center bg-canvas/70">
+      <span role="status" className="flex items-center gap-2 rounded-full bg-canvas px-3 py-1.5 text-caption text-muted">
+        <Spinner />
+        Loading…
+      </span>
+    </Appear>
   );
 }
 
