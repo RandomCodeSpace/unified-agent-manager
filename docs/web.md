@@ -483,7 +483,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   The first is what Enter does while a turn runs: steer (the default) or
   queue. A change is saved as you make it; if the service refuses it, the
   old value comes back with the reason. `GET /api/settings` returns the
-  settings as `{"send_default": "steer"}`, and `PATCH /api/settings` with
+  settings as `{"send_default": "steer", "terminal": false}` (see
+  [Terminal](#terminal)), and `PATCH /api/settings` with
   `{"send_default": "queue"}` changes them. An unknown key or value is
   refused and changes nothing. **New tasks** holds what every new Task
   starts with, in every Project: model, effort, context size (where the
@@ -728,6 +729,26 @@ A prompt is sent at most once per click. Retrying after a network error reuses
 the same request ID, and the service answers a repeated request ID with the
 recorded result instead of sending again. If the provider may or may not have
 received a prompt, the page says so and nothing is resent.
+
+## Terminal
+
+Settings → Terminal, off by default, adds a terminal panel that runs a login
+shell in the Project's folder: your `$SHELL` if it is an absolute path to an
+executable, otherwise `bash` or `sh`. The setting is kept in `sessions.json`
+as `terminal` and can also be changed with `PATCH /api/settings`
+`{"terminal": true}`. At most 8 terminals are open at once.
+
+**Security warning.** While the setting is on, anyone who can sign in gets a
+shell on this host as the user running `uam web`, with that user's files and
+credentials. Anyone signed in could already have the agent run commands in
+yolo mode, so this adds no new capability, but the shell bypasses the
+agent's permission prompts and managed policy. Turn it on only if you would
+hand every holder of the access token a shell.
+
+A terminal lives as long as its panel's connection. Closing the panel,
+reloading the page or losing the connection hangs up the shell and the
+command it runs; there is no reattach. Turning the setting off or stopping
+the service closes every open terminal the same way.
 
 ## Install as an app
 

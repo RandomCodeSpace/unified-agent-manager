@@ -24,7 +24,7 @@ func TestSettingsDefaultStoredAndStreamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f := parseFrame(t, snap); string(f.data["settings"]) != `{"send_default":"steer"}` {
+	if f := parseFrame(t, snap); string(f.data["settings"]) != `{"send_default":"steer","terminal":false}` {
 		t.Fatalf("snapshot settings = %s", f.data["settings"])
 	}
 
@@ -39,7 +39,7 @@ func TestSettingsDefaultStoredAndStreamed(t *testing.T) {
 		t.Fatalf("set queue = %+v, %v", got, err)
 	}
 	f := frameOf(t, sub, "settings")
-	if string(f.data["settings"]) != `{"send_default":"queue"}` || f.seq == 0 {
+	if string(f.data["settings"]) != `{"send_default":"queue","terminal":false}` || f.seq == 0 {
 		t.Fatalf("settings frame = %+v", f.data)
 	}
 	cfg, err := st.Load()
@@ -88,7 +88,7 @@ func TestSettingsLoadInvalidAsSteer(t *testing.T) {
 func TestSettingsRoutes(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	auth := withCookie(ts)
-	queue := `{"send_default":"queue"}`
+	queue, queued := `{"send_default":"queue"}`, `{"send_default":"queue","terminal":false}`
 	if w := ts.do(http.MethodGet, "/api/settings", ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("GET without sign-in = %d", w.Code)
 	}
@@ -111,7 +111,7 @@ func TestSettingsRoutes(t *testing.T) {
 		}
 		return strings.TrimSpace(w.Body.String())
 	}
-	if got := get(); got != `{"send_default":"steer"}` {
+	if got := get(); got != `{"send_default":"steer","terminal":false}` {
 		t.Fatalf("GET default = %s", got)
 	}
 	patch := func(body string, want int) string {
@@ -122,7 +122,7 @@ func TestSettingsRoutes(t *testing.T) {
 		}
 		return strings.TrimSpace(w.Body.String())
 	}
-	if got := patch(queue, http.StatusOK); got != queue {
+	if got := patch(queue, http.StatusOK); got != queued {
 		t.Fatalf("PATCH queue = %s", got)
 	}
 	for _, body := range []string{
@@ -133,13 +133,13 @@ func TestSettingsRoutes(t *testing.T) {
 			t.Fatalf("PATCH %s = %s", body, got)
 		}
 	}
-	if got := get(); got != queue {
+	if got := get(); got != queued {
 		t.Fatalf("refused PATCHes changed the settings: %s", got)
 	}
-	if got := patch(`{}`, http.StatusOK); got != queue {
+	if got := patch(`{}`, http.StatusOK); got != queued {
 		t.Fatalf("empty PATCH = %s", got)
 	}
-	if got := patch(`{"send_default":"steer"}`, http.StatusOK); got != `{"send_default":"steer"}` || get() != got {
+	if got := patch(`{"send_default":"steer"}`, http.StatusOK); got != `{"send_default":"steer","terminal":false}` || get() != got {
 		t.Fatalf("PATCH steer = %s", got)
 	}
 }
@@ -165,7 +165,7 @@ func TestHiddenModelsStoredStreamedAndNotEnforced(t *testing.T) {
 		t.Fatalf("hide = %+v, %v", got, err)
 	}
 	f := frameOf(t, sub, "settings")
-	if string(f.data["settings"]) != `{"send_default":"steer","hidden_models":{"fake":["b","c","gone"],"other":["x"]}}` {
+	if string(f.data["settings"]) != `{"send_default":"steer","terminal":false,"hidden_models":{"fake":["b","c","gone"],"other":["x"]}}` {
 		t.Fatalf("settings frame = %s", f.data["settings"])
 	}
 
@@ -244,7 +244,7 @@ func TestHiddenModelsRoute(t *testing.T) {
 		}
 		return strings.TrimSpace(w.Body.String())
 	}
-	hidden := `{"send_default":"steer","hidden_models":{"fake":["a","b"]}}`
+	hidden := `{"send_default":"steer","terminal":false,"hidden_models":{"fake":["a","b"]}}`
 	if got := patch(`{"hidden_models":{"fake":["b","a"]}}`, http.StatusOK); got != hidden {
 		t.Fatalf("PATCH hidden_models = %s", got)
 	}
@@ -263,7 +263,7 @@ func TestHiddenModelsRoute(t *testing.T) {
 	if got := patch(`{"hidden_models":{}}`, http.StatusOK); got != hidden {
 		t.Fatalf("empty hidden_models = %s", got)
 	}
-	if got := patch(`{"hidden_models":{"fake":[]}}`, http.StatusOK); got != `{"send_default":"steer"}` {
+	if got := patch(`{"hidden_models":{"fake":[]}}`, http.StatusOK); got != `{"send_default":"steer","terminal":false}` {
 		t.Fatalf("clear hidden_models = %s", got)
 	}
 }

@@ -83,6 +83,8 @@ type Server struct {
 	mux       *http.ServeMux
 	heartbeat time.Duration
 	grants    *tempGrants
+	// terminalOrigins are the public origins as WebSocket origin patterns.
+	terminalOrigins []string
 }
 
 // NewServer validates cfg and builds the handler.
@@ -98,9 +100,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		csrf: http.NewCrossOriginProtection(), assets: cfg.Assets, version: cfg.Version, heartbeat: heartbeatInterval,
 	}
 	for _, origin := range cfg.PublicOrigins {
-		if _, err := NormalizePublicOrigin(origin); err != nil {
+		normalized, err := NormalizePublicOrigin(origin)
+		if err != nil {
 			return nil, err
 		}
+		s.terminalOrigins = append(s.terminalOrigins, originPattern(normalized))
 	}
 	if s.assets == nil {
 		sub, err := fs.Sub(embedded, "dist")
@@ -146,6 +150,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
 	mux.HandleFunc("GET /api/projects/{id}/files", s.handleFileList((*Manager).ProjectFiles))
 	mux.HandleFunc("GET /api/projects/{id}/previous", s.handlePrevious)
+	mux.HandleFunc("GET /api/projects/{id}/terminal", s.handleTerminal)
 	mux.HandleFunc("GET /api/previous/counts", s.handlePreviousCounts)
 	mux.HandleFunc("POST /api/projects/{id}/previous/{conversation_id}/import", s.handleImport)
 	mux.HandleFunc("GET /api/sessions", s.handleList)
@@ -469,6 +474,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			patch.SendDefault = new(string)
 			if json.Unmarshal(raw, patch.SendDefault) != nil {
 				writeError(w, http.StatusBadRequest, "send_default must be a string")
+				return
+			}
+		case "terminal":
+			patch.Terminal = new(bool)
+			if json.Unmarshal(raw, patch.Terminal) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "terminal must be true or false")
 				return
 			}
 		case "hidden_models":

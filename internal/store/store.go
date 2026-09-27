@@ -526,6 +526,9 @@ type WebSettings struct {
 	// SendDefault is what Enter does while a turn runs: WebSendSteer or
 	// WebSendQueue. Empty or unrecognised values mean steer at runtime.
 	SendDefault string `json:"send_default,omitempty"`
+	// Terminal turns on the web terminal: a shell as the service user for
+	// anyone signed in. Off when absent.
+	Terminal bool `json:"terminal,omitempty"`
 	// HiddenModels lists, by provider, the model IDs the browser does not
 	// offer: sorted, without duplicates, at most MaxHiddenModels each. It is
 	// a display preference, never a check on requests.
@@ -702,6 +705,7 @@ type webSettingsAlias WebSettings
 
 var knownWebSettingsFields = map[string]struct{}{
 	"send_default":  {},
+	"terminal":      {},
 	"hidden_models": {},
 	"title_model":   {},
 	"custom_models": {},

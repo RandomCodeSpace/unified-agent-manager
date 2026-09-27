@@ -127,6 +127,9 @@ type Badge struct {
 type Settings struct {
 	// SendDefault is what Enter does while a turn runs: steer or queue.
 	SendDefault string `json:"send_default"`
+	// Terminal lets anyone signed in open a shell, as the service user, at a
+	// Project's directory (terminal.go). Off by default.
+	Terminal bool `json:"terminal"`
 	// HiddenModels lists, by provider, the model IDs the browser does not
 	// offer, sorted; omitted when none is hidden. IDs the provider no longer
 	// lists are kept. The service never refuses a hidden model.

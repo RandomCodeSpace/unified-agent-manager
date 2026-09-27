@@ -144,6 +144,10 @@ type Manager struct {
 	archive archiveCache
 	// Active Server registries; publication/removal is ordered by mu.
 	fileGrants map[*tempGrants]struct{}
+	// terminals are the open web terminals (terminal.go); terminalWG counts
+	// them until they end, and Shutdown waits for it.
+	terminals  map[*terminal]struct{}
+	terminalWG sync.WaitGroup
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -474,7 +478,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	for id, p := range cfg.WebProjects {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge)}
 	}
-	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
+	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults)}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
@@ -1158,9 +1162,11 @@ func (m *Manager) Settings() Settings {
 //
 // CustomModels, when not nil, replaces every custom model; an empty list
 // removes them all. TaskDefaults replaces the settings a new Task starts
-// with; they are checked as a Task's selection is.
+// with; they are checked as a Task's selection is. Turning Terminal off
+// closes every open terminal.
 type SettingsPatch struct {
 	SendDefault  *string
+	Terminal     *bool
 	HiddenModels map[string][]string
 	TitleModel   map[string]string
 	CustomModels *[]store.WebCustomModel
@@ -1240,6 +1246,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.SendDefault != nil {
 		next.SendDefault = *p.SendDefault
 	}
+	if p.Terminal != nil {
+		next.Terminal = *p.Terminal
+	}
 	if len(hidden) > 0 {
 		next.HiddenModels = withProviders(current.HiddenModels, hidden)
 	}
@@ -1253,11 +1262,12 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		next.TaskDefaults = defaults
 	}
 	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
-	if next.SendDefault == current.SendDefault && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults {
+	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults {
 		return current, nil
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		cfg.WebSettings.SendDefault = next.SendDefault
+		cfg.WebSettings.Terminal = next.Terminal
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
 		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, titles)
@@ -1275,6 +1285,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.settings = next
+	if !next.Terminal {
+		m.closeTerminalsLocked(errTerminalOff)
+	}
 	m.broadcastLocked("settings", "", func(seq uint64) any { return settingsEvent{Seq: seq, Settings: next} })
 	return next, nil
 }
@@ -3667,11 +3680,13 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	for sub := range m.subs {
 		m.dropLocked(sub)
 	}
+	m.closeTerminalsLocked(errShuttingDown)
 	m.mu.Unlock()
 	// Abort in-flight opens, sends and utility jobs; their outcome is
 	// recorded as usual. Utility jobs delete their throwaway conversations
 	// before the providers stop.
 	m.cancel()
+	wait(ctx, &m.terminalWG)
 	wait(ctx, &m.titles)
 	wait(ctx, &m.summaryWorkers)
 	m.discardSubagentSummaryJobs()
