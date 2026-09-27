@@ -26,8 +26,9 @@ const encoder = new TextEncoder();
 /** The server's opaque item boundary is UTF-8 encoded base64url. */
 export function itemCursor(id: string): string {
   let binary = '';
-  for (const byte of encoder.encode(id)) binary += String.fromCharCode(byte);
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+  for (const byte of encoder.encode(id)) binary += String.fromCodePoint(byte);
+  // base64 pads with at most two `=`; the bounded count keeps the scan linear.
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/={1,2}$/, '');
 }
 
 /** A thought or a tool call draws no row until its fold opens, so it takes a fifth of a row's share of a window. */

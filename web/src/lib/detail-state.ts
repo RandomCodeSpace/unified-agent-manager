@@ -25,6 +25,26 @@ export type DetailAction =
   | { type: 'page_failed'; agentId: string; token: number; error: string };
 export const emptyDetails = (epoch: string): DetailState => ({ epoch, bodies: {} });
 
+/** A body's status once it has to reach `floor`: loaded when it already does, else refreshed behind what it holds. */
+function bodyStatus(old: Pick<BodyState, 'seq' | 'item'>, floor: number): BodyStatus {
+  if (old.seq >= floor) return 'loaded';
+  return old.item ? 'refreshing' : 'loading';
+}
+
+/** The agent the interests name: the held one, reloading, or a new one; none without an id. */
+function interestAgent(agent: DetailAgent | undefined, agentId: string): DetailAgent | undefined {
+  if (!agentId) return undefined;
+  if (agent?.id === agentId) return { ...agent, loading: true, error: undefined, page: undefined, pending: undefined };
+  return { id: agentId, items: [], seq: -1, before: '', loading: true, itemSeq: {} };
+}
+
+/** The item a frame changes; '' for frames that name none. */
+function frameItemId(frame: DetailFrame): string {
+  if (frame.name === 'item') return frame.item.id;
+  if (frame.name === 'delta') return frame.item_id;
+  return '';
+}
+
 export function detailReducer(state: DetailState, action: DetailAction): DetailState {
   switch (action.type) {
     case 'release': {
@@ -36,10 +56,7 @@ export function detailReducer(state: DetailState, action: DetailAction): DetailS
         const key = bodyKey(ref), old = state.bodies[key];
         bodies[key] = old ? { ...old, status: old.item ? 'refreshing' : 'loading', error: undefined } : { status: 'loading', seq: -1, floor: -1 };
       }
-      const agent = action.agentId ? state.agent?.id === action.agentId
-        ? { ...state.agent, loading: true, error: undefined, page: undefined, pending: undefined }
-        : { id: action.agentId, items: [], seq: -1, before: '', loading: true, itemSeq: {} } : undefined;
-      return { ...state, bodies, agent };
+      return { ...state, bodies, agent: interestAgent(state.agent, action.agentId) };
     }
     case 'invalidate': {
       let bodies = state.bodies;
@@ -47,20 +64,25 @@ export function detailReducer(state: DetailState, action: DetailAction): DetailS
         const old = bodies[key];
         if (!old || floor <= old.floor) continue;
         if (bodies === state.bodies) bodies = { ...bodies };
-        bodies[key] = { ...old, floor, status: old.seq >= floor ? 'loaded' : old.item ? 'refreshing' : 'loading' };
+        bodies[key] = { ...old, floor, status: bodyStatus(old, floor) };
       }
       return bodies === state.bodies ? state : { ...state, bodies };
     }
-    case 'failed':
-      return { ...state, bodies: Object.fromEntries(Object.entries(state.bodies).map(([key, body]) => [key, { ...body, status: action.terminal ? 'error' : body.item ? 'refreshing' : 'loading', error: action.error }])), agent: state.agent ? { ...state.agent, loading: !action.terminal, error: action.terminal ? action.error : undefined } : undefined };
+    case 'failed': {
+      const failedStatus = (body: BodyState): BodyStatus => {
+        if (action.terminal) return 'error';
+        return body.item ? 'refreshing' : 'loading';
+      };
+      return { ...state, bodies: Object.fromEntries(Object.entries(state.bodies).map(([key, body]) => [key, { ...body, status: failedStatus(body), error: action.error }])), agent: state.agent ? { ...state.agent, loading: !action.terminal, error: action.terminal ? action.error : undefined } : undefined };
+    }
     case 'latest': {
       const agent = state.agent;
-      if (!agent || agent.id !== action.agentId || !agent.recentItems) return state;
+      if (agent?.id !== action.agentId || !agent.recentItems) return state;
       return { ...state, agent: { ...agent, items: agent.recentItems, before: agent.recentBefore ?? '', after: '', page: undefined, pageError: undefined } };
     }
     case 'page_start': {
       const agent = state.agent;
-      if (!agent || agent.id !== action.agentId || agent.page || (action.direction === 'newer' ? agent.after : agent.before) !== action.before) return state;
+      if (agent?.id !== action.agentId || agent.page || (action.direction === 'newer' ? agent.after : agent.before) !== action.before) return state;
       return { ...state, agent: { ...agent, pageError: undefined, page: { before: action.before, direction: action.direction, token: action.token, frames: [], bytes: 0 } } };
     }
     case 'page_failed':
@@ -68,7 +90,7 @@ export function detailReducer(state: DetailState, action: DetailAction): DetailS
       return { ...state, agent: { ...state.agent, page: undefined, pageError: action.error } };
     case 'page_done': {
       const agent = state.agent;
-      if (!agent || agent.id !== action.agentId || agent.page?.token !== action.token || agent.page.before !== action.before || (action.page.epoch && action.page.epoch !== state.epoch)) return state;
+      if (agent?.id !== action.agentId || agent.page?.token !== action.token || agent.page.before !== action.before || (action.page.epoch && action.page.epoch !== state.epoch)) return state;
       const direction = agent.page.direction ?? 'older';
       let incoming = action.page.items;
       for (const frame of agent.page.frames) if (frame.seq > action.page.seq) incoming = applyAgent(incoming, frame, agent.id, false);
@@ -93,9 +115,15 @@ export function detailReducer(state: DetailState, action: DetailAction): DetailS
       }
       const retained = new Set([...bounded.items, ...(recentItems ?? [])].map(item => item.id));
       for (const id of Object.keys(itemSeq)) if (!retained.has(id)) delete itemSeq[id];
+      let before = agent.before;
+      if (bounded.droppedBefore.length) before = itemCursor(bounded.items[0].id);
+      else if (direction === 'older') before = action.page.before;
+      let after = agent.after;
+      if (bounded.droppedAfter.length) after = itemCursor(bounded.items.at(-1)!.id);
+      else if (direction === 'newer') after = action.page.after ?? '';
       return { ...state, agent: { ...agent, items: bounded.items, recentItems, recentBefore: recent?.items.length && (recent.droppedBefore.length || (direction === 'newer' && action.page.after === '' && (bounded.droppedBefore.length || agent.before))) ? itemCursor(recent.items[0].id) : agent.recentBefore, itemSeq,
-        before: bounded.droppedBefore.length ? itemCursor(bounded.items[0].id) : direction === 'older' ? action.page.before : agent.before,
-        after: detachedAfter || (bounded.droppedAfter.length ? itemCursor(bounded.items.at(-1)!.id) : direction === 'newer' ? action.page.after ?? '' : agent.after),
+        before,
+        after: detachedAfter || after,
         index: indexPage(agent.index, incoming, direction), page: undefined } };
     }
     case 'frame': break;
@@ -105,7 +133,7 @@ export function detailReducer(state: DetailState, action: DetailAction): DetailS
   if (frame.name === 'detail_reset') return emptyDetails(state.epoch);
   if (frame.name === 'detail_ready') {
     const agent = state.agent;
-    if (!agent?.pending || agent.pending.seq !== frame.seq) return state;
+    if (agent?.pending?.seq !== frame.seq) return state;
     const { range: _range, reset, ...pending } = agent.pending;
     const replaced = new Set([...agent.items, ...(agent.recentItems ?? [])].map(item => item.id));
     const received = new Set([...pending.items, ...pending.recentItems].map(item => item.id));
@@ -123,7 +151,7 @@ export function detailReducer(state: DetailState, action: DetailAction): DetailS
     return { ...state, bodies: { ...state.bodies, [key]: { status: 'unavailable', seq: frame.seq, floor: frame.seq } } };
   }
   if (frame.name === 'detail_snapshot' || frame.name === 'detail_page') {
-    if (!frame.agent_id || !state.agent || frame.agent_id !== state.agent.id || frame.seq < state.agent.seq) return state;
+    if (!frame.agent_id || frame.agent_id !== state.agent?.id || frame.seq < state.agent.seq) return state;
     const old = state.agent, items = frame.items ?? [];
     if (frame.name === 'detail_page' && old.pending?.seq !== frame.seq) return state;
     let pending: NonNullable<DetailAgent['pending']>;
@@ -135,7 +163,10 @@ export function detailReducer(state: DetailState, action: DetailAction): DetailS
       const previous = old.pending!;
       const window = previous.range && frame.scope === 'window';
       const merged = boundItems(mergeItems(previous.items, items, 'older'), 'older');
-      pending = { ...previous, items: merged.items, before: frame.before ?? '', after: merged.droppedAfter.length ? itemCursor(merged.items.at(-1)!.id) : window && !previous.items.length ? frame.after ?? '' : previous.after };
+      let after = previous.after;
+      if (merged.droppedAfter.length) after = itemCursor(merged.items.at(-1)!.id);
+      else if (window && !previous.items.length) after = frame.after ?? '';
+      pending = { ...previous, items: merged.items, before: frame.before ?? '', after };
     }
     return { ...state, agent: { ...old, pending, loading: true, error: undefined } };
   }
@@ -170,7 +201,7 @@ export function detailReducer(state: DetailState, action: DetailAction): DetailS
       pageError = 'History changed too quickly. Scroll up to retry.';
     } else page = { ...page, bytes: page.bytes + bytes, frames: [...page.frames, frame] };
   }
-  const id = frame.name === 'item' ? frame.item.id : frame.name === 'delta' ? frame.item_id : '';
+  const id = frameItemId(frame);
   if (id && frame.seq <= (agent.itemSeq[id] ?? -1)) return { ...state, agent: { ...agent, page, pageError } };
   const bounded = boundItems(applyAgent(agent.items, frame, agent.id, !agent.after), agent.after ? 'older' : 'newer');
   const tail = boundItems(applyAgent(agent.recentItems ?? agent.items, frame, agent.id, true), 'newer', TAIL_ITEMS);

@@ -203,9 +203,14 @@ function png(seed: number, w = 320, h = 200): Uint8Array {
       const t = x / w;
       const u = y / h;
       const band = Math.abs(x - y * 1.1 - w * 0.3) < 22 ? 0.55 : 1;
-      const r = tint === 0 ? 205 - 50 * t : tint === 1 ? 170 + 40 * u : 190 - 30 * u;
-      const g = tint === 0 ? 195 - 20 * u : tint === 1 ? 185 - 40 * t : 200 - 60 * t;
-      const b = tint === 0 ? 170 + 50 * t : tint === 1 ? 160 + 30 * t : 175 + 40 * u;
+      let r: number, g: number, b: number;
+      if (tint === 0) {
+        r = 205 - 50 * t; g = 195 - 20 * u; b = 170 + 50 * t;
+      } else if (tint === 1) {
+        r = 170 + 40 * u; g = 185 - 40 * t; b = 160 + 30 * t;
+      } else {
+        r = 190 - 30 * u; g = 200 - 60 * t; b = 175 + 40 * u;
+      }
       raw[i] = Math.round(r * band);
       raw[i + 1] = Math.round(g * band);
       raw[i + 2] = Math.round(b * band);

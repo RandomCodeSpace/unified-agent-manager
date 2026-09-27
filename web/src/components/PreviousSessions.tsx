@@ -8,7 +8,7 @@ import { Dialog } from './ui/dialog';
 /** An available provider can import its recorded conversations; Edit project offers Previous sessions only then. */
 export const canImport = (meta: Meta | null): boolean => !!meta?.providers.some((p) => p.available && p.capabilities.import);
 
-export function PreviousSessionsDialog({ project, onClose }: { project: Project; onClose: () => void }) {
+export function PreviousSessionsDialog({ project, onClose }: Readonly<{ project: Project; onClose: () => void }>) {
   const { meta, dispatch } = useApp();
   const actions = useTaskActions();
   const [sessions, setSessions] = useState<PreviousSession[] | null>(null);
@@ -116,7 +116,7 @@ export function PreviousSessionsDialog({ project, onClose }: { project: Project;
 }
 
 /** Reading or retrying history never reopens a Task or changes its settings. */
-export function HistoryStatus({ session }: { session: SessionDetail }) {
+export function HistoryStatus({ session }: Readonly<{ session: SessionDetail }>) {
   const { dispatch } = useApp();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

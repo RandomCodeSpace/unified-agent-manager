@@ -7,7 +7,7 @@ export const TooltipProvider = BaseTooltip.Provider;
  * A hint for sighted users; the trigger must carry its own accessible name. `label` may
  * hold a second, muted line (pass a fragment). Opens after 400ms, 0 when another tip is up.
  */
-export function Tip({ label, children, side = 'top', disabled = false }: { label: ReactNode; children: ReactElement; side?: 'top' | 'bottom' | 'left' | 'right'; disabled?: boolean }) {
+export function Tip({ label, children, side = 'top', disabled = false }: Readonly<{ label: ReactNode; children: ReactElement; side?: 'top' | 'bottom' | 'left' | 'right'; disabled?: boolean }>) {
   const shown = useRef(false);
   if (disabled || !label) return children;
   return (

@@ -9,6 +9,9 @@ export interface TextPreview { text: string; truncated: boolean }
 
 export type FileFormat = 'image' | 'pdf' | 'code' | 'data' | 'archive' | 'audio' | 'video' | 'sheet' | 'text' | 'file';
 
+/** Extensions (lower case) shown as code. */
+const CODE_EXTENSIONS = new Set(['html', 'htm', 'css', 'scss', 'less', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'go', 'rs', 'py', 'rb', 'php', 'java', 'kt', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'sh', 'bash', 'zsh', 'fish', 'ps1', 'sql', 'proto', 'graphql', 'gql', 'tf', 'vue', 'svelte', 'astro']);
+
 /** Display hints only. MIME and the server's checks still decide how a file is opened. */
 export function fileLabel(path: string): { path: string; name: string; format: FileFormat } {
   const name = path.split('/').pop() || path;
@@ -17,7 +20,7 @@ export function fileLabel(path: string): { path: string; name: string; format: F
   let format: FileFormat = 'file';
   if (/^(png|jpe?g|gif|webp|svg|avif|bmp|ico|tiff?)$/.test(extension)) format = 'image';
   else if (extension === 'pdf') format = 'pdf';
-  else if (/^(html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|go|rs|py|rb|php|java|kt|swift|c|h|cc|cpp|hpp|cs|sh|bash|zsh|fish|ps1|sql|proto|graphql|gql|tf|vue|svelte|astro)$/.test(extension)) format = 'code';
+  else if (CODE_EXTENSIONS.has(extension)) format = 'code';
   else if (/^(jsonc?|ya?ml|toml|xml|ini|cfg|conf|env|lock)$/.test(extension)) format = 'data';
   else if (/^(zip|tar|gz|bz2|xz|7z|rar|tgz)$/.test(extension)) format = 'archive';
   else if (/^(mp3|wav|ogg|flac|aac|m4a)$/.test(extension)) format = 'audio';
@@ -30,21 +33,21 @@ export function fileLabel(path: string): { path: string; name: string; format: F
 /** Eligibility only. The explicit click still asks the server to authorize this exact file. */
 export function tempFile(href: string | undefined, workdir: string | undefined, meta: { temp_root?: string; temp_root_aliases?: readonly string[] } | null): { path: string; hash: string } | null {
   if (!href || !meta?.temp_root || taskFile(href, workdir)) return null;
-  const path = localPath(href.replace(/[?#].*$/s, ''));
+  const path = localPath(href.replace(/[?#].*/s, ''));
   if (!path?.startsWith('/') || /\p{Cc}/u.test(path) || new TextEncoder().encode(path).length > 4096) return null;
   if (path.slice(1).split('/').some(part => !part || part === '.' || part === '..')) return null;
-  const roots = [meta.temp_root, ...(meta.temp_root_aliases ?? []).slice(0, 1)].map(root => root.replace(/\/+$/, '')).filter(root => root.startsWith('/'));
+  const roots = [meta.temp_root, ...(meta.temp_root_aliases ?? []).slice(0, 1)].map(root => root.replace(/(?<!\/)\/+$/, '')).filter(root => root.startsWith('/'));
   const root = roots.find(root => path.startsWith(`${root}/`));
   if (!root) return null;
   // The canonical/configured spellings name the same root. Neither spelling may turn
   // a project under that root into a temporary-file grant.
   const projectRoot = roots.find(root => workdir === root || workdir?.startsWith(`${root}/`));
   if (projectRoot && workdir) {
-    const relativeProject = workdir.slice(projectRoot.length).replace(/\/+$/, '');
+    const relativeProject = workdir.slice(projectRoot.length).replace(/(?<!\/)\/+$/, '');
     const relativePath = path.slice(root.length);
     if (!relativeProject || relativePath === relativeProject || relativePath.startsWith(`${relativeProject}/`)) return null;
   }
-  return { path, hash: /#.*$/s.exec(href)?.[0] ?? '' };
+  return { path, hash: /#.*/s.exec(href)?.[0] ?? '' };
 }
 
 /** One active preview request and any exact-file grant acquired by that request. */
@@ -83,14 +86,20 @@ export class PreviewOwner {
   }
 }
 
+/** How a MIME type (lower case, without parameters) previews. */
+function previewKind(mime: string): PreviewKind {
+  if (mime === 'text/html') return 'html';
+  if (mime === 'application/pdf') return 'pdf';
+  if (/^image\/(png|jpeg|gif|webp|svg\+xml|avif|bmp|x-icon)$/.test(mime)) return 'image';
+  if (mime.startsWith('text/') || /^(application\/(json|xml|javascript)|[^/]+\/[^;]+\+(json|xml))$/.test(mime)) return 'text';
+  return 'binary';
+}
+
 export function previewMetadata(headers: Headers): PreviewMetadata {
   const mime = (headers.get('Content-Type') ?? '').split(';')[0].trim().toLowerCase();
   const length = headers.get('Content-Length');
   const size = length !== null && /^\d+$/.test(length) && Number.isSafeInteger(Number(length)) ? Number(length) : undefined;
-  const kind: PreviewKind = mime === 'text/html' ? 'html' : mime === 'application/pdf' ? 'pdf'
-    : /^image\/(png|jpeg|gif|webp|svg\+xml|avif|bmp|x-icon)$/.test(mime) ? 'image'
-      : mime.startsWith('text/') || /^(application\/(json|xml|javascript)|[^/]+\/[^;]+\+(json|xml))$/.test(mime) ? 'text' : 'binary';
-  return { mime, size, kind };
+  return { mime, size, kind: previewKind(mime) };
 }
 
 /** Keep the fragment last and preserve existing query parameters and literal escaping. */
@@ -103,6 +112,14 @@ export function downloadUrl(url: string): string {
 /** Only an ordinary primary click replaces a link's native new-tab/download behavior. */
 export function previewClick(event: { button: number; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; defaultPrevented: boolean }): boolean {
   return event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.defaultPrevented;
+}
+
+/** The UTF-8 length of one code point. */
+function utf8Size(point: number): number {
+  if (point <= 0x7f) return 1;
+  if (point <= 0x7ff) return 2;
+  if (point <= 0xffff) return 3;
+  return 4;
 }
 
 /**
@@ -150,8 +167,7 @@ export async function readTextPreview(response: Response, signal?: AbortSignal):
       }
       let kept = '';
       for (const char of text) {
-        const point = char.codePointAt(0)!;
-        const size = point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
+        const size = utf8Size(char.codePointAt(0)!);
         if (decoded + size > PREVIEW_BYTES) break;
         kept += char;
         decoded += size;
@@ -181,7 +197,8 @@ export async function readTextPreview(response: Response, signal?: AbortSignal):
     if (tailBytes && decoded + tailBytes > PREVIEW_BYTES) {
       let prefix = parts.join('');
       while (prefix && decoded + tailBytes > PREVIEW_BYTES) {
-        const last = prefix.charCodeAt(prefix.length - 1);
+        // At the last index a code point is the code unit itself, so this is the trailing unit.
+        const last = prefix.codePointAt(prefix.length - 1)!;
         const units = last >= 0xdc00 && last <= 0xdfff ? 2 : 1;
         decoded -= encoder.encode(prefix.slice(-units)).length;
         prefix = prefix.slice(0, -units);

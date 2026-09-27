@@ -11,7 +11,7 @@ interface ExecutionProps {
 }
 
 /** The mode radio group with its reason and objective, for the toolbar's permissions and execution menu and the phone's More menu. Selection follows runtime observations; changing a mode never submits the draft. */
-export function ExecutionItems({ execution, reason, busy, onChange, onRetry }: ExecutionProps) {
+export function ExecutionItems({ execution, reason, busy, onChange, onRetry }: Readonly<ExecutionProps>) {
   const objective = execution?.objective;
   const current = execution?.known === true;
   const mode = execution?.mode;

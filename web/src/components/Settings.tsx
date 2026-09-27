@@ -1,8 +1,9 @@
 import { X } from 'lucide-react';
-import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { api, describeError, resolveTaskDefaults, type CustomModel, type Model, type SendDefault, type Settings } from '../api';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
-import { Field, TaskDefaultsFields } from './TaskDefaults';
+import { byCodeUnit } from '../lib/order';
+import { Field, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
@@ -18,7 +19,7 @@ import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
 
 /** One titled group of settings, a floating card (DESIGN.md Settings view); a new group is another `Section` below the last. */
-function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+function Section({ id, title, children }: Readonly<{ id: string; title: string; children: ReactNode }>) {
   return (
     <section aria-labelledby={`${id}-title`} className="flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
       <h2 id={`${id}-title`} className="text-title text-ink">
@@ -30,7 +31,7 @@ function Section({ id, title, children }: { id: string; title: string; children:
 }
 
 /** A section whose content is still on its way (the first snapshot, the catalogs): the card with its title over a skeleton. */
-function PendingSection({ id, title, label }: { id: string; title: string; label: string }) {
+function PendingSection({ id, title, label }: Readonly<{ id: string; title: string; label: string }>) {
   return (
     <section aria-labelledby={`${id}-title`} aria-busy="true" className="flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
       <h2 id={`${id}-title`} className="text-title text-ink">
@@ -42,7 +43,7 @@ function PendingSection({ id, title, label }: { id: string; title: string; label
 }
 
 /** A label and its help on the left, the control on the right; stacked on a phone. */
-function Row({ id, label, help, children }: { id: string; label: string; help: ReactNode; children: ReactNode }) {
+function Row({ id, label, help, children }: Readonly<{ id: string; label: string; help: ReactNode; children: ReactNode }>) {
   return (
     <div className="grid items-start gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto]">
       <div className="flex min-w-0 max-w-3xl flex-col gap-1">
@@ -71,19 +72,38 @@ interface ProviderDraft {
 
 const newProvider: ProviderDraft = { name: '', base_url: '', api_key_env: '', ids: [], selected: [], query: '', manual: '' };
 
+/** What Remove is about to take away: one of a provider's models, or the provider with all of them. */
+interface Removal {
+  provider: CustomProvider;
+  model?: string;
+}
+
+function removalTitle(pending: Removal | null): string {
+  if (!pending) return 'Remove?';
+  return pending.model ? `Remove ${pending.provider.name}/${pending.model}?` : `Remove provider ${pending.provider.name}?`;
+}
+
+function removalDescription(pending: Removal | null): string | undefined {
+  if (!pending) return undefined;
+  if (pending.model) return 'It leaves the model menus. Tasks already using it keep it until their model is changed.';
+  const count = pending.provider.models.length;
+  const leave = count === 1 ? 'Its one model leaves' : `Its ${count} models leave`;
+  return `${leave} the model menus. Tasks already using one keep it until their model is changed.`;
+}
+
 /**
  * Custom (BYOM) models, by provider: an OpenAI-compatible endpoint whose models are chosen
  * from what it lists (the service loads the list) or typed in. The key never passes through
  * here; each provider names the service environment variable that holds it.
  */
-function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; disabled: boolean; onSave: (next: CustomModel[]) => Promise<boolean> }) {
+function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomModel[]; disabled: boolean; onSave: (next: CustomModel[]) => Promise<boolean> }>) {
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const providers = customProviders(models);
   const busy = disabled || loading;
   // Removing a provider or one of its models is confirmed first (DESIGN.md Confirmations).
-  const removal = useConfirm<{ provider: CustomProvider; model?: string }>();
+  const removal = useConfirm<Removal>();
   const pending = removal.target;
   function remove() {
     const r = removal.target;
@@ -101,7 +121,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
     setLoadError(null);
     try {
       const res = await api.discoverModels({ base_url: d.base_url.trim(), api_key_env: d.api_key_env.trim() });
-      setDraft((cur) => cur && { ...cur, ids: [...new Set([...res.models, ...cur.selected])].sort() });
+      setDraft((cur) => cur && { ...cur, ids: [...new Set([...res.models, ...cur.selected])].sort(byCodeUnit) });
       if (res.truncated) setLoadError(`Showing the first ${res.models.length} models the endpoint lists.`);
     } catch (e) {
       setLoadError(`Could not load the models: ${describeError(e)}`);
@@ -109,7 +129,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
       setLoading(false);
     }
   }
-  async function save(e: FormEvent, d: ProviderDraft) {
+  async function save(e: SubmitEvent, d: ProviderDraft) {
     e.preventDefault();
     const provider = { name: d.name.trim(), base_url: d.base_url.trim(), api_key_env: d.api_key_env.trim() };
     if (await onSave(withProvider(models, d.original, provider, d.selected))) setDraft(null);
@@ -174,14 +194,8 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
       ))}
       <AlertDialog
         {...removal.props}
-        title={pending ? (pending.model ? `Remove ${pending.provider.name}/${pending.model}?` : `Remove provider ${pending.provider.name}?`) : 'Remove?'}
-        description={
-          pending?.model
-            ? 'It leaves the model menus. Tasks already using it keep it until their model is changed.'
-            : pending
-              ? `${pending.provider.models.length === 1 ? 'Its one model leaves' : `Its ${pending.provider.models.length} models leave`} the model menus. Tasks already using one keep it until their model is changed.`
-              : undefined
-        }
+        title={removalTitle(pending)}
+        description={removalDescription(pending)}
         confirmLabel={pending?.model ? 'Remove model' : 'Remove provider'}
         onConfirm={remove}
       />
@@ -248,7 +262,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
               disabled={busy || !draft.manual.trim()}
               onClick={() => {
                 const id = draft.manual.trim();
-                setDraft({ ...draft, manual: '', ids: [...new Set([...draft.ids, id])].sort(), selected: [...new Set([...draft.selected, id])] });
+                setDraft({ ...draft, manual: '', ids: [...new Set([...draft.ids, id])].sort(byCodeUnit), selected: [...new Set([...draft.selected, id])] });
               }}
             >
               Add ID
@@ -273,7 +287,7 @@ function CustomModels({ models, disabled, onSave }: { models: CustomModel[]; dis
  * sidebar's gear and `#settings`. A change shows at once and is saved through PATCH; a
  * refusal puts the old value back and says why.
  */
-export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClose: () => void }) {
+export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNode; onClose: () => void }>) {
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
   const catalogPending = !meta && !metaError;
@@ -394,7 +408,7 @@ export function SettingsView({ leading, onClose }: { leading?: ReactNode; onClos
                 <Select aria-label={`${p.display_name} utility model`} aria-describedby={`utility-${p.name}-help`} value={current} disabled={saving} className="sm:w-72" items={[
                   { value: '', label: cheapestLabel(p), description: cheapest && cost(cheapest) },
                   { value: UTILITY_NONE, label: 'None (no utility AI)' },
-                  ...choices.map(({ model, note }) => ({ value: model.id, label: `${model.name}${note ? ` (${note.toLowerCase()})` : ''}`, description: cost(model), hidden: !!note })),
+                  ...choices.map(({ model, note }) => ({ value: model.id, label: choiceLabel(model.name, note), description: cost(model), hidden: !!note })),
                 ]} onValueChange={(id) => void save({ title_model: { ...settings.title_model, [p.name]: id } })} />
               </Row>;
             })}

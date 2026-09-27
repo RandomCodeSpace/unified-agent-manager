@@ -13,9 +13,15 @@ export function shownState(s: Pick<SessionSummary, 'state' | 'subagents_running'
   return (s.state === 'completed' || s.state === 'idle') && s.subagents_running > 0 ? 'working' : s.state;
 }
 
+/** Something waits in the Task: a positive count, or a bare flag (`pendingCount` in api.ts). */
+function hasPending(s: Pick<SessionSummary, 'pending'>): boolean {
+  if (typeof s.pending === 'number') return s.pending > 0;
+  return !!s.pending;
+}
+
 /** The sidebar's "Needs permission/answer" rows (`needsYou` in api.ts, minus the shelves): the count the tab title and app badge carry. */
 export function needsYouCount(sessions: readonly SessionSummary[]): number {
-  return sessions.filter((s) => !readOnly(s) && (s.state === 'awaiting_permission' || s.state === 'awaiting_answer' || (typeof s.pending === 'number' ? s.pending : s.pending ? 1 : 0) > 0)).length;
+  return sessions.filter((s) => !readOnly(s) && (s.state === 'awaiting_permission' || s.state === 'awaiting_answer' || hasPending(s))).length;
 }
 
 /** The document title: the needs-you count first, then the open Task's name, then the app. */

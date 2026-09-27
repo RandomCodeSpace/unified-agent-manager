@@ -8,7 +8,7 @@ import { EXIT_MS, usePresence } from './collapse';
  * way, and stays mounted through the exit, inert. The wrapper is an inline flex item, so
  * it takes the control's place in a row without moving its neighbours.
  */
-export function Appear({ show, className, children }: { show: boolean; className?: string; children: ReactNode }) {
+export function Appear({ show, className, children }: Readonly<{ show: boolean; className?: string; children: ReactNode }>) {
   const { mounted, onClosed } = usePresence(show);
   const closed = useEffectEvent(onClosed);
   // The first paint is the hidden state, so the enter has somewhere to start; a new exit resets it.

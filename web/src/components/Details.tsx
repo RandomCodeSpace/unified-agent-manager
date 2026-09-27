@@ -7,7 +7,7 @@ import { itemCursor } from '../lib/historyWindow';
 /** Mounted children of a collapsing group retain their preference, but no interest. */
 const Visible = createContext(true);
 export const useDetailVisibility = () => useContext(Visible);
-export function DetailVisibility({ open, children }: { open: boolean; children: ReactNode }) {
+export function DetailVisibility({ open, children }: Readonly<{ open: boolean; children: ReactNode }>) {
   const parent = useContext(Visible);
   return <Visible.Provider value={parent && open}>{children}</Visible.Provider>;
 }
@@ -40,9 +40,9 @@ const Details = createContext<DetailContextValue | null>(null);
 const EMPTY_BODY: BodyState = { status: 'unloaded', seq: -1, floor: -1 };
 const NO_SUBSCRIBE = () => () => {};
 
-export function DetailsProvider({ session, active, generation, versions, onAuthLost, children }: {
+export function DetailsProvider({ session, active, generation, versions, onAuthLost, children }: Readonly<{
   session: SessionDetail; active: boolean; generation: number; versions: Record<string, number>; onAuthLost: () => void; children: ReactNode;
-}) {
+}>) {
   const compact = session.representation === 'compact-v1' && session.detail_stream === true && !!session.epoch;
   const [store] = useState(() => new DetailStore(session.epoch ?? ''));
   const [disclosures] = useState(() => new Map<string, boolean>());
@@ -219,11 +219,17 @@ export function useItemBody(item: Item, open: boolean) {
   }, [context, deferred, open, parentVisible, item.agent_id, item.id]);
   return { item: deferred ? body.item : item, body: deferred ? body : undefined, attach: ref, retry: context?.retry };
 }
-export function BodyNotice({ body, retry }: { body?: BodyState; retry?: () => void }) {
+/** What a body still on its way says: a refresh, a wait for the scroll, or the read itself. */
+function loadingText(status: BodyState['status']): string {
+  if (status === 'refreshing') return 'Refreshing details…';
+  if (status === 'unloaded') return 'Details load as you scroll here…';
+  return 'Loading details…';
+}
+export function BodyNotice({ body, retry }: Readonly<{ body?: BodyState; retry?: () => void }>) {
   if (!body || body.status === 'loaded') return null;
   if (body.status === 'unavailable') return <p role="status" className="text-caption text-muted">This item is no longer retained.</p>;
   if (body.status === 'error') return <p role="alert" className="text-caption text-error">{body.error} <button type="button" onClick={retry} className="underline">Retry</button></p>;
-  return <p role="status" className="text-caption text-muted">{body.status === 'refreshing' ? 'Refreshing details…' : body.status === 'unloaded' ? 'Details load as you scroll here…' : 'Loading details…'}</p>;
+  return <p role="status" className="text-caption text-muted">{loadingText(body.status)}</p>;
 }
 export function useBodyCopy(item: Item, copy: (text: string) => void) {
   const context = useContext(Details);
@@ -298,9 +304,9 @@ export function useDetailAgent(id: string, open: boolean) {
 /** Keep only disclosure booleans when a history row is evicted. */
 export function useDisclosure(key: string) {
   const context = useContext(Details);
-  const [open, update] = useState(() => context?.disclosures.get(key) ?? false);
-  const setOpen = useCallback((value: boolean | ((current: boolean) => boolean)) => {
-    update(current => {
+  const [open, setOpen] = useState(() => context?.disclosures.get(key) ?? false);
+  const update = useCallback((value: boolean | ((current: boolean) => boolean)) => {
+    setOpen(current => {
       const next = typeof value === 'function' ? value(current) : value;
       if (context) {
         context.disclosures.delete(key);
@@ -310,5 +316,5 @@ export function useDisclosure(key: string) {
       return next;
     });
   }, [context, key]);
-  return [open, setOpen] as const;
+  return [open, update] as const;
 }

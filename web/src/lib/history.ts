@@ -30,7 +30,7 @@ export function historyEntries(items: readonly HistoryItem[] | undefined, queue:
   const entries: string[] = [];
   for (let i = texts.length - 1; i >= 0; i--) {
     const t = texts[i];
-    if (!t.trim() || entries[entries.length - 1] === t) continue;
+    if (!t.trim() || entries.at(-1) === t) continue;
     entries.push(t);
   }
   return entries;
@@ -60,7 +60,7 @@ export function onLastLine(text: string, caret: number): boolean {
  * for history and the browser keeps it. Recalled text goes in whole, so the caller puts the caret at its end.
  */
 export function historyKey(browsing: Browsing | null, entries: readonly string[], text: string, caret: number, key: string): HistoryStep | null {
-  const active = browsing && browsing.shown === text ? browsing : null;
+  const active = browsing?.shown === text ? browsing : null;
   if (key === 'ArrowUp') {
     if (text !== '' && !onFirstLine(text, caret)) return null;
     const index = active ? active.index + 1 : 0;

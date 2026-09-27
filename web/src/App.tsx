@@ -57,6 +57,9 @@ const SHELL = 'grid h-dvh overflow-x-clip pt-[env(safe-area-inset-top)] pr-[env(
 // Older servers omit `required`; treat absent as true.
 const loggedIn = (r: { authenticated: boolean; required?: boolean }) => r.authenticated || r.required === false;
 
+/** Hoisted: the stream's retry timer sits five functions deep, and its updater would be a sixth. */
+const increment = (n: number) => n + 1;
+
 /** True while a Base UI popup (menu, dialog, tooltip) is open; app-level Esc handlers stand back. */
 export const popupOpen = () => !!document.querySelector('[data-popup]');
 
@@ -193,7 +196,9 @@ export default function App() {
   // Keep the view in the URL fragment so a reload lands on it: `#settings`, else the selected task.
   useEffect(() => {
     const id = state.selectedId;
-    const next = settingsOpen ? SETTINGS_HASH : id ? `${HASH_PREFIX}${encodeURIComponent(id)}` : '';
+    let next = '';
+    if (settingsOpen) next = SETTINGS_HASH;
+    else if (id) next = `${HASH_PREFIX}${encodeURIComponent(id)}`;
     if (window.location.hash !== next) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next}`);
   }, [state.selectedId, settingsOpen]);
 
@@ -293,7 +298,7 @@ export default function App() {
       // link, one deleted elsewhere) is dropped with a notice; otherwise re-check auth, then reopen.
       const later = () => {
         if (!alive) return;
-        retry = window.setTimeout(() => { if (alive) setStreamKey((k) => k + 1); }, 5000);
+        retry = window.setTimeout(() => { if (alive) setStreamKey(increment); }, 5000);
       };
       const reconnect = () => {
         if (!alive) return;
@@ -340,7 +345,7 @@ export default function App() {
         localStorage.removeItem(FILTER_KEY);
         return null;
       });
-      if (data.session && data.session.id === selected) markViewed(selected, data.session.updated_at);
+      if (data.session?.id === selected) markViewed(selected, data.session.updated_at);
       // Composer drafts of Tasks that no longer exist go with them.
       try {
         for (const key of staleDraftKeys(Object.keys(localStorage), data.sessions.map((s) => s.id), data.projects.map((p) => p.id))) localStorage.removeItem(key);
@@ -624,7 +629,9 @@ export default function App() {
   // The tab title and the installed app's badge carry how many Tasks wait for the user; the title names the open Task.
   const attention = useMemo(() => needsYouCount(state.sessions), [state.sessions]);
   // A new Task shows as "New task"; only real Tasks count as needing you.
-  const openName = selected ? taskName(selected) : newTask ? '' : null;
+  let openName: string | null = null;
+  if (selected) openName = taskName(selected);
+  else if (newTask) openName = '';
   useEffect(() => {
     document.title = pageTitle(attention, openName);
     if (attention > 0) navigator.setAppBadge?.(attention).catch(() => {});
@@ -641,13 +648,16 @@ export default function App() {
   if (auth === 'out') return <Login onLoggedIn={() => setAuth('in')} />;
 
   // A cached selected task stays visible through a slow refresh. An unrelated previous task yields to the skeleton after the quiet period.
-  const shown = state.detail && selected ? state.detail : state.selectedId && selected && (state.previousCached || !lateLoad) ? state.previous : null;
+  let shown: SessionDetail | null = null;
+  if (state.detail && selected) shown = state.detail;
+  else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous;
   const stale = !settingsOpen && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
   const terminalProject = terminalId && state.settings.terminal ? state.projects.find((p) => p.id === terminalId) : undefined;
   if (terminalId && !terminalProject) setTerminalId(null);
   const dialogTask = taskDialog ? state.sessions.find((s) => s.id === taskDialog.id) : undefined;
+  const dialogTaskName = dialogTask ? `“${dialogTask.name || dialogTask.title || 'this task'}”` : 'this task';
   const newTaskProject = newTask ? state.projects.find((p) => p.id === newTask.projectId) : undefined;
 
   function showProject(id: string) {
@@ -693,11 +703,11 @@ export default function App() {
   );
 
   // The main pane's header starts with the sidebar toggle when the sidebar is hidden, or the drawer toggle on a narrow screen.
-  const leading = narrow ? (
-    <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1" />
-  ) : !sidebarOpen ? (
-    <SidebarToggle id="sidebar-show" size="icon-md" open={false} onToggle={toggleSidebar} className="-ml-1" />
-  ) : null;
+  let leading: React.ReactNode = null;
+  if (narrow) leading = <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1" />;
+  else if (!sidebarOpen) leading = <SidebarToggle id="sidebar-show" size="icon-md" open={false} onToggle={toggleSidebar} className="-ml-1" />;
+  // The sidebar's column, animated between its width and nothing.
+  const columns = sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]';
 
   let pane: React.ReactNode;
   if (settingsOpen) {
@@ -760,9 +770,7 @@ export default function App() {
           <div
             className={cn(
               SHELL,
-              narrow
-                ? 'grid-cols-1'
-                : cn('transition-[grid-template-columns] duration-240 ease-app', sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]'),
+              narrow ? 'grid-cols-1' : cn('transition-[grid-template-columns] duration-240 ease-app', columns),
             )}
           >
             {/* The column animates to 0; the sidebar keeps its width inside so nothing reflows on the way, and is inert once hidden. */}
@@ -778,19 +786,19 @@ export default function App() {
             )}
             <main className="relative flex min-h-0 min-w-0 flex-col bg-canvas">
               {connection !== 'connected' && (
-                <p role="status" className={cn('flex items-center gap-2 px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
+                <output className={cn('flex items-center gap-2 px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
                   <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
                   {CONNECTION_TEXT[connection]}
-                </p>
+                </output>
               )}
               {updated && (
-                <p role="status" className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-body animate-fade-in">
+                <output className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-body animate-fade-in">
                   <Dot tone="accent" />
                   <span className="flex-1">UAM was updated.</span>
                   <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
                     Reload
                   </Button>
-                </p>
+                </output>
               )}
               {notice && (
                 <p className="flex items-center gap-2 bg-error-wash px-4 py-1.5 text-caption text-error animate-fade-in" role="alert">
@@ -801,9 +809,9 @@ export default function App() {
                 </p>
               )}
               {stale && state.previousCached && (
-                <p role="status" className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-muted">
+                <output className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-muted">
                   <Dot tone="accent" pulse /> Refreshing task…
-                </p>
+                </output>
               )}
               <div className="relative flex min-h-0 flex-1 flex-col">
                 {/* A cached page is presentation only; actions and typing wait for confirmation. */}
@@ -860,7 +868,7 @@ export default function App() {
               open={taskDialogOpen && taskDialog?.kind === 'delete'}
               onOpenChange={(o) => !o && setTaskDialogOpen(false)}
               onClosed={() => setTaskDialog(null)}
-              title={`Delete ${dialogTask ? `“${dialogTask.name || dialogTask.title || 'this task'}”` : 'this task'}?`}
+              title={`Delete ${dialogTaskName}?`}
               description="This removes the task record from UAM. The provider conversation on the host is untouched."
               confirmLabel="Delete task"
               busy={!!taskDialog && !!busyTasks[taskDialog.id]}
@@ -885,23 +893,23 @@ export default function App() {
 }
 
 /** The header of the non-Task views while the sidebar is away (narrow, or hidden): its toggle, the brand, the connection. */
-function PaneHeader({ leading, connection }: { leading: React.ReactNode; connection?: keyof typeof CONNECTION_TEXT }) {
+function PaneHeader({ leading, connection }: Readonly<{ leading: React.ReactNode; connection?: keyof typeof CONNECTION_TEXT }>) {
   return (
     <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">
       {leading}
       <span className="text-title font-semibold text-ink">uam</span>
       <span className="flex-1" />
       {connection && connection !== 'connected' && (
-        <span role="status" className="flex items-center gap-1.5 text-caption text-warning" title={CONNECTION_TEXT[connection]}>
+        <output className="flex items-center gap-1.5 text-caption text-warning" title={CONNECTION_TEXT[connection]}>
           <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
           <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
-        </span>
+        </output>
       )}
     </header>
   );
 }
 
-function EmptyPane({ leading, connection, children }: { leading: React.ReactNode; connection: keyof typeof CONNECTION_TEXT; children: React.ReactNode }) {
+function EmptyPane({ leading, connection, children }: Readonly<{ leading: React.ReactNode; connection: keyof typeof CONNECTION_TEXT; children: React.ReactNode }>) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {leading && <PaneHeader leading={leading} connection={connection} />}
@@ -919,7 +927,7 @@ function EmptyPane({ leading, connection, children }: { leading: React.ReactNode
  * the Task view gives it the height, nothing is covered. Its top edge drags that height. It stays
  * across Task switches and ends with Close, which ends the shell.
  */
-function TerminalDock({ project, onClose }: { project: Project; onClose: () => void }) {
+function TerminalDock({ project, onClose }: Readonly<{ project: Project; onClose: () => void }>) {
   const { panelRef, handleProps } = useResizable('terminal-h', 320, 160, 'y');
   return (
     <section ref={panelRef} aria-label="Terminal" className="relative flex h-[var(--panel-h,320px)] shrink-0 flex-col bg-canvas">
@@ -933,19 +941,19 @@ function TerminalDock({ project, onClose }: { project: Project; onClose: () => v
   );
 }
 
-function LoadingVeil({ show }: { show: boolean }) {
+function LoadingVeil({ show }: Readonly<{ show: boolean }>) {
   return (
     <Appear show={show} className="absolute inset-x-0 top-header bottom-0 z-20 scale-100 items-center justify-center bg-canvas/70">
-      <span role="status" className="flex items-center gap-2 rounded-full bg-canvas px-3 py-1.5 text-caption text-muted">
+      <output className="flex items-center gap-2 rounded-full bg-canvas px-3 py-1.5 text-caption text-muted">
         <Spinner />
         Loading…
-      </span>
+      </output>
     </Appear>
   );
 }
 
 /** While the selected Task's detail (or the first snapshot) is on its way and nothing was on screen before: the header holds its height over a transcript-shaped skeleton. */
-function LoadingPane({ leading }: { leading: React.ReactNode }) {
+function LoadingPane({ leading }: Readonly<{ leading: React.ReactNode }>) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy="true" aria-label="Loading conversation">
       <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">{leading}</header>

@@ -1,5 +1,5 @@
 import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
-import { Bot, Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
+import { Bot, Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
@@ -12,7 +12,7 @@ import { turnVerb } from '../lib/verbs';
 import type { AgentTranscript } from '../state';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, DeclaredFileCard, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkdirContext, WorkingMark, useApp } from './common';
-import { DecidedRow } from './Interactions';
+import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
@@ -70,7 +70,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true }: Props) {
+export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = useMemo(() => {
     const map = new Map<string, Subagent>();
@@ -216,7 +216,10 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
  * the first open only; the counts turn `error` after a failure and `attention`
  * while a call waits for the user.
  */
-function TurnHead({ id, agentId, working, timing, summary, entries, ctx }: { id: string; agentId?: string; working: boolean; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext }) {
+/** The tip on a turn's duration slot: whether the time shown was recorded. */
+const durationTitle = (elapsed: string | null) => (elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.');
+
+function TurnHead({ id, agentId, working, timing, summary, entries, ctx }: Readonly<{ id: string; agentId?: string; working: boolean; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext }>) {
   // Item IDs are local to their agent; main-turn identities stay unchanged.
   const scope = agentId ? 'agent-turn' : 'turn';
   const scopedId = agentId ? encodeURIComponent(JSON.stringify([agentId, id])) : id;
@@ -241,7 +244,7 @@ function TurnHead({ id, agentId, working, timing, summary, entries, ctx }: { id:
   };
   return (
     <div id={domId} className="flex flex-col rounded-sm">
-      <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
+      <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : durationTitle(elapsed)}>
         {summary.count > 0 ? (
           <button
             ref={headButton}
@@ -286,7 +289,7 @@ function TurnHead({ id, agentId, working, timing, summary, entries, ctx }: { id:
  * its own click), each tool call as its row with its approval, details and images, each
  * question row and each decided request.
  */
-function Timeline({ id, entries, ctx }: { id: string; entries: Entry[]; ctx: RenderContext }) {
+function Timeline({ id, entries, ctx }: Readonly<{ id: string; entries: Entry[]; ctx: RenderContext }>) {
   const rows: ReactNode[] = [];
   const row = (key: string, time: string, took: string | null, node: ReactNode) =>
     rows.push(
@@ -320,7 +323,7 @@ function Timeline({ id, entries, ctx }: { id: string; entries: Entry[]; ctx: Ren
 }
 
 /** A timeline step's start (to the second, 24-hour) and its recorded duration, blank while it runs or when unrecorded. */
-function StepTime({ time, took }: { time: string; took: string | null }) {
+function StepTime({ time, took }: Readonly<{ time: string; took: string | null }>) {
   const at = new Date(time);
   return (
     <span className="flex h-6 shrink-0 items-center gap-2 text-caption tabular-nums text-faint pointer-coarse:h-11" title={at.toLocaleString()}>
@@ -331,7 +334,7 @@ function StepTime({ time, took }: { time: string; took: string | null }) {
 }
 
 /** The one line a compact turn keeps for its edits: "Changed 2 files", with the paths in its tooltip, and the way to the Changes sheet. */
-function ChangedLine({ files, onOpen }: { files: string[]; onOpen?: () => void }) {
+function ChangedLine({ files, onOpen }: Readonly<{ files: string[]; onOpen?: () => void }>) {
   return (
     <div className="flex h-6 items-center gap-2 text-caption text-muted" title={files.join('\n')}>
       <FileDiff aria-hidden="true" className="size-3.5 shrink-0 text-faint" />
@@ -353,7 +356,7 @@ function ChangedLine({ files, onOpen }: { files: string[]; onOpen?: () => void }
  * call is its own row, not an activity row.
  */
 function liveAtFoot(items: Item[], byParent: Map<string, Subagent>): boolean {
-  const last = items[items.length - 1];
+  const last = items.at(-1);
   if (!last) return false;
   if (last.kind === 'reasoning') return true;
   return last.kind === 'tool' && (last.tool?.status === 'pending' || last.tool?.status === 'running') && !byParent.has(last.id);
@@ -367,13 +370,15 @@ function liveAtFoot(items: Item[], byParent: Map<string, Subagent>): boolean {
  * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
  * status row already announces the state, so this one is not read out again.
  */
-function WorkingTail({ working, turnId, step, verb = true }: { working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null; /** Between steps, the verb; without it the line stays blank, so it does not fold and grow back at every step. */ verb?: boolean }) {
+function WorkingTail({ working, turnId, step, verb = true }: Readonly<{ working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null; /** Between steps, the verb; without it the line stays blank, so it does not fold and grow back at every step. */ verb?: boolean }>) {
   const { mounted, onClosed } = usePresence(working);
   if (!mounted) return null;
-  const text = step ? step.label : verb ? `${turnVerb(turnId)}…` : '';
+  let text = '';
+  if (step) text = step.label;
+  else if (verb) text = `${turnVerb(turnId)}…`;
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
-      {working && verb && <span role="status" className="sr-only">Busy</span>}
+      {working && verb && <output className="sr-only">Busy</output>}
       <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
         {text && <WorkingMark />}
         <span className={cn('min-w-0 truncate', (!step || step.shimmer) && 'animate-shimmer motion-reduce:animate-none', step?.tone === 'attention' && 'text-attention')} title={step?.label}>
@@ -391,7 +396,7 @@ function WorkingTail({ working, turnId, step, verb = true }: { working: boolean;
  * any scroll position and whichever history page is loaded; `items` is the live tail. Its width
  * holds while the time counts up, so it never shifts.
  */
-export function WorkingLabel({ working, since, items, identityItems = items, turnTimings = [] }: { working: boolean; since?: string; items: Item[]; identityItems?: Item[]; turnTimings?: TurnTiming[] }) {
+export function WorkingLabel({ working, since, items, identityItems = items, turnTimings = [] }: Readonly<{ working: boolean; since?: string; items: Item[]; identityItems?: Item[]; turnTimings?: TurnTiming[] }>) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!working) return;
@@ -404,7 +409,7 @@ export function WorkingLabel({ working, since, items, identityItems = items, tur
   const elapsed = working ? elapsedSince(since ?? foregroundStart(turnTimings), now) : null;
   return (
     <Appear show={working}>
-      {working && <span role="status" className="sr-only">Busy</span>}
+      {working && <output className="sr-only">Busy</output>}
       <span aria-hidden="true" className="flex h-7 items-center gap-2 rounded-sm bg-raised px-2.5 text-caption text-muted shadow-float">
         <WorkingMark />
         <span className="animate-shimmer whitespace-nowrap motion-reduce:animate-none">{turnVerb(turnId)}…</span>
@@ -575,10 +580,10 @@ function subagentRows(entries: Entry[], ctx: RenderContext): Map<string, ReactNo
  * the turn runs (the working label says so), then "Took 12s" once it ended. Without a recorded
  * duration the row keeps its slot, with no label and no rule.
  */
-function TurnStatus({ working = false, timing }: { working?: boolean; timing?: TurnTiming }) {
+function TurnStatus({ working = false, timing }: Readonly<{ working?: boolean; timing?: TurnTiming }>) {
   const elapsed = working ? null : completedDuration(timing);
   return (
-    <div className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
+    <div className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working ? undefined : durationTitle(elapsed)}>
       {elapsed && <span className="animate-fade-in">Took {elapsed}</span>}
     </div>
   );
@@ -596,7 +601,7 @@ function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & {
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, read, label, className, side = 'right', children, extra = [] }: { text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; children: ReactNode; extra?: ActionItem[] }) {
+function Copyable({ text, read, label, className, side = 'right', children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
   const [menuReady, setMenuReady] = useState(false);
   const menuHandlers = useRef<CopyableMenuEvents | null>(null);
@@ -698,13 +703,15 @@ function noticeRow({ text, className, whole }: MessageParts) {
 const plainText = (text: string) => <p className="break-words whitespace-pre-wrap">{text}</p>;
 
 /** A message the service holds shortened (`clipped`, a text over its memory bound): the part held, then the way to the whole text, read only on request. */
-function ClippedMessage({ item, sessionId, streaming, className }: { item: Item; sessionId?: string; streaming?: boolean; className?: string }) {
+function ClippedMessage({ item, sessionId, streaming, className }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string }>) {
   const whole = useWholeText(item);
   const parts = { item, text: whole.text, sessionId, streaming, className, whole };
-  return item.kind === 'user' ? userBubble(parts) : item.kind === 'notice' ? noticeRow(parts) : assistantMessage(parts);
+  if (item.kind === 'user') return userBubble(parts);
+  if (item.kind === 'notice') return noticeRow(parts);
+  return assistantMessage(parts);
 }
 
-function WholeNote({ whole }: { whole: WholeText }) {
+function WholeNote({ whole }: Readonly<{ whole: WholeText }>) {
   if (whole.status === 'whole') return null;
   if (whole.status === 'loading') return <p role="status" className="text-caption text-muted">Loading the full message…</p>;
   if (whole.status === 'error') return <p role="alert" className="text-caption text-error">{whole.error} <button type="button" onClick={whole.show} className="rounded-xs underline">Retry</button></p>;
@@ -752,7 +759,7 @@ const ToolRun = memo(function ToolRun({ identity, items, live, sessionId, approv
 const isActive = (s?: ToolStatus) => s === 'pending' || s === 'running';
 
 /** A call's state as a glyph: the spinner while it is open, a check, a cross, or a dash for a call that never reported. */
-export function ToolMark({ tone }: { tone: string }) {
+export function ToolMark({ tone }: Readonly<{ tone: string }>) {
   if (tone === 'running' || tone === 'pending') return <Spinner />;
   if (tone === 'completed' || tone === 'decided') return <Check aria-hidden="true" className="size-3.5 text-success" strokeWidth={2.5} />;
   if (tone === 'failed') return <X aria-hidden="true" className="size-3.5 text-error" strokeWidth={2.5} />;
@@ -760,7 +767,7 @@ export function ToolMark({ tone }: { tone: string }) {
 }
 
 /** A tool call's details: its text, then the input and output as code blocks; "No details yet." with none of them. */
-export function ToolDetails({ item, className }: { item: Item; className?: string }) {
+export function ToolDetails({ item, className }: Readonly<{ item: Item; className?: string }>) {
   const t = item.tool;
   return (
     <div className={cn('my-1 flex flex-col gap-1 text-ui', className)}>
@@ -777,10 +784,16 @@ export function ToolDetails({ item, className }: { item: Item; className?: strin
  * request's word ("auto" for yolo, "allowed" or "denied" for a person), never a line of
  * its own. The tooltip and the accessible name carry every request's full resolution.
  */
-function ApprovalMark({ interactions }: { interactions: Interaction[] }) {
+/** The state as a word for assistive tech: "no result" for a call the turn ended on, "done" for a completed one, else the status. */
+function statusWord(status: ToolStatus, ended: boolean): string {
+  if (ended) return 'no result';
+  return status === 'completed' ? 'done' : status;
+}
+
+function ApprovalMark({ interactions }: Readonly<{ interactions: Interaction[] }>) {
   const marks = interactions.map(approvalMark).reverse();
   const [latest, ...earlier] = marks;
-  const Icon = latest.tone === 'denied' ? ShieldX : latest.tone === 'gone' ? Shield : ShieldCheck;
+  const Icon = APPROVAL_ICONS[latest.tone];
   const label = earlier.length ? (
     <>
       {latest.full}
@@ -828,8 +841,9 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   const tone = ended ? 'ended' : status;
   const { name, arg } = toolLabel(t);
   const label = arg ? `${name} ${arg}` : name;
-  const word = ended ? 'no result' : status === 'completed' ? 'done' : status;
+  const word = statusWord(status, ended);
   const images = item.images ?? [];
+  const decided = approvals?.filter((ix) => ix.state !== 'pending') ?? [];
   const items: ActionItem[] = [
     { key: 'toggle', label: open ? 'Collapse' : 'Expand', icon: <ChevronRight />, onSelect: toggle },
     { key: 'cmd', label: 'Copy command', icon: <Copy />, disabled: !t?.input && !t?.has_input, onSelect: () => copyBody('input'), separator: true },
@@ -852,7 +866,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
             <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
             {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
             <span className="sr-only">, {word}</span>
-            {approvals && approvals.filter((ix) => ix.state !== 'pending').length > 0 && <ApprovalMark interactions={approvals.filter((ix) => ix.state !== 'pending')} />}
+            {decided.length > 0 && <ApprovalMark interactions={decided} />}
           </button>
           {opened && (
             <Collapse open={open} appear>
@@ -879,7 +893,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
 });
 
 /** The images a tool's result returned, as thumbnails that open the viewer, and its note on any left out. */
-function ToolImages({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
+function ToolImages({ item, sessionId, className }: Readonly<{ item: Item; sessionId?: string; className?: string }>) {
   return (
     <div className={cn('flex flex-col gap-1', className)}>
       {sessionId && <ImageThumbs sessionId={sessionId} images={item.images ?? []} />}
@@ -1002,7 +1016,13 @@ export { duration };
  * closed, so streaming never resizes the row. The choice is remembered per item for the
  * browser session.
  */
-export function Thinking({ item, streaming, endedAt, className }: { item: Item; streaming: boolean; endedAt?: string; className?: string }) {
+/** The row's word: "Thinking…" while it streams, the time it took once known, else just that it thought. */
+function thinkingLabel(streaming: boolean, took: string | null): string {
+  if (streaming) return 'Thinking…';
+  return took ? `Thought for ${took}` : 'Thought';
+}
+
+export function Thinking({ item, streaming, endedAt, className }: Readonly<{ item: Item; streaming: boolean; endedAt?: string; className?: string }>) {
   const key = THINKING_KEY + (item.agent_id ? `${item.agent_id}:` : '') + item.id;
   const [expanded, setExpanded] = useState(() => sessionStorage.getItem(key) === '1');
   const { item: fullItem, body, attach, retry } = useItemBody(item, expanded);
@@ -1017,7 +1037,7 @@ export function Thinking({ item, streaming, endedAt, className }: { item: Item; 
     <div ref={attach} className={cn('flex flex-col text-ui text-muted', className)}>
       <button type="button" aria-expanded={expanded} className="flex h-6 w-fit items-center gap-1.5 rounded-sm pr-1 text-left transition-colors duration-100 hover:text-body pointer-coarse:min-h-11" onClick={toggle}>
         <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />
-        <span className={cn('tabular-nums', streaming && 'animate-shimmer motion-reduce:animate-none')}>{streaming ? 'Thinking…' : took ? `Thought for ${took}` : 'Thought'}</span>
+        <span className={cn('tabular-nums', streaming && 'animate-shimmer motion-reduce:animate-none')}>{thinkingLabel(streaming, took)}</span>
       </button>
       <Collapse open={expanded}>
         <BodyNotice body={body} retry={retry} />
@@ -1030,7 +1050,7 @@ export function Thinking({ item, streaming, endedAt, className }: { item: Item; 
 }
 
 /** Subagent state as a chip: glyph plus the word; only "running" moves. */
-export function AgentChip({ status }: { status: SubagentStatus }) {
+export function AgentChip({ status }: Readonly<{ status: SubagentStatus }>) {
   switch (status) {
     case 'running':
       return (
@@ -1078,7 +1098,7 @@ export function AgentChip({ status }: { status: SubagentStatus }) {
  * height collapse and keeps its last text while it folds. Nothing else of the subagent's
  * output renders in the main column.
  */
-function SubagentRow({ item, subagent, agentItems, provider, onOpen }: { item: Item; subagent: Subagent; agentItems?: Item[]; provider: string; onOpen: (opener: HTMLElement) => void }) {
+function SubagentRow({ item, subagent, agentItems, provider, onOpen }: Readonly<{ item: Item; subagent: Subagent; agentItems?: Item[]; provider: string; onOpen: (opener: HTMLElement) => void }>) {
   const { meta } = useApp();
   const [, copy] = useCopied();
   const name = subagent.name || item.tool?.title || item.tool?.name || 'Subagent';
@@ -1122,7 +1142,7 @@ function SubagentRow({ item, subagent, agentItems, provider, onOpen }: { item: I
 }
 
 /** A subagent's own transcript at 13px: the same rows, blocks and bubbles as the main one, with its own requests. */
-export function AgentItems({ sessionId, workdir, provider, agentId, items, identityItems = items, historyItemSeq, interactions, live, density }: { sessionId: string; workdir: string; provider: string; agentId: string; items: Item[]; identityItems?: Item[]; historyItemSeq?: Record<string, number>; interactions: Interaction[]; live: boolean; density: Density }) {
+export function AgentItems({ sessionId, workdir, provider, agentId, items, identityItems = items, historyItemSeq, interactions, live, density }: Readonly<{ sessionId: string; workdir: string; provider: string; agentId: string; items: Item[]; identityItems?: Item[]; historyItemSeq?: Record<string, number>; interactions: Interaction[]; live: boolean; density: Density }>) {
   return (
     <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
       <Transcript sessionId={sessionId} agentId={agentId} provider={provider} workdir={workdir} items={items} identityItems={identityItems} historyItemSeq={historyItemSeq} interactions={interactions} subagents={[]} live={live} working={live} density={density} />

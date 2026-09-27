@@ -4,7 +4,10 @@ import { MODE_TEXT, contextReason, effortReason, sizeLabel } from './Composer';
 import { Note, useApp } from './common';
 import { Select } from './ui/select';
 
-export function Field({ id, label, hint, children }: { id: string; label: string; hint?: string; children: React.ReactNode }) {
+/** A model in a menu: its name, with the note ("hidden in Settings", "not offered now") in parentheses. */
+export const choiceLabel = (name: string, note?: string): string => (note ? `${name} (${note.toLowerCase()})` : name);
+
+export function Field({ id, label, hint, children }: Readonly<{ id: string; label: string; hint?: string; children: React.ReactNode }>) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
       <label htmlFor={id} className="text-caption text-muted">
@@ -17,7 +20,7 @@ export function Field({ id, label, hint, children }: { id: string; label: string
 }
 
 /** The settings a new Task starts with: model, effort, context size and mode (the New tasks section of Settings). */
-export function TaskDefaultsFields({ prefix, value, disabled, onChange }: { prefix: string; value: TaskDefaults; disabled: boolean; onChange: (next: TaskDefaults) => void }) {
+export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readonly<{ prefix: string; value: TaskDefaults; disabled: boolean; onChange: (next: TaskDefaults) => void }>) {
   const { meta, settings } = useApp();
   const chosen = provider(meta, value.provider);
   const catalog = modelCatalog(meta, value.provider);
@@ -35,7 +38,7 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: { pref
               id={`${prefix}-model`}
               value={value.model}
               disabled={disabled}
-              items={choices.map(({ model: m, note }) => ({ value: m.id, label: `${m.name}${note ? ` (${note.toLowerCase()})` : ''}`, hidden: !!note }))}
+              items={choices.map(({ model: m, note }) => ({ value: m.id, label: choiceLabel(m.name, note), hidden: !!note }))}
               onValueChange={(id) => {
                 const next = catalog.find((m) => m.id === id);
                 onChange({

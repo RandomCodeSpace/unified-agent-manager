@@ -67,6 +67,23 @@ const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-d
 const BOTTOM_SLACK = 32;
 const NO_ITEMS: Item[] = [];
 
+/** Whether the view is within reach (two screens, 200px to 1000px) of the window's `direction` edge. */
+function nearEdge(el: HTMLElement, direction: 'older' | 'newer'): boolean {
+  const rect = el.querySelector('[data-history-window]')?.getBoundingClientRect();
+  const edge = el.getBoundingClientRect();
+  let distance: number;
+  if (direction === 'older') distance = rect ? edge.top - rect.top : el.scrollTop;
+  else distance = rect ? rect.bottom - edge.bottom : el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distance < Math.min(1000, Math.max(200, el.clientHeight * 2));
+}
+
+/** Why a follow-up cannot be sent now; null when it can. */
+function followUpBlocked(session: SessionDetail): string | null {
+  if (readOnly(session)) return session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.';
+  if (LIVE.includes(session.state)) return 'Unavailable while the task is running a turn.';
+  return null;
+}
+
 /**
  * A side panel: inline beside the column at ≥1280px with a draggable inner edge (width
  * remembered per panel), an overlay sheet from the right at 960–1279, a full-screen sheet
@@ -74,7 +91,7 @@ const NO_ITEMS: Item[] = [];
  * out. Inline, the column commits its width at once and the panel slides over the space it
  * left; closing slides it out, then `onClosed` lets the owner unmount it.
  */
-export function SidePanel({ id, inline, open, onClose, onClosed, label, children, className, defaultWidth = 440 }: { id: string; inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; label: string; children: ReactNode; className?: string; defaultWidth?: number }) {
+export function SidePanel({ id, inline, open, onClose, onClosed, label, children, className, defaultWidth = 440 }: Readonly<{ id: string; inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; label: string; children: ReactNode; className?: string; defaultWidth?: number }>) {
   const { narrow } = useApp();
   const { panelRef, handleProps } = useResizable(id, defaultWidth);
   // The slide starts one frame after mount, so the first paint is off-screen.
@@ -113,7 +130,7 @@ export function SidePanel({ id, inline, open, onClose, onClosed, label, children
   );
 }
 
-export function PanelHeader({ children, className }: { children: ReactNode; className?: string }) {
+export function PanelHeader({ children, className }: Readonly<{ children: ReactNode; className?: string }>) {
   return <div className={cn('pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3', className)}>{children}</div>;
 }
 
@@ -133,7 +150,7 @@ export function SubagentPanel({
   onClose,
   onClosed,
   onLocate,
-}: {
+}: Readonly<{
   session: SessionDetail;
   agents: Record<string, AgentTranscript>;
   snapshotSeq: number;
@@ -146,7 +163,7 @@ export function SubagentPanel({
   onClosed: () => void;
   /** Scroll the main transcript to the `task` tool row that spawned a subagent. */
   onLocate: (toolCallId: string) => void;
-}) {
+}>) {
   const { meta, narrow } = useApp();
   const lead = useRef<HTMLButtonElement>(null);
   const [stops, stopNow] = useStops(session.id);
@@ -158,10 +175,11 @@ export function SubagentPanel({
     const s = session.subagents.find((x) => x.id === id);
     if (s) stopConfirm.ask(s);
   };
+  const stopName = stopConfirm.target ? `“${stopConfirm.target.name}”` : '';
   const stopDialog = (
     <AlertDialog
       {...stopConfirm.props}
-      title={`Stop subagent ${stopConfirm.target ? `“${stopConfirm.target.name}”` : ''}?`}
+      title={`Stop subagent ${stopName}?`}
       description="It stops where it is. What it has done so far stays in its transcript; the main agent gets no result from it."
       confirmLabel="Stop subagent"
       onConfirm={() => {
@@ -289,7 +307,7 @@ export function SubagentPanel({
 }
 
 /** Subagents only Copilot's record still lists: read a page at a time, only when asked, and merged into the groups above. */
-function OlderSubagents({ sessionId, before }: { sessionId: string; before: string }) {
+function OlderSubagents({ sessionId, before }: Readonly<{ sessionId: string; before: string }>) {
   const { dispatch } = useApp();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -321,7 +339,7 @@ function SubagentRow({
   onLocate,
   stopping,
   onStop,
-}: {
+}: Readonly<{
   session: SessionDetail;
   subagent: Subagent;
   /** "<model> · <effort>", or empty. */
@@ -330,7 +348,7 @@ function SubagentRow({
   onLocate: (toolCallId: string) => void;
   stopping: StopState;
   onStop: () => void;
-}) {
+}>) {
   const [, copy] = useCopied();
   const meta: string[] = [];
   if (s.started_at) meta.push(`Started ${clock(s.started_at)}`);
@@ -396,7 +414,7 @@ function AgentTranscriptView({
   result: legacyResult,
   open,
   parent,
-}: {
+}: Readonly<{
   sessionId: string;
   provider: string;
   workdir: string;
@@ -409,7 +427,7 @@ function AgentTranscriptView({
   result?: string;
   open: boolean;
   parent?: Item;
-}) {
+}>) {
   const { dispatch } = useApp();
   const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
@@ -454,13 +472,6 @@ function AgentTranscriptView({
     if (atBottom.current && !detail.agent?.after) el.scrollTop = el.scrollHeight;
   }, [items, detail.agent?.after]);
 
-  function nearEdge(el: HTMLElement, direction: 'older' | 'newer') {
-    const rect = el.querySelector('[data-history-window]')?.getBoundingClientRect();
-    const edge = el.getBoundingClientRect();
-    const distance = direction === 'older' ? rect ? edge.top - rect.top : el.scrollTop : rect ? rect.bottom - edge.bottom : el.scrollHeight - el.scrollTop - el.clientHeight;
-    return distance < Math.min(1000, Math.max(200, el.clientHeight * 2));
-  }
-
   function loadOlder(direction: 'older' | 'newer' = 'older') {
     const agent = detail.agent, store = detail.store;
     const before = direction === 'older' ? agent?.before : agent?.after;
@@ -487,9 +498,17 @@ function AgentTranscriptView({
     const el = scroller.current;
     if (!el || !open) return;
     let touchY = 0;
-    const key = (event: globalThis.KeyboardEvent) => { if (['Home', 'PageUp', 'ArrowUp'].includes(event.key) && nearEdge(el, 'older')) loadOnDemand(); if (['End', 'PageDown', 'ArrowDown'].includes(event.key) && nearEdge(el, 'newer')) loadOnDemand('newer'); };
+    const key = (event: globalThis.KeyboardEvent) => {
+      if (['Home', 'PageUp', 'ArrowUp'].includes(event.key) && nearEdge(el, 'older')) loadOnDemand();
+      if (['End', 'PageDown', 'ArrowDown'].includes(event.key) && nearEdge(el, 'newer')) loadOnDemand('newer');
+    };
     const start = (event: TouchEvent) => { touchY = event.touches[0]?.clientY ?? 0; };
-    const move = (event: TouchEvent) => { const y = event.touches[0]?.clientY ?? touchY; if (y > touchY && nearEdge(el, 'older')) loadOnDemand(); if (y < touchY && nearEdge(el, 'newer')) loadOnDemand('newer'); touchY = y; };
+    const move = (event: TouchEvent) => {
+      const y = event.touches[0]?.clientY ?? touchY;
+      if (y > touchY && nearEdge(el, 'older')) loadOnDemand();
+      if (y < touchY && nearEdge(el, 'newer')) loadOnDemand('newer');
+      touchY = y;
+    };
     el.addEventListener('keydown', key); el.addEventListener('touchstart', start, { passive: true }); el.addEventListener('touchmove', move, { passive: true });
     return () => { el.removeEventListener('keydown', key); el.removeEventListener('touchstart', start); el.removeEventListener('touchmove', move); };
   }, [open]);
@@ -511,30 +530,41 @@ function AgentTranscriptView({
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }
 
+  // The transcript: a skeleton until it is here, the failure with Retry, or the rows.
+  let body: ReactNode;
+  if ((!transcript || transcript.loading) && items.length === 0) {
+    body = <Skeleton label="Loading the transcript…" rows={5} />;
+  } else if (transcript?.error) {
+    body = (
+      <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1">Could not load the transcript: {transcript.error}</span>
+        <Button size="sm" variant="secondary" onClick={() => { if (detail.compact) detail.retry?.(); else setAttempt((n) => n + 1); }}>
+          Retry
+        </Button>
+      </Note>
+    );
+  } else {
+    body = (
+      <>
+        <HistoryAnchor scroller={scroller} firstItem={items[0]?.id ?? ''} lastItem={items.at(-1)?.id} itemIds={detail.compact ? items.map(item => item.id) : undefined} knownIds={detail.agent?.index?.map(item => item.id)} resetKey={`${detail.store?.value.epoch}:${windowReset}`} className="flex flex-col gap-3">
+          <AgentItems sessionId={sessionId} provider={provider} workdir={workdir} agentId={subagent.id} items={items} identityItems={detail.agent?.index} historyItemSeq={detail.agent?.itemSeq} interactions={visibleInteractions} live={live && !detail.agent?.after} density={density} />
+        </HistoryAnchor>
+        {items.length === 0 && <Note>Nothing recorded yet.</Note>}
+      </>
+    );
+  }
+
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder(); if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer'); }} role="log" tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined}>
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} role="log" tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheel={event => {
+      if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder();
+      if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer');
+    }}>
       {detail.agent?.page && <Note role="status"><Spinner /> Loading {detail.agent.page.direction === 'newer' ? 'newer' : 'earlier'} messages…</Note>}
       {detail.agent?.after && <Button className="sticky top-0 z-10 self-center" size="sm" variant="secondary" onClick={latest}>Jump to latest</Button>}
       {detail.agent?.pageError && <Note tone="error">{detail.agent.pageError}</Note>}
       {subagent.description && <Note>{subagent.description}</Note>}
-      {(!transcript || transcript.loading) && items.length === 0 ? (
-        <Skeleton label="Loading the transcript…" rows={5} />
-      ) : transcript?.error ? (
-        <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
-          <span className="min-w-0 flex-1">Could not load the transcript: {transcript.error}</span>
-          <Button size="sm" variant="secondary" onClick={() => { if (detail.compact) detail.retry?.(); else setAttempt((n) => n + 1); }}>
-            Retry
-          </Button>
-        </Note>
-      ) : (
-        <>
-          <HistoryAnchor scroller={scroller} firstItem={items[0]?.id ?? ''} lastItem={items.at(-1)?.id} itemIds={detail.compact ? items.map(item => item.id) : undefined} knownIds={detail.agent?.index?.map(item => item.id)} resetKey={`${detail.store?.value.epoch}:${windowReset}`} className="flex flex-col gap-3">
-            <AgentItems sessionId={sessionId} provider={provider} workdir={workdir} agentId={subagent.id} items={items} identityItems={detail.agent?.index} historyItemSeq={detail.agent?.itemSeq} interactions={visibleInteractions} live={live && !detail.agent?.after} density={density} />
-          </HistoryAnchor>
-          {items.length === 0 && <Note>Nothing recorded yet.</Note>}
-        </>
-      )}
+      {body}
       {subagent.status === 'failed' && <Note tone="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</Note>}
       {subagent.status === 'cancelled' && <Note>Stopped before it finished.</Note>}
       {detail.compact && parentBody && <div ref={parentAttach}><BodyNotice body={parentBody} retry={parentRetry} /></div>}
@@ -555,7 +585,7 @@ const UNCERTAIN_FOLLOW_UP = 'The subagent may or may not have received your mess
  * subagent is idle; enabled only while the task itself is active and between turns. The
  * status change and the user item both arrive over SSE, so nothing is added optimistically.
  */
-function SubagentComposer({ session, subagent }: { session: SessionDetail; subagent: Subagent }) {
+function SubagentComposer({ session, subagent }: Readonly<{ session: SessionDetail; subagent: Subagent }>) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -571,19 +601,13 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
       </div>
     ) : null;
   }
-  const blocked = readOnly(session)
-    ? session.stage === 'settled'
-      ? 'Settled. Reopen this task to continue the same conversation.'
-      : 'Archived. This task is read-only.'
-    : LIVE.includes(session.state)
-      ? 'Unavailable while the task is running a turn.'
-      : null;
+  const blocked = followUpBlocked(session);
   const cannotSubmit = busy || !!blocked || !text.trim();
 
   async function send() {
     const t = text.trim();
     if (cannotSubmit) return;
-    if (!pending.current || pending.current.text !== t) pending.current = { text: t, id: newRequestId() };
+    if (pending.current?.text !== t) pending.current = { text: t, id: newRequestId() };
     const id = pending.current.id;
     setBusy(true);
     setError(null);
@@ -660,7 +684,7 @@ function SubagentComposer({ session, subagent }: { session: SessionDetail; subag
 }
 
 /** Cancellation requests never invent a terminal status; the provider's SSE owns it. */
-function StopSubagent({ session, subagent, stopping, onStop }: { session: SessionDetail; subagent: Subagent; stopping: StopState; onStop: () => void }) {
+function StopSubagent({ session, subagent, stopping, onStop }: Readonly<{ session: SessionDetail; subagent: Subagent; stopping: StopState; onStop: () => void }>) {
   const { busy, requested, error } = stopping;
   if (subagent.status !== 'running') return null;
   return (

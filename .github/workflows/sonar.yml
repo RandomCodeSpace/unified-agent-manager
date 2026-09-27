@@ -49,6 +49,9 @@ jobs:
             --test-reporter=spec --test-reporter-destination=stdout \
             web/tests/*.test.mjs
 
+      - name: Run web component tests with coverage
+        run: npm --prefix web run test:dom -- --coverage
+
       - name: Run SonarCloud scan
         if: env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0

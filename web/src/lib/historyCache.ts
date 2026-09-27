@@ -90,7 +90,7 @@ let scheduled = false;
 let evict = true;
 
 function open(): Promise<IDBDatabase> {
-  return (db ??= new Promise<IDBDatabase>((resolve, reject) => {
+  db ??= new Promise<IDBDatabase>((resolve, reject) => {
     let failed = false;
     const request = indexedDB.open(ARCHIVE_DB, SCHEMA);
     request.onupgradeneeded = () => {
@@ -107,10 +107,11 @@ function open(): Promise<IDBDatabase> {
       opened.onclose = () => { db = null; };
       resolve(opened);
     };
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(request.error ?? new Error('The history cache could not open.'));
     // An older tab holds the database open: read from the network rather than wait.
     request.onblocked = () => { failed = true; db = null; reject(new Error('The history cache is busy.')); };
-  }));
+  });
+  return db;
 }
 
 const settled = (tx: IDBTransaction) => new Promise<void>((resolve, reject) => {
@@ -119,7 +120,7 @@ const settled = (tx: IDBTransaction) => new Promise<void>((resolve, reject) => {
 });
 const result = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
   request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error);
+  request.onerror = () => reject(request.error ?? new Error('The history cache request failed.'));
 });
 
 function idle(run: () => void) {
@@ -140,7 +141,9 @@ function schedule(wrote = false) {
 /** Records batched access times; evicts on the sweep, after writes, and with `shrink` (a quota refusal) to that share of what is stored. */
 async function maintain(shrink = 0) {
   const at = clearCount();
-  const [database, budget] = await Promise.all([open(), (quota ??= (navigator.storage?.estimate?.() ?? Promise.resolve<StorageEstimate>({})).then(e => budgetFor(e.quota), () => budgetFor()))]);
+  const opening = open();
+  quota ??= (navigator.storage?.estimate?.() ?? Promise.resolve<StorageEstimate>({})).then(e => budgetFor(e.quota), () => budgetFor());
+  const [database, budget] = await Promise.all([opening, quota]);
   if (at !== clearCount()) return;
   const time = Date.now();
   const touches = new Map(touched);

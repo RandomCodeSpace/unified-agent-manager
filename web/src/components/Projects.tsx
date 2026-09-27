@@ -1,5 +1,5 @@
 import { FolderMinus, FolderOpen, History } from 'lucide-react';
-import { useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type SubmitEvent } from 'react';
 import { api, describeError, isStatus, type Project, type SessionSummary } from '../api';
 import { Note, ProjectBadge, useApp } from './common';
 import { cn } from '../lib/cn';
@@ -33,7 +33,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
   // The picker collapses in and out (grid rows) so the dialog's height glides instead of jumping.
   const picker = usePresence(browsing);
 
-  async function submit(e: FormEvent) {
+  async function submit(e: SubmitEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
@@ -147,7 +147,7 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
   const [removing, setRemoving] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
 
-  async function submit(e: FormEvent) {
+  async function submit(e: SubmitEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);

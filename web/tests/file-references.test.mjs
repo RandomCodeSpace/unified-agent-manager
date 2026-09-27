@@ -82,7 +82,7 @@ function dom(t, count) {
   };
   t.after(() => { globalThis.window = beforeWindow; globalThis.IntersectionObserver = beforeObserver; globalThis.requestAnimationFrame = beforeFrame; globalThis.cancelAnimationFrame = beforeCancel; });
   const candidates = Array.from({ length: count }, (_, i) => ({
-    getAttribute: () => `src/${i}.ts`, getBoundingClientRect: () => ({ top: 10, bottom: 20 }), getClientRects: () => [1],
+    dataset: { fileReference: `src/${i}.ts` }, getBoundingClientRect: () => ({ top: 10, bottom: 20 }), getClientRects: () => [1],
   }));
   return { querySelectorAll: () => candidates };
 }

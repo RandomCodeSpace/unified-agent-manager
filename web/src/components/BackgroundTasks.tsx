@@ -13,7 +13,14 @@ import { Tip } from './ui/tooltip';
  * working mark and how many run (else the terminal glyph and how many there were), and on a
  * click a popover listing each with its status, command and Stop.
  */
-export function BackgroundTasks({ sessionId, snapshot, locked }: { sessionId: string; snapshot: Snapshot | undefined; locked: boolean }) {
+/** Why Stop is disabled, or what it does. */
+function stopTip(locked: boolean, known: boolean): string {
+  if (locked) return 'This task is read-only.';
+  if (!known) return 'Refresh the connection to check this task before stopping it.';
+  return 'Stop this background shell';
+}
+
+export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sessionId: string; snapshot: Snapshot | undefined; locked: boolean }>) {
   const [response, setResponse] = useState<{ source: Snapshot | undefined; snapshot: Snapshot } | null>(null);
   const [requests, setRequests] = useState<Record<string, { pending?: boolean; requested?: boolean; error?: string }>>({});
   // A newer SSE observation wins over a cancellation response started from an older snapshot.
@@ -35,6 +42,7 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: { sessionId: st
   }
   const active = shown.known && running > 0;
   const status = shown.known ? `${running} running` : 'Status unavailable';
+  const stopTarget = stopConfirm.target ? `“${stopConfirm.target.description}”` : 'this background task';
   return (
     <>
       <Popover.Root>
@@ -60,7 +68,7 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: { sessionId: st
                   ) : (
                     <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
                   )}
-                  {task.status === 'running' && <Tip label={locked ? 'This task is read-only.' : !shown.known ? 'Refresh the connection to check this task before stopping it.' : 'Stop this background shell'}>
+                  {task.status === 'running' && <Tip label={stopTip(locked, shown.known)}>
                     <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => stopConfirm.ask({ id: task.id, description: task.description || 'Shell task', command: task.command })}>
                       {requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
                     </Button>
@@ -75,7 +83,7 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: { sessionId: st
       </Popover.Root>
       <AlertDialog
         {...stopConfirm.props}
-        title={`Stop ${stopConfirm.target ? `“${stopConfirm.target.description}”` : 'this background task'}?`}
+        title={`Stop ${stopTarget}?`}
         description="This kills the process. Output it has not written yet is lost, and the agent is not told."
         confirmLabel="Stop task"
         onConfirm={() => {

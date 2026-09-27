@@ -2,11 +2,12 @@
 // A block that a blank line and an unindented line have closed cannot change as more text
 // arrives, so it is parsed once; only the tail block is parsed again per delta. No DOM.
 
-const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+// The fence run is whole (the lookaheads), so the rest cannot take its characters back.
+const FENCE = /^ {0,3}((?:`{3,}(?!`))|(?:~{3,}(?!~)))(.*)$/;
 const LIST_ITEM = /^([*+-]|\d{1,9}[.)])([ \t]|$)/;
 // Constructs that reach across blank lines at the top level (reference and footnote
 // definitions, HTML blocks of CommonMark types 1–5): such a text is one block.
-const WHOLE = /^ {0,3}(\[[^\]]+\]:|<!--|<\?|<![A-Za-z]|<!\[CDATA\[|<(pre|script|style|textarea)(\s|>|$))/im;
+const WHOLE = /^ {0,3}(\[[^\]]+\]:|<!--|<\?|<![a-z]|<!\[CDATA\[|<(pre|script|style|textarea)(\s|>|$))/im;
 
 /**
  * The text split into top-level blocks whose markdown renders exactly as the whole text does.
@@ -25,7 +26,7 @@ export function splitBlocks(text: string): string[] {
     const line = lines[i];
     if (fence) {
       const m = FENCE.exec(line);
-      if (m && m[1][0] === fence.char && m[1].length >= fence.size && !m[2].trim()) fence = null;
+      if (m?.[1].startsWith(fence.char) && m[1].length >= fence.size && !m[2].trim()) fence = null;
       continue;
     }
     if (!line.trim()) {
@@ -40,7 +41,7 @@ export function splitBlocks(text: string): string[] {
     }
     blank = -1;
     const m = FENCE.exec(line);
-    if (m && !(m[1][0] === '`' && m[2].includes('`'))) fence = { char: m[1][0], size: m[1].length };
+    if (m && !(m[1].startsWith('`') && m[2].includes('`'))) fence = { char: m[1][0], size: m[1].length };
   }
   blocks.push(lines.slice(start).join('\n'));
   return blocks;
@@ -86,11 +87,11 @@ export function localPath(ref: string | undefined): string | null {
 export function taskFile(ref: string | undefined, workdir: string | undefined): { path: string; hash: string } | null {
   let p = localPath(ref);
   if (!p || !ref) return null;
-  const hash = /#.*$/s.exec(ref)?.[0] ?? '';
+  const hash = /#.*/s.exec(ref)?.[0] ?? '';
   // Cut before decoding, so an escaped `%23` stays in the name.
-  if (!/^file:/i.test(ref)) p = decodePath(ref.replace(/[?#].*$/s, ''));
+  if (!/^file:/i.test(ref)) p = decodePath(ref.replace(/[?#].*/s, ''));
   if (p.startsWith('/')) {
-    const dir = workdir?.replace(/\/+$/, '');
+    const dir = workdir?.replace(/(?<!\/)\/+$/, '');
     if (!dir || !p.startsWith(`${dir}/`)) return null;
     p = p.slice(dir.length + 1);
   }
@@ -122,5 +123,5 @@ export function looksLikePath(text: string): boolean {
  * the name, never an escape.
  */
 export function codeFile(text: string, workdir: string | undefined): { path: string; hash: string } | null {
-  return looksLikePath(text) ? taskFile(text.replace(/%/g, '%25'), workdir) : null;
+  return looksLikePath(text) ? taskFile(text.replaceAll('%', '%25'), workdir) : null;
 }

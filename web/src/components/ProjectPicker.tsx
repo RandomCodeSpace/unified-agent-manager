@@ -50,7 +50,7 @@ const inputClass = 'h-8 min-w-0 flex-1 bg-transparent text-ui text-ink outline-n
  * for all of them. It opens a searchable list with All projects first; each Project row
  * carries a gear that opens Edit project once the list has closed, so focus returns to the badge.
  */
-export function ProjectFilterPicker({ projects, filter, onFilter, onEdit }: { projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; onEdit: (p: Project) => void }) {
+export function ProjectFilterPicker({ projects, filter, onFilter, onEdit }: Readonly<{ projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; onEdit: (p: Project) => void }>) {
   const chosen = filteredProject(projects, filter);
   const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -90,7 +90,7 @@ export function ProjectFilterPicker({ projects, filter, onFilter, onEdit }: { pr
   );
 }
 
-function FilterList({ projects, filter, input, onPick, onEdit }: { projects: Project[]; filter: string | null; input: RefObject<HTMLInputElement | null>; onPick: (id: string | null) => void; onEdit: (p: Project) => void }) {
+function FilterList({ projects, filter, input, onPick, onEdit }: Readonly<{ projects: Project[]; filter: string | null; input: RefObject<HTMLInputElement | null>; onPick: (id: string | null) => void; onEdit: (p: Project) => void }>) {
   const id = useId();
   const [query, setQuery] = useState('');
   const matches = useMemo(() => searchProjects(projects, query), [projects, query]);
@@ -173,7 +173,7 @@ const DIGIT = /^Digit([1-9])$/;
  * Project (else the most recently active one) starts highlighted. Enter, a click or Alt+1…9
  * pick one; the draft opens once the palette has closed, and its composer keeps the focus.
  */
-export function NewTaskPalette({ open, onOpenChange, projects, sessions, selectedId, filter, onPick }: { open: boolean; onOpenChange: (open: boolean) => void; projects: Project[]; sessions: SessionSummary[]; selectedId: string | null; filter: string | null; onPick: (projectId: string) => void }) {
+export function NewTaskPalette({ open, onOpenChange, projects, sessions, selectedId, filter, onPick }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; projects: Project[]; sessions: SessionSummary[]; selectedId: string | null; filter: string | null; onPick: (projectId: string) => void }>) {
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<string | null>(null);
   // Read by Base UI when the popup unmounts; a pick leaves focus to the draft's composer.
@@ -209,7 +209,7 @@ export function NewTaskPalette({ open, onOpenChange, projects, sessions, selecte
   );
 }
 
-function PaletteBody({ projects, start, input, onClose, onPick }: { projects: Project[]; start: Project | undefined; input: RefObject<HTMLInputElement | null>; onClose: () => void; onPick: (id: string) => void }) {
+function PaletteBody({ projects, start, input, onClose, onPick }: Readonly<{ projects: Project[]; start: Project | undefined; input: RefObject<HTMLInputElement | null>; onClose: () => void; onPick: (id: string) => void }>) {
   const id = useId();
   const { loaded } = useApp();
   const [query, setQuery] = useState('');

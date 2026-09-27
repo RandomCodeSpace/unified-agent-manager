@@ -27,14 +27,14 @@ function language(path: string): string {
  * The Files sheet: the Task directory's tree, one folder read per expansion, with the chosen
  * file below it. Nothing is read until the sheet opens, and nothing refreshes on its own.
  */
-export default function FilesSheet({ session, inline, open, onClose, onClosed }: {
+export default function FilesSheet({ session, inline, open, onClose, onClosed }: Readonly<{
   session: SessionSummary;
   inline: boolean;
   /** False while the sheet leaves; `onClosed` follows, and the owner unmounts it. */
   open: boolean;
   onClose: () => void;
   onClosed: () => void;
-}) {
+}>) {
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [shown, setShown] = useState<Shown | null>(null);
@@ -175,7 +175,7 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
   );
 }
 
-function FileView({ sessionId, shown: { path, file, error } }: { sessionId: string; shown: Shown }) {
+function FileView({ sessionId, shown: { path, file, error } }: Readonly<{ sessionId: string; shown: Shown }>) {
   const [copied, copy] = useCopied();
   const url = api.viewFileUrl(sessionId, path);
   const name = path.slice(path.lastIndexOf('/') + 1);

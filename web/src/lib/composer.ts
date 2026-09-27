@@ -51,7 +51,7 @@ export function applyPick(text: string, trigger: Trigger, value: string): { text
 
 /** `/name arguments` when `name` is a listed command; null means the text is plain. */
 export function parseCommand(text: string, commands: readonly (Pick<Command, 'name'> & Partial<Pick<Command, 'kind'>> & { aliases?: string[] })[]): { name: string; args: string } | null {
-  const m = /^([/$])(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  const m = /^([/$])(\S+)(?:\s+(\S[\s\S]*)?)?$/.exec(text.trim());
   if (!m) return null;
   const offered = commands.filter((c) => m[1] !== '$' || c.kind === 'skill');
   const command = offered.find((c) => c.name === m[2]) ?? offered.find((c) => c.aliases?.includes(m[2]));
@@ -118,18 +118,18 @@ export function enterInPicker(items: number, argumentList: boolean): 'pick' | 'c
 /** Literal argument choices replace only the argument before the caret. */
 export function argumentTrigger(text: string, caret: number, commands: readonly Command[]): { trigger: Trigger; command: Command } | null {
   const before = text.slice(0, caret);
-  const match = /^([/$]\S+\s+)([^\n]*)$/.exec(before);
+  const match = /^([/$]\S+\s+)(\S[^\n]*)?$/.exec(before);
   if (!match) return null;
   const parsed = parseCommand(match[1].trim(), commands);
   const command = commands.find((c) => c.name === parsed?.name);
   if (!command?.input_choices?.length) return null;
-  return { command, trigger: { kind: '/', start: match[1].length, end: caret, query: match[2] } };
+  return { command, trigger: { kind: '/', start: match[1].length, end: caret, query: match[2] ?? '' } };
 }
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
 /** Matches `@path` as a whole token: at the start or after whitespace, then the end or whitespace. */
-const tokenRe = (path: string) => new RegExp(`(^|\\s)@${escapeRe(path)}(?=\\s|$)`);
+const tokenRe = (path: string) => new RegExp(String.raw`(^|\s)@${escapeRe(path)}(?=\s|$)`);
 
 /** The referenced files whose `@path` token is still in the text; the chip goes when the token goes. */
 export function pruneFiles(text: string, files: readonly string[]): string[] {
@@ -138,5 +138,5 @@ export function pruneFiles(text: string, files: readonly string[]): string[] {
 
 /** Removes the first `@path` token and one space after it, so removing a chip also cleans the text. */
 export function removeToken(text: string, path: string): string {
-  return text.replace(new RegExp(`(^|\\s)@${escapeRe(path)}(?=\\s|$) ?`), '$1');
+  return text.replace(new RegExp(String.raw`(^|\s)@${escapeRe(path)}(?=\s|$) ?`), '$1');
 }

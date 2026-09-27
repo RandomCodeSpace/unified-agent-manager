@@ -750,6 +750,23 @@ async function filePreview(url: string, signal: AbortSignal, knownMetadata?: Pre
 
 const enc = encodeURIComponent;
 
+/** The query of a directory listing: the path and the hidden flag, each only when given. */
+function dirsQuery(path: string | undefined, hidden: boolean): string {
+  if (path) return `?path=${enc(path)}${hidden ? '&hidden=1' : ''}`;
+  return hidden ? '?hidden=1' : '';
+}
+
+/** The detail stream's query: the agent window's cursors only when given, then one `item` per body. */
+function detailEventsQuery(id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string): string {
+  const query = [`session=${enc(id)}`];
+  if (agentId) query.push(`agent=${enc(agentId)}`);
+  if (agentBefore) query.push(`agent_before=${enc(agentBefore)}`);
+  if (epoch) query.push(`epoch=${enc(epoch)}`);
+  if (agentUntil) query.push(`agent_until=${enc(agentUntil)}`);
+  for (const b of bodies) query.push(`item=${enc(JSON.stringify(b.coveredSeq === undefined ? [b.agentId, b.itemId] : [b.agentId, b.itemId, b.coveredSeq]))}`);
+  return query.join('&');
+}
+
 export const api = {
   auth: () => call<{ authenticated: boolean; required?: boolean }>('GET', '/api/auth'),
   login: (token: string) => call<void>('POST', '/api/login', { token }),
@@ -766,7 +783,7 @@ export const api = {
   updateProject: (id: string, body: { name: string }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
   deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
   /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
-  listDirs: (path?: string, hidden = false) => call<DirList>('GET', `/api/fs/dirs${path ? `?path=${enc(path)}${hidden ? '&hidden=1' : ''}` : hidden ? '?hidden=1' : ''}`),
+  listDirs: (path?: string, hidden = false) => call<DirList>('GET', `/api/fs/dirs${dirsQuery(path, hidden)}`),
   makeDir: (parent: string, name: string) => call<{ path: string }>('POST', '/api/fs/dirs', { parent, name }),
 
   webSettings: () => call<Settings>('GET', '/api/settings'),
@@ -835,7 +852,7 @@ export const api = {
   olderSubagents: (id: string, before: string, signal?: AbortSignal) => foregroundRead(() => call<SubagentPage>('GET', `/api/sessions/${enc(id)}/subagents?before=${enc(before)}`, undefined, false, signal), signal),
   subagentHistory: (id: string, agentId: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),
   itemBody: (id: string, itemId: string, agentId: string, signal?: AbortSignal) => foregroundRead(() => call<BodyData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}?agent_id=${enc(agentId)}`, undefined, false, signal), signal),
-  detailEventsUrl: (id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string) => `/api/events/detail?session=${enc(id)}${agentId ? `&agent=${enc(agentId)}` : ''}${agentBefore ? `&agent_before=${enc(agentBefore)}` : ''}${epoch ? `&epoch=${enc(epoch)}` : ''}${agentUntil ? `&agent_until=${enc(agentUntil)}` : ''}${bodies.map(b => `&item=${enc(JSON.stringify(b.coveredSeq === undefined ? [b.agentId, b.itemId] : [b.agentId, b.itemId, b.coveredSeq]))}`).join('')}`,
+  detailEventsUrl: (id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string) => `/api/events/detail?${detailEventsQuery(id, agentId, bodies, agentBefore, epoch, agentUntil)}`,
   eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}&tool_output=delta&history=recent&view=compact-v1` : '/api/events'),
 };
 
@@ -851,8 +868,9 @@ export interface Upload {
  */
 function uploadFile(id: string, file: File, onProgress: (fraction: number) => void, model?: string): Upload {
   const xhr = new XMLHttpRequest();
+  const modelQuery = model ? `&model=${enc(model)}` : '';
   const done = new Promise<Attachment & { id: string }>((resolve, reject) => {
-    xhr.open('POST', `/api/sessions/${enc(id)}/attachments?name=${enc(file.name)}${model ? `&model=${enc(model)}` : ''}`);
+    xhr.open('POST', `/api/sessions/${enc(id)}/attachments?name=${enc(file.name)}${modelQuery}`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total));
@@ -890,8 +908,8 @@ export function newRequestId(): string {
 }
 
 export function basename(path: string): string {
-  const parts = path.replace(/\/+$/, '').split('/');
-  return parts[parts.length - 1] || path;
+  const parts = path.replace(/(?<!\/)\/+$/, '').split('/');
+  return parts.at(-1) || path;
 }
 
 /** Display name of a Task: the user's name, else the provider title, else a placeholder. */
@@ -900,7 +918,8 @@ export function taskName(s: Pick<SessionSummary, 'name' | 'title'>): string {
 }
 
 export function pendingCount(s: SessionSummary): number {
-  return typeof s.pending === 'number' ? s.pending : s.pending ? 1 : 0;
+  if (typeof s.pending === 'number') return s.pending;
+  return s.pending ? 1 : 0;
 }
 
 export function needsYou(s: SessionSummary): boolean {
@@ -956,4 +975,8 @@ export function modelName(meta: Meta | null, providerName: string, id: string): 
 }
 
 export const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
-export const stageLabel = (s: SessionSummary): string => s.stage === 'settled' ? 'Settled' : s.stage === 'archived' ? 'Archived' : 'Active';
+export const stageLabel = (s: SessionSummary): string => {
+  if (s.stage === 'settled') return 'Settled';
+  if (s.stage === 'archived') return 'Archived';
+  return 'Active';
+};

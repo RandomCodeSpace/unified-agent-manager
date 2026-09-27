@@ -24,10 +24,9 @@ function render() {
 // Development only: `?mock` swaps fetch and EventSource for an in-browser fake of the
 // service. Vite drops this branch, and the module, from the production bundle.
 if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('mock')) {
-  import('./mock/install').then((m) => {
-    m.install();
-    render();
-  });
+  const m = await import('./mock/install');
+  m.install();
+  render();
 } else {
   render();
 }

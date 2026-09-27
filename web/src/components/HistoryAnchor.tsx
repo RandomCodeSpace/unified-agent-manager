@@ -32,11 +32,19 @@ interface Anchor {
   groupItem?: string;
 }
 
+/** The anchor row as it stands after the commit: the same node when it survived, else the row with its key or id. */
+function anchorNode(el: HTMLElement, anchor: Anchor): HTMLElement | null {
+  if (anchor.node?.isConnected && el.contains(anchor.node)) return anchor.node;
+  if (anchor.key) return el.querySelector<HTMLElement>(`[data-history-anchor="${CSS.escape(anchor.key)}"]`);
+  if (anchor.id) return el.querySelector<HTMLElement>(`#${CSS.escape(anchor.id)}`);
+  return null;
+}
+
 /** Capture at React's pre-commit boundary, so history rendering can yield. */
 export class HistoryAnchor extends Component<Props, Record<string, never>, Anchor | null> {
-  private content = createRef<HTMLDivElement>();
-  private topSpacer = createRef<HTMLDivElement>();
-  private bottomSpacer = createRef<HTMLDivElement>();
+  private readonly content = createRef<HTMLDivElement>();
+  private readonly topSpacer = createRef<HTMLDivElement>();
+  private readonly bottomSpacer = createRef<HTMLDivElement>();
   private before: HistoryBand[] = [];
   private after: HistoryBand[] = [];
   private release?: () => void;
@@ -44,7 +52,8 @@ export class HistoryAnchor extends Component<Props, Record<string, never>, Ancho
   private row(id: string): HTMLElement | null {
     const content = this.content.current;
     if (!content) return null;
-    const exact = content.querySelector<HTMLElement>(`[data-history-anchor="${CSS.escape(id)}"], #${CSS.escape(`item-${id}`)}`);
+    const itemId = CSS.escape(`item-${id}`);
+    const exact = content.querySelector<HTMLElement>(`[data-history-anchor="${CSS.escape(id)}"], #${itemId}`);
     if (exact && !exact.closest('[inert]')) return exact;
     return this.group(id);
   }
@@ -70,14 +79,14 @@ export class HistoryAnchor extends Component<Props, Record<string, never>, Ancho
       const rect = row.getBoundingClientRect();
       if (row.closest('[inert]') || rect.bottom <= viewport.top || rect.top >= viewport.bottom) return false;
       if (!active) return true;
-      if (!row.hasAttribute('data-history-items')) {
+      if (row.dataset.historyItems === undefined) {
         const id = row.dataset.historyAnchor ?? row.id.slice(5);
         return !previousIds.has(id) || active.has(id);
       }
       try { return (JSON.parse(row.dataset.historyItems ?? '[]') as string[]).some(id => active.has(id)); }
       catch { return false; }
     });
-    const node = rows.find(row => !row.hasAttribute('data-history-items')) ?? rows[0];
+    const node = rows.find(row => row.dataset.historyItems === undefined) ?? rows[0];
     const snapshot: Anchor = { scroller: el, node, key: node?.dataset.historyAnchor, id: node?.id, offset: node?.getBoundingClientRect().top, height: el.scrollHeight, top: el.scrollTop, reset };
     if (node?.dataset.historyItems) {
       try {
@@ -146,10 +155,7 @@ export class HistoryAnchor extends Component<Props, Record<string, never>, Ancho
       el.focus({ preventScroll: true });
     }
     if (anchor.reset) { anchor.node = undefined; return; }
-    const kept = (anchor.node?.isConnected && el.contains(anchor.node) ? anchor.node
-      : anchor.key ? el.querySelector<HTMLElement>(`[data-history-anchor="${CSS.escape(anchor.key)}"]`)
-        : anchor.id ? el.querySelector<HTMLElement>(`#${CSS.escape(anchor.id)}`) : null)
-      ?? (anchor.groupItem ? this.group(anchor.groupItem) : null);
+    const kept = anchorNode(el, anchor) ?? (anchor.groupItem ? this.group(anchor.groupItem) : null);
     anchor.node = undefined;
     el.scrollTop = kept && anchor.offset !== undefined
       ? el.scrollTop + kept.getBoundingClientRect().top - anchor.offset

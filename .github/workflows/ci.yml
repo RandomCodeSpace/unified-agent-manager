@@ -35,6 +35,9 @@ jobs:
       - name: Build web assets
         run: make web
 
+      - name: Web component tests
+        run: npm --prefix web run test:dom
+
       - name: Verify modules
         run: go mod verify
 

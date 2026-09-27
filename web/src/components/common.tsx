@@ -122,10 +122,9 @@ export function useMedia(query: string): boolean {
  * finished ones, always with the word for assistive tech. `label` renders the word too,
  * as a chip; only the attention chip has a fill.
  */
-export function StateMark({ state, label = false, title, className }: { state: SessionState; label?: boolean; title?: string; className?: string }) {
+export function StateMark({ state, label = false, title, className }: Readonly<{ state: SessionState; label?: boolean; title?: string; className?: string }>) {
   const text = STATE_LABELS[state] ?? state;
   const tone = STATE_TONE[state];
-  const attention = tone === 'attention';
   // Keyed on the state, so a change fades the new glyph in (`base`) in the same 16px slot; the chip's colour transitions with it.
   const glyph = (
     <span key={state} className="flex animate-fade-in">
@@ -141,7 +140,7 @@ export function StateMark({ state, label = false, title, className }: { state: S
     );
   }
   return (
-    <Chip tone={attention ? 'attention' : tone === 'faint' ? 'muted' : tone} className={className} title={title}>
+    <Chip tone={tone === 'faint' ? 'muted' : tone} className={className} title={title}>
       {glyph}
       {text}
     </Chip>
@@ -154,7 +153,7 @@ export function StateMark({ state, label = false, title, className }: { state: S
  * One component, so the sidebar rows, the Task header, the subagent chips and the
  * transcript's working row all move alike.
  */
-export function WorkingMark({ className }: { className?: string }) {
+export function WorkingMark({ className }: Readonly<{ className?: string }>) {
   return (
     <svg aria-hidden="true" viewBox="0 0 16 16" className={cn('size-3.5 shrink-0 text-accent', className)}>
       <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.25" className="opacity-25" />
@@ -166,7 +165,7 @@ export function WorkingMark({ className }: { className?: string }) {
   );
 }
 
-function StateGlyph({ state }: { state: SessionState }) {
+function StateGlyph({ state }: Readonly<{ state: SessionState }>) {
   const tone = STATE_TONE[state];
   switch (state) {
     case 'working':
@@ -205,7 +204,7 @@ const BADGE_BG: Record<BadgeColor, string> = {
 };
 
 /** A Project's badge: a 16px rounded square in its tone with the two characters. Decorative; the name beside it carries the meaning. */
-export function ProjectBadge({ badge, className }: { badge: Badge; className?: string }) {
+export function ProjectBadge({ badge, className }: Readonly<{ badge: Badge; className?: string }>) {
   return (
     <span aria-hidden="true" className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded-xs text-badge font-bold text-on-primary select-none', BADGE_BG[badge.color], className)}>
       {badge.text}
@@ -214,19 +213,19 @@ export function ProjectBadge({ badge, className }: { badge: Badge; className?: s
 }
 
 /** A tiny dot in a tone; used for connection status and unread marks. */
-export function Dot({ tone, className, pulse = false }: { tone: Tone; className?: string; pulse?: boolean }) {
+export function Dot({ tone, className, pulse = false }: Readonly<{ tone: Tone; className?: string; pulse?: boolean }>) {
   return <span aria-hidden="true" className={cn('inline-block size-2 shrink-0 rounded-full', TONE_BG[tone], pulse && 'animate-pulse-dot', className)} />;
 }
 
 import { Spinner } from './ui/spinner';
 export { Spinner };
 
-export function SubagentIdleIcon({ className }: { className?: string }) {
+export function SubagentIdleIcon({ className }: Readonly<{ className?: string }>) {
   return <CornerDownLeft aria-hidden="true" className={cn('size-3.5', className)} />;
 }
 
 /** Display name: name, else provider title, else a placeholder that says whether a title is on its way. */
-export function TaskTitle({ session, className }: { session: SessionSummary; className?: string }) {
+export function TaskTitle({ session, className }: Readonly<{ session: SessionSummary; className?: string }>) {
   const name = taskName(session);
   if (name) return <span className={className}>{name}</span>;
   const waiting = LIVE.includes(session.state);
@@ -265,7 +264,7 @@ export function useScrolled(): [boolean, (el: HTMLElement | null) => void] {
 }
 
 /** The sentinel `useScrolled` watches: the first child of the scroll container, taking no room. */
-export function ScrollSentinel({ sentinelRef }: { sentinelRef: (el: HTMLElement | null) => void }) {
+export function ScrollSentinel({ sentinelRef }: Readonly<{ sentinelRef: (el: HTMLElement | null) => void }>) {
   return <div ref={sentinelRef} aria-hidden="true" className="-mb-px h-px" />;
 }
 
@@ -275,13 +274,15 @@ export function ScrollSentinel({ sentinelRef }: { sentinelRef: (el: HTMLElement 
  * loads. It is a live status for screen readers and hidden decoration otherwise; the caller
  * marks the region `aria-busy`.
  */
-export function Skeleton({ label, rows = 3, className, rowClassName, children, ...props }: { label: string; rows?: number; className?: string; rowClassName?: string; children?: ReactNode; 'aria-hidden'?: boolean | 'true' }) {
+const SKELETON_WIDTHS = ['w-3/4', 'w-full', 'w-1/2'];
+
+export function Skeleton({ label, rows = 3, className, rowClassName, children, ...props }: Readonly<{ label: string; rows?: number; className?: string; rowClassName?: string; children?: ReactNode; 'aria-hidden'?: boolean | 'true' }>) {
   const hidden = !!props['aria-hidden'];
   return (
     <div role={hidden ? undefined : 'status'} aria-hidden={hidden || undefined} className={cn('skeleton flex flex-col gap-3 motion-reduce:[&::after]:hidden', className)}>
       {!hidden && <span className="sr-only">{label}</span>}
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} aria-hidden="true" className={cn('h-4 rounded-sm bg-sunken', i % 3 === 0 ? 'w-3/4' : i % 3 === 1 ? 'w-full' : 'w-1/2', rowClassName)} />
+        <div key={i} aria-hidden="true" className={cn('h-4 rounded-sm bg-sunken', SKELETON_WIDTHS[i % 3], rowClassName)} />
       ))}
       {children}
     </div>
@@ -289,7 +290,7 @@ export function Skeleton({ label, rows = 3, className, rowClassName, children, .
 }
 
 /** The conversation's skeleton: a user bubble at the right, then assistant lines, in the transcript's gutters. */
-export function TranscriptSkeleton({ label = 'Loading the conversation…' }: { label?: string }) {
+export function TranscriptSkeleton({ label = 'Loading the conversation…' }: Readonly<{ label?: string }>) {
   return (
     <div className="flex flex-col gap-6 px-3 pt-6 sm:px-4 md:px-6">
       <Skeleton label={label} rows={0} className="items-end">
@@ -331,13 +332,13 @@ export function InlineName({
   onCancel,
   className,
   label = 'Name',
-}: {
+}: Readonly<{
   initial: string;
   onSave: (value: string) => void;
   onCancel: () => void;
   className?: string;
   label?: string;
-}) {
+}>) {
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
   const done = useRef(false);
@@ -387,7 +388,7 @@ const remarkPlugins = [remarkGfm];
  * The slots are for the diagram card: `head` is the header's middle (default: a spacer),
  * `body` replaces the `<pre>`, `foot` is a line under it.
  */
-export function CodeBlock({ language, className, text, head, body, foot, children }: { language?: string; className?: string; text?: string; head?: ReactNode; body?: ReactNode; foot?: ReactNode; children: ReactNode }) {
+export function CodeBlock({ language, className, text, head, body, foot, children }: Readonly<{ language?: string; className?: string; text?: string; head?: ReactNode; body?: ReactNode; foot?: ReactNode; children: ReactNode }>) {
   const pre = useRef<HTMLPreElement>(null);
   const [copied, copy] = useCopied();
   const read = () => text ?? pre.current?.textContent ?? '';
@@ -432,7 +433,11 @@ function useHighlighter(): Highlighter | null {
   useEffect(() => {
     if (mod) return;
     let on = true;
-    (highlighterLoad ??= import('../lib/highlight').then((m) => (highlighter = m))).then(
+    highlighterLoad ??= import('../lib/highlight').then((m) => {
+      highlighter = m;
+      return m;
+    });
+    highlighterLoad.then(
       (m) => on && setMod(m),
       () => {},
     );
@@ -503,7 +508,7 @@ function ImageNote({ alt, detail, href }: { alt: string; detail: string; href?: 
 }
 
 /** A temporary path is an explicit owner choice, never an image or discovery request. */
-function TempFileAction({ file, children }: { file: { path: string; hash: string }; children?: ReactNode }) {
+function TempFileAction({ file, children }: Readonly<{ file: { path: string; hash: string }; children?: ReactNode }>) {
   const preview = usePreview();
   return (
     <span className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5 gap-y-1">
@@ -522,7 +527,7 @@ function TempFileAction({ file, children }: { file: { path: string; hash: string
 const FILE_ICONS = { image: FileImage, pdf: FileType, code: FileCode, data: FileBraces, archive: FileArchive, audio: FileMusic, video: FileVideoCamera, sheet: FileSpreadsheet, text: FileText, file: File } satisfies Record<FileFormat, typeof File>;
 
 /** A compact resolved file label. The path remains the link's identity and accessible name. */
-function FileLink({ path, url }: { path: string; url: string }) {
+function FileLink({ path, url }: Readonly<{ path: string; url: string }>) {
   const preview = usePreview();
   const label = fileLabel(path);
   const Icon = FILE_ICONS[label.format];
@@ -540,7 +545,7 @@ function FileLink({ path, url }: { path: string; url: string }) {
 }
 
 /** Display intent only. The resolver or exact temp-file grant checks the current file. */
-export function DeclaredFileCard({ declaration }: { declaration: FileDeclaration }) {
+export function DeclaredFileCard({ declaration }: Readonly<{ declaration: FileDeclaration }>) {
   const sessionId = useContext(SessionContext);
   const workdir = useContext(WorkdirContext);
   const tempRoots = useContext(TempRootContext);
@@ -553,6 +558,11 @@ export function DeclaredFileCard({ declaration }: { declaration: FileDeclaration
   const demand = useFileDemand(path);
   const label = fileLabel(path);
   const Icon = FILE_ICONS[label.format];
+  // The way to the file: a link once it is known to exist, the temp-file action, or word that neither is known.
+  let access: ReactNode;
+  if (sessionId && workFile && exists) access = <FileLink path={path} url={api.viewFileUrl(sessionId, workFile.path)} />;
+  else if (sessionId && temporary && preview) access = <TempFileAction file={temporary} />;
+  else access = <span className="text-caption text-muted">File availability unknown or unavailable.</span>;
   return (
     <div ref={demand} className="rounded-md bg-raised px-3.5 py-3 shadow-raised" role="group" aria-label={`Declared file ${path}`}>
       <div className="flex min-w-0 items-start gap-2.5">
@@ -568,9 +578,7 @@ export function DeclaredFileCard({ declaration }: { declaration: FileDeclaration
         </div>
       </div>
       <div className="mt-2 pl-6" data-file-reference={workFile?.path}>
-        {sessionId && workFile && exists ? <FileLink path={path} url={api.viewFileUrl(sessionId, workFile.path)} />
-          : sessionId && temporary && preview ? <TempFileAction file={temporary} />
-            : <span className="text-caption text-muted">File availability unknown or unavailable.</span>}
+        {access}
       </div>
     </div>
   );
@@ -585,7 +593,7 @@ function containsImage(node: ExtraProps['node']): boolean {
  * column; one that fails (outside the Task's folder, missing, not an image) becomes a note.
  * Clicking it opens the lightbox with the file's name.
  */
-function LocalImage({ sessionId, path, alt }: { sessionId: string; path: string; alt: string }) {
+function LocalImage({ sessionId, path, alt }: Readonly<{ sessionId: string; path: string; alt: string }>) {
   const preview = usePreview();
   const url = api.rawFileUrl(sessionId, path);
   const [failed, setFailed] = useState(false);
@@ -634,7 +642,7 @@ function LocalImage({ sessionId, path, alt }: { sessionId: string; path: string;
 }
 
 /** A markdown image: by path from the Task's directory; `data:` inline; a web address stays a link, as the page loads nothing cross-origin. */
-function MdImage({ src, alt }: { src?: string; alt?: string }) {
+function MdImage({ src, alt }: Readonly<{ src?: string; alt?: string }>) {
   const preview = usePreview();
   const tempRoots = useContext(TempRootContext);
   const sessionId = useContext(SessionContext);
@@ -650,8 +658,14 @@ function MdImage({ src, alt }: { src?: string; alt?: string }) {
   return <ImageNote alt={text} detail={src ?? ''} href={src && /^https?:/i.test(src) ? src : undefined} />;
 }
 
+/** Where a link goes: a Task file through the view route once it is known to exist, a web or mail address as it is, nothing otherwise. */
+function linkTarget(href: string | undefined, file: ReturnType<typeof taskFile>, sessionId: string | undefined, exists: boolean): string | undefined {
+  if (localPath(href)) return sessionId && file && exists ? api.viewFileUrl(sessionId, file.path) + file.hash : undefined;
+  return typeof href === 'string' && /^(https?:|mailto:)/i.test(href) ? href : undefined;
+}
+
 /** Local available files preview on an ordinary click; modified clicks and web links stay native. */
-function MdLink({ href, children, node }: { href?: string; children?: ReactNode } & ExtraProps) {
+function MdLink({ href, children, node }: Readonly<{ href?: string; children?: ReactNode } & ExtraProps>) {
   const preview = usePreview();
   const tempRoots = useContext(TempRootContext);
   const sessionId = useContext(SessionContext);
@@ -661,13 +675,16 @@ function MdLink({ href, children, node }: { href?: string; children?: ReactNode 
   const { eligible, exists } = useFileReference(file?.path);
   const temporary = !streaming && sessionId && preview ? tempFile(href, workdir, tempRoots) : null;
   if (temporary) return <TempFileAction file={temporary}>{children}</TempFileAction>;
-  const target = localPath(href) ? (sessionId && file && exists ? api.viewFileUrl(sessionId, file.path) + file.hash : undefined) : typeof href === 'string' && /^(https?:|mailto:)/i.test(href) ? href : undefined;
-  const link = target && file && localPath(href) && !containsImage(node) ? <FileLink path={file.path} url={target} /> : target ? <a href={target} rel="noopener noreferrer" target="_blank" onClick={event => {
+  const target = linkTarget(href, file, sessionId, exists);
+  let link: ReactNode;
+  if (target && file && localPath(href) && !containsImage(node)) link = <FileLink path={file.path} url={target} />;
+  else if (target) link = <a href={target} rel="noopener noreferrer" target="_blank" onClick={event => {
     if (preview && file && localPath(href) && previewClick(event)) {
       event.preventDefault();
       preview({ url: target, name: file.path.split('/').pop() || file.path, description: file.path, frameable: true }, event.currentTarget);
     }
-  }}>{children}</a> : children;
+  }}>{children}</a>;
+  else link = children;
   return localPath(href) ? <span key={file?.path} data-file-reference={eligible ? file?.path : undefined}>{link}</span> : <>{link}</>;
 }
 
@@ -676,14 +693,15 @@ function MdLink({ href, children, node }: { href?: string; children?: ReactNode 
  * opens it through the view route once the file is known to exist; until then, and when it
  * does not, it is the same plain code. Nothing is asked while its block is still streaming.
  */
-function InlineCode({ text, className }: { text: string; className?: string }) {
+function InlineCode({ text, className }: Readonly<{ text: string; className?: string }>) {
   const preview = usePreview();
   const tempRoots = useContext(TempRootContext);
   const sessionId = useContext(SessionContext);
   const workdir = useContext(WorkdirContext);
   const { streaming } = useContext(MdContext);
   const hintedPath = sessionId && !streaming && !text.includes('/') ? hintPath(text, workdir ?? '') : undefined;
-  const file = sessionId && !streaming ? codeFile(text, workdir) ?? (hintedPath ? { path: hintedPath, hash: '' } : null) : null;
+  let file: ReturnType<typeof codeFile> = null;
+  if (sessionId && !streaming) file = codeFile(text, workdir) ?? (hintedPath ? { path: hintedPath, hash: '' } : null);
   const url = sessionId && file ? api.viewFileUrl(sessionId, file.path) : undefined;
   const { eligible, exists } = useFileReference(file?.path, text);
   const temporary = !streaming && sessionId && preview && text.startsWith('/') ? tempFile(text.split('/').map(encodeURIComponent).join('/'), workdir, tempRoots) : null;
@@ -702,7 +720,7 @@ interface Span {
   end: { offset?: number };
 }
 
-function MermaidBlock({ source, position, children }: { source: string; position?: Span; children: ReactNode }) {
+function MermaidBlock({ source, position, children }: Readonly<{ source: string; position?: Span; children: ReactNode }>) {
   const { text, streaming } = useContext(MdContext);
   const ready = !streaming || !position || fenceClosed(text, position.start.offset ?? 0, position.end.offset ?? text.length);
   return (
@@ -712,7 +730,19 @@ function MermaidBlock({ source, position, children }: { source: string; position
   );
 }
 
-const languageOf = (className: unknown): string | undefined => /language-([\w+-]+)/.exec(Array.isArray(className) ? className.join(' ') : String(className ?? ''))?.[1];
+/** A hast `className` (a list or one string) as one string. */
+function classText(className: unknown): string {
+  if (Array.isArray(className)) return className.join(' ');
+  return typeof className === 'string' ? className : '';
+}
+
+const languageOf = (className: unknown): string | undefined => /language-([\w+-]+)/.exec(classText(className))?.[1];
+
+/** The children as one string when they are text (a fenced block's, an inline code's); null when they hold elements. */
+function textOf(children: ReactNode): string | null {
+  if (typeof children === 'string') return children;
+  return Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;
+}
 
 /** react-markdown drops `file:` URLs as unsafe; here they are paths for the file routes, which MdImage and MdLink decide on. */
 const mdUrl = (url: string): string => (/^file:\/\//i.test(url) ? url : defaultUrlTransform(url));
@@ -730,7 +760,7 @@ const mdComponents: Components = {
   },
   code({ className, children }) {
     const language = languageOf(className);
-    const code = typeof children === 'string' ? children : Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;
+    const code = textOf(children);
     // Fenced code ends in a newline and so never looks like a path: only inline code links.
     if (!language && code !== null) return <InlineCode text={code} className={className} />;
     if (!language || code === null) return <code className={className}>{children}</code>;
@@ -761,7 +791,7 @@ const mdComponents: Components = {
  * messages mount as one document. Streaming text uses top-level blocks so only the last block
  * is parsed again per delta; it keeps those boundaries after completion to retain DOM state.
  */
-export function Markdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
+export function Markdown({ text, streaming = false, className }: Readonly<{ text: string; streaming?: boolean; className?: string }>) {
   const [hasStreamed, setHasStreamed] = useState(streaming);
   if (streaming && !hasStreamed) setHasStreamed(true);
   const blocks = useMemo(() => hasStreamed ? splitBlocks(text) : [text], [text, hasStreamed]);
@@ -790,10 +820,10 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, streaming }: { text: s
  * The quiet loading indicator: nothing for `delay` ms (a wait that short shows nothing new),
  * then a spinner and a word. Replaces skeleton placeholders; what was on screen stays.
  */
-export function Loading({ label = 'Loading…', delay = 300, className }: { label?: string; delay?: number; className?: string }) {
+export function Loading({ label = 'Loading…', delay = 300, className }: Readonly<{ label?: string; delay?: number; className?: string }>) {
   const late = useLate(true, delay);
   return (
-    <div role="status" aria-busy="true" className={cn('flex min-h-8 items-center gap-2 text-caption text-muted', className)}>
+    <output aria-busy="true" className={cn('flex min-h-8 items-center gap-2 text-caption text-muted', className)}>
       {late && (
         <span className="flex items-center gap-2 animate-fade-in">
           <Spinner className="border-muted" />
@@ -801,12 +831,12 @@ export function Loading({ label = 'Loading…', delay = 300, className }: { labe
         </span>
       )}
       {!late && <span className="sr-only">{label}</span>}
-    </div>
+    </output>
   );
 }
 
 /** A `caption` line for feedback: `error` and `warn` are the only coloured ones. */
-export function Note({ tone = 'muted', className, children, role, id }: { tone?: 'muted' | 'error' | 'warn' | 'info'; className?: string; children: ReactNode; role?: 'alert' | 'status'; id?: string }) {
+export function Note({ tone = 'muted', className, children, role, id }: Readonly<{ tone?: 'muted' | 'error' | 'warn' | 'info'; className?: string; children: ReactNode; role?: 'alert' | 'status'; id?: string }>) {
   return (
     <p id={id} role={role} className={cn('text-caption animate-fade-in', tone === 'error' && 'text-error', tone === 'warn' && 'text-warning', tone === 'info' && 'text-info', tone === 'muted' && 'text-muted', className)}>
       {children}

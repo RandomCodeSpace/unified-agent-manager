@@ -1,4 +1,4 @@
-import { AtSign, ExternalLink, FileText, FileType, Image as ImageIcon, Paperclip, TriangleAlert, X } from 'lucide-react';
+import { AtSign, ExternalLink, FileText, FileType, Image as ImageIcon, Paperclip, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { api, type Attachment } from '../api';
 import { formatSize, kindOf, type Kind } from '../lib/attachments';
@@ -27,14 +27,15 @@ export interface Pending {
 }
 
 const KIND_LABEL: Record<Kind, string> = { image: 'Image', pdf: 'PDF', text: 'Text' };
+const KIND_ICON: Record<Kind, LucideIcon> = { image: ImageIcon, pdf: FileType, text: FileText };
 
-function KindIcon({ kind, className }: { kind: Kind; className?: string }) {
-  const Icon = kind === 'image' ? ImageIcon : kind === 'pdf' ? FileType : FileText;
+function KindIcon({ kind, className }: Readonly<{ kind: Kind; className?: string }>) {
+  const Icon = KIND_ICON[kind];
   return <Icon aria-hidden="true" className={className} />;
 }
 
 /** A 36px square: the image itself, or the kind's glyph on a well. */
-function Thumb({ kind, src, name, className }: { kind: Kind; src?: string; name: string; className?: string }) {
+function Thumb({ kind, src, name, className }: Readonly<{ kind: Kind; src?: string; name: string; className?: string }>) {
   return (
     <span className={cn('flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-xs bg-sunken', className)}>
       {src ? <img src={src} alt="" className="size-full object-cover" /> : <KindIcon kind={kind} className="size-4 text-muted" />}
@@ -43,17 +44,24 @@ function Thumb({ kind, src, name, className }: { kind: Kind; src?: string; name:
   );
 }
 
+/** The chip's second line: the refusal, the upload's progress, or the stored file's size and type. */
+function uploadState(item: Pending): string | undefined {
+  if (item.status === 'error') return item.error;
+  if (item.status === 'uploading') return `Uploading… ${Math.round(item.progress * 100)}%`;
+  return `${formatSize(item.size)} · ${KIND_LABEL[item.kind]}`;
+}
+
 /**
  * An upload in the composer: thumbnail or glyph, name, then its state (progress, size and
  * type, or the refusal). A well, not a box: the composer already has the hairline.
  */
-export function UploadChip({ item, onRemove }: { item: Pending; onRemove: () => void }) {
+export function UploadChip({ item, onRemove }: Readonly<{ item: Pending; onRemove: () => void }>) {
   const bar = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     bar.current?.style.setProperty('--fill', `${Math.round(item.progress * 100)}%`);
   }, [item.progress]);
   const failed = item.status === 'error';
-  const state = failed ? item.error : item.status === 'uploading' ? `Uploading… ${Math.round(item.progress * 100)}%` : `${formatSize(item.size)} · ${KIND_LABEL[item.kind]}`;
+  const state = uploadState(item);
   return (
     <div
       className={cn('relative flex h-11 max-w-72 min-w-0 items-center gap-2 overflow-hidden rounded-sm bg-tint-well pr-0.5 pl-1 animate-rise', failed && 'bg-error-wash')}
@@ -75,7 +83,7 @@ export function UploadChip({ item, onRemove }: { item: Pending; onRemove: () => 
 }
 
 /** A referenced project path in the composer. */
-export function FileRefChip({ path, onRemove }: { path: string; onRemove: () => void }) {
+export function FileRefChip({ path, onRemove }: Readonly<{ path: string; onRemove: () => void }>) {
   return (
     <span className="inline-flex h-7 max-w-full min-w-0 items-center gap-1 rounded-sm bg-tint-well pl-1.5 text-caption text-ink animate-rise">
       <AtSign aria-hidden="true" className="size-3 shrink-0 text-faint" />
@@ -88,7 +96,7 @@ export function FileRefChip({ path, onRemove }: { path: string; onRemove: () => 
 }
 
 /** Covers the composer while files are dragged over it. */
-export function DropOverlay({ note }: { note: string }) {
+export function DropOverlay({ note }: Readonly<{ note: string }>) {
   return (
     <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md bg-raised outline-2 -outline-offset-4 outline-dashed outline-accent animate-fade-in">
       <div className="flex flex-col items-center gap-1 text-accent">
@@ -101,7 +109,7 @@ export function DropOverlay({ note }: { note: string }) {
 }
 
 /** Small chips for a queued prompt's files and uploads. */
-export function QueuedExtras({ files = [], attachments = [] }: { files?: string[]; attachments?: Attachment[] }) {
+export function QueuedExtras({ files = [], attachments = [] }: Readonly<{ files?: string[]; attachments?: Attachment[] }>) {
   if (!files.length && !attachments.length) return null;
   return (
     <span className="flex flex-wrap gap-1">
@@ -129,11 +137,17 @@ export interface StoredImage {
   size?: number;
 }
 
+/** The viewer's second line: the kind, then the size when it is known. */
+function describeImage(a: StoredImage): string {
+  const size = a.size ? ` · ${formatSize(a.size)}` : '';
+  return `${KIND_LABEL[kindOf(a.mime)]}${size}`;
+}
+
 /**
  * Thumbnails up to 160px high from the serve route; clicking one opens the lightbox with
  * **Open original**. Shared by a user turn's uploads and a tool row's images.
  */
-export function ImageThumbs({ sessionId, images, className }: { sessionId: string; images: StoredImage[]; className?: string }) {
+export function ImageThumbs({ sessionId, images, className }: Readonly<{ sessionId: string; images: StoredImage[]; className?: string }>) {
   const preview = usePreview();
   const [shown, setShown] = useState<StoredImage | null>(null);
   const [open, setOpen] = useState(false);
@@ -150,7 +164,7 @@ export function ImageThumbs({ sessionId, images, className }: { sessionId: strin
             aria-label={`Open ${nameOf(a)}`}
             onClick={event => {
               if (preview) {
-                preview({ url: api.attachmentUrl(sessionId, a.id), name: nameOf(a), description: `${KIND_LABEL[kindOf(a.mime)]}${a.size ? ` · ${formatSize(a.size)}` : ''}`, image: true }, event.currentTarget);
+                preview({ url: api.attachmentUrl(sessionId, a.id), name: nameOf(a), description: describeImage(a), image: true }, event.currentTarget);
                 return;
               }
               setShown(a);
@@ -167,7 +181,7 @@ export function ImageThumbs({ sessionId, images, className }: { sessionId: strin
           onOpenChange={setOpen}
           onClosed={() => setShown(null)}
           title={nameOf(shown)}
-          description={`${KIND_LABEL[kindOf(shown.mime)]}${shown.size ? ` · ${formatSize(shown.size)}` : ''}`}
+          description={describeImage(shown)}
           src={api.attachmentUrl(sessionId, shown.id)}
           alt={nameOf(shown)}
           footer={
@@ -188,7 +202,7 @@ export function ImageThumbs({ sessionId, images, className }: { sessionId: strin
  * stored copy the chip has no link. A document the model did not receive as a document
  * gets a warning line saying how it was read instead.
  */
-export function ItemAttachments({ sessionId, attachments }: { sessionId: string; attachments: Attachment[] }) {
+export function ItemAttachments({ sessionId, attachments }: Readonly<{ sessionId: string; attachments: Attachment[] }>) {
   const images = attachments.filter((a): a is Attachment & { id: string } => kindOf(a.mime) === 'image' && !!a.id);
   const rest = attachments.filter((a) => !images.includes(a as Attachment & { id: string }));
   return (
@@ -215,7 +229,7 @@ export function ItemAttachments({ sessionId, attachments }: { sessionId: string;
 }
 
 /** The image lightbox (DESIGN.md): the image up to 94vw by 1400px and 78dvh on a see-through scrim, `footer` right-aligned under it. */
-export function Lightbox({ open, onOpenChange, onClosed, title, description, src, alt, footer }: { open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; title: ReactNode; description?: ReactNode; src: string; alt: string; footer?: ReactNode }) {
+export function Lightbox({ open, onOpenChange, onClosed, title, description, src, alt, footer }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; title: ReactNode; description?: ReactNode; src: string; alt: string; footer?: ReactNode }>) {
   return (
     <ViewerDialog open={open} onOpenChange={onOpenChange} onClosed={onClosed} title={title} description={description} footer={footer}>
       <img src={src} alt={alt} className="mx-auto block max-h-[78dvh] w-auto max-w-full min-h-0 rounded-sm bg-sunken shadow-modal" />
@@ -223,7 +237,7 @@ export function Lightbox({ open, onOpenChange, onClosed, title, description, src
   );
 }
 
-function FileChip({ sessionId, attachment: a }: { sessionId: string; attachment: Attachment }) {
+function FileChip({ sessionId, attachment: a }: Readonly<{ sessionId: string; attachment: Attachment }>) {
   const preview = usePreview();
   const kind = kindOf(a.mime);
   const body: ReactNode = (

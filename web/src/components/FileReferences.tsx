@@ -7,7 +7,7 @@ const Files = createContext<FileReferences | null>(null);
 const NO_SUBSCRIBE = () => () => {};
 
 /** Keyed by task, workdir and history/auth lifetime at the Task boundary. */
-export function FileReferencesProvider({ sessionId, workdir, generation, active, items, children }: { sessionId: string; workdir: string; generation: string; active: boolean; items: Item[]; children: ReactNode }) {
+export function FileReferencesProvider({ sessionId, workdir, generation, active, items, children }: Readonly<{ sessionId: string; workdir: string; generation: string; active: boolean; items: Item[]; children: ReactNode }>) {
   // A new lifecycle clears lookup state without remounting the transcript or composer.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const owner = useMemo(() => new FileReferences(workdir, (paths, signal) => api.resolveFiles(sessionId, paths, signal)), [sessionId, workdir, generation, active]);

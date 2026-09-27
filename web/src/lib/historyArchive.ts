@@ -27,7 +27,8 @@ let cache: Cache | null = null;
 let clears = 0;
 
 function load(): Promise<Cache> {
-  return (loading ??= import('./historyCache.ts').then(module => (cache = module), error => { loading = null; throw error; }));
+  loading ??= import('./historyCache.ts').then(module => { cache = module; return module; }, error => { loading = null; throw error; });
+  return loading;
 }
 
 /** Work started before a clear must not write afterwards. */

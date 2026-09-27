@@ -8,7 +8,7 @@ import { DIAGRAM_FONT, intrinsicSize, parseRequest, type DiagramReply } from '..
 const FONT_WEIGHTS = '300 900';
 const fontFace = `@font-face{font-family:'Figtree Variable';font-weight:${FONT_WEIGHTS};src:url(${figtree}) format('woff2')}`;
 const fontReady = (async () => {
-  const bytes = Uint8Array.from(atob(figtree.slice(figtree.indexOf(',') + 1)), (c) => c.charCodeAt(0));
+  const bytes = Uint8Array.from(atob(figtree.slice(figtree.indexOf(',') + 1)), (c) => c.codePointAt(0)!);
   document.fonts.add(await new FontFace('Figtree Variable', bytes, { weight: FONT_WEIGHTS }).load());
 })().catch(() => {}); // Without it Mermaid measures and draws with the system fallback in DIAGRAM_FONT.
 
