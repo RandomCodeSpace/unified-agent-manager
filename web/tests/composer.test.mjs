@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
+import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
 
 test('the active composer permits draft settings and retains settings in prompt identity and payload', async () => {
   const source = ts.createSourceFile('Composer.tsx', await readFile(new URL('../src/components/Composer.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -171,4 +171,21 @@ test('Enter in an open picker picks a row, closes an empty list, and runs a comm
   assert.equal(enterInPicker(1, true), 'pick');
   assert.equal(enterInPicker(0, false), 'close');
   assert.equal(enterInPicker(0, true), 'submit');
+});
+
+test('a typed command that ends in Yolo with autopilot is caught before it is sent', () => {
+  const safeAutopilot = { yolo: false, autopilot: true };
+  const yoloInteractive = { yolo: true, autopilot: false };
+  assert.equal(entersRiskiest('allow-all', 'on', safeAutopilot), true);
+  assert.equal(entersRiskiest('allow-all', '', safeAutopilot), true);
+  assert.equal(entersRiskiest('permissions', 'allow-all', safeAutopilot), true);
+  assert.equal(entersRiskiest('allow-all', 'off', safeAutopilot), false);
+  assert.equal(entersRiskiest('allow-all', 'show', safeAutopilot), false);
+  assert.equal(entersRiskiest('autopilot', 'on', yoloInteractive), true);
+  assert.equal(entersRiskiest('autopilot', 'Ship the release notes', yoloInteractive), true);
+  assert.equal(entersRiskiest('autopilot', 'off', yoloInteractive), false);
+  assert.equal(entersRiskiest('autopilot', 'on', { yolo: false, autopilot: false }), false);
+  assert.equal(entersRiskiest('allow-all', 'on', { yolo: false, autopilot: false }), false);
+  // Already there: nothing to switch into.
+  assert.equal(entersRiskiest('autopilot', 'on', { yolo: true, autopilot: true }), false);
 });

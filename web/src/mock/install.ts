@@ -855,6 +855,16 @@ export function install(): void {
       if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
       const name = String(body.name ?? '');
       if (!st.commands.some((c) => c.name === name)) return fail(404, `/${name} is not one of this task's commands`);
+      // Mode switches apply at once, mid-turn too, and add no transcript line.
+      if (name === 'autopilot' || name === 'allow-all') {
+        const arg = String(body.arguments ?? '').trim().toLowerCase();
+        if (name === 'autopilot') touch(t, { execution: { known: true, mode: arg === 'off' ? 'interactive' : 'autopilot' } });
+        else touch(t, { mode: arg === 'on' || (!arg && t.mode !== 'yolo') ? 'yolo' : 'safe' });
+        const sub: Submission = { request_id: String(body.request_id ?? ''), status: 'accepted', time: now() };
+        t.last_submission = sub;
+        broadcast('submission', { session_id: t.id, submission: sub }, t.id);
+        return json(202, sub);
+      }
       if (busy(t)) return fail(409, 'the provider is still running a turn');
       const extras = checkExtras(t, body);
       if (extras instanceof Response) return extras;

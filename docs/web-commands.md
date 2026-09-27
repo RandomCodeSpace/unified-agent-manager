@@ -38,9 +38,11 @@ through an unsupported command to bypass Task model settings.
 
 ## Autopilot and Stop
 
-Choose Interactive or Autopilot from the execution dropdown beside the model and
-permission controls. Selecting a mode preserves the draft and attachments and
-does not send a message or change Safe/Yolo permissions. Selecting Interactive
+Choose Interactive or Autopilot from the Permissions and execution menu beside
+the model control. Selecting a mode preserves the draft and attachments and
+does not send a message or change Safe/Yolo permissions. Entering Autopilot
+while in Yolo, or Yolo while Autopilot runs, including by a typed command, asks
+for confirmation first. Selecting Interactive
 disables future continuation; use Stop to abort current work as well. Objective
 details appear inside the dropdown, without a separate execution banner.
 

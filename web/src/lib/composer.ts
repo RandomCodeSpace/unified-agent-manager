@@ -59,6 +59,20 @@ export function parseCommand(text: string, commands: readonly (Pick<Command, 'na
 }
 
 /**
+ * Whether a typed command would switch the Task into Yolo with autopilot, the riskiest pair,
+ * from a state that is not both (docs/web-commands.md): `allow-all`/`yolo` with `on` or a
+ * toggle from Safe, `permissions allow-all`, or `autopilot`/`goal` with anything but `off` or
+ * `show`. It is then confirmed first, as the toolbar menu does.
+ */
+export function entersRiskiest(name: string, args: string, state: { yolo: boolean; autopilot: boolean }): boolean {
+  if (state.yolo && state.autopilot) return false;
+  const arg = args.trim().toLowerCase();
+  const yolo = name === 'allow-all' || name === 'yolo' ? arg === 'on' || (arg === '' && !state.yolo) : name === 'permissions' && arg === 'allow-all';
+  const autopilot = (name === 'autopilot' || name === 'goal') && arg !== 'off' && arg !== 'show';
+  return (yolo && state.autopilot) || (autopilot && state.yolo);
+}
+
+/**
  * True while `text` is shaped like `/name…` and the command list is still on its way
  * (`commands` null, no `error`): sending then would hand an unresolved command to the
  * model as plain text. A loaded list, even an empty one, or a failed fetch never waits.

@@ -283,6 +283,8 @@ export function seed(): MockState {
       name: 'Fix re-attach redraw regression',
       title: '',
       state: 'working',
+      capabilities: { ...CAPS, execution_modes: true },
+      execution: { known: true, mode: 'interactive' },
       background_tasks: {
         known: true,
         tasks: [
@@ -832,6 +834,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
   const commands: Command[] = [
     { name: 'init', description: 'Create a copilot-instructions.md for this project', kind: 'command', input_hint: '' },
     { name: 'review', description: 'Review the uncommitted changes and report problems', kind: 'command', input_hint: '' },
+    { name: 'autopilot', description: 'Keep working between turns until the task is done', kind: 'command', input_hint: '[on|off]', aliases: ['goal'], allow_during_turn: true },
+    { name: 'allow-all', description: 'Allow every permission request without asking', kind: 'command', input_hint: '[on|off]', aliases: ['yolo'], allow_during_turn: true },
     { name: 'commit', description: 'Write a conventional commit for the staged changes', kind: 'skill', input_hint: '[scope]' },
     { name: 'release-notes', description: 'Draft release notes from recent commits', kind: 'skill', input_hint: '<range>' },
     { name: 'diagnosing-bugs', description: 'Reproduce, isolate and fix a bug from its symptom', kind: 'skill', input_hint: '<symptom>' },
