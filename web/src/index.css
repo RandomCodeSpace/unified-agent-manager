@@ -490,7 +490,11 @@
     animation: var(--animate-sweep);
   }
 
-  /* Markdown from providers (react-markdown output; utilities cannot reach inside it). */
+  /* Markdown from providers (react-markdown output; utilities cannot reach inside it). An unbroken
+     run (a data URL, a hash) wraps instead of widening the column; code blocks keep their own scroll. */
+  .md {
+    overflow-wrap: anywhere;
+  }
   .md > :first-child {
     margin-top: 0;
   }
