@@ -2,7 +2,7 @@ import { ChevronRight, CircleCheck, FolderPlus, GitBranch, LogOut, Settings as S
 import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
-import { filteredProject, groupTasks, sidebarTasks } from '../lib/tasks';
+import { filteredProject, groupTasks, shownState, sidebarTasks } from '../lib/tasks';
 import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, STATE_LABELS, STATE_TONE, Skeleton, StateMark, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker } from './ProjectPicker';
@@ -146,9 +146,10 @@ function TaskRow({ session: s, project, selected, compact = false }: { session: 
   // The menu's own Settle item, shown on hover only while its rules allow it.
   const settle = compact ? undefined : items.find((item) => item.key === 'settle' && !item.disabled);
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
-  const meta = rowMeta(s, unread);
+  const state = shownState(s);
+  const meta = rowMeta({ ...s, state }, unread);
   // Working and Completed (its time, or the word while unread) carry weight so they read at a glance; a Settled or Archived card stays quiet.
-  const heavy = !readOnly(s) && (s.state === 'working' || s.state === 'completed');
+  const heavy = !readOnly(s) && (state === 'working' || state === 'completed');
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   // A card on the rail: `raised` with the soft ring; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
   const rowClass = compact
@@ -203,7 +204,7 @@ function TaskRow({ session: s, project, selected, compact = false }: { session: 
               </span>
               <span className="flex w-full min-w-0 items-center gap-1.5">
                 <span className={cn('flex shrink-0 items-center gap-1 text-caption tabular-nums whitespace-nowrap transition-colors duration-160', heavy ? 'font-semibold' : 'font-normal', meta.tone)}>
-                  {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
+                  {(needsYou(s) || LIVE.includes(state)) && <StateMark state={state} />}
                   {meta.text}
                 </span>
                 <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />

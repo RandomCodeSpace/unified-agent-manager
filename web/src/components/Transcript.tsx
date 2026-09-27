@@ -378,7 +378,7 @@ function WorkingTail({ working, turnId, step, verb = true }: { working: boolean;
  * any scroll position and whichever history page is loaded; `items` is the live tail. Its width
  * holds while the time counts up, so it never shifts.
  */
-export function WorkingLabel({ working, items, identityItems = items, turnTimings = [] }: { working: boolean; items: Item[]; identityItems?: Item[]; turnTimings?: TurnTiming[] }) {
+export function WorkingLabel({ working, since, items, identityItems = items, turnTimings = [] }: { working: boolean; since?: string; items: Item[]; identityItems?: Item[]; turnTimings?: TurnTiming[] }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!working) return;
@@ -387,7 +387,8 @@ export function WorkingLabel({ working, items, identityItems = items, turnTiming
   }, [working]);
   const lastUser = (list: Item[]) => [...list].reverse().find((item) => item.kind === 'user' && !item.delivery)?.id;
   const turnId = lastUser(items) ?? lastUser(identityItems) ?? 'start';
-  const elapsed = working ? elapsedSince(foregroundStart(turnTimings), now) : null;
+  // `since` times work that outlived the turn (subagents still running); otherwise the running turn's clock.
+  const elapsed = working ? elapsedSince(since ?? foregroundStart(turnTimings), now) : null;
   return (
     <Appear show={working}>
       {working && <span role="status" className="sr-only">Busy</span>}

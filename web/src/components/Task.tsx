@@ -8,6 +8,7 @@ import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
+import { shownState } from '../lib/tasks';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
 import { Chip } from './ui/chip';
@@ -435,6 +436,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const noGit = project?.no_git;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
+  // A subagent still running after the turn keeps the Task Working (lib/tasks shownState).
+  const state = shownState(session);
+  // Then the floating label stays up too, timed from the first of them to start.
+  const labelled = working || state === 'working';
+  const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort()[0];
   const items = taskMenuItems(session, actions, 'header');
   const renamable = canRename(session, actions);
 
@@ -464,7 +470,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {readOnly(session) ? (
               <Chip fill="outline">{stageLabel(session)}</Chip>
             ) : (
-              <StateMark state={session.state} label title={detail} className="shrink-0" />
+              <StateMark state={state} label title={state !== session.state ? `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running` : detail} className="shrink-0" />
             )}
             {busy && <Spinner className="shrink-0" />}
             {/* The pencil takes no room until the title is hovered or it is focused, so the state chip sits by the title. */}
@@ -601,8 +607,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           {/* The working label stays centred just above the composer; while it shows, "Jump to bottom" is an arrow beside it, so it never moves. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
             <div className="relative flex">
-              <WorkingLabel working={working} items={liveItems} identityItems={session.history_index} turnTimings={session.turn_timings} />
-              <Appear show={jump && working} className="absolute top-0 left-full ml-2">
+              <WorkingLabel working={labelled} since={agentsSince} items={liveItems} identityItems={session.history_index} turnTimings={session.turn_timings} />
+              <Appear show={jump && labelled} className="absolute top-0 left-full ml-2">
                 <Tip label="Jump to bottom">
                   <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={scrollToBottom}>
                     <ArrowDown />
@@ -610,7 +616,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 </Tip>
               </Appear>
             </div>
-            <Appear show={jump && !working} className="shrink-0">
+            <Appear show={jump && !labelled} className="shrink-0">
               <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
                 <ArrowDown />
                 Jump to bottom
