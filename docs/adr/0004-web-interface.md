@@ -1655,11 +1655,12 @@ many languages; the page showed both as plain code.
 mermaid 11.17.2 (MIT, exact pin, `npm audit` clean) runs only inside one
 hidden `<iframe sandbox="allow-scripts">`, created on the first diagram and
 never given `allow-same-origin`. Its document, `/diagram-frame.html`, is a
-second Vite bundle embedded like the rest and served by the Go service with
-its own policy:
+second Vite bundle embedded like the rest, with its one script inline, and
+served by the Go service with its own policy, which allows exactly that
+script by its SHA-256 (computed from the embedded document at startup):
 
 ```text
-default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'
+default-src 'none'; script-src 'sha256-…'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'
 ```
 
 Every other response keeps the service policy unchanged, byte for byte
@@ -1712,6 +1713,16 @@ while transient failures can be retried when the block mounts again.
   none (cross-site). The document is static and unauthenticated like
   `index.html` and `/assets/*`; it holds no secret, so the auth model does
   not change. Protected API calls still require Host-bound authentication.
+- Behind a sign-in proxy (a login page in front of the service, with a
+  `SameSite=Lax` cookie) the frame's own script request reaches the proxy
+  without its cookie and is redirected to the login origin, which
+  `script-src 'self'` blocks: no diagram renders. The script is therefore
+  inline in the document, whose navigation does carry the cookie, and the
+  policy names its hash instead of `'self'`, which is stricter: no other
+  script of the origin may run in the frame. The build refuses a script
+  holding `<script`, `</script`, a CR or a NUL, which would end it early or
+  change what the browser hashes. The document is revalidated (a weak ETag),
+  so later loads cost a 304, not 3.4 MB.
 - Mermaid measures text in the frame, and gantt and the charts take their
   width from it, so the frame is laid out at 800×600, invisible, not
   `display: none`.
@@ -1722,8 +1733,7 @@ while transient failures can be retried when the block mounts again.
 
 | Method and path | Result |
 |---|---|
-| `GET /diagram-frame.html` | the frame document with the frame policy, `X-Frame-Options: SAMEORIGIN` and `Cache-Control: no-cache`; 403 for a foreign Host; 405 for other methods |
-| `GET /assets/diagram-frame-<hash>.js` | the frame bundle, served like every asset, with the service policy |
+| `GET /diagram-frame.html` | the frame document, its script inline, with the frame policy, `X-Frame-Options: SAMEORIGIN`, `Cache-Control: no-cache` and a weak `ETag` (304 on a match); 403 for a foreign Host; 405 for other methods |
 
 ### Highlighting
 
