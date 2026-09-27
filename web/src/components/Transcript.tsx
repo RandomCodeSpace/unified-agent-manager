@@ -6,7 +6,7 @@ import { modelName, type Interaction, type Item, type Subagent, type SubagentSta
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
-import { approvalMark, askedOn, changedFiles, currentStep, declarationIdentity, duration, elapsedSince, foregroundItems, foregroundStart, itemTook, completedDuration, isDeclarationBoundary, isFileDeclaration, isWork, newestFileDeclarations, promoted, segmentActivity, summarizeActivity, summarizeTurn, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, foregroundStart, itemTook, completedDuration, isWork, newestFileDeclarations, promoted, segmentActivity, summarizeActivity, summarizeTurn, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { turnVerb } from '../lib/verbs';
 import type { AgentTranscript } from '../state';
@@ -77,12 +77,10 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   }, [subagents]);
   const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
   const declarations = useMemo(() => newestFileDeclarations(items), [items]);
-  const showDeclaration = (item: Item) => isFileDeclaration(item) && declarations.has(declarationIdentity(item));
-  const declarationBoundary = (item: Item) => isDeclarationBoundary(item) && declarations.has(declarationIdentity(item));
   const groupItems = useIdentityEntries(identityItems, loose, questions);
   const turnIds = useGroupIdentities(groupItems, 'turn');
-  const groupIds = useGroupIdentities(groupItems, false, item => byParent.has(item.id) || declarationBoundary(item));
-  const toolGroupIds = useGroupIdentities(identityItems, true, item => byParent.has(item.id) || declarationBoundary(item) || !!endedQuestion(item, linked, live), [...loose, ...questions].filter(interaction => interaction.state !== 'pending').map(interaction => interaction.time));
+  const groupIds = useGroupIdentities(groupItems, false, item => byParent.has(item.id));
+  const toolGroupIds = useGroupIdentities(identityItems, true, item => byParent.has(item.id) || !!endedQuestion(item, linked, live), [...loose, ...questions].filter(interaction => interaction.state !== 'pending').map(interaction => interaction.time));
   // A subagent's row in any state: it stands in the answer while it runs and folds into the
   // turn's collapsed activity once it is idle, completed, failed or cancelled.
   const subagentRow = (item: Item) => {
@@ -92,16 +90,14 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   const running = (item: Item) => byParent.get(item.id)?.status === 'running';
   const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => byParent.get(item.id), foldedSubagentRow: (item) => (running(item) ? null : subagentRow(item)) };
   const compact = density === 'compact';
-  const special = (item: Item) => {
-    if (showDeclaration(item) && item.tool?.declaration) return (
-      <div key={`${item.agent_id ?? 'main'}:${item.id}`} data-history-anchor={item.id} className="flex flex-col gap-1">
-        <DeclaredFileCard declaration={item.tool.declaration} />
-        <ToolRow item={item} live={live} sessionId={sessionId} approvals={linked.get(item.id)} />
-      </div>
-    );
-    return running(item) ? subagentRow(item) : null;
+  const special = (item: Item) => (running(item) ? subagentRow(item) : null);
+  // What a call produced for the person stands in the answer while the call folds like any
+  // other: a declared file's card in both densities, the images its result returned in Compact.
+  const product = (item: Item) => {
+    const kind = callProduct(item, declarations);
+    return kind === 'card' || (compact && kind) ? <CallProduct key={`${item.agent_id ?? 'main'}:${item.id}`} item={item} sessionId={sessionId} card={kind === 'card'} className={arrival(item.id)} /> : null;
   };
-  const own = (item: Item) => running(item) || showDeclaration(item);
+  const own = (item: Item) => running(item) || callProduct(item, declarations) === 'card';
 
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
   const out: ReactNode[] = [];
@@ -133,12 +129,12 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       out.push(
         <div key={`turn-${id}`} className="flex flex-col gap-3">
           {(last && working) || showEnd || summary.count > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} timing={timing} summary={summary} entries={group} ctx={gctx} /> : null}
-          {renderCompact(group, gctx, special, own)}
+          {renderCompact(group, gctx, (item) => special(item) ?? product(item), own)}
           {changed.length > 0 && <ChangedLine files={changed} onOpen={onOpenChanges} />}
         </div>,
       );
     } else {
-      const nodes = renderEntries(group, gctx, special);
+      const nodes = renderEntries(group, gctx, special, product);
       out.push(
         <div key={`turn-${after}`} className="flex flex-col gap-3">
           {last && working ? <TurnStatus working /> : showEnd && <TurnStatus timing={timing} />}
@@ -175,8 +171,9 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
 /**
  * Compact (DESIGN.md turn line): the entries that stand in the answer, in order. Prose,
  * notices and steer bubbles; the promoted work, that is a question that no longer waits, a
- * call that returned images (its own row, the same row as inside a run) and a subagent row.
- * Everything else, failed calls included, is in the turn line and its timeline.
+ * running subagent's row and what a call produced (the images its result returned, a declared
+ * file's card) without the call's row. Every call, failed ones included, is in the turn line
+ * and its timeline.
  */
 function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Item) => ReactNode | null, own: (item: Item) => boolean): ReactNode[] {
   const out: ReactNode[] = [];
@@ -432,9 +429,10 @@ function thoughtEnds(items: Item[]): Map<string, string> {
  * Entries in order. Each contiguous run of work between two messages (thinking, tool calls,
  * decided requests, questions that no longer wait) folds into one activity row; prose and
  * the rows `special` takes over (subagents, whose controls must stay in view) stand on
- * their own between them.
+ * their own between them, and what `product` draws for a call in a run (a declared file's
+ * card) stands right after that run.
  */
-function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: Item) => ReactNode | null): ReactNode[] {
+function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: Item) => ReactNode | null, product?: (item: Item) => ReactNode | null): ReactNode[] {
   // A pending request is the action card under the transcript; it is not drawn twice.
   const drawn = entries.filter((entry) => entry.interaction?.state !== 'pending');
   // Tool calls that are a block of their own: a subagent row.
@@ -456,6 +454,10 @@ function renderEntries(entries: Entry[], ctx: RenderContext, special?: (item: It
     let endedAt: string | undefined;
     for (let k = pos; k < drawn.length && !endedAt; k++) endedAt = drawn[k].item?.time;
     out.push(<ActivityRun key={ctx.groupIds?.get(segment.key) ?? segment.key} identity={ctx.groupIds?.get(segment.key) ?? segment.key} entries={segment.entries} ctx={ctx} endedAt={endedAt} className={ctx.arrival(segment.key)} />);
+    for (const { item } of segment.entries) {
+      const node = item && product?.(item);
+      if (node) out.push(node);
+    }
   }
   return out;
 }
@@ -843,12 +845,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
           )}
         </div>
         {copyError && <p role="alert" className="text-caption text-error">{copyError}</p>}
-        {(images.length > 0 || item.images_note) && (
-          <div className="mt-1 mb-1.5 ml-7 flex flex-col gap-1">
-            {sessionId && <ImageThumbs sessionId={sessionId} images={images} />}
-            {item.images_note && <p className="text-caption text-muted">{item.images_note}</p>}
-          </div>
-        )}
+        {(images.length > 0 || item.images_note) && <ToolImages item={item} sessionId={sessionId} className="mt-1 mb-1.5 ml-7" />}
         <Menu.Root modal={false}>
           <Menu.Trigger render={<Button size="icon-sm" className="absolute top-0 right-0 text-muted opacity-0 transition-opacity group-hover/tool:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" aria-label={`Actions for ${label}`} />}>
             <Ellipsis />
@@ -862,6 +859,29 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
         <ContextMenu.Actions items={items} />
       </ContextMenu.Content>
     </ContextMenu.Root>
+  );
+});
+
+/** The images a tool's result returned, as thumbnails that open the viewer, and its note on any left out. */
+function ToolImages({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
+  return (
+    <div className={cn('flex flex-col gap-1', className)}>
+      {sessionId && <ImageThumbs sessionId={sessionId} images={item.images ?? []} />}
+      {item.images_note && <p className="text-caption text-muted">{item.images_note}</p>}
+    </div>
+  );
+}
+
+/**
+ * What a folded call produced for the person (DESIGN.md promotion), standing in the answer
+ * without the call's row, which is in the turn's activity: a declared file's card, or the
+ * images its result returned. Memoised on the call, which a streamed delta elsewhere leaves alone.
+ */
+const CallProduct = memo(function CallProduct({ item, sessionId, card, className }: { item: Item; sessionId?: string; card: boolean; className?: string }) {
+  return (
+    <div data-history-anchor={item.id} className={className}>
+      {card && item.tool?.declaration ? <DeclaredFileCard declaration={item.tool.declaration} /> : <ToolImages item={item} sessionId={sessionId} />}
+    </div>
   );
 });
 

@@ -686,8 +686,10 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           tool('c10', step(0.05), { name: 'web_fetch', title: 'Fetch http://localhost:8000/sky-dodge/', status: 'completed', input: '{"url":"http://localhost:8000/sky-dodge/"}', output: '<!doctype html>…' }),
           think('r7', 'The assets load from the subfolder; capture that URL.'),
           bash('c11', 'chromium --headless --no-sandbox --screenshot=sky-dodge.png http://localhost:8000/sky-dodge/', {}, 0.05),
-          // The capture, read back: a tool image, which stays in the answer.
+          // The capture, read back: a tool image, which stands in the answer while its call folds.
           { ...read('c12', 'sky-dodge.png'), images: [{ id: 'img-sky-dodge', mime: 'image/png', size: 20480, name: 'sky-dodge.png' }] },
+          // The captured page, declared: its file card stands in the answer, its call folds with the rest.
+          tool('c12b', step(0.05), { name: 'uam_show_file', title: 'Show sky-dodge/index.html', status: 'completed', input: JSON.stringify({ path: `${p('p3')}/sky-dodge/index.html`, title: 'The captured page', type_hint: 'html' }), output: 'Declared the file for display.', declaration: { artifact_id: 'artifact-sky-dodge', path: `${p('p3')}/sky-dodge/index.html`, title: 'The captured page', type_hint: 'html' } }),
           say('m3', 'Launched Sky Dodge in the browser and saved a screenshot to `sky-dodge.png`.\n\nThe server\'s root page had changed to a different app, so I loaded Sky Dodge directly without altering the current `index.html`.'),
           { id: 'u2', kind: 'user' as const, time: ago(step(1)), text: 'can you share inline image' },
           think('r8', 'Provide the markdown inline image path for the user, `![Sky Dodge](sky-dodge.png)`; no tools needed.'),

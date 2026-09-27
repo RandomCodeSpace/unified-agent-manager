@@ -308,11 +308,14 @@ are logged only at debug level (`UAM_DEBUG=1`).
   Tasks discards the old preview and cancels its pending read.
 - **Declared files**: the agent can call `uam_show_file` with an existing
   path and an optional title. Its completed tool call shows a file card on
-  that turn, including inside a subagent conversation. The card survives
-  reloading the conversation and appears in Compact and Detailed views.
-  It records display metadata only. Opening it still checks the current
-  file; a temporary file requires the same explicit grant as an ordinary
-  reference. A title or file-type hint cannot change those access rules.
+  that turn, including inside a subagent conversation: in Compact at the
+  call's place in the reply, in Detailed right after the activity row that
+  holds the call. The call itself folds into the turn's activity like any
+  other tool call. The card looks the same for every file type and survives
+  reloading the conversation. It records display metadata only. Opening it
+  still checks the current file; a temporary file requires the same
+  explicit grant as an ordinary reference. A title or file-type hint cannot
+  change those access rules.
 - **Subagents**: when the agent delegates work to a subagent, the Task shows
   one compact row under the tool call that started it (name, status, and
   the duration once it ended) while the subagent runs. Once it is idle or has
@@ -416,12 +419,14 @@ are logged only at debug level (`UAM_DEBUG=1`).
   archive, and delete).
 - **Images from tools**: when a tool returns an image, such as a screenshot
   or Copilot's `view` of an image file, UAM keeps a copy with the Task and
-  shows it as a thumbnail under that tool call, for subagents too; click it
-  to see it large. Kept: png, jpeg, gif and
-  webp up to 5 MiB, at most 50 per Task, one copy of each distinct image;
-  the tool call notes any it left out and why. They come back after a reload
-  or a restart of UAM, because Copilot records the image's bytes in its
-  session. They are deleted with the Task, like attachments.
+  shows it as a thumbnail under that tool call in the turn's activity, for
+  subagents too. In Compact the thumbnail also stands in the reply at the
+  call's place, without the tool call's line. Click it to see it large.
+  Kept: png, jpeg, gif and webp up to 5 MiB, at most 50 per Task, one copy
+  of each distinct image; the tool call notes any it left out and why. They
+  come back after a reload or a restart of UAM, because Copilot records the
+  image's bytes in its session. They are deleted with the Task, like
+  attachments.
 - **Messages while a turn runs**: you can queue a message or steer the turn
   with it.
   - **Queue** holds the message until the turn completes, then sends it as

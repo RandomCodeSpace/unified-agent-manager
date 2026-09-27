@@ -1,6 +1,6 @@
 import type { HistoryPage, Item, SessionDetail } from '../api';
 import { boundItems, idleSteerEcho, itemCursor, mergeItems, placeIdleSteerEchoes, TAIL_ITEMS } from './historyWindow.ts';
-import { isFileDeclaration, questionOf } from './transcript.ts';
+import { questionOf } from './transcript.ts';
 
 /** Identity/grouping records survive page eviction; no deferred or chat text does. */
 export function indexItem(item: Item): Item {
@@ -9,7 +9,7 @@ export function indexItem(item: Item): Item {
     id: item.id, kind: item.kind, time: item.time, ended_at: item.ended_at, agent_id: item.agent_id, delivery: item.delivery,
     ...(item.steer_status ? { steer_status: item.steer_status } : {}),
     compact: item.compact,
-    ...(tool ? { tool: { name: tool.name, status: tool.status, question_outcome: tool.question_outcome ?? questionOf(tool, undefined, true)?.outcome, ...(isFileDeclaration(item) ? { declaration_boundary: true } : {}) } } : {}),
+    ...(tool ? { tool: { name: tool.name, status: tool.status, question_outcome: tool.question_outcome ?? questionOf(tool, undefined, true)?.outcome } } : {}),
 
   };
 }

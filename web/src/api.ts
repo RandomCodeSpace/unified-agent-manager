@@ -332,8 +332,6 @@ export interface ToolCall {
   /** Exact local tool metadata; eligibility only, never proof that a file exists. */
   file_paths?: string[];
   declaration?: FileDeclaration;
-  /** Client-only marker for stable history grouping after declaration metadata leaves the item window. */
-  declaration_boundary?: boolean;
   display_arg?: string;
   path?: string;
   has_input?: boolean;
