@@ -618,7 +618,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   loading until its first recorded message, even when the service keeps only
   the newest part in memory. Older pages are read from Copilot's record on
   demand. The first such read of a long Task can take a second or two; later
-  pages come from the service's cache. These pages never change, so this
+  pages come from the service's cache. On an iPhone or iPad a loaded page
+  appears once scrolling stops, so the view never moves under your finger. These pages never change, so this
   browser also keeps the ones you have read in its own storage (IndexedDB),
   and reading them again, even after a reload or a service restart, needs no
   request. That cache holds at most 64 MiB (less when the browser gives this

@@ -55,6 +55,8 @@ interface Props {
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
 const BOTTOM_SLACK = 32;
+/** iOS WebKit: a scroll-position write under a finger or during momentum fights the scroller and jumps. */
+const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-callout', 'none');
 
 function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string; snapshot: BackgroundTasks | undefined; locked: boolean }) {
   const [response, setResponse] = useState<{ source: BackgroundTasks | undefined; snapshot: BackgroundTasks } | null>(null);
@@ -171,6 +173,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (sheetOpen && filesOpen) setFilesOpen(false);
   const atBottom = useRef(true);
   const lastScrollTop = useRef(0);
+  const touching = useRef(false);
+  const lastScrollAt = useRef(0);
   // Anchor by ID so incoming output cannot move the beginning while someone reads.
   const [firstVisible, setFirstVisible] = useState<string | undefined>(() => session.items[transcriptWindowStart(session.items)]?.id);
   let visibleStart = firstVisible === undefined ? -1 : session.items.findIndex((it) => it.id === firstVisible);
@@ -211,6 +215,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (synchronous) flushSync(update); // Parent locate needs its target in the DOM.
     else startTransition(update);
   }
+  /** Resolves once no finger is down and the view has stopped moving, so a page can land without a write mid-scroll. */
+  const scrollSettled = (signal: AbortSignal) => new Promise<void>((resolve) => {
+    const check = () => {
+      if (signal.aborted || (!touching.current && performance.now() - lastScrollAt.current > 150)) resolve();
+      else window.setTimeout(check, 50);
+    };
+    check();
+  });
 
   async function loadEarlier(before = session.history_before, synchronous = false, direction: 'older' | 'newer' = 'older') {
     if (!historyLive.current || historyAbort.current || historyRequest?.loading || Date.now() < historyRetryAt.current) return null;
@@ -234,6 +246,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       if (session.epoch && page.epoch && session.epoch !== page.epoch) {
         onHistoryReset();
         return null;
+      }
+      if (TOUCH_WEBKIT && !synchronous) {
+        window.clearTimeout(timeout);
+        await scrollSettled(controller.signal);
+        if (controller.signal.aborted) return null;
       }
       prepend(() => {
         dispatch({ type: 'history_loaded', sessionId: session.id, before, page });
@@ -452,6 +469,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (!el) return;
     const upwards = el.scrollTop < lastScrollTop.current;
     lastScrollTop.current = el.scrollTop;
+    lastScrollAt.current = performance.now();
     // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
     atBottom.current = !session.history_after && (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK || (atBottom.current && !upwards));
     setJump(!atBottom.current);
@@ -574,7 +592,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}
           onKeyDown={e => { if (e.defaultPrevented) return; if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) && nearEarlier(e.currentTarget)) void loadEarlier(); if (['ArrowDown', 'PageDown', 'End'].includes(e.key) && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
           onWheel={e => { if (e.deltaY < 0 && nearEarlier(e.currentTarget)) void loadEarlier(); if (e.deltaY > 0 && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
-          onTouchStart={e => { touchY.current = e.touches[0]?.clientY ?? 0; }}
+          onTouchStart={e => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0; }}
+          onTouchEnd={e => { touching.current = e.touches.length > 0; }}
+          onTouchCancel={e => { touching.current = e.touches.length > 0; }}
           onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current && nearEarlier(e.currentTarget)) void loadEarlier(); if (y < touchY.current && nearEdge(e.currentTarget, 'newer')) void loadNewer(); touchY.current = y; }}>
           <ScrollSentinel sentinelRef={sentinel} />
           {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
