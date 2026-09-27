@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -868,5 +869,371 @@ func TestToolImagesInReadOnlyHistoryAndImport(t *testing.T) {
 				t.Fatalf("stored image = %v", err)
 			}
 		})
+	}
+}
+
+// A name without a usable base is stored as "attachment", an unterminated
+// processing instruction is text rather than SVG, and a Task that does not
+// exist or a stopping service stores and serves nothing.
+func TestUploadNamesMissingTasksAndShutdown(t *testing.T) {
+	m, _, sum, _, dirs := uploadTask(t, "docs")
+	for _, tc := range []struct {
+		name, want string
+		data       []byte
+	}{
+		{"", "attachment", []byte("plain")},
+		{"notes/..", "attachment", []byte("dots")},
+		{"page.php", "page.php", []byte("<?php echo 'no closing tag';\n")},
+	} {
+		att := mustUpload(t, m, sum.ID, tc.name, tc.data)
+		if att.Name != tc.want || att.MIME != mimeText {
+			t.Fatalf("upload %q = %+v, want name %q as text", tc.name, att, tc.want)
+		}
+	}
+	missing := mustUUID(t)
+	if _, err := m.Upload(missing, "a.txt", []byte("a")); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("upload to a missing task = %v", err)
+	}
+	if _, _, _, err := m.Attachment(missing, mustUUID(t)); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("attachment of a missing task = %v", err)
+	}
+
+	files, _ := os.ReadDir(dirs.task(sum.ID))
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Upload(sum.ID, "late.txt", []byte("late")); err != errShuttingDown {
+		t.Fatalf("upload while stopping = %v", err)
+	}
+	if after, _ := os.ReadDir(dirs.task(sum.ID)); len(after) != len(files) {
+		t.Fatalf("stored %d files while stopping, had %d", len(after), len(files))
+	}
+}
+
+// An uploads path that is not a directory is never written through: the
+// service starts, and uploads and tool images fail to store.
+func TestUploadsRootThatIsNotADirectory(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	prov.SetModels(mediaModels, nil)
+	st := openTestStore(t)
+	root := filepath.Join(filepath.Dir(st.Path()), uploadsDir)
+	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := startManager(t, st, prov)
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: addProject(t, m, t.TempDir()), Model: "docs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Upload(sum.ID, "a.txt", []byte("a")); statusOf(err) != http.StatusInternalServerError || err.Error() != "store attachment: "+root+" is not a directory" {
+		t.Fatalf("upload = %v", err)
+	}
+	prov.Last().EmitItem(toolItem("t1", "", toolImage("shot.png", pngBytes(t))))
+	m.imageWG.Wait()
+	if items := detail(t, m, sum.ID).Items; len(items) != 1 || len(items[0].Images) != 0 || items[0].ImagesNote != "1 image not kept: could not be stored" {
+		t.Fatalf("items = %+v", items)
+	}
+	if data, err := os.ReadFile(root); err != nil || string(data) != "not a directory" {
+		t.Fatalf("uploads path = %q, %v", data, err)
+	}
+}
+
+// At start only whole records load: one that does not parse, names another
+// upload or has no regular file beside it is skipped, and entries of the
+// uploads directory that are not Task directories are left alone.
+func TestUploadRecordsLoadOnlyWhole(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	st := openTestStore(t)
+	m := startManager(t, st, prov)
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: addProject(t, m, t.TempDir())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := mustUpload(t, m, sum.ID, "kept.txt", []byte("kept"))
+	lost := mustUpload(t, m, sum.ID, "lost.txt", []byte("lost"))
+	moved := mustUpload(t, m, sum.ID, "moved.txt", []byte("moved"))
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(filepath.Dir(st.Path()), uploadsDir)
+	task := filepath.Join(root, sum.ID)
+	record, err := os.ReadFile(filepath.Join(task, kept.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	garbled, renamed := mustUUID(t), mustUUID(t)
+	for name, data := range map[string][]byte{
+		garbled + ".json": []byte("{not json"),
+		garbled:           []byte("garbled"),
+		renamed + ".json": record, // names kept, not renamed
+		renamed:           []byte("kept"),
+	} {
+		if err := os.WriteFile(filepath.Join(task, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(filepath.Join(task, lost.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(task, moved.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(task, moved.ID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stray := []string{filepath.Join(root, "README"), filepath.Join(root, "not-a-task")}
+	if err := os.WriteFile(stray[0], []byte("left alone"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(stray[1], 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	m2 := startManager(t, st, agenttest.NewProvider("fake", allCaps))
+	if _, data, _, err := m2.Attachment(sum.ID, kept.ID); err != nil || string(data) != "kept" {
+		t.Fatalf("whole record = %q, %v", data, err)
+	}
+	for what, id := range map[string]string{"unparsable record": garbled, "record of another upload": renamed, "record without its file": lost.ID, "record beside a directory": moved.ID} {
+		if _, _, _, err := m2.Attachment(sum.ID, id); statusOf(err) != http.StatusNotFound {
+			t.Fatalf("%s loaded: %v", what, err)
+		}
+	}
+	for _, path := range stray {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("stray entry %s removed: %v", path, err)
+		}
+	}
+}
+
+// Storage the service may not write or read is logged and survived: an
+// uploads directory it cannot create fails the upload, an expired upload it
+// cannot delete is forgotten anyway, an orphan it cannot remove stays, and a
+// Task directory it cannot list loads no uploads.
+func TestUploadStorageWithoutPermissions(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	prov := agenttest.NewProvider("fake", allCaps)
+	st := openTestStore(t)
+	m := startManager(t, st, prov)
+	base := filepath.Dir(st.Path())
+	root := filepath.Join(base, uploadsDir)
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: addProject(t, m, t.TempDir())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chmod := func(dir string, mode os.FileMode) {
+		t.Helper()
+		if err := os.Chmod(dir, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	chmod(base, 0o500)
+	_, err = m.Upload(sum.ID, "a.txt", []byte("a"))
+	chmod(base, 0o700)
+	if statusOf(err) != http.StatusInternalServerError || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("upload without an uploads directory = %v", err)
+	}
+
+	stale := mustUpload(t, m, sum.ID, "stale.txt", []byte("stale"))
+	task := filepath.Join(root, sum.ID)
+	chmod(task, 0o500)
+	later := time.Now().Add(uploadExpiry + time.Minute)
+	m.now = func() time.Time { return later }
+	m.sweepUploads()
+	chmod(task, 0o700)
+	if _, _, _, err := m.Attachment(sum.ID, stale.ID); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("expired upload = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(task, stale.ID)); err != nil {
+		t.Fatalf("the undeletable file: %v", err)
+	}
+
+	other, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: addProject(t, m, t.TempDir())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlisted := mustUpload(t, m, other.ID, "b.txt", []byte("b"))
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(root, mustUUID(t), "locked")
+	if err := os.MkdirAll(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "file"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	otherTask := filepath.Join(root, other.ID)
+	chmod(locked, 0o500)
+	chmod(otherTask, 0o300)
+	t.Cleanup(func() {
+		_ = os.Chmod(locked, 0o700)
+		_ = os.Chmod(otherTask, 0o700)
+	})
+	m2 := startManager(t, st, agenttest.NewProvider("fake", allCaps))
+	if _, err := os.Stat(filepath.Join(locked, "file")); err != nil {
+		t.Fatalf("an orphan that cannot be removed: %v", err)
+	}
+	if _, _, _, err := m2.Attachment(other.ID, unlisted.ID); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("upload of an unlistable directory = %v", err)
+	}
+}
+
+// A PDF still goes, as bytes without a path, when its named copy cannot be
+// made, and the prompt is sent even when its upload cannot be marked used.
+func TestPromptPDFWithoutANamedCopy(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	m, _, sum, conv, dirs := uploadTask(t, "docs")
+	task := dirs.task(sum.ID)
+	for i, tc := range []struct {
+		what     string
+		mode     os.FileMode
+		lockCopy bool // the named copy's directory exists, read-only
+		marked   bool
+	}{
+		{"task directory without read", 0o100, false, false},
+		{"task directory without write", 0o500, false, false},
+		{"read-only named copy directory", 0o700, true, true},
+	} {
+		a := mustUpload(t, m, sum.ID, "doc.pdf", pdfBytes)
+		copyDir := filepath.Join(task, a.ID+".d")
+		if tc.lockCopy {
+			if err := os.Mkdir(copyDir, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(copyDir, 0o700) })
+		}
+		if err := os.Chmod(task, tc.mode); err != nil {
+			t.Fatal(err)
+		}
+		sub, err := m.Submit(sum.ID, PromptRequest{Text: "read it", RequestID: mustUUID(t), Attachments: []string{a.ID}})
+		if err := os.Chmod(task, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err != nil || sub.Status != SubmissionAccepted {
+			t.Fatalf("%s: send = %+v, %v", tc.what, sub, err)
+		}
+		waitUntil(t, "prompt sent", func() bool { return len(conv.Prompts()) == i+1 })
+		if p := conv.Prompts()[i]; len(p.Attachments) != 1 || p.Attachments[0].Path != "" || !bytes.Equal(p.Attachments[0].Data, pdfBytes) {
+			t.Fatalf("%s: sent %+v", tc.what, p.Attachments)
+		}
+		if _, err := os.Stat(filepath.Join(copyDir, "doc.pdf")); !os.IsNotExist(err) {
+			t.Fatalf("%s: named copy = %v", tc.what, err)
+		}
+		var record upload
+		data, _ := os.ReadFile(filepath.Join(task, a.ID+".json"))
+		if json.Unmarshal(data, &record) != nil || record.UsedAt.IsZero() == tc.marked {
+			t.Fatalf("%s: record = %s", tc.what, data)
+		}
+		conv.EmitTurn(agentapi.TurnCompleted, "")
+	}
+}
+
+// A PDF sent again goes with the named copy made the first time.
+func TestPromptPDFReusesItsNamedCopy(t *testing.T) {
+	m, _, sum, conv, dirs := uploadTask(t, "docs")
+	a := mustUpload(t, m, sum.ID, "spec.pdf", pdfBytes)
+	want := filepath.Join(dirs.task(sum.ID), a.ID+".d", "spec.pdf")
+	for i := range 2 {
+		if _, err := m.Submit(sum.ID, PromptRequest{Text: "read it", RequestID: mustUUID(t), Attachments: []string{a.ID}}); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, "prompt sent", func() bool { return len(conv.Prompts()) == i+1 })
+		if p := conv.Prompts()[i]; len(p.Attachments) != 1 || p.Attachments[0].Path != want {
+			t.Fatalf("send %d = %+v, want path %s", i, p.Attachments, want)
+		}
+		conv.EmitTurn(agentapi.TurnCompleted, "")
+	}
+	if data, err := os.ReadFile(want); err != nil || !bytes.Equal(data, pdfBytes) {
+		t.Fatalf("named copy = %q, %v", data, err)
+	}
+}
+
+// An upload whose file is gone, or is no longer its size, is refused when a
+// prompt carries it and is not served.
+func TestUploadWhoseFileChangedIsRefused(t *testing.T) {
+	m, _, sum, conv, dirs := uploadTask(t, "docs")
+	gone := mustUpload(t, m, sum.ID, "gone.txt", []byte("gone"))
+	short := mustUpload(t, m, sum.ID, "short.txt", []byte("twelve bytes"))
+	if err := os.Remove(filepath.Join(dirs.task(sum.ID), gone.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirs.task(sum.ID), short.ID), []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []agentapi.Attachment{gone, short} {
+		sub, err := m.Submit(sum.ID, PromptRequest{Text: "x", RequestID: mustUUID(t), Attachments: []string{a.ID}})
+		if err != nil || sub.Status != SubmissionRejected || sub.Error != "attachment "+a.Name+" is no longer stored" {
+			t.Fatalf("send %s = %+v, %v", a.Name, sub, err)
+		}
+		if _, _, _, err := m.Attachment(sum.ID, a.ID); statusOf(err) != http.StatusNotFound || !strings.Contains(err.Error(), "attachment not found") {
+			t.Fatalf("serve %s = %v", a.Name, err)
+		}
+	}
+	if p := conv.Prompts(); len(p) != 0 {
+		t.Fatalf("sent %+v", p)
+	}
+}
+
+// A user's upload is never a tool image: the same bytes returned by a tool
+// are stored as a tool image of their own.
+func TestToolImagesAreNotMatchedToUploads(t *testing.T) {
+	m, _, sum, conv, _ := uploadTask(t, "docs")
+	img := pngBytes(t)
+	up := mustUpload(t, m, sum.ID, "shot.png", img)
+	conv.EmitItem(toolItem("t1", "", toolImage("shot.png", img)))
+	m.imageWG.Wait()
+	items := detail(t, m, sum.ID).Items
+	if len(items) != 1 || len(items[0].Images) != 1 || items[0].Images[0].ID == up.ID || !validRequestID(items[0].Images[0].ID) {
+		t.Fatalf("items = %+v, upload %s", items, up.ID)
+	}
+	if _, data, _, err := m.Attachment(sum.ID, items[0].Images[0].ID); err != nil || !bytes.Equal(data, img) {
+		t.Fatalf("tool image = %v", err)
+	}
+}
+
+// Tool images whose Task is deleted while they wait to be stored are not
+// written, and nor is a file stored for a Task deleted meanwhile.
+func TestFilesOfADeletedTaskAreNotKept(t *testing.T) {
+	m, _, sum, conv, dirs := uploadTask(t, "docs")
+	s, err := m.lookup(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	m.storeImageHook = func() {
+		entered <- struct{}{}
+		<-release
+	}
+	conv.EmitItem(toolItem("t1", "", toolImage("shot.png", pngBytes(t))))
+	<-entered
+	if _, err := m.Archive(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	m.imageWG.Wait()
+	if _, err := os.Stat(dirs.task(sum.ID)); !os.IsNotExist(err) {
+		t.Fatalf("a deleted task's tool image was stored: %v", err)
+	}
+
+	u := &upload{ID: mustUUID(t), Name: "late.txt", MIME: mimeText, Size: 4, CreatedAt: time.Now()}
+	if err := m.storeUpload(s, u, []byte("late")); !errors.Is(err, errTaskRemoved) {
+		t.Fatalf("store for a deleted task = %v", err)
+	}
+	if _, err := os.Stat(dirs.task(sum.ID)); !os.IsNotExist(err) {
+		t.Fatalf("a deleted task's upload was kept: %v", err)
+	}
+	m.mu.Lock()
+	recorded := s.uploads[u.ID]
+	m.mu.Unlock()
+	if recorded != nil {
+		t.Fatal("a deleted task recorded the upload")
 	}
 }

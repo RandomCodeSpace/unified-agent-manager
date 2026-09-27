@@ -810,7 +810,7 @@ func (m *Manager) lookup(id string) (*webSession, error) {
 	defer m.mu.Unlock()
 	s := m.sessions[id]
 	if s == nil {
-		return nil, newError(http.StatusNotFound, "session not found")
+		return nil, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	return s, nil
 }
@@ -884,7 +884,7 @@ func (m *Manager) Summary(id string) (SessionSummary, error) {
 	defer m.mu.Unlock()
 	s := m.sessions[id]
 	if s == nil {
-		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	return m.summaryLocked(s), nil
 }
@@ -900,7 +900,7 @@ func (m *Manager) Detail(id string) (SessionDetail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s.removed {
-		return SessionDetail{}, newError(http.StatusNotFound, "session not found")
+		return SessionDetail{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	m.viewHistoryLocked(s)
 	return m.detailLocked(s), nil
@@ -912,12 +912,12 @@ func (m *Manager) Subagent(id, agentID string) (SubagentDetail, error) {
 	defer m.mu.Unlock()
 	s := m.sessions[id]
 	if s == nil {
-		return SubagentDetail{}, newError(http.StatusNotFound, "session not found")
+		return SubagentDetail{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	m.viewHistoryLocked(s)
 	sa := s.subIdx[agentID]
 	if sa == nil {
-		return SubagentDetail{}, newError(http.StatusNotFound, "subagent not found")
+		return SubagentDetail{}, newError(http.StatusNotFound, msgSubagentNotFound)
 	}
 	return SubagentDetail{Seq: m.seq, Subagent: *sa, Items: s.agentItems(agentID)}, nil
 }
@@ -1066,7 +1066,7 @@ func (m *Manager) taskDefaults(d TaskDefaults) (TaskDefaults, error) {
 	selectionErr := m.validateSelectionLocked(d.Provider, d.Model, d.Effort, d.ContextSize)
 	m.mu.Unlock()
 	if !registered {
-		return TaskDefaults{}, newError(http.StatusBadRequest, "unknown provider %q", d.Provider)
+		return TaskDefaults{}, newError(http.StatusBadRequest, msgUnknownProvider, d.Provider)
 	}
 	if selectionErr != nil {
 		return TaskDefaults{}, selectionErr
@@ -1185,7 +1185,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	hidden := make(map[string][]string, len(p.HiddenModels))
 	for provider, ids := range p.HiddenModels {
 		if m.providers[provider] == nil {
-			return Settings{}, newError(http.StatusBadRequest, "unknown provider %q", clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
+			return Settings{}, newError(http.StatusBadRequest, msgUnknownProvider, clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
 		}
 		if slices.ContainsFunc(ids, func(id string) bool { return !store.ValidHiddenModel(id) }) {
 			return Settings{}, newError(http.StatusBadRequest, "a hidden model ID must be 1 to %d bytes without control characters", store.MaxHiddenModelBytes)
@@ -1199,7 +1199,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	}
 	for provider := range p.TitleModel {
 		if m.providers[provider] == nil {
-			return Settings{}, newError(http.StatusBadRequest, "unknown provider %q", clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
+			return Settings{}, newError(http.StatusBadRequest, msgUnknownProvider, clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
 		}
 	}
 	if p.CustomModels != nil {
@@ -1418,7 +1418,7 @@ func (m *Manager) Delete(id string) error {
 	m.mu.Unlock()
 	switch {
 	case gone:
-		return newError(http.StatusNotFound, "session not found")
+		return newError(http.StatusNotFound, msgSessionNotFound)
 	case closed:
 		return errShuttingDown
 	case !archived:
@@ -1871,11 +1871,11 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	}
 	hasPrompt := strings.TrimSpace(req.Prompt) != ""
 	if hasPrompt && len(req.Prompt) > maxPromptBytes {
-		return SessionSummary{}, newError(http.StatusRequestEntityTooLarge, "prompt is too large")
+		return SessionSummary{}, newError(http.StatusRequestEntityTooLarge, msgPromptTooLarge)
 	}
 	reqID := req.RequestID
 	if reqID != "" && !validRequestID(reqID) {
-		return SessionSummary{}, newError(http.StatusBadRequest, "request_id must be a UUID")
+		return SessionSummary{}, newError(http.StatusBadRequest, msgRequestIDNotUUID)
 	}
 	if reqID != "" {
 		if existing, found := m.claimCreate(reqID); found {
@@ -2017,7 +2017,7 @@ func (m *Manager) availableProvider(name string) (agentapi.Provider, error) {
 	info := m.infos[name]
 	m.mu.Unlock()
 	if prov == nil {
-		return nil, newError(http.StatusBadRequest, "unknown provider %q", name)
+		return nil, newError(http.StatusBadRequest, msgUnknownProvider, name)
 	}
 	if info.Available {
 		return prov, nil
@@ -2117,7 +2117,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	if s.removed {
 		m.finishOpeningLocked(s)
 		m.mu.Unlock()
-		return newError(http.StatusNotFound, "session not found")
+		return newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	if s.conv != nil || m.closed || (!explicit && !m.autoOpenableLocked(s)) {
 		before := m.summaryLocked(s)
@@ -2273,7 +2273,7 @@ type turnInput struct {
 // while the prompt waits in the queue, without contacting the provider.
 func (m *Manager) Submit(id string, req PromptRequest) (Submission, error) {
 	if !validRequestID(req.RequestID) {
-		return Submission{}, newError(http.StatusBadRequest, "request_id must be a UUID")
+		return Submission{}, newError(http.StatusBadRequest, msgRequestIDNotUUID)
 	}
 	mode := req.Mode
 	switch mode {
@@ -2287,7 +2287,7 @@ func (m *Manager) Submit(id string, req PromptRequest) (Submission, error) {
 		return Submission{}, newError(http.StatusBadRequest, "prompt text is required")
 	}
 	if len(req.Text) > maxPromptBytes {
-		return Submission{}, newError(http.StatusRequestEntityTooLarge, "prompt is too large")
+		return Submission{}, newError(http.StatusRequestEntityTooLarge, msgPromptTooLarge)
 	}
 	s, err := m.lookup(id)
 	if err != nil {
@@ -2301,7 +2301,7 @@ func (m *Manager) Submit(id string, req PromptRequest) (Submission, error) {
 // turn refuses it, and there is no queue or steer.
 func (m *Manager) Command(id string, req CommandRequest) (Submission, error) {
 	if !validRequestID(req.RequestID) {
-		return Submission{}, newError(http.StatusBadRequest, "request_id must be a UUID")
+		return Submission{}, newError(http.StatusBadRequest, msgRequestIDNotUUID)
 	}
 	if !validCommandName(req.Name) {
 		return Submission{}, newError(http.StatusBadRequest, "name must be a command name without the slash or spaces")
@@ -2356,7 +2356,7 @@ func (m *Manager) Commands(ctx context.Context, id string) ([]agentapi.Command, 
 	conv, state := s.conv, s.state()
 	m.mu.Unlock()
 	if conv == nil {
-		return nil, newError(http.StatusConflict, "the provider conversation is not open")
+		return nil, newError(http.StatusConflict, msgConversationNotOpen)
 	}
 	commands, err := m.listCommands(conv)
 	if errors.Is(err, agentapi.ErrUnsupported) {
@@ -2431,7 +2431,7 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 	}
 	if s.removed {
 		m.mu.Unlock()
-		return Submission{}, newError(http.StatusNotFound, "session not found")
+		return Submission{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	if m.closed {
 		m.mu.Unlock()
@@ -2545,7 +2545,7 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	uploads, err := m.checkUploadsLocked(s, in.attachments)
 	m.mu.Unlock()
 	if conv == nil {
-		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open", true), nil
+		return m.recordSubmission(s, reqID, SubmissionRejected, msgConversationNotOpen, true), nil
 	}
 	var files []agentapi.File
 	var blobs []agentapi.Blob
@@ -2568,7 +2568,7 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	m.mu.Lock()
 	if s.conv != conv {
 		m.mu.Unlock()
-		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open", true), nil
+		return m.recordSubmission(s, reqID, SubmissionRejected, msgConversationNotOpen, true), nil
 	}
 	// Reopening can surface a turn or request the provider still has.
 	if busy(s.state()) {
@@ -2627,7 +2627,7 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 // caller holds s.op.
 func (m *Manager) steer(s *webSession, conv agentapi.Conversation, in turnInput, uploads []*upload, reqID string) (Submission, error) {
 	if conv == nil {
-		return m.recordSubmission(s, reqID, SubmissionRejected, "the provider conversation is not open", false), nil
+		return m.recordSubmission(s, reqID, SubmissionRejected, msgConversationNotOpen, false), nil
 	}
 	if sub, found, err := m.checkedPrompt(s, reqID); found || err != nil {
 		return sub, err
@@ -2826,7 +2826,7 @@ func (m *Manager) CancelQueued(id, reqID string) error {
 	s := m.sessions[id]
 	switch {
 	case s == nil:
-		return newError(http.StatusNotFound, "session not found")
+		return newError(http.StatusNotFound, msgSessionNotFound)
 	case m.closed:
 		return errShuttingDown
 	case s.stage != StageActive:
@@ -2865,7 +2865,7 @@ func (m *Manager) ClearQueue(id string) error {
 	s := m.sessions[id]
 	switch {
 	case s == nil:
-		return newError(http.StatusNotFound, "session not found")
+		return newError(http.StatusNotFound, msgSessionNotFound)
 	case m.closed:
 		return errShuttingDown
 	case s.stage != StageActive:
@@ -2891,7 +2891,7 @@ func (m *Manager) ResumeQueue(id string) error {
 	s := m.sessions[id]
 	switch {
 	case s == nil:
-		return newError(http.StatusNotFound, "session not found")
+		return newError(http.StatusNotFound, msgSessionNotFound)
 	case m.closed:
 		return errShuttingDown
 	case s.stage != StageActive:
@@ -2952,7 +2952,7 @@ func (m *Manager) Cancel(id string) (SessionSummary, error) {
 	case errors.Is(err, agentapi.ErrUnsupported):
 		return SessionSummary{}, newError(http.StatusConflict, "this provider does not support cancelling a turn")
 	case errors.Is(err, agentapi.ErrClosed):
-		return SessionSummary{}, newError(http.StatusConflict, "the provider conversation is closed")
+		return SessionSummary{}, newError(http.StatusConflict, msgConversationClosed)
 	default:
 		return SessionSummary{}, newError(http.StatusBadGateway, "cancel failed: %s", shortError(err))
 	}
@@ -2973,10 +2973,10 @@ func (m *Manager) CancelSubagent(id, agentID string) (agentapi.Subagent, error) 
 	switch {
 	case s.removed:
 		m.mu.Unlock()
-		return agentapi.Subagent{}, newError(http.StatusNotFound, "session not found")
+		return agentapi.Subagent{}, newError(http.StatusNotFound, msgSessionNotFound)
 	case sa == nil:
 		m.mu.Unlock()
-		return agentapi.Subagent{}, newError(http.StatusNotFound, "subagent not found")
+		return agentapi.Subagent{}, newError(http.StatusNotFound, msgSubagentNotFound)
 	case sa.Status.Terminal(), s.stoppedSubagents[agentID]:
 		result := *sa
 		m.mu.Unlock()
@@ -3010,7 +3010,7 @@ func (m *Manager) CancelSubagent(id, agentID string) (agentapi.Subagent, error) 
 	case errors.Is(err, agentapi.ErrUnsupported):
 		return agentapi.Subagent{}, newError(http.StatusConflict, "this provider cannot stop a subagent")
 	case errors.Is(err, agentapi.ErrClosed):
-		return agentapi.Subagent{}, newError(http.StatusConflict, "the provider conversation is closed")
+		return agentapi.Subagent{}, newError(http.StatusConflict, msgConversationClosed)
 	default:
 		return agentapi.Subagent{}, newError(http.StatusBadGateway, "could not stop subagent: %s", shortError(err))
 	}
@@ -3023,13 +3023,13 @@ func (m *Manager) CancelSubagent(id, agentID string) (agentapi.Subagent, error) 
 // returns the recorded outcome without contacting the provider.
 func (m *Manager) PromptSubagent(id, agentID, text, requestID string) (Submission, error) {
 	if !validRequestID(requestID) {
-		return Submission{}, newError(http.StatusBadRequest, "request_id must be a UUID")
+		return Submission{}, newError(http.StatusBadRequest, msgRequestIDNotUUID)
 	}
 	if strings.TrimSpace(text) == "" {
 		return Submission{}, newError(http.StatusBadRequest, "prompt text is required")
 	}
 	if len(text) > maxPromptBytes {
-		return Submission{}, newError(http.StatusRequestEntityTooLarge, "prompt is too large")
+		return Submission{}, newError(http.StatusRequestEntityTooLarge, msgPromptTooLarge)
 	}
 	s, err := m.lookup(id)
 	if err != nil {
@@ -3059,15 +3059,15 @@ func (m *Manager) PromptSubagent(id, agentID, text, requestID string) (Submissio
 	sa := s.subIdx[agentID]
 	switch {
 	case s.removed:
-		err = newError(http.StatusNotFound, "session not found")
+		err = newError(http.StatusNotFound, msgSessionNotFound)
 	case sa == nil:
-		err = newError(http.StatusNotFound, "subagent not found")
+		err = newError(http.StatusNotFound, msgSubagentNotFound)
 	case m.closed:
 		err = errShuttingDown
 	case s.stage != StageActive:
 		err = s.readOnlyLocked()
 	case s.conv == nil:
-		err = newError(http.StatusConflict, "the provider conversation is not open")
+		err = newError(http.StatusConflict, msgConversationNotOpen)
 	case busy(s.state()):
 		err = newError(http.StatusConflict, "the task is running or waiting for input; a subagent takes a follow-up only while the task is idle")
 	case sa.Status == agentapi.SubagentRunning:
@@ -3089,7 +3089,7 @@ func (m *Manager) PromptSubagent(id, agentID, text, requestID string) (Submissio
 	case errors.Is(err, agentapi.ErrUnsupported):
 		return Submission{}, newError(http.StatusConflict, "this provider cannot chat with a subagent")
 	case errors.Is(err, agentapi.ErrClosed):
-		return Submission{}, newError(http.StatusConflict, "the provider conversation is closed")
+		return Submission{}, newError(http.StatusConflict, msgConversationClosed)
 	}
 	log.Warn("web subagent follow-up failed", "session", s.id, "error", err)
 	if errors.Is(err, agentapi.ErrSubmissionUncertain) {
@@ -3124,7 +3124,7 @@ func (m *Manager) Close(id string) (SessionSummary, error) {
 	m.mu.Lock()
 	if s.removed {
 		m.mu.Unlock()
-		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	before := m.summaryLocked(s)
 	conv := m.disconnectLocked(s)
@@ -3256,7 +3256,7 @@ func (m *Manager) moveStage(id, to string, from ...string) (SessionSummary, erro
 	switch {
 	case s.removed:
 		m.mu.Unlock()
-		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	case m.closed:
 		m.mu.Unlock()
 		return SessionSummary{}, errShuttingDown
@@ -3356,7 +3356,7 @@ func (m *Manager) Rename(id, name string) (SessionSummary, error) {
 	defer m.mu.Unlock()
 	s := m.sessions[id]
 	if s == nil {
-		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	if s.stage == StageArchived {
 		return SessionSummary{}, s.readOnlyLocked()
@@ -3388,7 +3388,7 @@ func (m *Manager) setModelLocked(s *webSession, model, effort, contextSize *stri
 	m.mu.Lock()
 	if s.removed {
 		m.mu.Unlock()
-		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	if s.stage != StageActive {
 		m.mu.Unlock()
@@ -3486,7 +3486,7 @@ func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agen
 	s := m.sessions[id]
 	if s == nil {
 		m.mu.Unlock()
-		return agentapi.Interaction{}, newError(http.StatusNotFound, "session not found")
+		return agentapi.Interaction{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	ix := s.ixIdx[interactionID]
 	if ix == nil {
@@ -3504,10 +3504,10 @@ func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agen
 	conv := s.conv
 	if conv == nil {
 		before := m.summaryLocked(s)
-		m.expireLocked(s, ix, "the provider conversation is not open")
+		m.expireLocked(s, ix, msgConversationNotOpen)
 		m.changedLocked(s, before)
 		m.mu.Unlock()
-		return agentapi.Interaction{}, newError(http.StatusGone, "the interaction expired")
+		return agentapi.Interaction{}, newError(http.StatusGone, msgInteractionExpired)
 	}
 	ix.answering = true
 	m.mu.Unlock()
@@ -3547,7 +3547,7 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 			m.expireLocked(s, ix, "the provider no longer waits for this answer")
 		}
 		m.changedLocked(s, before)
-		return agentapi.Interaction{}, newError(http.StatusGone, "the interaction expired")
+		return agentapi.Interaction{}, newError(http.StatusGone, msgInteractionExpired)
 	default:
 		if wasYolo && ix.State == agentapi.InteractionPending {
 			m.publishInteractionLocked(s, ix) // the browser learns it waits for the user
@@ -3620,7 +3620,7 @@ func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
 	defer m.mu.Unlock()
 	s := m.sessions[id]
 	if s == nil {
-		return SessionSummary{}, newError(http.StatusNotFound, "session not found")
+		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	if err := s.readOnlyLocked(); err != nil {
 		return SessionSummary{}, err
@@ -3635,7 +3635,7 @@ func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
 func interactionOpen(ix *interaction) error {
 	switch ix.State {
 	case agentapi.InteractionExpired:
-		return newError(http.StatusGone, "the interaction expired")
+		return newError(http.StatusGone, msgInteractionExpired)
 	case agentapi.InteractionPending:
 		if ix.answering {
 			return newError(http.StatusConflict, "the interaction is already being answered")

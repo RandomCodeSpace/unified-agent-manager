@@ -95,7 +95,7 @@ func TestAcceptanceSpawnLeavesTheLauncherServiceUnderTheUserManager(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Contains(string(cgroup), "/uam-web-"); got != tc.scope {
+			if strings.Contains(string(cgroup), "/uam-web-") != tc.scope {
 				t.Fatalf("service cgroup = %q, want own scope %v", cgroup, tc.scope)
 			}
 		})

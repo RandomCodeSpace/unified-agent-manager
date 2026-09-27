@@ -119,9 +119,12 @@ func (c *conversation) checkExecutionLocked() {
 	}()
 }
 
+// allowAllCommand is the native command the Task's permission policy handles.
+const allowAllCommand = "allow-all"
+
 func commandDisabled(name string) string {
 	switch name {
-	case "allow-all", "permissions", "model", "rename", "context", "usage", "list-dirs", "env", "skills", "autopilot", "init", "review", "blame", "fleet", "research", "security-review":
+	case allowAllCommand, "permissions", "model", "rename", "context", "usage", "list-dirs", "env", "skills", "autopilot", "init", "review", "blame", "fleet", "research", "security-review":
 		return ""
 	case "plan":
 		return "Plan exit approval is not supported by the web client yet"
@@ -179,7 +182,7 @@ func (c *conversation) Commands(ctx context.Context) ([]agentapi.Command, error)
 			item.InputHint = "Task name (omit to open rename)"
 			item.InputChoices = nil
 			item.InputRequired = false
-		case "allow-all":
+		case allowAllCommand:
 			item.Description = "Set this Task's permission policy: on (Yolo), off (Safe), show; omit to toggle"
 		case "permissions":
 			item.Description = "Manage this Task's Safe/Yolo permission policy"
@@ -228,7 +231,7 @@ func (c *conversation) ExecuteCommand(ctx context.Context, name string, args age
 	}
 	name = offered.Name
 	switch name {
-	case "model", "rename", "allow-all", "permissions":
+	case "model", "rename", allowAllCommand, "permissions":
 		return nil, errors.New("this command is handled by the web Task settings")
 	}
 	if offered.InputRequired && strings.TrimSpace(args.Text) == "" {

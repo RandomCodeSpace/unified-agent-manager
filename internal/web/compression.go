@@ -17,7 +17,7 @@ var responseGzipPool = sync.Pool{New: func() any {
 func serveCompressed(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	writer := &compressedResponse{
 		ResponseWriter: w,
-		acceptsGzip:    acceptsGzip(r.Header.Values("Accept-Encoding")),
+		acceptsGzip:    acceptsGzip(r.Header.Values(headerAcceptEncoding)),
 		head:           r.Method == http.MethodHead,
 		ranged:         r.Header.Get("Range") != "",
 	}
@@ -89,12 +89,12 @@ func compressibleType(value string) bool {
 func varyAcceptEncoding(h http.Header) {
 	for _, value := range h.Values("Vary") {
 		for _, field := range strings.Split(value, ",") {
-			if field = strings.TrimSpace(field); field == "*" || strings.EqualFold(field, "Accept-Encoding") {
+			if field = strings.TrimSpace(field); field == "*" || strings.EqualFold(field, headerAcceptEncoding) {
 				return
 			}
 		}
 	}
-	h.Add("Vary", "Accept-Encoding")
+	h.Add("Vary", headerAcceptEncoding)
 }
 
 type compressedResponse struct {
@@ -122,8 +122,8 @@ func (w *compressedResponse) WriteHeader(status int) {
 	varyAcceptEncoding(h)
 	if w.acceptsGzip && !w.ranged && status >= 200 && status != http.StatusNoContent &&
 		status != http.StatusResetContent && status != http.StatusNotModified && status != http.StatusPartialContent &&
-		h.Get("Content-Encoding") == "" && h.Get("Content-Disposition") == "" && compressibleType(h.Get("Content-Type")) {
-		h.Set("Content-Encoding", "gzip")
+		h.Get(headerContentEncoding) == "" && h.Get(headerContentDisposition) == "" && compressibleType(h.Get(headerContentType)) {
+		h.Set(headerContentEncoding, "gzip")
 		h.Del("Content-Length")
 		// HEAD describes the GET representation without writing a gzip member.
 		if !w.head {
@@ -136,8 +136,8 @@ func (w *compressedResponse) WriteHeader(status int) {
 
 func (w *compressedResponse) Write(p []byte) (int, error) {
 	if !w.wroteHeader {
-		if _, set := w.Header()["Content-Type"]; !set && w.Header().Get("Content-Encoding") == "" && len(p) != 0 {
-			w.Header().Set("Content-Type", http.DetectContentType(p))
+		if _, set := w.Header()[headerContentType]; !set && w.Header().Get(headerContentEncoding) == "" && len(p) != 0 {
+			w.Header().Set(headerContentType, http.DetectContentType(p))
 		}
 		w.WriteHeader(http.StatusOK)
 	}

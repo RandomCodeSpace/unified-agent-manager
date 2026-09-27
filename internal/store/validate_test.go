@@ -323,7 +323,7 @@ func TestValidateRejectsUnsafeProviderSessionID(t *testing.T) {
 	}
 	for _, bad := range []string{"--continue", "-leadingdash", "x; rm -rf /", "id with space", "$(boom)"} {
 		rec.ProviderSessionID = bad
-		if reason := validateRecord(rec); reason == "" {
+		if validateRecord(rec) == "" {
 			t.Fatalf("provider session id %q must be rejected", bad)
 		}
 	}

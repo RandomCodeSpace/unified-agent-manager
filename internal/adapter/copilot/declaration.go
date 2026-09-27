@@ -67,8 +67,8 @@ func newDeclarationTool(validate func(context.Context, string) (string, error)) 
 	return &declarationTool{validate: validate, stopCtx: ctx, stopCancel: cancel, calls: make(map[string]*declarationCall)}
 }
 
-func declarationText(s string, max int) bool {
-	if len(s) > max || !utf8.ValidString(s) {
+func declarationText(s string, limit int) bool {
+	if len(s) > limit || !utf8.ValidString(s) {
 		return false
 	}
 	return !containsControl(s)

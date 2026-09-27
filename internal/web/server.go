@@ -57,6 +57,21 @@ const (
 	// fileKeyRoute is the view route under a file key (fileKey), the one
 	// route that checks its own credential instead of the cookie.
 	fileKeyRoute = "GET /api/sessions/{id}/files/key/{key}/{path...}"
+	// indexDocument is the app's page, served for every client-side route.
+	indexDocument = "index.html"
+	noCache       = "no-cache"
+)
+
+// Header names.
+const (
+	headerAcceptEncoding     = "Accept-Encoding"
+	headerCacheControl       = "Cache-Control"
+	headerContentDisposition = "Content-Disposition"
+	headerContentEncoding    = "Content-Encoding"
+	headerContentSecurity    = "Content-Security-Policy"
+	headerContentType        = "Content-Type"
+	headerContentTypeOptions = "X-Content-Type-Options"
+	headerFrameOptions       = "X-Frame-Options"
 )
 
 // ServerConfig configures the HTTP interface.
@@ -116,7 +131,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("embedded web assets: %w", err)
 		}
-		if _, err := fs.Stat(sub, "index.html"); err != nil {
+		if _, err := fs.Stat(sub, indexDocument); err != nil {
 			return nil, errors.New("web assets are not built; run make build or make install, or install a release tag")
 		}
 		s.assets = sub
@@ -216,13 +231,13 @@ func safeMethod(method string) bool {
 // ServeHTTP applies the security checks every request passes before routing.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
-	h.Set("Content-Security-Policy", contentSecurity)
-	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set(headerContentSecurity, contentSecurity)
+	h.Set(headerContentTypeOptions, "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("X-Frame-Options", "DENY")
+	h.Set(headerFrameOptions, "DENY")
 	api := isAPI(r.URL.Path)
 	if api {
-		h.Set("Cache-Control", "no-store")
+		h.Set(headerCacheControl, "no-store")
 	}
 	// Any Host can reach sign-in and static assets. Cookies and file keys
 	// are Host-bound, so another Host cannot reuse their authentication.
@@ -239,12 +254,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		limit := int64(maxBodyBytes)
 		switch {
 		case r.Method == http.MethodPost && uploadPath(r.URL.Path):
-			if !hasMediaType(r.Header.Get("Content-Type"), "application/octet-stream") {
+			if !hasMediaType(r.Header.Get(headerContentType), "application/octet-stream") {
 				s.refuse(w, r, http.StatusUnsupportedMediaType, "attachment uploads must use Content-Type: application/octet-stream")
 				return
 			}
 			limit = maxUploadBytes
-		case !bodyless && !jsonContentType(r.Header.Get("Content-Type")):
+		case !bodyless && !jsonContentType(r.Header.Get(headerContentType)):
 			s.refuse(w, r, http.StatusUnsupportedMediaType, "requests must use Content-Type: application/json")
 			return
 		}
@@ -306,7 +321,7 @@ func redactHeaderValue(name, value string) string {
 	lower := strings.ToLower(name)
 	for _, hint := range credentialHints {
 		if strings.Contains(lower, hint) {
-			return "[redacted]"
+			return redactedValue
 		}
 	}
 	return capLogValue(redactKeyURL(value))
@@ -333,7 +348,7 @@ func uploadPath(p string) bool {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set(headerContentType, "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Debug("write web response failed", "error", err)
@@ -825,14 +840,14 @@ func (s *Server) handleRawImage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = img.File.Close() }()
 	h := w.Header()
-	h.Set("Content-Type", img.MIME)
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Cache-Control", "private, no-cache")
+	h.Set(headerContentType, img.MIME)
+	h.Set(headerContentTypeOptions, "nosniff")
+	h.Set(headerCacheControl, "private, no-cache")
 	h.Set("ETag", fmt.Sprintf(`"%x-%x"`, img.Info.Size(), img.Info.ModTime().UnixNano()))
 	if value := mime.FormatMediaType("inline", map[string]string{"filename": img.Info.Name()}); value != "" {
-		h.Set("Content-Disposition", value)
+		h.Set(headerContentDisposition, value)
 	} else {
-		h.Set("Content-Disposition", "inline")
+		h.Set(headerContentDisposition, "inline")
 	}
 	http.ServeContent(w, r, "", img.Info.ModTime(), img.File)
 }
@@ -854,17 +869,15 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 	} else {
 		exp := time.Now().Add(fileKeyTTL).Unix()
 		key := fileKey(s.token, r.Host, id, exp)
-		// The id segment is escaped, so the first /files/view/ is the route's.
-		before, rest, _ := strings.Cut(r.URL.EscapedPath(), "/files/view/")
-		prefix := before + "/files/key/"
-		target := prefix + key + "/" + rest
+		prefix := "/api/sessions/" + url.PathEscape(id) + "/files/key/"
+		target := prefix + key + "/" + viewPath(r.PathValue("path"))
 		if secureRequest(r) {
 			setFileCookie(w, fileCookie(s.token, r.Host, id, exp), prefix, int(fileKeyTTL/time.Second))
 		}
 		if r.URL.Query().Get("download") == "1" {
 			target += "?download=1"
 		}
-		http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- the request's own path, which this route matched under /api/sessions/; never another host.
+		http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- a path under /api/sessions/ built from the route's escaped values; never another host.
 		return
 	}
 	f, err := s.m.ViewFile(id, r.PathValue("path"))
@@ -874,21 +887,36 @@ func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = f.File.Close() }()
 	h := w.Header()
-	h.Set("Content-Type", f.MIME)
-	h.Set("Cache-Control", "private, no-cache")
+	h.Set(headerContentType, f.MIME)
+	h.Set(headerCacheControl, "private, no-cache")
 	h.Set("ETag", fmt.Sprintf(`"%x-%x"`, f.Info.Size(), f.Info.ModTime().UnixNano()))
-	h.Set("Content-Security-Policy", viewSecurity)
-	h.Set("X-Frame-Options", "SAMEORIGIN")
+	h.Set(headerContentSecurity, viewSecurity)
+	h.Set(headerFrameOptions, "SAMEORIGIN")
 	disposition := "inline"
 	if f.MIME == "application/octet-stream" || r.URL.Query().Get("download") == "1" {
 		disposition = "attachment"
 	}
 	if value := mime.FormatMediaType(disposition, map[string]string{"filename": f.Info.Name()}); value != "" {
-		h.Set("Content-Disposition", value)
+		h.Set(headerContentDisposition, value)
 	} else {
-		h.Set("Content-Disposition", disposition)
+		h.Set(headerContentDisposition, disposition)
 	}
 	http.ServeContent(w, r, "", f.Info.ModTime(), f.File)
+}
+
+// viewPath escapes a view route's file path segment by segment, keeping the
+// separators so a page's relative links resolve to its siblings. A dot
+// segment is escaped as well, so it stays part of the path the route passes on.
+func viewPath(p string) string {
+	segments := strings.Split(p, "/")
+	for i, segment := range segments {
+		if segment == "." || segment == ".." {
+			segments[i] = strings.ReplaceAll(segment, ".", "%2E")
+		} else {
+			segments[i] = url.PathEscape(segment)
+		}
+	}
+	return strings.Join(segments, "/")
 }
 
 // handleUpload stores the request body as one attachment named by the name
@@ -933,13 +961,13 @@ func (s *Server) handleAttachment(w http.ResponseWriter, r *http.Request) {
 	if isImage(att.MIME) && r.URL.Query().Get("download") != "1" {
 		disposition = "inline"
 	}
-	h.Set("Content-Type", contentType)
-	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set(headerContentType, contentType)
+	h.Set(headerContentTypeOptions, "nosniff")
 	// A tool image may have no name.
 	if value := mime.FormatMediaType(disposition, map[string]string{"filename": att.Name}); value != "" && att.Name != "" {
-		h.Set("Content-Disposition", value)
+		h.Set(headerContentDisposition, value)
 	} else {
-		h.Set("Content-Disposition", disposition)
+		h.Set(headerContentDisposition, disposition)
 	}
 	http.ServeContent(w, r, "", modified, bytes.NewReader(data))
 }
@@ -1070,7 +1098,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer s.m.Unsubscribe(sub)
 	rc := http.NewResponseController(w)
 	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
+	h.Set(headerContentType, "text/event-stream")
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	write := func(frame []byte) bool {
@@ -1131,7 +1159,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 	if name == "" {
-		name = "index.html"
+		name = indexDocument
 	}
 	if s.serveAsset(w, r, name) {
 		return
@@ -1140,7 +1168,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !s.serveAsset(w, r, "index.html") {
+	if !s.serveAsset(w, r, indexDocument) {
 		http.NotFound(w, r)
 	}
 }
@@ -1160,28 +1188,28 @@ func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string)
 		return false
 	}
 	switch name {
-	case "index.html":
-		w.Header().Set("Cache-Control", "no-cache")
+	case indexDocument:
+		w.Header().Set(headerCacheControl, noCache)
 	case "manifest.webmanifest":
 		// The web app manifest: its type is not in Go's built-in table, and it is
 		// revalidated so a changed name or icon reaches installed apps.
-		w.Header().Set("Content-Type", "application/manifest+json")
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set(headerContentType, "application/manifest+json")
+		w.Header().Set(headerCacheControl, noCache)
 	case frameDocument:
 		// The document carries the whole renderer: revalidated, it costs a 304.
 		h := w.Header()
-		h.Set("Content-Security-Policy", s.frameSecurity)
-		h.Set("X-Frame-Options", "SAMEORIGIN")
-		h.Set("Cache-Control", "no-cache")
+		h.Set(headerContentSecurity, s.frameSecurity)
+		h.Set(headerFrameOptions, "SAMEORIGIN")
+		h.Set(headerCacheControl, noCache)
 		h.Set("ETag", s.frameETag)
 	default:
 		switch ext := path.Ext(name); {
 		case strings.HasPrefix(name, "assets/"):
 			// Vite names every file under assets/ by its content hash.
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			w.Header().Set(headerCacheControl, "public, max-age=31536000, immutable")
 		case path.Dir(name) == "." && (ext == ".png" || ext == ".svg"):
 			// App icons keep their names: cached for a day, not for good.
-			w.Header().Set("Cache-Control", "public, max-age=86400")
+			w.Header().Set(headerCacheControl, "public, max-age=86400")
 		}
 	}
 	http.ServeContent(w, r, name, info.ModTime(), content)

@@ -36,6 +36,28 @@ func TestSaveLeavesNoTempOrphan(t *testing.T) {
 	}
 }
 
+// A save whose final rename fails removes its temp file.
+func TestSaveFailedRenameLeavesNoTempOrphan(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{path: path}
+	if err := s.Save(DefaultConfig()); err == nil {
+		t.Fatal("Save replaced a directory")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if name := e.Name(); name != "sessions.json" && name != "sessions.json.lock" {
+			t.Fatalf("unexpected leftover file after a failed Save: %q", name)
+		}
+	}
+}
+
 func TestSaveDoesNotUsePredictablePidTempName(t *testing.T) {
 	// Pre-occupy the OLD predictable "<path>.tmp.<pid>" name with a DIRECTORY.
 	// The legacy code opened that exact path with O_CREATE|O_TRUNC|O_WRONLY,
