@@ -1,4 +1,4 @@
-import type { Project, SessionSummary } from '../api';
+import type { Project, SessionState, SessionSummary } from '../api';
 
 const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
 
@@ -6,6 +6,11 @@ const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stag
  * chain shared App render contexts and retain prior transcripts on navigation. */
 export function newsReader(selectedId: string | null, viewed: Readonly<Record<string, string>>, loadedAt: string) {
   return (session: SessionSummary) => session.id !== selectedId && session.updated_at > (viewed[session.id] ?? loadedAt);
+}
+
+/** The state a Task shows on its card and header chip: Working while a subagent still runs after its turn completed (Copilot lets background subagents outlive the turn that started them). */
+export function shownState(s: Pick<SessionSummary, 'state' | 'subagents_running'>): SessionState {
+  return (s.state === 'completed' || s.state === 'idle') && s.subagents_running > 0 ? 'working' : s.state;
 }
 
 /** The sidebar's "Needs permission/answer" rows (`needsYou` in api.ts, minus the shelves): the count the tab title and app badge carry. */

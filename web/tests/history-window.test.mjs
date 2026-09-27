@@ -117,41 +117,21 @@ test('duplicate page records appear once and an existing live record wins in bot
 
 // Outer activity may include reasoning, but each inner tool run needs its own key.
 import { groupIdentities, indexPage } from '../src/lib/historyState.ts';
-import { declarationIdentity, isDeclarationBoundary, newestFileDeclarations } from '../src/lib/transcript.ts';
 
-test('indexed declarations keep adjacent run keys distinct across replay and older pages', () => {
+test('declarations group like any tool call, so the index replays run keys without their metadata', () => {
   const ordinary = id => ({ id, kind: 'tool', time: id, tool: { name: 'view', status: 'completed' } });
   const declared = { id: 'b', kind: 'tool', time: 'b', tool: { name: 'uam_show_file', status: 'completed', declaration: { artifact_id: 'artifact-1', path: '/repo/README' } } };
   const all = [ordinary('a'), declared, ordinary('c')];
   const index = indexPage([], all);
   assert.equal(index[1].tool.declaration, undefined, 'the lightweight index must not retain path metadata');
-  assert.equal(index[1].tool.declaration_boundary, true);
   for (const toolsOnly of [false, true]) {
-    const full = groupIdentities(all, toolsOnly, isDeclarationBoundary);
-    const replay = groupIdentities(index, toolsOnly, isDeclarationBoundary);
-    assert.deepEqual([...replay], [...full]);
-    assert.equal(replay.get('a'), 'a');
-    assert.equal(replay.get('b'), undefined);
-    assert.equal(replay.get('c'), 'c');
-    const later = groupIdentities(indexPage(indexPage([], all.slice(1)), all.slice(0, 1), 'older'), toolsOnly, isDeclarationBoundary, [], replay);
-    assert.equal(later.get('a'), 'a');
-    assert.equal(later.get('c'), 'c');
-  }
-});
-
-test('the oldest declaration rejoins ordinary tool grouping when the card window exceeds 128', () => {
-  const ordinary = id => ({ id, kind: 'tool', time: id, tool: { name: 'view', status: 'completed' } });
-  const declarations = Array.from({ length: 129 }, (_, index) => ({ id: `call-${index}`, kind: 'tool', time: String(index), tool: { name: 'uam_show_file', status: 'completed', declaration: { artifact_id: `artifact-${index}`, path: `/repo/${index}` } } }));
-  const all = [ordinary('before'), ...declarations, ordinary('after')];
-  const cards = newestFileDeclarations(all);
-  const boundary = item => cards.has(declarationIdentity(item)) && isDeclarationBoundary(item);
-  const indexed = indexPage([], all);
-  for (const toolsOnly of [false, true]) {
-    const keys = groupIdentities(indexed, toolsOnly, boundary);
-    assert.equal(keys.get('call-0'), keys.get('before'));
-    assert.equal(keys.get('call-1'), undefined);
-    assert.equal(keys.get('after'), 'after');
-    assert.notEqual(keys.get('before'), keys.get('after'));
+    const replay = groupIdentities(index, toolsOnly);
+    assert.deepEqual([...replay], [...groupIdentities(all, toolsOnly)]);
+    assert.deepEqual([...replay.values()], ['a', 'a', 'a']);
+    // A run first seen from its declaration keeps that key when an older page adds a call before it.
+    const newer = groupIdentities(indexPage([], all.slice(1)), toolsOnly);
+    const later = groupIdentities(indexPage(indexPage([], all.slice(1)), all.slice(0, 1), 'older'), toolsOnly, undefined, [], newer);
+    assert.deepEqual([...later.values()], ['b', 'b', 'b']);
   }
 });
 test('inner tool run identities split at reasoning and questions while retained metadata keeps adjacent keys stable', () => {
@@ -213,4 +193,17 @@ test('discovering the parent user preserves a partial compact turn disclosure ke
   assert.equal(after.get('c'), 'c');
   assert.equal(after.get('d'), 'c');
   assert.equal(after.get('next-answer'), 'next-answer');
+});
+
+test('folded work takes a fifth of a row, so a window of tool calls spans more of the transcript', () => {
+  const tool = id => ({ id, kind: 'tool', time: '', tool: { name: 'bash', status: 'completed' } });
+  const work = Array.from({ length: 1000 }, (_, index) => tool(String(index)));
+  assert.equal(boundItems(work, 'newer').items.length, ACTIVE_ITEMS * 5);
+  // One answer after every four calls: the window fills to 150 rows, a call counting a fifth.
+  const turns = Array.from({ length: 1000 }, (_, index) => index % 5 === 4 ? item(String(index)) : tool(String(index)));
+  const bounded = boundItems(turns, 'newer');
+  const rows = bounded.items.reduce((sum, entry) => sum + (entry.kind === 'tool' ? 1 / 5 : 1), 0);
+  assert.ok(rows <= ACTIVE_ITEMS && rows > ACTIVE_ITEMS - 1, String(rows));
+  assert.ok(bounded.items.length > ACTIVE_ITEMS * 2);
+  assert.deepEqual(ids(bounded.items), ids(turns.slice(-bounded.items.length)));
 });

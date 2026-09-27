@@ -1,17 +1,18 @@
-import { ArrowDown, Bot, ChevronRight, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil } from 'lucide-react';
+import { ArrowDown, Bot, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, SquareTerminal, TriangleAlert } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type BackgroundTasks, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
+import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
 import type { AgentTranscript, HistoryRequest } from '../state';
 import { popupOpen } from '../App';
-import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
+import { shownState } from '../lib/tasks';
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
 import { Chip } from './ui/chip';
+import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
 import { Composer, type FirstMessage } from './Composer';
@@ -19,12 +20,11 @@ import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
-import { Transcript } from './Transcript';
+import { Transcript, WorkingLabel } from './Transcript';
 import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
 import { HistoryAnchor } from './HistoryAnchor';
 import { Button } from './ui/button';
-import { AlertDialog, useConfirm } from './ui/dialog';
 import { Menu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
@@ -47,6 +47,9 @@ interface Props {
   /** Side panels (Changes, Subagents) sit beside the column (wide) rather than over it. */
   sidePanelInline: boolean;
   onSheet: (open: boolean, restoreFocus?: boolean) => void;
+  /** The terminal docked under the app (App.tsx): whether it is open, and the toggle that opens it in a Project's folder or closes it. */
+  terminalOpen: boolean;
+  onTerminal: (projectId: string) => void;
   onSessionUpdate: (s: SessionSummary) => void;
   onInteractionUpdate: (sessionId: string, i: Interaction) => void;
   /** Leading header control (the drawer button on narrow screens). */
@@ -58,91 +61,9 @@ const BOTTOM_SLACK = 32;
 /** iOS WebKit: a scroll-position write under a finger or during momentum fights the scroller and jumps. */
 const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-callout', 'none');
 
-function BackgroundTaskList({ sessionId, snapshot, locked }: { sessionId: string; snapshot: BackgroundTasks | undefined; locked: boolean }) {
-  const [response, setResponse] = useState<{ source: BackgroundTasks | undefined; snapshot: BackgroundTasks } | null>(null);
-  const [requests, setRequests] = useState<Record<string, { pending?: boolean; requested?: boolean; error?: string }>>({});
-  // A newer SSE observation wins over a cancellation response started from an older snapshot.
-  const shown = response && response.source === snapshot ? response.snapshot : snapshot;
-  const running = shown?.tasks.filter((task) => task.status === 'running').length ?? 0;
-  const [open, setOpen] = useState(running > 0);
-  // Opens itself when a background task starts, as the list did before; closing it stays the user's choice.
-  const [wasRunning, setWasRunning] = useState(running);
-  if (running !== wasRunning) {
-    setWasRunning(running);
-    if (wasRunning === 0 && running > 0) setOpen(true);
-  }
-  // A stop kills the shell, so it is confirmed first (DESIGN.md Confirmations).
-  const stopConfirm = useConfirm<{ id: string; description: string; command: string }>();
-  if (!shown?.tasks.length) return null;
-  async function stop(id: string) {
-    if (requests[id]?.pending || locked || !shown?.known) return;
-    setRequests((r) => ({ ...r, [id]: { pending: true } }));
-    try {
-      const result = await api.cancelBackgroundTask(sessionId, id);
-      setResponse({ source: snapshot, snapshot: result.background_tasks });
-      setRequests((r) => ({ ...r, [id]: { requested: result.accepted } }));
-    } catch (e) {
-      setRequests((r) => ({ ...r, [id]: { error: describeError(e) } }));
-    }
-  }
-  return (
-    <div className="mb-2 text-caption text-muted">
-      <button type="button" aria-expanded={open} className="flex h-8 items-center gap-1.5 rounded-sm text-left transition-colors duration-100 hover:text-body" onClick={() => setOpen((o) => !o)}>
-        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
-        Background tasks · {shown.known ? `${running} running` : 'Status unavailable'}
-        {shown.known && running > 0 && <WorkingMark />}
-      </button>
-      <Collapse open={open}>
-      {!shown.known && <p className="pb-2">Last reported tasks. Their current status is unavailable.</p>}
-      <ul className="max-h-40 space-y-2 overflow-y-auto overscroll-contain pb-2">
-        {shown.tasks.map((task) => (
-          <li key={task.id} className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
-              {shown.known && task.status === 'running' ? (
-                <Chip tone="accent">
-                  <WorkingMark />
-                  Running
-                </Chip>
-              ) : (
-                <span className="shrink-0 capitalize">{shown.known ? task.status : 'Unknown'}</span>
-              )}
-              {task.status === 'running' && <Tip label={locked ? 'This task is read-only.' : !shown.known ? 'Refresh the connection to check this task before stopping it.' : 'Stop this background shell'}>
-                <Button size="sm" variant="subtle" aria-label={`Stop background task: ${task.description || task.command}`} loading={!!requests[task.id]?.pending} disabled={locked || !shown.known || requests[task.id]?.requested} onClick={() => stopConfirm.ask({ id: task.id, description: task.description || 'Shell task', command: task.command })}>
-                  {requests[task.id]?.requested ? 'Stop requested' : 'Stop'}
-                </Button>
-              </Tip>}
-            </div>
-            <code className="block truncate font-sans text-caption" title={task.command}>{task.command}</code>
-            {requests[task.id]?.error && <p role="alert" className="pt-1 text-error">{requests[task.id].error}</p>}
-          </li>
-        ))}
-      </ul>
-      </Collapse>
-      <AlertDialog
-        {...stopConfirm.props}
-        title={`Stop ${stopConfirm.target ? `“${stopConfirm.target.description}”` : 'this background task'}?`}
-        description="This kills the process. Output it has not written yet is lost, and the agent is not told."
-        confirmLabel="Stop task"
-        onConfirm={() => {
-          const id = stopConfirm.target?.id;
-          stopConfirm.close();
-          if (id) void stop(id);
-        }}
-      >
-        {stopConfirm.target && (
-          <code className="mt-3 block truncate rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink" title={stopConfirm.target.command}>
-            {stopConfirm.target.command}
-          </code>
-        )}
-      </AlertDialog>
-    </div>
-  );
-}
-
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, onSessionUpdate, onInteractionUpdate, leading }: Props) {
-  const { dispatch, meta } = useApp();
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading }: Props) {
+  const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
   const tempAlias = meta?.temp_root_aliases?.[0];
   const tempRoots = useMemo(() => ({ temp_root: tempRoot, temp_root_aliases: tempAlias ? [tempAlias] : undefined }), [tempRoot, tempAlias]);
@@ -175,6 +96,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
   const lastScrollAt = useRef(0);
+  // A landed page moves the view the other way (its rows are anchored), which is not the reader
+  // turning back: scrolling loads nothing in the opposite direction until the reader moves that way.
+  const landed = useRef<'older' | 'newer' | null>(null);
+  const toward = (direction: 'older' | 'newer' | null) => { if (landed.current !== direction) landed.current = null; };
   // Anchor by ID so incoming output cannot move the beginning while someone reads.
   const [firstVisible, setFirstVisible] = useState<string | undefined>(() => session.items[transcriptWindowStart(session.items)]?.id);
   let visibleStart = firstVisible === undefined ? -1 : session.items.findIndex((it) => it.id === firstVisible);
@@ -256,6 +181,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         dispatch({ type: 'history_loaded', sessionId: session.id, before, page });
         if (!compactWindow && page.items.length) setFirstVisible(page.items[0].id);
       }, synchronous);
+      landed.current = direction;
       return page;
     } catch (error) {
       if (controller.signal.aborted) return null;
@@ -445,6 +371,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       atBottom.current = false;
       flushSync(() => setFirstVisible(current.items[transcriptWindowStart(current.items, index + 1)]?.id));
     }
+    if (!document.getElementById(`item-${toolCallId}`)) {
+      // A settled subagent's row folds into its turn's activity: open the fold that holds it.
+      const fold = [...(log.current?.querySelectorAll<HTMLElement>('[data-history-items]') ?? [])].find(node => (JSON.parse(node.dataset.historyItems ?? '[]') as string[]).includes(toolCallId));
+      const toggle = fold?.matches('button') ? fold : fold?.querySelector('button');
+      if (toggle?.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
+    }
     const el = document.getElementById(`item-${toolCallId}`);
     if (!el) return;
     el.scrollIntoView({ block: 'center' });
@@ -459,8 +391,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const content = el.querySelector('[data-history-window]');
     const edge = el.getBoundingClientRect();
     const rect = content?.getBoundingClientRect();
-    const distance = direction === 'older' ? rect ? edge.top - rect.top : el.scrollTop : rect ? rect.bottom - edge.bottom : el.scrollHeight - el.scrollTop - el.clientHeight;
-    return distance < Math.min(1600, Math.max(200, el.clientHeight * 3));
+    const above = rect ? edge.top - rect.top : el.scrollTop;
+    const below = rect ? rect.bottom - edge.bottom : el.scrollHeight - el.scrollTop - el.clientHeight;
+    const [distance, other] = direction === 'older' ? [above, below] : [below, above];
+    // A page read at one end drops rows at the other. In a window shorter than both reaches (folded
+    // Compact turns), that is the end in view: read only at the end the reader is closer to. Both
+    // ends in view (nothing to scroll yet) count as equally near, so the wheel still reads earlier.
+    return distance < Math.min(1600, Math.max(200, el.clientHeight * 3)) && Math.max(0, distance) <= Math.max(0, other);
   };
   const nearEarlier = (el: HTMLElement) => nearEdge(el, 'older');
   const loadNewer = () => session.history_after ? loadEarlier(session.history_after, false, 'newer') : Promise.resolve(null);
@@ -473,8 +410,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
     atBottom.current = !session.history_after && (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK || (atBottom.current && !upwards));
     setJump(!atBottom.current);
-    if (upwards && nearEarlier(el)) void loadEarlier();
-    else if (!upwards && nearEdge(el, 'newer')) void loadNewer();
+    if (upwards && landed.current !== 'newer' && nearEarlier(el)) void loadEarlier();
+    else if (!upwards && landed.current !== 'older' && nearEdge(el, 'newer')) void loadNewer();
   }
 
   // A decided card collapses in place (its last pending look, inert) instead of vanishing; it leaves once the collapse has run.
@@ -498,8 +435,15 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Recorded history still on its way with nothing to show yet: a skeleton, not the "New task" intro.
   const historyLoading = session.history === 'loading' && session.items.length === 0;
   const fileCount = changes?.supported ? changes.files.length : null;
+  // Without git there is nothing for Changes or Files to show: a warning stands in their place (DESIGN.md D3).
+  const noGit = project?.no_git;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
+  // A subagent still running after the turn keeps the Task Working (lib/tasks shownState).
+  const state = shownState(session);
+  // Then the floating label stays up too, timed from the first of them to start.
+  const labelled = working || state === 'working';
+  const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort()[0];
   const items = taskMenuItems(session, actions, 'header');
   const renamable = canRename(session, actions);
 
@@ -529,7 +473,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {readOnly(session) ? (
               <Chip fill="outline">{stageLabel(session)}</Chip>
             ) : (
-              <StateMark state={session.state} label title={detail} className="shrink-0" />
+              <StateMark state={state} label title={state !== session.state ? `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running` : detail} className="shrink-0" />
             )}
             {busy && <Spinner className="shrink-0" />}
             {/* The pencil takes no room until the title is hovered or it is focused, so the state chip sits by the title. */}
@@ -548,19 +492,44 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               <span className="truncate">{project.branch}</span>
             </span>
           )}
-          <Tip label={`Changes in ${project?.name ?? 'the project'}`}>
-            <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={`Open changes${fileCount !== null ? `, ${fileCount} files` : ''}`} className="px-2 text-muted" onClick={openChanges}>
-              <FileDiff />
-              <span className="max-sm:hidden">Changes</span>
-              {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
-            </Button>
-          </Tip>
-          <Tip label={`Files in ${project?.name ?? 'the project'}`}>
-            <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={toggleFiles}>
-              <FolderTree />
-              <span className="max-sm:hidden">Files</span>
-            </Button>
-          </Tip>
+          {noGit ? (
+            <Popover.Root>
+              <Popover.Trigger render={<Button id="no-git" size="md" className="px-2 text-warning" />}>
+                <TriangleAlert />
+                <span className="max-sm:sr-only">{noGit === 'not_installed' ? 'Git not installed' : 'Not a Git repository'}</span>
+              </Popover.Trigger>
+              <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
+                <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
+                <Popover.Description>
+                  {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has no Changes or Files view.
+                </Popover.Description>
+              </Popover.Content>
+            </Popover.Root>
+          ) : (
+            <>
+              <Tip label={`Changes in ${project?.name ?? 'the project'}`}>
+                <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={`Open changes${fileCount !== null ? `, ${fileCount} files` : ''}`} className="px-2 text-muted" onClick={openChanges}>
+                  <FileDiff />
+                  <span className="max-sm:hidden">Changes</span>
+                  {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
+                </Button>
+              </Tip>
+              <Tip label={`Files in ${project?.name ?? 'the project'}`}>
+                <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={toggleFiles}>
+                  <FolderTree />
+                  <span className="max-sm:hidden">Files</span>
+                </Button>
+              </Tip>
+            </>
+          )}
+          {settings.terminal && project && (
+            <Tip label={`Terminal in ${project.name}`}>
+              <Button id="terminal-link" size="md" aria-pressed={terminalOpen} aria-label="Terminal" className="px-2 text-muted" onClick={() => onTerminal(project.id)}>
+                <SquareTerminal />
+                <span className="max-sm:hidden">Terminal</span>
+              </Button>
+            </Tip>
+          )}
           {session.subagents.length > 0 && (
             <Tip label="Subagents">
               <Button
@@ -589,13 +558,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </header>
 
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
-        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}
-          onKeyDown={e => { if (e.defaultPrevented) return; if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) && nearEarlier(e.currentTarget)) void loadEarlier(); if (['ArrowDown', 'PageDown', 'End'].includes(e.key) && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
-          onWheel={e => { if (e.deltaY < 0 && nearEarlier(e.currentTarget)) void loadEarlier(); if (e.deltaY > 0 && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
+        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
+          onKeyDown={e => { if (e.defaultPrevented) return; if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (['ArrowDown', 'PageDown', 'End'].includes(e.key)) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
+          onWheel={e => { if (e.deltaY < 0) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (e.deltaY > 0) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
           onTouchStart={e => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0; }}
           onTouchEnd={e => { touching.current = e.touches.length > 0; }}
           onTouchCancel={e => { touching.current = e.touches.length > 0; }}
-          onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current && nearEarlier(e.currentTarget)) void loadEarlier(); if (y < touchY.current && nearEdge(e.currentTarget, 'newer')) void loadNewer(); touchY.current = y; }}>
+          onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (y < touchY.current) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } touchY.current = y; }}>
           <ScrollSentinel sentinelRef={sentinel} />
           {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
           {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
@@ -622,8 +591,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               provider={session.provider}
               workdir={session.workdir}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
+              footVerb={false}
               density={density}
               onOpenChanges={openChanges}
+              changedLine={!noGit}
             />
             </HistoryAnchor>
             {session.history_after && <p role="status" className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</p>}
@@ -644,13 +615,25 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}>
-          <Appear show={jump} className="absolute top-0 left-1/2 -translate-x-1/2">
-            <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
-              <ArrowDown />
-              Jump to bottom
-            </Button>
-          </Appear>
-          <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
+          {/* The working label stays centred just above the composer; while it shows, "Jump to bottom" is an arrow beside it, so it never moves. */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
+            <div className="relative flex">
+              <WorkingLabel working={labelled} since={agentsSince} items={liveItems} identityItems={session.history_index} turnTimings={session.turn_timings} />
+              <Appear show={jump && labelled} className="absolute top-0 left-full ml-2">
+                <Tip label="Jump to bottom">
+                  <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={scrollToBottom}>
+                    <ArrowDown />
+                  </Button>
+                </Tip>
+              </Appear>
+            </div>
+            <Appear show={jump && !labelled} className="shrink-0">
+              <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
+                <ArrowDown />
+                Jump to bottom
+              </Button>
+            </Appear>
+          </div>
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
         </div>
       </div>

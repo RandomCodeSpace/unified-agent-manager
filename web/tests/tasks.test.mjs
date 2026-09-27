@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { filteredProject, groupTasks, mostRecentProject, newsReader, tasksOf, visibleProjects } from '../src/lib/tasks.ts';
+import { filteredProject, groupTasks, mostRecentProject, newsReader, shownState, tasksOf, visibleProjects } from '../src/lib/tasks.ts';
 
 const p1 = { id: 'p1', name: 'one', dir: '/one', created_at: '2026-09-20T10:00:00Z' };
 const p2 = { id: 'p2', name: 'two', dir: '/two', created_at: '2026-09-23T10:00:00Z' };
@@ -118,4 +118,13 @@ test('unread checks use only the selected ID and recorded visit times', () => {
   assert.equal(hasNews({ id: 'visited', updated_at: '2026-09-25T10:00:01Z' }), true);
   assert.equal(hasNews({ id: 'unvisited', updated_at: '2026-09-25T08:59:59Z' }), false);
   assert.equal(hasNews({ id: 'unvisited', updated_at: '2026-09-25T09:00:01Z' }), true);
+});
+
+test('a task whose turn ended shows Working while a subagent still runs', () => {
+  assert.equal(shownState({ state: 'completed', subagents_running: 2 }), 'working');
+  assert.equal(shownState({ state: 'idle', subagents_running: 1 }), 'working');
+  assert.equal(shownState({ state: 'completed', subagents_running: 0 }), 'completed');
+  // A request waiting for the user, or a failure, still says so.
+  assert.equal(shownState({ state: 'awaiting_permission', subagents_running: 1 }), 'awaiting_permission');
+  assert.equal(shownState({ state: 'failed', subagents_running: 1 }), 'failed');
 });

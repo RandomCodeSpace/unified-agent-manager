@@ -1,9 +1,6 @@
-import { ChevronDown, Repeat2 } from 'lucide-react';
 import type { ExecutionState } from '../api';
 import { formatCredits } from '../lib/cost';
-import { Button } from './ui/button';
 import { Menu } from './ui/menu';
-import { Tip } from './ui/tooltip';
 
 interface ExecutionProps {
   execution: ExecutionState | null | undefined;
@@ -13,7 +10,7 @@ interface ExecutionProps {
   onRetry?: () => void;
 }
 
-/** The mode radio group with its reason and objective, for the toolbar picker and the phone's More menu. */
+/** The mode radio group with its reason and objective, for the toolbar's permissions and execution menu and the phone's More menu. Selection follows runtime observations; changing a mode never submits the draft. */
 export function ExecutionItems({ execution, reason, busy, onChange, onRetry }: ExecutionProps) {
   const objective = execution?.objective;
   const current = execution?.known === true;
@@ -41,28 +38,5 @@ export function ExecutionItems({ execution, reason, busy, onChange, onRetry }: E
         </div>
       </div>}
     </>
-  );
-}
-
-/** Selection follows runtime observations; changing a mode never submits the draft. Hidden on a phone, where the More menu carries it. */
-export function ExecutionStatus({ execution, supported, reason, busy, onOpenChange, onChange, onRetry }: ExecutionProps & { supported: boolean; onOpenChange: (open: boolean) => void }) {
-  if (!supported) return null;
-  const objective = execution?.objective;
-  const current = execution?.known === true;
-  const mode = execution?.mode;
-  const label = current && mode ? mode.charAt(0).toUpperCase() + mode.slice(1) : 'Status unavailable';
-  return (
-    <Menu.Root modal={false} onOpenChange={onOpenChange}>
-      <Tip label={`Execution: ${label}${current && objective ? ` · ${objective.status}` : ''}`}>
-        <Menu.Trigger render={<Button id="composer-execution" size="sm" variant="subtle" aria-label={`Execution: ${label}`} aria-busy={busy} className="max-sm:hidden" />}>
-          <Repeat2 aria-hidden="true" className="text-faint" />
-          <span>{label}</span>
-          <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
-        </Menu.Trigger>
-      </Tip>
-      <Menu.Content side="top" align="start" className="max-w-80">
-        <ExecutionItems execution={execution} reason={reason} busy={busy} onChange={onChange} onRetry={onRetry} />
-      </Menu.Content>
-    </Menu.Root>
   );
 }

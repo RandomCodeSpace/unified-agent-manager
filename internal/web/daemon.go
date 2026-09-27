@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/daemonruntime"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
@@ -198,9 +200,53 @@ func lockFree(dir string) bool {
 }
 
 // Spawn starts `uam __web` detached, exactly like a session host: its own
-// session, stdio on /dev/null, readiness reported on fd 3. It returns once
-// the service is serving or with the error the service reported.
+// session, stdio on /dev/null, readiness reported on fd 3, and its own
+// systemd scope where userScope finds one fitting. It returns once the
+// service is serving or with the error the service reported.
 func Spawn(ctx context.Context, exe string, args []string) error {
+	argv := append([]string{exe, "__web"}, args...)
+	if run := userScope(); run != "" {
+		unit := "uam-web-" + strconv.Itoa(os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+		var env []string
+		// A launcher with a cleared environment still runs under the manager,
+		// whose bus is at the standard place: point systemd-run at it.
+		if runtime := "/run/user/" + strconv.Itoa(os.Getuid()); os.Getenv("XDG_RUNTIME_DIR") == "" && os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+			if _, err := os.Stat(filepath.Join(runtime, "bus")); err == nil {
+				env = append(env, "XDG_RUNTIME_DIR="+runtime)
+			}
+		}
+		err := spawn(ctx, append([]string{run, "--user", "--scope", "--quiet", "--collect", "--unit=" + unit, "--"}, argv...), env...)
+		// systemd-run exits without a word when it cannot make the scope
+		// (no user bus here): start the service as before.
+		if !errors.Is(err, io.EOF) {
+			return err
+		}
+	}
+	return spawn(ctx, argv)
+}
+
+// userScope returns systemd-run when the launcher runs under the user's
+// systemd manager (user@UID.service), typically inside another service such
+// as an editor or agent server. The service then gets its own transient
+// scope there, so stopping or restarting the launcher's unit, which kills
+// its whole cgroup, leaves it running. A login session (session-N.scope)
+// keeps the service where it is: under the manager it would end with the
+// manager, at logout unless lingering is on.
+func userScope() string {
+	cgroup, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil || !strings.Contains(string(cgroup), "/user@"+strconv.Itoa(os.Getuid())+".service/") {
+		return ""
+	}
+	run, err := execpath.Resolve("systemd-run")
+	if err != nil {
+		return ""
+	}
+	return run
+}
+
+// spawn runs argv detached, with env added to this process's environment,
+// and waits for its readiness report.
+func spawn(ctx context.Context, argv []string, env ...string) error {
 	devIn, err := os.Open(os.DevNull)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", os.DevNull, err)
@@ -216,11 +262,11 @@ func Spawn(ctx context.Context, exe string, args []string) error {
 		return fmt.Errorf("create readiness pipe: %w", err)
 	}
 	defer func() { _ = r.Close() }()
-	cmd := exec.Command(exe, append([]string{"__web"}, args...)...) // #nosec G204 -- exe is the running uam binary; args are built without a shell.
+	cmd := exec.Command(argv[0], argv[1:]...) // #nosec G204 -- the running uam binary, or systemd-run from a fixed path running it; args are built without a shell.
 	// The service must outlive the launching terminal and SSH session.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devIn, devOut, devOut
-	cmd.Env = append(os.Environ(), readyEnv+"=3")
+	cmd.Env = append(append(os.Environ(), env...), readyEnv+"=3")
 	cmd.ExtraFiles = []*os.File{w}
 	if err := cmd.Start(); err != nil {
 		_ = w.Close()

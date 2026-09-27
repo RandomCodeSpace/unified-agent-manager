@@ -288,9 +288,11 @@ func TestProjectBranchFromGit(t *testing.T) {
 	}
 	detached := branchRepo(t)
 	gitIn(t, detached, "switch", "-q", "--detach")
-	want := map[string]string{repo: "feature/x", sub: "feature/x", linked: "topic", detached: "", t.TempDir(): ""}
+	plain := t.TempDir()
+	want := map[string]string{repo: "feature/x", sub: "feature/x", linked: "topic", detached: "", plain: ""}
 	for dir, branch := range want {
-		if p, err := m.AddProject(dir, ""); err != nil || p.Branch != branch {
+		// Only a folder outside any work tree is marked; a detached HEAD is still git.
+		if p, err := m.AddProject(dir, ""); err != nil || p.Branch != branch || (p.NoGit == noGitRepository) != (dir == plain) {
 			t.Fatalf("AddProject(%s) = %+v, %v; want branch %q", dir, p, err, branch)
 		}
 	}
@@ -301,6 +303,7 @@ func TestProjectBranchFromGit(t *testing.T) {
 	var listed []struct {
 		Dir    string  `json:"dir"`
 		Branch *string `json:"branch"`
+		NoGit  *string `json:"no_git"`
 	}
 	decodeField(t, parseFrame(t, snapRaw), "projects", &listed)
 	if len(listed) != len(want) {
@@ -312,7 +315,29 @@ func TestProjectBranchFromGit(t *testing.T) {
 			t.Fatalf("%s lists branch %q, want none", p.Dir, *p.Branch)
 		case branch != "" && (p.Branch == nil || *p.Branch != branch):
 			t.Fatalf("%s lists branch %v, want %q", p.Dir, p.Branch, branch)
+		case (p.NoGit != nil) != (p.Dir == plain):
+			t.Fatalf("%s lists no_git %v", p.Dir, p.NoGit)
 		}
+	}
+}
+
+func TestProjectNoGitClearsOnceInitialised(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	dir := t.TempDir()
+	project := addProject(t, m, dir)
+	if p := m.Projects()[0]; p.NoGit != noGitRepository {
+		t.Fatalf("plain folder = %+v, want no_git %q", p, noGitRepository)
+	}
+	sub, _, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	m.refreshBranches(t.Context(), true, project)
+	var announced Project
+	decodeField(t, frameOf(t, sub, "project"), "project", &announced)
+	if announced.NoGit != "" || announced.Branch != "main" {
+		t.Fatalf("project frame after git init = %+v", announced)
 	}
 }
 

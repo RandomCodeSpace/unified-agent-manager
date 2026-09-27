@@ -98,6 +98,11 @@ type Project struct {
 	// and never stored. It is empty when Dir is not in a work tree, HEAD is
 	// detached, or git cannot tell.
 	Branch string `json:"branch,omitempty"`
+	// NoGit says why Dir has no changes or git-listed files to show:
+	// "not_installed" (no git in a standard location) or "not_repository"
+	// (git reports Dir is in no work tree). It is empty in a work tree and
+	// when git cannot tell. Read with Branch and never stored.
+	NoGit string `json:"no_git,omitempty"`
 }
 
 // TaskDefaults are the settings a new Task starts with (Settings). The
@@ -122,6 +127,9 @@ type Badge struct {
 type Settings struct {
 	// SendDefault is what Enter does while a turn runs: steer or queue.
 	SendDefault string `json:"send_default"`
+	// Terminal lets anyone signed in open a shell, as the service user, at a
+	// Project's directory (terminal.go). Off by default.
+	Terminal bool `json:"terminal"`
 	// HiddenModels lists, by provider, the model IDs the browser does not
 	// offer, sorted; omitted when none is hidden. IDs the provider no longer
 	// lists are kept. The service never refuses a hidden model.
@@ -219,6 +227,9 @@ type SessionSummary struct {
 	LastModel string `json:"last_model"`
 	// SubagentsRunning counts subagents that have not ended.
 	SubagentsRunning int `json:"subagents_running"`
+	// BackgroundTasksRunning counts the open conversation's background shell
+	// tasks that have not finished.
+	BackgroundTasksRunning int `json:"background_tasks_running"`
 	// Queued counts prompts waiting in the Task's queue.
 	Queued int `json:"queued"`
 	// Mode is safe or yolo. A yolo Task's permission requests are allowed

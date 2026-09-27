@@ -251,6 +251,8 @@ export interface Settings {
   custom_models?: CustomModel[];
   /** What a new Task starts with, shared by every browser; omitted until set, and the provider's own defaults apply then. */
   task_defaults?: TaskDefaults;
+  /** Whether a Task's header offers a shell in its Project folder; off by default. Turning it off ends every open shell. */
+  terminal: boolean;
 }
 
 /**
@@ -277,6 +279,8 @@ export interface Project {
   badge: Badge;
   /** Current git branch of the directory; absent unless it is a checkout on a named branch. May change between `project` frames. */
   branch?: string;
+  /** Why the directory has no Changes or Files views: git is not installed, or the directory is in no Git repository. Absent in a repository and when git cannot tell. */
+  no_git?: 'not_installed' | 'not_repository';
 }
 
 export interface SessionSummary {
@@ -294,6 +298,8 @@ export interface SessionSummary {
   /** Model reported by the latest turn; live only, empty when unknown. */
   last_model: string;
   subagents_running: number;
+  /** Background shell tasks of the open conversation that have not finished; absent from older servers. */
+  background_tasks_running?: number;
   effort?: string;
   context_size?: string;
   context?: ContextUsage;
@@ -302,6 +308,9 @@ export interface SessionSummary {
   mode?: 'safe' | 'yolo';
   execution?: ExecutionState | null;
   stage?: 'active' | 'settled' | 'archived';
+  /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
+  settled_at?: string;
+  archived_at?: string;
   queued?: number;
   state: SessionState;
   state_detail?: string;
@@ -332,8 +341,6 @@ export interface ToolCall {
   /** Exact local tool metadata; eligibility only, never proof that a file exists. */
   file_paths?: string[];
   declaration?: FileDeclaration;
-  /** Client-only marker for stable history grouping after declaration metadata leaves the item window. */
-  declaration_boundary?: boolean;
   display_arg?: string;
   path?: string;
   has_input?: boolean;

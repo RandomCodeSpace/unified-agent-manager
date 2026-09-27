@@ -48,7 +48,11 @@ then open http://127.0.0.1:8260/ and sign in with the access token.
 ```
 
 The service detaches from the shell: it has its own session, no controlling
-terminal, and `/dev/null` for its standard streams. Running `uam web` again
+terminal, and `/dev/null` for its standard streams. Started from inside
+another service of your systemd user manager (an editor or agent server, for
+example), it also moves into its own transient scope, `uam-web-….scope`, so
+stopping or restarting that service leaves it running. Started from a login
+shell, it stays in that session. Running `uam web` again
 while it is running prints the same details, including the token. Use
 `--listen 127.0.0.1:<port>` for another port. To let other machines connect
 directly, see [Listen beyond loopback](#listen-beyond-loopback).
@@ -273,7 +277,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   a reload or restart. An interrupted question without a recorded answer
   shows "No answer." Copilot's recorded thinking also returns after a restart.
   If you scroll up while text arrives, the view stays put
-  and offers "Jump to bottom".
+  and offers "Jump to bottom". While the agent works, a label above the
+  composer shows that it is working and for how long, and stays in view as
+  you scroll; what it is doing shows at the end of the conversation.
 - **Diagrams and code**: a fenced ` ```mermaid ` block in a reply renders as
   a diagram once its fence has closed, with a Diagram / Code toggle and Copy
   code in its header; clicking the diagram opens it larger. A block Mermaid
@@ -306,14 +312,19 @@ are logged only at debug level (`UAM_DEBUG=1`).
   Tasks discards the old preview and cancels its pending read.
 - **Declared files**: the agent can call `uam_show_file` with an existing
   path and an optional title. Its completed tool call shows a file card on
-  that turn, including inside a subagent conversation. The card survives
-  reloading the conversation and appears in Compact and Detailed views.
-  It records display metadata only. Opening it still checks the current
-  file; a temporary file requires the same explicit grant as an ordinary
-  reference. A title or file-type hint cannot change those access rules.
+  that turn, including inside a subagent conversation: in Compact at the
+  call's place in the reply, in Detailed right after the activity row that
+  holds the call. The call itself folds into the turn's activity like any
+  other tool call. The card looks the same for every file type and survives
+  reloading the conversation. It records display metadata only. Opening it
+  still checks the current file; a temporary file requires the same
+  explicit grant as an ordinary reference. A title or file-type hint cannot
+  change those access rules.
 - **Subagents**: when the agent delegates work to a subagent, the Task shows
   one compact row under the tool call that started it (name, status, and
-  the duration once it ended) and a "Subagents" button in the header with
+  the duration once it ended) while the subagent runs. Once it is idle or has
+  ended, the row folds into the turn's collapsed activity, in place of that
+  tool call. There is also a "Subagents" button in the header with
   the total and how many are running. The button opens a panel beside the
   conversation that lists the subagents grouped by status (running, idle,
   failed, completed, cancelled) with their start time and duration. Only the
@@ -377,14 +388,20 @@ are logged only at debug level (`UAM_DEBUG=1`).
   See [Web commands and execution state](web-commands.md) for the exact supported
   command list, limits and retry behavior.
 - **Execution mode**: supported providers report Interactive, Plan or Autopilot
-  separately from permissions. The composer shows the runtime's objective
+  separately from permissions. Both share one toolbar menu, whose label reads
+  them together ("Safe · Interactive"). Its icon and first line rate the pair:
+  Safe · Interactive is the safest, Safe · Autopilot keeps working on its own
+  but still asks, Yolo · Interactive is unsafe, and Yolo · Autopilot is highly
+  risky, so switching into it (from the menu or by a typed command) asks you
+  to confirm first. The composer shows the runtime's objective
   status and, on expansion, reported turns, credits, limits and pause or
   completion details. Missing or stale observations say Status unavailable.
   Stop remains available between autopilot turns, disables continuation and
   pauses queued follow-ups through the existing cancellation operation. Partial
   cancellation failures remain errors rather than a claimed stopped state.
-- **Background tasks**: running provider shells appear above the composer with
-  their own Stop action. Stopping one shell does not stop the foreground turn.
+- **Background tasks**: a chip in the composer's toolbar counts the Task's
+  running provider shells; click it to see each shell's status and command
+  and to stop one. Stopping one shell does not stop the foreground turn.
   Stop requested means the provider accepted cancellation; the list waits for
   a reported terminal state. Unknown or read-only tasks cannot be stopped.
   Subagents retain their Stop action in the subagent panel and context menu.
@@ -412,12 +429,14 @@ are logged only at debug level (`UAM_DEBUG=1`).
   archive, and delete).
 - **Images from tools**: when a tool returns an image, such as a screenshot
   or Copilot's `view` of an image file, UAM keeps a copy with the Task and
-  shows it as a thumbnail under that tool call, for subagents too; click it
-  to see it large. Kept: png, jpeg, gif and
-  webp up to 5 MiB, at most 50 per Task, one copy of each distinct image;
-  the tool call notes any it left out and why. They come back after a reload
-  or a restart of UAM, because Copilot records the image's bytes in its
-  session. They are deleted with the Task, like attachments.
+  shows it as a thumbnail under that tool call in the turn's activity, for
+  subagents too. In Compact the thumbnail also stands in the reply at the
+  call's place, without the tool call's line. Click it to see it large.
+  Kept: png, jpeg, gif and webp up to 5 MiB, at most 50 per Task, one copy
+  of each distinct image; the tool call notes any it left out and why. They
+  come back after a reload or a restart of UAM, because Copilot records the
+  image's bytes in its session. They are deleted with the Task, like
+  attachments.
 - **Messages while a turn runs**: you can queue a message or steer the turn
   with it.
   - **Queue** holds the message until the turn completes, then sends it as
@@ -428,9 +447,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
     draft or the Task's settings does not change messages already queued.
   - **Steer** adds the message to the turn that is running. The agent reads
     it before its next step. Once Copilot accepts it, the conversation shows
-    the message with **Accepted · delivery unconfirmed** until Copilot records
-    delivery. That confirmation updates the same message. If it arrives as
-    a new turn after the current one ends, it moves to that turn's position.
+    the message in bold italic (accepted); once Copilot records delivery, the
+    same message turns to normal text (delivered). If it arrives as a new
+    turn after the current one ends, it moves to that turn's position as its
+    prompt.
     A steer cannot be taken back. If the turn is stopped or fails before the
     agent took it in, the message says **Not delivered** and a notice explains
     why. With Copilot, a steer also moves a
@@ -463,7 +483,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   The first is what Enter does while a turn runs: steer (the default) or
   queue. A change is saved as you make it; if the service refuses it, the
   old value comes back with the reason. `GET /api/settings` returns the
-  settings as `{"send_default": "steer"}`, and `PATCH /api/settings` with
+  settings as `{"send_default": "steer", "terminal": false}` (see
+  [Terminal](#terminal)), and `PATCH /api/settings` with
   `{"send_default": "queue"}` changes them. An unknown key or value is
   refused and changes nothing. **New tasks** holds what every new Task
   starts with, in every Project: model, effort, context size (where the
@@ -576,7 +597,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
 
   | Action | Allowed on | Also needs | Result |
   |---|---|---|---|
-  | Settle | an active Task | no turn running, nothing waiting for you, an empty queue | Read-only; the conversation is closed |
+  | Settle | an active Task | no turn running, nothing waiting for you, an empty queue, no subagent or background task still running | Read-only; the conversation is closed |
   | Reopen | a settled Task | – | Active again; the next message reopens the same conversation |
   | Archive | an active or settled Task | for an active Task, the same as Settle | Read-only for good; there is no unarchive |
   | Delete Task | an archived Task | – | The Task is removed from UAM |
@@ -658,11 +679,37 @@ are logged only at debug level (`UAM_DEBUG=1`).
   anything else with Open in new tab and Download. Only one of Changes, Files,
   Subagents and a file preview is open at a time. On a wide window, a click in
   the conversation or the composer closes whichever of them is open.
+- **Terminal**: off by default. Turn on Settings → Terminal and the Task
+  header shows a "Terminal" button after Files, also when the project has no
+  Git and on settled and archived Tasks. It opens a shell in the project
+  folder, running on the server as the user the service runs as, docked at
+  the bottom of the window under the conversation (drag its top edge to
+  resize). It stays open, with its shell, while you switch Tasks. Anyone signed in can
+  then run commands on the machine without the agent's permission prompts;
+  agents do not use it. The panel's header shows the folder and whether the
+  shell is connecting, connected, exited (with its exit code) or
+  disconnected; Restart starts a new shell and × closes the panel. The shell
+  lives only as long as the panel: closing it, Restart, reloading the page or
+  turning the setting off ends the shell and everything it runs, and there
+  is no reattaching. Esc goes to the terminal, so only × (or the header's
+  Terminal button) closes it; Changes, Files, Subagents and file previews
+  open beside the conversation above it. At
+  most eight terminals run at once. When the service refuses one (too many,
+  the folder is gone, or the setting is off) the panel says "Could not open a
+  terminal." with Retry. The terminal draws with WebGL; in a browser with
+  WebGL turned off the panel says so instead.
+- **No Git**: when the project directory is not in a Git repository, or git
+  is not installed on the server, the Task header shows a warning in place of
+  Changes and Files, and turns leave out their "Changed n files" line. Click
+  the warning for the reason. It clears once the directory becomes a
+  repository, the next time the Project is re-read.
 - **Sidebar**: Tasks form one flat list with a compact card for each Task,
   with collapsible "Settled" and "Archived" shelves at the foot of the list.
   A card shows its Project, state or last activity, title, provider icon and
   branch when known; hovering an active card that can settle shows Settle.
-  A shelf row shows only the title, faded until hovered or selected.
+  A shelf row shows the Project badge and title, faded until hovered or
+  selected; its tooltip adds the Project name and directory and when the Task
+  was created, settled and archived.
   A settled or archived Task opens read-only. Search matches Task names and
   titles, Project names and branches within the chosen Project filter.
   Right-click a card, press Shift+F10 or the Menu key, or long-press on touch
@@ -703,6 +750,26 @@ A prompt is sent at most once per click. Retrying after a network error reuses
 the same request ID, and the service answers a repeated request ID with the
 recorded result instead of sending again. If the provider may or may not have
 received a prompt, the page says so and nothing is resent.
+
+## Terminal
+
+Settings → Terminal, off by default, adds a terminal panel that runs a login
+shell in the Project's folder: your `$SHELL` if it is an absolute path to an
+executable, otherwise `bash` or `sh`. The setting is kept in `sessions.json`
+as `terminal` and can also be changed with `PATCH /api/settings`
+`{"terminal": true}`. At most 8 terminals are open at once.
+
+**Security warning.** While the setting is on, anyone who can sign in gets a
+shell on this host as the user running `uam web`, with that user's files and
+credentials. Anyone signed in could already have the agent run commands in
+yolo mode, so this adds no new capability, but the shell bypasses the
+agent's permission prompts and managed policy. Turn it on only if you would
+hand every holder of the access token a shell.
+
+A terminal lives as long as its panel's connection. Closing the panel,
+reloading the page or losing the connection hangs up the shell and the
+command it runs; there is no reattach. Turning the setting off or stopping
+the service closes every open terminal the same way.
 
 ## Install as an app
 

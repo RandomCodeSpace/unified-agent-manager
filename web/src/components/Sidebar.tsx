@@ -2,7 +2,7 @@ import { ChevronRight, CircleCheck, FolderPlus, GitBranch, LogOut, Settings as S
 import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
-import { filteredProject, groupTasks, sidebarTasks } from '../lib/tasks';
+import { filteredProject, groupTasks, shownState, sidebarTasks } from '../lib/tasks';
 import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, STATE_LABELS, STATE_TONE, Skeleton, StateMark, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker } from './ProjectPicker';
@@ -118,11 +118,11 @@ function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
 
 /* ---------- Task row ---------- */
 
-/** Right-slot text: the header's status word for act-now, in-motion, broken and unread rows; the relative time otherwise. */
+/** Right-slot text: the header's status word for act-now, in-motion, completed, broken and unread rows; the relative time otherwise. */
 function rowMeta(s: SessionSummary, unread: boolean): { text: string; tone: string } {
   if (readOnly(s)) return { text: relTime(s.updated_at), tone: 'text-muted' };
   const tone = STATE_TONE[s.state];
-  if (needsYou(s) || LIVE.includes(s.state) || s.state === 'failed' || s.state === 'interrupted' || unread) {
+  if (needsYou(s) || LIVE.includes(s.state) || s.state === 'completed' || s.state === 'failed' || s.state === 'interrupted' || unread) {
     return { text: STATE_LABELS[s.state], tone: TONE_TEXT[tone] };
   }
   return { text: relTime(s.updated_at), tone: 'text-muted' };
@@ -133,7 +133,24 @@ const ROW_TRANSITION = { sessions: 'vt-row', default: 'none' } as const;
 const ROW_ENTER = { sessions: 'vt-row-enter', default: 'none' } as const;
 const ROW_EXIT = { sessions: 'vt-row-exit', default: 'none' } as const;
 
-/** `compact`: a Settled or Archived shelf row, the title alone on one line, faded until hovered, focused or selected. */
+/** A shelf row's tip: the full title, its Project with the directory, and when the Task was created, settled and archived. */
+function shelfTip(s: SessionSummary, project: Project) {
+  const at = (label: string, iso?: string) => iso && <span className="block">{label} <time dateTime={iso}>{new Date(iso).toLocaleString()}</time></span>;
+  return (
+    <>
+      <span className="block font-medium">{taskName(s) || 'New task'}</span>
+      <span className="mt-1 flex items-center gap-1.5"><ProjectBadge badge={project.badge} />{project.name}</span>
+      <span className="block text-on-primary/70 [overflow-wrap:anywhere]">{project.dir}</span>
+      <span className="mt-1 block text-on-primary/70">
+        {at('Created', s.created_at)}
+        {at('Settled', s.settled_at)}
+        {at('Archived', s.archived_at)}
+      </span>
+    </>
+  );
+}
+
+/** `compact`: a Settled or Archived shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest. */
 function TaskRow({ session: s, project, selected, compact = false }: { session: SessionSummary; project: Project; selected: boolean; compact?: boolean }) {
   const { hasNews } = useApp();
   const a = useTaskActions();
@@ -146,12 +163,15 @@ function TaskRow({ session: s, project, selected, compact = false }: { session: 
   // The menu's own Settle item, shown on hover only while its rules allow it.
   const settle = compact ? undefined : items.find((item) => item.key === 'settle' && !item.disabled);
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
-  const meta = rowMeta(s, unread);
+  const state = shownState(s);
+  const meta = rowMeta({ ...s, state }, unread);
+  // Working and Completed (its time, or the word while unread) carry weight so they read at a glance; a Settled or Archived card stays quiet.
+  const heavy = !readOnly(s) && (state === 'working' || state === 'completed');
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   // A card on the rail: `raised` with the soft ring; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
   const rowClass = compact
     ? cn(
-        'flex h-8 w-full items-center rounded-sm px-2 text-left text-ui transition-[background-color,color,opacity] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
+        'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-ui transition-[background-color,color,opacity] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
         selected ? 'bg-tint-selected' : 'opacity-60 hover:bg-tint-hover hover:opacity-100 focus-within:opacity-100',
         strong ? 'font-medium text-ink' : 'text-body',
       )
@@ -171,47 +191,53 @@ function TaskRow({ session: s, project, selected, compact = false }: { session: 
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
         </div>
       ) : (
-        <button
-          type="button"
-          data-nav=""
-          aria-current={selected ? 'true' : undefined}
-          title={taskName(s) || 'New task'}
-          className={rowClass}
-          onClick={(event) => {
-            if (contextOpen.current) { event.preventDefault(); return; }
-            a.select(s.id);
-          }}
-          onDoubleClick={() => canRename(s, a) && a.startRename(s.id, 'row')}
-          onKeyDown={(e) => {
-            if (e.key === 'F2' && canRename(s, a)) {
-              e.preventDefault();
-              a.startRename(s.id, 'row');
-            }
-          }}
-        >
-          {compact ? (
-            <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate', selected && 'font-semibold')} />
-          ) : (
-            <>
-              <span className="flex w-full min-w-0 items-center gap-1.5 text-meta font-normal text-muted">
+        <Tip label={compact && shelfTip(s, project)} side="right">
+          <button
+            type="button"
+            data-nav=""
+            aria-current={selected ? 'true' : undefined}
+            title={compact ? undefined : taskName(s) || 'New task'}
+            className={rowClass}
+            onClick={(event) => {
+              if (contextOpen.current) { event.preventDefault(); return; }
+              a.select(s.id);
+            }}
+            onDoubleClick={() => canRename(s, a) && a.startRename(s.id, 'row')}
+            onKeyDown={(e) => {
+              if (e.key === 'F2' && canRename(s, a)) {
+                e.preventDefault();
+                a.startRename(s.id, 'row');
+              }
+            }}
+          >
+            {compact ? (
+              <>
                 <ProjectBadge badge={project.badge} />
-                <span className={cn('min-w-0 flex-1 truncate text-caption', selected && 'font-semibold')} title={project.dir}>{project.name}</span>
-                {project.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
-                {readOnly(s) && <span className="shrink-0">{s.stage === 'archived' ? 'Archived' : 'Settled'}</span>}
-              </span>
-              <span className="flex w-full min-w-0 items-center gap-1.5">
-                <span className={cn('flex shrink-0 items-center gap-1 text-caption font-normal tabular-nums whitespace-nowrap transition-colors duration-160', meta.tone)}>
-                  {(needsYou(s) || LIVE.includes(s.state)) && <StateMark state={s.state} />}
-                  {meta.text}
+                <span className="sr-only">{project.name}, </span>
+                <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate', selected && 'font-semibold')} />
+              </>
+            ) : (
+              <>
+                <span className="flex w-full min-w-0 items-center gap-1.5 text-meta font-normal text-muted">
+                  <ProjectBadge badge={project.badge} />
+                  <span className={cn('min-w-0 flex-1 truncate text-caption', selected && 'font-semibold')} title={project.dir}>{project.name}</span>
+                  {project.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
+                  {readOnly(s) && <span className="shrink-0">{s.stage === 'archived' ? 'Archived' : 'Settled'}</span>}
                 </span>
-                <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
-                {s.provider && <span className="shrink-0 text-meta font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
-                  {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
-                </span>}
-              </span>
-            </>
-          )}
-        </button>
+                <span className="flex w-full min-w-0 items-center gap-1.5">
+                  <span className={cn('flex shrink-0 items-center gap-1 text-caption tabular-nums whitespace-nowrap transition-colors duration-160', heavy ? 'font-semibold' : 'font-normal', meta.tone)}>
+                    {(needsYou(s) || LIVE.includes(state)) && <StateMark state={state} />}
+                    {meta.text}
+                  </span>
+                  <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
+                  {s.provider && <span className="shrink-0 text-meta font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
+                    {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
+                  </span>}
+                </span>
+              </>
+            )}
+          </button>
+        </Tip>
       )}
       {settle && !renaming && (
         // A sibling of the row button, not inside it, so clicking Settle never selects the row. It sits over the provider icon.

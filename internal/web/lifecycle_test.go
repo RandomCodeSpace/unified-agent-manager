@@ -185,6 +185,19 @@ func TestSettleAndArchivePreconditions(t *testing.T) {
 			if _, err := m.Answer(sum.ID, "q1", agentapi.Answer{Reject: true}); err != nil {
 				t.Fatal(err)
 			}
+			// Work that outlives the turn holds the Task too.
+			conv.EmitSubagent(agentapi.Subagent{ID: "a1", Name: "survey", Status: agentapi.SubagentRunning})
+			refused("while a subagent runs", sum.ID, "subagents are still running")
+			conv.EmitSubagent(agentapi.Subagent{ID: "a1", Name: "survey", Status: agentapi.SubagentIdle})
+			shell := func(status string) {
+				conv.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{{ID: "server", Status: status}}}})
+			}
+			shell("running")
+			if s, _ := m.Summary(sum.ID); s.BackgroundTasksRunning != 1 || s.SubagentsRunning != 0 {
+				t.Fatalf("summary counts = %d background, %d subagents", s.BackgroundTasksRunning, s.SubagentsRunning)
+			}
+			refused("while a background task runs", sum.ID, "background tasks are still running")
+			shell("completed")
 			if _, err := move(m, sum.ID); err != nil {
 				t.Fatalf("%s once idle: %v", name, err)
 			}

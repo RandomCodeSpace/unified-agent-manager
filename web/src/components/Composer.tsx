@@ -1,17 +1,18 @@
-import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, Shield, ShieldOff, Square, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type PromptSettings, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
+import { BackgroundTasks } from './BackgroundTasks';
 import { ComposerUsage } from './ComposerUsage';
-import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
+import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
 import { Markdown, Note, Skeleton, Spinner, useApp } from './common';
-import { ExecutionItems, ExecutionStatus } from './ExecutionStatus';
+import { ExecutionItems } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
@@ -19,6 +20,14 @@ import { AlertDialog, useConfirm } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
 import { Menu } from './ui/menu';
 import { Tip } from './ui/tooltip';
+
+/** How freely the agent acts, from permissions and execution together (DESIGN.md Permissions and execution): safest to riskiest. */
+const RISKS = [
+  { Icon: ShieldCheck, tone: 'text-success', text: 'Safest: asks before risky actions and waits for each message.' },
+  { Icon: ShieldHalf, tone: 'text-warning', text: 'Keeps working between turns by itself, but still asks before risky actions.' },
+  { Icon: ShieldOff, tone: 'text-attention', text: 'Unsafe: allows permission requests without asking.' },
+  { Icon: ShieldAlert, tone: 'text-error', text: 'Highly risky: allows every permission request and keeps working without you.' },
+] as const;
 
 export const MODE_TEXT = {
   safe: 'Asks before allowing permission requests.',
@@ -264,6 +273,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
   const routed = session.last_model && session.last_model !== session.model ? modelName(meta, session.provider, session.last_model) : null;
   const queue = session.queue ?? [];
   // Cancelling a queued prompt or clearing the queue loses its text, so each is confirmed first (DESIGN.md Confirmations).
+  const riskConfirm = useConfirm<{ run: () => void }>();
   const discard = useConfirm<{ kind: 'one'; id: string; text: string } | { kind: 'all'; count: number }>();
   function confirmDiscard() {
     const d = discard.target;
@@ -574,10 +584,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
     }
   }
 
-  async function send(promptMode: PromptMode) {
+  async function send(promptMode: PromptMode, confirmed = false) {
     const t = text.trim();
     if (cannotSubmit || (!cmd && promptMode === 'send' && live)) return;
     if (newTask) return sendFirst(t);
+    if (cmd && !confirmed && entersRiskiest(cmd.name, cmd.args, { yolo: mode === 'yolo', autopilot })) {
+      riskConfirm.ask({ run: () => void send(promptMode, true) });
+      return;
+    }
     if (!cmd && promptMode === 'steer' && steerBlocked) {
       setError(steerBlocked);
       return;
@@ -730,6 +744,34 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
     { value: 'safe', label: 'Safe', description: MODE_TEXT.safe },
     { value: 'yolo', label: 'Yolo', description: MODE_TEXT.yolo },
   ];
+  // Yolo with autopilot is the riskiest pair: every way into it is confirmed first.
+  const chooseMode = (next: 'safe' | 'yolo') => {
+    if (next === 'yolo' && mode !== 'yolo' && autopilot) riskConfirm.ask({ run: () => void settings({ mode: next }) });
+    else void settings({ mode: next });
+  };
+  const chooseExecution = (next: 'interactive' | 'autopilot') => {
+    if (next === 'autopilot' && mode === 'yolo' && !autopilot) riskConfirm.ask({ run: () => void changeExecution(next) });
+    else void changeExecution(next);
+  };
+  // The permission group, shared by the toolbar's permissions and execution menu and the phone's More menu.
+  const permissionItems = (
+    <Menu.RadioGroup value={mode} onValueChange={(v) => chooseMode(v as 'safe' | 'yolo')}>
+      <Menu.Label>Permissions</Menu.Label>
+      {modeChoices.map((c) => <Menu.RadioItem key={c.value} value={c.value} description={c.description} disabled={!!busy}>{c.label}</Menu.RadioItem>)}
+    </Menu.RadioGroup>
+  );
+  const executionSupported = !newTask && !!session.capabilities.execution_modes;
+  const executionKnown = executionSupported && session.execution?.known === true && !!session.execution.mode;
+  const executionMode = executionKnown ? session.execution!.mode! : '';
+  const runLabel = [mode === 'yolo' ? 'Yolo' : 'Safe', executionMode.charAt(0).toUpperCase() + executionMode.slice(1)].filter(Boolean).join(' · ');
+  const risk = RISKS[(mode === 'yolo' ? 2 : 0) + (autopilot ? 1 : 0)];
+  const runIcon = <risk.Icon aria-hidden="true" className={risk.tone} />;
+  const riskLine = (
+    <p className={cn('flex max-w-72 items-start gap-2 px-2 py-1 text-caption', risk.tone)}>
+      <risk.Icon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+      {risk.text}
+    </p>
+  );
   // The effort and context groups, shared by the toolbar picker and the phone's More menu.
   const tuningItems = (
     <>
@@ -894,6 +936,19 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
         </details>
         </Collapse>
       )}
+      {(riskConfirm.target || riskConfirm.props.open) && (
+        <AlertDialog
+          {...riskConfirm.props}
+          title="Switch to Yolo with Autopilot?"
+          description="The agent will allow every permission request itself and keep working between turns without waiting for you."
+          confirmLabel="Switch"
+          onConfirm={() => {
+            const run = riskConfirm.target?.run;
+            riskConfirm.close();
+            run?.();
+          }}
+        />
+      )}
       {(discard.target || discard.props.open) && (
         <AlertDialog
           {...discard.props}
@@ -1035,22 +1090,38 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
           </Menu.Root>
         )}
         <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline-strong max-sm:hidden" />
-        <Picker
-          id="composer-mode"
-          icon={mode === 'yolo' ? <ShieldOff aria-hidden="true" className="text-attention" /> : <Shield aria-hidden="true" className="text-faint" />}
-          label="Permissions"
-          value={mode}
-          display={mode === 'yolo' ? 'Yolo' : 'Safe'}
-          choices={modeChoices}
-          disabled={!!busy || locked}
-          reason={locked ? 'This task is read-only.' : undefined}
-          className="max-sm:hidden"
-          onChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}
-        />
-        <ExecutionStatus execution={session.execution} supported={!newTask && !!session.capabilities.execution_modes}
-          reason={executionReason} busy={!!busy} onOpenChange={setExecutionOpen}
-          onChange={(next) => void changeExecution(next)}
-          onRetry={commandsError && !locked ? () => setCommandVersion((v) => v + 1) : undefined} />
+        {/* Permissions and execution: one menu, since both say how freely the agent acts; its glyph follows both. */}
+        {locked ? (
+          <Tip label="This task is read-only.">
+            <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}. This task is read-only.`} className="min-w-0 shrink text-muted max-sm:hidden">
+              {runIcon}
+              <span className="max-w-40 truncate">{runLabel}</span>
+              <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+            </Button>
+          </Tip>
+        ) : (
+          <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
+            <Tip label={<>{`Permissions and execution: ${runLabel}${executionKnown && session.execution?.objective ? ` · ${session.execution.objective.status}` : ''}`}<span className="block text-on-primary/70">{risk.text}</span></>}>
+              <Menu.Trigger render={<Button id="composer-mode" size="sm" variant="subtle" aria-label={`Permissions and execution: ${runLabel}`} aria-busy={!!busy} className="min-w-0 shrink max-sm:hidden" />}>
+                {runIcon}
+                <span className="max-w-40 truncate">{runLabel}</span>
+                <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+              </Menu.Trigger>
+            </Tip>
+            <Menu.Content side="top" align="start" className="max-w-80">
+              {riskLine}
+              <Menu.Separator />
+              {permissionItems}
+              {executionSupported && (
+                <>
+                  <Menu.Separator />
+                  <ExecutionItems execution={session.execution} reason={executionReason} busy={!!busy} onChange={chooseExecution} onRetry={commandsError ? () => setCommandVersion((v) => v + 1) : undefined} />
+                </>
+              )}
+            </Menu.Content>
+          </Menu.Root>
+        )}
+        {!newTask && <BackgroundTasks key={session.id} sessionId={session.id} snapshot={session.background_tasks} locked={locked} />}
         {!locked && (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
             <Tip label="Effort, context, permissions and execution">
@@ -1061,14 +1132,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: ComposerP
             <Menu.Content side="top" align="start" className="max-w-80">
               {settingsLocked ? <p className="max-w-64 px-2 py-1 text-caption text-muted">Effort and context cannot change now.</p> : tuningItems}
               <Menu.Separator />
-              <Menu.RadioGroup value={mode} onValueChange={(v) => void settings({ mode: v as 'safe' | 'yolo' })}>
-                <Menu.Label>Permissions</Menu.Label>
-                {modeChoices.map((c) => <Menu.RadioItem key={c.value} value={c.value} description={c.description} disabled={!!busy}>{c.label}</Menu.RadioItem>)}
-              </Menu.RadioGroup>
-              {!newTask && session.capabilities.execution_modes && (
+              {riskLine}
+              {permissionItems}
+              {executionSupported && (
                 <>
                   <Menu.Separator />
-                  <ExecutionItems execution={session.execution} reason={executionReason} busy={!!busy} onChange={(next) => void changeExecution(next)} onRetry={commandsError ? () => setCommandVersion((v) => v + 1) : undefined} />
+                  <ExecutionItems execution={session.execution} reason={executionReason} busy={!!busy} onChange={chooseExecution} onRetry={commandsError ? () => setCommandVersion((v) => v + 1) : undefined} />
                 </>
               )}
             </Menu.Content>

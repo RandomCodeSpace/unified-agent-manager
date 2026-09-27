@@ -144,6 +144,10 @@ type Manager struct {
 	archive archiveCache
 	// Active Server registries; publication/removal is ordered by mu.
 	fileGrants map[*tempGrants]struct{}
+	// terminals are the open web terminals (terminal.go); terminalWG counts
+	// them until they end, and Shutdown waits for it.
+	terminals  map[*terminal]struct{}
+	terminalWG sync.WaitGroup
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -474,7 +478,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	for id, p := range cfg.WebProjects {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge)}
 	}
-	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
+	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults)}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
@@ -816,7 +820,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	return SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
 		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context, Usage: s.usage,
-		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), Workdir: s.workdir, ConversationID: s.convID,
+		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt,
@@ -960,7 +964,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	if err != nil {
 		return Project{}, fmt.Errorf("generate project id: %w", err)
 	}
-	branch := readBranch(m.ctx, canonical)
+	branch, noGit := readBranch(m.ctx, canonical)
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -978,7 +982,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	if existing != "" {
 		return Project{}, projectExists(existing)
 	}
-	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Branch: branch}
+	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Branch: branch, NoGit: noGit}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		for _, other := range cfg.WebProjects {
 			if other.Dir == canonical {
@@ -1158,9 +1162,11 @@ func (m *Manager) Settings() Settings {
 //
 // CustomModels, when not nil, replaces every custom model; an empty list
 // removes them all. TaskDefaults replaces the settings a new Task starts
-// with; they are checked as a Task's selection is.
+// with; they are checked as a Task's selection is. Turning Terminal off
+// closes every open terminal.
 type SettingsPatch struct {
 	SendDefault  *string
+	Terminal     *bool
 	HiddenModels map[string][]string
 	TitleModel   map[string]string
 	CustomModels *[]store.WebCustomModel
@@ -1240,6 +1246,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.SendDefault != nil {
 		next.SendDefault = *p.SendDefault
 	}
+	if p.Terminal != nil {
+		next.Terminal = *p.Terminal
+	}
 	if len(hidden) > 0 {
 		next.HiddenModels = withProviders(current.HiddenModels, hidden)
 	}
@@ -1253,11 +1262,12 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		next.TaskDefaults = defaults
 	}
 	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
-	if next.SendDefault == current.SendDefault && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults {
+	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults {
 		return current, nil
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		cfg.WebSettings.SendDefault = next.SendDefault
+		cfg.WebSettings.Terminal = next.Terminal
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
 		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, titles)
@@ -1275,6 +1285,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.settings = next
+	if !next.Terminal {
+		m.closeTerminalsLocked(errTerminalOff)
+	}
 	m.broadcastLocked("settings", "", func(seq uint64) any { return settingsEvent{Seq: seq, Settings: next} })
 	return next, nil
 }
@@ -3211,7 +3224,8 @@ func (m *Manager) keepsOpenLocked(s *webSession) bool {
 }
 
 // Settle marks an active Task complete and closes its conversation. It is
-// refused while the Task is busy, has queued prompts or waits for an answer.
+// refused while the Task is busy, has queued prompts, waits for an answer, or
+// still runs subagents or background tasks.
 func (m *Manager) Settle(id string) (SessionSummary, error) {
 	return m.moveStage(id, StageSettled, StageActive)
 }
@@ -3294,6 +3308,10 @@ func (s *webSession) settleableLocked() error {
 		return newError(http.StatusConflict, "a permission request is still being answered; try again")
 	case len(s.queue) > 0 || s.queueSending != "":
 		return newError(http.StatusConflict, "the task has queued prompts; send or clear them first")
+	case s.runningSubagents() > 0:
+		return newError(http.StatusConflict, "subagents are still running; wait for them or stop them first")
+	case s.runningBackgroundTasks() > 0:
+		return newError(http.StatusConflict, "background tasks are still running; wait for them or stop them first")
 	}
 	return nil
 }
@@ -3662,11 +3680,13 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	for sub := range m.subs {
 		m.dropLocked(sub)
 	}
+	m.closeTerminalsLocked(errShuttingDown)
 	m.mu.Unlock()
 	// Abort in-flight opens, sends and utility jobs; their outcome is
 	// recorded as usual. Utility jobs delete their throwaway conversations
 	// before the providers stop.
 	m.cancel()
+	wait(ctx, &m.terminalWG)
 	wait(ctx, &m.titles)
 	wait(ctx, &m.summaryWorkers)
 	m.discardSubagentSummaryJobs()

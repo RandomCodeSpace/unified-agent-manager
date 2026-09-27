@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, declarationIdentity, firstLine, foldWindow, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, newestFileDeclarations, promoted, questionOf, subagentSummary, summarizeTools, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, callProduct, declarationIdentity, firstLine, foldWindow, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, newestFileDeclarations, promoted, questionOf, subagentSummary, summarizeTools, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
 
-test('only a successful recorded file declaration stands outside compact activity', () => {
+test('a successful recorded file declaration folds like any call; only its card stands in the answer', () => {
   const declaration = { artifact_id: 'artifact-1', path: '/repo/README' };
-  const call = { id: 'call-1', agent_id: 'child-1', kind: 'tool', tool: { name: 'uam_show_file', status: 'completed', declaration } };
+  const call = { id: 'call-1', agent_id: 'child-1', kind: 'tool', time: '2026-09-27T10:00:00Z', tool: { name: 'uam_show_file', status: 'completed', declaration } };
+  const cards = newestFileDeclarations([call]);
   assert.equal(isFileDeclaration(call), true);
-  assert.equal(promoted({ item: call }, { live: false, approvals: new Map() }, isFileDeclaration), true);
+  assert.equal(callProduct(call, cards), 'card');
+  assert.equal(promoted({ item: call }, { live: false, approvals: new Map() }, item => callProduct(item, cards) === 'card'), true);
+  // The call itself is counted on the turn line (and drawn in its timeline) like any other tool.
+  assert.deepEqual(summarizeTurn([{ item: call }], { live: false }).parts.map(p => p.text), ['1 tool']);
   assert.equal(call.agent_id, 'child-1');
   for (const tool of [
     { ...call.tool, status: 'running' },
@@ -15,7 +19,22 @@ test('only a successful recorded file declaration stands outside compact activit
     { ...call.tool, declaration: { ...declaration, path: '' } },
     { ...call.tool, declaration: { ...declaration, path: 'README' } },
     { ...call.tool, name: 'foreign_tool' },
-  ]) assert.equal(isFileDeclaration({ ...call, tool }), false);
+  ]) {
+    assert.equal(isFileDeclaration({ ...call, tool }), false);
+    assert.equal(callProduct({ ...call, tool }, cards), null);
+  }
+});
+
+test('a call that returned images folds; only its images stand in the answer', () => {
+  const view = { id: 'v1', kind: 'tool', time: '2026-09-27T10:00:00Z', tool: { name: 'view', status: 'completed', input: '{"path":"shot.png"}' } };
+  const shot = { ...view, images: [{ id: 'img-1', mime: 'image/png', size: 10 }] };
+  const none = new Set();
+  assert.equal(callProduct(shot, none), 'images');
+  assert.equal(callProduct({ ...view, images_note: '1 image was left out' }, none), 'images');
+  assert.equal(callProduct(view, none), null);
+  assert.equal(callProduct({ id: 'm1', kind: 'assistant', time: view.time, text: 'Done.', images: shot.images }, none), null);
+  assert.equal(promoted({ item: shot }, { live: false }), true);
+  assert.deepEqual(summarizeTurn([{ item: shot }], { live: false }).parts.map(p => p.text), ['1 file read', '1 image']);
 });
 
 test('only the newest 128 declarations in a transcript window get cards', () => {
@@ -29,6 +48,8 @@ test('only the newest 128 declarations in a transcript window get cards', () => 
   const context = { live: false, approvals: new Map() };
   assert.equal(promoted({ item: items[0] }, context, item => cards.has(declarationIdentity(item))), false);
   assert.equal(promoted({ item: items[1] }, context, item => cards.has(declarationIdentity(item))), true);
+  assert.equal(callProduct(items[0], cards), null);
+  assert.equal(callProduct(items[1], cards), 'card');
   const agent = call('call-0', 'child-1');
   assert.notEqual(declarationIdentity(agent), declarationIdentity(items[0]));
   const replay = newestFileDeclarations([...items, { ...items[128], tool: { ...items[128].tool, status: 'failed' } }]);

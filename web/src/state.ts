@@ -5,7 +5,7 @@ import type { AccountUsage, HistoryPage, Interaction, Item, ItemKind, Project, S
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 
 /** The service's defaults, in force until its snapshot arrives (and on a service too old to send one). */
-export const DEFAULT_SETTINGS: Settings = { send_default: 'steer' };
+export const DEFAULT_SETTINGS: Settings = { send_default: 'steer', terminal: false };
 
 /** A frame that arrived for a subagent while its transcript fetch was in flight. */
 export type Buffered = Extract<UpdateData, { name: 'item' | 'delta' | 'tool_output' | 'subagent' | 'items_trimmed' }>;

@@ -22,7 +22,12 @@ host. Rendering those TUIs in a browser would inherit terminal semantics
 
 `uam web` starts one detached per-user service, `uam __web`, that serves an
 embedded single-page application and drives providers through their
-structured APIs:
+structured APIs. When the launcher runs under the user's systemd manager
+(inside another user service), the service starts through
+`systemd-run --user --scope` in its own transient scope, so that service's
+stop or restart does not kill it (a launcher that cleared its environment is
+pointed at the manager's bus under `/run/user/<uid>`); elsewhere, or when no
+user bus answers, it starts in place as before:
 
 | Provider | Integration |
 |---|---|
@@ -360,9 +365,12 @@ record on demand:
   events and parent tool results and keeps at most 1,000 records and 4 MiB
   before the named one, which the same cache holds.
 
-Each active transcript keeps a contiguous reading window of at most 150 items
-and 4 MiB of accounted data, plus a separate recent tail of at most 50 items
-under the same byte allowance. One oversized item remains intact to allow
+Each active transcript keeps a contiguous reading window of at most 150 rows
+and 4 MiB of accounted data, plus a separate recent tail of at most 50 rows
+under the same byte allowance. A thought or tool call counts as a fifth of a
+row, since it draws nothing until its fold opens; counted as whole items,
+folded work left a window about two screens tall, and reading one end dropped
+rows in view at the other. One oversized item remains intact to allow
 progress. Compact metadata preserves IDs, order, kinds and required semantic
 state for up to 2,000 retained items; it excludes chat and body text, images and
 display strings. Live corrections update held items without resurrecting
@@ -579,7 +587,9 @@ Shape changes:
 - `ProviderInfo` gains `models: [{id, name, efforts: [string], context_sizes: [{id, tokens}]}]` and `capabilities.context_size`.
 - `Project`: `id`, `name`, `dir`, `created_at`.
 - `SessionSummary` gains `project_id`, `model`, `title`, `last_model` (from the
-  latest turn that reported one; live only) and `subagents_running`. `name`
+  latest turn that reported one; live only), `subagents_running` and
+  `background_tasks_running` (the open conversation's unfinished background
+  shell tasks; added 2026-09-27). `name`
   may be empty. It also gains `effort`, `context_size` (always `default` or
   the selected tier), and optional `context: {used, limit}`.
 - `SessionDetail.items` holds only the main agent's items; it gains
@@ -889,7 +899,7 @@ snapshot of `GET /api/events?session={id}`, and `GET
 
 | Method and path | Body | Result |
 |---|---|---|
-| `POST /api/sessions/{id}/settle` | – | 200 `SessionSummary`; 404; 409 wrong stage, busy, queued prompts or a pending interaction |
+| `POST /api/sessions/{id}/settle` | – | 200 `SessionSummary`; 404; 409 wrong stage, busy, queued prompts, a pending interaction, or a subagent or background task still running |
 | `POST /api/sessions/{id}/reopen` | – | 200 `SessionSummary`; 404; 409 unless settled |
 | `POST /api/sessions/{id}/archive` | – | 200 `SessionSummary`; 404; 409 when archived, or when active and a settle precondition fails |
 | `DELETE /api/sessions/{id}` | – | 204; 404; 409 unless archived |
@@ -1044,6 +1054,14 @@ listed (`GET /api/projects` and the `snapshot` frame, at most once per Project
 every two seconds), when a Task in the Project ends a turn, and when a Task's
 Changes load. Nothing polls. When the branch changes, the `project` frame
 carries the Project again.
+
+`Project` also gains `no_git` (2026-09-27), read by the same git call:
+`not_installed` when there is no git in a standard location, and
+`not_repository` when git reports `dir` is in no work tree. It is omitted in a
+work tree and when git cannot tell (a timeout, or a repository git refuses to
+read), so a transient failure never hides a view. The web client then shows a
+warning in place of Changes and Files. A change of `no_git` also sends the
+`project` frame.
 
 ## Listening beyond loopback
 
@@ -2022,3 +2040,71 @@ model call's `assistant.turn_start` to the event that carried it. The service
 keeps an item's earliest `time` when a later event replaces it, so a live
 item and the same item read back from history agree. The browser shows a
 duration only from these two times and never infers one from the next item.
+
+## Web terminal (opt-in)
+
+- Date: 2026-09-27
+
+A terminal panel runs commands at a Project's directory from the browser.
+
+- **Setting.** Settings → Terminal, off by default, stored as
+  `web_settings.terminal` (omitted while off) and changed with
+  `PATCH /api/settings` `{"terminal": true|false}` like the other settings;
+  any other value is 400. A change sends the `settings` frame. Turning it off
+  closes every open terminal. While it is on, anyone signed in can open a
+  shell as the service user. Anyone signed in could already have the agent
+  run commands in yolo mode, so this adds no new capability, but the shell
+  bypasses the agent's permission prompts and managed policy.
+- **Route.** `GET /api/projects/{id}/terminal?cols=&rows=` is a WebSocket
+  upgrade (`github.com/coder/websocket`). It needs the Host-bound sign-in
+  cookie like every `/api/` route (401). The cross-origin check in
+  `ServeHTTP` skips `GET`, which a handshake is, so the route checks origin
+  itself. In order: `Sec-Fetch-Site: cross-site` is 403; the setting off is
+  404 "the terminal is turned off in Settings"; an unknown Project is 404; a
+  missing directory is 409; a ninth open terminal is 429 "too many terminals
+  open"; and the upgrade accepts only an `Origin` equal to the request's
+  Host or to a `--public-origin` value, scheme included (403 otherwise). A
+  request without `Origin`, which browsers always send, passes. `cols` and
+  `rows` are clamped to 1..500 and default to 80×24.
+- **Protocol.** Server to client: binary messages carry raw PTY output, at
+  most 32 KiB each. When the shell exits, one text message
+  `{"type":"exit","code":<int>}` (128 plus the signal number when a signal
+  ended it), then a normal close (1000). Client to server: binary messages
+  are input, written to the PTY as they are; text messages are JSON control,
+  of which only `{"type":"resize","cols","rows"}` exists, clamped like the
+  query. Unknown types are ignored. A client message is at most 64 KiB. When
+  the setting is turned off or the service stops, the socket closes with
+  1001 and the reason as text.
+- **Shell.** `$SHELL` when it is an absolute path to a regular executable,
+  else `bash`, else `sh`, from the fixed system directories; run as
+  `[shell, "-l"]` in the Project's directory on a PTY, in its own session
+  with the PTY as its controlling terminal. Its environment is the service's
+  without `UAM_WEB_READY_FD`, plus `TERM=xterm-256color` and
+  `COLORTERM=truecolor`.
+- **Lifetime.** A terminal lives exactly as long as its socket; there is no
+  reattach, and a reload opens a new shell. When the socket closes for any
+  reason, the shell's process group gets SIGHUP, then SIGKILL if the shell
+  has not exited within 3 s, and the shell is always reaped. A shell that
+  exits first is reaped at once and its group is not signalled, since its
+  PID may be reused; output it left behind has up to 1 s to arrive before
+  the exit message. As in any terminal, the foreground command gets SIGHUP
+  from the kernel when the shell ends, and bash and zsh pass SIGHUP on to
+  their other jobs; a process that ignores SIGHUP or left the session keeps
+  running. Service shutdown closes every terminal the same way and waits for
+  them. Each open and close is logged (`web terminal opened` with the
+  Project, PID and size; `web terminal closed` with the Project, PID, exit
+  code and duration).
+- **Limits.** At most 8 terminals are open across the service. Output is
+  written with a blocking write, so a slow client stalls its shell instead
+  of growing a buffer.
+- **Rendering.** The client draws with xterm.js's WebGL renderer: the DOM
+  renderer injects styles, which `style-src 'self'` refuses, and that policy
+  stays strict.
+
+### HTTP additions and changes
+
+| Method and path | Body | Result |
+|---|---|---|
+| `GET /api/projects/{id}/terminal?cols=&rows=` | – (WebSocket upgrade) | 101 and the protocol above; 401 signed out; 403 cross-site or a foreign `Origin`; 404 the setting off or an unknown Project; 409 the directory is gone; 426 not a WebSocket handshake; 429 eight terminals open |
+| `GET /api/settings` | – | `Settings` gains `"terminal": bool` |
+| `PATCH /api/settings` | gains `"terminal"?: bool` | 400 for a value that is not `true` or `false`; `false` closes every open terminal |

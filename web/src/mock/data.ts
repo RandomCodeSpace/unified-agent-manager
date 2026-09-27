@@ -163,7 +163,7 @@ export function seed(): MockState {
       badge: { text: 'UM', color: 'blue' },
       branch: 'feat/web-project-defaults-and-sidebar-revamp',
     },
-    { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4), badge: { text: 'DF', color: 'teal' } },
+    { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4), badge: { text: 'DF', color: 'teal' }, no_git: 'not_repository' },
     {
       id: 'p3',
       name: 'notes-site',
@@ -283,6 +283,16 @@ export function seed(): MockState {
       name: 'Fix re-attach redraw regression',
       title: '',
       state: 'working',
+      background_tasks_running: 1,
+      capabilities: { ...CAPS, execution_modes: true },
+      execution: { known: true, mode: 'interactive' },
+      background_tasks: {
+        known: true,
+        tasks: [
+          { id: 'bg-watch', description: 'Repeat the redraw tests', command: 'go test ./internal/vterm/... -run Redraw -count=200', status: 'running', started_at: ago(3) },
+          { id: 'bg-docs', description: 'Serve the docs preview', command: 'npx vite --host 127.0.0.1 --port 8765 docs', status: 'completed', started_at: ago(8), ended_at: ago(5) },
+        ],
+      },
       queued: 1,
       queue: [
         {
@@ -585,8 +595,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       title: 'Explain the attach status bar design',
       state: 'closed',
       stage: 'settled',
+      settled_at: ago(60 * 47),
       created_at: ago(60 * 50),
-      updated_at: ago(60 * 48),
+      updated_at: ago(60 * 47),
       items: [
         { id: 'i1', kind: 'user', time: ago(60 * 50), text: 'Explain why the attach status bar sits on a reserved row and never on codex.' },
         {
@@ -607,8 +618,10 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       title: '',
       state: 'closed',
       stage: 'archived',
+      settled_at: ago(60 * 24 * 2),
+      archived_at: ago(60 * 24),
       created_at: ago(60 * 24 * 3),
-      updated_at: ago(60 * 24 * 3 - 20),
+      updated_at: ago(60 * 24),
       items: [
         { id: 'i1', kind: 'user', time: ago(60 * 24 * 3), text: 'Move every workflow to the Node 24 action releases and keep the SHA pins.' },
         tool('i2', 60 * 24 * 3 - 5, { name: 'edit', title: 'Edit .github/workflows/ci.yml', status: 'completed', output: '@@ -30,2 +30,2 @@\n-        uses: actions/setup-node@v4\n+        uses: actions/setup-node@v5' }),
@@ -624,8 +637,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       title: 'Migrate the RSS template to Atom',
       state: 'closed',
       stage: 'archived',
+      archived_at: ago(60 * 24 * 5),
       created_at: ago(60 * 24 * 6),
-      updated_at: ago(60 * 24 * 6 - 30),
+      updated_at: ago(60 * 24 * 5),
       items: [
         { id: 'i1', kind: 'user', time: ago(60 * 24 * 6), text: 'Replace the RSS 2.0 feed template with Atom and keep the same URL.' },
         { id: 'i2', kind: 'assistant', time: ago(60 * 24 * 6 - 30), text: 'Switched `templates/feed.xml` to Atom 1.0. The URL is unchanged and the validator passes.' },
@@ -686,8 +700,10 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           tool('c10', step(0.05), { name: 'web_fetch', title: 'Fetch http://localhost:8000/sky-dodge/', status: 'completed', input: '{"url":"http://localhost:8000/sky-dodge/"}', output: '<!doctype html>…' }),
           think('r7', 'The assets load from the subfolder; capture that URL.'),
           bash('c11', 'chromium --headless --no-sandbox --screenshot=sky-dodge.png http://localhost:8000/sky-dodge/', {}, 0.05),
-          // The capture, read back: a tool image, which stays in the answer.
+          // The capture, read back: a tool image, which stands in the answer while its call folds.
           { ...read('c12', 'sky-dodge.png'), images: [{ id: 'img-sky-dodge', mime: 'image/png', size: 20480, name: 'sky-dodge.png' }] },
+          // The captured page, declared: its file card stands in the answer, its call folds with the rest.
+          tool('c12b', step(0.05), { name: 'uam_show_file', title: 'Show sky-dodge/index.html', status: 'completed', input: JSON.stringify({ path: `${p('p3')}/sky-dodge/index.html`, title: 'The captured page', type_hint: 'html' }), output: 'Declared the file for display.', declaration: { artifact_id: 'artifact-sky-dodge', path: `${p('p3')}/sky-dodge/index.html`, title: 'The captured page', type_hint: 'html' } }),
           say('m3', 'Launched Sky Dodge in the browser and saved a screenshot to `sky-dodge.png`.\n\nThe server\'s root page had changed to a different app, so I loaded Sky Dodge directly without altering the current `index.html`.'),
           { id: 'u2', kind: 'user' as const, time: ago(step(1)), text: 'can you share inline image' },
           think('r8', 'Provide the markdown inline image path for the user, `![Sky Dodge](sky-dodge.png)`; no tools needed.'),
@@ -823,6 +839,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
   const commands: Command[] = [
     { name: 'init', description: 'Create a copilot-instructions.md for this project', kind: 'command', input_hint: '' },
     { name: 'review', description: 'Review the uncommitted changes and report problems', kind: 'command', input_hint: '' },
+    { name: 'autopilot', description: 'Keep working between turns until the task is done', kind: 'command', input_hint: '[on|off]', aliases: ['goal'], allow_during_turn: true },
+    { name: 'allow-all', description: 'Allow every permission request without asking', kind: 'command', input_hint: '[on|off]', aliases: ['yolo'], allow_during_turn: true },
     { name: 'commit', description: 'Write a conventional commit for the staged changes', kind: 'skill', input_hint: '[scope]' },
     { name: 'release-notes', description: 'Draft release notes from recent commits', kind: 'skill', input_hint: '<range>' },
     { name: 'diagnosing-bugs', description: 'Reproduce, isolate and fix a bug from its symptom', kind: 'skill', input_hint: '<symptom>' },
@@ -868,6 +886,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
 
   return { meta, projects, previous, settings: {
       send_default: 'steer',
+      // On here, unlike the service, so the Task header shows Terminal.
+      terminal: true,
       // The setting names a model with effort and a long context, so the Settings section and a draft show them resolved.
       task_defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
       custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'UAM_BYOM_OPENROUTER', key_present: false }],

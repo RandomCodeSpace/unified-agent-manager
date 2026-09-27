@@ -53,7 +53,9 @@ func (m *Manager) CancelBackgroundTask(id, taskID string) (BackgroundTaskCancell
 	cancel()
 	m.mu.Lock()
 	if s.conv == conv {
+		before := m.summaryLocked(s)
 		m.backgroundTasksLocked(s, snapshot)
+		m.changedLocked(s, before)
 	}
 	m.mu.Unlock()
 	switch {

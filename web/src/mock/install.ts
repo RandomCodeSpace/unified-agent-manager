@@ -377,6 +377,57 @@ export function install(): void {
     }
   } as unknown as typeof EventSource;
 
+  // A Project's terminal socket gets a fake shell; every other socket is real.
+  const RealWebSocket = window.WebSocket;
+  window.WebSocket = Object.assign(function (url: string | URL, protocols?: string | string[]) {
+    return /\/api\/projects\/.+\/terminal/.test(String(url)) ? fakeShell() : new RealWebSocket(url, protocols);
+  }, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 }) as unknown as typeof WebSocket;
+
+  /** Prompts `mock$ `, echoes what is typed, answers each line with `you typed: <line>`; `exit` exits with code 0. */
+  function fakeShell(): WebSocket {
+    let line = '';
+    const socket = {
+      readyState: 0,
+      binaryType: 'blob',
+      onopen: null as ((e: Event) => void) | null,
+      onmessage: null as ((e: MessageEvent) => void) | null,
+      onclose: null as ((e: CloseEvent) => void) | null,
+      send(data: string | Uint8Array) {
+        if (typeof data === 'string') return; // resize
+        for (const ch of new TextDecoder().decode(data)) {
+          if (ch === '\x7f') {
+            if (line) out('\b \b');
+            line = line.slice(0, -1);
+          } else if (ch !== '\r') {
+            if (ch < ' ') continue; // Esc, Ctrl keys
+            line += ch;
+            out(ch);
+          } else if (line.trim() === 'exit') {
+            out('\r\n');
+            socket.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ type: 'exit', code: 0 }) }));
+            socket.close();
+          } else {
+            out(`\r\nyou typed: ${line}\r\nmock$ `);
+            line = '';
+          }
+        }
+      },
+      close() {
+        if (socket.readyState === 3) return;
+        socket.readyState = 3;
+        window.setTimeout(() => socket.onclose?.(new CloseEvent('close')), 0);
+      },
+    };
+    const out = (text: string) => socket.readyState === 1 && socket.onmessage?.(new MessageEvent('message', { data: new TextEncoder().encode(text).buffer }));
+    window.setTimeout(() => {
+      if (socket.readyState !== 0) return;
+      socket.readyState = 1;
+      socket.onopen?.(new Event('open'));
+      out('mock$ ');
+    }, 30);
+    return socket as unknown as WebSocket;
+  }
+
   const realFetch = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, window.location.origin);
@@ -554,7 +605,12 @@ export function install(): void {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal') return fail(400, `unknown setting "${key}"`);
+      if (body.terminal !== undefined) {
+        if (typeof body.terminal !== 'boolean') return fail(400, 'terminal must be true or false');
+        st.settings = { ...st.settings, terminal: body.terminal };
+        broadcast('settings', { settings: st.settings });
+      }
       if (body.task_defaults !== undefined) {
         const defaults = checkSelection(body.task_defaults);
         if (typeof defaults === 'string') return fail(400, defaults);
@@ -747,16 +803,16 @@ export function install(): void {
         case 'settle':
           if (stage !== 'active') return fail(409, `a ${stage} task cannot be settled`);
           if (blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
-          touch(t, { stage: 'settled', state: 'closed', open: false });
+          touch(t, { stage: 'settled', settled_at: now(), state: 'closed', open: false });
           return json(200, summary(t));
         case 'reopen':
           if (stage !== 'settled') return fail(409, `a ${stage} task cannot be reopened`);
-          touch(t, { stage: 'active' });
+          touch(t, { stage: 'active', settled_at: undefined });
           return json(200, summary(t));
         case 'archive':
           if (stage === 'archived') return fail(409, 'the task is already archived');
           if (stage === 'active' && blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
-          touch(t, { stage: 'archived', state: 'closed', open: false });
+          touch(t, { stage: 'archived', archived_at: now(), state: 'closed', open: false });
           return json(200, summary(t));
       }
     }
@@ -855,6 +911,16 @@ export function install(): void {
       if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
       const name = String(body.name ?? '');
       if (!st.commands.some((c) => c.name === name)) return fail(404, `/${name} is not one of this task's commands`);
+      // Mode switches apply at once, mid-turn too, and add no transcript line.
+      if (name === 'autopilot' || name === 'allow-all') {
+        const arg = String(body.arguments ?? '').trim().toLowerCase();
+        if (name === 'autopilot') touch(t, { execution: { known: true, mode: arg === 'off' ? 'interactive' : 'autopilot' } });
+        else touch(t, { mode: arg === 'on' || (!arg && t.mode !== 'yolo') ? 'yolo' : 'safe' });
+        const sub: Submission = { request_id: String(body.request_id ?? ''), status: 'accepted', time: now() };
+        t.last_submission = sub;
+        broadcast('submission', { session_id: t.id, submission: sub }, t.id);
+        return json(202, sub);
+      }
       if (busy(t)) return fail(409, 'the provider is still running a turn');
       const extras = checkExtras(t, body);
       if (extras instanceof Response) return extras;
@@ -889,6 +955,15 @@ export function install(): void {
       return new Response(u.bytes.slice(), { status: 200, headers: { 'Content-Type': u.mime, 'X-Content-Type-Options': 'nosniff' } });
     }
 
+    // Stopping a background shell: accepted at once, reported as cancelled.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/background-tasks\/([^/]+)\/cancel$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      const id = decodeURIComponent(r[2]);
+      if (!t?.background_tasks?.tasks.some((task) => task.id === id)) return fail(404, 'background task not found');
+      t.background_tasks = { ...t.background_tasks, tasks: t.background_tasks.tasks.map((task) => (task.id === id ? { ...task, status: 'cancelled', ended_at: new Date().toISOString() } : task)) };
+      touch(t, { background_tasks_running: t.background_tasks.tasks.filter((task) => task.status === 'running').length });
+      return json(200, { accepted: true, background_tasks: t.background_tasks });
+    }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/(prompt|cancel|close)$/)) && method === 'POST') {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
@@ -910,7 +985,10 @@ export function install(): void {
               return json(202, { ...sub, status: 'queued' });
             }
             if (body.mode === 'steer') {
-              pushItem(t, { id: nextId('u'), kind: 'user', delivery: 'steer', text, time: now(), ...withAttachments });
+              // As with Copilot: a receipt until the provider records the message under the same ID.
+              const steer: Item = { id: nextId('u'), kind: 'user', delivery: 'steer', text, time: now(), ...withAttachments };
+              pushItem(t, { ...steer, steer_status: 'accepted' });
+              void wait(2000).then(() => pushItem(t, busy(t) ? steer : { ...steer, steer_status: 'not_delivered' }));
               t.last_submission = sub;
               broadcast('submission', { session_id: t.id, submission: sub }, t.id);
               return json(202, sub);

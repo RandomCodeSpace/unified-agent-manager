@@ -749,9 +749,9 @@ export function currentStep(items: readonly Item[], ctx: ActivityContext, own?: 
 /**
  * Whether an entry stands in the answer at its place (DESIGN.md promotion) rather than folding
  * into the turn line: prose, notices and steer bubbles always; a question that no longer waits;
- * a call whose result returned images; a call `own` takes over (a subagent row); a question
- * request. Thoughts, calls (failed ones too: the turn line counts them) and decided permissions
- * never do.
+ * a call whose result returned images (the images do, while the call folds, see `callProduct`);
+ * a call `own` takes over (a subagent row, a declared file's card); a question request.
+ * Thoughts, calls (failed ones too: the turn line counts them) and decided permissions never do.
  */
 export function promoted(entry: Entry, ctx: ActivityContext, own?: (item: Item) => boolean): boolean {
   if (entry.interaction) return entry.interaction.kind === 'question';
@@ -764,18 +764,13 @@ export function promoted(entry: Entry, ctx: ActivityContext, own?: (item: Item) 
   return !!asked && asked.outcome !== 'pending';
 }
 
-/** Only a completed local declaration replaces its routine tool row with a file card. */
+/** Only a completed local declaration has a file card; its tool row folds like any call. */
 export function isFileDeclaration(item: Item): boolean {
   const tool = item.tool;
   const declaration = tool?.declaration;
   return item.kind === 'tool' && tool?.name === 'uam_show_file' && tool.status === 'completed'
     && typeof declaration?.artifact_id === 'string' && !!declaration.artifact_id
     && typeof declaration.path === 'string' && declaration.path.startsWith('/');
-}
-
-/** The lightweight history index keeps only this grouping fact, never declaration metadata. */
-export function isDeclarationBoundary(item: Item): boolean {
-  return isFileDeclaration(item) || item.tool?.declaration_boundary === true;
 }
 
 export const FILE_DECLARATION_LIMIT = 128;
@@ -785,7 +780,7 @@ export function declarationIdentity(item: Pick<Item, 'id' | 'agent_id'>): string
   return JSON.stringify([item.agent_id ?? '', item.id]);
 }
 
-/** A window keeps only its newest declaration cards; older calls remain ordinary tool rows. */
+/** A window keeps only its newest declaration cards; older calls keep only their tool rows. */
 export function newestFileDeclarations(items: readonly Item[]): Set<string> {
   const seen = new Set<string>();
   const cards = new Set<string>();
@@ -797,6 +792,18 @@ export function newestFileDeclarations(items: readonly Item[]): Set<string> {
     if (isFileDeclaration(item)) cards.add(key);
   }
   return cards;
+}
+
+/**
+ * What a tool call produced for the person, which stands in the answer at the call's place
+ * while the call itself folds into the turn's activity (DESIGN.md promotion): `card` for a
+ * declaration among the window's newest (`cards`, from `newestFileDeclarations`), `images`
+ * for a call whose result returned images or a note on them; null for anything else.
+ */
+export function callProduct(item: Item, cards: ReadonlySet<string>): 'card' | 'images' | null {
+  if (item.kind !== 'tool') return null;
+  if (isFileDeclaration(item) && cards.has(declarationIdentity(item))) return 'card';
+  return (item.images?.length ?? 0) > 0 || !!item.images_note ? 'images' : null;
 }
 
 /** The distinct paths the turn's completed edit, write and create calls named, in order. */

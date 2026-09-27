@@ -624,6 +624,7 @@ func TestToolImagesAreSniffedDedupedAndKeptWithTheTask(t *testing.T) {
 		t.Fatalf("tool image as an attachment = %v", err)
 	}
 
+	prov.Last().EmitSubagent(agentapi.Subagent{ID: "agent-1", Name: "helper", Status: agentapi.SubagentIdle})
 	if _, err := m.Archive(sum.ID); err != nil {
 		t.Fatal(err)
 	}

@@ -32,6 +32,7 @@ const modules = {
   './Attachments': { ImageThumbs: () => null, ItemAttachments: () => null },
   './common': { CodeBlock: element('pre'), Markdown: ({ text }) => React.createElement('p', null, text), SessionContext: React.createContext(''), WorkdirContext: React.createContext(''), Spinner: () => null, SubagentIdleIcon: () => null, WorkingMark: () => null, useApp: () => ({ meta: null }) },
   './Interactions': { DecidedRow: ({ interaction }) => React.createElement('p', null, interaction.id) },
+  './ui/appear': { Appear: ({ show, children }) => show ? children : null },
   './ui/button': { Button: element('button') },
   './ui/chip': { Chip: element('span') },
   './ui/collapse': { Collapse: ({ open, children }) => open ? children : null, usePresence: open => ({ mounted: open, onClosed: () => {} }) },
@@ -143,5 +144,34 @@ test('same-ID main and child turns keep disclosure state and DOM targets indepen
   } finally {
     disclosureValues.clear();
     disclosureKeys.length = 0;
+  }
+});
+
+test('a running subagent stands in the answer; a settled one folds into its turn and opens with it', () => {
+  const task = (id, description) => ({ id, kind: 'tool', time: `2026-09-26T12:00:0${id.slice(-1)}Z`, tool: { name: 'task', input: JSON.stringify({ description }), status: id === 'call2' ? 'running' : 'completed' } });
+  const items = [
+    { id: 'request1', kind: 'user', text: 'Request', time: '2026-09-26T12:00:01Z' },
+    task('call2', 'RUNNING_AGENT'),
+    task('call3', 'SETTLED_AGENT'),
+    { id: 'answer4', kind: 'assistant', text: 'Answer', time: '2026-09-26T12:00:04Z' },
+  ];
+  const subagents = [
+    { id: 'a2', name: 'RUNNING_AGENT', status: 'running', parent_tool_call_id: 'call2' },
+    { id: 'a3', name: 'SETTLED_AGENT', status: 'completed', parent_tool_call_id: 'call3' },
+  ];
+  const draw = density => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: true, working: true, density, onOpenAgent: () => {} }));
+  for (const density of ['compact', 'detailed']) {
+    const closed = draw(density);
+    assert.match(closed, /RUNNING_AGENT/, density);
+    assert.doesNotMatch(closed, /SETTLED_AGENT/, density);
+    expanded = true;
+    try {
+      const open = draw(density);
+      assert.match(open, /SETTLED_AGENT/, density);
+      const ids = [...open.matchAll(/\sid="(item-[^"]+)"/g)].map(match => match[1]);
+      assert.equal(ids.filter(id => id === 'item-call3').length, 1, density);
+    } finally {
+      expanded = false;
+    }
   }
 });

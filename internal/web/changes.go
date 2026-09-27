@@ -386,32 +386,43 @@ func countPatch(patch string) (additions, deletions int) {
 	return additions, deletions
 }
 
+// Why a Project has no git views (Project.NoGit).
+const (
+	noGitInstalled  = "not_installed"
+	noGitRepository = "not_repository"
+)
+
 // readBranch returns the branch checked out in the git work tree containing
-// dir, made safe to show. It is empty when dir is not in a work tree, HEAD is
-// detached, or git cannot tell within branchTimeout.
-func readBranch(ctx context.Context, dir string) string {
+// dir, made safe to show, and why dir has no git views, if it has none. The
+// branch is empty when dir is not in a work tree, HEAD is detached, or git
+// cannot tell within branchTimeout; noGit is set only when git is missing or
+// says dir is in no work tree.
+func readBranch(ctx context.Context, dir string) (branch, noGit string) {
 	git, err := execpath.Resolve("git")
 	if err != nil {
-		return ""
+		return "", noGitInstalled
 	}
 	ctx, cancel := context.WithTimeout(ctx, branchTimeout)
 	defer cancel()
-	out, code, _, err := runGit(ctx, git, dir, 4096, "symbolic-ref", "--quiet", "HEAD")
+	out, code, stderr, err := runGit(ctx, git, dir, 4096, "symbolic-ref", "--quiet", "HEAD")
 	if err != nil || code != 0 {
-		return ""
+		if err == nil && strings.Contains(stderr, "not a git repository") {
+			return "", noGitRepository
+		}
+		return "", ""
 	}
 	branch, ok := strings.CutPrefix(strings.TrimSpace(string(out)), "refs/heads/")
 	if !ok {
-		return ""
+		return "", ""
 	}
-	return clipRunes(displaytext.Sanitize(branch), maxNameRunes)
+	return clipRunes(displaytext.Sanitize(branch), maxNameRunes), ""
 }
 
 // refreshBranches re-reads the branch of each Project in ids, or of every
-// Project when there are none, and publishes each Project whose branch
-// changed. Unless force, a branch read within branchTTL is kept. Git runs
-// outside mu, for all Projects at once, so a listing waits at most about
-// branchTimeout however many Projects there are.
+// Project when there are none, and publishes each Project whose branch, or
+// whether it has git views, changed. Unless force, a branch read within
+// branchTTL is kept. Git runs outside mu, for all Projects at once, so a
+// listing waits at most about branchTimeout however many Projects there are.
 func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string) {
 	m.branchMu.Lock()
 	defer m.branchMu.Unlock()
@@ -428,16 +439,20 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 		}
 	}
 	m.mu.Unlock()
-	branches := make(map[string]string, len(dirs))
+	type read struct {
+		branch string
+		noGit  string
+	}
+	branches := make(map[string]read, len(dirs))
 	var (
 		wg sync.WaitGroup
 		mu sync.Mutex
 	)
 	for id, dir := range dirs {
 		wg.Go(func() {
-			branch := readBranch(ctx, dir)
+			branch, noGit := readBranch(ctx, dir)
 			mu.Lock()
-			branches[id] = branch
+			branches[id] = read{branch, noGit}
 			mu.Unlock()
 		})
 	}
@@ -447,14 +462,14 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for id, branch := range branches {
+	for id, r := range branches {
 		p := m.projects[id]
 		if p == nil {
 			continue // removed while git ran
 		}
 		m.branchAt[id] = time.Now()
-		if p.Branch != branch {
-			p.Branch = branch
+		if p.Branch != r.branch || p.NoGit != r.noGit {
+			p.Branch, p.NoGit = r.branch, r.noGit
 			m.publishProjectLocked(*p)
 		}
 	}

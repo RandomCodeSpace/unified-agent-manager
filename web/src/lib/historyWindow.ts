@@ -30,16 +30,27 @@ export function itemCursor(id: string): string {
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
-/** Keep a contiguous window at the requested edge, including one oversized item intact. */
+/** A thought or a tool call draws no row until its fold opens, so it takes a fifth of a row's share of a window. */
+const ROW = 5;
+const share = (item: Item) => (item.kind === 'tool' || item.kind === 'reasoning' ? 1 : ROW);
+
+/**
+ * Keep a contiguous window at the requested edge, including one oversized item intact. `maxItems`
+ * counts rows: folded work counts a fifth, so a window of mostly tool calls still spans several
+ * screens and reading one end never drops what is in view at the other.
+ */
 export function boundItems(items: Item[], direction: 'older' | 'newer', maxItems = ACTIVE_ITEMS, maxBytes = ACTIVE_BYTES): {
   items: Item[]; droppedBefore: Item[]; droppedAfter: Item[];
 } {
+  const limit = Math.max(1, maxItems) * ROW;
   let count = 0;
+  let units = 0;
   let bytes = 0;
-  while (count < items.length && count < Math.max(1, maxItems)) {
-    const index = direction === 'older' ? count : items.length - count - 1;
-    const next = accountItem(items[index]);
-    if (count > 0 && bytes + next > maxBytes) break;
+  while (count < items.length) {
+    const item = items[direction === 'older' ? count : items.length - count - 1];
+    const next = accountItem(item);
+    if (count > 0 && (units + share(item) > limit || bytes + next > maxBytes)) break;
+    units += share(item);
     bytes += next;
     count++;
     if (bytes >= maxBytes) break;
