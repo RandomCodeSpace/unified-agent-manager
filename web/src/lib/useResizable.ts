@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type Poin
 
 /** The chat column keeps at least this much room beside an inline panel. */
 const COLUMN_MIN = 480;
+/** The Task view keeps at least this much height above a bottom panel (its header, a few rows and the composer). */
+const PANE_MIN = 280;
 const RAIL = 264;
 const STEP = 16;
 
 export interface Resizable {
-  /** Put on the panel; its width is the `--panel-w` custom property set here through CSSOM (no inline markup). */
+  /** Put on the panel; its size is the `--panel-w` (or, for a bottom panel, `--panel-h`) custom property set here through CSSOM (no inline markup). */
   panelRef: RefObject<HTMLElement | null>;
   width: number;
   min: number;
@@ -15,7 +17,7 @@ export interface Resizable {
   handleProps: {
     role: 'separator';
     tabIndex: number;
-    'aria-orientation': 'vertical';
+    'aria-orientation': 'vertical' | 'horizontal';
     'aria-valuenow': number;
     'aria-valuemin': number;
     'aria-valuemax': number;
@@ -30,29 +32,34 @@ export interface Resizable {
 }
 
 /**
- * A right-hand panel whose width the user drags on its inner edge. The width is written
- * straight to a CSS custom property during the drag (no React re-render per move, no
- * layout thrash) and saved to localStorage per panel when the drag ends. Double-click
- * resets; arrow keys step 16px (64 with Shift); Home/End go to the limits.
+ * A right-hand panel whose width the user drags on its inner edge, or (`axis` `y`) a bottom
+ * panel whose height the user drags on its top edge. The size is written straight to a CSS
+ * custom property during the drag (no React re-render per move, no layout thrash) and saved
+ * to localStorage per panel when the drag ends. Double-click resets; arrow keys step 16px
+ * (64 with Shift); Home/End go to the limits.
  */
-export function useResizable(key: string, fallback: number, minWidth = 320): Resizable {
+export function useResizable(key: string, fallback: number, minWidth = 320, axis: 'x' | 'y' = 'x'): Resizable {
+  const y = axis === 'y';
+  const maxFor = y ? maxHeight : maxWidth;
   const storageKey = `uam.panel.${key}`;
   const panelRef = useRef<HTMLElement | null>(null);
   const [max, setMax] = useState(() => maxFor(minWidth));
   const [stored, setStored] = useState(() => read(storageKey) ?? fallback);
   // The effective width is derived, so a viewport change re-clamps without touching state.
   const width = clamp(stored, minWidth, max);
-  const drag = useRef<{ x: number; w: number } | null>(null);
+  const drag = useRef<{ at: number; w: number } | null>(null);
+  const at = (e: PointerEvent<HTMLElement>) => (y ? e.clientY : e.clientX);
+  const cursor = y ? 'cursor-row-resize' : 'cursor-col-resize';
 
   useEffect(() => {
     const onResize = () => setMax(maxFor(minWidth));
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
-  }, [minWidth]);
+  }, [minWidth, maxFor]);
 
   const apply = useCallback((w: number) => {
-    panelRef.current?.style.setProperty('--panel-w', `${w}px`);
-  }, []);
+    panelRef.current?.style.setProperty(y ? '--panel-h' : '--panel-w', `${w}px`);
+  }, [y]);
 
   // Keep the element in step with the effective width (mount, reset, keyboard, viewport change).
   useEffect(() => {
@@ -72,7 +79,7 @@ export function useResizable(key: string, fallback: number, minWidth = 320): Res
   const handleProps: Resizable['handleProps'] = {
     role: 'separator',
     tabIndex: 0,
-    'aria-orientation': 'vertical',
+    'aria-orientation': y ? 'horizontal' : 'vertical',
     'aria-valuenow': width,
     'aria-valuemin': minWidth,
     'aria-valuemax': max,
@@ -80,31 +87,31 @@ export function useResizable(key: string, fallback: number, minWidth = 320): Res
     onPointerDown: (e) => {
       if (e.button !== 0) return;
       e.currentTarget.setPointerCapture(e.pointerId);
-      drag.current = { x: e.clientX, w: width };
-      document.body.classList.add('cursor-col-resize', 'select-none');
+      drag.current = { at: at(e), w: width };
+      document.body.classList.add(cursor, 'select-none');
     },
     onPointerMove: (e) => {
       if (!drag.current) return;
-      apply(clamp(drag.current.w + (drag.current.x - e.clientX), minWidth, max));
+      apply(clamp(drag.current.w + (drag.current.at - at(e)), minWidth, max));
     },
     onPointerUp: (e) => {
       if (!drag.current) return;
-      const w = clamp(drag.current.w + (drag.current.x - e.clientX), minWidth, max);
+      const w = clamp(drag.current.w + (drag.current.at - at(e)), minWidth, max);
       drag.current = null;
-      document.body.classList.remove('cursor-col-resize', 'select-none');
+      document.body.classList.remove(cursor, 'select-none');
       commit(w);
     },
     onPointerCancel: () => {
       if (!drag.current) return;
       drag.current = null;
-      document.body.classList.remove('cursor-col-resize', 'select-none');
+      document.body.classList.remove(cursor, 'select-none');
       apply(width);
     },
     onKeyDown: (e) => {
       const step = e.shiftKey ? STEP * 4 : STEP;
       let next: number | null = null;
-      if (e.key === 'ArrowLeft') next = width + step;
-      else if (e.key === 'ArrowRight') next = width - step;
+      if (e.key === (y ? 'ArrowUp' : 'ArrowLeft')) next = width + step;
+      else if (e.key === (y ? 'ArrowDown' : 'ArrowRight')) next = width - step;
       else if (e.key === 'Home') next = max;
       else if (e.key === 'End') next = minWidth;
       else if (e.key === 'Enter') next = fallback;
@@ -118,8 +125,12 @@ export function useResizable(key: string, fallback: number, minWidth = 320): Res
   return { panelRef, width, min: minWidth, max, handleProps };
 }
 
-function maxFor(min: number): number {
+function maxWidth(min: number): number {
   return Math.max(min, Math.min(880, window.innerWidth - RAIL - COLUMN_MIN));
+}
+
+function maxHeight(min: number): number {
+  return Math.max(min, window.innerHeight - PANE_MIN);
 }
 
 function clamp(v: number, lo: number, hi: number): number {

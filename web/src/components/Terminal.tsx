@@ -14,8 +14,8 @@ type Status = 'connecting' | 'connected' | 'disconnected' | 'failed' | 'webgl' |
 const LABELS: Record<string, string> = { connecting: 'Connecting…', connected: 'Connected', disconnected: 'Disconnected' };
 
 /**
- * The terminal panel's content, inside the Task's SidePanel: a shell in the Project folder. The shell
- * lives as long as its socket: closing the panel, Restart and leaving the Task end it. This chunk
+ * The terminal dock's content (App.tsx TerminalDock, under the Task view): a shell in the Project
+ * folder. The shell lives as long as its socket: Close and Restart end it; switching Tasks does not. This chunk
  * uses Button and plain markup rather than PanelHeader, Note or Tip: the bundler moves modules that
  * two lazy chunks (this and Files) share with the page out of the page's bundle into another request.
  */
@@ -30,16 +30,16 @@ export default function TerminalPanel({ project, onClose }: { project: Project; 
 
   return (
     <>
-      <div className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3">
+      <div className="flex h-9 shrink-0 items-center gap-1.5 pr-1.5 pl-3">
         <SquareTerminal aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <span className="text-title text-ink">Terminal</span>
         <span className="min-w-0 flex-1 truncate text-meta text-muted" title={project.dir}>{project.dir}</span>
         <span role="status" className="shrink-0 text-meta text-muted">{typeof status === 'number' ? `Exited (code ${status})` : LABELS[status]}</span>
-        <Button size="md" className="px-2 text-muted" onClick={restart}>
+        <Button size="sm" className="text-muted" onClick={restart}>
           <RotateCcw />
           <span className="max-sm:sr-only">Restart</span>
         </Button>
-        <Button size="icon-md" aria-label="Close terminal" className="text-muted" onClick={onClose}>
+        <Button size="icon" aria-label="Close terminal" className="text-muted" onClick={onClose}>
           <X />
         </Button>
       </div>
@@ -103,7 +103,8 @@ const THEME: ITheme = {
 };
 /** index.css `--font-mono`. */
 const FONT = "'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace";
-const FONT_SIZE = 13;
+const FONT_SIZE = 14;
+const LINE_HEIGHT = 1.25;
 
 /**
  * Opens a terminal in `host` with a shell in the Project folder, unless `signal` aborts first; the
@@ -125,7 +126,7 @@ function connect(host: HTMLElement, projectId: string, onStatus: (status: Status
     return () => {};
   }
   probe.getExtension('WEBGL_lose_context')?.loseContext();
-  const term = new Terminal({ theme: THEME, fontFamily: FONT, fontSize: FONT_SIZE });
+  const term = new Terminal({ theme: THEME, fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT });
   const fit = new FitAddon();
   term.loadAddon(fit);
   try {

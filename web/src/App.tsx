@@ -1,7 +1,7 @@
 import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
-import { addTransitionType, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { UPDATE_EVENTS, api, describeError, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
@@ -15,6 +15,7 @@ import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAtta
 import { needsYouCount, newsReader, pageTitle, tasksOf } from './lib/tasks';
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
+import { useResizable } from './lib/useResizable';
 import { checkDue, decideUpdate } from './lib/update';
 import { NewTaskPane, Task } from './components/Task';
 import type { FirstMessage } from './components/Composer';
@@ -23,6 +24,9 @@ import { Button } from './components/ui/button';
 import { Appear } from './components/ui/appear';
 import { AlertDialog, Sheet } from './components/ui/dialog';
 import { TooltipProvider } from './components/ui/tooltip';
+
+/** The terminal's content brings xterm.js, so it loads with the first terminal opened. */
+const TerminalPanel = lazy(() => import('./components/Terminal'));
 
 type Auth = 'checking' | 'in' | 'out';
 type ProjectDialog = { kind: 'add' } | { kind: 'edit'; project: Project } | null;
@@ -86,6 +90,8 @@ export default function App() {
   const sheetInline = useMedia(SHEET_INLINE);
   const [notice, setNotice] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  // The terminal docked under the Task view (TerminalDock): the Project its shell started in, or null.
+  const [terminalId, setTerminalId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [dialog, setDialog] = useState<ProjectDialog>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -416,6 +422,11 @@ export default function App() {
     confirmedDetail.current = null;
     void api.logout().finally(() => { dispatch({ type: 'reset' }); setAuth('out'); });
   }, [recentTasks]);
+  const toggleTerminal = useCallback((projectId: string) => setTerminalId((id) => (id ? null : projectId)), []);
+  const closeTerminal = useCallback(() => {
+    setTerminalId(null);
+    document.getElementById('terminal-link')?.focus();
+  }, []);
   const onSheet = useCallback((open: boolean, restoreFocus = true) => {
     setSheetOpen(open);
     if (!open && restoreFocus) document.getElementById('changes-link')?.focus();
@@ -633,6 +644,9 @@ export default function App() {
   const shown = state.detail && selected ? state.detail : state.selectedId && selected && (state.previousCached || !lateLoad) ? state.previous : null;
   const stale = !settingsOpen && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
+  // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
+  const terminalProject = terminalId && state.settings.terminal ? state.projects.find((p) => p.id === terminalId) : undefined;
+  if (terminalId && !terminalProject) setTerminalId(null);
   const dialogTask = taskDialog ? state.sessions.find((s) => s.id === taskDialog.id) : undefined;
   const newTaskProject = newTask ? state.projects.find((p) => p.id === newTask.projectId) : undefined;
 
@@ -708,6 +722,8 @@ export default function App() {
         sheetOpen={sheetOpen}
         sidePanelInline={sheetInline}
         onSheet={onSheet}
+        terminalOpen={!!terminalProject}
+        onTerminal={toggleTerminal}
         onSessionUpdate={onSessionUpdate}
         onInteractionUpdate={onInteractionUpdate}
         leading={leading}
@@ -797,6 +813,7 @@ export default function App() {
                 {/* Settings and a new Task do not wait on the stream. */}
                 <LoadingVeil show={loading && !settingsOpen && !newTask} />
               </div>
+              {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} onClose={closeTerminal} />}
             </main>
 
             <NewTaskPalette open={paletteOpen} onOpenChange={setPaletteOpen} projects={state.projects} sessions={state.sessions} selectedId={state.selectedId} filter={filter} onPick={startTask} />
@@ -897,6 +914,25 @@ function EmptyPane({ leading, connection, children }: { leading: React.ReactNode
  * While the stream (re)opens past the quiet period: a `canvas` veil over the pane below its header
  * that takes the pointer, with a spinner at its centre. It fades both ways (Appear, without its scale); the header stays usable.
  */
+/**
+ * Settings → Terminal's shell, docked under the Task view as part of the layout (DESIGN.md Terminal):
+ * the Task view gives it the height, nothing is covered. Its top edge drags that height. It stays
+ * across Task switches and ends with Close, which ends the shell.
+ */
+function TerminalDock({ project, onClose }: { project: Project; onClose: () => void }) {
+  const { panelRef, handleProps } = useResizable('terminal-h', 320, 160, 'y');
+  return (
+    <section ref={panelRef} aria-label="Terminal" className="relative flex h-[var(--panel-h,320px)] shrink-0 flex-col bg-canvas">
+      <div {...handleProps} className="absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize items-center outline-hidden focus-visible:outline-2 focus-visible:outline-focus" title="Drag to resize · double-click to reset">
+        <div className="fade-rule w-full" />
+      </div>
+      <Suspense fallback={null}>
+        <TerminalPanel project={project} onClose={onClose} />
+      </Suspense>
+    </section>
+  );
+}
+
 function LoadingVeil({ show }: { show: boolean }) {
   return (
     <Appear show={show} className="absolute inset-x-0 top-header bottom-0 z-20 scale-100 items-center justify-center bg-canvas/70">

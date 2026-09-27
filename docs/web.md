@@ -682,17 +682,18 @@ are logged only at debug level (`UAM_DEBUG=1`).
 - **Terminal**: off by default. Turn on Settings → Terminal and the Task
   header shows a "Terminal" button after Files, also when the project has no
   Git and on settled and archived Tasks. It opens a shell in the project
-  folder, running on the server as the user the service runs as, beside the
-  conversation (a full-screen sheet on a narrow window). Anyone signed in can
+  folder, running on the server as the user the service runs as, docked at
+  the bottom of the window under the conversation (drag its top edge to
+  resize). It stays open, with its shell, while you switch Tasks. Anyone signed in can
   then run commands on the machine without the agent's permission prompts;
   agents do not use it. The panel's header shows the folder and whether the
   shell is connecting, connected, exited (with its exit code) or
   disconnected; Restart starts a new shell and × closes the panel. The shell
-  lives only as long as the panel: closing it, Restart, opening another Task,
-  reloading the page or turning the setting off ends the shell and
-  everything it runs, and there is no reattaching. Esc goes to the terminal,
-  so only × closes the panel, and a click in the conversation leaves it
-  open; opening Changes, Files, Subagents or a file preview closes it. At
+  lives only as long as the panel: closing it, Restart, reloading the page or
+  turning the setting off ends the shell and everything it runs, and there
+  is no reattaching. Esc goes to the terminal, so only × (or the header's
+  Terminal button) closes it; Changes, Files, Subagents and file previews
+  open beside the conversation above it. At
   most eight terminals run at once. When the service refuses one (too many,
   the folder is gone, or the setting is off) the panel says "Could not open a
   terminal." with Retry. The terminal draws with WebGL; in a browser with
