@@ -100,7 +100,7 @@ make build
 make test-e2e
 ```
 
-Source builds require Go 1.25.14 or newer and Node.js with npm. The tested Node
+Source builds require Go 1.26.6 or newer and Node.js with npm. The tested Node
 version is in `web/.node-version`. `make build` and `make install` use the locked
 frontend dependencies, build the UI, and embed it in the Go binary. Generated
 bundles are ignored on source branches. Without `make web`, a plain Go build

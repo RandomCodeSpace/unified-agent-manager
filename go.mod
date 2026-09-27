@@ -1,6 +1,6 @@
 module github.com/RandomCodeSpace/unified-agent-manager
 
-go 1.25.14
+go 1.26.6
 
 require (
 	github.com/charmbracelet/x/term v0.2.2
