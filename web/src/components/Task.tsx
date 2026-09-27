@@ -19,7 +19,7 @@ import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
-import { Transcript } from './Transcript';
+import { Transcript, WorkingLabel } from './Transcript';
 import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
 import { HistoryAnchor } from './HistoryAnchor';
@@ -628,6 +628,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               provider={session.provider}
               workdir={session.workdir}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
+              footLine={false}
               density={density}
               onOpenChanges={openChanges}
             />
@@ -650,12 +651,16 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}>
-          <Appear show={jump} className="absolute top-0 left-1/2 -translate-x-1/2">
-            <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
-              <ArrowDown />
-              Jump to bottom
-            </Button>
-          </Appear>
+          {/* The working label and "Jump to bottom" float side by side, centred just above the composer. */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center gap-2 px-3 *:pointer-events-auto">
+            <WorkingLabel working={working} items={liveItems} identityItems={session.history_index} interactions={session.interactions} subagents={session.subagents} turnTimings={session.turn_timings} compact={density === 'compact'} />
+            <Appear show={jump} className="shrink-0">
+              <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
+                <ArrowDown />
+                Jump to bottom
+              </Button>
+            </Appear>
+          </div>
           <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
         </div>

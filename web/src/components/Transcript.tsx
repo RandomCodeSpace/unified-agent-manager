@@ -17,6 +17,7 @@ import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
+import { Appear } from './ui/appear';
 import { Tip } from './ui/tooltip';
 
 interface Props {
@@ -50,6 +51,8 @@ interface Props {
   density?: Density;
   /** Open the Changes sheet from a turn's "Changed n files" line. */
   onOpenChanges?: () => void;
+  /** Draw the live foot line; the main pane draws the floating `WorkingLabel` over its composer instead. */
+  footLine?: boolean;
 }
 
 /** Rows that arrive after mount rise in; rows present at mount appear at once. Stable, so memoised rows hold. */
@@ -65,7 +68,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges }: Props) {
+export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges, footLine = true }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = useMemo(() => {
     const map = new Map<string, Subagent>();
@@ -118,8 +121,8 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
     const gctx = { ...ctx, live: groupLive };
     if (last && working) showedWorking = true;
-    // One status row heads the turn: "Busy for 12s" becomes "Took 12s" in the same slot, and
-    // streamed content lands below it, so nothing on screen moves at either moment.
+    // One status row heads the turn and keeps its slot while it runs, so "Took 12s" lands there
+    // at the end and streamed content lands below it: nothing on screen moves at either moment.
     if (compact) {
       // Compact: the head row carries the turn's counts and opens its timeline; only promoted
       // entries stand in the answer, and a steer bubble sits in the turn at its place.
@@ -129,7 +132,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
       out.push(
         <div key={`turn-${id}`} className="flex flex-col gap-3">
-          {(last && working) || showEnd || summary.count > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} start={foregroundStart(turnTimings)} timing={timing} summary={summary} entries={group} ctx={gctx} /> : null}
+          {(last && working) || showEnd || summary.count > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} timing={timing} summary={summary} entries={group} ctx={gctx} /> : null}
           {renderCompact(group, gctx, special, own)}
           {changed.length > 0 && <ChangedLine files={changed} onOpen={onOpenChanges} />}
         </div>,
@@ -138,7 +141,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       const nodes = renderEntries(group, gctx, special);
       out.push(
         <div key={`turn-${after}`} className="flex flex-col gap-3">
-          {last && working ? <TurnStatus working start={foregroundStart(turnTimings)} /> : showEnd && <TurnStatus timing={timing} />}
+          {last && working ? <TurnStatus working /> : showEnd && <TurnStatus timing={timing} />}
           {nodes}
         </div>,
       );
@@ -157,13 +160,13 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   });
   flush(true);
   // Compact draws no live activity row, so the foot line names the current step itself.
-  const step = compact && working ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
+  const step = footLine && compact && working ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
   return (
     <SessionContext.Provider value={sessionId}>
       <WorkdirContext.Provider value={workdir}>
         {out}
-        {working && !showedWorking && <TurnStatus working start={foregroundStart(turnTimings)} />}
-        <WorkingTail working={working && (compact || !liveAtFoot(items, byParent))} turnId={userItemId ?? 'start'} step={step} />
+        {working && !showedWorking && <TurnStatus working />}
+        {footLine && <WorkingTail working={working && (compact || !liveAtFoot(items, byParent))} turnId={userItemId ?? 'start'} step={step} />}
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
@@ -208,26 +211,20 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
 
 /**
  * The row that heads a compact turn (DESIGN.md turn line), in the turn status row's slot:
- * the working mark and "Busy for 12s" while it runs, "Took 12s" once it ended, then the
- * turn's counts, "5 thoughts (42s) · 3 commands · 2 files read", updating in place as items
- * append. With anything folded it is a button that opens the turn's whole timeline in place,
- * mounted on the first open only; the counts turn `error` after a failure and `attention`
+ * "Took 12s" once it ended (while it runs the working label says so), then the turn's counts,
+ * "5 thoughts (42s) · 3 commands · 2 files read", updating in place as items append. With
+ * anything folded it is a button that opens the turn's whole timeline in place, mounted on
+ * the first open only; the counts turn `error` after a failure and `attention`
  * while a call waits for the user.
  */
-function TurnHead({ id, agentId, working, start, timing, summary, entries, ctx }: { id: string; agentId?: string; working: boolean; start?: string; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext }) {
+function TurnHead({ id, agentId, working, timing, summary, entries, ctx }: { id: string; agentId?: string; working: boolean; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext }) {
   // Item IDs are local to their agent; main-turn identities stay unchanged.
   const scope = agentId ? 'agent-turn' : 'turn';
   const scopedId = agentId ? encodeURIComponent(JSON.stringify([agentId, id])) : id;
   const [open, setOpen] = useDisclosure(`${scope}:${scopedId}`);
   const [opened, setOpened] = useState(open);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!working) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [working]);
-  const elapsed = working ? elapsedSince(start, now) : completedDuration(timing);
-  const head = working ? (elapsed ? `Busy for ${elapsed}` : 'Busy') : elapsed ? `Took ${elapsed}` : '';
+  const elapsed = working ? null : completedDuration(timing);
+  const head = elapsed ? `Took ${elapsed}` : '';
   const text = [head, ...summary.parts.map((p) => p.text)].filter(Boolean).join(' · ');
   const domId = `${scope}-${scopedId}`;
   const timelineId = `${domId}-timeline`;
@@ -238,8 +235,6 @@ function TurnHead({ id, agentId, working, start, timing, summary, entries, ctx }
   return (
     <div id={domId} className="flex flex-col rounded-sm">
       <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
-        {working && <WorkingMark />}
-        {working && <span role="status" className="sr-only">Busy</span>}
         {summary.count > 0 ? (
           <button
             type="button"
@@ -249,7 +244,7 @@ function TurnHead({ id, agentId, working, start, timing, summary, entries, ctx }
             className={cn('-mx-1.5 flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11', summary.tone === 'attention' && 'text-attention')}
             onClick={toggle}
           >
-            <span role={working ? 'timer' : undefined} aria-live={working ? 'off' : undefined} className="min-w-0 truncate">
+            <span className="min-w-0 truncate">
               {head}
               {summary.parts.map((p, k) => (
                 <span key={k} className={cn(p.tone === 'error' && 'text-error')}>
@@ -261,8 +256,6 @@ function TurnHead({ id, agentId, working, start, timing, summary, entries, ctx }
             <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
             <span className="sr-only">, activity of this turn</span>
           </button>
-        ) : working ? (
-          <span role="timer" aria-live="off">{head}</span>
         ) : (
           head && <span className="animate-fade-in">{head}</span>
         )}
@@ -367,6 +360,7 @@ function WorkingTail({ working, turnId, step }: { working: boolean; turnId: stri
   if (!mounted) return null;
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
+      {working && <span role="status" className="sr-only">Busy</span>}
       <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
         <WorkingMark />
         <span className={cn('min-w-0 truncate', (!step || step.shimmer) && 'animate-shimmer motion-reduce:animate-none', step?.tone === 'attention' && 'text-attention')} title={step?.label}>
@@ -374,6 +368,38 @@ function WorkingTail({ working, turnId, step }: { working: boolean; turnId: stri
         </span>
       </div>
     </Collapse>
+  );
+}
+
+/**
+ * The main pane's working label (DESIGN.md working label), floating over the composer: while a
+ * turn runs, the working mark, the turn's verb (in Compact the current step, as the foot line
+ * names it) and how long the turn has been busy. It sits outside the transcript, so it stays in
+ * view at any scroll position and whichever history page is loaded; `items` is the live tail.
+ */
+export function WorkingLabel({ working, items, identityItems = items, interactions, subagents, turnTimings = [], compact }: { working: boolean; items: Item[]; identityItems?: Item[]; interactions: Interaction[]; subagents: Subagent[]; turnTimings?: TurnTiming[]; compact: boolean }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!working) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [working]);
+  const lastUser = (list: Item[]) => [...list].reverse().find((item) => item.kind === 'user' && !item.delivery)?.id;
+  const turnId = lastUser(items) ?? lastUser(identityItems) ?? 'start';
+  const running = (item: Item) => subagents.some((s) => s.parent_tool_call_id === item.id && s.status === 'running');
+  const step = compact && working ? currentStep(items, { live: true, streamingId: items.at(-1)?.id, approvals: linkInteractions(items, interactions).linked }, running) : null;
+  const elapsed = working ? elapsedSince(foregroundStart(turnTimings), now) : null;
+  return (
+    <Appear show={working} className="min-w-0">
+      {working && <span role="status" className="sr-only">Busy</span>}
+      <span aria-hidden="true" className="flex h-7 min-w-0 items-center gap-2 rounded-sm bg-raised px-2.5 text-caption text-muted shadow-float">
+        <WorkingMark />
+        <span className={cn('min-w-0 truncate', (!step || step.shimmer) && 'animate-shimmer motion-reduce:animate-none', step?.tone === 'attention' && 'text-attention')} title={step?.label}>
+          {step ? step.label : `${turnVerb(turnId)}…`}
+        </span>
+        {elapsed && <span className="shrink-0 tabular-nums text-faint">{elapsed}</span>}
+      </span>
+    </Appear>
   );
 }
 
@@ -528,23 +554,15 @@ function subagentRows(entries: Entry[], ctx: RenderContext): Map<string, ReactNo
 }
 
 /**
- * The row that heads a turn (DESIGN.md turn status), in one slot for both states: the
- * working mark and a live "Busy for 12s" while the turn runs, then "Took 12s" once it
- * ended. Without a recorded duration the row keeps its slot, with no label and no rule.
+ * The row that heads a turn (DESIGN.md turn status), in one slot for both states: empty while
+ * the turn runs (the working label says so), then "Took 12s" once it ended. Without a recorded
+ * duration the row keeps its slot, with no label and no rule.
  */
-function TurnStatus({ working = false, start, timing }: { working?: boolean; start?: string; timing?: TurnTiming }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!working) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [working]);
-  const elapsed = working ? elapsedSince(start, now) : completedDuration(timing);
+function TurnStatus({ working = false, timing }: { working?: boolean; timing?: TurnTiming }) {
+  const elapsed = working ? null : completedDuration(timing);
   return (
     <div className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working ? undefined : elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.'}>
-      {working && <WorkingMark />}
-      {working && <span role="status" className="sr-only">Busy</span>}
-      {working ? <span role="timer" aria-live="off">{elapsed ? `Busy for ${elapsed}` : 'Busy'}</span> : elapsed && <span className="animate-fade-in">Took {elapsed}</span>}
+      {elapsed && <span className="animate-fade-in">Took {elapsed}</span>}
     </div>
   );
 }

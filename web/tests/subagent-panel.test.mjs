@@ -32,6 +32,7 @@ const modules = {
   './Attachments': { ImageThumbs: () => null, ItemAttachments: () => null },
   './common': { CodeBlock: element('pre'), Markdown: ({ text }) => React.createElement('p', null, text), SessionContext: React.createContext(''), WorkdirContext: React.createContext(''), Spinner: () => null, SubagentIdleIcon: () => null, WorkingMark: () => null, useApp: () => ({ meta: null }) },
   './Interactions': { DecidedRow: ({ interaction }) => React.createElement('p', null, interaction.id) },
+  './ui/appear': { Appear: ({ show, children }) => show ? children : null },
   './ui/button': { Button: element('button') },
   './ui/chip': { Chip: element('span') },
   './ui/collapse': { Collapse: ({ open, children }) => open ? children : null, usePresence: open => ({ mounted: open, onClosed: () => {} }) },
