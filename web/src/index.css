@@ -256,6 +256,20 @@
   #root {
     height: 100%;
   }
+  /* Nothing here scrolls sideways, so nothing rubber-bands sideways: desktop Safari stretches any box without a
+     vertical scrollbar (the page itself never scrolls) and iOS bounces scrollers on both axes. Important, since
+     overscroll-contain utilities set both axes. Code blocks still scroll; they stop at their ends. */
+  * {
+    overscroll-behavior-x: none !important;
+  }
+  /* iOS zooms the page into a focused field whose text is under 16px. Only iOS matches; utilities size fields. */
+  @supports (-webkit-touch-callout: none) {
+    input,
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
+  }
   body {
     overflow: hidden;
     background: var(--color-canvas);

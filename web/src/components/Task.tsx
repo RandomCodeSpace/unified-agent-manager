@@ -589,7 +589,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </header>
 
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
-        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}
+        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}
           onKeyDown={e => { if (e.defaultPrevented) return; if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) && nearEarlier(e.currentTarget)) void loadEarlier(); if (['ArrowDown', 'PageDown', 'End'].includes(e.key) && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
           onWheel={e => { if (e.deltaY < 0 && nearEarlier(e.currentTarget)) void loadEarlier(); if (e.deltaY > 0 && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
           onTouchStart={e => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0; }}
@@ -603,7 +603,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
             {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
-            {(visibleStart > 0 || session.history_before) && <p role="status" className="text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading ? 'Loading earlier messages…' : 'Scroll up for earlier messages')}</p>}
+            {(visibleStart > 0 || session.history_before) && <p role="status" className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</p>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
             <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-6">
             <Transcript
@@ -626,7 +626,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               onOpenChanges={openChanges}
             />
             </HistoryAnchor>
-            {session.history_after && <p role="status" className="text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? 'Loading newer messages…' : 'Scroll down for newer messages'}</p>}
+            {session.history_after && <p role="status" className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</p>}
             {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (
               <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && awaitsUser(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>

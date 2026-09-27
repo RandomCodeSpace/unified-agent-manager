@@ -12,7 +12,7 @@ import { historyPage } from '../lib/historyArchive';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
-import { Markdown, Note, Skeleton, useApp } from './common';
+import { Markdown, Note, Skeleton, Spinner, useApp } from './common';
 import { AgentChip, AgentItems, duration } from './Transcript';
 import { Button } from './ui/button';
 import { Collapse, EXIT_MS } from './ui/collapse';
@@ -514,7 +514,7 @@ function AgentTranscriptView({
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 py-4 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} onWheel={event => { if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder(); if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer'); }} role="log" tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined}>
-      {detail.agent?.page && <Note>Loading {detail.agent.page.direction === 'newer' ? 'newer' : 'earlier'} messages…</Note>}
+      {detail.agent?.page && <Note role="status"><Spinner /> Loading {detail.agent.page.direction === 'newer' ? 'newer' : 'earlier'} messages…</Note>}
       {detail.agent?.after && <Button className="sticky top-0 z-10 self-center" size="sm" variant="secondary" onClick={latest}>Jump to latest</Button>}
       {detail.agent?.pageError && <Note tone="error">{detail.agent.pageError}</Note>}
       {subagent.description && <Note>{subagent.description}</Note>}
