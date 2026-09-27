@@ -800,7 +800,7 @@ export default function App() {
                 onClosed={() => setDialog(null)}
                 onAdded={(p) => {
                   dispatch({ type: 'upsert_project', project: p });
-                  showProject(p.id);
+                  select(null);
                 }}
                 onExisting={showProject}
               />
