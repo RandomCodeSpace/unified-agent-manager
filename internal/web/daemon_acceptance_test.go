@@ -60,6 +60,46 @@ func TestAcceptanceSpawnReadinessProtocol(t *testing.T) {
 	}
 }
 
+func TestAcceptanceSpawnLeavesTheLauncherServiceUnderTheUserManager(t *testing.T) {
+	if userScope() == "" {
+		t.Skip("not running under a systemd user manager")
+	}
+	dir := t.TempDir()
+	out, exe := filepath.Join(dir, "cgroup"), filepath.Join(dir, "ready-helper")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\ncat /proc/self/cgroup > '"+out+"'\nprintf 'ok\\n' >&3\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		bus   bool
+		scope bool
+	}{
+		{"own scope", true, true},
+		// Without a reachable user manager it starts in place, as before.
+		{"no user bus", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.bus {
+				t.Setenv("XDG_RUNTIME_DIR", "")
+				t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
+			}
+			_ = os.Remove(out)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := Spawn(ctx, exe, nil); err != nil {
+				t.Fatal(err)
+			}
+			cgroup, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(cgroup), "/uam-web-"); got != tc.scope {
+				t.Fatalf("service cgroup = %q, want own scope %v", cgroup, tc.scope)
+			}
+		})
+	}
+}
+
 func TestAcceptanceDaemonStartupFailureLeavesNoRunningState(t *testing.T) {
 	for _, failure := range []string{"listen syntax", "public origin", "token", "token read", "token creation", "store", "occupied port", "state publication"} {
 		t.Run(failure, func(t *testing.T) {

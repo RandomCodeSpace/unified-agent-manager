@@ -48,7 +48,11 @@ then open http://127.0.0.1:8260/ and sign in with the access token.
 ```
 
 The service detaches from the shell: it has its own session, no controlling
-terminal, and `/dev/null` for its standard streams. Running `uam web` again
+terminal, and `/dev/null` for its standard streams. Started from inside
+another service of your systemd user manager (an editor or agent server, for
+example), it also moves into its own transient scope, `uam-web-….scope`, so
+stopping or restarting that service leaves it running. Started from a login
+shell, it stays in that session. Running `uam web` again
 while it is running prints the same details, including the token. Use
 `--listen 127.0.0.1:<port>` for another port. To let other machines connect
 directly, see [Listen beyond loopback](#listen-beyond-loopback).

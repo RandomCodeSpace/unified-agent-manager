@@ -22,7 +22,11 @@ host. Rendering those TUIs in a browser would inherit terminal semantics
 
 `uam web` starts one detached per-user service, `uam __web`, that serves an
 embedded single-page application and drives providers through their
-structured APIs:
+structured APIs. When the launcher runs under the user's systemd manager
+(inside another user service), the service starts through
+`systemd-run --user --scope` in its own transient scope, so that service's
+stop or restart does not kill it; elsewhere, or when no user bus answers, it
+starts in place as before:
 
 | Provider | Integration |
 |---|---|
