@@ -24,7 +24,9 @@ const (
 	tokenFileName = "web-token"
 	tokenBytes    = 32
 	cookieName    = "uam_web"
-	cookieMaxAge  = 30 * 24 * 60 * 60
+	// fileCookieName is the companion of file keys over HTTPS (fileCookie).
+	fileCookieName = "uam_file"
+	cookieMaxAge   = 30 * 24 * 60 * 60
 	// fileKeyTTL bounds how long a file key (fileKey) opens a Task's files.
 	fileKeyTTL = 12 * time.Hour
 
@@ -169,7 +171,7 @@ func sessionCookie(token, host string, exp int64) string {
 
 func cookieMAC(token, host, exp string) string {
 	mac := hmac.New(sha256.New, []byte(token))
-	mac.Write([]byte("uam-web-session-v2|" + strings.ToLower(host) + "|" + exp))
+	mac.Write([]byte("uam-web-session-v3|" + strings.ToLower(host) + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -185,7 +187,7 @@ func fileKey(token, host, id string, exp int64) string {
 
 func fileKeyMAC(token, host, id, exp string) string {
 	mac := hmac.New(sha256.New, []byte(token))
-	mac.Write([]byte("uam-web-file-v1|" + strings.ToLower(host) + "|" + id + "|" + exp))
+	mac.Write([]byte("uam-web-file-v2|" + strings.ToLower(host) + "|" + id + "|" + exp))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -199,6 +201,41 @@ func (s *Server) validFileKey(key, host, id string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(mac), []byte(fileKeyMAC(s.token, host, id, exp))) == 1
+}
+
+// fileCookie derives the companion a file key needs over HTTPS: the view route
+// sets it next to the redirect, HttpOnly and scoped to the Task's file-key
+// path, so the key in a view URL opens nothing without the browser that
+// opened it. SameSite=None lets the sandboxed page's own requests carry it;
+// plain HTTP cannot set such a cookie, so there the key alone is checked.
+func fileCookie(token, host, id string, exp int64) string {
+	e := strconv.FormatInt(exp, 10)
+	return e + "." + fileCookieMAC(token, host, id, e)
+}
+
+func fileCookieMAC(token, host, id, exp string) string {
+	mac := hmac.New(sha256.New, []byte(token))
+	mac.Write([]byte("uam-web-file-cookie-v1|" + strings.ToLower(host) + "|" + id + "|" + exp))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// validFileCookie reports whether r carries an unexpired companion cookie for
+// Task id on its host.
+func (s *Server) validFileCookie(r *http.Request, id string) bool {
+	for _, c := range r.CookiesNamed(fileCookieName) {
+		exp, mac, ok := strings.Cut(c.Value, ".")
+		if !ok {
+			continue
+		}
+		until, err := strconv.ParseInt(exp, 10, 64)
+		if err != nil || time.Now().Unix() >= until {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(mac), []byte(fileCookieMAC(s.token, r.Host, id, exp))) == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
@@ -219,6 +256,13 @@ func (s *Server) authenticated(r *http.Request) bool {
 
 func secureRequest(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func setFileCookie(w http.ResponseWriter, value, path string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{
+		Name: fileCookieName, Value: value, Path: path, MaxAge: maxAge,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteNoneMode,
+	})
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {

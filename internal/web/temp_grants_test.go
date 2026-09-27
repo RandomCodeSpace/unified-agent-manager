@@ -586,8 +586,9 @@ func TestTempGrantUnavailableRootsAndRedaction(t *testing.T) {
 		t.Fatal("registry leaked after protection failure")
 	}
 	secret := "1234567.secret-mac"
-	for _, input := range []string{"/api/sessions/task/file-grants/grant/" + secret, "https://uam.example/api/sessions/task/file-grants/grant/" + secret + "?download=1"} {
-		if got := redactGrantURL(input); strings.Contains(got, secret) || !strings.Contains(got, "redacted") {
+	for _, input := range []string{"/api/sessions/task/file-grants/grant/" + secret, "https://uam.example/api/sessions/task/file-grants/grant/" + secret + "?download=1",
+		"/api/sessions/task/files/key/" + secret + "/out/report.html", "https://uam.example/api/sessions/task/files/key/" + secret + "/a%20b.txt?download=1"} {
+		if got := redactKeyURL(input); strings.Contains(got, secret) || !strings.Contains(got, "redacted") {
 			t.Fatalf("redaction = %q", got)
 		}
 		if got := redactHeaderValue("Referer", input); strings.Contains(got, secret) {

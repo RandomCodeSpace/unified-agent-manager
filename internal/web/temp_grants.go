@@ -445,14 +445,14 @@ func (w grantResponse) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
-// Scrub grant URLs in request targets and headers, including opaque-frame
-// Referer values. Existing Task file-key policy is intentionally unchanged.
-func redactGrantURL(value string) string {
+// Scrub grant and Task file-key URLs in request targets and headers, including
+// opaque-frame Referer values.
+func redactKeyURL(value string) string {
 	u, err := url.Parse(value)
 	if err != nil {
 		// A malformed header value must not bypass redaction merely because
 		// it is not parseable as a URL.
-		if strings.Contains(value, "file-grants") {
+		if strings.Contains(value, "file-grants") || strings.Contains(value, "files/key") {
 			return "[redacted]"
 		}
 		return value
@@ -460,6 +460,11 @@ func redactGrantURL(value string) string {
 	parts := strings.Split(u.Path, "/")
 	for i := 0; i+4 < len(parts); i++ {
 		if parts[i] == "api" && parts[i+1] == "sessions" && parts[i+3] == "file-grants" && i+5 < len(parts) {
+			parts[i+5] = "[redacted]"
+			u.Path, u.RawPath = strings.Join(parts, "/"), ""
+			return u.String()
+		}
+		if parts[i] == "api" && parts[i+1] == "sessions" && parts[i+3] == "files" && parts[i+4] == "key" && i+5 < len(parts) {
 			parts[i+5] = "[redacted]"
 			u.Path, u.RawPath = strings.Join(parts, "/"), ""
 			return u.String()

@@ -275,7 +275,7 @@ func (s *Server) logRequest(r *http.Request, outcome string, status int) {
 		}
 		headers[name] = logged
 	}
-	args := []any{"method", r.Method, "path", capLogValue(redactGrantURL(r.URL.RequestURI())), "remote", r.RemoteAddr,
+	args := []any{"method", r.Method, "path", capLogValue(redactKeyURL(r.URL.RequestURI())), "remote", r.RemoteAddr,
 		"host", capLogValue(r.Host), "headers", headers, "outcome", outcome}
 	if status != 0 {
 		args = append(args, "status", status)
@@ -297,7 +297,7 @@ func redactHeaderValue(name, value string) string {
 			return "[redacted]"
 		}
 	}
-	return capLogValue(redactGrantURL(value))
+	return capLogValue(redactKeyURL(value))
 }
 
 func capLogValue(v string) string {
@@ -829,14 +829,20 @@ func (s *Server) handleRawImage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleViewFile(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if key := r.PathValue("key"); key != "" {
-		if !s.validFileKey(key, r.Host, id) {
+		if !s.validFileKey(key, r.Host, id) || (secureRequest(r) && !s.validFileCookie(r, id)) {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
 	} else {
-		key := fileKey(s.token, r.Host, id, time.Now().Add(fileKeyTTL).Unix())
+		exp := time.Now().Add(fileKeyTTL).Unix()
+		key := fileKey(s.token, r.Host, id, exp)
 		// The id segment is escaped, so the first /files/view/ is the route's.
-		target := strings.Replace(r.URL.EscapedPath(), "/files/view/", "/files/key/"+key+"/", 1)
+		before, rest, _ := strings.Cut(r.URL.EscapedPath(), "/files/view/")
+		prefix := before + "/files/key/"
+		target := prefix + key + "/" + rest
+		if secureRequest(r) {
+			setFileCookie(w, fileCookie(s.token, r.Host, id, exp), prefix, int(fileKeyTTL/time.Second))
+		}
 		if r.URL.Query().Get("download") == "1" {
 			target += "?download=1"
 		}

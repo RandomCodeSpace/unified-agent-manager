@@ -4,11 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -37,6 +41,26 @@ func newTestServer(t *testing.T, cfg ServerConfig) *testServer {
 	}
 	t.Cleanup(srv.Close)
 	return &testServer{srv: srv, m: m, prov: prov}
+}
+
+// legacyMAC signs msg with the test token the way earlier releases did.
+func legacyMAC(msg string) string {
+	mac := hmac.New(sha256.New, []byte(testToken))
+	mac.Write([]byte(msg))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// Sign-ins from before this release's cookie label must sign in again.
+func TestSessionCookieFromBeforeTheCurrentLabelIsRefused(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	e := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	old := e + "." + legacyMAC("uam-web-session-v2|127.0.0.1:8260|"+e)
+	if w := ts.do(http.MethodGet, "/api/sessions", "", func(r *http.Request) { r.AddCookie(&http.Cookie{Name: cookieName, Value: old}) }); w.Code != http.StatusUnauthorized {
+		t.Fatalf("old session cookie = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions", "", withCookie(ts)); w.Code != http.StatusOK {
+		t.Fatalf("current session cookie = %d", w.Code)
+	}
 }
 
 func validCookie(host string) string {
