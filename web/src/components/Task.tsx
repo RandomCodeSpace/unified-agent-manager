@@ -175,6 +175,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
   const lastScrollAt = useRef(0);
+  // A landed page moves the view the other way (its rows are anchored), which is not the reader
+  // turning back: scrolling loads nothing in the opposite direction until the reader moves that way.
+  const landed = useRef<'older' | 'newer' | null>(null);
+  const toward = (direction: 'older' | 'newer' | null) => { if (landed.current !== direction) landed.current = null; };
   // Anchor by ID so incoming output cannot move the beginning while someone reads.
   const [firstVisible, setFirstVisible] = useState<string | undefined>(() => session.items[transcriptWindowStart(session.items)]?.id);
   let visibleStart = firstVisible === undefined ? -1 : session.items.findIndex((it) => it.id === firstVisible);
@@ -256,6 +260,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         dispatch({ type: 'history_loaded', sessionId: session.id, before, page });
         if (!compactWindow && page.items.length) setFirstVisible(page.items[0].id);
       }, synchronous);
+      landed.current = direction;
       return page;
     } catch (error) {
       if (controller.signal.aborted) return null;
@@ -479,8 +484,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
     atBottom.current = !session.history_after && (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK || (atBottom.current && !upwards));
     setJump(!atBottom.current);
-    if (upwards && nearEarlier(el)) void loadEarlier();
-    else if (!upwards && nearEdge(el, 'newer')) void loadNewer();
+    if (upwards && landed.current !== 'newer' && nearEarlier(el)) void loadEarlier();
+    else if (!upwards && landed.current !== 'older' && nearEdge(el, 'newer')) void loadNewer();
   }
 
   // A decided card collapses in place (its last pending look, inert) instead of vanishing; it leaves once the collapse has run.
@@ -595,13 +600,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </header>
 
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
-        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}
-          onKeyDown={e => { if (e.defaultPrevented) return; if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) && nearEarlier(e.currentTarget)) void loadEarlier(); if (['ArrowDown', 'PageDown', 'End'].includes(e.key) && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
-          onWheel={e => { if (e.deltaY < 0 && nearEarlier(e.currentTarget)) void loadEarlier(); if (e.deltaY > 0 && nearEdge(e.currentTarget, 'newer')) void loadNewer(); }}
+        <div role="region" aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
+          onKeyDown={e => { if (e.defaultPrevented) return; if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (['ArrowDown', 'PageDown', 'End'].includes(e.key)) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
+          onWheel={e => { if (e.deltaY < 0) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (e.deltaY > 0) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
           onTouchStart={e => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0; }}
           onTouchEnd={e => { touching.current = e.touches.length > 0; }}
           onTouchCancel={e => { touching.current = e.touches.length > 0; }}
-          onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current && nearEarlier(e.currentTarget)) void loadEarlier(); if (y < touchY.current && nearEdge(e.currentTarget, 'newer')) void loadNewer(); touchY.current = y; }}>
+          onTouchMove={e => { const y = e.touches[0]?.clientY ?? 0; if (y > touchY.current) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (y < touchY.current) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } touchY.current = y; }}>
           <ScrollSentinel sentinelRef={sentinel} />
           {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
           {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
