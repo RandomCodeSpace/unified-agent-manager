@@ -269,7 +269,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   a reload or restart. An interrupted question without a recorded answer
   shows "No answer." Copilot's recorded thinking also returns after a restart.
   If you scroll up while text arrives, the view stays put
-  and offers "New output".
+  and offers "Jump to bottom".
 - **Diagrams and code**: a fenced ` ```mermaid ` block in a reply renders as
   a diagram once its fence has closed, with a Diagram / Code toggle and Copy
   code in its header; clicking the diagram opens it larger. A block Mermaid

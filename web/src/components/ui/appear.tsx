@@ -4,7 +4,7 @@ import { EXIT_MS, usePresence } from './collapse';
 
 /**
  * Enter and exit for a small control that comes and goes in a fixed slot (the Stop button,
- * the "New output" button): it fades and scales from 0.9 over `base`, back out the same
+ * the "Jump to bottom" button): it fades and scales from 0.9 over `base`, back out the same
  * way, and stays mounted through the exit, inert. The wrapper is an inline flex item, so
  * it takes the control's place in a row without moving its neighbours.
  */

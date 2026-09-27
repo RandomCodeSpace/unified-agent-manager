@@ -148,8 +148,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [changes, setChanges] = useState<ChangesData | null>(null);
   const [changesError, setChangesError] = useState<string | null>(null);
   const [changesTick, setChangesTick] = useState(0);
-  /** Why the jump-to-bottom control shows: new output below, or only a reader scrolled up. */
-  const [jump, setJump] = useState<'new' | 'latest' | null>(null);
+  /** The jump-to-bottom control shows while the reader is away from the bottom. */
+  const [jump, setJump] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [panel, setPanel] = useState<PanelView | null>(null);
   const panelOpener = useRef<HTMLElement | null>(null);
@@ -170,6 +170,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // The Changes sheet can open from outside the header (the composer's count); it replaces Files.
   if (sheetOpen && filesOpen) setFilesOpen(false);
   const atBottom = useRef(true);
+  const lastScrollTop = useRef(0);
   // Anchor by ID so incoming output cannot move the beginning while someone reads.
   const [firstVisible, setFirstVisible] = useState<string | undefined>(() => session.items[transcriptWindowStart(session.items)]?.id);
   let visibleStart = firstVisible === undefined ? -1 : session.items.findIndex((it) => it.id === firstVisible);
@@ -306,8 +307,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     historyAbort.current = null;
     if (session.history_after) flushSync(() => { dispatch({ type: 'history_latest', sessionId: session.id }); setWindowReset(value => value + 1); });
     el.scrollTop = el.scrollHeight;
+    lastScrollTop.current = el.scrollTop;
     atBottom.current = true;
-    setJump(null);
+    setJump(false);
   }, [dispatch, session.id, session.history_after]);
 
   // Follow new content only while the reader is at the bottom; otherwise offer a way back.
@@ -315,8 +317,18 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const el = scroller.current;
     if (!el) return;
     if (atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
-    else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump('new');
+    else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump(true);
   }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
+  // Rows also grow after their own commits (a body arriving, a row expanding); a pinned view follows them.
+  const log = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scroller.current, content = log.current;
+    if (!el || !content) return;
+    const observer = new ResizeObserver(() => { if (atBottom.current) el.scrollTop = el.scrollHeight; });
+    observer.observe(content);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // One side panel at a time: the Changes sheet wins while it is open; opening the other closes it.
   const shownPanel = sheetOpen ? null : panel;
@@ -423,7 +435,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
   }
 
-  const lastScrollTop = useRef(0);
   const touchY = useRef(0);
   // A single upward-demand read can start three viewports ahead. This gives
   // slow responses time to arrive without fetching anything on initial open.
@@ -439,10 +450,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   function onScroll() {
     const el = scroller.current;
     if (!el) return;
-    atBottom.current = !session.history_after && el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK;
-    setJump(atBottom.current ? null : (current) => current ?? 'latest');
     const upwards = el.scrollTop < lastScrollTop.current;
     lastScrollTop.current = el.scrollTop;
+    // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
+    atBottom.current = !session.history_after && (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK || (atBottom.current && !upwards));
+    setJump(!atBottom.current);
     if (upwards && nearEarlier(el)) void loadEarlier();
     else if (!upwards && nearEdge(el, 'newer')) void loadNewer();
   }
@@ -567,7 +579,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           <ScrollSentinel sentinelRef={sentinel} />
           {/* The foot's extra padding is the dock's overlap plus a gap, so the last row can still scroll clear of the composer. */}
           {historyLoading && <TranscriptSkeleton label="Loading recorded history…" />}
-          <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
+          <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
             {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
@@ -612,10 +624,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}>
-          <Appear show={!!jump} className="absolute top-0 left-1/2 -translate-x-1/2">
+          <Appear show={jump} className="absolute top-0 left-1/2 -translate-x-1/2">
             <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
               <ArrowDown />
-              {jump === 'new' ? 'New output' : 'Jump to bottom'}
+              Jump to bottom
             </Button>
           </Appear>
           <BackgroundTaskList key={`background-${session.id}`} sessionId={session.id} snapshot={session.background_tasks} locked={readOnly(session)} />
