@@ -928,7 +928,10 @@ export function install(): void {
               return json(202, { ...sub, status: 'queued' });
             }
             if (body.mode === 'steer') {
-              pushItem(t, { id: nextId('u'), kind: 'user', delivery: 'steer', text, time: now(), ...withAttachments });
+              // As with Copilot: a receipt until the provider records the message under the same ID.
+              const steer: Item = { id: nextId('u'), kind: 'user', delivery: 'steer', text, time: now(), ...withAttachments };
+              pushItem(t, { ...steer, steer_status: 'accepted' });
+              void wait(2000).then(() => pushItem(t, busy(t) ? steer : { ...steer, steer_status: 'not_delivered' }));
               t.last_submission = sub;
               broadcast('submission', { session_id: t.id, submission: sub }, t.id);
               return json(202, sub);

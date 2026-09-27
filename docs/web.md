@@ -447,9 +447,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
     draft or the Task's settings does not change messages already queued.
   - **Steer** adds the message to the turn that is running. The agent reads
     it before its next step. Once Copilot accepts it, the conversation shows
-    the message with **Accepted · delivery unconfirmed** until Copilot records
-    delivery. That confirmation updates the same message. If it arrives as
-    a new turn after the current one ends, it moves to that turn's position.
+    the message with one tick (Accepted); once Copilot records delivery, the
+    same message shows two ticks (Delivered). If it arrives as a new turn
+    after the current one ends, it moves to that turn's position as its
+    prompt, without ticks.
     A steer cannot be taken back. If the turn is stopped or fails before the
     agent took it in, the message says **Not delivered** and a notice explains
     why. With Copilot, a steer also moves a

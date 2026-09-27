@@ -1,5 +1,5 @@
 import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
-import { Bot, Check, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
+import { Bot, Check, CheckCheck, ChevronRight, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Shield, ShieldCheck, ShieldX, Terminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
@@ -648,14 +648,29 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
         <div className="flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised">
           <span className="sr-only">You: </span>
           {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
-          {item.steer_status === 'accepted' && <span className="block text-caption text-muted">Accepted · delivery unconfirmed</span>}
           {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
           {text && (whole?.status === 'whole' ? plainText(text) : <Markdown text={text} />)}
           {whole && <WholeNote whole={whole} />}
           {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
+          {deliveryTick(item)}
         </div>
       </Copyable>
     </div>
+  );
+}
+
+/** A steer's receipt, as in a messenger: one tick once the provider accepted it, two once it recorded the message. */
+function deliveryTick(item: Item) {
+  if (item.delivery !== 'steer' || item.steer_status === 'not_delivered') return null;
+  const delivered = !item.steer_status;
+  const Tick = delivered ? CheckCheck : Check;
+  return (
+    <Tip label={delivered ? 'Delivered: the agent received it' : 'Accepted: sent to the agent, delivery not confirmed yet'}>
+      <span className="-mt-1 flex self-end text-faint">
+        <Tick aria-hidden="true" className="size-3.5" />
+        <span className="sr-only">{delivered ? 'Delivered' : 'Accepted'}</span>
+      </span>
+    </Tip>
   );
 }
 
