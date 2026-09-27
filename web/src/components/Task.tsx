@@ -10,7 +10,7 @@ import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { shownState } from '../lib/tasks';
 import { ChangesSheet } from './Changes';
-import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
+import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useMedia, useScrolled } from './common';
 import { Chip } from './ui/chip';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
@@ -25,7 +25,7 @@ import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
 import { HistoryAnchor } from './HistoryAnchor';
 import { Button } from './ui/button';
-import { Menu } from './ui/menu';
+import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
 /** The Files sheet loads with its first opening, never with the Task. */
@@ -60,6 +60,8 @@ interface Props {
 const BOTTOM_SLACK = 32;
 /** iOS WebKit: a scroll-position write under a finger or during momentum fights the scroller and jumps. */
 const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-callout', 'none');
+/** Tailwind's `max-sm`: a phone-width column. */
+const PHONE = '(width < 40rem)';
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
 export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading }: Props) {
@@ -444,7 +446,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Then the floating label stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort()[0];
-  const items = taskMenuItems(session, actions, 'header');
+  // Below `sm` the title keeps the row: the state shows its glyph alone, and Files and Terminal move into the actions menu.
+  const phone = useMedia(PHONE);
+  const folded: ActionItem[] = [];
+  if (phone && !noGit) folded.push({ key: 'files', label: filesOpen ? 'Close files' : 'Browse files', icon: <FolderTree />, onSelect: toggleFiles });
+  if (phone && settings.terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
+  const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
   const renamable = canRename(session, actions);
 
   return (
@@ -473,7 +480,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {readOnly(session) ? (
               <Chip fill="outline">{stageLabel(session)}</Chip>
             ) : (
-              <StateMark state={state} label title={state !== session.state ? `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running` : detail} className="shrink-0" />
+              <StateMark state={state} label={!phone} title={state !== session.state ? `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running` : detail} className="shrink-0" />
             )}
             {busy && <Spinner className="shrink-0" />}
             {/* The pencil takes no room until the title is hovered or it is focused, so the state chip sits by the title. */}
@@ -514,15 +521,17 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                   {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
                 </Button>
               </Tip>
-              <Tip label={`Files in ${project?.name ?? 'the project'}`}>
-                <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={toggleFiles}>
-                  <FolderTree />
-                  <span className="max-sm:hidden">Files</span>
-                </Button>
-              </Tip>
+              {!phone && (
+                <Tip label={`Files in ${project?.name ?? 'the project'}`}>
+                  <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={toggleFiles}>
+                    <FolderTree />
+                    <span className="max-sm:hidden">Files</span>
+                  </Button>
+                </Tip>
+              )}
             </>
           )}
-          {settings.terminal && project && (
+          {settings.terminal && project && !phone && (
             <Tip label={`Terminal in ${project.name}`}>
               <Button id="terminal-link" size="md" aria-pressed={terminalOpen} aria-label="Terminal" className="px-2 text-muted" onClick={() => onTerminal(project.id)}>
                 <SquareTerminal />
