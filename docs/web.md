@@ -358,7 +358,13 @@ are logged only at debug level (`UAM_DEBUG=1`).
   answer from any tab wins and later answers are refused. Once decided, the
   card goes away: the decision shows on the tool call it was for, and a
   request UAM could not tie to a call shows as one grey line where it
-  happened.
+  happened. A question with one question is answered from the message box:
+  pick an option on the card (it appears there as a chip) or type the answer
+  where the question allows free text, then press Enter or Answer. Anything
+  the answer cannot carry (a note typed beside a chosen option, images and
+  files) is sent into the same turn first, as a steer, so the agent has it
+  when it resumes. Decline stays on the card. What you had typed before the
+  question arrived is kept and comes back once the question is settled.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
   once". That includes requests from subagents. Shell commands, file writes,

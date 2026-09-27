@@ -762,6 +762,88 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       recordSubagents: oldAudits,
       agentItems: { a5: longHistory('g', 300, 'a5'), ...Object.fromEntries(oldAudits.map((s) => [s.id, longHistory(`o${s.id}`, 20, s.id)])) },
     }),
+    // Questions with one question, answered from the composer: options with free text, options only, free text only.
+    task({
+      id: 't16',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'claude-haiku-4.5',
+      last_model: 'claude-haiku-4.5',
+      name: '',
+      title: 'Retry the flaky redraw test',
+      state: 'awaiting_answer',
+      pending: 1,
+      created_at: ago(30),
+      updated_at: ago(3),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(30), text: 'The redraw test fails once in about twenty runs on CI. Add a retry so the suite stays green while I look for the cause.' },
+        { id: 'i2', kind: 'assistant', time: ago(4), text: 'The failure is a timing race in `TestRedrawReplaysFocusEvents`. A retry hides it; how far should it go?' },
+      ],
+      interactions: [
+        {
+          id: 'q16',
+          kind: 'question',
+          title: 'How should the retry be bounded?',
+          state: 'pending',
+          time: ago(3),
+          questions: [{ text: 'Pick a bound for the retry, or describe one', choices: ['Retry once', 'Retry up to 3 times', 'Retry until the test deadline'], custom: true }],
+        },
+      ],
+    }),
+    task({
+      id: 't17',
+      project_id: 'p3',
+      workdir: p('p3'),
+      model: 'gpt-5-mini',
+      last_model: 'gpt-5-mini',
+      name: '',
+      title: 'Set up the dependency lockfile',
+      state: 'awaiting_answer',
+      pending: 1,
+      created_at: ago(12),
+      updated_at: ago(2),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(12), text: 'Add a lockfile and a CI step that installs from it.' },
+        { id: 'i2', kind: 'assistant', time: ago(3), text: 'There is no lockfile and no package manager is pinned in `package.json`. I will use the one you name.' },
+      ],
+      interactions: [
+        {
+          id: 'q17',
+          kind: 'question',
+          title: 'Which package manager does this project use?',
+          state: 'pending',
+          time: ago(2),
+          questions: [{ text: 'Which package manager should the lockfile and CI use?', choices: ['npm', 'pnpm', 'yarn'], custom: false }],
+        },
+      ],
+    }),
+    task({
+      id: 't18',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'claude-haiku-4.5',
+      last_model: 'claude-haiku-4.5',
+      name: '',
+      title: 'Draft the release note for v0.12',
+      state: 'awaiting_answer',
+      pending: 1,
+      created_at: ago(9),
+      updated_at: ago(1),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(9), text: 'Draft the release note for v0.12 from the merged pull requests.' },
+        { id: 'i2', kind: 'assistant', time: ago(2), text: 'Twelve pull requests merged since v0.11. Before I write the note I need the headline.' },
+      ],
+      interactions: [
+        {
+          id: 'q18',
+          kind: 'question',
+          title: 'What should the release note lead with?',
+          state: 'pending',
+          time: ago(1),
+          questions: [{ text: 'Name the headline change for v0.12 in a sentence', custom: true }],
+        },
+      ],
+    }),
   ];
 
   const changes: Record<string, MockChange[]> = {

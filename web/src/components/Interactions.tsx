@@ -3,7 +3,7 @@ import { useId, useState, type SubmitEvent } from 'react';
 import { api, describeError, isStatus, type Answer, type Interaction, type Option, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { approvalMark } from '../lib/transcript';
-import { Note } from './common';
+import { Markdown, Note } from './common';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
@@ -42,12 +42,20 @@ export function DecidedRow({ interaction, className }: Readonly<{ interaction: I
   );
 }
 
+/** A single question answered from the composer: the options it has staged there, and how the card changes them. */
+export interface Staging {
+  staged: string[];
+  onStage: (choices: string[]) => void;
+}
+
 /**
  * Permission or question card. The first answer from any tab wins: a 409 means someone
  * else answered, a 410 means the provider withdrew the request. While pending the header
- * carries the attention chip; that is the only orange on the card.
+ * carries the attention chip; that is the only orange on the card. With `staging` a
+ * question with one question keeps only its options and Decline: the answer is composed
+ * and sent from the composer (DESIGN.md Composer, answer mode).
  */
-export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }>) {
+export function InteractionCard({ session, interaction, staging, onUpdate }: Readonly<{ session: SessionDetail; interaction: Interaction; staging?: Staging; onUpdate: (i: Interaction) => void }>) {
   /** The action in flight: a permission option's id, `answer` or `decline`. */
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -108,6 +116,8 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
             </div>
           )}
         </>
+      ) : staging && permitted && interaction.questions?.length === 1 ? (
+        <StagedQuestion interactionId={interaction.id} question={interaction.questions[0]} staging={staging} sending={busy === 'decline'} onDecline={() => respond({ reject: true }, 'decline')} />
       ) : (
         <QuestionForm interactionId={interaction.id} questions={interaction.questions ?? []} disabled={!permitted} sending={busy === 'answer' || busy === 'decline' ? busy : null} onSubmit={(answers) => respond({ answers }, 'answer')} onDecline={() => respond({ reject: true }, 'decline')} />
       )}
@@ -118,6 +128,51 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
         </Note>
       )}
     </section>
+  );
+}
+
+/** One choice as a selectable row: a radio or checkbox per `multiple`, 44px on a coarse pointer. */
+function ChoiceRow({ name, choice, multiple, on, onToggle }: Readonly<{ name: string; choice: string; multiple: boolean; on: boolean; onToggle: () => void }>) {
+  return (
+    <label className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
+      <input type={multiple ? 'checkbox' : 'radio'} name={name} checked={on} onChange={onToggle} className="size-3.5 accent-accent" />
+      {choice}
+    </label>
+  );
+}
+
+/**
+ * The single-question card that answers from the composer: the question as markdown, its
+ * options as rows that stage or unstage the answer there, and Decline. The text and the
+ * Answer button live in the composer. A radio cannot be cleared by a click; the chip's
+ * remove button in the composer does that.
+ */
+function StagedQuestion({ interactionId, question, staging, sending, onDecline }: Readonly<{ interactionId: string; question: Question; staging: Staging; sending: boolean; onDecline: () => void }>) {
+  const labelId = useId();
+  const { staged, onStage } = staging;
+  function toggle(choice: string) {
+    if (!question.multiple) onStage([choice]);
+    else onStage(staged.includes(choice) ? staged.filter((c) => c !== choice) : [...staged, choice]);
+  }
+  return (
+    <div className="mt-2">
+      <div id={labelId} className="mb-1.5 text-ui text-ink">
+        {question.header && <span className="mb-0.5 block text-caption text-muted">{question.header}</span>}
+        <Markdown text={question.text} />
+      </div>
+      {(question.choices?.length ?? 0) > 0 && (
+        <fieldset aria-labelledby={labelId} className="mb-3 flex min-w-0 flex-col gap-0.5" disabled={sending}>
+          {question.choices!.map((c) => (
+            <ChoiceRow key={c} name={`q-${interactionId}-0`} choice={c} multiple={!!question.multiple} on={staged.includes(c)} onToggle={() => toggle(c)} />
+          ))}
+        </fieldset>
+      )}
+      <div className="flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
+        <Button variant="danger" loading={sending} onClick={onDecline}>
+          Decline
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -180,15 +235,9 @@ function QuestionForm({
             {q.text}
           </legend>
           <div className="flex flex-col gap-0.5">
-            {(q.choices ?? []).map((c) => {
-              const on = (chosen[qi] ?? []).includes(c);
-              return (
-                <label key={c} className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
-                  <input type={q.multiple ? 'checkbox' : 'radio'} name={`q-${interactionId}-${qi}`} checked={on} onChange={() => toggle(qi, c, !!q.multiple)} className="size-3.5 accent-accent" />
-                  {c}
-                </label>
-              );
-            })}
+            {(q.choices ?? []).map((c) => (
+              <ChoiceRow key={c} name={`q-${interactionId}-${qi}`} choice={c} multiple={!!q.multiple} on={(chosen[qi] ?? []).includes(c)} onToggle={() => toggle(qi, c, !!q.multiple)} />
+            ))}
             {q.custom && (
               <label htmlFor={`q-${interactionId}-${qi}-custom`} className="mt-1 flex items-center">
                 <span className="sr-only">Your answer</span>

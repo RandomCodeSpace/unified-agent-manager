@@ -16,9 +16,9 @@ import { Chip } from './ui/chip';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
-import { Composer, type FirstMessage } from './Composer';
+import { Composer, type Answering, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
-import { InteractionCard } from './Interactions';
+import { InteractionCard, type Staging } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript, WorkingLabel } from './Transcript';
@@ -63,6 +63,8 @@ const BOTTOM_SLACK = 32;
 const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-callout', 'none');
 /** Tailwind's `max-sm`: a phone-width column. */
 const PHONE = '(width < 40rem)';
+/** No options staged: one array, so the composer's props hold still. */
+const NO_CHOICES: string[] = [];
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
 export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading }: Readonly<Props>) {
@@ -428,6 +430,18 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }
   const cards = [...session.interactions.filter(awaitsUser), ...lingering.filter((i) => !session.interactions.some((x) => x.id === i.id && awaitsUser(x)))];
 
+  // A pending question with one question is answered from the composer (DESIGN.md Composer, answer mode):
+  // its card stages the options here, the composer holds the text and files and sends. The staged
+  // options belong to that question; another question starts with none.
+  const question = session.capabilities.questions ? session.interactions.find((i) => awaitsUser(i) && i.kind === 'question' && i.questions?.length === 1) : undefined;
+  const questionId = question?.id;
+  const [staged, setStaged] = useState<{ id: string; choices: string[] }>({ id: '', choices: [] });
+  const stagedChoices = questionId && staged.id === questionId ? staged.choices : NO_CHOICES;
+  const onStage = useCallback((choices: string[]) => { if (questionId) setStaged({ id: questionId, choices }); }, [questionId]);
+  const onAnswered = useCallback((i: Interaction) => onInteractionUpdate(session.id, i), [onInteractionUpdate, session.id]);
+  const staging = useMemo<Staging>(() => ({ staged: stagedChoices, onStage }), [stagedChoices, onStage]);
+  const answering = useMemo<Answering | null>(() => (question ? { interaction: question, question: question.questions![0], staged: stagedChoices, onStage, onAnswered } : null), [question, stagedChoices, onStage, onAnswered]);
+
   // The provider's own notice about a failure already stands in the transcript: the failed line is not repeated under it.
   const failure = session.state === 'failed' ? session.state_detail?.toLowerCase() ?? '' : '';
   const noticed = !!failure && foregroundItems(liveItems).some((i) => i.kind === 'notice' && (i.text ?? '').toLowerCase().includes(failure));
@@ -615,7 +629,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (
               <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && awaitsUser(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
-                <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
+                <InteractionCard session={session} interaction={i} staging={i.id === questionId ? staging : undefined} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
               </Collapse>
             ))}
             {session.state === 'interrupted' && <Note tone="warn">{INTERRUPTED_TEXT}</Note>}
@@ -648,7 +662,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </Appear>
           </div>
-          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
+          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} />
         </div>
       </div>
 
