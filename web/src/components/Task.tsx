@@ -474,8 +474,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const below = rect ? rect.bottom - edge.bottom : el.scrollHeight - el.scrollTop - el.clientHeight;
     const [distance, other] = direction === 'older' ? [above, below] : [below, above];
     // A page read at one end drops rows at the other. In a window shorter than both reaches (folded
-    // Compact turns), that is the end in view: read only at the end the reader is closer to.
-    return distance < Math.min(1600, Math.max(200, el.clientHeight * 3)) && distance <= other;
+    // Compact turns), that is the end in view: read only at the end the reader is closer to. Both
+    // ends in view (nothing to scroll yet) count as equally near, so the wheel still reads earlier.
+    return distance < Math.min(1600, Math.max(200, el.clientHeight * 3)) && Math.max(0, distance) <= Math.max(0, other);
   };
   const nearEarlier = (el: HTMLElement) => nearEdge(el, 'older');
   const loadNewer = () => session.history_after ? loadEarlier(session.history_after, false, 'newer') : Promise.resolve(null);
