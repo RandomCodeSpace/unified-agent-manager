@@ -363,8 +363,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   same one again to clear it) or type the answer where the question allows
   free text, then press Enter or Answer. Anything the answer cannot carry (a
   note typed beside a chosen option, images and files) is sent into the same
-  turn first, as a steer, so the agent has it when it resumes. Decline sits
-  beside Stop and Answer. What you had typed before the question arrived is
+  turn first, as a steer, so the agent has it when it resumes. Decline is the
+  × between Stop and Answer. What you had typed before the question arrived is
   kept and comes back once the question is settled.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow

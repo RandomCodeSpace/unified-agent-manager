@@ -1400,8 +1400,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </Appear>
         <Appear show={!!answering}>
           <Tip label="Decline to answer this question">
-            <Button variant="danger" className="ml-1" loading={busy === 'decline'} disabled={!!busy || locked} onClick={() => void decline()}>
-              Decline
+            <Button size="icon-md" variant="danger" aria-label="Decline" className="ml-1 rounded-full" loading={busy === 'decline'} disabled={!!busy || locked} onClick={() => void decline()}>
+              <X aria-hidden="true" strokeWidth={2.25} />
             </Button>
           </Tip>
         </Appear>
