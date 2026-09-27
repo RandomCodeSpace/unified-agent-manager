@@ -1,6 +1,7 @@
 import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Model, type PromptMode, type PromptSettings, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
+import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
+import { answerFromComposer, answerPlaceholder, canAnswer } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
@@ -14,6 +15,7 @@ import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from
 import { Markdown, Note, Skeleton, Spinner, useApp } from './common';
 import { ExecutionItems } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
+import { ComposerQuestion } from './Interactions';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -54,6 +56,8 @@ const LIST_ID = 'composer-picker';
 const LIMITS_TEXT = 'Images up to 3 MiB, PDF up to 10 MiB, text up to 256 KiB · 5 per message';
 /** Typing pauses this long before the draft is written. */
 const DRAFT_DELAY = 250;
+/** A touch screen: focusing the composer would raise the keyboard over the conversation (as App's select). */
+const COARSE = '(pointer: coarse)';
 
 // Storage may be unavailable (private mode, quota): the composer works without a draft then.
 function readDraft(key: string): Draft | null {
@@ -215,17 +219,32 @@ export interface NewTask {
 /** A new Task has no provider conversation yet, so no commands or skills; its execution mode shows once it exists. */
 const NO_COMMANDS: Command[] = [];
 
+/**
+ * A pending question with one question, answered from the composer (DESIGN.md Composer, answer
+ * mode): the question it shows, and where the answered or declined interaction goes.
+ */
+export interface Answering {
+  interaction: Interaction;
+  question: Question;
+  onAnswered: (i: Interaction) => void;
+}
+
+/** No option chosen: one array, so nothing derived from it changes between renders. */
+const NO_CHOICES: string[] = [];
+
 interface ComposerProps {
   session: SessionDetail;
   onRename: () => void;
   onSessionUpdate: (s: SessionSummary) => void;
   /** Set for a new Task: its settings are `session`'s, changed locally through `onSessionUpdate`. */
   newTask?: NewTask;
+  /** Set while a question is answered from here. */
+  answering?: Answering | null;
 }
 
 /** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
 function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
-  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask) return false;
+  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering) return false;
   if (a.session === b.session) return true;
   const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
   keys.delete('items');
@@ -237,7 +256,7 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
 
 export const Composer = memo(ComposerView, sameComposerProps);
 
-function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<ComposerProps>) {
+function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null }: Readonly<ComposerProps>) {
   const { meta, metaError, settings: appSettings, dispatch } = useApp();
   // The catalogs are still on their way: the pickers' slot holds a skeleton, since their values would be a guess.
   const catalogPending = !meta && !metaError;
@@ -251,6 +270,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
   const [browsing, setBrowsing] = useState<Browsing | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A warning, not a failure: the question was answered elsewhere or withdrawn after the note went. */
+  const [notice, setNotice] = useState<string | null>(null);
   const [steerUnavailable, setSteerUnavailable] = useState('');
   const [outcome, setOutcome] = useState<Submission | null>(null);
   const resultStorageKey = `uam:command-result-dismissed:${session.id}`;
@@ -335,9 +356,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
   const argument = useMemo(() => triggerAt(text, caret) ? null : argumentTrigger(text, caret, commands ?? []), [text, caret, commands]);
   const rawTrigger = useMemo(() => triggerAt(text, caret) ?? argument?.trigger ?? null, [text, caret, argument]);
   const triggerKey = rawTrigger ? `${rawTrigger.kind}${rawTrigger.start}` : null;
-  const trigger = rawTrigger && dismissed !== triggerKey && !locked && !busy ? rawTrigger : null;
-  const shapedCommand = /^[/$]\S/.test(text.trim());
-  const pendingCommand = commandPending(text, commands, commandsError);
+  // An answer is never a command: while answering only the `@` picker opens and slash-shaped text is text.
+  const trigger = rawTrigger && dismissed !== triggerKey && !locked && !busy && !(answering && rawTrigger.kind !== '@') ? rawTrigger : null;
+  const shapedCommand = !answering && /^[/$]\S/.test(text.trim());
+  const pendingCommand = !answering && commandPending(text, commands, commandsError);
   const wantCommands = !locked && (executionOpen || trigger?.kind === '/' || trigger?.kind === '$' || pendingCommand);
   const autopilotCommand = commands?.find((c) => c.kind === 'command' && (c.name === 'autopilot' || c.aliases?.includes('autopilot')));
   /** Why the execution mode cannot change now; empty when it can. */
@@ -539,9 +561,46 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
   const attachmentIds = uploads.flatMap((u) => (u.status === 'done' && u.id ? [u.id] : []));
   const extras = { ...(files.length ? { files } : {}), ...(attachmentIds.length ? { attachments: attachmentIds } : {}) };
 
+  /* ---------- Answer mode ---------- */
+
+  // A question is answered from its own buffer: the Task's draft (text, `@` files, uploads) is parked
+  // when the question arrives and comes back when it resolves, however it resolves. The parked draft
+  // is what the storage keeps meanwhile. An answer left unsent stays only where the draft was empty.
+  const answeringId = answering?.interaction.id ?? null;
+  // The options chosen on the question, its own: another question starts with none.
+  const [chosen, setChosen] = useState<{ id: string; choices: string[] }>({ id: '', choices: [] });
+  const staged = answeringId && chosen.id === answeringId ? chosen.choices : NO_CHOICES;
+  const [parked, setParked] = useState<{ id: string; text: string; files: string[]; uploads: Pending[] } | null>(null);
+  if (answeringId && parked?.id !== answeringId) {
+    setParked(parked ? { ...parked, id: answeringId } : { id: answeringId, text, files, uploads });
+    setText('');
+    setCaret(0);
+    setFiles([]);
+    setUploads([]);
+    setBrowsing(null);
+    setDismissed(null);
+  } else if (!answeringId && parked) {
+    setParked(null);
+    if (parked.text || parked.files.length || parked.uploads.length || !(text.trim() || files.length || uploads.length)) {
+      setText(parked.text);
+      setCaret(parked.text.length);
+      setFiles(parked.files);
+      setUploads(parked.uploads);
+    }
+  }
+  // A question arriving on a desktop is an invitation to answer: the composer takes focus when nothing
+  // else holds it. Never on a touch screen, where the keyboard would rise over the conversation.
+  useEffect(() => {
+    if (!answeringId || window.matchMedia(COARSE).matches) return;
+    const active = document.activeElement;
+    if (!active || active === document.body) textarea.current?.focus();
+  }, [answeringId]);
+
   // The draft follows the text, the picked files and the finished uploads once typing pauses;
   // leaving the Task writes it at once. An accepted send clears it (see `send`).
-  const draftNow = useMemo<Draft>(() => ({ text, files, ...(promptSettings ? { settings: promptSettings } : {}), attachments: uploads.flatMap((u) => (u.status === 'done' && u.id ? [{ id: u.id, name: u.name, size: u.size, kind: u.kind }] : [])) }), [text, files, uploads, promptSettings]);
+  const buffer = useMemo(() => ({ text, files, uploads }), [text, files, uploads]);
+  const kept = parked ?? buffer;
+  const draftNow = useMemo<Draft>(() => ({ text: kept.text, files: kept.files, ...(promptSettings ? { settings: promptSettings } : {}), attachments: kept.uploads.flatMap((u) => (u.status === 'done' && u.id ? [{ id: u.id, name: u.name, size: u.size, kind: u.kind }] : [])) }), [kept, promptSettings]);
   const latestDraft = useRef(draftNow);
   useEffect(() => {
     latestDraft.current = draftNow;
@@ -565,7 +624,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
     textarea.current?.focus();
   }
 
-  const cmd = commands ? parseCommand(text, commands) : null;
+  const cmd = commands && !answering ? parseCommand(text, commands) : null;
   const descriptor = commands?.find((c) => c.name === cmd?.name);
   const commandBlocked = commandReason(descriptor, live) || (descriptor?.input_required && !cmd?.args ? `/${descriptor.name} needs ${descriptor.input_hint || 'an argument'}.` : '');
   /** Why nothing can be sent now; empty when it can. */
@@ -579,7 +638,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
   const blocked = describeBlocked();
   const settingsSteerReason = live && selectionChanged ? 'Model, effort and context changes apply to the next turn. Steering keeps the current settings.' : '';
   const steerBlocked = steerUnavailable || settingsSteerReason;
-  const cannotSubmit = !!busy || locked || session.state === 'starting' || !text.trim() || !!blocked;
+  const empty = answering ? !canAnswer(answering.question, staged, text) : !text.trim();
+  const cannotSubmit = !!busy || locked || session.state === 'starting' || empty || !!blocked;
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The one send button is Enter's.
   const steerDefault = appSettings.send_default === 'steer';
   const { enter, modified } = enterActions(live, appSettings.send_default, !!steerUnavailable);
@@ -606,7 +666,86 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
     }
   }
 
+  /** What an accepted send leaves behind: nothing (a command's prefill aside). */
+  function clearBuffer(prefill = '') {
+    setText(prefill);
+    setCaret(prefill.length);
+    setFiles([]);
+    setUploads([]);
+    setDismissed(null);
+  }
+
+  /** The `alongside` steer that already went for the current answer, so a retry after a failed answer never repeats it. */
+  const steered = useRef<string | null>(null);
+
+  /**
+   * Answer mode's send: what the answer cannot carry (a note beside a staged option, every file)
+   * is steered into the turn first, so it is waiting when the model resumes; then the answer goes.
+   * A failed steer answers nothing and keeps everything here.
+   */
+  async function sendAnswer() {
+    if (!answering || cannotSubmit) return;
+    const composed = answerFromComposer(answering.question, { text, staged, files, attachments: attachmentIds });
+    if (!composed) return;
+    // As `send`: the same steer repeats under the same request id.
+    const key = JSON.stringify([answering.interaction.id, text, files, attachmentIds, staged]);
+    if (pending.current?.key !== key) pending.current = { key, id: newRequestId() };
+    const id = pending.current.id;
+    refocus.current = true;
+    setBusy('answer');
+    setError(null);
+    setNotice(null);
+    try {
+      if (composed.alongside && steered.current !== key) {
+        const { text: note, files: refs, attachments } = composed.alongside;
+        const sub = await api.prompt(session.id, note, id, 'steer', { ...(refs.length ? { files: refs } : {}), ...(attachments.length ? { attachments } : {}) });
+        setOutcome(sub);
+        // A refused steer delivered nothing: answer nothing and keep what the composer holds; a retry is a new request.
+        if (sub.status === 'rejected' || sub.status === 'cancelled') {
+          pending.current = null;
+          return;
+        }
+        steered.current = key;
+      }
+      try {
+        const answered = await api.respond(session.id, answering.interaction.id, { answers: composed.answers });
+        clearBuffer();
+        answering.onAnswered(answered);
+      } catch (e) {
+        // Answered from another tab or withdrawn: what the steer carried stands in the transcript, so it goes from here.
+        if (isStatus(e, 409)) setNotice('This request was already answered elsewhere.');
+        else if (isStatus(e, 410)) setNotice('This request expired before it was answered.');
+        else throw e;
+        if (composed.alongside) clearBuffer();
+      }
+      pending.current = null;
+      steered.current = null;
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Declines the question from the action row; the card's rules (a 409 or 410 is a note, not a failure). */
+  async function decline() {
+    if (!answering || busy) return;
+    setBusy('decline');
+    setError(null);
+    setNotice(null);
+    try {
+      answering.onAnswered(await api.respond(session.id, answering.interaction.id, { reject: true }));
+    } catch (e) {
+      if (isStatus(e, 409)) setNotice('This request was already answered elsewhere.');
+      else if (isStatus(e, 410)) setNotice('This request expired before it was answered.');
+      else setError(describeError(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function send(promptMode: PromptMode, confirmed = false) {
+    if (answering) return sendAnswer();
     const t = text.trim();
     if (cannotSubmit || (!cmd && promptMode === 'send' && live)) return;
     if (newTask) return sendFirst(t);
@@ -631,16 +770,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
         pending.current = null;
         const result = sub.command_result;
         const prefill = result?.kind === 'text' ? result.prefill_input ?? '' : '';
-        setText(prefill);
-        setCaret(prefill.length);
+        clearBuffer(prefill);
         if (cmd) {
           if (result?.kind === 'action') setCommandAction(result.action);
           setCommandVersion((v) => v + 1);
         }
-        setFiles([]);
-        setUploads([]);
         setPromptSettings(null);
-        setDismissed(null);
         // Gone at once, not after the debounce: a reload right after sending must not bring the prompt back.
         writeDraft(storageKey, { text: prefill, files: [], attachments: [] });
       }
@@ -745,6 +880,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
 
   /** The send button's name: what Enter does now. */
   function describeSend(): string {
+    if (answering) return busy === 'answer' ? 'Submitting…' : 'Answer';
     if (busy === enter) return 'Submitting…';
     if (cmd) return `Run /${cmd.name}`;
     if (!live) return 'Send';
@@ -844,12 +980,21 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
   /** The textarea's placeholder: what Enter does while a turn runs, else the invitation. */
   function describePlaceholder(): string {
     if (locked) return '';
+    if (answering) return answerPlaceholder(answering.question, staged.length > 0);
     if (!live) return 'Ask anything, @ files, $ skills, / commands';
     return steerDefault ? 'Steer this turn, or queue a follow-up…' : 'Queue a follow-up, or steer this turn…';
   }
   /** The send button's tip: why it is blocked, or what Enter and Ctrl+Enter do. */
   function describeSendTip(): ReactNode {
     if (blocked) return blocked;
+    if (answering) {
+      return (
+        <>
+          Answer (Enter)
+          <span className="block text-on-primary/70">Shift+Enter adds a line</span>
+        </>
+      );
+    }
     if (live && !cmd) {
       return (
         <>
@@ -902,8 +1047,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
 
   return (
     <form
-      // `data-draft` marks unsent work (text, picked files, uploads); an update waits while it is set.
-      data-draft={text.trim() || files.length || uploads.length ? '' : undefined}
+      // `data-draft` marks unsent work (text, picked files, uploads, a parked draft); an update waits while it is set.
+      data-draft={text.trim() || files.length || uploads.length || parked?.text.trim() || parked?.files.length || parked?.uploads.length ? '' : undefined}
       className={cn(
         // The floating control plane (DESIGN.md Composer): `lg` corners on the float shadow; focus-within fades in
         // (opacity only) a pseudo-element carrying a deeper neutral shadow (no glow), so no shadow is ever animated.
@@ -950,7 +1095,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
           popupRef={popup}
         />
       )}
-      {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked) || selectionChanged) && (
+      {answering && (
+        // Answer mode (DESIGN.md Composer): the question is the composer's extension, above what answers it.
+        <ComposerQuestion interactionId={answering.interaction.id} question={answering.question} chosen={staged} disabled={!!busy || locked} onChoose={(choices) => setChosen({ id: answering.interaction.id, choices })} />
+      )}
+      {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {locked && <Note>{session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.'}</Note>}
           {last?.status === 'uncertain' && (
@@ -968,11 +1117,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
               {error}
             </Note>
           )}
+          {notice && (
+            <Note tone="warn" role="alert">
+              {notice}
+            </Note>
+          )}
           {commandBlocked && <Note role="status">{commandBlocked}</Note>}
           {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
-          {live && steerUnavailable && !cmd && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
+          {live && steerUnavailable && !cmd && !answering && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
           {selectionChanged && <Note>Current model: {modelName(meta, session.provider, session.model)} · {session.effort || 'Default'} effort · {sizeLabel(session.context_size || 'default')} context. Draft settings apply when its next turn starts.</Note>}
-          {settingsSteerReason && !cmd && <Note>{settingsSteerReason} <Button size="sm" variant="secondary" disabled={cannotSubmit} onClick={() => void send('queue')}>Queue next turn</Button></Note>}
+          {settingsSteerReason && !cmd && !answering && <Note>{settingsSteerReason} <Button size="sm" variant="secondary" disabled={cannotSubmit} onClick={() => void send('queue')}>Queue next turn</Button></Note>}
           {resendable && (
             <Tip label="Puts the last prompt back here to edit or send again. Nothing is sent until you do.">
               <Button size="sm" variant="secondary" className="self-start animate-rise" onClick={resend}>
@@ -1067,7 +1221,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
       )}
 
       <label className="sr-only" htmlFor="composer-text">
-        Message
+        {answering ? 'Your answer' : 'Message'}
       </label>
       <textarea
         ref={textarea}
@@ -1234,7 +1388,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
         )}
           </>
         )}
-        {/* The actions: the send button keeps the far right, so Stop rises in beside it and nothing else moves. */}
+        {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
         <span className="ml-auto flex shrink-0 items-center gap-0.5">
         {busy === 'settings' && <Spinner className="mr-1" />}
         <Appear show={live || session.execution?.objective?.status === 'active'}>
@@ -1244,9 +1398,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask }: Readonly<
             </Button>
           </Tip>
         </Appear>
+        <Appear show={!!answering}>
+          <Tip label="Decline to answer this question">
+            <Button size="icon-md" variant="danger" aria-label="Decline" className="ml-1 rounded-full" loading={busy === 'decline'} disabled={!!busy || locked} onClick={() => void decline()}>
+              <X aria-hidden="true" strokeWidth={2.25} />
+            </Button>
+          </Tip>
+        </Appear>
         {!locked && (
           <Tip label={describeSendTip()}>
-            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === enter} disabled={cannotSubmit || (!cmd && enter === 'steer' && !!settingsSteerReason)}>
+            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === (answering ? 'answer' : enter)} disabled={cannotSubmit || (!answering && !cmd && enter === 'steer' && !!settingsSteerReason)}>
               <ArrowUp aria-hidden="true" strokeWidth={2.25} />
             </Button>
           </Tip>

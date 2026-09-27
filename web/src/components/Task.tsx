@@ -16,7 +16,7 @@ import { Chip } from './ui/chip';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
-import { Composer, type FirstMessage } from './Composer';
+import { Composer, type Answering, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
@@ -415,9 +415,17 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     else if (!upwards && landed.current !== 'older' && nearEdge(el, 'newer')) void loadNewer();
   }
 
+  // A pending question with one question is the composer's extension (DESIGN.md Composer, answer mode),
+  // never a card: the composer shows it, holds the text and files, and answers or declines it.
+  const question = session.capabilities.questions ? session.interactions.find((i) => awaitsUser(i) && i.kind === 'question' && i.questions?.length === 1) : undefined;
+  const questionId = question?.id;
+  const onAnswered = useCallback((i: Interaction) => onInteractionUpdate(session.id, i), [onInteractionUpdate, session.id]);
+  const answering = useMemo<Answering | null>(() => (question ? { interaction: question, question: question.questions![0], onAnswered } : null), [question, onAnswered]);
+
   // A decided card collapses in place (its last pending look, inert) instead of vanishing; it leaves once the collapse has run.
-  // A request yolo mode is answering is never a card.
-  const pendingIds = session.interactions.filter(awaitsUser).map((i) => i.id).join(',');
+  // A request yolo mode is answering is never a card, nor is the question the composer answers.
+  const carded = (i: Interaction) => awaitsUser(i) && i.id !== questionId;
+  const pendingIds = session.interactions.filter(carded).map((i) => i.id).join(',');
   const [seenPending, setSeenPending] = useState(pendingIds);
   const [lingering, setLingering] = useState<Interaction[]>([]);
   if (pendingIds !== seenPending) {
@@ -426,7 +434,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const decided = gone.flatMap((id) => session.interactions.filter((i) => i.id === id)).map((i) => ({ ...i, state: 'pending' as const }));
     if (decided.length) setLingering((l) => [...l, ...decided.filter((i) => !l.some((x) => x.id === i.id))]);
   }
-  const cards = [...session.interactions.filter(awaitsUser), ...lingering.filter((i) => !session.interactions.some((x) => x.id === i.id && awaitsUser(x)))];
+  const cards = [...session.interactions.filter(carded), ...lingering.filter((i) => !session.interactions.some((x) => x.id === i.id && carded(x)))];
 
   // The provider's own notice about a failure already stands in the transcript: the failed line is not repeated under it.
   const failure = session.state === 'failed' ? session.state_detail?.toLowerCase() ?? '' : '';
@@ -614,7 +622,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
             {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (
-              <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && awaitsUser(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
+              <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
                 <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
               </Collapse>
             ))}
@@ -648,7 +656,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </Appear>
           </div>
-          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} />
+          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} />
         </div>
       </div>
 

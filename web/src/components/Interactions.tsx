@@ -3,7 +3,7 @@ import { useId, useState, type SubmitEvent } from 'react';
 import { api, describeError, isStatus, type Answer, type Interaction, type Option, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { approvalMark } from '../lib/transcript';
-import { Note } from './common';
+import { Markdown, Note } from './common';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
@@ -45,7 +45,8 @@ export function DecidedRow({ interaction, className }: Readonly<{ interaction: I
 /**
  * Permission or question card. The first answer from any tab wins: a 409 means someone
  * else answered, a 410 means the provider withdrew the request. While pending the header
- * carries the attention chip; that is the only orange on the card.
+ * carries the attention chip; that is the only orange on the card. A question with one
+ * question is not a card: it is the composer's extension (`ComposerQuestion`).
  */
 export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }>) {
   /** The action in flight: a permission option's id, `answer` or `decline`. */
@@ -121,6 +122,59 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
   );
 }
 
+/**
+ * One choice as a selectable row: a radio or checkbox per `multiple`, 44px on a coarse pointer.
+ * A radio cannot be unchecked natively; `clearable` lets a click on the chosen one clear it (a
+ * radio's click fires either way, its change only when it turns on).
+ */
+function ChoiceRow({ name, choice, multiple, on, clearable = false, onToggle }: Readonly<{ name: string; choice: string; multiple: boolean; on: boolean; clearable?: boolean; onToggle: () => void }>) {
+  const change = !multiple && clearable ? { onClick: onToggle, readOnly: true } : { onChange: onToggle };
+  return (
+    <label className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
+      <input type={multiple ? 'checkbox' : 'radio'} name={name} checked={on} className="size-3.5 accent-accent" {...change} />
+      {choice}
+    </label>
+  );
+}
+
+/**
+ * A question with one question as the composer's extension (DESIGN.md Composer, answer mode):
+ * the attention chip, the question as markdown and its choices as rows that choose the answer
+ * in place. The text, the files, Decline and Answer are the composer's. A long question or
+ * many options scroll inside a capped box, so the surface never outgrows the pane.
+ */
+export function ComposerQuestion({ interactionId, question, chosen, disabled, onChoose }: Readonly<{ interactionId: string; question: Question; chosen: string[]; disabled: boolean; onChoose: (choices: string[]) => void }>) {
+  const labelId = useId();
+  function toggle(choice: string) {
+    if (question.multiple) onChoose(chosen.includes(choice) ? chosen.filter((c) => c !== choice) : [...chosen, choice]);
+    else onChoose(chosen.includes(choice) ? [] : [choice]);
+  }
+  return (
+    <div className="flex flex-col gap-1.5 px-3.5 pt-3">
+      <div className="flex items-center gap-2">
+        <Chip tone="attention">
+          <MessageCircleQuestion aria-hidden="true" className="size-3.5" />
+          Needs answer
+        </Chip>
+      </div>
+      <div className="max-h-[min(240px,30dvh)] overflow-y-auto">
+        <div id={labelId} className="text-ui text-ink">
+          {question.header && <span className="mb-0.5 block text-caption text-muted">{question.header}</span>}
+          <Markdown text={question.text} />
+        </div>
+        {(question.choices?.length ?? 0) > 0 && (
+          <fieldset aria-labelledby={labelId} className="mt-1.5 flex min-w-0 flex-col gap-0.5" disabled={disabled}>
+            {question.choices!.map((c) => (
+              <ChoiceRow key={c} name={`q-${interactionId}-0`} choice={c} multiple={!!question.multiple} on={chosen.includes(c)} clearable onToggle={() => toggle(c)} />
+            ))}
+          </fieldset>
+        )}
+      </div>
+      <div className="fade-rule" aria-hidden="true" />
+    </div>
+  );
+}
+
 function QuestionForm({
   interactionId,
   questions,
@@ -180,15 +234,9 @@ function QuestionForm({
             {q.text}
           </legend>
           <div className="flex flex-col gap-0.5">
-            {(q.choices ?? []).map((c) => {
-              const on = (chosen[qi] ?? []).includes(c);
-              return (
-                <label key={c} className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
-                  <input type={q.multiple ? 'checkbox' : 'radio'} name={`q-${interactionId}-${qi}`} checked={on} onChange={() => toggle(qi, c, !!q.multiple)} className="size-3.5 accent-accent" />
-                  {c}
-                </label>
-              );
-            })}
+            {(q.choices ?? []).map((c) => (
+              <ChoiceRow key={c} name={`q-${interactionId}-${qi}`} choice={c} multiple={!!q.multiple} on={(chosen[qi] ?? []).includes(c)} onToggle={() => toggle(qi, c, !!q.multiple)} />
+            ))}
             {q.custom && (
               <label htmlFor={`q-${interactionId}-${qi}-custom`} className="mt-1 flex items-center">
                 <span className="sr-only">Your answer</span>

@@ -10,7 +10,7 @@ import { install } from '../../src/mock/install';
 
 export function renderApp(hash = '') {
   if (hash) history.replaceState(null, '', `/${hash}`);
-  install();
+  const mock = install();
   const user = userEvent.setup();
   const view = render(
     <StrictMode>
@@ -19,7 +19,7 @@ export function renderApp(hash = '') {
       </CSPProvider>
     </StrictMode>,
   );
-  return { user, ...view };
+  return { user, mock, ...view };
 }
 
 export type User = ReturnType<typeof renderApp>['user'];

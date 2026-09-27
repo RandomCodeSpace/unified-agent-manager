@@ -96,8 +96,16 @@ class FakeEventSource extends EventTarget {
   }
 }
 
-export function install(): void {
+/** A request the prompt or the interaction route took, in order, so a test can check what went and when. */
+export interface Received {
+  route: 'prompt' | 'answer';
+  session: string;
+  body: Json;
+}
+
+export function install(): { received: Received[] } {
   const st: MockState = seed();
+  const received: Received[] = [];
   // `?mock&slow=1500` holds every reply and the first snapshot that long, to look at the loading states.
   const slow = Math.max(0, Number(new URLSearchParams(window.location.search).get('slow')) || 0);
   const createdBy = new Map<string, string>();
@@ -969,6 +977,7 @@ export function install(): void {
       if (!t) return fail(404, 'session not found');
       switch (r[2]) {
         case 'prompt': {
+          received.push({ route: 'prompt', session: t.id, body });
           if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
           const text = String(body.text ?? '');
           if (!text.trim()) return fail(400, 'prompt text is required');
@@ -1029,6 +1038,7 @@ export function install(): void {
       const t = find(decodeURIComponent(r[1]));
       const i = t?.interactions.find((x) => x.id === decodeURIComponent(r![2]));
       if (!t || !i) return fail(404, 'interaction not found');
+      received.push({ route: 'answer', session: t.id, body });
       if (i.state !== 'pending') return fail(409, 'already resolved');
       const reject = body.reject === true || (typeof body.decision === 'string' && !!i.options?.find((o) => o.id === body.decision)?.reject);
       const resolution =
@@ -1120,6 +1130,8 @@ export function install(): void {
     broadcast('interaction', { session_id: t.id, interaction: next }, t.id);
     return next;
   }
+
+  return { received };
 }
 
 /** Mirrors the server's svgRoot: after a BOM, whitespace, `<?…?>`, `<!--…-->` and `<!…>`, does the text start with `<svg`? */
