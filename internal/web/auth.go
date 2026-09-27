@@ -259,7 +259,7 @@ func secureRequest(r *http.Request) bool {
 }
 
 func setFileCookie(w http.ResponseWriter, value, path string, maxAge int) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- SameSite=None is required: the sandboxed page's own requests are cross-site; Secure and HttpOnly are always set and the path is one Task's file-key route.
 		Name: fileCookieName, Value: value, Path: path, MaxAge: maxAge,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteNoneMode,
 	})
