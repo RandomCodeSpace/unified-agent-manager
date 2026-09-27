@@ -596,7 +596,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
 
   | Action | Allowed on | Also needs | Result |
   |---|---|---|---|
-  | Settle | an active Task | no turn running, nothing waiting for you, an empty queue | Read-only; the conversation is closed |
+  | Settle | an active Task | no turn running, nothing waiting for you, an empty queue, no subagent or background task still running | Read-only; the conversation is closed |
   | Reopen | a settled Task | – | Active again; the next message reopens the same conversation |
   | Archive | an active or settled Task | for an active Task, the same as Settle | Read-only for good; there is no unarchive |
   | Delete Task | an archived Task | – | The Task is removed from UAM |

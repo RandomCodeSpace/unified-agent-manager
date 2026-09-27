@@ -635,6 +635,22 @@ func (s *webSession) runningSubagents() int {
 	return n
 }
 
+// runningBackgroundTasks counts the background shells of s's open
+// conversation last reported as not finished. A closed conversation runs
+// none, whatever its last snapshot said.
+func (s *webSession) runningBackgroundTasks() int {
+	if s.conv == nil || s.backgroundTasks == nil {
+		return 0
+	}
+	n := 0
+	for _, task := range s.backgroundTasks.Tasks {
+		if task.Status != "completed" && task.Status != "failed" && task.Status != "cancelled" {
+			n++
+		}
+	}
+	return n
+}
+
 func (m *Manager) backgroundTasksLocked(s *webSession, snapshot agentapi.BackgroundTasks) {
 	snapshot.Tasks = slices.Clone(snapshot.Tasks)
 	for i := range snapshot.Tasks {

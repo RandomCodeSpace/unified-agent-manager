@@ -224,6 +224,9 @@ type SessionSummary struct {
 	LastModel string `json:"last_model"`
 	// SubagentsRunning counts subagents that have not ended.
 	SubagentsRunning int `json:"subagents_running"`
+	// BackgroundTasksRunning counts the open conversation's background shell
+	// tasks that have not finished.
+	BackgroundTasksRunning int `json:"background_tasks_running"`
 	// Queued counts prompts waiting in the Task's queue.
 	Queued int `json:"queued"`
 	// Mode is safe or yolo. A yolo Task's permission requests are allowed

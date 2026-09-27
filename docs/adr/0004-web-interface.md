@@ -587,7 +587,9 @@ Shape changes:
 - `ProviderInfo` gains `models: [{id, name, efforts: [string], context_sizes: [{id, tokens}]}]` and `capabilities.context_size`.
 - `Project`: `id`, `name`, `dir`, `created_at`.
 - `SessionSummary` gains `project_id`, `model`, `title`, `last_model` (from the
-  latest turn that reported one; live only) and `subagents_running`. `name`
+  latest turn that reported one; live only), `subagents_running` and
+  `background_tasks_running` (the open conversation's unfinished background
+  shell tasks; added 2026-09-27). `name`
   may be empty. It also gains `effort`, `context_size` (always `default` or
   the selected tier), and optional `context: {used, limit}`.
 - `SessionDetail.items` holds only the main agent's items; it gains
@@ -897,7 +899,7 @@ snapshot of `GET /api/events?session={id}`, and `GET
 
 | Method and path | Body | Result |
 |---|---|---|
-| `POST /api/sessions/{id}/settle` | – | 200 `SessionSummary`; 404; 409 wrong stage, busy, queued prompts or a pending interaction |
+| `POST /api/sessions/{id}/settle` | – | 200 `SessionSummary`; 404; 409 wrong stage, busy, queued prompts, a pending interaction, or a subagent or background task still running |
 | `POST /api/sessions/{id}/reopen` | – | 200 `SessionSummary`; 404; 409 unless settled |
 | `POST /api/sessions/{id}/archive` | – | 200 `SessionSummary`; 404; 409 when archived, or when active and a settle precondition fails |
 | `DELETE /api/sessions/{id}` | – | 204; 404; 409 unless archived |

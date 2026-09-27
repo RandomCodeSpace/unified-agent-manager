@@ -816,7 +816,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	return SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
 		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context, Usage: s.usage,
-		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), Workdir: s.workdir, ConversationID: s.convID,
+		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt,
@@ -3211,7 +3211,8 @@ func (m *Manager) keepsOpenLocked(s *webSession) bool {
 }
 
 // Settle marks an active Task complete and closes its conversation. It is
-// refused while the Task is busy, has queued prompts or waits for an answer.
+// refused while the Task is busy, has queued prompts, waits for an answer, or
+// still runs subagents or background tasks.
 func (m *Manager) Settle(id string) (SessionSummary, error) {
 	return m.moveStage(id, StageSettled, StageActive)
 }
@@ -3294,6 +3295,10 @@ func (s *webSession) settleableLocked() error {
 		return newError(http.StatusConflict, "a permission request is still being answered; try again")
 	case len(s.queue) > 0 || s.queueSending != "":
 		return newError(http.StatusConflict, "the task has queued prompts; send or clear them first")
+	case s.runningSubagents() > 0:
+		return newError(http.StatusConflict, "subagents are still running; wait for them or stop them first")
+	case s.runningBackgroundTasks() > 0:
+		return newError(http.StatusConflict, "background tasks are still running; wait for them or stop them first")
 	}
 	return nil
 }

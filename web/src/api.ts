@@ -296,6 +296,8 @@ export interface SessionSummary {
   /** Model reported by the latest turn; live only, empty when unknown. */
   last_model: string;
   subagents_running: number;
+  /** Background shell tasks of the open conversation that have not finished; absent from older servers. */
+  background_tasks_running?: number;
   effort?: string;
   context_size?: string;
   context?: ContextUsage;

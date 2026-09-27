@@ -50,11 +50,11 @@ export const TaskActionsContext = createContext<TaskActions>({
 
 export const useTaskActions = () => useContext(TaskActionsContext);
 
-export const STAGE_REASON = 'Stop the turn, answer what is waiting and clear queued prompts before settling or archiving.';
+export const STAGE_REASON = 'Stop the turn, answer what is waiting, clear queued prompts and let subagents and background tasks finish (or stop them) before settling or archiving.';
 
-/** True while the lifecycle rules refuse a stage change (a busy Task). */
+/** True while the lifecycle rules refuse a stage change (a busy Task, or work that outlived its turn). */
 export function stageBlocked(s: SessionSummary): boolean {
-  return LIVE.includes(s.state) || needsYou(s) || (s.queued ?? 0) > 0;
+  return LIVE.includes(s.state) || needsYou(s) || (s.queued ?? 0) > 0 || s.subagents_running > 0 || (s.background_tasks_running ?? 0) > 0;
 }
 
 /** True when a rename may start: not archived and no lifecycle request in flight. Every entry point (menu, double-click, F2, the header pencil) asks this. */

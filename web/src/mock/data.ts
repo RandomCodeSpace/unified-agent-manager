@@ -283,6 +283,7 @@ export function seed(): MockState {
       name: 'Fix re-attach redraw regression',
       title: '',
       state: 'working',
+      background_tasks_running: 1,
       capabilities: { ...CAPS, execution_modes: true },
       execution: { known: true, mode: 'interactive' },
       background_tasks: {

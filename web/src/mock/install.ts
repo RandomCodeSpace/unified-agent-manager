@@ -905,6 +905,7 @@ export function install(): void {
       const id = decodeURIComponent(r[2]);
       if (!t?.background_tasks?.tasks.some((task) => task.id === id)) return fail(404, 'background task not found');
       t.background_tasks = { ...t.background_tasks, tasks: t.background_tasks.tasks.map((task) => (task.id === id ? { ...task, status: 'cancelled', ended_at: new Date().toISOString() } : task)) };
+      touch(t, { background_tasks_running: t.background_tasks.tasks.filter((task) => task.status === 'running').length });
       return json(200, { accepted: true, background_tasks: t.background_tasks });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/(prompt|cancel|close)$/)) && method === 'POST') {

@@ -1115,6 +1115,7 @@ func TestProjectAndTaskRoutes(t *testing.T) {
 	if code := del("/api/projects/"+project.ID, auth); code != http.StatusConflict {
 		t.Fatalf("DELETE a project with an active task = %d, want 409", code)
 	}
+	conv.EmitSubagent(agentapi.Subagent{ID: "agent-1", Name: "helper", Status: agentapi.SubagentIdle})
 	if w := ts.do(http.MethodPost, patch+"/archive", "", auth); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"stage":"archived"`) {
 		t.Fatalf("archive = %d %s", w.Code, w.Body)
 	}
