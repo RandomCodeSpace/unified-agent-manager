@@ -98,6 +98,11 @@ type Project struct {
 	// and never stored. It is empty when Dir is not in a work tree, HEAD is
 	// detached, or git cannot tell.
 	Branch string `json:"branch,omitempty"`
+	// NoGit says why Dir has no changes or git-listed files to show:
+	// "not_installed" (no git in a standard location) or "not_repository"
+	// (git reports Dir is in no work tree). It is empty in a work tree and
+	// when git cannot tell. Read with Branch and never stored.
+	NoGit string `json:"no_git,omitempty"`
 }
 
 // TaskDefaults are the settings a new Task starts with (Settings). The

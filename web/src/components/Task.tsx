@@ -1,4 +1,4 @@
-import { ArrowDown, Bot, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil } from 'lucide-react';
+import { ArrowDown, Bot, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, TriangleAlert } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
@@ -11,6 +11,7 @@ import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, w
 import { ChangesSheet } from './Changes';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useScrolled } from './common';
 import { Chip } from './ui/chip';
+import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
 import { Collapse, usePresence } from './ui/collapse';
 import { Composer, type FirstMessage } from './Composer';
@@ -430,6 +431,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Recorded history still on its way with nothing to show yet: a skeleton, not the "New task" intro.
   const historyLoading = session.history === 'loading' && session.items.length === 0;
   const fileCount = changes?.supported ? changes.files.length : null;
+  // Without git there is nothing for Changes or Files to show: a warning stands in their place (DESIGN.md D3).
+  const noGit = project?.no_git;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
   const items = taskMenuItems(session, actions, 'header');
@@ -480,19 +483,36 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               <span className="truncate">{project.branch}</span>
             </span>
           )}
-          <Tip label={`Changes in ${project?.name ?? 'the project'}`}>
-            <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={`Open changes${fileCount !== null ? `, ${fileCount} files` : ''}`} className="px-2 text-muted" onClick={openChanges}>
-              <FileDiff />
-              <span className="max-sm:hidden">Changes</span>
-              {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
-            </Button>
-          </Tip>
-          <Tip label={`Files in ${project?.name ?? 'the project'}`}>
-            <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={toggleFiles}>
-              <FolderTree />
-              <span className="max-sm:hidden">Files</span>
-            </Button>
-          </Tip>
+          {noGit ? (
+            <Popover.Root>
+              <Popover.Trigger render={<Button id="no-git" size="md" className="px-2 text-warning" />}>
+                <TriangleAlert />
+                <span className="max-sm:sr-only">{noGit === 'not_installed' ? 'Git not installed' : 'Not a Git repository'}</span>
+              </Popover.Trigger>
+              <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
+                <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
+                <Popover.Description>
+                  {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has no Changes or Files view.
+                </Popover.Description>
+              </Popover.Content>
+            </Popover.Root>
+          ) : (
+            <>
+              <Tip label={`Changes in ${project?.name ?? 'the project'}`}>
+                <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={`Open changes${fileCount !== null ? `, ${fileCount} files` : ''}`} className="px-2 text-muted" onClick={openChanges}>
+                  <FileDiff />
+                  <span className="max-sm:hidden">Changes</span>
+                  {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
+                </Button>
+              </Tip>
+              <Tip label={`Files in ${project?.name ?? 'the project'}`}>
+                <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={toggleFiles}>
+                  <FolderTree />
+                  <span className="max-sm:hidden">Files</span>
+                </Button>
+              </Tip>
+            </>
+          )}
           {session.subagents.length > 0 && (
             <Tip label="Subagents">
               <Button
@@ -557,6 +577,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               footVerb={false}
               density={density}
               onOpenChanges={openChanges}
+              changedLine={!noGit}
             />
             </HistoryAnchor>
             {session.history_after && <p role="status" className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</p>}

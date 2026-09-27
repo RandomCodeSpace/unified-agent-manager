@@ -277,6 +277,8 @@ export interface Project {
   badge: Badge;
   /** Current git branch of the directory; absent unless it is a checkout on a named branch. May change between `project` frames. */
   branch?: string;
+  /** Why the directory has no Changes or Files views: git is not installed, or the directory is in no Git repository. Absent in a repository and when git cannot tell. */
+  no_git?: 'not_installed' | 'not_repository';
 }
 
 export interface SessionSummary {

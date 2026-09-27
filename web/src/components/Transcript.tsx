@@ -51,6 +51,8 @@ interface Props {
   density?: Density;
   /** Open the Changes sheet from a turn's "Changed n files" line. */
   onOpenChanges?: () => void;
+  /** Keep a compact turn's "Changed n files" line; off where the Task's folder has no Changes view (no Git). */
+  changedLine?: boolean;
   /** Name the turn's verb on the foot line between steps; the main pane's floating `WorkingLabel` carries it instead, and its foot line names only the current step (Compact). */
   footVerb?: boolean;
 }
@@ -68,7 +70,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges, footVerb = true }: Props) {
+export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true }: Props) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = useMemo(() => {
     const map = new Map<string, Subagent>();
@@ -130,7 +132,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
         <div key={`turn-${id}`} className="flex flex-col gap-3">
           {(last && working) || showEnd || summary.count > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} timing={timing} summary={summary} entries={group} ctx={gctx} /> : null}
           {renderCompact(group, gctx, (item) => special(item) ?? product(item), own)}
-          {changed.length > 0 && <ChangedLine files={changed} onOpen={onOpenChanges} />}
+          {changedLine && changed.length > 0 && <ChangedLine files={changed} onOpen={onOpenChanges} />}
         </div>,
       );
     } else {

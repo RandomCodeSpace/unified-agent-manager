@@ -1048,6 +1048,14 @@ every two seconds), when a Task in the Project ends a turn, and when a Task's
 Changes load. Nothing polls. When the branch changes, the `project` frame
 carries the Project again.
 
+`Project` also gains `no_git` (2026-09-27), read by the same git call:
+`not_installed` when there is no git in a standard location, and
+`not_repository` when git reports `dir` is in no work tree. It is omitted in a
+work tree and when git cannot tell (a timeout, or a repository git refuses to
+read), so a transient failure never hides a view. The web client then shows a
+warning in place of Changes and Files. A change of `no_git` also sends the
+`project` frame.
+
 ## Listening beyond loopback
 
 - Date: 2026-09-24 (decided in #174)

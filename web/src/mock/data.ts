@@ -163,7 +163,7 @@ export function seed(): MockState {
       badge: { text: 'UM', color: 'blue' },
       branch: 'feat/web-project-defaults-and-sidebar-revamp',
     },
-    { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4), badge: { text: 'DF', color: 'teal' } },
+    { id: 'p2', name: 'dotfiles', dir: '/home/user/dotfiles', created_at: ago(60 * 24 * 4), badge: { text: 'DF', color: 'teal' }, no_git: 'not_repository' },
     {
       id: 'p3',
       name: 'notes-site',

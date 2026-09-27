@@ -673,6 +673,11 @@ are logged only at debug level (`UAM_DEBUG=1`).
   anything else with Open in new tab and Download. Only one of Changes, Files,
   Subagents and a file preview is open at a time. On a wide window, a click in
   the conversation or the composer closes whichever of them is open.
+- **No Git**: when the project directory is not in a Git repository, or git
+  is not installed on the server, the Task header shows a warning in place of
+  Changes and Files, and turns leave out their "Changed n files" line. Click
+  the warning for the reason. It clears once the directory becomes a
+  repository, the next time the Project is re-read.
 - **Sidebar**: Tasks form one flat list with a compact card for each Task,
   with collapsible "Settled" and "Archived" shelves at the foot of the list.
   A card shows its Project, state or last activity, title, provider icon and

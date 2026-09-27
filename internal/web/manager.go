@@ -960,7 +960,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	if err != nil {
 		return Project{}, fmt.Errorf("generate project id: %w", err)
 	}
-	branch := readBranch(m.ctx, canonical)
+	branch, noGit := readBranch(m.ctx, canonical)
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -978,7 +978,7 @@ func (m *Manager) AddProject(dir, name string) (Project, error) {
 	if existing != "" {
 		return Project{}, projectExists(existing)
 	}
-	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Branch: branch}
+	p := Project{ID: id, Name: clean, Dir: canonical, CreatedAt: m.now(), Branch: branch, NoGit: noGit}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		for _, other := range cfg.WebProjects {
 			if other.Dir == canonical {
