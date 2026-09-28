@@ -509,6 +509,8 @@ export interface TurnTiming {
   user_item_id?: string;
   started_at: string;
   ended_at?: string;
+  paused_at?: string;
+  paused_ms?: number;
   state: 'working' | 'completed' | 'cancelled' | 'failed' | 'unknown';
 }
 

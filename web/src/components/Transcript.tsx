@@ -6,7 +6,7 @@ import { modelName, type Interaction, type Item, type Subagent, type SubagentSta
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
-import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, foregroundStart, itemTook, completedDuration, isWork, newestFileDeclarations, promoted, segmentActivity, summarizeActivity, summarizeTurn, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, turnElapsed, itemTook, completedDuration, isWork, newestFileDeclarations, promoted, segmentActivity, summarizeActivity, summarizeTurn, subagentSummary, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { turnVerb } from '../lib/verbs';
 import type { AgentTranscript } from '../state';
@@ -398,15 +398,22 @@ function WorkingTail({ working, turnId, step, verb = true }: Readonly<{ working:
  */
 export function WorkingLabel({ working, since, items, identityItems = items, turnTimings = [] }: Readonly<{ working: boolean; since?: string; items: Item[]; identityItems?: Item[]; turnTimings?: TurnTiming[] }>) {
   const [now, setNow] = useState(() => Date.now());
+  const timing = turnTimings.at(-1);
+  const ticking = working && (!!since || !timing?.paused_at);
+  const [wasTicking, setWasTicking] = useState(ticking);
+  if (ticking !== wasTicking) {
+    setWasTicking(ticking);
+    if (ticking) setNow(() => Date.now());
+  }
   useEffect(() => {
-    if (!working) return;
+    if (!ticking) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [working]);
+  }, [ticking]);
   const lastUser = (list: Item[]) => [...list].reverse().find((item) => item.kind === 'user' && !item.delivery)?.id;
   const turnId = lastUser(items) ?? lastUser(identityItems) ?? 'start';
   // `since` times work that outlived the turn (subagents still running); otherwise the running turn's clock.
-  const elapsed = working ? elapsedSince(since ?? foregroundStart(turnTimings), now) : null;
+  const elapsed = working ? (since ? elapsedSince(since, now) : timing?.state === 'working' ? turnElapsed(timing, now) : null) : null;
   return (
     <Appear show={working}>
       {working && <output className="sr-only">Busy</output>}

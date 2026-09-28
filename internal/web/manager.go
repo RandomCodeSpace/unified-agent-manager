@@ -1471,6 +1471,7 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 // changed since before, and schedules a sessions.json write when its durable
 // part or its queue changed.
 func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
+	m.updateTurnTimingPauseLocked(s)
 	after := m.summaryLocked(s)
 	after.UpdatedAt = before.UpdatedAt
 	key := s.key()

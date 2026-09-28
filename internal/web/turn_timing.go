@@ -1,6 +1,10 @@
 package web
 
-import "github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+import (
+	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+)
 
 // Keep no more timing records than the bounded transcript can show. Timings
 // belong to UAM: provider history must never invent or replace these records.
@@ -32,10 +36,40 @@ func (m *Manager) observeTurnTimingLocked(s *webSession, state agentapi.TurnStat
 	}
 	timing := s.turnTimings[s.activeTiming]
 	timing.EndedAt, timing.State = m.now(), string(state)
+	finishTimingPause(&timing, timing.EndedAt)
 	s.turnTimings[s.activeTiming] = timing
 	s.activeTiming = -1
 	s.pendingTimingUser = ""
 	m.publishTurnTimingLocked(s, timing)
+}
+
+// Pending manual requests pause the clock once, even when requests overlap.
+// Yolo claims do not wait for the user and are excluded by pendingKinds.
+func (m *Manager) updateTurnTimingPauseLocked(s *webSession) {
+	if s.activeTiming < 0 {
+		return
+	}
+	timing := s.turnTimings[s.activeTiming]
+	permissions, questions := s.pendingKinds()
+	paused := permissions+questions > 0
+	if paused == !timing.PausedAt.IsZero() {
+		return
+	}
+	if paused {
+		timing.PausedAt = m.now()
+	} else {
+		finishTimingPause(&timing, m.now())
+	}
+	s.turnTimings[s.activeTiming] = timing
+	m.publishTurnTimingLocked(s, timing)
+}
+
+func finishTimingPause(timing *TurnTiming, end time.Time) {
+	if timing.PausedAt.IsZero() {
+		return
+	}
+	timing.PausedMS += max(0, end.Sub(timing.PausedAt).Milliseconds())
+	timing.PausedAt = time.Time{}
 }
 
 // Only a new live ordinary user item can anchor an observation. Replayed

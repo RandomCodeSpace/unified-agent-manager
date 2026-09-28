@@ -334,6 +334,8 @@ type TurnTiming struct {
 	UserItemID string    `json:"user_item_id,omitempty"`
 	StartedAt  time.Time `json:"started_at"`
 	EndedAt    time.Time `json:"ended_at,omitzero"`
+	PausedAt   time.Time `json:"paused_at,omitzero"`
+	PausedMS   int64     `json:"paused_ms,omitempty"`
 	State      string    `json:"state"`
 }
 
