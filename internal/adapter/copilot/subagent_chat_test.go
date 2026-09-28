@@ -215,6 +215,79 @@ func TestWebSubagentFollowUpRunsAndReturnsToIdle(t *testing.T) {
 	}
 }
 
+func TestWebCompletedSubagentReusedInBackground(t *testing.T) {
+	h := openWeb(t)
+	finish(t, h, agentTaskInfo("agent-1", rpc.TaskStatusIdle, rpc.TaskExecutionModeBackground))
+	if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentCompleted {
+		t.Fatalf("initial completion = %+v", sa)
+	}
+	// The main agent sends another message through the SDK, bypassing UAM's
+	// PromptSubagent method. The same task now runs in the background.
+	h.fs.setTasks(agentTaskInfo("agent-1", rpc.TaskStatusRunning, rpc.TaskExecutionModeBackground))
+	h.fs.onEvent(ev("reused", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 2)
+	if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentRunning || !sa.EndedAt.IsZero() || sa.ParentToolCallID != "call_1" {
+		t.Fatalf("reused background subagent = %+v, want running without an end time", sa)
+	}
+	h.fs.setTasks(agentTaskInfo("agent-1", rpc.TaskStatusIdle, rpc.TaskExecutionModeBackground))
+	h.fs.onEvent(ev("finished-again", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 3)
+	if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentCompleted || sa.EndedAt.IsZero() {
+		t.Fatalf("background follow-up completion = %+v", sa)
+	}
+}
+
+func TestWebSubagentReuseTurnStartsBeforeTaskListCatchesUp(t *testing.T) {
+	for _, mode := range []rpc.TaskExecutionMode{rpc.TaskExecutionModeSync, rpc.TaskExecutionModeBackground} {
+		t.Run(string(mode), func(t *testing.T) {
+			h := openWeb(t)
+			finish(t, h, agentTaskInfo("agent-1", rpc.TaskStatusIdle, mode))
+			started := agentEv("reuse-turn", "agent-1", &rpc.AssistantTurnStartData{TurnID: "0"})
+			started.Timestamp = time.Now().Add(time.Second)
+			// The first task-list reply still describes the previous idle period.
+			h.fs.onEvent(started)
+			settleTasks(t, h, 2)
+			if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentRunning || !sa.EndedAt.IsZero() || !sa.StartedAt.Equal(started.Timestamp) {
+				t.Fatalf("reused subagent after a stale task list = %+v", sa)
+			}
+			task := agentTaskInfo("agent-1", rpc.TaskStatusIdle, mode).(*rpc.TaskAgentInfo)
+			task.IdleSince = option(started.Timestamp.Add(time.Second))
+			h.fs.setTasks(task)
+			h.fs.onEvent(ev("done-again", &rpc.SessionBackgroundTasksChangedData{}))
+			settleTasks(t, h, 3)
+			want := agentapi.SubagentCompleted
+			if mode == rpc.TaskExecutionModeSync {
+				want = agentapi.SubagentIdle
+			}
+			if sa := h.sink.subagent("agent-1"); sa.Status != want || !sa.EndedAt.After(sa.StartedAt) {
+				t.Fatalf("reused subagent completion = %+v, want %s", sa, want)
+			}
+		})
+	}
+}
+
+func TestWebSubagentReuseIgnoresPreviousCompletedTask(t *testing.T) {
+	h := openWeb(t)
+	task := agentTaskInfo("agent-1", rpc.TaskStatusCompleted, rpc.TaskExecutionModeBackground).(*rpc.TaskAgentInfo)
+	started := agentEv("reuse-turn", "agent-1", &rpc.AssistantTurnStartData{TurnID: "0"})
+	started.Timestamp = time.Now()
+	task.CompletedAt = option(started.Timestamp.Add(-time.Second))
+	finish(t, h, task)
+	h.fs.onEvent(started)
+	settleTasks(t, h, 2)
+	if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentRunning {
+		t.Fatalf("old task completion ended the new run: %+v", sa)
+	}
+	finished := *task
+	finished.CompletedAt = option(started.Timestamp.Add(time.Second))
+	h.fs.setTasks(&finished)
+	h.fs.onEvent(ev("new-completion", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 3)
+	if sa := h.sink.subagent("agent-1"); sa.Status != agentapi.SubagentCompleted || !sa.EndedAt.Equal(*finished.CompletedAt) {
+		t.Fatalf("new task completion = %+v", sa)
+	}
+}
+
 func TestWebPromptSubagentRefusalsAndOutcomes(t *testing.T) {
 	ctx := context.Background()
 	h := openWeb(t)

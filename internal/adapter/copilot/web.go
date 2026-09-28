@@ -349,15 +349,16 @@ func newWebProvider(newClient func() (sdkClient, error), pingEvery time.Duration
 	return &webProvider{newClient: newClient, pingEvery: pingEvery, kick: make(chan struct{}, 1), convs: map[*conversation]struct{}{}}
 }
 
-// newSDKClient points the SDK at the installed CLI. Token, config directory
-// and environment stay unset so the user's own login and ~/.copilot settings
-// apply unchanged.
+// newSDKClient points the SDK at the installed CLI, retaining the user's login
+// and configuration. Disable shell history in the runtime and its children
+// without changing the service environment or the manual web terminal.
 func newSDKClient() (sdkClient, error) {
 	path, err := resolveCopilot()
 	if err != nil {
 		return nil, err
 	}
-	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path}})}, nil
+	env := append(os.Environ(), "HISTFILE="+os.DevNull, "HISTSIZE=0")
+	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}})}, nil
 }
 
 func resolveCopilot() (string, error) {
@@ -2374,10 +2375,25 @@ func (c *conversation) endIdleLocked() {
 }
 
 // watchLocked has the task list settle agentID from now on. A non-zero sent
-// ignores idle entries from before that follow-up.
+// ignores task-list entries that ended before that follow-up.
 func (c *conversation) watchLocked(agentID string, sent time.Time) {
 	c.watch[agentID] = sent
 	c.checkTasksLocked()
+}
+
+// resumeSubagentLocked records a follow-up started by the main agent rather
+// than UAM's composer. A later start distinguishes reuse from stale events.
+func (c *conversation) resumeSubagentLocked(agentID string, started time.Time) bool {
+	sa := c.subs.byID[agentID]
+	if sa == nil || c.stoppedSubagents[agentID] ||
+		(sa.Status != agentapi.SubagentCompleted && sa.Status != agentapi.SubagentIdle) || !started.After(sa.EndedAt) {
+		return false
+	}
+	sa.Status, sa.StartedAt, sa.EndedAt = agentapi.SubagentRunning, started, time.Time{}
+	c.watch[agentID] = started
+	v := *sa
+	c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &v})
+	return true
 }
 
 // checkTasksLocked reads background shells and watched agents on its own
@@ -2473,12 +2489,32 @@ func (c *conversation) applyShellTasksLocked(tasks []rpc.TaskInfo) {
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &snapshot})
 }
 
-// applyTasksLocked settles the watched agents from one task-list read. Only
+// applyTasksLocked discovers reused agents and settles watched follow-ups. Only
 // the entry for the exact agent counts. It is idle only when the list says
 // idle with a synchronous wait: a follow-up to a background agent wakes the
 // main agent. A finished agent is otherwise left completed; a follow-up ends
 // with the status the list reports.
 func (c *conversation) applyTasksLocked(tasks []rpc.TaskInfo) {
+	for _, task := range tasks {
+		t, ok := task.(*rpc.TaskAgentInfo)
+		if !ok || t.Status != rpc.TaskStatusRunning {
+			continue
+		}
+		sa := c.subs.byID[t.ID]
+		if sa == nil {
+			continue
+		}
+		// Right after completion, the list can still describe the original
+		// run. Reopen a watched record only with a newer active period.
+		if _, watched := c.watch[t.ID]; watched && (t.ActiveStartedAt == nil || !t.ActiveStartedAt.After(sa.EndedAt)) {
+			continue
+		}
+		started := time.Now()
+		if t.ActiveStartedAt != nil {
+			started = *t.ActiveStartedAt
+		}
+		c.resumeSubagentLocked(t.ID, started)
+	}
 	for id, sent := range c.watch {
 		sa, t := c.subs.byID[id], agentTask(tasks, id)
 		followUp := sa != nil && sa.Status == agentapi.SubagentRunning
@@ -2486,7 +2522,7 @@ func (c *conversation) applyTasksLocked(tasks []rpc.TaskInfo) {
 			delete(c.watch, id) // an event ended it meanwhile
 			continue
 		}
-		if t == nil && followUp || t != nil && t.Status == rpc.TaskStatusRunning || followUp && idleBefore(t, sent) {
+		if t == nil && followUp || t != nil && t.Status == rpc.TaskStatusRunning || followUp && taskEndedBefore(t, sent) {
 			continue // not settled yet
 		}
 		delete(c.watch, id)
@@ -2508,8 +2544,10 @@ func (c *conversation) applyTasksLocked(tasks []rpc.TaskInfo) {
 		sa.Status = status
 		if sa.EndedAt.IsZero() {
 			sa.EndedAt = time.Now()
-			if t.IdleSince != nil && status == agentapi.SubagentIdle {
+			if t.IdleSince != nil && t.Status == rpc.TaskStatusIdle {
 				sa.EndedAt = *t.IdleSince
+			} else if t.CompletedAt != nil {
+				sa.EndedAt = *t.CompletedAt
 			}
 		}
 		v := *sa
@@ -2527,10 +2565,16 @@ func agentTask(tasks []rpc.TaskInfo, agentID string) *rpc.TaskAgentInfo {
 	return nil
 }
 
-// idleBefore reports an idle entry that entered idle before sent, so it does
-// not describe the follow-up sent then. An entry without the time counts.
-func idleBefore(t *rpc.TaskAgentInfo, sent time.Time) bool {
-	return !sent.IsZero() && t != nil && t.Status == rpc.TaskStatusIdle && t.IdleSince != nil && !t.IdleSince.After(sent)
+// taskEndedBefore rejects an old idle or completed period as evidence that
+// the new follow-up ended. Entries without a timestamp remain authoritative.
+func taskEndedBefore(t *rpc.TaskAgentInfo, sent time.Time) bool {
+	if sent.IsZero() || t == nil {
+		return false
+	}
+	if t.Status == rpc.TaskStatusIdle {
+		return t.IdleSince != nil && !t.IdleSince.After(sent)
+	}
+	return t.CompletedAt != nil && !t.CompletedAt.After(sent)
 }
 
 // takesFollowUps reports a task-list entry that waits for a follow-up the
@@ -2653,6 +2697,8 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			c.idleUnresolved = false
 			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
+		} else if c.resumeSubagentLocked(agentID, ev.Timestamp) {
+			c.checkTasksLocked()
 		}
 		return
 	case *rpc.SessionErrorData:
@@ -3327,7 +3373,8 @@ func agentOf(ev copilot.SessionEvent) string {
 // running record, and end an idle one only as failed or cancelled. The first
 // terminal event wins: Copilot reports a second, cancelled completion for an
 // idle subagent when the client disconnects. Only the task list makes a
-// completed record idle, and only an accepted follow-up makes it run again.
+// completed record idle. The conversation separately tracks accepted follow-ups
+// and provider-reported reuse, which can make a completed or idle record run again.
 type subagentLog struct {
 	byID   map[string]*agentapi.Subagent
 	byCall map[string]string // spawning tool call ID -> agent ID

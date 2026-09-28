@@ -540,9 +540,9 @@ func (m *Manager) expireSubagentLocked(s *webSession, agentID string) {
 
 // upsertSubagentLocked records a subagent update and, with publish, sends it
 // to viewers. A failed or cancelled subagent never changes again, and a
-// completed one only becomes idle when the provider reports that it takes a
-// follow-up: providers may report the end more than once (Copilot sends a
-// second, cancelled completion when a client disconnects).
+// completed one becomes idle when it takes follow-ups or running when the
+// provider reports a new start after its previous end. Duplicate end events
+// and stale starts stay ignored (Copilot sends a cancelled end on disconnect).
 func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publish bool) {
 	if in.Status == "" {
 		in.Status = agentapi.SubagentRunning
@@ -556,7 +556,8 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 		cur = &agentapi.Subagent{}
 		s.subagents = append(s.subagents, cur)
 		s.subIdx[in.ID] = cur
-	} else if cur.Status.Terminal() && (cur.Status != agentapi.SubagentCompleted || in.Status != agentapi.SubagentIdle) {
+	} else if cur.Status.Terminal() && (cur.Status != agentapi.SubagentCompleted ||
+		in.Status != agentapi.SubagentIdle && (in.Status != agentapi.SubagentRunning || !in.StartedAt.After(cur.EndedAt))) {
 		return
 	} else {
 		// An end event may omit what the start event said.
