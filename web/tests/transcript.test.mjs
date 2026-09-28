@@ -272,6 +272,12 @@ test('foreground elapsed uses recorded turn evidence across steer and rejects un
 });
 
 
+test('completed duration excludes recorded time waiting for user input', async () => {
+  const { completedDuration } = await import('../src/lib/transcript.ts');
+  const timing = { id: 'turn', state: 'completed', started_at: '2026-09-28T12:00:00Z', ended_at: '2026-09-28T12:01:10Z', paused_ms: 60_000 };
+  assert.equal(completedDuration(timing), '10s');
+});
+
 test('all current turn segments stay live across steer, while earlier turns stay ended', async () => {
   const { foregroundItems } = await import('../src/lib/transcript.ts');
   const history = [{ id: 'old-user', kind: 'user' }, { id: 'old-tool', kind: 'tool' }, { id: 'user', kind: 'user' }, { id: 'pending-tool', kind: 'tool' }, { id: 'steer', kind: 'user', delivery: 'steer' }, { id: 'progress', kind: 'assistant' }];

@@ -157,6 +157,17 @@ test('subagent completion received while fetching survives the older running res
   assert.deepEqual(state.detail.subagents, [completed]);
 });
 
+test('a reused subagent stays running across an older completed transcript response', () => {
+  let state = update(loading(), { name: 'subagent', seq: 11, session_id: 'task', subagent: completed });
+  state = update(state, { name: 'subagent', seq: 13, session_id: 'task', subagent: running });
+  state = loaded(state, 12, [item('first result')], completed);
+  assert.deepEqual(state.detail.subagents, [running]);
+  assert.equal(state.detail.subagents[0].ended_at, undefined);
+  state = update(state, { name: 'item', seq: 14, session_id: 'task', agent_id: 'helper', item: { ...item('second result'), id: 'reply2' } });
+  assert.deepEqual(state.agents.helper.items.map(i => i.text), ['first result', 'second result']);
+  assert.deepEqual(state.detail.items, []);
+});
+
 test('subagent snapshot ignores captured SSE frames delivered after the response', () => {
   let state = loaded(loading(), 15, [item('a'), tool('completed')], completed);
   state = update(state, { name: 'subagent', seq: 11, session_id: 'task', subagent: running });

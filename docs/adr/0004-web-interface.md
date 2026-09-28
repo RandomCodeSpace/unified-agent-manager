@@ -490,7 +490,7 @@ sessions (the routes keep the `sessions` name) whose `web.project_id` names it.
 | `Item.AgentID`, `Delta.AgentID`, `Interaction.AgentID` | Empty for the main agent, otherwise the provider's subagent instance ID. |
 | `Turn.Model` | The model the provider reported for the turn. Not persisted. |
 | `EventTitle` (`Event.Title`) | The provider-generated conversation title. |
-| `EventSubagent` (`Event.Subagent`) | Upserts `Subagent{ID, ParentToolCallID, Name, Description, Model, Effort, Status, Error, StartedAt, EndedAt}`. Model and effort are optional provider reports. Status is `running`, `completed`, `failed` or `cancelled`; once terminal, later updates are ignored. |
+| `EventSubagent` (`Event.Subagent`) | Upserts `Subagent{ID, ParentToolCallID, Name, Description, Model, Effort, Status, Error, StartedAt, EndedAt}`. Model and effort are optional provider reports. Status is `running`, `idle`, `completed`, `failed` or `cancelled`. A completed agent can become idle or start another run after its previous end; failed and cancelled agents remain final. |
 | `EventContext` (`Event.Context`) | Reports main-agent `Context{Used, Limit}` in tokens. Kept in memory only. |
 | `History` → `{Items, Subagents}` | Subagent items carry `AgentID`; subagent records are rebuilt from recorded events. |
 
@@ -953,8 +953,13 @@ stay pending because UAM cannot safely assign them to the stopped subagent.
 `Subagent.Status` gains `idle`, which is not terminal: the live provider
 reports that the subagent finished and takes a follow-up. `failed` and
 `cancelled` stay final. `completed` becomes `idle` only on the provider's
-report, and `idle` becomes `running` only when UAM's own follow-up is accepted
-or its outcome is uncertain; the task list then settles it.
+report. An accepted or uncertain UAM follow-up makes it `running`; so does
+a new subagent turn or a task-list report of reuse by the main agent. A reused
+agent keeps its ID, original parent tool call and transcript, starts a new
+active period and clears its previous end time. The task list settles it;
+background agents return to `completed`, while synchronous agents that take
+follow-ups return to `idle`. Stale running reports and duplicate end events
+do not reopen a completed run.
 When a conversation closes or its runtime exits, `idle` falls back to
 `completed`.
 
@@ -965,9 +970,10 @@ Ambiguous failures wrap `ErrSubmissionUncertain` and are never resent.
 Copilot reads `session.tasks.list`. A subagent is `idle` only when the entry
 for its exact agent ID says `idle` with execution mode `sync`; a background
 subagent never is, because a follow-up wakes the main agent. The list is read
-after a `subagent.completed` that was not cancelled, and after each
-`session.background_tasks_changed` until the subagent is idle again or has
-ended. A reopened conversation reads the list once; UAM's own record never
+after a `subagent.completed` that was not cancelled, on a new turn from a
+finished subagent, and after each `session.background_tasks_changed`. These
+reads also detect completed or idle agents reused outside UAM's composer.
+A reopened conversation reads the list once; UAM's own record never
 restores `idle`. `session.tasks.sendMessage` targets the agent ID, never the
 parent tool call. `sent: false` is a refusal, with the provider's error. The
 follow-up's events carry the agent ID and go only to the subagent's

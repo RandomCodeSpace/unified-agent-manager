@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -221,5 +222,94 @@ func TestTurnTimingHistoryDoesNotInventDurations(t *testing.T) {
 	loaded := sessionFromRecord(record)
 	if loaded.activeTiming != -1 || loaded.turnTimings[0].State != "unknown" || !loaded.turnTimings[0].EndedAt.IsZero() {
 		t.Fatalf("stale persisted interval=%+v", loaded.turnTimings)
+	}
+}
+
+func TestTurnTimingPausesForManualRequestsAndSurvivesReload(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	start, advance := turnClock(m)
+	sum, conv := createSession(t, m, prov)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	advance(5 * time.Second)
+	conv.EmitInteraction(permissionRequest("permission"))
+	sub, _, err := m.Subscribe(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	check := func(pausedAt time.Time, pausedMS int64) TurnTiming {
+		t.Helper()
+		got := detail(t, m, sum.ID).TurnTimings[0]
+		if !got.PausedAt.Equal(pausedAt) || got.PausedMS != pausedMS {
+			t.Fatalf("pause=%v/%d, want %v/%d", got.PausedAt, got.PausedMS, pausedAt, pausedMS)
+		}
+		return got
+	}
+	check(start.Add(5*time.Second), 0)
+	advance(10 * time.Second)
+	conv.EmitInteraction(question("question"))
+	advance(20 * time.Second)
+	conv.SetRespondHook(func(context.Context, string, agentapi.Answer) error { return errors.New("try again") })
+	if _, err := m.Answer(sum.ID, "permission", agentapi.Answer{Decision: "allow"}); err == nil {
+		t.Fatal("failed answer accepted")
+	}
+	check(start.Add(5*time.Second), 0)
+	conv.SetRespondHook(nil)
+	advance(30 * time.Second)
+	if _, err := m.Answer(sum.ID, "permission", agentapi.Answer{Decision: "allow"}); err != nil {
+		t.Fatal(err)
+	}
+	check(start.Add(5*time.Second), 0) // The question still waits; no double counting.
+	advance(65 * time.Second)
+	if _, err := m.Answer(sum.ID, "question", agentapi.Answer{Answers: [][]string{{"blue"}}}); err != nil {
+		t.Fatal(err)
+	}
+	resumed := check(time.Time{}, 60_000)
+	var live TurnTiming
+	decodeField(t, frameOf(t, sub, "turn_timing"), "turn_timing", &live)
+	if live != resumed {
+		t.Fatalf("resume SSE=%+v, want %+v", live, resumed)
+	}
+	advance(70 * time.Second)
+	conv.EmitInteraction(question("again"))
+	check(start.Add(70*time.Second), 60_000)
+	advance(80 * time.Second)
+	conv.EmitTurn(agentapi.TurnCancelled, "")
+	ended := check(time.Time{}, 70_000)
+	if ended.EndedAt.Sub(ended.StartedAt)-time.Duration(ended.PausedMS)*time.Millisecond != 10*time.Second {
+		t.Fatalf("cancelled turn counted waiting time: %+v", ended)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restarted := startManager(t, st, agenttest.NewProvider("fake", allCaps))
+	if got := detail(t, restarted, sum.ID).TurnTimings[0]; got != ended {
+		t.Fatalf("reload=%+v, want %+v", got, ended)
+	}
+}
+
+func TestTurnTimingYoloClaimsDoNotPauseButQuestionsDo(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	start, advance := turnClock(m)
+	sum, conv := createTask(t, m, prov, "yolo")
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	release := make(chan struct{})
+	defer close(release)
+	conv.SetRespondHook(func(ctx context.Context, _ string, _ agentapi.Answer) error {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	})
+	advance(5 * time.Second)
+	conv.EmitInteraction(onceRequest("auto", ""))
+	if got := detail(t, m, sum.ID).TurnTimings[0]; !got.PausedAt.IsZero() || got.PausedMS != 0 {
+		t.Fatalf("automatic approval paused timer: %+v", got)
+	}
+	advance(10 * time.Second)
+	conv.EmitInteraction(question("manual"))
+	if got := detail(t, m, sum.ID).TurnTimings[0]; !got.PausedAt.Equal(start.Add(10 * time.Second)) {
+		t.Fatalf("question in yolo mode did not pause timer: %+v", got)
 	}
 }

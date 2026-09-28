@@ -527,7 +527,14 @@ export function timingForTurn(timings: TurnTiming[], userItemId: string | undefi
 /** A stopped clock requires both observed boundaries and a terminal outcome. */
 export function completedDuration(timing: TurnTiming | undefined): string | null {
   if (!timing?.ended_at || !['completed', 'cancelled', 'failed'].includes(timing.state)) return null;
-  return elapsedSince(timing.started_at, Date.parse(timing.ended_at));
+  return turnElapsed(timing, Date.parse(timing.ended_at));
+}
+
+/** Recorded manual waits never count as foreground work, including after reload. */
+export function turnElapsed(timing: TurnTiming | undefined, now: number): string | null {
+  if (!timing || timing.state === 'unknown') return null;
+  const end = timing.paused_at ? Date.parse(timing.paused_at) : now;
+  return elapsedSince(timing.started_at, end - (timing.paused_ms ?? 0));
 }
 
 /** A recorded empty reply still has a duration when the next ordinary prompt arrives. */

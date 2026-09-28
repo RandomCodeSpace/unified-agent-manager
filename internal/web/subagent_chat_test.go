@@ -8,10 +8,55 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
 )
+
+func TestCompletedSubagentReusePublishesRunningAndCanBeStopped(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, conv := createSession(t, ts.m, ts.prov)
+	start := time.Now().Add(-time.Minute)
+	end := start.Add(time.Second)
+	conv.EmitSubagent(agentapi.Subagent{ID: "target", ParentToolCallID: "call-target", Name: "helper", Status: agentapi.SubagentRunning, StartedAt: start})
+	conv.EmitItem(agentapi.Item{ID: "first-reply", AgentID: "target", Kind: agentapi.ItemAssistant, Text: "first result"})
+	conv.EmitSubagent(agentapi.Subagent{ID: "target", Status: agentapi.SubagentCompleted, EndedAt: end})
+	sub, _, err := ts.m.Subscribe(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ts.m.Unsubscribe(sub)
+	conv.EmitSubagent(agentapi.Subagent{ID: "target", Status: agentapi.SubagentRunning, StartedAt: end.Add(time.Second)})
+	d := detail(t, ts.m, sum.ID)
+	if d.State != StateIdle {
+		t.Fatalf("main agent must remain idle during subagent reuse: %s", d.State)
+	}
+	if len(d.Subagents) != 1 || d.SubagentsRunning != 1 || d.Subagents[0].Status != agentapi.SubagentRunning || !d.Subagents[0].EndedAt.IsZero() {
+		t.Fatalf("reused subagent not running in detail: %+v", d.Subagents)
+	}
+	var event agentapi.Subagent
+	decodeField(t, frameOf(t, sub, "subagent"), "subagent", &event)
+	if event.Status != agentapi.SubagentRunning || event.ParentToolCallID != "call-target" || event.Name != "helper" {
+		t.Fatalf("reuse SSE = %+v", event)
+	}
+	var summary SessionSummary
+	decodeField(t, frameOf(t, sub, "session"), "session", &summary)
+	if summary.State != StateIdle || summary.SubagentsRunning != 1 {
+		t.Fatalf("idle task must publish its running subagent count: %+v", summary)
+	}
+	conv.EmitItem(agentapi.Item{ID: "second-reply", AgentID: "target", Kind: agentapi.ItemAssistant, Text: "second result"})
+	sa, err := ts.m.Subagent(sum.ID, "target")
+	if err != nil || len(sa.Items) != 2 || len(detail(t, ts.m, sum.ID).Items) != 0 {
+		t.Fatalf("reused transcript = %+v, %v", sa, err)
+	}
+	if w := ts.do(http.MethodPost, "/api/sessions/"+sum.ID+"/subagents/target/cancel", "", withCookie(ts)); w.Code != http.StatusOK {
+		t.Fatalf("stop reused subagent = %d %s", w.Code, w.Body)
+	}
+	if ids := conv.SubagentCancels(); len(ids) != 1 || ids[0] != "target" {
+		t.Fatalf("stop did not reach reused subagent: %v", ids)
+	}
+}
 
 // idleSubagent creates a Task with one subagent the provider reports idle.
 func idleSubagent(t *testing.T, m *Manager, prov *agenttest.Provider) (SessionSummary, *agenttest.Conversation) {

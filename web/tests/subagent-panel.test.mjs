@@ -10,6 +10,7 @@ import remarkGfm from 'remark-gfm';
 import ts from 'typescript';
 import * as transcript from '../src/lib/transcript.ts';
 import * as history from '../src/lib/historyState.ts';
+import { shownState } from '../src/lib/tasks.ts';
 
 // Render the real transcript component with local UI shells and no browser or data reads.
 const require = createRequire(import.meta.url);
@@ -173,5 +174,36 @@ test('a running subagent stands in the answer; a settled one folds into its turn
     } finally {
       expanded = false;
     }
+  }
+});
+
+test('a reused subagent reappears even though its original task call is completed', () => {
+  const items = [
+    { id: 'request', kind: 'user', text: 'Request', time: '2026-09-28T12:00:00Z' },
+    { id: 'call', kind: 'tool', time: '2026-09-28T12:00:01Z', tool: { name: 'task', status: 'completed' } },
+    { id: 'answer', kind: 'assistant', text: 'First result', time: '2026-09-28T12:00:02Z' },
+  ];
+  const agent = { id: 'reused', name: 'REUSED_AGENT', parent_tool_call_id: 'call' };
+  for (const density of ['compact', 'detailed']) {
+    const draw = status => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', items, interactions: [], subagents: [{ ...agent, status }], live: false, working: false, density, onOpenAgent: () => {} }));
+    assert.doesNotMatch(draw('completed'), /REUSED_AGENT/, density);
+    const reused = draw('running');
+    assert.match(reused, /REUSED_AGENT/, density);
+    assert.equal((reused.match(/id="item-call"/g) ?? []).length, 1, density);
+    assert.doesNotMatch(draw('completed'), /REUSED_AGENT/, density);
+  }
+});
+
+test('the activity verb stays visible when a reused subagent is the only worker', () => {
+  const draw = (state, subagents_running) => renderToStaticMarkup(React.createElement(exports.WorkingLabel, {
+    working: shownState({ state, subagents_running }) === 'working',
+    since: '2026-09-28T12:00:00Z', items: [],
+  }));
+  for (const state of ['idle', 'completed']) {
+    assert.equal(draw(state, 0), '');
+    const working = draw(state, 1);
+    assert.match(working, /<output[^>]*>Busy<\/output>/);
+    assert.match(working, /Working…/);
+    assert.equal(draw(state, 0), '');
   }
 });
