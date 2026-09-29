@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, Layers, Search, Settings } from 'lucide-react';
+import { ArrowLeft, Check, KanbanSquare, Layers, Search, Settings } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import type { Project, SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -50,17 +50,22 @@ const inputClass = 'h-8 min-w-0 flex-1 bg-transparent text-ui text-ink outline-n
  * for all of them. It opens a searchable list with All projects first; each Project row
  * carries a gear that opens Edit project once the list has closed, so focus returns to the badge.
  */
-export function ProjectFilterPicker({ projects, filter, onFilter, onEdit }: Readonly<{ projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; onEdit: (p: Project) => void }>) {
+export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onPlan }: Readonly<{ projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; onEdit: (p: Project) => void; onPlan?: (p: Project) => void }>) {
   const chosen = filteredProject(projects, filter);
   const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<Project | null>(null);
+  const planning = useRef<Project | null>(null);
   return (
     <Popover.Root
       open={open}
       onOpenChange={setOpen}
       onOpenChangeComplete={(o) => {
-        if (o || !pending.current) return;
+        if (o) return;
+        const plan = planning.current;
+        planning.current = null;
+        if (plan) onPlan?.(plan);
+        if (!pending.current) return;
         const p = pending.current;
         pending.current = null;
         onEdit(p);
@@ -84,13 +89,17 @@ export function ProjectFilterPicker({ projects, filter, onFilter, onEdit }: Read
             pending.current = p;
             setOpen(false);
           }}
+          onPlan={onPlan && ((p) => {
+            planning.current = p;
+            setOpen(false);
+          })}
         />
       </Popover.Content>
     </Popover.Root>
   );
 }
 
-function FilterList({ projects, filter, input, onPick, onEdit }: Readonly<{ projects: Project[]; filter: string | null; input: RefObject<HTMLInputElement | null>; onPick: (id: string | null) => void; onEdit: (p: Project) => void }>) {
+function FilterList({ projects, filter, input, onPick, onEdit, onPlan }: Readonly<{ projects: Project[]; filter: string | null; input: RefObject<HTMLInputElement | null>; onPick: (id: string | null) => void; onEdit: (p: Project) => void; onPlan?: (p: Project) => void }>) {
   const id = useId();
   const [query, setQuery] = useState('');
   const matches = useMemo(() => searchProjects(projects, query), [projects, query]);
@@ -142,6 +151,20 @@ function FilterList({ projects, filter, input, onPick, onEdit }: Readonly<{ proj
               {p ? <ProjectBadge badge={p.badge} /> : <Layers />}
               <span className="min-w-0 flex-1 truncate">{p ? p.name : 'All projects'}</span>
               {current && <Check aria-hidden="true" strokeWidth={2.5} className="!size-3.5 !text-accent" />}
+              {p && onPlan && !p.no_git && (
+                <Button
+                  size="icon-sm"
+                  aria-label={`Plan ${p.name}`}
+                  title="Plan"
+                  className="text-muted"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPlan(p);
+                  }}
+                >
+                  <KanbanSquare />
+                </Button>
+              )}
               {p && (
                 <Button
                   size="icon-sm"

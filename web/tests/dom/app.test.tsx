@@ -6,7 +6,8 @@ const header = () => screen.getByRole('heading', { level: 1 });
 
 describe('app shell', () => {
   test('lists the projects and tasks, and says how to begin', async () => {
-    renderApp();
+    // A service that predates the planner: the count is the Tasks' alone.
+    renderApp('?planner=unset');
     const side = await sidebar();
     expect(await screen.findByText('Open a task from the sidebar, or start a new one there.')).toBeTruthy();
     expect(side.getByRole('button', { name: /Fix re-attach redraw regression/ })).toBeTruthy();
