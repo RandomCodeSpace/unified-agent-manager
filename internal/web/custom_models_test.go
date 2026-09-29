@@ -143,7 +143,7 @@ func TestCustomModelsRoute(t *testing.T) {
 	}
 	// key_present is output only: a browser sending it back changes nothing.
 	body := `{"custom_models":[{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_TEST_ACME","key_present":false}]}`
-	want := `{"send_default":"steer","terminal":false,"custom_models":[{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_TEST_ACME","key_present":true}]}`
+	want := `{"send_default":"steer","terminal":false,"planner":false,"custom_models":[{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_TEST_ACME","key_present":true}]}`
 	if got := patch(body, http.StatusOK); got != want {
 		t.Fatalf("PATCH = %s", got)
 	}
@@ -151,7 +151,7 @@ func TestCustomModelsRoute(t *testing.T) {
 	if got := strings.TrimSpace(w.Body.String()); got != want || strings.Contains(got, "acme-secret") {
 		t.Fatalf("GET = %s", got)
 	}
-	if got := patch(`{"custom_models":[]}`, http.StatusOK); got != `{"send_default":"steer","terminal":false}` {
+	if got := patch(`{"custom_models":[]}`, http.StatusOK); got != `{"send_default":"steer","terminal":false,"planner":false}` {
 		t.Fatalf("remove = %s", got)
 	}
 }
