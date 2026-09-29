@@ -115,7 +115,6 @@ func (m *Manager) openBoard(ctx context.Context) error {
 	m.mu.Lock()
 	m.boardRevs = revs
 	m.mu.Unlock()
-	// TODO(#253): register the board_* agent tools through m.hostTools.
 	m.board.mu.Lock()
 	m.board.st, m.board.broken = st, false
 	m.board.mu.Unlock()
