@@ -173,7 +173,7 @@ func TestTerminalSetting(t *testing.T) {
 	if m.Settings().Terminal {
 		t.Fatal("the terminal is on by default")
 	}
-	on := `{"send_default":"steer","terminal":true}`
+	on := `{"send_default":"steer","terminal":true,"planner":false}`
 	if got := patch(`{"terminal":true}`, http.StatusOK); got != on {
 		t.Fatalf("PATCH terminal = %s", got)
 	}

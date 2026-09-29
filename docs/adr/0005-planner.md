@@ -408,7 +408,7 @@ The preamble is deterministic. It contains:
 
 **Settle:** `POST /api/sessions/{id}/settle` takes an optional body, `{"holds": {"<card id>": {"action": "keep|release|cancel", "comment": ""}}}`. If the Task holds subtasks and the body doesn't decide each one, the answer is 409 `holds_undecided` with the held cards, and the UI shows the Settle dialog (§5).
 
-**Reject:** rejecting a request while its Task is Active sends the reason to that Task through its normal send path (a steer while a turn runs). Otherwise the reason becomes a comment and the hold is released.
+**Reject:** rejecting a request while its Task is Active sends the reason to that Task through its normal send path (a steer while a turn runs). Otherwise the reason becomes a comment and the hold is released. The reply is the request plus `steered`, true only when the reason reached the Task; when it is false and the subtask is still held, the UI offers Release.
 
 ## 15. Live updates
 
@@ -489,3 +489,4 @@ These record how `internal/board` reads this contract, plus two later decisions.
 
 1. **Split under a story.** A leaf whose parent is a story splits into sibling leaves under that story, placed right after it and in order. Unticked items become planned siblings; ticked items become siblings with a pending done request that cites the tick. The original is cancelled with the automatic comment "split into #a, #b, …" and its own `cascade_id`, so Restore brings it back and leaves the siblings. A live hold moves to the first pending sibling. An unconfirmed, unheld leaf splits directly; a confirmed or held one files one split request, and accepting it applies everything at once. Under an epic or at the root, §7 is unchanged: the leaf becomes a story.
 2. **An owner touch confirms ancestors.** Any owner touch on a card (save, create, launch, accept, restore, confirm or a status change) also confirms and re-pins each unconfirmed ancestor in the same transaction. This replaces the `unconfirmed_parent` refusal. So launching a leaf under an agent-suggested story confirms the story, and the sweep can't expire it.
+3. **Board revisions in the snapshot** (added to §15). While the planner is on, the `snapshot` frame carries `boards`: each Project's board revision, plus `""` for Unassigned. It is omitted while the planner is off. A client reloads only the boards it holds an older revision of.

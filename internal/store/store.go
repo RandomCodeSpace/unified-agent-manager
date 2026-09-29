@@ -531,6 +531,9 @@ type WebSettings struct {
 	// Terminal turns on the web terminal: a shell as the service user for
 	// anyone signed in. Off when absent.
 	Terminal bool `json:"terminal,omitempty"`
+	// Planner turns on the planner (ADR 0005): a Board for each Project
+	// with a Git repository. Off when absent.
+	Planner bool `json:"planner,omitempty"`
 	// HiddenModels lists, by provider, the model IDs the browser does not
 	// offer: sorted, without duplicates, at most MaxHiddenModels each. It is
 	// a display preference, never a check on requests.
@@ -708,6 +711,7 @@ type webSettingsAlias WebSettings
 var knownWebSettingsFields = map[string]struct{}{
 	"send_default":  {},
 	"terminal":      {},
+	"planner":       {},
 	"hidden_models": {},
 	"title_model":   {},
 	"custom_models": {},
