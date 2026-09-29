@@ -1,0 +1,461 @@
+# ADR 0005: Agentic planner
+
+Status: accepted (2026-09-29). Decided in [#255](https://github.com/RandomCodeSpace/unified-agent-manager/issues/255) and [#248](https://github.com/RandomCodeSpace/unified-agent-manager/issues/248). The map is [#247](https://github.com/RandomCodeSpace/unified-agent-manager/issues/247).
+
+## Context
+
+uam gets a planner: an agile board of **epics, stories and subtasks** for each git Project.
+- Agents decompose the work and carry it out through in-process tools.
+- The owner confirms, launches and closes the work.
+- The storage and rules are ported from kb (github.com/RandomCodeSpace/kb, MIT), using SQLite through `modernc.org/sqlite` (no CGO).
+- It is not a record of every Task. A uam Task appears on the board only when it holds a subtask or plans under a container.
+
+Naming: **Task** always means a uam conversation. The planner's leaf kind is **subtask** (`KindSubtask`), and nodes are **cards** on a **board**.
+
+## Decision
+
+## Principles
+
+- Agents write the plan, the owner's edits stick, and only the owner closes work.
+- Deterministic rules over judgement. Every stored state has a writer and a defined exit.
+- The board holds only work that was planned or started. uam Tasks that never touch it don't appear on it.
+- The planner sits behind a Settings switch, off by default. It exists only on Projects with a git repository.
+
+## 1. Model
+
+One table, where a node is a card. It has the ported kb fields (`#seq`, title, desc, prio, due, effort, labels, checklist, blocked flag, comments, blocker links, FTS search, revision) plus:
+
+| Column | Meaning | Written by |
+|---|---|---|
+| `kind` | `epic`, `story` or `subtask` (the leaf) | create, split |
+| `parent_id`, `rank` | Tree position. Kind rank is epic < story < subtask, a parent must outrank its child, and the root may hold any kind | agents (in scope, unconfirmed nodes only), owner |
+| `win_condition` | One line saying what done means | agents on unconfirmed nodes, owner |
+| `expires_at` | NULL means **confirmed**. Agent-created nodes start at now + 14 days; any owner save, launch, accept or restore sets it to NULL | uam |
+| `held_by` | The Task holding a leaf. Invariant: `doing ⇔ held_by is set` | launch, claim, release |
+| `pinned_sha` | HEAD at the last owner touch | uam |
+| `accept_cmd` | Leaf override: NULL inherits the Project default, `''` means none, otherwise a command | **owner only** |
+| `paths` | Optional globs used by staleness | **owner only** |
+| `cascade_id` | Which cascade cancelled this node | uam |
+
+There is also a `requests` table, which is the inbox. Each row has a node, a Task, a kind (`done`, `cancel`, `blocked`, `split` or `change`), a payload, evidence, a base revision, and a status (pending, accepted, rejected or withdrawn).
+
+Leaf statuses are `planned | todo | doing | done | cancelled`. `planned` means never launched. `todo` means released after an attempt, or marked ready by the owner.
+
+## 2. Derived containers
+
+Epics and stories never store a status. Their status comes from the **confirmed** leaves in their subtree:
+
+| Leaves | Container |
+|---|---|
+| no confirmed leaves | planned (never done) |
+| every confirmed leaf cancelled | cancelled |
+| every non-cancelled confirmed leaf done | done |
+| any leaf held, or any confirmed leaf done | doing |
+| otherwise | planned |
+
+- A container can't reach done while any leaf under it is held or has a pending request.
+- Progress is done ÷ non-cancelled confirmed leaves, counted rather than weighted. The UI adds "+N proposed" for unconfirmed leaves.
+- When a container reaches done, uam does two things:
+  - it cancels the container's remaining unconfirmed, unheld leaves with the comment "closed unconfirmed with #12";
+  - it adds a roll-up comment made of the children's close comments.
+- There is no force on containers.
+
+## 3. Who may write what
+
+A static actor table (owner or agent) sits in one transition function in `internal/board`.
+
+**Agents, within scope, may:**
+- create stories and subtasks;
+- edit anything on an unconfirmed node, where the last write wins;
+- on a confirmed node: tick, untick or add checklist items, comment, add children (under containers), and add blocker links. Any other change is filed as a `change` request, one pending per node per Task, with a newer request replacing the older one;
+- claim a leaf, moving it from planned or todo to doing;
+- file `done`, `cancel`, `blocked` and `split` requests.
+
+**Agents never:**
+- set done, cancelled or the blocked flag;
+- write `accept_cmd` or `paths`, which appear in no tool schema;
+- create epics or root nodes, or reparent a node outside their scope;
+- restore or purge.
+
+**The owner** may do everything. That includes marking a leaf done directly, with a comment: the finishing guard applies, and `force` exists on leaves only.
+
+**Blocker links** may point only at confirmed cards. A link stays open while its blocker is not terminal, so cancelling the blocker releases it.
+
+## 4. Scope and caps
+
+- **Planning Task:** "Plan with agent" on a container starts a normal Task with a preamble. It creates and edits under that container and holds nothing.
+- **Working Task:** its scope is the container it was launched from ("Do whole story"), or the parent of its single launched leaf. It creates siblings and claims leaves only within that scope.
+- **Utility scout:** "Suggest stories" on a container follows the same rules. What it writes are unconfirmed nodes, so suggestions and agent decomposition are one mechanism.
+- **Caps** are counted per Task, and calls made by subagents count against their Task:
+  - 20 created nodes;
+  - 10 unconfirmed children per container;
+  - 20 comments per card;
+  - one hold without a pending request at a time.
+- A duplicate normalised title among live siblings is refused. The FTS similarity check is information only.
+
+## 5. Launch, holds and release
+
+- **Launch** is an owner action on a leaf only. It moves the leaf from planned or todo to doing, sets `held_by` to the new Task, and counts as a touch (it confirms and re-pins the leaf). The start of a hold records HEAD and `git status` as the evidence baseline.
+- **"Do whole story"** launches the first pending confirmed leaf. The preamble carries the story's pending list, and the Task claims further leaves through the tool.
+- **A hold persists while the Task is Active.** It can end only through one `releaseHold` path:
+
+| Event | Result |
+|---|---|
+| Request accepted | done |
+| Request rejected while the holder is live | Steer sent to the Task; the hold stays |
+| Request rejected while the holder is not live | todo, with the reason as a comment |
+| Settle | A dialog for each held leaf: keep held (it resumes after Reopen), release to todo, or cancel with a comment |
+| Archive or Delete | todo, with the comment "attempt #n ended, uncommitted: …" |
+| Owner Release | todo |
+| Owner cancel, or a cascade | cancelled; pending requests are withdrawn |
+
+- **Reconciliation** is one pure function, `reconcile(nodes, tasks)`.
+  - It runs at boot, after the Task store loads and before any outline write is accepted, and again after every Task transition.
+  - It reads the Task store, never the live-session table, so Settled Tasks keep their holds across restarts.
+  - When a hold is released on a leaf that is still unconfirmed, `expires_at` is re-armed to now + 14 days.
+- Any status change on a leaf withdraws its pending requests. `claim_done` and Accept both require the leaf to be doing and held by the Task that made the request.
+
+## 6. Evidence-backed done
+
+`claim_done` checks, in this order:
+1. Open checklist items, the blocked flag, or open blockers → refused, with the list.
+2. The resolved acceptance command is non-empty → uam runs it. Any non-zero exit, 127 included, → refused with the output tail.
+3. uam can't spawn the shell → the request is filed, flagged "acceptance could not run".
+4. No diff, no commits and an empty command → the request is filed, flagged "no change in tree".
+5. Otherwise → a done request with evidence rows.
+
+**Evidence rows:**
+- **diff:** `numstat` since the hold started. It shows the total, the files this Task touched, and any overlap with other live holds ("overlaps with #13 (Task X)"). It is tagged "tests or build files changed" when the diff touches test, build or CI files.
+- **commits:** the log since the hold started.
+- **accept:** command hash, HEAD, dirty flag, exit code and output tail.
+- **transcript:** the span of the Task's transcript.
+- **checklist:** the checklist state.
+
+**The runner:**
+- There is one per Project, guarded by a mutex. A claim that waits longer than the acceptance timeout is refused with "acceptance busy, retry".
+- It runs `$SHELL -lc` in the Project directory, in its own process group, bound to the Task's context. Archive or Delete kills the run and discards the result.
+- Editing a command marks the earlier green rows for that command as stale.
+
+**The owner** accepts or rejects:
+- Accept turns the claim text into the close comment and counts as a touch.
+- Reject requires a reason.
+
+**Leaves that are red by design**, such as a leaf that adds a failing test, have two options: fold red and green into one leaf, or have the owner set that leaf's command to `''`. The refusal message says so. Agents may attach a `proposed_accept_cmd` as text; the owner's Apply copies it into the leaf, and it never runs before that.
+
+## 7. Split
+
+- A split turns a leaf into a story with child subtasks.
+  - Unticked checklist items become planned children.
+  - Ticked items become children with a pending done request that cites the tick.
+  - A split never creates done children.
+- **Unconfirmed, unheld leaf:** the split applies directly.
+- **Confirmed or held leaf,** including the holder's own leaf: the split is one inbox row. Accepting it applies the structure and accepts the ticked children together. A live hold moves to the first pending child.
+
+## 8. Cancel, restore, purge
+
+- Marking a leaf done, cancelling it and restoring it all require a non-empty comment. Automatic comments (attempt ended, roll-up, expired, imported, closed with parent) are exempt from the caps.
+- **Cascade** (owner only) stamps one comment on each non-terminal leaf, "cancelled with #12: …", with a shared `cascade_id`. It releases holds and withdraws requests.
+- **Restore** (owner only, comment required) reopens exactly the nodes with that `cascade_id` and confirms each one. A leaf under a cancelled parent can't be reopened on its own.
+- **The expiry sweep** runs at boot and on each outline write. It cancels expired nodes with an automatic comment. It skips any node that is held, has a pending request, or has a held or confirmed descendant. Swept nodes can be restored.
+- **"Purge cancelled"** is the only hard delete, and only the owner can run it.
+
+## 9. Staleness
+
+- Computed for confirmed leaves that are not terminal and not held:
+  - **behind N:** how many commits HEAD is ahead of the pin;
+  - **diverged:** the pin is no longer an ancestor of HEAD;
+  - **files touched:** files changed since the pin that match `paths`.
+- It shows as a marker plus a per-Project count. It never creates inbox rows.
+- **Utility triage** runs on demand. It returns valid, moot or conflicts, plus one sentence, cached per leaf and HEAD. The matching actions are: re-pin, cancel with a prefilled comment, or add a comment.
+- **"Check at HEAD"** runs the acceptance command through the runner.
+- **Launching a stale leaf** is allowed. The preamble then carries the log since the pin (up to 50 lines) and the changed files.
+
+## 10. UI
+
+**Three views of one Project's plan,** switchable in place. Selection and filters carry across them.
+- **Tree:** the outline. Each container shows its progress, and unconfirmed nodes are collapsed as "+N suggested" under their parent with Confirm and Dismiss. This is where most planning happens.
+- **Board:** kanban over leaves (planned, todo, doing, done), with swimlanes by story and a filter by epic. Cancelled leaves are hidden and can be toggled on.
+- **Map:** a graph laid out as a tree (epic → story → subtask), with blocker links drawn as secondary edges. Nodes are coloured by derived status and show progress rings. It supports pan and zoom and opens a card on click.
+
+**The rest of the surface:**
+- **Inbox:** pending requests (done, cancel, blocked, split and change), showing their flags and evidence. The count folds into Needs you.
+- **Card detail:** fields, win condition, checklist, the evidence trail, hold history (attempts), comments, and the owner-only command and paths.
+- **Actions:** Launch, Do whole story, Plan with agent, Suggest stories, Confirm, Release, Cancel (with a comment), Restore (with a comment), Check at HEAD, Triage, and Purge cancelled.
+- **The Settle dialog** for held leaves (§5).
+
+**Floating picture-in-picture.** Any of the three views, or the Inbox, can pop out into a floating window that stays above other windows while you work in a Task or another app.
+- Built on the Document Picture-in-Picture API: Chromium browsers, with a user gesture. The window is rendered through a React portal from the main app, so it needs no new route and no second SSE stream.
+- Where the API is missing (Safari, Firefox, iPhone), the same view opens as a floating in-page panel that can be dragged and resized.
+- The prototype must confirm that the window works under uam's strict CSP: stylesheets copied as same-origin links, and no inline styles. It must also work behind the owner's sign-in proxy.
+
+**Performance and style:**
+- One theme.
+- No blur.
+- Animate transform and opacity only.
+- The Map's pan and zoom use a CSS transform.
+
+## 11. kb import
+
+A one-time import reads a **copy** of kb's `kb.db`, which must be at kb schema v11. uam never opens the original file.
+- Imported cards become confirmed subtask leaves at the root, with no pin.
+- A kb project whose name matches a uam Project imports into that Project. Otherwise the cards go to the **Unassigned** list (`project_id` is empty).
+- Unassigned cards are read-only until the owner moves one into a git Project. Moving a card counts as a touch.
+- Imported done cards get the automatic close comment "imported from kb".
+- Comments and blocker links are copied too.
+- Running the import again adds no duplicates, because it keys on kb's card UUID.
+
+## Test plan (invariants from the adversarial pass)
+
+Each item is a store, tool or UI test.
+
+**Acceptance commands**
+1. No planner tool schema contains `accept_cmd` or `paths`, and an update carrying either is rejected before any write.
+2. An acceptance command runs only if the owner wrote it; no agent write can change what runs.
+3. Every non-zero exit refuses the claim. Only a failure to spawn the shell produces a flagged request.
+4. At most one acceptance run per Project happens at a time, a claim still waiting past the timeout is refused, and Archiving or Deleting the Task kills its run and records nothing.
+
+**Holds and requests**
+
+5. `doing ⇔ held_by` holds after every write.
+6. After any Task transition (Settle, Reopen, Archive, Delete, or boot with the Task missing), no leaf is held by an Archived, Deleted or absent Task.
+7. A restart changes no holds of Active or Settled Tasks and writes no comments.
+8. `claim_done` and Accept refuse when the leaf isn't doing or isn't held by the Task making the request.
+9. Any status change on a leaf withdraws its pending requests.
+
+**Agent limits**
+
+10. For the agent actor, moving to done or cancelled, setting the blocked flag, restoring and purging are all refused.
+11. A split never produces a done child, and a split of a confirmed or held leaf is exactly one pending request.
+
+**Containers**
+
+12. Derived status and progress ignore unconfirmed leaves, except that a hold makes the container doing, and a container with no confirmed leaves is never done.
+13. A container can't become done while a leaf under it is held or has a pending request. When it does become done, its unconfirmed, unheld leaves are cancelled with the automatic comment.
+
+**Sweep, cascade and links**
+
+14. The sweep never cancels a held node, a node with a pending request, or an ancestor of a held or confirmed node.
+15. Restore reopens exactly one cascade's nodes and confirms them, and a restore without a comment is refused.
+16. A cancelled blocker doesn't block, and a link to an unconfirmed card is refused.
+
+**Caps, staleness and import**
+
+17. Caps count per Task, and calls from subagents count against their Task.
+18. The duplicate-title refusal ignores cancelled siblings.
+19. Staleness is not computed for held leaves.
+20. Imported cards are confirmed with no pin, and imported done cards carry the automatic close comment.
+
+**UI**
+
+21. The picture-in-picture window and the in-page floating panel render the same view state, and closing either loses no selection.
+
+## Rejected (non-goals)
+
+- Keeping the plan as Markdown in the repo.
+- A card as a bundle of pointers with generated text.
+- Weighted consolidation of proposals.
+- A long-lived steward Task per epic.
+- A per-Project rule table.
+- Parsing the agent's shell commands for evidence.
+- Per-Task git worktrees: overlap between Tasks is flagged, not prevented. Running acceptance in a temporary worktree is prototype-only, and only if overlap proves painful.
+- Tracking every uam Task: no automatic card per Task, and no `#12` composer references in this effort.
+
+## Deferred
+
+- Auto-accept per Project.
+- "Start next card".
+- Queueing cards onto a running Task.
+- Forge import (#248 item 8).
+
+## 12. Packages
+
+- **`internal/board`** owns the model and every rule in §1–§9:
+  - the SQLite store: WAL, a single connection, and kb's busy retry;
+  - the actor transition table, derivation, holds and `ReleaseHold`;
+  - `Reconcile`, requests, split, cascade, restore, sweep, purge, search, the duplicate check and caps.
+  - It knows nothing about HTTP, Copilot or `sessions.json`. Clock and ID sources are injectable for tests.
+- **`internal/web/board*.go`** integrates the planner with the Manager:
+  - the Settings switch, API handlers and the SSE frame;
+  - reconcile calls at Start and on every Task transition;
+  - launch and plan, which create a Task;
+  - the Settle hold decisions;
+  - the evidence runner (`board_evidence.go`), staleness (`board_stale.go`), the kb import (`board_import.go`), agent tools (`board_tools.go`) and Utility jobs (`board_ai.go`).
+  - It never holds `m.mu` or a Task's `op` lock across SQL or git.
+- **`internal/agentapi`** carries the host-tool seam (#249). A call identifies its Task, plus the agent ID when a subagent made it.
+- **`internal/adapter/copilot/hosttools.go`** registers host tools into Task sessions and Utility sessions.
+- **`web/src`** holds:
+  - `api.ts` types and calls;
+  - the `state.ts` reducer for the `board` frame;
+  - `components/planner/*` (Tree, Board, Map, Inbox, CardDetail, picture-in-picture);
+  - the matching routes in `web/src/mock`.
+
+## 13. Storage
+
+- `board.db` lives beside `sessions.json`, in `filepath.Dir(store.DefaultPath())`, with mode 0600. It is created the first time the Settings switch is turned on.
+- **Tables:**
+  - `cards`: kb's fields plus §1's columns;
+  - `labels`, `comments` and `links`;
+  - `requests` (§1);
+  - `holds`: the attempt history, with id, card, Task, started_at, baseline HEAD, baseline porcelain status, ended_at and end reason;
+  - `project_settings`: the Project ID and the default `accept_cmd`;
+  - one revision counter per Project, maintained in the same transaction as each write.
+- `#seq` is global to the board and is never reused.
+- Comment authors are `owner`, `task:<id>` or `uam`. The last is for automatic comments, which carry an `automatic` flag.
+
+## 14. HTTP API
+
+- **Access:** every route sits behind uam's existing sign-in, cross-origin and JSON checks.
+  - If the switch is off, the answer is 409 `{"error","code":"planner_off"}`.
+  - A Project that is not a git repository gets 409 with the code `no_git`.
+- **Errors:** they carry `{"error": "...", "code": "..."}`. The codes are:
+  - `guard_open_items`, `guard_blockers` and `guard_blocked`;
+  - `not_held`;
+  - `holds_undecided`;
+  - `unconfirmed_parent`, `read_only` (Unassigned) and `invalid`.
+- `{ref}` is a card UUID or its `#seq` (with or without `#`).
+
+**Card**
+
+```json
+{
+  "id": "uuid", "seq": 12, "project_id": "uuid or empty for Unassigned",
+  "kind": "epic|story|subtask", "parent_id": "uuid or null", "rank": 0,
+  "title": "", "desc": "markdown", "win_condition": "",
+  "status": "planned|todo|doing|done|cancelled",
+  "progress": {"done": 3, "total": 5, "proposed": 2},
+  "prio": 3, "due": "YYYY-MM-DD", "effort": "S|M|L", "labels": [],
+  "checklist": [{"text": "", "done": false}], "blocked": false,
+  "blocked_by": ["uuid"], "blocks": ["uuid"],
+  "confirmed": true, "expires_at": "RFC3339",
+  "held_by": "task uuid", "pinned_sha": "",
+  "accept_cmd": null, "paths": [],
+  "stale": {"behind": 3, "diverged": false, "files": ["a.go"]},
+  "pending_requests": 1, "revision": 7,
+  "created_at": "RFC3339", "updated_at": "RFC3339", "moved_at": "RFC3339"
+}
+```
+
+- `status` is derived for containers.
+- `progress` is sent for containers only.
+- `expires_at` is sent only while the card is unconfirmed.
+- `accept_cmd` is `null` (inherit), `""` (none) or a command.
+- `stale` is sent only when it has been computed (§9).
+
+**Request**
+
+```json
+{
+  "id": "uuid", "card_id": "uuid", "task_id": "uuid", "agent_id": "",
+  "kind": "done|cancel|blocked|split|change",
+  "comment": "", "payload": {}, "evidence": {},
+  "flags": ["acceptance_could_not_run", "no_change_in_tree", "tests_or_build_changed", "overlap"],
+  "base_revision": 7, "status": "pending|accepted|rejected|withdrawn",
+  "created_at": "RFC3339", "decided_at": "RFC3339", "decision_comment": ""
+}
+```
+
+**Evidence** (a done request)
+
+```json
+{
+  "baseline": {"head": "sha", "dirty": ["path"]},
+  "diff": {"added": 10, "deleted": 2, "files": [{"path": "", "added": 1, "deleted": 0, "by_task": true, "overlap": {"card": 13, "task_id": "uuid"}}]},
+  "commits": [{"sha": "", "subject": ""}],
+  "accept": {"cmd": "", "cmd_hash": "", "head": "", "dirty": false, "exit": 0, "tail": "", "ran_at": "RFC3339", "stale": false},
+  "transcript": {"task_id": "uuid", "from_item": "", "to_item": ""},
+  "checklist": {"done": 3, "total": 3}
+}
+```
+
+**Routes**
+
+| Route | Does |
+|---|---|
+| `GET /api/board?project_id=<id or unassigned>` | `{cards, requests (pending), revision}` for one Project |
+| `GET /api/board/projects/{id}` | `{accept_cmd, git: "" or no_git reason}` |
+| `PATCH /api/board/projects/{id}` | `{accept_cmd}` sets the Project default |
+| `GET /api/board/cards/{ref}` | `{card, comments, requests, holds}` |
+| `POST /api/board/cards` | Owner create; the card is confirmed: `{project_id, kind, parent_id, title, desc, win_condition, prio, effort, due, labels, checklist}` |
+| `PATCH /api/board/cards/{ref}` | Owner edit of any field, including `accept_cmd`, `paths` and `project_id` (moving a card out of Unassigned); the edit confirms the card |
+| `POST /api/board/cards/{ref}/confirm` | Confirm |
+| `POST /api/board/cards/{ref}/dismiss` | Cancel an unconfirmed node, with the automatic comment "dismissed" |
+| `POST /api/board/cards/{ref}/move` | `{parent_id, rank}` |
+| `POST /api/board/cards/{ref}/status` | `{status: done|cancelled|todo, comment, force}` — owner-direct on a subtask; `cancelled` on a container is the cascade |
+| `POST /api/board/cards/{ref}/restore` | `{comment}` |
+| `POST /api/board/cards/{ref}/split` | `{children: [{title, win_condition}]}` (owner split) |
+| `POST /api/board/cards/{ref}/comments` | `{body}` |
+| `POST /api/board/links` | `{blocker, blocked}` |
+| `DELETE /api/board/links?blocker=&blocked=` | Removes a blocker link |
+| `POST /api/board/cards/{ref}/launch` | `{model, effort, mode, context_size}` (optional; Project defaults otherwise) → 201 `{card, session}`. On a subtask it launches that subtask; on a container it is "Do whole story" |
+| `POST /api/board/cards/{ref}/plan` | `{brief, model, …}` → 201 `{session}`. A planning Task scoped to the container |
+| `POST /api/board/cards/{ref}/release` | `{comment}` |
+| `POST /api/board/cards/{ref}/check` | Check at HEAD → `{accept}` |
+| `POST /api/board/cards/{ref}/triage` | `{verdict: valid|moot|conflicts, sentence, head}` |
+| `POST /api/board/cards/{ref}/suggest` | `{brief, document, max}` → 202 `{job_id}` |
+| `POST /api/board/requests/{id}/accept` | `{comment}` |
+| `POST /api/board/requests/{id}/reject` | `{reason}` |
+| `POST /api/board/purge` | `{project_id}` |
+| `POST /api/board/import` | `{dir}` → `{imported, updated, unassigned, comments, links, skipped: [{id, reason}]}` |
+
+**Launch and plan** create the Task through the existing create path, set the hold (launch only) in the same request, and send the preamble as the Task's first prompt.
+
+The preamble is deterministic. It contains:
+- the card's path with `#seq` (epic › story › subtask);
+- the win condition, description and checklist;
+- for "Do whole story", the pending list;
+- for a stale card, the log since the pin (up to 50 lines) and the changed files;
+- a short statement of the rules: use the board tools, finish with a `done` request, and never mark anything done yourself.
+
+**Settle:** `POST /api/sessions/{id}/settle` takes an optional body, `{"holds": {"<card id>": {"action": "keep|release|cancel", "comment": ""}}}`. If the Task holds subtasks and the body doesn't decide each one, the answer is 409 `holds_undecided` with the held cards, and the UI shows the Settle dialog (§5).
+
+**Reject:** rejecting a request while its Task is Active sends the reason to that Task through its normal send path (a steer while a turn runs). Otherwise the reason becomes a comment and the hold is released.
+
+## 15. Live updates
+
+- After each committed write, one `board` frame goes on the existing `/api/events` stream, broadcast to everyone: `{seq, project_id, revision, cards: [Card], removed: [id], requests: [Request]}`.
+- A planner view loads `GET /api/board` when it opens and applies frames whose revision is higher than the one it loaded. If there is a gap in revisions, it fetches again.
+- Utility jobs also send `board_job` frames: `{seq, job_id, card_id, status: running|done|failed, error}`.
+
+## 16. Agent tools (#253)
+
+- The tools are registered into Active Tasks of git Projects while the switch is on.
+- `ref` accepts a UUID or `#seq`.
+- Each result is `{text, card}`, and the card renders as a transcript chip.
+
+| Tool | Parameters |
+|---|---|
+| `board_get` | `{ref}` — for a container, also the pending subtasks depth-first, blocked ones last |
+| `board_list` | `{query, status, kind, parent}` |
+| `board_create` | `{kind: story|subtask, parent, title, desc, win_condition, prio, effort, labels, checklist}` |
+| `board_edit` | `{ref, title, desc, win_condition, prio, effort, labels, parent, rank}` — on a confirmed card this becomes a `change` request |
+| `board_checklist` | `{ref, tick: [index], untick: [index], add: [text]}` |
+| `board_comment` | `{ref, body}` |
+| `board_link` | `{blocker, blocked}` |
+| `board_claim` | `{ref}` |
+| `board_split` | `{ref, children: [{title, win_condition}]}` |
+| `board_request` | `{ref, kind: done|cancel|blocked, comment, blocker}` |
+
+No schema has `accept_cmd`, `paths`, `status`, `blocked`, `force`, restore or purge.
+
+## 17. Settings
+
+- `planner` (bool, off by default) in `store.WebSettings` and `web.Settings`, set with `PATCH /api/settings {"planner": true}`.
+- The Settings page shows:
+  - the switch, and the reason it can't be turned on (no git binary);
+  - the kb import (a source directory, then the report);
+  - the Utility model in use.
+
+## 18. Utility jobs (#254)
+
+- **Suggest stories and split a document:** a store-less Utility session.
+  - It has a replaced system message and no built-in tools, and every permission is rejected.
+  - Its only host tools are `board_create`, `board_edit`, `board_get` and `board_list`, scoped to the container.
+  - What it writes are unconfirmed nodes.
+- **Triage** writes nothing. It is cached per card and HEAD.
+- Utility sessions use the provider's Utility model from Settings (`title_model`).
+
+## Consequences
+
+- uam gains its first database and its first large dependency (`modernc.org/sqlite`, BSD-3-Clause, pure Go). The binary grows. The size change is recorded in the port PR.
+- The planner is invisible until it is switched on, and it is unavailable on Projects without git.
+- Task transitions now call `reconcile`, and Settle can answer 409 `holds_undecided`.
