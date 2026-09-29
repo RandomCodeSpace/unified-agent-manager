@@ -81,10 +81,13 @@ func parseStamps(raw []string, dst ...*time.Time) error {
 	return nil
 }
 
+// loadCardsQuery reads a Project's cards in outline order.
+const loadCardsQuery = `SELECT ` + cardCols + ` FROM cards WHERE project_id = ? ORDER BY rank, seq`
+
 // load reads project's cards, their pending request counts and links, and
 // derives every container.
 func (t *txn) load(project string) (*outline, error) {
-	rows, err := t.tx.QueryContext(t.ctx, `SELECT `+cardCols+` FROM cards WHERE project_id = ? ORDER BY rank, seq`, project)
+	rows, err := t.tx.QueryContext(t.ctx, loadCardsQuery, project)
 	if err != nil {
 		return nil, fmt.Errorf("board: load cards: %w", err)
 	}

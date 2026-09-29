@@ -227,6 +227,26 @@ func TestBusyRetry(t *testing.T) {
 	}
 }
 
+// A write that panics must release its transaction, or every later write
+// waits on the lock it still holds.
+func TestWritePanicRollsBack(t *testing.T) {
+	f := newFixture(t)
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = f.s.write(f.ctx, func(x *txn) error {
+			if err := x.exec(`UPDATE meta SET v = v WHERE k = 'schema_version'`); err != nil {
+				return err
+			}
+			panic("boom")
+		})
+	}()
+	ctx, cancel := context.WithTimeout(f.ctx, 2*time.Second)
+	defer cancel()
+	if _, err := f.s.Create(ctx, owner, NewCard{ProjectID: proj, Kind: KindSubtask, Title: "after a panic"}); err != nil {
+		t.Fatalf("write after a panicking write: %v", err)
+	}
+}
+
 func TestClosedStore(t *testing.T) {
 	f := newFixture(t)
 	_, _, one, _ := f.tree()
