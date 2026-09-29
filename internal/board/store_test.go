@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -60,7 +61,7 @@ func TestOpenPragmasAndMode(t *testing.T) {
 			t.Fatal(err)
 		}
 		var version string
-		if err := s.db.QueryRow(`SELECT v FROM meta WHERE k = 'schema_version'`).Scan(&version); err != nil || version != "1" {
+		if err := s.db.QueryRow(`SELECT v FROM meta WHERE k = 'schema_version'`).Scan(&version); err != nil || version != strconv.Itoa(len(migrations)) {
 			t.Fatalf("schema_version = %q, %v", version, err)
 		}
 		if snap, err := s.Board(context.Background(), proj); err != nil || len(snap.Cards) != 1 || snap.Revision != 1 {

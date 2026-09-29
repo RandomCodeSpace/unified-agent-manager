@@ -150,4 +150,17 @@ CREATE TRIGGER cards_fts_au AFTER UPDATE OF title, "desc", labels, project_id ON
   VALUES (new.id, new.project_id, new.title, new."desc", new.labels);
 END;
 `,
+	// v2: one row per imported source task, keyed on its UUID, so a second
+	// import updates its card instead of adding another. state is what the
+	// last import took from the task and last_comment the highest source
+	// comment number copied. A purged card leaves its row behind, so the
+	// import never brings it back.
+	`
+CREATE TABLE import_refs (
+  source_id    TEXT PRIMARY KEY,
+  card_id      TEXT NOT NULL,
+  state        TEXT NOT NULL,
+  last_comment INTEGER NOT NULL DEFAULT 0
+);
+`,
 }
