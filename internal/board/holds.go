@@ -12,9 +12,9 @@ import (
 // Launch starts taskID's hold on the subtask ref and scopes the Task to the
 // subtask's parent. On a container it is "Do whole story": it holds the
 // container's first pending confirmed subtask and scopes the Task to the
-// container. Launch is an owner touch: the held subtask is confirmed and
-// pinned. base is the working tree state the hold's evidence is measured
-// from.
+// container. Launch is an owner touch: the held subtask and its unconfirmed
+// ancestors are confirmed and pinned. base is the working tree state the
+// hold's evidence is measured from.
 func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Baseline) (Card, error) {
 	if err := permit(a, opLaunch, ""); err != nil {
 		return Card{}, err
@@ -51,11 +51,10 @@ func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Ba
 			if err := permit(a, opLaunch, leaf.stored); err != nil {
 				return err
 			}
-			if err := o.confirmedChain(leaf.ParentID); err != nil {
+			held = leaf.ID
+			if err := t.confirm(o, a, leaf); err != nil {
 				return err
 			}
-			held = leaf.ID
-			t.touch(a, leaf)
 			if err := t.updateCard(leaf); err != nil {
 				return err
 			}

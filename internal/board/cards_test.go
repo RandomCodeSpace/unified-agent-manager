@@ -80,7 +80,7 @@ func TestCreateRules(t *testing.T) {
 	epic, _, one, _ := f.tree()
 	_, err := f.s.Create(f.ctx, owner, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: one.ID, Title: "x"})
 	wantCode(t, err, CodeInvalid) // a subtask holds nothing
-	// The owner can't put a confirmed card under an unconfirmed one.
+	// The owner's card under an unconfirmed one confirms it.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
 	agent := Agent("planner", "")
 	proposed := f.create(agent, epic.ID, KindStory, "Proposed story")
@@ -88,8 +88,11 @@ func TestCreateRules(t *testing.T) {
 		proposed.CreatedBy != "task:planner" || proposed.PinnedSHA != "" {
 		t.Fatalf("agent-created card %+v", proposed)
 	}
-	_, err = f.s.Create(f.ctx, owner, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: proposed.ID, Title: "x"})
-	wantCode(t, err, CodeUnconfirmedParent)
+	under, err := f.s.Create(f.ctx, Owner("head-2"), NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: proposed.ID, Title: "x"})
+	f.must(err)
+	if got := f.card(proposed.ID); !under.Confirmed() || !got.Confirmed() || got.PinnedSHA != "head-2" {
+		t.Fatalf("owner card %+v under %+v", under, got)
+	}
 	// Agents never create epics or root cards, or outside their scope.
 	_, err = f.s.Create(f.ctx, agent, NewCard{ProjectID: proj, Kind: KindEpic, ParentID: epic.ID, Title: "x"})
 	wantCode(t, err, CodeForbidden)
@@ -398,22 +401,15 @@ func TestChecklistAndConfirm(t *testing.T) {
 	f.must(err)
 	_, err = f.s.Checklist(f.ctx, owner, outside.ID, ChecklistEdit{Add: []string{"x"}})
 	wantCode(t, err, CodeInvalid)
-	// Confirm: parents first, never a cancelled card.
+	// Confirm takes the unconfirmed ancestors with it, never a cancelled card.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
 	planner := Agent("planner", "")
 	s2 := f.create(planner, epic.ID, KindStory, "Suggested story")
 	leaf := f.create(planner, s2.ID, KindSubtask, "Suggested leaf")
-	_, err = f.s.Confirm(f.ctx, owner, leaf.ID)
-	wantCode(t, err, CodeUnconfirmedParent)
-	_, err = f.s.Checklist(f.ctx, owner, leaf.ID, ChecklistEdit{Add: []string{"x"}})
-	wantCode(t, err, CodeUnconfirmedParent)
-	got, err := f.s.Confirm(f.ctx, owner, s2.ID)
+	got, err := f.s.Confirm(f.ctx, owner, leaf.ID)
 	f.must(err)
-	if !got.Confirmed() || got.PinnedSHA != "head-1" {
-		t.Fatalf("confirmed = %+v", got)
-	}
-	if got, err = f.s.Confirm(f.ctx, owner, leaf.ID); err != nil || !got.Confirmed() {
-		t.Fatalf("confirm leaf = %+v, %v", got, err)
+	if story := f.card(s2.ID); !got.Confirmed() || got.PinnedSHA != "head-1" || !story.Confirmed() || story.PinnedSHA != "head-1" {
+		t.Fatalf("confirmed %+v under %+v", got, story)
 	}
 	_, err = f.s.Confirm(f.ctx, owner, outside.ID)
 	wantCode(t, err, CodeInvalid)
@@ -500,5 +496,106 @@ func TestSimilarityAndQueries(t *testing.T) {
 	}
 	if got := len(quotedTokens(strings.Repeat("w ", 20))); got != maxSearchTokens {
 		t.Errorf("tokens = %d, want %d", got, maxSearchTokens)
+	}
+}
+
+// Every owner touch on a card confirms and pins its unconfirmed ancestors,
+// leaves confirmed ones alone, and so keeps them from the sweep.
+func TestOwnerTouchConfirmsAncestors(t *testing.T) {
+	head := Owner("head-9")
+	for _, tc := range []struct {
+		name string
+		op   func(f *fixture, epic, story, leaf Card) error
+	}{
+		{"save", func(f *fixture, _, _, leaf Card) error {
+			_, err := f.s.Edit(f.ctx, head, leaf.ID, Patch{Desc: ptr("x")})
+			return err
+		}},
+		{"checklist", func(f *fixture, _, _, leaf Card) error {
+			_, err := f.s.Checklist(f.ctx, head, leaf.ID, ChecklistEdit{Add: []string{"x"}})
+			return err
+		}},
+		{"confirm", func(f *fixture, _, _, leaf Card) error {
+			_, err := f.s.Confirm(f.ctx, head, leaf.ID)
+			return err
+		}},
+		{"launch", func(f *fixture, _, _, leaf Card) error {
+			_, err := f.s.Launch(f.ctx, head, leaf.ID, "task-9", Baseline{})
+			return err
+		}},
+		{"done", func(f *fixture, _, _, leaf Card) error {
+			_, err := f.s.SetStatus(f.ctx, head, leaf.ID, StatusDone, "shipped", false)
+			return err
+		}},
+		{"ready", func(f *fixture, _, _, leaf Card) error {
+			_, err := f.s.SetStatus(f.ctx, head, leaf.ID, StatusTodo, "", false)
+			return err
+		}},
+		{"create", func(f *fixture, _, story, _ Card) error {
+			_, err := f.s.Create(f.ctx, head, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: story.ID, Title: "new"})
+			return err
+		}},
+		{"move", func(f *fixture, epic, story, _ Card) error {
+			x := f.create(owner, epic.ID, KindSubtask, "X")
+			_, err := f.s.Edit(f.ctx, head, x.ID, Patch{ParentID: &story.ID})
+			return err
+		}},
+		{"accept change", func(f *fixture, epic, story, _ Card) error {
+			x := f.create(owner, epic.ID, KindSubtask, "X")
+			res, err := f.s.Edit(f.ctx, Agent("planner", ""), x.ID, Patch{ParentID: &story.ID})
+			if err != nil {
+				return err
+			}
+			_, err = f.s.Accept(f.ctx, head, res.Request.ID, "")
+			return err
+		}},
+		{"accept blocked", func(f *fixture, epic, _, leaf Card) error {
+			worker := Agent("worker", "")
+			first := f.create(owner, epic.ID, KindSubtask, "First")
+			f.launch(first.ID, "worker")
+			f.done(first.ID, worker)
+			if _, err := f.s.Claim(f.ctx, worker, leaf.ID, Baseline{}); err != nil {
+				return err
+			}
+			r, err := f.s.FileRequest(f.ctx, worker, leaf.ID, RequestInput{Kind: RequestBlocked, Comment: "stuck"})
+			if err != nil {
+				return err
+			}
+			_, err = f.s.Accept(f.ctx, head, r.ID, "")
+			return err
+		}},
+		{"restore", func(f *fixture, _, _, leaf Card) error {
+			if _, err := f.s.Dismiss(f.ctx, owner, leaf.ID); err != nil {
+				return err
+			}
+			_, err := f.s.Restore(f.ctx, head, leaf.ID, "back")
+			return err
+		}},
+		{"split", func(f *fixture, _, _, leaf Card) error {
+			_, err := f.s.Split(f.ctx, head, leaf.ID, []SplitChild{{Title: "a"}, {Title: "b"}})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			epic := f.create(owner, "", KindEpic, "Epic")
+			f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+			story := f.create(Agent("planner", ""), epic.ID, KindStory, "Suggested")
+			leaf := f.create(Agent("planner", ""), story.ID, KindSubtask, "Suggested leaf")
+			f.must(tc.op(f, epic, story, leaf))
+			got := f.card(story.ID)
+			if !got.Confirmed() || got.PinnedSHA != "head-9" {
+				t.Fatalf("story after %s = %+v", tc.name, got)
+			}
+			if e := f.card(epic.ID); e.PinnedSHA != "head-1" {
+				t.Fatalf("a confirmed ancestor was re-pinned: %+v", e)
+			}
+			f.clock.advance(2 * ExpiryWindow)
+			_, err := f.s.Sweep(f.ctx)
+			f.must(err)
+			if got := f.card(story.ID); got.Status == StatusCancelled {
+				t.Fatalf("the sweep expired the story after %s", tc.name)
+			}
+		})
 	}
 }

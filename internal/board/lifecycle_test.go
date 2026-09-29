@@ -254,14 +254,17 @@ func TestSweep(t *testing.T) {
 	_, err = f.s.AddComment(f.ctx, owner, epic.ID, "any write")
 	f.must(err)
 	wantStatus(t, f.card(late.ID), StatusCancelled)
-	// Restoring under an unconfirmed parent is refused.
+	// Restoring under an unconfirmed parent confirms the parent.
 	s3 := f.create(planner, epic.ID, KindStory, "S3")
 	l3 := f.create(planner, s3.ID, KindSubtask, "L3")
 	f.clock.advance(time.Hour)
 	_, err = f.s.Dismiss(f.ctx, owner, l3.ID)
 	f.must(err)
-	_, err = f.s.Restore(f.ctx, owner, l3.ID, "back")
-	wantCode(t, err, CodeUnconfirmedParent)
+	got, err = f.s.Restore(f.ctx, owner, l3.ID, "back")
+	f.must(err)
+	if !got.Confirmed() || !f.card(s3.ID).Confirmed() {
+		t.Fatalf("restored %+v under an unconfirmed story", got)
+	}
 }
 
 func TestPurge(t *testing.T) {

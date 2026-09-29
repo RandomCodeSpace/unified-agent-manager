@@ -2,6 +2,7 @@ package board
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -236,7 +237,7 @@ func TestAcceptCancelAndBlocked(t *testing.T) {
 // confirmed or held subtask is exactly one pending request.
 func TestSplit(t *testing.T) {
 	f := newFixture(t)
-	epic, story, one, _ := f.tree()
+	epic, story, _, _ := f.tree()
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
 	planner := Agent("planner", "")
 	u, err := f.s.Create(f.ctx, planner, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: epic.ID, Title: "Big",
@@ -270,9 +271,7 @@ func TestSplit(t *testing.T) {
 	if tick.Kind != RequestDone || tick.TaskID != "planner" || !strings.Contains(tick.Comment, "ticked on #5") {
 		t.Fatalf("tick request = %+v", tick)
 	}
-	// Refusals: under a story, nothing to split into, repeated titles, containers.
-	_, err = f.s.Split(f.ctx, owner, one.ID, []SplitChild{{Title: "x"}})
-	wantCode(t, err, CodeInvalid)
+	// Refusals: nothing to split into, repeated titles, containers.
 	loose := f.create(owner, epic.ID, KindSubtask, "Loose")
 	_, err = f.s.Split(f.ctx, owner, loose.ID, nil)
 	wantCode(t, err, CodeInvalid)
@@ -346,4 +345,147 @@ func TestSplit(t *testing.T) {
 	f.raw(`UPDATE requests SET status = 'pending' WHERE id = ?`, req.Request.ID)
 	_, err = f.s.Accept(f.ctx, owner, req.Request.ID, "")
 	wantCode(t, err, CodeInvalid)
+}
+
+// A subtask under a story can't become a story, so a split makes siblings
+// right after it and cancels it under its own cascade; restoring it leaves
+// the siblings.
+func TestSplitIntoSiblings(t *testing.T) {
+	f := newFixture(t)
+	_, story, _, _ := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, story.ID, "planner"))
+	planner := Agent("planner", "")
+	big, err := f.s.Create(f.ctx, planner, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: story.ID, Title: "Big",
+		Checklist: []Check{{Text: "ticked", Done: true}, {Text: "open"}}})
+	f.must(err)
+	f.create(owner, story.ID, KindSubtask, "Tail")
+	// A new sibling may not repeat a live sibling's title.
+	_, err = f.s.Split(f.ctx, planner, big.ID, []SplitChild{{Title: "two"}})
+	wantCode(t, err, CodeDuplicate)
+
+	res, err := f.s.Split(f.ctx, planner, big.ID, []SplitChild{{Title: "first", WinCondition: "works"}})
+	f.must(err)
+	if res.Request != nil || res.Card.Kind != KindSubtask || res.Card.Status != StatusCancelled || res.Card.CascadeID == "" {
+		t.Fatalf("direct sibling split = %+v", res)
+	}
+	kids := f.children(story.ID)
+	var titles []string
+	for i, k := range kids {
+		titles = append(titles, k.Title)
+		if k.Rank != i {
+			t.Fatalf("%s rank = %d, want %d", k.Title, k.Rank, i)
+		}
+	}
+	if want := []string{"One", "Two", "Big", "first", "ticked", "open", "Tail"}; !slices.Equal(titles, want) {
+		t.Fatalf("siblings = %v, want %v", titles, want)
+	}
+	made := kids[3:6]
+	for _, k := range made {
+		if k.Kind != KindSubtask || k.Status != StatusPlanned || k.Confirmed() || k.CreatedBy != "task:planner" {
+			t.Fatalf("sibling %+v", k)
+		}
+	}
+	if made[0].WinCondition != "works" || made[0].PendingRequests != 0 || made[1].PendingRequests != 1 || made[2].PendingRequests != 0 {
+		t.Fatalf("siblings = %+v", made)
+	}
+	tick := f.detail(made[1].ID).Requests[0]
+	if tick.Kind != RequestDone || tick.TaskID != "planner" || !strings.Contains(tick.Comment, "ticked on "+big.ref()) {
+		t.Fatalf("tick request = %+v", tick)
+	}
+	note := "uam: split into " + made[0].ref() + ", " + made[1].ref() + ", " + made[2].ref()
+	if !slices.Contains(f.comments(big.ID), note) {
+		t.Fatalf("comments = %q, want %q", f.comments(big.ID), note)
+	}
+	restored, err := f.s.Restore(f.ctx, owner, big.ID, "keep the original too")
+	f.must(err)
+	if restored.Status != StatusPlanned || !restored.Confirmed() || len(f.children(story.ID)) != 7 {
+		t.Fatalf("restored = %+v", restored)
+	}
+	for _, k := range made {
+		if f.card(k.ID).Status != StatusPlanned {
+			t.Fatalf("restore touched sibling %+v", f.card(k.ID))
+		}
+	}
+
+	// The split's own subtask leaves the Task's unconfirmed count on the
+	// story, so it may split into exactly the cap.
+	f2 := newFixture(t)
+	_, s2, _, _ := f2.tree()
+	f2.must(f2.s.StartPlanning(f2.ctx, owner, s2.ID, "planner"))
+	mine := f2.create(planner, s2.ID, KindSubtask, "Mine")
+	var many []SplitChild
+	for i := range CapUnconfirmed + 1 {
+		many = append(many, SplitChild{Title: fmt.Sprintf("part %d", i)})
+	}
+	_, err = f2.s.Split(f2.ctx, planner, mine.ID, many)
+	wantCode(t, err, CodeLimit)
+	_, err = f2.s.Split(f2.ctx, planner, mine.ID, many[:CapUnconfirmed])
+	f2.must(err)
+
+	// Under an epic or at the root, a split still makes a story.
+	root := f.create(owner, "", KindSubtask, "Root")
+	res, err = f.s.Split(f.ctx, owner, root.ID, []SplitChild{{Title: "a"}})
+	f.must(err)
+	if res.Card.Kind != KindStory || len(f.children(root.ID)) != 1 {
+		t.Fatalf("root split = %+v", res)
+	}
+}
+
+// A held subtask under a story splits by request; accepting it makes the
+// siblings, accepts the ticked one, moves the hold and cancels the original.
+func TestSplitIntoSiblingsByRequest(t *testing.T) {
+	f := newFixture(t)
+	_, story, one, _ := f.tree()
+	_, err := f.s.Checklist(f.ctx, owner, one.ID, ChecklistEdit{Add: []string{"x", "y"}})
+	f.must(err)
+	f.launch(one.ID, "worker")
+	worker := Agent("worker", "")
+	_, err = f.s.Checklist(f.ctx, worker, one.ID, ChecklistEdit{Tick: []int{0}})
+	f.must(err)
+	res, err := f.s.Split(f.ctx, worker, one.ID, []SplitChild{{Title: "part one"}})
+	f.must(err)
+	if res.Request == nil || res.Request.Kind != RequestSplit || len(f.children(story.ID)) != 2 {
+		t.Fatalf("held split = %+v", res)
+	}
+	_, err = f.s.Accept(f.ctx, Owner("head-3"), res.Request.ID, "")
+	f.must(err)
+	orig := f.card(one.ID)
+	if orig.Kind != KindSubtask || orig.Status != StatusCancelled || orig.HeldBy != "" || orig.CascadeID == "" {
+		t.Fatalf("original after accept = %+v", orig)
+	}
+	if h := f.detail(one.ID).Holds; len(h) != 1 || h[0].EndReason != ReleaseSplit {
+		t.Fatalf("original hold = %+v", h)
+	}
+	kids := f.children(story.ID)
+	var titles []string
+	for _, k := range kids {
+		titles = append(titles, k.Title)
+	}
+	if want := []string{"One", "part one", "x", "y", "Two"}; !slices.Equal(titles, want) {
+		t.Fatalf("siblings = %v, want %v", titles, want)
+	}
+	part, x, y := kids[1], kids[2], kids[3]
+	if part.HeldBy != "worker" || part.Status != StatusDoing || x.Status != StatusDone || y.Status != StatusPlanned {
+		t.Fatalf("siblings = %+v", kids[1:4])
+	}
+	for _, k := range kids[1:4] {
+		if !k.Confirmed() || k.PinnedSHA != "head-3" || k.CreatedBy != "task:worker" {
+			t.Fatalf("sibling %+v", k)
+		}
+	}
+	if h := f.detail(part.ID).Holds; len(h) != 1 || h[0].Baseline.Head != "base" || h[0].TaskID != "worker" {
+		t.Fatalf("moved hold = %+v", h)
+	}
+	wantStatus(t, f.card(story.ID), StatusDoing)
+	note := "uam: split into " + part.ref() + ", " + x.ref() + ", " + y.ref()
+	if !slices.Contains(f.comments(one.ID), note) {
+		t.Fatalf("comments = %q", f.comments(one.ID))
+	}
+	// Restoring the original reopens it as todo and leaves the siblings.
+	restored, err := f.s.Restore(f.ctx, owner, one.ID, "keep it")
+	f.must(err)
+	if restored.Status != StatusTodo || f.card(part.ID).HeldBy != "worker" || f.card(x.ID).Status != StatusDone ||
+		len(f.children(story.ID)) != 5 {
+		t.Fatalf("restored = %+v", restored)
+	}
 }

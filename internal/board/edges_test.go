@@ -17,8 +17,8 @@ func TestAcceptRechecks(t *testing.T) {
 	_, err = f.s.Accept(f.ctx, owner, r.ID, "")
 	wantCode(t, err, CodeGuardBlocked)
 
-	// A subtask claimed under an unconfirmed story can't be accepted until
-	// the story is confirmed.
+	// Accepting a subtask claimed under an unconfirmed story confirms the
+	// story.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
 	planner := Agent("planner", "")
 	loose := f.create(owner, epic.ID, KindSubtask, "Epic-level")
@@ -31,15 +31,10 @@ func TestAcceptRechecks(t *testing.T) {
 	f.must(err)
 	done := f.done(pl.ID, worker)
 	_, err = f.s.Accept(f.ctx, owner, done.ID, "")
-	wantCode(t, err, CodeUnconfirmedParent)
-	blocked, err := f.s.FileRequest(f.ctx, worker, pl.ID, RequestInput{Kind: RequestBlocked, Comment: "stuck"})
 	f.must(err)
-	_, err = f.s.Accept(f.ctx, owner, blocked.ID, "")
-	wantCode(t, err, CodeUnconfirmedParent)
-	_, err = f.s.Confirm(f.ctx, owner, ps.ID)
-	f.must(err)
-	_, err = f.s.Accept(f.ctx, owner, done.ID, "")
-	f.must(err)
+	if !f.card(ps.ID).Confirmed() || !f.card(pl.ID).Confirmed() {
+		t.Fatal("accepting did not confirm the subtask and its story")
+	}
 
 	// A container that reached done can no longer be cancelled by request.
 	s2 := f.create(owner, epic.ID, KindStory, "Second story")
@@ -101,12 +96,6 @@ func TestOwnerAndAgentEdgeCases(t *testing.T) {
 	planner := Agent("planner", "")
 	ps := f.create(planner, epic.ID, KindStory, "Proposed")
 	pl := f.create(planner, ps.ID, KindSubtask, "Proposed leaf")
-	_, err = f.s.SetStatus(f.ctx, owner, pl.ID, StatusDone, "done", true)
-	wantCode(t, err, CodeUnconfirmedParent)
-	_, err = f.s.SetStatus(f.ctx, owner, pl.ID, StatusTodo, "", false)
-	wantCode(t, err, CodeUnconfirmedParent)
-	_, err = f.s.Edit(f.ctx, owner, pl.ID, Patch{Desc: ptr("x")})
-	wantCode(t, err, CodeUnconfirmedParent)
 	un := f.unassigned("Loose")
 	_, err = f.s.CheckFinishable(f.ctx, owner, un)
 	wantCode(t, err, CodeReadOnly)

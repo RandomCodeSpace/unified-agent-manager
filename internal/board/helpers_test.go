@@ -166,6 +166,20 @@ func (f *fixture) done(ref string, a Actor) Request {
 	return r
 }
 
+// children returns parent's direct children in rank order.
+func (f *fixture) children(parent string) []Card {
+	f.t.Helper()
+	snap, err := f.s.Board(f.ctx, proj)
+	f.must(err)
+	var out []Card
+	for _, c := range snap.Cards {
+		if c.ParentID == parent {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (f *fixture) comments(ref string) []string {
 	f.t.Helper()
 	var out []string

@@ -102,7 +102,7 @@ var errReadOnly = refuse(CodeReadOnly, "Unassigned cards are read-only; move the
 
 // Create adds a card. Agents may create stories and subtasks under a
 // container in their scope, within the caps; the owner may create any kind
-// anywhere, but not under an unconfirmed card.
+// anywhere, and the owner's card confirms its unconfirmed ancestors.
 func (s *Store) Create(ctx context.Context, a Actor, in NewCard) (Card, error) {
 	o := opCreate
 	if in.ParentID == "" || in.Kind == KindEpic {
@@ -180,7 +180,7 @@ func (t *txn) create(a Actor, project, parentID string, in NewCard) (*node, erro
 		return nil, err
 	}
 	if a.owner() {
-		if err := o.confirmedChain(parentID); err != nil {
+		if err := t.confirmAncestors(o, a, parentID); err != nil {
 			return nil, err
 		}
 		n.PinnedSHA = a.Head
@@ -232,10 +232,10 @@ func (t *txn) caps(o *outline, a Actor, parentID string, created, unconfirmed in
 }
 
 // Edit applies p to the card ref. The owner may edit any field, and the
-// edit confirms the card. An agent edits an unconfirmed card in its scope
-// directly; its edit of a confirmed card is filed as a change request, which
-// replaces the Task's earlier pending one. An agent patch carrying an
-// owner-only field is refused before any write.
+// edit confirms the card and its ancestors. An agent edits an unconfirmed
+// card in its scope directly; its edit of a confirmed card is filed as a
+// change request, which replaces the Task's earlier pending one. An agent
+// patch carrying an owner-only field is refused before any write.
 func (s *Store) Edit(ctx context.Context, a Actor, ref string, p Patch) (EditResult, error) {
 	if p.empty() {
 		return EditResult{}, invalid("nothing to change")
@@ -378,11 +378,6 @@ func (t *txn) planEdit(o *outline, a Actor, n *node, p Patch) (editPlan, error) 
 			return editPlan{}, err
 		}
 	}
-	if a.owner() {
-		if err := o.confirmedChain(plan.parent); err != nil {
-			return editPlan{}, err
-		}
-	}
 	if plan.moving || normalTitle(c.Title) != normalTitle(n.Title) {
 		if err := o.duplicate(plan.parent, c.Title, n.ID); err != nil {
 			return editPlan{}, err
@@ -425,7 +420,9 @@ func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan) er
 		}
 	}
 	if a.owner() {
-		t.touch(a, n)
+		if err := t.confirm(o, a, n); err != nil {
+			return err
+		}
 	}
 	if err := t.updateCard(n); err != nil {
 		return err
@@ -493,18 +490,24 @@ func (t *txn) place(o *outline, n *node, parent string, rank *int) error {
 		return nil
 	}
 	index := min(*rank, len(sibs))
-	ordered := slices.Concat(sibs[:index], []*node{n}, sibs[index:])
+	return t.rerank(o, slices.Concat(sibs[:index], []*node{n}, sibs[index:]), n)
+}
+
+// rerank gives each card in ordered its index as its rank, writing each one
+// whose rank changed except skip, which the caller writes.
+func (t *txn) rerank(o *outline, ordered []*node, skip *node) error {
 	for i, m := range ordered {
-		if m == n {
-			n.Rank = i
+		if m.Rank == i {
 			continue
 		}
-		if m.Rank != i {
-			if err := t.exec(`UPDATE cards SET rank = ?, updated_at = ? WHERE id = ?`, i, stamp(t.now), m.ID); err != nil {
-				return err
-			}
-			t.changed(o.project, m.ID)
+		m.Rank = i
+		if m == skip {
+			continue
 		}
+		if err := t.exec(`UPDATE cards SET rank = ?, updated_at = ? WHERE id = ?`, i, stamp(t.now), m.ID); err != nil {
+			return err
+		}
+		t.changed(o.project, m.ID)
 	}
 	return nil
 }
@@ -557,10 +560,9 @@ func (s *Store) Checklist(ctx context.Context, a Actor, ref string, e ChecklistE
 			}
 			n.Checklist = list
 			if a.owner() {
-				if err := o.confirmedChain(n.ParentID); err != nil {
+				if err := t.confirm(o, a, n); err != nil {
 					return err
 				}
-				t.touch(a, n)
 			}
 			return t.updateCard(n)
 		})
@@ -574,7 +576,7 @@ func (s *Store) Checklist(ctx context.Context, a Actor, ref string, e ChecklistE
 }
 
 // Confirm confirms a card: it stops expiring and is pinned to the owner's
-// HEAD. Its ancestors must be confirmed already.
+// HEAD, and so is every unconfirmed ancestor.
 func (s *Store) Confirm(ctx context.Context, a Actor, ref string) (Card, error) {
 	if err := permit(a, opConfirm, ""); err != nil {
 		return Card{}, err
@@ -583,10 +585,9 @@ func (s *Store) Confirm(ctx context.Context, a Actor, ref string) (Card, error) 
 		if n.stored == StatusCancelled {
 			return invalid("%s is cancelled; restore it instead", n.ref())
 		}
-		if err := o.confirmedChain(n.ParentID); err != nil {
+		if err := t.confirm(o, a, n); err != nil {
 			return err
 		}
-		t.touch(a, n)
 		return t.updateCard(n)
 	})
 }
@@ -619,9 +620,31 @@ func (s *Store) ownerWrite(ctx context.Context, ref string, fn func(*txn, *outli
 	return withRevision(out, changes), err
 }
 
-// touch confirms n and pins it to the owner's HEAD, when known. The caller
-// writes the card.
-func (t *txn) touch(a Actor, n *node) {
+// confirm is an owner touch on n: it confirms n and pins it to the owner's
+// HEAD, when known, and does the same to every unconfirmed ancestor, so a
+// confirmed card never sits under an unconfirmed one. The caller writes n.
+func (t *txn) confirm(o *outline, a Actor, n *node) error {
+	touch(a, n)
+	return t.confirmAncestors(o, a, n.ParentID)
+}
+
+// confirmAncestors confirms, pins and writes every unconfirmed card from
+// parentID up to the root.
+func (t *txn) confirmAncestors(o *outline, a Actor, parentID string) error {
+	for p := o.byID[parentID]; p != nil; p = o.byID[p.ParentID] {
+		if p.Confirmed() {
+			continue
+		}
+		touch(a, p)
+		if err := t.updateCard(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// touch confirms n and pins it to the owner's HEAD, when known.
+func touch(a Actor, n *node) {
 	n.ExpiresAt = nil
 	if a.Head != "" {
 		n.PinnedSHA = a.Head

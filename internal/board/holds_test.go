@@ -52,12 +52,20 @@ func TestLaunch(t *testing.T) {
 	}
 	_, err = f.s.Launch(f.ctx, owner, story.ID, "task-4", Baseline{})
 	wantCode(t, err, CodeInvalid)
-	// A subtask under an unconfirmed parent can't be launched.
+	// Launching a subtask under an agent-suggested story confirms and pins
+	// the story, so the sweep can no longer expire it.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
 	s2 := f.create(Agent("planner", ""), epic.ID, KindStory, "Proposed")
 	leaf := f.create(Agent("planner", ""), s2.ID, KindSubtask, "Proposed leaf")
-	_, err = f.s.Launch(f.ctx, owner, leaf.ID, "task-5", Baseline{})
-	wantCode(t, err, CodeUnconfirmedParent)
+	got, err = f.s.Launch(f.ctx, Owner("head-5"), leaf.ID, "task-5", Baseline{})
+	f.must(err)
+	if story := f.card(s2.ID); !got.Confirmed() || got.PinnedSHA != "head-5" || !story.Confirmed() || story.PinnedSHA != "head-5" {
+		t.Fatalf("launched %+v under %+v", got, story)
+	}
+	f.clock.advance(2 * ExpiryWindow)
+	_, err = f.s.Sweep(f.ctx)
+	f.must(err)
+	wantStatus(t, f.card(s2.ID), StatusDoing)
 	wantCode(t, f.s.StartPlanning(f.ctx, owner, leaf.ID, "planner"), CodeInvalid)
 	wantCode(t, f.s.StartPlanning(f.ctx, owner, epic.ID, ""), CodeInvalid)
 	wantCode(t, f.s.StartPlanning(f.ctx, owner, "#99", "p"), CodeNotFound)

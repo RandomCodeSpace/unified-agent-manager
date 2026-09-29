@@ -328,17 +328,6 @@ func (o *outline) statuses() map[string]Status {
 	return out
 }
 
-// confirmedChain reports whether every ancestor of a card placed under
-// parentID is confirmed: a confirmed card never sits under an unconfirmed one.
-func (o *outline) confirmedChain(parentID string) error {
-	for n := o.byID[parentID]; n != nil; n = o.byID[n.ParentID] {
-		if !n.Confirmed() {
-			return refuse(CodeUnconfirmedParent, "%s is unconfirmed; confirm it first", n.ref())
-		}
-	}
-	return nil
-}
-
 // duplicate returns a live sibling under parentID whose normalised title
 // matches title, ignoring except and cancelled siblings.
 func (o *outline) duplicate(parentID, title, except string) error {

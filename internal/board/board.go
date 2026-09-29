@@ -231,19 +231,18 @@ const (
 // Code classifies a refusal so callers can map it to their own errors.
 type Code string
 
-// The refusal codes. The first eight are ADR 0005 §14's.
+// The refusal codes. The first six are ADR 0005 §14's.
 const (
-	CodeGuardOpenItems    Code = "guard_open_items"
-	CodeGuardBlockers     Code = "guard_blockers"
-	CodeGuardBlocked      Code = "guard_blocked"
-	CodeNotHeld           Code = "not_held"
-	CodeUnconfirmedParent Code = "unconfirmed_parent"
-	CodeReadOnly          Code = "read_only"
-	CodeInvalid           Code = "invalid"
-	CodeNotFound          Code = "not_found"
-	CodeForbidden         Code = "forbidden"
-	CodeLimit             Code = "limit"
-	CodeDuplicate         Code = "duplicate"
+	CodeGuardOpenItems Code = "guard_open_items"
+	CodeGuardBlockers  Code = "guard_blockers"
+	CodeGuardBlocked   Code = "guard_blocked"
+	CodeNotHeld        Code = "not_held"
+	CodeReadOnly       Code = "read_only"
+	CodeInvalid        Code = "invalid"
+	CodeNotFound       Code = "not_found"
+	CodeForbidden      Code = "forbidden"
+	CodeLimit          Code = "limit"
+	CodeDuplicate      Code = "duplicate"
 )
 
 // Error is a refusal from a board rule. Refs lists the cards or items the

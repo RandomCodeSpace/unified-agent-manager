@@ -46,9 +46,6 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 					return err
 				}
 			}
-			if err := o.confirmedChain(n.ParentID); err != nil {
-				return err
-			}
 			if _, err := t.addComment(n, AuthorOwner, "", body, false, true); err != nil {
 				return err
 			}
@@ -59,7 +56,9 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 			} else if err := t.setStatus(n, StatusDone, "", ""); err != nil {
 				return err
 			}
-			t.touch(a, n)
+			if err := t.confirm(o, a, n); err != nil {
+				return err
+			}
 			return t.updateCard(n)
 		case StatusCancelled:
 			if err := permit(a, opCancel, n.stored); err != nil {
@@ -75,13 +74,12 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 			if err := permit(a, opReady, n.stored); err != nil {
 				return err
 			}
-			if err := o.confirmedChain(n.ParentID); err != nil {
-				return err
-			}
 			if err := t.setStatus(n, StatusTodo, "", ""); err != nil {
 				return err
 			}
-			t.touch(a, n)
+			if err := t.confirm(o, a, n); err != nil {
+				return err
+			}
 			if err := t.updateCard(n); err != nil {
 				return err
 			}
@@ -163,9 +161,10 @@ func (s *Store) Dismiss(ctx context.Context, a Actor, ref string) (Card, error) 
 }
 
 // Restore reopens exactly the cards cancelled with the card ref, in one
-// cascade, and confirms each. A subtask with an earlier attempt reopens as
-// todo, one without as planned. It needs a comment, and is refused while a
-// card of the cascade sits under a cancelled card outside it.
+// cascade, and confirms each, with its unconfirmed ancestors. A subtask with
+// an earlier attempt reopens as todo, one without as planned. It needs a
+// comment, and is refused while a card of the cascade sits under a cancelled
+// card outside it.
 func (s *Store) Restore(ctx context.Context, a Actor, ref, comment string) (Card, error) {
 	if err := permit(a, opRestore, ""); err != nil {
 		return Card{}, err
@@ -199,9 +198,6 @@ func (s *Store) Restore(ctx context.Context, a Actor, ref, comment string) (Card
 				if p.stored == StatusCancelled {
 					return invalid("%s is under cancelled %s; restore that first", m.ref(), p.ref())
 				}
-				if !p.Confirmed() {
-					return refuse(CodeUnconfirmedParent, "%s is unconfirmed; confirm it first", p.ref())
-				}
 			}
 			if err := o.duplicate(m.ParentID, m.Title, m.ID); err != nil {
 				return err
@@ -221,7 +217,9 @@ func (s *Store) Restore(ctx context.Context, a Actor, ref, comment string) (Card
 			if err := t.setStatus(m, to, "", ""); err != nil {
 				return err
 			}
-			t.touch(a, m)
+			if err := t.confirm(o, a, m); err != nil {
+				return err
+			}
 			if err := t.updateCard(m); err != nil {
 				return err
 			}

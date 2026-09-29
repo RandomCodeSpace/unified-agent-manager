@@ -98,8 +98,9 @@ type payload struct {
 	Tick    string `json:"tick,omitempty"`
 }
 
-// SplitResult is a split's outcome: the card, now a story when the split
-// applied, or the split request filed instead.
+// SplitResult is a split's outcome: the card as the split left it (a story,
+// or cancelled after a split into siblings), and the split request filed
+// instead when it did not apply.
 type SplitResult struct {
 	Card    Card
 	Request *Request
@@ -273,13 +274,17 @@ func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (Reques
 	return r, nil
 }
 
-// Split turns the subtask ref into a story. Its children are the given
-// ones, then its unticked checklist items as planned subtasks, then its
-// ticked items as subtasks with a pending done request that cites the tick:
-// a split never creates a done subtask. An agent's split of a confirmed or
-// held subtask is filed as one split request instead; the owner's, and an
-// agent's split of an unconfirmed unheld subtask, apply at once. A live hold
-// moves to the first pending child.
+// Split splits the subtask ref. Under an epic or at the root it becomes a
+// story whose children are the given ones, then its checklist items in order.
+// Under a story, which can't hold a story, those cards become its siblings,
+// placed right after it, and the subtask is cancelled under its own cascade
+// with the automatic comment "split into #a, #b, …", so Restore brings it
+// back and leaves the siblings. Unticked items become planned subtasks and
+// ticked ones subtasks with a pending done request that cites the tick: a
+// split never creates a done subtask. An agent's split of a confirmed or held
+// subtask is filed as one split request instead; the owner's, and an agent's
+// split of an unconfirmed unheld subtask, apply at once. A live hold moves to
+// the first pending new subtask.
 func (s *Store) Split(ctx context.Context, a Actor, ref string, children []SplitChild) (SplitResult, error) {
 	if err := permit(a, opSplit, ""); err != nil {
 		return SplitResult{}, err
@@ -312,7 +317,15 @@ func (s *Store) Split(ctx context.Context, a Actor, ref string, children []Split
 			out.Request = &req
 			return err
 		}
-		if err := t.caps(o, a, n.ID, count, count); err != nil {
+		parent, unconfirmed := n.ID, count
+		if o.splitsIntoSiblings(n) {
+			// The subtask is cancelled, so it leaves its parent's count.
+			parent = n.ParentID
+			if n.CreatedBy == a.author() {
+				unconfirmed--
+			}
+		}
+		if err := t.caps(o, a, parent, count, unconfirmed); err != nil {
 			return err
 		}
 		return t.applySplit(o, a, a.TaskID, n, children, false)
@@ -321,15 +334,21 @@ func (s *Store) Split(ctx context.Context, a Actor, ref string, children []Split
 	return out, err
 }
 
-// checkSplit refuses a split that leaves nothing to split into, would put a
-// story under a story, or repeats a child title.
+// splitsIntoSiblings reports whether a split of the subtask n makes siblings
+// rather than a story: its parent can't hold a story.
+func (o *outline) splitsIntoSiblings(n *node) bool {
+	parent := o.byID[n.ParentID]
+	return parent != nil && !parent.Kind.canHold(KindStory)
+}
+
+// checkSplit refuses a split that leaves nothing to split into or repeats a
+// title, among its new cards or, for a split into siblings, among the live
+// siblings.
 func checkSplit(o *outline, n *node, children []SplitChild) error {
 	if len(children)+len(n.Checklist) == 0 {
 		return invalid("a split needs children or checklist items")
 	}
-	if parent := o.byID[n.ParentID]; parent != nil && !parent.Kind.canHold(KindStory) {
-		return invalid("%s is under a %s, which cannot hold a story", n.ref(), parent.Kind)
-	}
+	siblings := o.splitsIntoSiblings(n)
 	seen := map[string]bool{}
 	for _, title := range splitTitles(n, children) {
 		key := normalTitle(title)
@@ -337,6 +356,11 @@ func checkSplit(o *outline, n *node, children []SplitChild) error {
 			return refuse(CodeDuplicate, "the split repeats the title %q", title)
 		}
 		seen[key] = true
+		if siblings {
+			if err := o.duplicate(n.ParentID, title, n.ID); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -352,9 +376,9 @@ func splitTitles(n *node, children []SplitChild) []string {
 	return out
 }
 
-// applySplit turns n into a story with its children (see Split). requester
-// is the Task the ticked items' done requests are filed for; accept accepts
-// them at once, as accepting a split request does.
+// applySplit applies the split of n (see Split). requester is the Task the
+// ticked items' done requests are filed for; accept accepts them at once, as
+// accepting a split request does.
 func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, children []SplitChild, accept bool) error {
 	holder := n.HeldBy
 	var base Baseline
@@ -364,22 +388,36 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 			return err
 		}
 		base = hold.Baseline
-		if err := t.releaseHold(n, ReleaseSplit, StatusPlanned, ""); err != nil {
+	}
+	siblings := o.splitsIntoSiblings(n)
+	parent, to, cascade := n.ID, StatusPlanned, ""
+	if siblings {
+		parent, to, cascade = n.ParentID, StatusCancelled, t.s.newID()
+	}
+	if holder != "" {
+		if err := t.releaseHold(n, ReleaseSplit, to, cascade); err != nil {
 			return err
 		}
-	} else if err := t.setStatus(n, StatusPlanned, "", ""); err != nil {
+	} else if err := t.setStatus(n, to, "", cascade); err != nil {
 		return err
 	}
 	checklist := n.Checklist
-	n.Kind, n.Checklist, n.Progress = KindStory, nil, &Progress{}
-	if a.owner() {
-		if err := o.confirmedChain(n.ParentID); err != nil {
+	switch {
+	case !siblings:
+		n.Kind, n.Checklist, n.Progress = KindStory, nil, &Progress{}
+		if a.owner() {
+			if err := t.confirm(o, a, n); err != nil {
+				return err
+			}
+		}
+		if err := t.updateCard(n); err != nil {
 			return err
 		}
-		t.touch(a, n)
-	}
-	if err := t.updateCard(n); err != nil {
-		return err
+	case a.owner():
+		// The owner's new subtasks are confirmed, so their ancestors are too.
+		if err := t.confirmAncestors(o, a, parent); err != nil {
+			return err
+		}
 	}
 	type planned struct {
 		child SplitChild
@@ -396,10 +434,12 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 	if accept {
 		createdBy = TaskAuthor(requester)
 	}
+	sibs := slices.Clone(o.kids[parent])
+	var made []*node
 	var first *node
 	for _, p := range list {
 		kid := &node{stored: StatusPlanned, Card: Card{
-			ProjectID: n.ProjectID, Kind: KindSubtask, ParentID: n.ID, Title: p.child.Title,
+			ProjectID: n.ProjectID, Kind: KindSubtask, ParentID: parent, Title: p.child.Title,
 			WinCondition: p.child.WinCondition, Status: StatusPlanned, Prio: PrioDefault, Effort: DefaultEffort,
 			CreatedBy: createdBy, CreatedAt: t.now, UpdatedAt: t.now, MovedAt: t.now,
 		}}
@@ -412,7 +452,8 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 		if err := t.insertCard(o, kid); err != nil {
 			return err
 		}
-		o.kids[n.ID] = append(o.kids[n.ID], kid)
+		o.kids[parent] = append(o.kids[parent], kid)
+		made = append(made, kid)
 		if !p.tick {
 			if first == nil {
 				first = kid
@@ -430,9 +471,23 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 			if err := t.decide(&req, RequestAccepted, ""); err != nil {
 				return err
 			}
-			if err := t.markDone(kid, &req, a); err != nil {
+			if err := t.markDone(o, kid, &req, a); err != nil {
 				return err
 			}
+		}
+	}
+	if siblings {
+		at := slices.Index(sibs, n) + 1
+		o.kids[parent] = slices.Concat(sibs[:at], made, sibs[at:])
+		if err := t.rerank(o, o.kids[parent], nil); err != nil {
+			return err
+		}
+		refs := make([]string, len(made))
+		for i, m := range made {
+			refs[i] = m.ref()
+		}
+		if _, err := t.addComment(n, AuthorUAM, "", "split into "+strings.Join(refs, ", "), true, false); err != nil {
+			return err
 		}
 	}
 	if holder != "" && first != nil {
@@ -465,10 +520,7 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 			if err := t.guard(o, n); err != nil {
 				return err
 			}
-			if err := o.confirmedChain(n.ParentID); err != nil {
-				return err
-			}
-			return t.markDone(n, r, a)
+			return t.markDone(o, n, r, a)
 		case RequestCancel:
 			if n.stored == StatusCancelled || n.Status == StatusDone {
 				return invalid("%s is already %s", n.ref(), n.Status)
@@ -477,9 +529,6 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 		case RequestBlocked:
 			if n.stored.terminal() {
 				return invalid("%s is already %s", n.ref(), n.stored)
-			}
-			if err := o.confirmedChain(n.ParentID); err != nil {
-				return err
 			}
 			if p.Blocker != "" {
 				blocker, err := t.blocker(o, n, p.Blocker)
@@ -492,7 +541,9 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 			} else {
 				n.Blocked = true
 			}
-			t.touch(a, n)
+			if err := t.confirm(o, a, n); err != nil {
+				return err
+			}
 			return t.updateCard(n)
 		case RequestSplit:
 			if n.container() || n.stored.terminal() {
@@ -516,7 +567,7 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 
 // markDone marks the subtask n done by accepting r: the claim text becomes the
 // close comment, the hold ends, and the owner's acceptance confirms n.
-func (t *txn) markDone(n *node, r *Request, a Actor) error {
+func (t *txn) markDone(o *outline, n *node, r *Request, a Actor) error {
 	author := AuthorUAM
 	if r.TaskID != "" {
 		author = TaskAuthor(r.TaskID)
@@ -531,7 +582,9 @@ func (t *txn) markDone(n *node, r *Request, a Actor) error {
 	} else if err := t.setStatus(n, StatusDone, "", ""); err != nil {
 		return err
 	}
-	t.touch(a, n)
+	if err := t.confirm(o, a, n); err != nil {
+		return err
+	}
 	return t.updateCard(n)
 }
 
