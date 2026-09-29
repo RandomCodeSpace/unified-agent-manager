@@ -154,7 +154,7 @@ func (f *fixture) tree() (epic, story, one, two Card) {
 
 func (f *fixture) launch(ref, task string) Card {
 	f.t.Helper()
-	c, err := f.s.Launch(f.ctx, owner, ref, task, Baseline{Head: "base", Dirty: []string{"x.go"}})
+	c, err := f.s.Launch(f.ctx, owner, ref, task, Baseline{Head: "base", Dirty: []string{"x.go"}, Blobs: map[string]string{"x.go": "b10b"}})
 	if err != nil {
 		f.t.Fatalf("launch %s: %v", ref, err)
 	}

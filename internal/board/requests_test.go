@@ -73,10 +73,10 @@ func TestDoneRequest(t *testing.T) {
 	}
 	evidence := json.RawMessage(`{"diff":{"added":3}}`)
 	req, err := f.s.FileRequest(f.ctx, agent, one.ID, RequestInput{Kind: RequestDone, Comment: " all green ",
-		Evidence: evidence, Flags: []string{FlagOverlap}, ProposedAcceptCmd: "go test ./..."})
+		Evidence: evidence, Flags: []string{FlagOverlap, FlagBaselineMissing}, ProposedAcceptCmd: "go test ./..."})
 	f.must(err)
 	if req.Status != RequestPending || req.Comment != "all green" || req.AgentID != "sub" || string(req.Evidence) != string(evidence) ||
-		!slices.Equal(req.Flags, []string{FlagOverlap}) || req.BaseRevision == 0 || !strings.Contains(string(req.Payload), "go test") {
+		!slices.Equal(req.Flags, []string{FlagOverlap, FlagBaselineMissing}) || req.BaseRevision == 0 || !strings.Contains(string(req.Payload), "go test") {
 		t.Fatalf("request = %+v", req)
 	}
 	if c := f.card(one.ID); c.PendingRequests != 1 {

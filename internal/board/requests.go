@@ -41,9 +41,12 @@ const (
 	FlagNoChangeInTree        = "no_change_in_tree"
 	FlagTestsOrBuildChanged   = "tests_or_build_changed"
 	FlagOverlap               = "overlap"
+	// FlagBaselineMissing marks evidence gathered without the hold's
+	// baseline commit, which no longer exists.
+	FlagBaselineMissing = "baseline_missing"
 )
 
-var knownFlags = []string{FlagAcceptanceCouldNotRun, FlagNoChangeInTree, FlagTestsOrBuildChanged, FlagOverlap}
+var knownFlags = []string{FlagAcceptanceCouldNotRun, FlagNoChangeInTree, FlagTestsOrBuildChanged, FlagOverlap, FlagBaselineMissing}
 
 // Request is one inbox row. BaseRevision is the card's revision when it was
 // filed.
