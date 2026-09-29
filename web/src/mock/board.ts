@@ -26,6 +26,8 @@ const inDays = (days: number) => new Date(Date.now() + days * 86400000).toISOStr
 /** HEAD of each Project's checkout in the mock. */
 const HEAD: Record<string, string> = { p1: 'c41d2e8', p3: '7be0913' };
 
+const RANK: Record<CardKind, number> = { epic: 0, story: 1, subtask: 2 };
+
 function json(status: number, body?: unknown): Response {
   if (body === undefined) return new Response(null, { status });
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -79,7 +81,7 @@ function seedBoard(big: boolean): Seeded {
   const P = 'p1';
   const suggestion = { confirmed: false, expires_at: inDays(9) };
   const cards: Card[] = [
-    card(1, P, 'epic', null, 'Faster first load of long transcripts', { win_condition: 'A 5,000-item Task shows its last page in under a second on a laptop.', desc: 'Long Tasks load every item before the first paint. Page from the record, cache what was read, and keep the view steady while pages land.', prio: 1 }),
+    card(1, P, 'epic', null, 'Faster first load of long transcripts', { win_condition: 'A 5,000-item Task shows its last page in under a second on a laptop.', desc: 'Long Tasks load every item before the first paint. The plan:\n\n- page older history from the provider record\n- cache what was read in `historyCache`\n- keep the view **steady** while pages land', prio: 1 }),
     card(2, P, 'story', 1, 'Page history from the provider record', { win_condition: 'Older history arrives a page at a time and survives a restart.' }),
     card(3, P, 'subtask', 2, 'Serve archive pages with stable cursors', { status: 'done', win_condition: 'An archive cursor still resolves after the service restarts.', effort: 'M' }),
     card(4, P, 'subtask', 2, 'Cache archive pages in IndexedDB', { status: 'done', win_condition: 'Revisiting an archived page reads no network.', effort: 'M' }),
@@ -265,6 +267,13 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if (comment) say(c, author, comment, author === 'uam');
   };
   const openBlockers = (c: Card) => c.blocked_by.map(byId).filter((b): b is Card => !!b && b.status !== 'done' && b.status !== 'cancelled');
+  /** A parent must outrank its child (epic < story < subtask); the root may hold any kind (§1). Null when the place is valid. */
+  const misplaced = (kind: CardKind, parentId: unknown, project: string): Response | null => {
+    if (parentId === null || parentId === undefined || parentId === '') return null;
+    const parent = byId(String(parentId));
+    if (!parent || parent.project_id !== project) return refuse(404, 'invalid', 'parent not found');
+    return RANK[parent.kind] < RANK[kind] ? null : refuse(409, 'invalid', `a ${parent.kind} cannot hold a ${kind}`);
+  };
 
   /**
    * A split (§7): the given children first, then the checklist items. Under a story they become
@@ -496,6 +505,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       const kind = body.kind as CardKind;
       const title = String(body.title ?? '').trim();
       if (!title || !['epic', 'story', 'subtask'].includes(kind)) return refuse(400, 'invalid', 'a card needs a kind and a title');
+      const wrong = misplaced(kind, body.parent_id, pid);
+      if (wrong) return wrong;
       const parent = body.parent_id ? byId(String(body.parent_id)) : undefined;
       const c = card(nextSeq++, pid, kind, null, title, { parent_id: parent?.id ?? null, win_condition: String(body.win_condition ?? ''), desc: String(body.desc ?? ''), created_at: now(), min: 0 });
       return done(commit(() => {
@@ -598,12 +609,15 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
             say(node, 'uam', 'dismissed', true);
           }
         }), ok);
-      case 'POST move':
+      case 'POST move': {
+        const wrong = misplaced(c.kind, body.parent_id, c.project_id);
+        if (wrong) return wrong;
         return done(commit(() => {
           c.parent_id = (body.parent_id as string | null) ?? null;
           c.rank = Number(body.rank ?? c.rank);
           touch(c);
         }), ok);
+      }
       case 'POST status': {
         const status = body.status as CardStatus;
         if (!comment && status !== 'todo') return refuse(400, 'invalid', 'a comment is required');
@@ -726,5 +740,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     });
   }
 
-  return { route, settle, ended };
+  /** Each Board's revision, for the snapshot (`''` is the Unassigned list). */
+  const boardRevisions = () => ({ ...revisions });
+
+  return { route, settle, ended, revisions: boardRevisions };
 }

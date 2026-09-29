@@ -426,6 +426,18 @@ export function errorCode(e: unknown): string | undefined {
   return e instanceof ApiError && typeof e.body.code === 'string' ? e.body.code : undefined;
 }
 
+/** What stops an owner's Mark done (409 `guard_open_items`, `guard_blockers` or `guard_blocked`, §6), or null for any other outcome. */
+export type DoneGuard = { code: 'guard_open_items'; items: string[] } | { code: 'guard_blockers'; blockers: string[] } | { code: 'guard_blocked' };
+
+export function doneGuard(e: unknown): DoneGuard | null {
+  if (!isStatus(e, 409)) return null;
+  const code = errorCode(e);
+  if (code === 'guard_open_items') return { code, items: Array.isArray(e.body.items) ? e.body.items.map(String) : [] };
+  if (code === 'guard_blockers') return { code, blockers: Array.isArray(e.body.blockers) ? e.body.blockers.map(String) : [] };
+  if (code === 'guard_blocked') return { code };
+  return null;
+}
+
 /** The subtasks a Settle left undecided (409 `holds_undecided`), or null for any other outcome. */
 export function undecidedHolds(e: unknown): Card[] | null {
   if (!isStatus(e, 409) || errorCode(e) !== 'holds_undecided') return null;
@@ -778,6 +790,11 @@ export interface SnapshotData extends Representation {
   settings?: Settings;
   /** Absent from a service older than usage (#188). */
   usage?: AccountUsage;
+  /**
+   * With the planner on: each Board's revision by Project id (`''` for the Unassigned list), so
+   * a new stream fetches again only the Boards that moved while no stream was open (ADR 0005 §15).
+   */
+  boards?: Record<string, number>;
   sessions: SessionSummary[];
   session: SessionDetail | null;
 }

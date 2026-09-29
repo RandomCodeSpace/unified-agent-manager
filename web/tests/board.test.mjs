@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyBoardFrame, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openingView, pendingRequests } from '../src/lib/board.ts';
+import { applyBoardFrame, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests } from '../src/lib/board.ts';
 import { initialState, reducer } from '../src/state.ts';
 
 let seq = 0;
@@ -220,4 +220,62 @@ test('Fit shows the whole plan within the zoom limits', () => {
   const hugeLeft = huge.nodes.find((n) => n.card.kind === 'story').x;
   assert.equal(fitHuge.x, (1200 - (huge.width - hugeLeft) * MAP_MIN_K) / 2 - hugeLeft * MAP_MIN_K);
   assert.equal(fitView(huge, 200, 900, 24).x, 24 - hugeLeft * MAP_MIN_K);
+});
+
+test('map nodes come parents first, so Tab goes epic, story, subtask', () => {
+  const epic = card({ kind: 'epic' });
+  const story = card({ kind: 'story', parent_id: epic.id });
+  const a = card({ parent_id: story.id });
+  const b = card({ parent_id: story.id });
+  const loose = card({});
+  const { nodes } = layoutMap([loose, b, a, story, epic], { epic: null, showCancelled: false });
+  assert.deepEqual(nodes.map((n) => n.card.id), [epic.id, story.id, a.id, b.id, loose.id]);
+});
+
+test('an unchanged card at the same place keeps its map node, so the Map memo holds', () => {
+  const story = card({ kind: 'story' });
+  const a = card({ parent_id: story.id });
+  const b = card({ parent_id: story.id });
+  const at = (layout, id) => layout.nodes.find((n) => n.card.id === id);
+  const first = layoutMap([story, a, b], { epic: null, showCancelled: false });
+  const renamed = { ...b, title: 'Renamed' };
+  const second = layoutMap([story, a, renamed], { epic: null, showCancelled: false });
+  assert.equal(at(second, a.id), at(first, a.id));
+  assert.equal(at(second, story.id), at(first, story.id));
+  assert.notEqual(at(second, b.id), at(first, b.id));
+  assert.equal(at(second, b.id).card, renamed);
+  const third = layoutMap([story, card({ parent_id: story.id, rank: -1 }), a, renamed], { epic: null, showCancelled: false });
+  assert.notEqual(at(third, a.id), at(second, a.id), 'the same card one row down is a new node');
+  assert.equal(at(third, a.id).y, MAP_ROW);
+});
+
+test('open blockers are a plain string, empty when none is open', () => {
+  const done = card({ status: 'done' });
+  const open = card({});
+  const blocked = card({ blocked_by: [done.id, open.id, 'gone'] });
+  const byId = new Map([done, open, blocked].map((c) => [c.id, c]));
+  assert.equal(openBlockerSeqs(blocked, byId), `#${open.seq}`);
+  assert.equal(openBlockerSeqs(open, byId), '');
+});
+
+const snapshot = (boards) => ({ type: 'snapshot', data: { name: 'snapshot', seq: 3, sessions: [], projects: [], boards } });
+
+test('a snapshot with Board revisions marks stale only the Boards that moved or are missing', () => {
+  let state = follow(initialState, 'p1', { cards: [], requests: [], revision: 4 });
+  state = follow(state, 'p3', { cards: [], requests: [], revision: 2 });
+  state = follow(state, 'unassigned', { cards: [], requests: [], revision: 7 });
+  state = follow(state, 'p9', { cards: [], requests: [], revision: 1 });
+  const before = state.boards;
+  state = reducer(state, snapshot({ p1: 4, p3: 5, '': 7 }));
+  assert.equal(state.boards.p1, before.p1, 'the same revision: kept as it is');
+  assert.equal(state.boards.unassigned, before.unassigned, 'the Unassigned list is the empty key');
+  assert.equal(state.boards.p3.stale, true, 'moved while no stream was open');
+  assert.equal(state.boards.p9.stale, true, 'missing from the snapshot');
+});
+
+test('a Board still loading at a snapshot is fetched again even when the revisions match', () => {
+  let state = reducer(initialState, { type: 'board_loading', key: 'p1' });
+  state = reducer(state, snapshot({ p1: 1 }));
+  state = reducer(state, { type: 'board_loaded', key: 'p1', data: { cards: [], requests: [], revision: 1 } });
+  assert.equal(state.boards.p1.stale, true, 'the reply may predate the new stream');
 });

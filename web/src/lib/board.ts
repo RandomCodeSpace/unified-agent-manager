@@ -170,11 +170,15 @@ export interface MapEdge {
   kind: 'parent' | 'blocker';
 }
 
+/** The last node drawn for each card object: an unchanged card at the same place keeps its node, so the Map's memo holds. */
+const lastNode = new WeakMap<Card, MapNode>();
+
 /**
  * A tidy tree laid out left to right: one column per kind (epic, story, subtask), so a card
  * the root holds directly still sits in its kind's column; each leaf takes the next row and
  * a parent is centred on its first and last child. Sibling trees are a half row apart.
- * Blocker links are secondary edges between cards that are both drawn.
+ * Nodes come parents first (epic, then its stories, then their subtasks), which is the Tab
+ * order. Blocker links are secondary edges between cards that are both drawn.
  */
 export function layoutMap(cards: readonly Card[], filters: Filters): { nodes: MapNode[]; edges: MapEdge[]; width: number; height: number } {
   const index = childIndex(cards);
@@ -184,6 +188,8 @@ export function layoutMap(cards: readonly Card[], filters: Filters): { nodes: Ma
   let row = 0;
   const place = (card: Card): number => {
     const kids = (index.get(card.id) ?? []).filter(visible);
+    // The parent's slot comes before its children's; its row is known once they are placed.
+    const slot = nodes.push(undefined as unknown as MapNode) - 1;
     let y: number;
     if (kids.length === 0) {
       y = row * MAP_ROW;
@@ -195,7 +201,11 @@ export function layoutMap(cards: readonly Card[], filters: Filters): { nodes: Ma
       });
       y = (ys[0] + ys[ys.length - 1]) / 2;
     }
-    nodes.push({ card, x: COLUMN[card.kind] * (MAP_NODE_W + MAP_COL_GAP), y });
+    const x = COLUMN[card.kind] * (MAP_NODE_W + MAP_COL_GAP);
+    const last = lastNode.get(card);
+    const node = last && last.x === x && last.y === y ? last : { card, x, y };
+    lastNode.set(card, node);
+    nodes[slot] = node;
     return y;
   };
   let roots = (index.get('') ?? []).filter(visible);
@@ -234,6 +244,16 @@ export function fitView(layout: { nodes: readonly MapNode[]; width: number; heig
   const k = Math.min(1, Math.max(MAP_MIN_K, Math.min((w - pad * 2) / bw, (h - pad * 2) / Math.max(layout.height, 1))));
   const x = bw * k <= w - pad * 2 ? (w - bw * k) / 2 - left * k : pad - left * k;
   return { k, x, y: pad };
+}
+
+/** A card's open blockers as `#8, #20` ('' for none): a plain string, so a row that takes it stays equal while they do. */
+export function openBlockerSeqs(card: Card, byId: ReadonlyMap<string, Card>): string {
+  if (!card.blocked_by.length) return '';
+  return card.blocked_by
+    .map((id) => byId.get(id))
+    .filter((b): b is Card => !!b && b.status !== 'done' && b.status !== 'cancelled')
+    .map((b) => `#${b.seq}`)
+    .join(', ');
 }
 
 /** Pending requests per Project key, for the Needs-you count. */

@@ -195,8 +195,7 @@ export function reducer(state: State, action: Action): State {
         agentSteps: {},
         settings: settings ?? DEFAULT_SETTINGS,
         usage: usage ?? null,
-        // Frames sent while no stream was open are lost: every followed Board is fetched again.
-        boards: Object.fromEntries(Object.entries(state.boards).map(([key, board]) => [key, { ...board, stale: true }])),
+        boards: staleSince(state.boards, action.data.boards),
       };
     }
     case 'board_loading': {
@@ -418,6 +417,21 @@ export function reducer(state: State, action: Action): State {
       }
     }
   }
+}
+
+/**
+ * Frames sent while no stream was open are lost: a new snapshot's Board revisions say which
+ * followed Boards moved meanwhile. One whose loaded revision differs, that is still loading, or
+ * that the snapshot does not list (or a snapshot without revisions at all) is fetched again.
+ */
+function staleSince(boards: Record<string, BoardState>, revisions: Record<string, number> | undefined): Record<string, BoardState> {
+  return Object.fromEntries(
+    Object.entries(boards).map(([key, board]) => {
+      const revision = revisions?.[key === 'unassigned' ? '' : key];
+      const current = revision !== undefined && !board.loading && board.data?.revision === revision;
+      return [key, current || board.stale ? board : { ...board, stale: true }];
+    }),
+  );
 }
 
 /** A `board` frame on the Board it names: buffered while that Board loads, applied by revision, a gap marks it stale. Boards not followed ignore it. */

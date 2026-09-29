@@ -390,7 +390,7 @@ export function install(): { received: Received[] } {
         }
         return () => sources.delete(src);
       }
-      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
+      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, ...(st.settings.planner ? { boards: { ...Object.fromEntries(st.projects.map((p) => [p.id, 0])), ...board.revisions() } } : {}), sessions: st.tasks.map(summary), session: t ? detail(t) : null });
       if (slow) window.setTimeout(emitSnapshot, slow);
       else emitSnapshot();
       if (t && !started.has(t.id)) {

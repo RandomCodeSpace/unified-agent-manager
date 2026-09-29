@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import type { Card, CardStatus } from '../../api';
-import { BOARD_COLUMNS, STATUS_LABEL, childIndex } from '../../lib/board';
+import { BOARD_COLUMNS, STATUS_LABEL, childIndex, openBlockerSeqs } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { useShownBoard } from './context';
 import { CardMarkers, ProgressText, StatusGlyph, TaskChip } from './parts';
@@ -46,9 +46,10 @@ function lanesOf(cards: readonly Card[], epic: string | null, showCancelled: boo
 /**
  * The Board (ADR 0005 §10): kanban over subtasks, a column per status and a swimlane per
  * story. Held subtasks carry their Task's chip, which opens the Task. Suggestions stay in the Tree.
+ * Cards are memoised on their card object, so a `board` frame re-renders only the ones it changed.
  */
 export function BoardView() {
-  const { ui, cards, sessions, openCard, openTask } = useShownBoard();
+  const { ui, cards, openCard } = useShownBoard();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const lanes = useMemo(() => lanesOf(cards, ui.epic, ui.showCancelled), [cards, ui.epic, ui.showCancelled]);
   const columns: CardStatus[] = ui.showCancelled ? [...BOARD_COLUMNS, 'cancelled'] : [...BOARD_COLUMNS];
@@ -88,7 +89,7 @@ export function BoardView() {
                   .filter((c) => c.status === s)
                   .map((c) => (
                     <li key={c.id}>
-                      <BoardCard card={c} byId={byId} selected={ui.selected === c.id} onOpen={() => openCard(c.id)} task={c.held_by ? <TaskChip taskId={c.held_by} sessions={sessions} onOpen={openTask} /> : null} />
+                      <BoardCard card={c} blockers={openBlockerSeqs(c, byId)} selected={ui.selected === c.id} onOpen={openCard} />
                     </li>
                   ))}
               </ul>
@@ -100,7 +101,7 @@ export function BoardView() {
   );
 }
 
-function BoardCard({ card: c, byId, selected, onOpen, task }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; selected: boolean; onOpen: () => void; task: React.ReactNode }>) {
+const BoardCard = memo(function BoardCard({ card: c, blockers, selected, onOpen }: Readonly<{ card: Card; blockers: string; selected: boolean; onOpen: (id: string) => void }>) {
   return (
     // A div, not a button: the Task chip inside is one. It is reached and opened by keyboard all the same.
     <div
@@ -113,24 +114,24 @@ function BoardCard({ card: c, byId, selected, onOpen, task }: Readonly<{ card: C
         selected && 'bg-tint-selected hover:bg-tint-selected',
         c.status === 'cancelled' && 'opacity-60',
       )}
-      onClick={onOpen}
+      onClick={() => onOpen(c.id)}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
         e.preventDefault();
-        onOpen();
+        onOpen(c.id);
       }}
     >
       <span className="flex min-w-0 items-start gap-1.5">
         <span className="shrink-0 text-caption tabular-nums text-muted">#{c.seq}</span>
         <span className={cn('min-w-0 flex-1 text-ink [overflow-wrap:anywhere]', c.status === 'cancelled' && 'line-through')}>{c.title}</span>
       </span>
-      {(task || c.pending_requests > 0 || c.stale || c.blocked || c.blocked_by.length > 0 || c.effort) && (
+      {(c.held_by || c.pending_requests > 0 || c.stale || c.blocked || blockers || c.effort) && (
         <span className="flex min-w-0 flex-wrap items-center gap-1">
-          {task}
-          <CardMarkers card={c} byId={byId} compact />
+          {c.held_by && <TaskChip taskId={c.held_by} />}
+          <CardMarkers card={c} blockers={blockers} compact />
           {c.effort && <span className="text-caption text-muted" title="Effort">{c.effort}</span>}
         </span>
       )}
     </div>
   );
-}
+});

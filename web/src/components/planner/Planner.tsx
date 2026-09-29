@@ -1,6 +1,6 @@
-import { Ellipsis, Inbox, KanbanSquare, PictureInPicture2, Trash2, X } from 'lucide-react';
+import { Ellipsis, Inbox, KanbanSquare, PictureInPicture2, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, describeError, errorCode, type BoardJob, type Project, type SessionSummary } from '../../api';
+import { api, describeError, errorCode, type BoardJob, type Project } from '../../api';
 import { childIndex } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
@@ -34,12 +34,11 @@ export function plannerKeys(enabled: boolean, projects: readonly Project[]): str
  * Boards it follows. Each followed Board is fetched once, then kept by `board` frames; one that
  * went stale (a revision gap, a new stream) is fetched again. The Needs-you count reads them all.
  */
-export function usePlannerController({ enabled, boards, jobs, projects, sessions, dispatch, onShowPlanner, onOpenTask, initialProject }: Readonly<{
+export function usePlannerController({ enabled, boards, jobs, projects, dispatch, onShowPlanner, onOpenTask, initialProject }: Readonly<{
   enabled: boolean;
   boards: Record<string, BoardState>;
   jobs: Record<string, BoardJob>;
   projects: Project[];
-  sessions: SessionSummary[];
   dispatch: (a: Action) => void;
   onShowPlanner: () => void;
   onOpenTask: (id: string) => void;
@@ -111,17 +110,19 @@ export function usePlannerController({ enabled, boards, jobs, projects, sessions
     setPop({ kind, win: null });
   }, []);
 
+  // Stable, so the memoised rows that take it keep their props.
+  const openCard = useCallback((id: string) => {
+    setUi({ selected: id, panel: 'card' });
+    onShowPlanner();
+  }, [setUi, onShowPlanner]);
+
   const value: PlannerContextValue = useMemo(() => ({
     ui,
     setUi,
     boards,
     jobs,
     projects,
-    sessions,
-    openCard: (id: string) => {
-      setUi({ selected: id, panel: 'card' });
-      onShowPlanner();
-    },
+    openCard,
     openTask: onOpenTask,
     reload: load,
     popout: pop?.kind ?? null,
@@ -130,7 +131,7 @@ export function usePlannerController({ enabled, boards, jobs, projects, sessions
     notice,
     notify,
     enabled,
-  }), [ui, setUi, boards, jobs, projects, sessions, onShowPlanner, onOpenTask, load, pop?.kind, popOut, closePopout, notice, enabled]);
+  }), [ui, setUi, boards, jobs, projects, openCard, onOpenTask, load, pop?.kind, popOut, closePopout, notice, enabled]);
 
   const host = pop && enabled ? <PopOutHost win={pop.win} kind={pop.kind} onKind={(kind) => setPop((p) => p && { ...p, kind })} onClose={closePopout} /> : null;
   return { value, host };
@@ -162,7 +163,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   // A Board to show: the one asked for, else the default (the filtered or most recent git Project).
   useEffect(() => {
     if (ui.project && (ui.project === 'unassigned' || projects.some((x) => x.id === ui.project))) return;
-    if (defaultProject) setUi({ project: defaultProject, selected: null, epic: null, panel: null });
+    if (defaultProject) setUi({ project: defaultProject, selected: null, epic: null, panel: null, creating: null });
   }, [ui.project, projects, defaultProject, setUi]);
 
   const cards = board?.data?.cards;
@@ -175,6 +176,9 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   if (ui.panel && ui.panel !== lastPanel) setLastPanel(ui.panel);
   const panel = ui.panel ?? lastPanel;
   const closePanel = () => setUi({ panel: null });
+  // Owner authoring (§3) happens in the Tree: a new card's form opens there, under its parent.
+  const author = !!key && key !== 'unassigned' && !project?.no_git && !!board?.data;
+  const create = (kind: 'epic' | 'subtask') => setUi({ view: 'tree', creating: { parent: '', kind } });
 
   let body: ReactNode;
   if (project?.no_git) {
@@ -190,6 +194,22 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
     );
   } else if (!board?.data) {
     body = <Skeleton label="Loading the plan…" rows={8} className="px-4 py-4" rowClassName="h-6" />;
+  } else if (author && !board.data.cards.length && !ui.creating) {
+    body = (
+      <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
+        <p className="text-ui text-muted">Nothing is planned for {project?.name ?? 'this project'} yet.</p>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button size="md" variant="primary" onClick={() => create('epic')}>
+            <Plus />
+            New epic
+          </Button>
+          <Button size="md" variant="secondary" onClick={() => create('subtask')}>
+            <Plus />
+            Add subtask
+          </Button>
+        </div>
+      </div>
+    );
   } else if (ui.view === 'tree') {
     body = <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain"><TreeView readOnly={key === 'unassigned'} /></div>;
   } else if (ui.view === 'board') {
@@ -213,11 +233,20 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
             aria-label="Project"
             className="h-8 w-auto max-w-56 min-w-0 bg-transparent shadow-none hover:not-data-disabled:bg-tint-hover sm:ml-1"
             value={key}
-            onValueChange={(v) => setUi({ project: v, selected: null, epic: null, panel: null })}
+            // Base UI reports null when the chosen option leaves the list (the Unassigned entry, once its last card moves): not a pick.
+            onValueChange={(v) => v && setUi({ project: v, selected: null, epic: null, panel: null, creating: null })}
             items={[...git.map((x) => ({ value: x.id, label: x.name })), ...(unassigned || key === 'unassigned' ? [{ value: 'unassigned', label: `Unassigned (${unassigned})` }] : [])]}
           />
           {project && <ProjectBadge badge={project.badge} className="-ml-0.5 max-sm:hidden" />}
           <span className="flex-1" />
+          {author && (
+            <Tip label="New epic">
+              <Button size="md" aria-label="New epic" className="px-2 text-muted" onClick={() => create('epic')}>
+                <Plus />
+                <span className="max-sm:hidden">New epic</span>
+              </Button>
+            </Tip>
+          )}
           {!narrow && <Segmented size="sm" aria-label="View" value={ui.view} onValueChange={(v) => setUi({ view: v as PlannerViewKind })} items={VIEW_ITEMS} />}
           <Tip label="Inbox">
             <Button id="planner-inbox" size="md" aria-pressed={ui.panel === 'inbox'} aria-label={`Inbox, ${pending} pending`} className="px-2 text-muted" onClick={() => setUi({ panel: ui.panel === 'inbox' ? null : 'inbox' })}>

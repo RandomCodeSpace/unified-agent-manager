@@ -7,7 +7,7 @@ import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
 import { Collapse } from '../ui/collapse';
 import { Input } from '../ui/input';
-import { useShownBoard } from './context';
+import { usePlannerTasks, useShownBoard } from './context';
 import { TaskChip } from './parts';
 
 export const REQUEST_LABEL: Record<RequestKind, string> = { done: 'Done', cancel: 'Cancel', blocked: 'Blocked', split: 'Split', change: 'Change' };
@@ -46,7 +46,8 @@ function Row({ icon, label, children }: Readonly<{ icon: ReactNode; label: React
 }
 
 /** A done request's evidence rows (§6): diff, commits, acceptance, transcript and checklist, each one line until opened. */
-export function EvidenceRows({ evidence: ev, sessions, onOpenTask }: Readonly<{ evidence: Evidence; sessions: SessionSummary[]; onOpenTask: (id: string) => void }>) {
+export function EvidenceRows({ evidence: ev }: Readonly<{ evidence: Evidence }>) {
+  const { sessions } = usePlannerTasks();
   const rows: ReactNode[] = [];
   if (ev.diff) {
     const files = ev.diff.files;
@@ -101,7 +102,7 @@ export function EvidenceRows({ evidence: ev, sessions, onOpenTask }: Readonly<{ 
         <span aria-hidden="true" className="size-3.5 shrink-0" />
         <MessageSquareText aria-hidden="true" className="size-3.5 shrink-0" />
         Transcript
-        <TaskChip taskId={t.task_id} sessions={sessions} onOpen={onOpenTask} />
+        <TaskChip taskId={t.task_id} />
       </div>,
     );
   }
@@ -116,22 +117,26 @@ function taskLabel(sessions: SessionSummary[], id: string): string {
   return name ? ` (${name})` : '';
 }
 
+/**
+ * What a split does to `card` with `count` new subtasks (§7): under a story they join it right
+ * after the card, which is cancelled; under an epic or at the root the card becomes a story.
+ */
+export function splitSentence(card: Card | undefined, byId: ReadonlyMap<string, Card>, count: number): string {
+  const parent = card?.parent_id ? byId.get(card.parent_id) : undefined;
+  const n = `${count} ${count === 1 ? 'subtask' : 'subtasks'}`;
+  const hold = card?.held_by ? ' The hold moves to the first pending one.' : '';
+  return parent?.kind === 'story' ? `Adds ${n} to #${parent.seq} ${parent.title} right after #${card?.seq}, which is cancelled.${hold}` : `Turns #${card?.seq} into a story with ${n}.${hold}`;
+}
+
 /** What a split or change request proposes. */
 function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; card: Card | undefined; byId: ReadonlyMap<string, Card> }>) {
   if (r.kind === 'split') {
     // The given children first, then the checklist items (§7).
     const given = Array.isArray(r.payload.children) ? (r.payload.children as { title: string; win_condition?: string; done?: boolean }[]) : [];
     const children = [...given, ...(card?.checklist ?? []).map((i) => ({ title: i.text, win_condition: '', done: i.done }))];
-    const parent = card?.parent_id ? byId.get(card.parent_id) : undefined;
-    const count = `${children.length} ${children.length === 1 ? 'subtask' : 'subtasks'}`;
-    const hold = card?.held_by ? ' The hold moves to the first pending one.' : '';
     return (
       <div className="flex flex-col gap-0.5">
-        <p className="text-caption text-muted">
-          {parent?.kind === 'story'
-            ? `Adds ${count} to #${parent.seq} ${parent.title} right after #${card?.seq}, which is cancelled.${hold}`
-            : `Turns #${card?.seq} into a story with ${count}.${hold}`}
-        </p>
+        <p className="text-caption text-muted">{splitSentence(card, byId, children.length)}</p>
         <ul className="flex flex-col gap-0.5 pl-1">
           {children.map((c, i) => (
             <li key={i} className="flex min-w-0 items-start gap-1.5 text-caption">
@@ -175,7 +180,8 @@ function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; 
  * Accept, and Reject with a required reason, both inline so they work in a popped-out window.
  */
 export function RequestItem({ request: r, byId, showCard = true }: Readonly<{ request: BoardRequest; byId: ReadonlyMap<string, Card>; showCard?: boolean }>) {
-  const { sessions, openCard, openTask, notify } = useShownBoard();
+  const { openCard, notify } = useShownBoard();
+  const { sessions } = usePlannerTasks();
   const card = byId.get(r.card_id);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
@@ -214,7 +220,7 @@ export function RequestItem({ request: r, byId, showCard = true }: Readonly<{ re
         )}
         {!pending && <span className="text-caption text-muted capitalize">{r.status}</span>}
         <span className="flex-1" />
-        <TaskChip taskId={r.task_id} sessions={sessions} onOpen={openTask} />
+        <TaskChip taskId={r.task_id} />
         <time className="shrink-0 text-caption tabular-nums text-muted" dateTime={r.created_at} title={new Date(r.created_at).toLocaleString()}>{relTime(r.created_at)}</time>
       </header>
       {r.comment && <p className="text-ui text-body [overflow-wrap:anywhere]">{r.comment}</p>}
@@ -228,7 +234,7 @@ export function RequestItem({ request: r, byId, showCard = true }: Readonly<{ re
         </div>
       )}
       <Proposal request={r} card={card} byId={byId} />
-      <EvidenceRows evidence={r.evidence} sessions={sessions} onOpenTask={openTask} />
+      <EvidenceRows evidence={r.evidence} />
       {r.decision_comment && <p className="text-caption text-muted">Decision: {r.decision_comment}</p>}
       {pending && !rejecting && (
         <div className="flex flex-wrap justify-end gap-2 pt-1">

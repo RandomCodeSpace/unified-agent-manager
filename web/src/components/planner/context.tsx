@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { BoardJob, Card, Project, SessionSummary } from '../../api';
+import type { BoardJob, Card, CardKind, Project, SessionSummary } from '../../api';
 import type { BoardState } from '../../state';
 
 export type PlannerViewKind = 'tree' | 'board' | 'map';
@@ -25,9 +25,16 @@ export interface PlannerUi {
   suggestedOpen: Record<string, boolean>;
   /** The side panel of the main pane. */
   panel: 'card' | 'inbox' | null;
+  /** A card the owner is adding in the Tree: its kind, under this parent (`''` for the root). */
+  creating: PlannerCreating | null;
 }
 
-export const INITIAL_UI: PlannerUi = { project: null, view: 'tree', selected: null, epic: null, showCancelled: false, folded: {}, suggestedOpen: {}, panel: null };
+export interface PlannerCreating {
+  parent: string;
+  kind: CardKind;
+}
+
+export const INITIAL_UI: PlannerUi = { project: null, view: 'tree', selected: null, epic: null, showCancelled: false, folded: {}, suggestedOpen: {}, panel: null, creating: null };
 
 export interface PlannerNotice {
   tone: 'muted' | 'error';
@@ -42,7 +49,6 @@ export interface PlannerContextValue {
   boards: Record<string, BoardState>;
   jobs: Record<string, BoardJob>;
   projects: Project[];
-  sessions: SessionSummary[];
   /** Select a card and show it in the main pane's card panel (opening the Planner view when it is elsewhere). */
   openCard: (id: string) => void;
   /** Show a Task (a held subtask's chip, a transcript link). */
@@ -59,6 +65,19 @@ export interface PlannerContextValue {
 }
 
 export const PlannerContext = createContext<PlannerContextValue | null>(null);
+
+/**
+ * The Tasks, for the chips that name one (a held subtask, a request, a transcript link). Apart
+ * from the planner's context, so a Task update re-renders those chips and nothing else.
+ */
+export interface PlannerTasksValue {
+  sessions: SessionSummary[];
+  openTask: (id: string) => void;
+}
+
+export const PlannerTasks = createContext<PlannerTasksValue>({ sessions: [], openTask: () => {} });
+
+export const usePlannerTasks = () => useContext(PlannerTasks);
 
 export function usePlanner(): PlannerContextValue {
   const ctx = useContext(PlannerContext);

@@ -1,17 +1,17 @@
-import { ArrowLeft, Ban, Check, FolderInput, GitCommitHorizontal, Link2, ListChecks, Pencil, Play, RotateCcw, Sparkles, SquareTerminal, Stethoscope, Undo2, Workflow, X } from 'lucide-react';
+import { ArrowLeft, Ban, Check, CheckCheck, FolderInput, GitCommitHorizontal, Link2, ListChecks, MoveRight, Pencil, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, describeError, type AcceptRun, type Card, type CardDetail, type TriageVerdict } from '../../api';
-import { cardPath } from '../../lib/board';
+import { cardPath, openBlockerSeqs } from '../../lib/board';
 import { cn } from '../../lib/cn';
-import { Loading, Note, relTime, useApp } from '../common';
+import { Loading, Markdown, Note, relTime, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
 import { Input } from '../ui/input';
 import { Segmented } from '../ui/segmented';
 import { Select } from '../ui/select';
-import { useShownBoard } from './context';
-import { BriefDialog, ReasonDialog, type BriefAsk, type ReasonAsk } from './dialogs';
+import { usePlannerTasks, useShownBoard } from './context';
+import { BriefDialog, DoneDialog, MoveDialog, ReasonDialog, SplitDialog, moveTargets, type BriefAsk, type ReasonAsk } from './dialogs';
 import { CardMarkers, KindIcon, ProgressText, StatusMark, TaskChip, expiresIn, kindLabel } from './parts';
 import { RequestItem } from './Requests';
 import { CardEditor } from './TreeView';
@@ -70,7 +70,9 @@ export function CardPanel({ inline, open, onClose, onClosed }: Readonly<{ inline
 }
 
 function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void }>) {
-  const { sessions, openTask, notify, projects, jobs } = useShownBoard();
+  const { notify, projects, jobs, cards } = useShownBoard();
+  const { sessions } = usePlannerTasks();
+  const [dialog, setDialog] = useState<'done' | 'move' | 'split' | null>(null);
   const [detail, setDetail] = useState<CardDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -125,9 +127,12 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
       actions.push({ key: 'plan', label: 'Plan with agent', icon: <Workflow />, onClick: () => setBrief({ kind: 'plan', title: `Plan #${c.seq} with an agent`, run: async ({ brief: b }) => { const r = await api.planner.plan(c.id, { brief: b }); notify({ tone: 'muted', text: `A planning task started for #${c.seq}.`, task: r.session.id }); } }) });
       actions.push({ key: 'suggest', label: c.kind === 'epic' ? 'Suggest stories' : 'Suggest subtasks', icon: <Sparkles />, onClick: () => setBrief({ kind: 'suggest', title: c.kind === 'epic' ? `Suggest stories for #${c.seq}` : `Suggest subtasks for #${c.seq}`, run: (body) => api.planner.suggest(c.id, body) }) });
     }
+    if (leaf && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'done', label: 'Mark done', icon: <CheckCheck />, onClick: () => setDialog('done') });
     if (leaf && c.status === 'doing') actions.push({ key: 'release', label: 'Release', icon: <Undo2 />, onClick: () => setReason({ title: `Release #${c.seq}?`, description: 'The subtask goes back to To do and its Task stops holding it. Pending requests are withdrawn.', label: 'Comment (optional)', confirm: 'Release', required: false, run: (t) => api.planner.release(c.id, t) }) });
     if (leaf && c.confirmed && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, onClick: () => void run('check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && setCheck(r.accept)) });
     if (leaf && c.stale) actions.push({ key: 'triage', label: 'Triage', icon: <Stethoscope />, onClick: () => void run('triage', 'triage the subtask', () => api.planner.triage(c.id)).then((r) => r && setTriage(r)) });
+    if (c.kind !== 'epic' && c.status !== 'cancelled' && (c.parent_id || moveTargets(c, cards).length > 0)) actions.push({ key: 'move', label: 'Move to…', icon: <MoveRight />, onClick: () => setDialog('move') });
+    if (leaf && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'split', label: 'Split', icon: <Split />, onClick: () => setDialog('split') });
     if (c.status !== 'cancelled' && c.status !== 'done') {
       actions.push({
         key: 'cancel',
@@ -182,8 +187,8 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
             <span>{kindLabel(c.kind)}</span>
             {!leaf && <ProgressText card={c} />}
             {!c.confirmed && <Chip><Sparkles aria-hidden="true" className="size-3" />Suggested, {expiresIn(c.expires_at)}</Chip>}
-            {c.held_by && <TaskChip taskId={c.held_by} sessions={sessions} onOpen={openTask} />}
-            <CardMarkers card={c} byId={byId} />
+            {c.held_by && <TaskChip taskId={c.held_by} />}
+            <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} />
             {c.pinned_sha && <span className="flex items-center gap-1" title="HEAD at the last owner touch"><GitCommitHorizontal aria-hidden="true" className="size-3" />{c.pinned_sha.slice(0, 7)}</span>}
             {c.effort && <span>Effort {c.effort}</span>}
             {c.due && <span>Due {c.due}</span>}
@@ -227,7 +232,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
 
         {c.desc && (
           <Group title="Description">
-            <p className="text-ui whitespace-pre-wrap text-body [overflow-wrap:anywhere]">{c.desc}</p>
+            <Markdown text={c.desc} />
           </Group>
         )}
 
@@ -275,7 +280,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
               {detail.holds.map((h, i) => (
                 <li key={h.id} className="flex min-w-0 flex-wrap items-center gap-1.5 text-caption text-muted">
                   <span className="tabular-nums">#{i + 1}</span>
-                  <TaskChip taskId={h.task_id} sessions={sessions} onOpen={openTask} />
+                  <TaskChip taskId={h.task_id} />
                   <span>from {h.baseline_head.slice(0, 7)}, {relTime(h.started_at)} ago</span>
                   <span>{h.ended_at ? `ended ${relTime(h.ended_at)} ago${h.end_reason ? `: ${h.end_reason}` : ''}` : 'holding'}</span>
                 </li>
@@ -311,10 +316,13 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
           )}
         </Group>
 
-        {leaf && !unassigned && <OwnerFields key={`${c.id}:${c.revision}`} card={c} />}
+        {leaf && !unassigned && <OwnerFields key={c.id} card={c} />}
       </div>
       <ReasonDialog ask={reason} onClose={() => setReason(null)} />
       <BriefDialog ask={brief} onClose={() => setBrief(null)} />
+      <DoneDialog card={c} byId={byId} open={dialog === 'done'} onClose={() => setDialog(null)} />
+      <MoveDialog card={c} cards={cards} open={dialog === 'move'} onClose={() => setDialog(null)} />
+      <SplitDialog card={c} byId={byId} open={dialog === 'split'} onClose={() => setDialog(null)} />
     </div>
   );
 }
@@ -372,15 +380,33 @@ function Links({ card: c, byId, onOpen, readOnly }: Readonly<{ card: Card; byId:
   );
 }
 
+const modeOf = (cmd: string | null): 'inherit' | 'none' | 'command' => {
+  if (cmd === null) return 'inherit';
+  return cmd === '' ? 'none' : 'command';
+};
+
 /**
  * The owner-only fields (§1): the acceptance command, tri-state (inherit the Project's, none,
- * or a command), and the paths staleness watches. No agent tool can write either.
+ * or a command), and the paths staleness watches. No agent tool can write either. The form
+ * lives as long as the card is shown; when the stored values change (a save, another window),
+ * a field takes them only while it is untouched, so a card update never wipes unsaved input.
  */
 function OwnerFields({ card: c }: Readonly<{ card: Card }>) {
   const { notify } = useShownBoard();
-  const [mode, setMode] = useState<'inherit' | 'none' | 'command'>(c.accept_cmd === null ? 'inherit' : c.accept_cmd === '' ? 'none' : 'command');
+  const [mode, setMode] = useState(modeOf(c.accept_cmd));
   const [cmd, setCmd] = useState(c.accept_cmd ?? '');
   const [paths, setPaths] = useState(c.paths.join('\n'));
+  const storedPaths = c.paths.join('\n');
+  const [base, setBase] = useState({ accept: c.accept_cmd, paths: storedPaths });
+  if (base.accept !== c.accept_cmd || base.paths !== storedPaths) {
+    const localAccept = mode === 'inherit' ? null : mode === 'none' ? '' : cmd.trim();
+    if (localAccept === base.accept) {
+      setMode(modeOf(c.accept_cmd));
+      setCmd(c.accept_cmd ?? '');
+    }
+    if (paths === base.paths) setPaths(storedPaths);
+    setBase({ accept: c.accept_cmd, paths: storedPaths });
+  }
   const [inherited, setInherited] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {

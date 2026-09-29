@@ -1,9 +1,10 @@
 import { Bot, Check, Circle, CircleDashed, CircleDot, Layers, Link2, ListTree, Lock, Minus, SquareCheck, TriangleAlert } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { taskName, type Card, type CardKind, type CardStatus, type SessionSummary } from '../../api';
+import { memo, type ReactNode } from 'react';
+import { taskName, type Card, type CardKind, type CardStatus } from '../../api';
 import { KIND_LABEL, STATUS_LABEL } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Chip } from '../ui/chip';
+import { usePlannerTasks } from './context';
 
 /**
  * Card state marks (DESIGN.md State marks, extended): colour only where it means something —
@@ -12,7 +13,8 @@ import { Chip } from '../ui/chip';
  */
 export const STATUS_TEXT: Record<CardStatus, string> = { planned: 'text-muted', todo: 'text-body', doing: 'text-accent', done: 'text-success', cancelled: 'text-muted' };
 
-export function StatusGlyph({ status, className }: Readonly<{ status: CardStatus; className?: string }>) {
+// Memoised, like ProgressText: the Board's column and lane heads draw them again on every frame.
+export const StatusGlyph = memo(function StatusGlyph({ status, className }: Readonly<{ status: CardStatus; className?: string }>) {
   const c = cn('size-3.5 shrink-0', className);
   switch (status) {
     case 'planned':
@@ -26,7 +28,7 @@ export function StatusGlyph({ status, className }: Readonly<{ status: CardStatus
     case 'cancelled':
       return <Minus aria-hidden="true" className={cn(c, 'text-muted')} strokeWidth={2.5} />;
   }
-}
+});
 
 /** The status as a glyph and a word (a chip), or the glyph alone with the word for screen readers. */
 export function StatusMark({ status, label = false, className }: Readonly<{ status: CardStatus; label?: boolean; className?: string }>) {
@@ -55,8 +57,8 @@ export function KindIcon({ kind, className }: Readonly<{ kind: CardKind; classNa
 
 export const kindLabel = (k: CardKind) => KIND_LABEL[k];
 
-/** A container's progress: done of total, with "+N proposed" for its suggestions. */
-export function ProgressText({ card, className }: Readonly<{ card: Card; className?: string }>) {
+/** A container's progress: done of total, with "+N proposed" for its suggestions. Memoised on the card, which stays the same object while unchanged. */
+export const ProgressText = memo(function ProgressText({ card, className }: Readonly<{ card: Card; className?: string }>) {
   const p = card.progress;
   if (!p) return null;
   return (
@@ -65,7 +67,7 @@ export function ProgressText({ card, className }: Readonly<{ card: Card; classNa
       {p.proposed > 0 && <span className="text-muted"> +{p.proposed}</span>}
     </span>
   );
-}
+});
 
 /** A 16px ring filled by a container's progress (the Map draws its own in SVG). */
 export function ProgressRing({ card, className }: Readonly<{ card: Card; className?: string }>) {
@@ -82,7 +84,8 @@ export function ProgressRing({ card, className }: Readonly<{ card: Card; classNa
 }
 
 /** The Task holding a subtask; a click opens it. */
-export function TaskChip({ taskId, sessions, onOpen, className }: Readonly<{ taskId: string; sessions: SessionSummary[]; onOpen: (id: string) => void; className?: string }>) {
+export function TaskChip({ taskId, className }: Readonly<{ taskId: string; className?: string }>) {
+  const { sessions, openTask } = usePlannerTasks();
   const s = sessions.find((x) => x.id === taskId);
   const name = s ? taskName(s) || 'New task' : 'A task';
   return (
@@ -93,7 +96,7 @@ export function TaskChip({ taskId, sessions, onOpen, className }: Readonly<{ tas
       aria-label={`Open task ${name}`}
       onClick={(e) => {
         e.stopPropagation();
-        onOpen(taskId);
+        openTask(taskId);
       }}
     >
       <Bot aria-hidden="true" className="size-3 shrink-0" />
@@ -102,8 +105,8 @@ export function TaskChip({ taskId, sessions, onOpen, className }: Readonly<{ tas
   );
 }
 
-/** The quiet markers a card row carries: pending requests, staleness, blocked. */
-export function CardMarkers({ card, byId, compact = false }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; compact?: boolean }>) {
+/** The quiet markers a card row carries: pending requests, staleness, blocked (`blockers`: its open blockers, from `openBlockerSeqs`). */
+export function CardMarkers({ card, blockers, compact = false }: Readonly<{ card: Card; blockers: string; compact?: boolean }>) {
   const marks: ReactNode[] = [];
   if (card.pending_requests > 0) {
     marks.push(
@@ -124,9 +127,8 @@ export function CardMarkers({ card, byId, compact = false }: Readonly<{ card: Ca
       </Chip>,
     );
   }
-  const open = card.blocked_by.map((id) => byId.get(id)).filter((b): b is Card => !!b && b.status !== 'done' && b.status !== 'cancelled');
-  if (card.blocked || open.length) {
-    const title = card.blocked ? 'Marked blocked' : `Blocked by ${open.map((b) => `#${b.seq}`).join(', ')}`;
+  if (card.blocked || blockers) {
+    const title = card.blocked ? 'Marked blocked' : `Blocked by ${blockers}`;
     marks.push(
       <Chip key="blocked" title={title}>
         {card.blocked ? <Lock aria-hidden="true" className="size-3" /> : <Link2 aria-hidden="true" className="size-3" />}

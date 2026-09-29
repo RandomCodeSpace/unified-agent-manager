@@ -28,6 +28,9 @@ export function MapView() {
   const view = useRef({ x: PAD, y: PAD, k: 1 });
   const frame = useRef(0);
   const idle = useRef(0);
+  /** The window the pending frame and timer belong to: the pop-out's own when the Map is in one. */
+  const clock = useRef<Window | null>(null);
+  const revealed = useRef<string | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean; distance?: number; k?: number } | null>(null);
   const dragged = useRef(false);
@@ -37,14 +40,22 @@ export function MapView() {
   const paint = useCallback(() => {
     frame.current = 0;
     const el = layer.current;
-    if (el) el.style.transform = `translate3d(${view.current.x}px, ${view.current.y}px, 0) scale(${view.current.k})`;
+    // 2D on purpose: a 3D transform would keep the layer composited at rest (will-change promotes it only while it moves).
+    if (el) el.style.transform = `translate(${view.current.x}px, ${view.current.y}px) scale(${view.current.k})`;
   }, []);
-  /** Schedules one write per frame; the layer is promoted only while it moves, then settles back to crisp text. */
+  /**
+   * Schedules one write per frame; the layer is promoted only while it moves, then settles back
+   * to crisp text. Frames and timers run on the Map's own window: in a Picture-in-Picture
+   * pop-out, the main page's may be throttled while its tab is hidden.
+   */
   const schedule = useCallback(() => {
-    layer.current?.classList.add('will-change-transform');
-    window.clearTimeout(idle.current);
-    idle.current = window.setTimeout(() => layer.current?.classList.remove('will-change-transform'), 200);
-    frame.current ||= requestAnimationFrame(paint);
+    const el = layer.current;
+    const win = el?.ownerDocument.defaultView ?? window;
+    clock.current = win;
+    el?.classList.add('will-change-transform');
+    win.clearTimeout(idle.current);
+    idle.current = win.setTimeout(() => layer.current?.classList.remove('will-change-transform'), 200);
+    frame.current ||= win.requestAnimationFrame(paint);
   }, [paint]);
   const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
     const v = view.current;
@@ -72,23 +83,32 @@ export function MapView() {
     paint();
   }, [openKey, layout, paint]);
   useEffect(() => () => {
-    cancelAnimationFrame(frame.current);
+    const win = clock.current;
+    if (!win) return;
+    win.cancelAnimationFrame(frame.current);
     frame.current = 0;
-    window.clearTimeout(idle.current);
+    win.clearTimeout(idle.current);
   }, []);
 
-  // A card chosen elsewhere (the Tree, the Board, another window) is brought into view.
-  useEffect(() => {
+  /** Pans a node into view when any of it is outside, centring it. */
+  const reveal = useCallback((n: MapNode) => {
     const el = viewport.current;
-    const n = layout.nodes.find((x) => x.card.id === ui.selected);
-    if (!el || !n) return;
+    if (!el) return;
     const v = view.current;
     const left = v.x + n.x * v.k, top = v.y + n.y * v.k;
     if (left >= 0 && top >= 0 && left + MAP_NODE_W * v.k <= el.clientWidth && top + MAP_NODE_H * v.k <= el.clientHeight) return;
     v.x = el.clientWidth / 2 - (n.x + MAP_NODE_W / 2) * v.k;
     v.y = el.clientHeight / 2 - (n.y + MAP_NODE_H / 2) * v.k;
     schedule();
-  }, [ui.selected, layout.nodes, schedule]);
+  }, [schedule]);
+
+  // A card chosen elsewhere (the Tree, the Board, another window) is brought into view, once per choice.
+  useEffect(() => {
+    const n = layout.nodes.find((x) => x.card.id === ui.selected);
+    if (!n || revealed.current === ui.selected) return;
+    revealed.current = ui.selected;
+    reveal(n);
+  }, [ui.selected, layout.nodes, reveal]);
 
   // Wheel pans; Ctrl or Cmd + wheel (and a trackpad pinch) zooms at the pointer. Not passive, so the page never scrolls.
   useEffect(() => {
@@ -195,7 +215,8 @@ export function MapView() {
         aria-label="Plan map. Arrow keys pan, plus and minus zoom, 0 fits the plan."
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so the keyboard can pan and zoom it.
         tabIndex={0}
-        className="absolute inset-0 cursor-grab touch-none overflow-hidden bg-canvas select-none focus-visible:-outline-offset-2 active:cursor-grabbing"
+        // Clipped, never a scroll container: focusing a node off screen pans the layer (Node's onFocus), it never scrolls the viewport.
+        className="absolute inset-0 cursor-grab touch-none overflow-clip bg-canvas select-none focus-visible:-outline-offset-2 active:cursor-grabbing"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -212,7 +233,7 @@ export function MapView() {
             <Edges edges={layout.edges} nodes={layout.nodes} arrow={`url(#${marker}-arrow)`} />
           </svg>
           {layout.nodes.map((n) => (
-            <Node key={n.card.id} node={n} selected={ui.selected === n.card.id} onOpen={open} />
+            <Node key={n.card.id} node={n} selected={ui.selected === n.card.id} onOpen={open} onFocusNode={reveal} />
           ))}
         </div>
       </div>
@@ -231,6 +252,22 @@ export function MapView() {
   );
 }
 
+const isOpen = (c: Card) => c.status !== 'done' && c.status !== 'cancelled';
+
+/** Equal while the same edges join nodes at the same places, each blocker as open as before: a title or checklist change redraws no edge. */
+function sameEdges(a: Readonly<{ edges: MapEdge[]; nodes: MapNode[]; arrow: string }>, b: Readonly<{ edges: MapEdge[]; nodes: MapNode[]; arrow: string }>): boolean {
+  if (a.arrow !== b.arrow || a.edges.length !== b.edges.length || a.nodes.length !== b.nodes.length) return false;
+  for (let i = 0; i < a.nodes.length; i++) {
+    const p = a.nodes[i], q = b.nodes[i];
+    if (p !== q && (p.card.id !== q.card.id || p.x !== q.x || p.y !== q.y || isOpen(p.card) !== isOpen(q.card))) return false;
+  }
+  for (let i = 0; i < a.edges.length; i++) {
+    const x = a.edges[i], y = b.edges[i];
+    if (x.from !== y.from || x.to !== y.to || x.kind !== y.kind) return false;
+  }
+  return true;
+}
+
 const Edges = memo(function Edges({ edges, nodes, arrow }: Readonly<{ edges: MapEdge[]; nodes: MapNode[]; arrow: string }>) {
   const at = new Map(nodes.map((n) => [n.card.id, n]));
   const h = MAP_NODE_H / 2;
@@ -247,7 +284,7 @@ const Edges = memo(function Edges({ edges, nodes, arrow }: Readonly<{ edges: Map
         // A blocker link loops out to the right of both cards, so it never crosses the tree's own edges.
         const x1 = a.x + MAP_NODE_W, y1 = a.y + h, x2 = b.x + MAP_NODE_W, y2 = b.y + h;
         const out = Math.max(x1, x2) + 36 + Math.min(80, Math.abs(y2 - y1) / 6);
-        const open = a.card.status !== 'done' && a.card.status !== 'cancelled';
+        const open = isOpen(a.card);
         return (
           <path
             key={`${e.from}~${e.to}`}
@@ -263,9 +300,9 @@ const Edges = memo(function Edges({ edges, nodes, arrow }: Readonly<{ edges: Map
       })}
     </g>
   );
-});
+}, sameEdges);
 
-const Node = memo(function Node({ node, selected, onOpen }: Readonly<{ node: MapNode; selected: boolean; onOpen: (id: string) => void }>) {
+const Node = memo(function Node({ node, selected, onOpen, onFocusNode }: Readonly<{ node: MapNode; selected: boolean; onOpen: (id: string) => void; onFocusNode: (n: MapNode) => void }>) {
   const c: Card = node.card;
   const meta = `#${c.seq} · ${KIND_LABEL[c.kind]} · ${STATUS_LABEL[c.status]}${c.progress ? ` · ${c.progress.done}/${c.progress.total}` : ''}`;
   return (
@@ -284,6 +321,7 @@ const Node = memo(function Node({ node, selected, onOpen }: Readonly<{ node: Map
         c.status === 'cancelled' && 'opacity-50',
       )}
       onClick={() => onOpen(c.id)}
+      onFocus={() => onFocusNode(node)}
     >
       {c.kind === 'subtask' ? <span aria-hidden="true" className={cn('size-2.5 shrink-0 rounded-full border-[1.5px]', DOT[c.status])} /> : <ProgressRing card={c} />}
       <span className="flex min-w-0 flex-1 flex-col">

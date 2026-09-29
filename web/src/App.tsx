@@ -15,6 +15,7 @@ import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAtta
 import { mostRecentProject, needsYouCount, newsReader, pageTitle, tasksOf } from './lib/tasks';
 import { pendingRequests } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
+import { PlannerTasks } from './components/planner/context';
 import { SettleDialog, type SettleAsk } from './components/planner/SettleDialog';
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
@@ -489,12 +490,12 @@ export default function App() {
     boards: state.boards,
     jobs: state.boardJobs,
     projects: state.projects,
-    sessions: state.sessions,
     dispatch,
     onShowPlanner: showPlanner,
     onOpenTask: openTask,
     initialProject: hashPlanner(),
   });
+  const plannerTasks = useMemo(() => ({ sessions: state.sessions, openTask }), [state.sessions, openTask]);
   const plannerProject = planner.value.ui.project;
   const setPlannerUi = planner.value.setUi;
 
@@ -845,6 +846,7 @@ export default function App() {
   return (
     <AppContext.Provider value={ctx}>
       <PlannerContext.Provider value={planner.value}>
+      <PlannerTasks.Provider value={plannerTasks}>
       <TaskActionsContext.Provider value={taskActions}>
         <TooltipProvider delay={400} closeDelay={0}>
           <div
@@ -970,6 +972,7 @@ export default function App() {
           </div>
         </TooltipProvider>
       </TaskActionsContext.Provider>
+      </PlannerTasks.Provider>
       </PlannerContext.Provider>
     </AppContext.Provider>
   );

@@ -1,5 +1,6 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { api } from '../../src/api';
 import { copyStyles, popMode } from '../../src/components/planner/PopOut';
 import { renderApp, sidebar, type User } from './render';
 
@@ -309,10 +310,234 @@ describe('the map', () => {
     await user.click(screen.getByRole('radio', { name: 'Map' }));
     const map = await screen.findByRole('group', { name: /Plan map/ });
     const layer = map.firstElementChild as HTMLElement;
-    await waitFor(() => expect(layer.style.transform).toBe('translate3d(24px, 24px, 0) scale(1)'));
+    await waitFor(() => expect(layer.style.transform).toBe('translate(24px, 24px) scale(1)'));
     expect(within(map).getByRole('button', { name: /^#1 · Epic · Doing/ })).toBeTruthy();
     // The test environment lays nothing out (a 0 × 0 viewport): Fit stops at the 0.4 limit.
     await user.click(screen.getByRole('button', { name: 'Fit the plan' }));
     expect(layer.style.transform).toMatch(/scale\(0\.4\)$/);
+  });
+
+  test('Tab goes parents first, and a focused node pans into view without scrolling the viewport', async () => {
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('radio', { name: 'Map' }));
+    const map = await screen.findByRole('group', { name: /Plan map/ });
+    const layer = map.firstElementChild as HTMLElement;
+    await waitFor(() => expect(layer.style.transform).toBe('translate(24px, 24px) scale(1)'));
+    expect(map.classList.contains('overflow-clip')).toBe(true);
+    act(() => map.focus());
+    const seen: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      await user.tab();
+      seen.push(document.activeElement!.getAttribute('aria-label')!.split(' · ').slice(0, 2).join(' · '));
+    }
+    expect(seen).toEqual(['#1 · Epic', '#2 · Story', '#3 · Subtask']);
+    // The test environment's viewport is 0 × 0, so every node is out of view: focus pans the layer to it.
+    await waitFor(() => expect(layer.style.transform).not.toBe('translate(24px, 24px) scale(1)'));
+    expect(map.scrollTop).toBe(0);
+    expect(map.scrollLeft).toBe(0);
+  });
+});
+
+/** Picks `option` in the labelled select. */
+async function pick(user: User, within_: ReturnType<typeof within>, name: string, option: string | RegExp) {
+  await user.click(within_.getByRole('combobox', { name }));
+  await user.click(await screen.findByRole('option', { name: option }));
+}
+
+/** Opens a card's detail from the Tree. */
+async function openCard(user: User, tree: ReturnType<typeof within>, seq: number) {
+  await user.click(tree.getByRole('treeitem', { name: new RegExp(`^#${seq} `) }));
+  return within(await screen.findByLabelText(`Card #${seq}`));
+}
+
+/** Closes the card detail: below 1280px it is an overlay, and the Tree under it is hidden while it is open. */
+async function closeCard(user: User) {
+  await user.click(screen.getByRole('button', { name: 'Close card' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Close card' })).toBeNull());
+}
+
+const labels = (tree: ReturnType<typeof within>) => tree.getAllByRole('treeitem').map((r) => r.getAttribute('aria-label') ?? '');
+
+describe('owner authoring', () => {
+  test('an empty plan offers New epic; containers add stories and subtasks, and the root a subtask', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    await api.createProject({ dir: '/home/user/projects/empty-plan' });
+    await user.click(side.getByRole('button', { name: 'Planner' }));
+    await waitFor(() => expect(header().textContent).toBe('Planner'));
+    await pick(user, within(document.body), 'Project', 'empty-plan');
+    expect(await screen.findByText('Nothing is planned for empty-plan yet.')).toBeTruthy();
+    // The header's New epic, and the empty state's.
+    await user.click(screen.getAllByRole('button', { name: 'New epic' }).at(-1)!);
+    const add = async (form: string, title: string, button: string) => {
+      const f = within(await screen.findByRole('form', { name: form }));
+      await user.type(f.getByRole('textbox', { name: 'Title' }), title);
+      await user.click(f.getByRole('button', { name: button }));
+    };
+    await add('New epic', 'Offline mode', 'Add epic');
+    const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    const epic = await tree.findByRole('treeitem', { name: '#37 Offline mode, Planned' });
+    await user.click(within(epic).getByRole('button', { name: 'Add a story to #37' }));
+    await add('New story in #37', 'Queue sends while offline', 'Add story');
+    const story = await tree.findByRole('treeitem', { name: '#38 Queue sends while offline, Planned' });
+    await user.click(within(story).getByRole('button', { name: 'Add a subtask to #38' }));
+    await add('New subtask in #38', 'Persist the send queue', 'Add subtask');
+    await tree.findByRole('treeitem', { name: /^#39 Persist the send queue/ });
+    await user.click(screen.getByRole('button', { name: 'Add a subtask at the root' }));
+    await add('New subtask', 'Audit the service worker cache', 'Add subtask');
+    await tree.findByRole('treeitem', { name: /^#40 Audit the service worker cache/ });
+    expect(tree.getAllByRole('treeitem').map((r) => `${r.getAttribute('aria-level')} ${r.getAttribute('aria-label')?.split(' ')[0]}`)).toEqual(['1 #37', '2 #38', '3 #39', '1 #40']);
+  });
+
+  test('New epic in the header opens its form in the Tree from any view', async () => {
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('radio', { name: 'Board' }));
+    await screen.findByRole('region', { name: 'Board' });
+    await user.click(screen.getByRole('button', { name: 'New epic' }));
+    const form = within(await screen.findByRole('form', { name: 'New epic' }));
+    expect(screen.getByRole('radio', { name: 'Tree' }).getAttribute('aria-checked')).toBe('true');
+    await user.type(form.getByRole('textbox', { name: 'Title' }), 'Offline mode{Enter}');
+    const tree = within(screen.getByRole('tree', { name: 'Plan outline' }));
+    expect((await tree.findByRole('treeitem', { name: '#37 Offline mode, Planned' })).getAttribute('aria-level')).toBe('1');
+  });
+
+  test('Mark done shows what is still open, and Finish anyway closes it', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 15);
+    await user.click(panel.getByRole('button', { name: 'Mark done' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Mark #15 done?' }));
+    const submit = dialog.getByRole('button', { name: 'Mark done' }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    await user.type(dialog.getByRole('textbox', { name: 'Comment (required)' }), 'The window tests cover it.');
+    await user.click(submit);
+    const alert = within(await dialog.findByRole('alert'));
+    expect(alert.getByText('Open checklist items')).toBeTruthy();
+    expect(alert.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Scroll to the middle', 'Land an older page']);
+    await user.click(dialog.getByRole('button', { name: 'Finish anyway' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Mark #15 done?' })).toBeNull());
+    await closeCard(user);
+    expect(await tree.findByRole('treeitem', { name: '#15 Cover anchoring with a DOM test, Done' })).toBeTruthy();
+  });
+
+  test('Move to… puts a subtask last under another story', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 22);
+    await user.click(panel.getByRole('button', { name: 'Move to…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Move #22' }));
+    await pick(user, dialog, 'Move to', '#12 Keep the transcript steady while pages land (in #1)');
+    await user.click(dialog.getByRole('button', { name: 'Move' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Move #22' })).toBeNull());
+    await waitFor(() => expect(within(panel.getByRole('navigation', { name: 'Card path' })).getByRole('button', { name: /^#12 / })).toBeTruthy());
+    await closeCard(user);
+    const rows = labels(tree);
+    expect(rows[rows.findIndex((r) => r.startsWith('#15 ')) + 1]).toBe('#22 Set up the macOS signing step, To do');
+  });
+
+  test('Split under a story adds the subtasks right after it and cancels it', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 26);
+    await user.click(panel.getByRole('button', { name: 'Split' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Split #26' }));
+    await user.type(dialog.getByRole('textbox', { name: 'Subtask 1 title' }), 'Check the signature before unpacking');
+    await user.click(dialog.getByRole('button', { name: 'Another subtask' }));
+    await user.type(dialog.getByRole('textbox', { name: 'Subtask 2 title' }), 'Fail closed on a missing signature');
+    expect(dialog.getByText('Adds 2 subtasks to #23 Sign release binaries right after #26, which is cancelled.')).toBeTruthy();
+    await user.click(dialog.getByRole('button', { name: 'Split' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Split #26' })).toBeNull());
+    expect(await panel.findByText('Cancelled')).toBeTruthy();
+    await closeCard(user);
+    await waitFor(() => expect(tree.queryByRole('treeitem', { name: /^#26 / })).toBeNull());
+    const rows = labels(tree);
+    const at = rows.findIndex((r) => r.startsWith('#25 '));
+    expect(rows.slice(at + 1, at + 3)).toEqual(['#37 Check the signature before unpacking, Planned', '#38 Fail closed on a missing signature, Planned']);
+  });
+
+  test('an Unassigned card moves into a project, and its plan opens on it', async () => {
+    const { user } = await openPlanner();
+    await pick(user, within(document.body), 'Project', 'Unassigned (1)');
+    const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    const panel = await openCard(user, tree, 36);
+    await user.click(panel.getByRole('button', { name: 'Move' }));
+    // The card opens in its new plan, no longer read-only.
+    expect(await panel.findByRole('button', { name: 'Mark done' })).toBeTruthy();
+    await closeCard(user);
+    expect(screen.getByRole('combobox', { name: 'Project' }).textContent).toContain('unified-agent-manager');
+    const plan = within(screen.getByRole('tree', { name: 'Plan outline' }));
+    expect(await plan.findByRole('treeitem', { name: /^#36 Investigate the flaky clipboard test on Firefox/ })).toBeTruthy();
+  });
+
+  test('a card update keeps what the owner is typing in its owner fields', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 5);
+    // Queried each time: a remounted form would be a new element.
+    const paths = () => (panel.getByRole('textbox', { name: 'Paths' }) as HTMLTextAreaElement).value;
+    await user.type(panel.getByRole('textbox', { name: 'Paths' }), '{Enter}web/src/lib/historyWindow.ts');
+    const typed = 'web/src/lib/historyCache.ts\nweb/src/lib/historyWindow.ts';
+    // An agent-side tick lands as a new revision of the card.
+    await user.click(panel.getByRole('checkbox', { name: 'Keep the live tail' }));
+    expect(await panel.findByRole('region', { name: 'Checklist 2/3' })).toBeTruthy();
+    expect(paths()).toBe(typed);
+    // A stored value that changes under an untouched field shows in it; the typed field keeps its text.
+    await api.planner.edit('cp1-5', { accept_cmd: 'make test-web' });
+    await waitFor(() => expect(panel.getByRole('radio', { name: 'Command' }).getAttribute('aria-checked')).toBe('true'));
+    expect((panel.getByRole('textbox', { name: 'Command' }) as HTMLInputElement).value).toBe('make test-web');
+    expect(paths()).toBe(typed);
+  });
+
+  test('a card’s description renders as Markdown', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 1);
+    const desc = panel.getByRole('region', { name: 'Description' });
+    expect(within(desc).getAllByRole('listitem')).toHaveLength(3);
+    expect(desc.querySelector('code')?.textContent).toBe('historyCache');
+    expect(desc.querySelector('strong')?.textContent).toBe('steady');
+  });
+});
+
+describe('the planner’s frames and streams', () => {
+  test('in Picture-in-Picture the Tree moves focus on the window’s own frames', async () => {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const pipDoc = frame.contentDocument!;
+    const listeners = new Set<() => void>();
+    const pip = {
+      document: pipDoc,
+      closed: false,
+      close() {
+        this.closed = true;
+        for (const l of listeners) l();
+      },
+      addEventListener: (_: string, l: () => void) => listeners.add(l),
+      removeEventListener: (_: string, l: () => void) => listeners.delete(l),
+    };
+    window.documentPictureInPicture = { requestWindow: async () => pip as unknown as Window };
+    const own = vi.spyOn(frame.contentWindow!, 'requestAnimationFrame');
+    try {
+      const { user } = await openPlanner();
+      await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
+      const row = await within(pipDoc.body).findByRole('treeitem', { name: /^#1 Faster first load/ });
+      fireEvent.keyDown(row, { key: 'ArrowDown' });
+      expect(own).toHaveBeenCalled();
+      await user.click(within(pipDoc.body).getByRole('button', { name: 'Close the pop-out' }));
+      await waitFor(() => expect(pipDoc.body.textContent).toBe(''));
+    } finally {
+      own.mockRestore();
+      frame.remove();
+    }
+  });
+
+  test('a new stream fetches no Board whose revision it reports unchanged', async () => {
+    const { user } = await openPlanner();
+    const side = await sidebar();
+    const fetchSpy = vi.spyOn(window, 'fetch');
+    try {
+      const row = side.getAllByRole('button', { name: /Fix re-attach redraw regression/ }).find((b) => !b.getAttribute('aria-label')?.startsWith('Settle'));
+      await user.click(row!);
+      await screen.findByRole('region', { name: 'Conversation' });
+      await settleWait();
+      expect(fetchSpy.mock.calls.map(([url]) => String(url)).filter((u) => u.includes('/api/board?'))).toEqual([]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
