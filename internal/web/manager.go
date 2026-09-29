@@ -148,6 +148,10 @@ type Manager struct {
 	// them until they end, and Shutdown waits for it.
 	terminals  map[*terminal]struct{}
 	terminalWG sync.WaitGroup
+	// hostTools, when set, returns the host tools a Task's conversation
+	// registers and the CallTool bound to that Task. It may run with mu held.
+	// Nothing sets it yet.
+	hostTools func(taskID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -1904,7 +1908,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	s.history = HistoryLoaded
 	s.gen = 1
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
-	conv, err := prov.Open(ctx, agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)})
+	conv, err := prov.Open(ctx, m.withHostTools(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}))
 	cancel()
 	if err != nil {
 		log.Warn("open web conversation failed", "provider", prov.Name(), "error", err)
@@ -2110,6 +2114,14 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 	}
 }
 
+// withHostTools adds the host tools of req's Task to req, when there are any.
+func (m *Manager) withHostTools(req agentapi.OpenRequest) agentapi.OpenRequest {
+	if m.hostTools != nil {
+		req.Tools, req.CallTool = m.hostTools(req.SessionID)
+	}
+	return req
+}
+
 // openLocked reopens s's exact conversation. The caller holds s.op. explicit
 // is true for user actions (sending a prompt); a viewer only opens sessions
 // autoOpenableLocked allows.
@@ -2152,7 +2164,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.cancelHistoryLocked(s)
 	s.gen++
 	gen := s.gen
-	req := agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}
+	req := m.withHostTools(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)})
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
 	s.context = nil

@@ -44,27 +44,40 @@ type declarationCall struct {
 	err    error
 }
 
-// declarationTool owns only bounded call idempotence and the SDK registration
-// observation. The journal holds successful display metadata for history.
-type declarationTool struct {
+// toolGate is the SDK registration observation every uam tool of one session
+// shares: their calls run only after catalog proved each of them is uam's
+// own, only for that session, and only until the tool list changes or stop.
+// mu also guards the tools' own call state.
+type toolGate struct {
 	mu          sync.Mutex
-	validate    func(context.Context, string) (string, error)
 	stopCtx     context.Context
 	stopCancel  context.CancelFunc
 	session     string
 	ready       bool
 	closed      bool
 	invalidated bool
-	calls       map[string]*declarationCall
-	successes   int
+}
+
+func newToolGate() *toolGate {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &toolGate{stopCtx: ctx, stopCancel: cancel}
+}
+
+// declarationTool owns only bounded call idempotence; its gate owns the SDK
+// registration observation. The journal holds successful display metadata
+// for history.
+type declarationTool struct {
+	*toolGate
+	validate  func(context.Context, string) (string, error)
+	calls     map[string]*declarationCall
+	successes int
 }
 
 func newDeclarationTool(validate func(context.Context, string) (string, error)) *declarationTool {
 	if validate == nil {
 		return nil
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	return &declarationTool{validate: validate, stopCtx: ctx, stopCancel: cancel, calls: make(map[string]*declarationCall)}
+	return &declarationTool{toolGate: newToolGate(), validate: validate, calls: make(map[string]*declarationCall)}
 }
 
 func declarationText(s string, limit int) bool {
@@ -234,10 +247,10 @@ type declarationCatalogName struct {
 	serverSet, toolSet, namespaceSet bool
 }
 
-func declarationCatalogNames(tools []rpc.CurrentToolMetadata, excluding string) map[declarationCatalogName]int {
+func declarationCatalogNames(tools []rpc.CurrentToolMetadata, excluding map[string]bool) map[declarationCatalogName]int {
 	names := make(map[declarationCatalogName]int, len(tools))
 	for _, tool := range tools {
-		if tool.Name == excluding {
+		if excluding[tool.Name] {
 			continue
 		}
 		name := declarationCatalogName{name: tool.Name}
@@ -271,9 +284,18 @@ func (a sdkSessionAdapter) SetTools(ctx context.Context, tools []rpc.ProtocolExt
 	return err
 }
 
-func (d *declarationTool) catalog(ctx context.Context, session sdkSession, original copilot.Tool) error {
+// catalog proves originals are the session's uam tools: with the external
+// tools cleared, no tool has one of their names; with them restored, each
+// name is there exactly once, from no MCP server, and nothing else changed.
+func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ...copilot.Tool) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	own := make(map[string]bool, len(originals))
+	definitions := make([]rpc.ProtocolExternalToolDefinition, 0, len(originals))
+	for _, tool := range originals {
+		own[tool.Name] = true
+		definitions = append(definitions, declarationDefinition(tool))
+	}
 	if err := session.SetTools(ctx, []rpc.ProtocolExternalToolDefinition{}); err != nil {
 		return fmt.Errorf("clear declaration tools: %w", err)
 	}
@@ -282,8 +304,8 @@ func (d *declarationTool) catalog(ctx context.Context, session sdkSession, origi
 		return errors.New("unshadowed declaration tool catalog is unavailable")
 	}
 	for _, tool := range before {
-		if tool.Name == declarationToolName {
-			return errors.New("uam_show_file already exists in the unshadowed tool catalog")
+		if own[tool.Name] {
+			return fmt.Errorf("%s already exists in the unshadowed tool catalog", tool.Name)
 		}
 	}
 	d.mu.Lock()
@@ -292,24 +314,29 @@ func (d *declarationTool) catalog(ctx context.Context, session sdkSession, origi
 	if invalidated || ctx.Err() != nil {
 		return errors.New("declaration catalog observation was invalidated")
 	}
-	if err := session.SetTools(ctx, []rpc.ProtocolExternalToolDefinition{declarationDefinition(original)}); err != nil {
+	if err := session.SetTools(ctx, definitions); err != nil {
 		return fmt.Errorf("restore declaration tool: %w", err)
 	}
 	after, err := session.ToolCatalog(ctx)
 	if err != nil || after == nil || len(after) > maxDeclarationCatalog {
 		return errors.New("restored declaration tool catalog is unavailable")
 	}
-	matches := 0
+	matches := make(map[string]int, len(own))
 	for _, tool := range after {
-		if tool.Name != declarationToolName {
+		if !own[tool.Name] {
 			continue
 		}
-		matches++
+		matches[tool.Name]++
 		if tool.MCPServerName != nil || tool.MCPToolName != nil || tool.NamespacedName != nil {
-			return errors.New("uam_show_file has ambiguous tool origin")
+			return fmt.Errorf("%s has ambiguous tool origin", tool.Name)
 		}
 	}
-	if matches != 1 || !maps.Equal(declarationCatalogNames(before, declarationToolName), declarationCatalogNames(after, declarationToolName)) {
+	for name := range own {
+		if matches[name] != 1 {
+			return errors.New("restored declaration catalog changed or is ambiguous")
+		}
+	}
+	if !maps.Equal(declarationCatalogNames(before, own), declarationCatalogNames(after, own)) {
 		return errors.New("restored declaration catalog changed or is ambiguous")
 	}
 	d.mu.Lock()
@@ -321,7 +348,7 @@ func (d *declarationTool) catalog(ctx context.Context, session sdkSession, origi
 	return nil
 }
 
-func (d *declarationTool) observe(ev copilot.SessionEvent) {
+func (d *toolGate) observe(ev copilot.SessionEvent) {
 	if _, changed := ev.Data.(*rpc.MCPToolsListChangedData); !changed {
 		return
 	}
@@ -330,7 +357,7 @@ func (d *declarationTool) observe(ev copilot.SessionEvent) {
 	d.mu.Unlock()
 }
 
-func (d *declarationTool) stop() {
+func (d *toolGate) stop() {
 	d.mu.Lock()
 	d.closed, d.ready = true, false
 	d.mu.Unlock()
