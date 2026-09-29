@@ -1,6 +1,7 @@
 import { initialWindow, liveWindow, recentProjection, upsertTranscriptItem, windowPage } from './lib/historyState.ts';
 import { boundItems, idleSteerEcho, itemCursor, mergeItems, TAIL_ITEMS } from './lib/historyWindow.ts';
-import type { AccountUsage, HistoryPage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, Subagent, SubagentDetail, SubagentPage, UpdateData } from './api';
+import { applyBoardFrame } from './lib/board.ts';
+import type { AccountUsage, BoardData, BoardFrame, BoardJob, HistoryPage, Interaction, Item, ItemKind, Project, SessionDetail, SessionSummary, Settings, SnapshotData, Subagent, SubagentDetail, SubagentPage, UpdateData } from './api';
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'offline';
 
@@ -38,6 +39,27 @@ export interface HistoryRequest {
   bufferedChars: number;
 }
 
+/**
+ * One Project's Board (key: the Project id, or `unassigned`), from `GET /api/board` and the
+ * `board` frames after it (ADR 0005 §15). Frames that arrive while a fetch is in flight wait
+ * in `buffered` and replay on its reply; a revision gap marks it `stale`, and it is fetched again.
+ */
+export interface BoardState {
+  loading: boolean;
+  /** Null until the first reply: the board is unknown, not empty. */
+  data: BoardData | null;
+  error?: string;
+  stale: boolean;
+  buffered: BoardFrame[];
+}
+
+/** Frames kept while a board fetch is in flight; more means fetching again. */
+const MAX_BOARD_BUFFER = 64;
+/** The latest frames of Utility jobs, by job id; older ones leave first. */
+const MAX_BOARD_JOBS = 32;
+
+export const boardKey = (projectId: string) => projectId || 'unassigned';
+
 export interface State {
   /** Whether a snapshot has arrived at least once: until then the Projects and Tasks are unknown, not absent (loading, never the empty state). */
   loaded: boolean;
@@ -67,6 +89,10 @@ export interface State {
   settings: Settings;
   /** The account quotas, from the snapshot and `usage` frames; null until a snapshot carries them (#188). */
   usage: AccountUsage | null;
+  /** The Boards this page follows, by `boardKey`. */
+  boards: Record<string, BoardState>;
+  /** The latest `board_job` frame of each Utility job. */
+  boardJobs: Record<string, BoardJob>;
 }
 
 export const initialState: State = {
@@ -88,6 +114,8 @@ export const initialState: State = {
   agentSteps: {},
   settings: DEFAULT_SETTINGS,
   usage: null,
+  boards: {},
+  boardJobs: {},
 };
 
 export type Action =
@@ -115,7 +143,12 @@ export type Action =
   | { type: 'agent_failed'; sessionId: string; agentId: string; error: string }
   | { type: 'agent_unloaded'; sessionId: string; agentId: string }
   /** A page of older subagents, read with the detail's `subagents_before`. */
-  | { type: 'subagents_older'; sessionId: string; before: string; page: SubagentPage };
+  | { type: 'subagents_older'; sessionId: string; before: string; page: SubagentPage }
+  | { type: 'board_loading'; key: string }
+  | { type: 'board_loaded'; key: string; data: BoardData }
+  | { type: 'board_failed'; key: string; error: string }
+  /** The planner was turned off, or a Project left: its Board is no longer followed. */
+  | { type: 'board_dropped'; key: string };
 
 /** Older subagents go before the held ones; a held record is fresher than its recorded copy. */
 export function withOlderSubagents(held: Subagent[], older: Subagent[]): Subagent[] {
@@ -162,7 +195,29 @@ export function reducer(state: State, action: Action): State {
         agentSteps: {},
         settings: settings ?? DEFAULT_SETTINGS,
         usage: usage ?? null,
+        boards: staleSince(state.boards, action.data.boards),
       };
+    }
+    case 'board_loading': {
+      const board = state.boards[action.key];
+      return { ...state, boards: { ...state.boards, [action.key]: { loading: true, data: board?.data ?? null, stale: false, buffered: [] } } };
+    }
+    case 'board_loaded': {
+      const board = state.boards[action.key];
+      if (!board?.loading) return state;
+      // Marked stale while in flight (a new stream, too many frames): the reply is kept, and fetched again.
+      return { ...state, boards: { ...state.boards, [action.key]: replayBoard({ loading: false, data: action.data, stale: board.stale, buffered: [] }, board.buffered) } };
+    }
+    case 'board_failed': {
+      const board = state.boards[action.key];
+      if (!board?.loading) return state;
+      return { ...state, boards: { ...state.boards, [action.key]: { ...board, loading: false, error: action.error, buffered: [] } } };
+    }
+    case 'board_dropped': {
+      if (!state.boards[action.key]) return state;
+      const boards = { ...state.boards };
+      delete boards[action.key];
+      return { ...state, boards };
     }
     case 'settings':
       return { ...state, settings: action.settings };
@@ -299,6 +354,12 @@ export function reducer(state: State, action: Action): State {
           return { ...state, settings: d.settings };
         case 'usage':
           return { ...state, usage: d.usage };
+        case 'board':
+          return withBoardFrame(state, d);
+        case 'board_job': {
+          const jobs = Object.entries({ ...state.boardJobs, [d.job_id]: d }).slice(-MAX_BOARD_JOBS);
+          return { ...state, boardJobs: Object.fromEntries(jobs) };
+        }
       }
       const detail = state.detail;
       if (d.session_id !== detail?.id || d.seq <= state.detailSeq) return state;
@@ -356,6 +417,46 @@ export function reducer(state: State, action: Action): State {
       }
     }
   }
+}
+
+/**
+ * Frames sent while no stream was open are lost: a new snapshot's Board revisions say which
+ * followed Boards moved meanwhile. One whose loaded revision differs, that is still loading, or
+ * that the snapshot does not list (or a snapshot without revisions at all) is fetched again.
+ */
+function staleSince(boards: Record<string, BoardState>, revisions: Record<string, number> | undefined): Record<string, BoardState> {
+  return Object.fromEntries(
+    Object.entries(boards).map(([key, board]) => {
+      const revision = revisions?.[key === 'unassigned' ? '' : key];
+      const current = revision !== undefined && !board.loading && board.data?.revision === revision;
+      return [key, current || board.stale ? board : { ...board, stale: true }];
+    }),
+  );
+}
+
+/** A `board` frame on the Board it names: buffered while that Board loads, applied by revision, a gap marks it stale. Boards not followed ignore it. */
+function withBoardFrame(state: State, frame: BoardFrame): State {
+  const key = boardKey(frame.project_id);
+  const board = state.boards[key];
+  if (!board) return state;
+  if (board.loading) {
+    // Already to be fetched again once this reply lands: nothing to keep.
+    if (board.stale) return state;
+    const next = board.buffered.length >= MAX_BOARD_BUFFER ? { ...board, stale: true, buffered: [] } : { ...board, buffered: [...board.buffered, frame] };
+    return { ...state, boards: { ...state.boards, [key]: next } };
+  }
+  return { ...state, boards: { ...state.boards, [key]: replayBoard(board, [frame]) } };
+}
+
+function replayBoard(board: BoardState, frames: readonly BoardFrame[]): BoardState {
+  let next = board;
+  for (const frame of frames) {
+    if (!next.data || next.stale) break;
+    const outcome = applyBoardFrame(next.data, frame);
+    if (outcome.kind === 'gap') next = { ...next, stale: true };
+    else if (outcome.kind === 'applied') next = { ...next, data: outcome.data, error: undefined };
+  }
+  return next;
 }
 
 function appendDelta(items: Item[], itemId: string, kind: ItemKind, text: string, agentId?: string): Item[] {

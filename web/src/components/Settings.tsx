@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
-import { useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { api, describeError, resolveTaskDefaults, type CustomModel, type Model, type SendDefault, type Settings } from '../api';
+import { useContext, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
+import { PlannerContext } from './planner/context';
+import { api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { byCodeUnit } from '../lib/order';
 import { Field, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
@@ -17,6 +18,8 @@ import { Chip } from './ui/chip';
 import { Input } from './ui/input';
 import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
+
+const NO_PROJECTS: Project[] = [];
 
 /** One titled group of settings, a floating card (DESIGN.md Settings view); a new group is another `Section` below the last. */
 function Section({ id, title, children }: Readonly<{ id: string; title: string; children: ReactNode }>) {
@@ -283,12 +286,89 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
 }
 
 /**
+ * Settings → Planner (ADR 0005 §17): the switch (off by default; it cannot turn on without a git
+ * binary), the Utility model its suggestions and triage use, and the one-time import of a board
+ * from the kb app: a source directory in, a report out.
+ */
+function PlannerSection({ settings, saving, projects, providers, onSave }: Readonly<{ settings: Settings; saving: boolean; projects: Project[]; providers: ProviderInfo[]; onSave: (patch: Partial<Settings>) => void }>) {
+  const [dir, setDir] = useState('');
+  const [report, setReport] = useState<ImportReport | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  // A service without the import route yet (it lands after the planner): the form stays, disabled.
+  const [importMissing, setImportMissing] = useState(false);
+  const noGit = projects.some((p) => p.no_git === 'not_installed');
+  const utility = providers
+    .filter((p) => p.capabilities.titles)
+    .map((p) => {
+      const id = settings.title_model?.[p.name] || p.cheapest_model;
+      return id === UTILITY_NONE ? `${p.display_name}: none (suggestions and triage are unavailable)` : `${p.display_name}: ${p.models.find((m) => m.id === id)?.name ?? id ?? 'the provider default'}`;
+    });
+  const run = async (e: SubmitEvent) => {
+    e.preventDefault();
+    setImporting(true);
+    setImportError(null);
+    setReport(null);
+    try {
+      setReport(await api.planner.import(dir.trim()));
+    } catch (err) {
+      if (routeMissing(err)) setImportMissing(true);
+      else setImportError(plannerErrorText(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+  return (
+    <Section id="planner" title="Planner">
+      <Row id="planner-switch" label="Planner" help={noGit ? 'Git is not installed on the server, so the planner cannot turn on.' : 'Epics, stories and subtasks for each git project, which agents decompose and carry out and you confirm, launch and close. Off, nothing of it shows.'}>
+        <Switch aria-label="Planner" aria-describedby="planner-switch-help" checked={!!settings.planner} disabled={saving || (noGit && !settings.planner)} onCheckedChange={(planner) => onSave({ planner })} />
+      </Row>
+      {settings.planner && utility.length > 0 && <Note>Suggestions and triage use the Utility model: {utility.join('; ')}.</Note>}
+      {settings.planner && (
+        <form aria-label="Import from kb" className="flex flex-col gap-2" onSubmit={(e) => void run(e)}>
+          <span id="planner-import-label" className="text-ui font-medium text-ink">Import from kb</span>
+          <Note id="planner-import-help">Copy cards from a kb board directory. Cards whose project name matches a project here join its board; the rest wait in Unassigned. Running it again adds no duplicates.</Note>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input aria-labelledby="planner-import-label" aria-describedby="planner-import-help" className="max-w-md flex-1 text-ui" spellCheck={false} autoComplete="off" placeholder="/home/you/.local/share/kb" value={dir} disabled={importing || importMissing} onChange={(e) => setDir(e.target.value)} />
+            <Button type="submit" variant="secondary" size="lg" loading={importing} disabled={!dir.trim() || importMissing}>
+              Import
+            </Button>
+          </div>
+          {importMissing && <Note role="status">This service cannot import yet; an update adds it.</Note>}
+          {importError && <Note tone="error" role="alert">Could not import: {importError}</Note>}
+          {report && (
+            <div role="status" className="flex flex-col gap-1 rounded-md bg-tint-well px-3 py-2 text-caption text-body">
+              <span>
+                {report.imported} imported, {report.updated} already here, {report.unassigned} to Unassigned, {report.comments} {report.comments === 1 ? 'comment' : 'comments'} and {report.links} blocker {report.links === 1 ? 'link' : 'links'} copied.
+              </span>
+              {report.skipped.length > 0 && (
+                <>
+                  <span className="text-muted">{report.skipped.length} skipped:</span>
+                  <ul className="flex flex-col gap-0.5 pl-2">
+                    {report.skipped.map((s) => (
+                      <li key={s.id} className="min-w-0 text-muted [overflow-wrap:anywhere]">
+                        {s.id}: {s.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
+        </form>
+      )}
+    </Section>
+  );
+}
+
+/**
  * The Settings view (issue #183): a page in the main pane, not a dialog, reached from the
  * sidebar's gear and `#settings`. A change shows at once and is saved through PATCH; a
  * refusal puts the old value back and says why.
  */
 export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNode; onClose: () => void }>) {
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
+  const projects = useContext(PlannerContext)?.projects ?? NO_PROJECTS;
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
   const catalogPending = !meta && !metaError;
   const saveSequence = useRef(0);
@@ -449,6 +529,8 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               </div>;
             })}
           </Section>}
+          {/* A service that does not know the planner setting yet has no planner: no row at all. */}
+          {loaded && settings.planner !== undefined && <PlannerSection settings={settings} saving={saving} projects={projects} providers={meta?.providers ?? []} onSave={(patch) => void save(patch)} />}
           {loaded && <Section id="shell" title="Shell access">
             <Row id="terminal" label="Terminal" help="Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on this machine as the uam user, without the agent's permission prompts.">
               <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />
