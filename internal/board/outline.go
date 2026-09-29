@@ -328,6 +328,18 @@ func (o *outline) statuses() map[string]Status {
 	return out
 }
 
+// underCancelled refuses n while one of its ancestors, other than those in
+// skip, is cancelled: nothing under a cancelled card is reopened, held or
+// added on its own.
+func (o *outline) underCancelled(n *node, skip map[string]bool) error {
+	for p := o.byID[n.ParentID]; p != nil; p = o.byID[p.ParentID] {
+		if !skip[p.ID] && p.stored == StatusCancelled {
+			return invalid("%s is under cancelled %s; restore that first", n.ref(), p.ref())
+		}
+	}
+	return nil
+}
+
 // duplicate returns a live sibling under parentID whose normalised title
 // matches title, ignoring except and cancelled siblings.
 func (o *outline) duplicate(parentID, title, except string) error {
@@ -488,7 +500,8 @@ func (t *txn) mutate(project string, sweep bool, fn func() error) error {
 
 // settle closes every container that reached done since before, deepest
 // first: its unconfirmed, unheld subtasks are cancelled with an automatic
-// comment, and a roll-up of its children's close comments is added.
+// comment, its own pending requests are withdrawn, and a roll-up of its
+// children's close comments is added.
 func (t *txn) settle(project string, before map[string]Status) error {
 	o, err := t.outline(project)
 	if err != nil {
@@ -515,6 +528,9 @@ func (t *txn) settle(project string, before map[string]Status) error {
 			if _, err := t.addComment(leaf, AuthorUAM, "", "closed unconfirmed with "+c.ref(), true, false); err != nil {
 				return err
 			}
+		}
+		if err := t.withdraw(c); err != nil {
+			return err
 		}
 		if err := t.rollUp(o, c); err != nil {
 			return err

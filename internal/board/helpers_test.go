@@ -71,8 +71,8 @@ func newFixture(t *testing.T) *fixture {
 }
 
 // invariants checks ADR 0005's stored invariants: doing ⇔ held_by, one open
-// attempt per hold, no pending request on a terminal card, and no confirmed
-// card under an unconfirmed one.
+// attempt per hold, no pending request on a terminal card, no confirmed card
+// under an unconfirmed one, and no open subtask under a cancelled card.
 func (f *fixture) invariants() {
 	f.t.Helper()
 	for _, q := range []struct{ name, sql string }{
@@ -86,6 +86,10 @@ func (f *fixture) invariants() {
 		{"confirmed under unconfirmed", `SELECT COUNT(*) FROM cards c JOIN cards p ON p.id = c.parent_id
 			WHERE c.expires_at IS NULL AND p.expires_at IS NOT NULL`},
 		{"container status", `SELECT COUNT(*) FROM cards WHERE kind <> 'subtask' AND status NOT IN ('planned', 'cancelled')`},
+		{"open under cancelled", `WITH RECURSIVE up(id, parent) AS (
+			SELECT id, parent_id FROM cards WHERE kind = 'subtask' AND status NOT IN ('done', 'cancelled')
+			UNION ALL SELECT up.id, c.parent_id FROM up JOIN cards c ON c.id = up.parent)
+			SELECT COUNT(*) FROM up JOIN cards p ON p.id = up.parent WHERE p.status = 'cancelled'`},
 	} {
 		var n int
 		if err := f.s.db.QueryRow(q.sql).Scan(&n); err != nil {
@@ -164,6 +168,11 @@ func (f *fixture) done(ref string, a Actor) Request {
 		f.t.Fatalf("done request on %s: %v", ref, err)
 	}
 	return r
+}
+
+// asOf returns a Task-snapshot time after every hold started so far.
+func (f *fixture) asOf() time.Time {
+	return f.clock.Now().Add(time.Second)
 }
 
 // children returns parent's direct children in rank order.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -234,7 +235,7 @@ func TestClosedStore(t *testing.T) {
 		errOf(f.s.Card(ctx, one.ID)),
 		errOf(f.s.Board(ctx, proj)),
 		errOf(f.s.Create(ctx, owner, NewCard{ProjectID: proj, Kind: KindEpic, Title: "x"})),
-		errOf(f.s.Reconcile(ctx, nil, nil)),
+		errOf(f.s.Reconcile(ctx, nil, f.asOf(), nil)),
 		errOf(f.s.Sweep(ctx)),
 		errOf(f.s.Request(ctx, "r")),
 		errOf(f.s.ProjectSettings(ctx, proj)),
@@ -254,3 +255,94 @@ func TestClosedStore(t *testing.T) {
 }
 
 func errOf[T any](_ T, err error) error { return err }
+
+// Mixed reads and writes from many goroutines, with OnChange swapped
+// underneath them, fail only with rule refusals and keep the invariants.
+func TestConcurrentMixedOperations(t *testing.T) {
+	f := newFixture(t)
+	epic, story, _, _ := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	var wg sync.WaitGroup
+	for g := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range 15 {
+				var err error
+				switch (g + i) % 6 {
+				case 0:
+					_, err = f.s.Create(f.ctx, owner, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: story.ID, Title: fmt.Sprintf("o%d-%d", g, i)})
+				case 1:
+					_, err = f.s.Create(f.ctx, Agent("planner", fmt.Sprint(g)), NewCard{Kind: KindSubtask, ParentID: story.ID, Title: fmt.Sprintf("a%d-%d", g, i)})
+				case 2:
+					_, err = f.s.Board(f.ctx, proj)
+				case 3:
+					_, err = f.s.Reconcile(f.ctx, map[string]Stage{}, f.asOf(), nil)
+				case 4:
+					_, err = f.s.Sweep(f.ctx)
+					f.s.OnChange(func(Change) { f.invariants() })
+				case 5:
+					var snap Snapshot
+					snap, err = f.s.Board(f.ctx, proj)
+					for _, c := range snap.Cards {
+						if c.Kind == KindSubtask && c.Status == StatusPlanned {
+							_, err = f.s.Launch(f.ctx, owner, c.ID, fmt.Sprintf("t%d", g), Baseline{})
+							break
+						}
+					}
+				}
+				if err != nil && CodeOf(err) == "" {
+					t.Errorf("goroutine %d step %d: %v", g, i, err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	f.invariants()
+}
+
+// The queries on hot paths read through an index; the two held-by queries
+// must use the cards_held partial index.
+func TestQueryPlans(t *testing.T) {
+	f := newFixture(t)
+	f.tree()
+	for _, tc := range []struct {
+		query string
+		args  []any
+		index string
+	}{
+		{openHoldsQuery, []any{"t"}, "cards_held"},
+		{heldQuery, nil, "cards_held"},
+		{`SELECT ` + cardCols + ` FROM cards WHERE project_id = ? ORDER BY rank, seq`, []any{proj}, "cards_project_parent"},
+		{`SELECT r.card_id, COUNT(*) FROM requests r JOIN cards c ON c.id = r.card_id
+			WHERE c.project_id = ? AND r.status = 'pending' GROUP BY r.card_id`, []any{proj}, "requests_card"},
+		{`SELECT blocker_id, blocked_id FROM links
+			WHERE blocked_id IN (SELECT id FROM cards WHERE project_id = ?1)
+			   OR blocker_id IN (SELECT id FROM cards WHERE project_id = ?1)
+			ORDER BY blocker_id, blocked_id`, []any{proj}, "links_blocked"},
+		{`SELECT COUNT(*) FROM cards WHERE created_by = ?`, []any{"task:x"}, "cards_created_by"},
+		{`SELECT COUNT(*) FROM comments WHERE card_id = ? AND author = ? AND automatic = 0`, []any{"x", "a"}, "comments_card"},
+		{`SELECT id FROM requests WHERE card_id = ? AND task_id = ? AND kind = ? AND status = 'pending'`, []any{"x", "t", "done"}, "requests_card"},
+		{`DELETE FROM links WHERE blocker_id = ?1 OR blocked_id = ?1`, []any{"x"}, "links_blocked"},
+	} {
+		rows, err := f.s.db.Query(`EXPLAIN QUERY PLAN `+tc.query, tc.args...)
+		f.must(err)
+		var plan []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			f.must(rows.Scan(&id, &parent, &unused, &detail))
+			plan = append(plan, detail)
+		}
+		f.must(errors.Join(rows.Err(), rows.Close()))
+		joined := strings.Join(plan, "; ")
+		for _, line := range plan {
+			if (strings.HasPrefix(line, "SCAN ") || strings.HasPrefix(line, "SEARCH ")) && !strings.Contains(line, "INDEX") {
+				t.Errorf("%.60s… reads a whole table: %s", tc.query, joined)
+			}
+		}
+		if !strings.Contains(joined, "INDEX "+tc.index) {
+			t.Errorf("%.60s… doesn't use %s: %s", tc.query, tc.index, joined)
+		}
+	}
+}

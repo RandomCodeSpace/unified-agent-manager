@@ -88,7 +88,7 @@ var faultOps = map[string]func(s *faultScene) error{
 	"reject":       func(s *faultScene) error { return errOf(s.f.s.Reject(s.f.ctx, owner, s.r1.ID, "x", false)) },
 	"acceptCancel": func(s *faultScene) error { return errOf(s.f.s.Accept(s.f.ctx, owner, s.r2.ID, "")) },
 	"acceptSplit":  func(s *faultScene) error { return errOf(s.f.s.Accept(s.f.ctx, owner, s.split.ID, "")) },
-	"reconcile":    func(s *faultScene) error { return errOf(s.f.s.Reconcile(s.f.ctx, nil, nil)) },
+	"reconcile":    func(s *faultScene) error { return errOf(s.f.s.Reconcile(s.f.ctx, nil, s.f.asOf(), nil)) },
 	"sweep":        func(s *faultScene) error { return errOf(s.f.s.Sweep(s.f.ctx)) },
 	"sweepOnWrite": func(s *faultScene) error { return errOf(s.f.s.AddComment(s.f.ctx, owner, s.p2root.ID, "x")) },
 	"settle": func(s *faultScene) error {
@@ -205,7 +205,7 @@ func TestCorruptRows(t *testing.T) {
 		"detail":     func(s *faultScene) error { return errOf(s.f.s.Detail(s.f.ctx, s.one.ID)) },
 		"detail4":    func(s *faultScene) error { return errOf(s.f.s.Detail(s.f.ctx, s.four.ID)) },
 		"getRequest": func(s *faultScene) error { return errOf(s.f.s.Request(s.f.ctx, s.r1.ID)) },
-		"reconcile":  func(s *faultScene) error { return errOf(s.f.s.Reconcile(s.f.ctx, nil, nil)) },
+		"reconcile":  func(s *faultScene) error { return errOf(s.f.s.Reconcile(s.f.ctx, nil, s.f.asOf(), nil)) },
 		"sweep":      func(s *faultScene) error { return errOf(s.f.s.Sweep(s.f.ctx)) },
 		"purge":      func(s *faultScene) error { return errOf(s.f.s.Purge(s.f.ctx, owner, proj)) },
 		"unlink":     func(s *faultScene) error { return s.f.s.Unlink(s.f.ctx, owner, s.two.ID, s.five.ID) },

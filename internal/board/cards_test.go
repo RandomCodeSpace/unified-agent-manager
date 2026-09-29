@@ -599,3 +599,18 @@ func TestOwnerTouchConfirmsAncestors(t *testing.T) {
 		})
 	}
 }
+
+// Search input is never passed to FTS5 as syntax, so hostile queries match
+// or miss but never fail.
+func TestSearchSurvivesHostileQueries(t *testing.T) {
+	f := newFixture(t)
+	f.tree()
+	for _, q := range []string{"*", "-", "()", `"`, `""`, "a*", "NEAR(", "title:x", "^", "one OR", "\x00", "ünï", "!!!", "a\"b", "col:*"} {
+		if _, err := f.s.List(f.ctx, proj, Filter{Query: q}); err != nil {
+			t.Errorf("list %q: %v", q, err)
+		}
+		if _, err := f.s.Similar(f.ctx, proj, q, "", 5); err != nil {
+			t.Errorf("similar %q: %v", q, err)
+		}
+	}
+}

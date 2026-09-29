@@ -147,7 +147,7 @@ func TestReconcile(t *testing.T) {
 	f.launch(three.ID, "archived")
 	f.launch(four.ID, "deleted")
 	tasks := map[string]Stage{"active": StageActive, "settled": StageSettled, "archived": StageArchived}
-	n, err := f.s.Reconcile(f.ctx, tasks, map[string][]string{proj: {"b.go", "a.go"}})
+	n, err := f.s.Reconcile(f.ctx, tasks, f.asOf(), map[string][]string{proj: {"b.go", "a.go"}})
 	f.must(err)
 	if n != 2 {
 		t.Fatalf("released %d holds, want 2", n)
@@ -168,17 +168,17 @@ func TestReconcile(t *testing.T) {
 	}
 	// A restart with the same Tasks writes nothing.
 	before := f.revision()
-	n, err = f.s.Reconcile(f.ctx, tasks, nil)
+	n, err = f.s.Reconcile(f.ctx, tasks, f.asOf(), nil)
 	if err != nil || n != 0 || f.revision() != before || len(f.comments(one.ID)) != 0 {
 		t.Fatalf("second reconcile: %d, %v, revision %d → %d", n, err, before, f.revision())
 	}
 	// Later attempts are numbered; the uncommitted list is optional.
 	f.launch(three.ID, "gone")
-	if n, err = f.s.Reconcile(f.ctx, tasks, map[string][]string{proj: nil}); err != nil || n != 1 {
+	if n, err = f.s.Reconcile(f.ctx, tasks, f.asOf(), map[string][]string{proj: nil}); err != nil || n != 1 {
 		t.Fatalf("reconcile = %d, %v", n, err)
 	}
 	f.launch(three.ID, "gone-too")
-	if _, err = f.s.Reconcile(f.ctx, tasks, nil); err != nil {
+	if _, err = f.s.Reconcile(f.ctx, tasks, f.asOf(), nil); err != nil {
 		t.Fatal(err)
 	}
 	comments := f.comments(three.ID)
@@ -196,4 +196,56 @@ func TestEndedHolds(t *testing.T) {
 	if endedHolds(held, map[string]Stage{"t1": StageActive, "t2": StageActive, "t3": StageSettled, "t4": StageActive}) != nil {
 		t.Fatal("live Tasks lost holds")
 	}
+}
+
+// A hold that started at or after the Task snapshot's time is left alone:
+// its Task may be newer than the snapshot.
+func TestReconcileSkipsHoldsNewerThanSnapshot(t *testing.T) {
+	f := newFixture(t)
+	_, story, one, two := f.tree()
+	three := f.create(owner, story.ID, KindSubtask, "Three")
+	f.launch(one.ID, "old")
+	f.clock.advance(time.Second)
+	asOf := f.clock.Now()
+	tasks := map[string]Stage{} // read at asOf: "old" was deleted, the rest didn't exist yet
+	f.launch(two.ID, "new")
+	f.clock.advance(time.Second)
+	f.launch(three.ID, "newer")
+	n, err := f.s.Reconcile(f.ctx, tasks, asOf, nil)
+	f.must(err)
+	if n != 1 || f.card(one.ID).HeldBy != "" || f.card(two.ID).HeldBy != "new" || f.card(three.ID).HeldBy != "newer" {
+		t.Fatalf("released %d; holds %q %q %q", n, f.card(one.ID).HeldBy, f.card(two.ID).HeldBy, f.card(three.ID).HeldBy)
+	}
+}
+
+// Only a pending done, blocked or split request exempts a hold from the
+// one-hold cap; a change or cancel request doesn't.
+func TestOneHoldCapExemptions(t *testing.T) {
+	f := newFixture(t)
+	_, story, one, two := f.tree()
+	three := f.create(owner, story.ID, KindSubtask, "Three")
+	four := f.create(owner, story.ID, KindSubtask, "Four")
+	f.launch(one.ID, "w")
+	w := Agent("w", "")
+	res, err := f.s.Edit(f.ctx, w, one.ID, Patch{Desc: ptr("note")})
+	f.must(err)
+	if res.Request == nil {
+		t.Fatal("expected a change request")
+	}
+	_, err = f.s.Claim(f.ctx, w, two.ID, Baseline{})
+	wantCode(t, err, CodeLimit)
+	_, err = f.s.FileRequest(f.ctx, w, one.ID, RequestInput{Kind: RequestCancel, Comment: "drop it"})
+	f.must(err)
+	_, err = f.s.Claim(f.ctx, w, two.ID, Baseline{})
+	wantCode(t, err, CodeLimit)
+	_, err = f.s.FileRequest(f.ctx, w, one.ID, RequestInput{Kind: RequestBlocked, Comment: "stuck"})
+	f.must(err)
+	_, err = f.s.Claim(f.ctx, w, two.ID, Baseline{})
+	f.must(err)
+	_, err = f.s.Split(f.ctx, w, two.ID, []SplitChild{{Title: "half"}})
+	f.must(err)
+	_, err = f.s.Claim(f.ctx, w, three.ID, Baseline{})
+	f.must(err)
+	_, err = f.s.Claim(f.ctx, w, four.ID, Baseline{})
+	wantCode(t, err, CodeLimit)
 }

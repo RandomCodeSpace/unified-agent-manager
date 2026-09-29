@@ -160,6 +160,9 @@ func (t *txn) create(a Actor, project, parentID string, in NewCard) (*node, erro
 		if parent.stored == StatusCancelled {
 			return nil, invalid("%s is cancelled", parent.ref())
 		}
+		if err := o.underCancelled(parent, nil); err != nil {
+			return nil, err
+		}
 		if err := t.inScope(o, a, parent); err != nil {
 			return nil, err
 		}
@@ -399,6 +402,9 @@ func (t *txn) checkParent(o *outline, a Actor, n *node, parent string) error {
 	}
 	if pn.stored == StatusCancelled {
 		return invalid("%s is cancelled", pn.ref())
+	}
+	if err := o.underCancelled(pn, nil); err != nil {
+		return err
 	}
 	if err := t.inScope(o, a, pn); err != nil {
 		return err

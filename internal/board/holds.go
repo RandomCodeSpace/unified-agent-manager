@@ -1,12 +1,14 @@
 package board
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Launch starts taskID's hold on the subtask ref and scopes the Task to the
@@ -49,6 +51,9 @@ func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Ba
 				leaf, scopeID = leaves[0], n.ID
 			}
 			if err := permit(a, opLaunch, leaf.stored); err != nil {
+				return err
+			}
+			if err := o.underCancelled(leaf, nil); err != nil {
 				return err
 			}
 			held = leaf.ID
@@ -103,8 +108,8 @@ func (s *Store) StartPlanning(ctx context.Context, a Actor, ref, taskID string) 
 }
 
 // Claim starts the agent's Task's hold on the subtask ref, which must be in
-// the Task's scope. A Task may have only one hold without a pending request
-// at a time, and a planning Task may hold nothing.
+// the Task's scope. A Task may have only one hold without a pending done,
+// blocked or split request at a time, and a planning Task may hold nothing.
 func (s *Store) Claim(ctx context.Context, a Actor, ref string, base Baseline) (Card, error) {
 	if err := permit(a, opClaim, ""); err != nil {
 		return Card{}, err
@@ -116,6 +121,9 @@ func (s *Store) Claim(ctx context.Context, a Actor, ref string, base Baseline) (
 		if err := permit(a, opClaim, n.stored); err != nil {
 			return err
 		}
+		if err := o.underCancelled(n, nil); err != nil {
+			return err
+		}
 		sc, err := t.scope(a.TaskID)
 		if err != nil {
 			return err
@@ -124,9 +132,7 @@ func (s *Store) Claim(ctx context.Context, a Actor, ref string, base Baseline) (
 			return refuse(CodeForbidden, "a planning Task holds nothing")
 		}
 		var open int
-		if err := t.tx.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM cards c WHERE c.held_by = ? AND NOT EXISTS (
-			SELECT 1 FROM requests r WHERE r.card_id = c.id AND r.task_id = ? AND r.status = 'pending')`,
-			a.TaskID, a.TaskID).Scan(&open); err != nil {
+		if err := t.tx.QueryRowContext(t.ctx, openHoldsQuery, a.TaskID).Scan(&open); err != nil {
 			return fmt.Errorf("board: count holds: %w", err)
 		}
 		if open > 0 {
@@ -135,6 +141,16 @@ func (s *Store) Claim(ctx context.Context, a Actor, ref string, base Baseline) (
 		return t.startHold(n, a.TaskID, base)
 	})
 }
+
+// openHoldsQuery counts a Task's holds that have no pending done, blocked or
+// split request from it; a change or cancel request exempts nothing. The
+// non-empty held_by term lets SQLite use the cards_held partial index.
+const openHoldsQuery = `SELECT COUNT(*) FROM cards c WHERE c.held_by = ?1 AND c.held_by <> '' AND NOT EXISTS (
+	SELECT 1 FROM requests r WHERE r.card_id = c.id AND r.task_id = ?1 AND r.status = 'pending'
+	AND r.kind IN ('done', 'blocked', 'split'))`
+
+// heldQuery lists every held card from the cards_held index.
+const heldQuery = `SELECT id, seq, project_id, held_by FROM cards WHERE held_by <> ''`
 
 // agentWrite runs fn on the card ref inside one sweeping, settling write,
 // after refusing Unassigned cards and cards outside an agent's scope.
@@ -250,6 +266,7 @@ func (t *txn) openHold(n *node) (Hold, error) {
 // heldLeaf is one held subtask as reconciliation sees it.
 type heldLeaf struct {
 	cardID, project, taskID string
+	seq                     int64
 }
 
 // endedHolds is reconciliation's pure core: the holds whose Task is neither
@@ -266,23 +283,25 @@ func endedHolds(held []heldLeaf, tasks map[string]Stage) []heldLeaf {
 
 // Reconcile releases every hold whose Task is Archived or deleted to todo,
 // with the automatic comment "attempt #n ended, uncommitted: …". tasks maps
-// each Task ID to its stage; a Task missing from it has been deleted.
+// each Task ID to its stage, as the caller read it at asOf on the store's
+// clock; a Task missing from it has been deleted. A hold that started at or
+// after asOf may belong to a Task the snapshot predates, so it is left alone.
 // uncommitted maps a Project ID to its working tree's uncommitted paths, when
 // known. It reads only stored state, so Settled Tasks keep their holds across
 // restarts, and when nothing has ended it writes nothing. It returns the
 // number of holds released.
-func (s *Store) Reconcile(ctx context.Context, tasks map[string]Stage, uncommitted map[string][]string) (int, error) {
+func (s *Store) Reconcile(ctx context.Context, tasks map[string]Stage, asOf time.Time, uncommitted map[string][]string) (int, error) {
 	released := 0
 	_, err := s.write(ctx, func(t *txn) error {
 		released = 0
-		rows, err := t.tx.QueryContext(t.ctx, `SELECT id, project_id, held_by FROM cards WHERE held_by <> '' ORDER BY seq`)
+		rows, err := t.tx.QueryContext(t.ctx, heldQuery)
 		if err != nil {
 			return fmt.Errorf("board: load holds: %w", err)
 		}
 		var held []heldLeaf
 		for rows.Next() {
 			var h heldLeaf
-			if err := rows.Scan(&h.cardID, &h.project, &h.taskID); err != nil {
+			if err := rows.Scan(&h.cardID, &h.seq, &h.project, &h.taskID); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("board: load holds: %w", err)
 			}
@@ -291,6 +310,7 @@ func (s *Store) Reconcile(ctx context.Context, tasks map[string]Stage, uncommitt
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return fmt.Errorf("board: load holds: %w", err)
 		}
+		slices.SortFunc(held, func(a, b heldLeaf) int { return cmp.Compare(a.seq, b.seq) })
 		for _, h := range endedHolds(held, tasks) {
 			err := t.mutate(h.project, false, func() error {
 				_, n, err := t.cardIn(h.project, h.cardID)
@@ -300,6 +320,9 @@ func (s *Store) Reconcile(ctx context.Context, tasks map[string]Stage, uncommitt
 				hold, err := t.openHold(n)
 				if err != nil {
 					return err
+				}
+				if !hold.StartedAt.Before(asOf) {
+					return nil
 				}
 				if err := t.releaseHold(n, ReleaseEnded, StatusTodo, ""); err != nil {
 					return err

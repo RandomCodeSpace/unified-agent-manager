@@ -393,3 +393,90 @@ func TestDetail(t *testing.T) {
 	_, err = f.s.Detail(f.ctx, "#99")
 	wantCode(t, err, CodeNotFound)
 }
+
+// A cascade skips a container that is already done, as cancelling it
+// directly is refused, and nothing is then added under it.
+func TestCascadeKeepsDoneContainers(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	other := f.create(owner, epic.ID, KindStory, "Other")
+	three := f.create(owner, other.ID, KindSubtask, "Three")
+	for _, c := range []Card{one, two} {
+		_, err := f.s.SetStatus(f.ctx, owner, c.ID, StatusDone, "ok", false)
+		f.must(err)
+	}
+	wantStatus(t, f.card(story.ID), StatusDone)
+	_, err := f.s.SetStatus(f.ctx, owner, story.ID, StatusCancelled, "drop", false)
+	wantCode(t, err, CodeInvalid)
+	_, err = f.s.SetStatus(f.ctx, owner, epic.ID, StatusCancelled, "drop epic", false)
+	f.must(err)
+	if got := f.card(story.ID); got.Status != StatusDone || got.CascadeID != "" || got.Progress.Done != 2 {
+		t.Fatalf("done story after its epic's cascade: %+v", got)
+	}
+	wantStatus(t, f.card(other.ID), StatusCancelled)
+	wantStatus(t, f.card(three.ID), StatusCancelled)
+	_, err = f.s.Create(f.ctx, owner, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: story.ID, Title: "Late"})
+	wantCode(t, err, CodeInvalid)
+	loose := f.create(owner, "", KindSubtask, "Loose")
+	_, err = f.s.Edit(f.ctx, owner, loose.ID, Patch{ParentID: &story.ID})
+	wantCode(t, err, CodeInvalid)
+	_, err = f.s.Restore(f.ctx, owner, epic.ID, "back")
+	f.must(err)
+	wantStatus(t, f.card(story.ID), StatusDone)
+	wantStatus(t, f.card(three.ID), StatusPlanned)
+}
+
+// A subtask under a cancelled card is never reopened or held on its own:
+// ready, Launch and Claim refuse it until the cancelled card is restored.
+func TestNothingReopensUnderCancelledParent(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	_, err := f.s.SetStatus(f.ctx, owner, one.ID, StatusDone, "ok", false)
+	f.must(err)
+	_, err = f.s.SetStatus(f.ctx, owner, story.ID, StatusCancelled, "drop story", false)
+	f.must(err)
+	wantStatus(t, f.card(story.ID), StatusCancelled)
+	_, err = f.s.SetStatus(f.ctx, owner, one.ID, StatusTodo, "", false)
+	wantCode(t, err, CodeInvalid)
+	_, err = f.s.Restore(f.ctx, owner, one.ID, "back")
+	wantCode(t, err, CodeInvalid) // done, not cancelled
+	// A subtask left open under the cancelled story, as older data may be,
+	// can't be launched or claimed.
+	loose := f.create(owner, epic.ID, KindSubtask, "Loose")
+	f.launch(loose.ID, "w")
+	f.done(loose.ID, Agent("w", ""))
+	f.raw(`UPDATE cards SET status = 'todo', cascade_id = '' WHERE id = ?`, two.ID)
+	_, err = f.s.Launch(f.ctx, owner, two.ID, "t1", Baseline{})
+	wantCode(t, err, CodeInvalid)
+	_, err = f.s.Claim(f.ctx, Agent("w", ""), two.ID, Baseline{})
+	wantCode(t, err, CodeInvalid)
+	f.raw(`UPDATE cards SET status = 'cancelled', cascade_id = ? WHERE id = ?`, f.card(story.ID).CascadeID, two.ID)
+	// Restoring the story's cascade reopens it; then ready works again.
+	_, err = f.s.Restore(f.ctx, owner, story.ID, "back")
+	f.must(err)
+	got, err := f.s.SetStatus(f.ctx, owner, one.ID, StatusTodo, "", false)
+	f.must(err)
+	wantStatus(t, got, StatusTodo)
+}
+
+// When a container reaches done its own pending requests are withdrawn, so
+// none is left pending on a finished card.
+func TestDoneContainerWithdrawsRequests(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	r, err := f.s.FileRequest(f.ctx, Agent("planner", ""), story.ID, RequestInput{Kind: RequestCancel, Comment: "not needed"})
+	f.must(err)
+	for _, c := range []Card{one, two} {
+		_, err := f.s.SetStatus(f.ctx, owner, c.ID, StatusDone, "ok", false)
+		f.must(err)
+	}
+	wantStatus(t, f.card(story.ID), StatusDone)
+	got, err := f.s.Request(f.ctx, r.ID)
+	f.must(err)
+	if got.Status != RequestWithdrawn || f.card(story.ID).PendingRequests != 0 {
+		t.Fatalf("request on the done story = %s", got.Status)
+	}
+	_, err = f.s.Accept(f.ctx, owner, r.ID, "")
+	wantCode(t, err, CodeInvalid)
+}

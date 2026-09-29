@@ -74,6 +74,9 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 			if err := permit(a, opReady, n.stored); err != nil {
 				return err
 			}
+			if err := o.underCancelled(n, nil); err != nil {
+				return err
+			}
 			if err := t.setStatus(n, StatusTodo, "", ""); err != nil {
 				return err
 			}
@@ -93,8 +96,9 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 }
 
 // cancel cancels n under a new cascade with body as author's comment. On a
-// container it is the cascade: every card under it that is not terminal is
-// cancelled, holds are released and requests withdrawn, and each subtask is
+// container it is the cascade: every card under it whose shown status is not
+// terminal is cancelled, so a container that is already done keeps its
+// status; holds are released and requests withdrawn, and each subtask is
 // stamped "cancelled with #n: …".
 func (t *txn) cancel(o *outline, n *node, body, author string) error {
 	cascade := t.s.newID()
@@ -106,7 +110,7 @@ func (t *txn) cancel(o *outline, n *node, body, author string) error {
 		return err
 	}
 	for _, m := range o.subtree(n) {
-		if m.stored.terminal() {
+		if m != n && m.Status.terminal() {
 			continue
 		}
 		if err := t.cancelNode(m, cascade); err != nil {
@@ -146,7 +150,7 @@ func (s *Store) Dismiss(ctx context.Context, a Actor, ref string) (Card, error) 
 		}
 		cascade := t.s.newID()
 		for _, m := range o.subtree(n) {
-			if m.stored.terminal() {
+			if m != n && m.Status.terminal() {
 				continue
 			}
 			if err := t.cancelNode(m, cascade); err != nil {
@@ -191,13 +195,8 @@ func (s *Store) Restore(ctx context.Context, a Actor, ref, comment string) (Card
 			in[m.ID] = true
 		}
 		for _, m := range set {
-			for p := o.byID[m.ParentID]; p != nil; p = o.byID[p.ParentID] {
-				if in[p.ID] {
-					continue
-				}
-				if p.stored == StatusCancelled {
-					return invalid("%s is under cancelled %s; restore that first", m.ref(), p.ref())
-				}
+			if err := o.underCancelled(m, in); err != nil {
+				return err
 			}
 			if err := o.duplicate(m.ParentID, m.Title, m.ID); err != nil {
 				return err
