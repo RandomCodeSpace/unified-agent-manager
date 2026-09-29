@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
@@ -24,9 +26,9 @@ import (
 // maxToolCards bounds the cards one board_list call shows.
 const maxToolCards = 100
 
-// errClaimDiscarded ends a done claim whose Task was archived while the
-// claim was evaluated.
-var errClaimDiscarded = errors.New("the task was archived, so its done claim was discarded")
+// errTaskEnded ends a planner call whose Task was settled or archived while
+// it ran; a done claim's acceptance run is killed and nothing is filed.
+var errTaskEnded = errors.New("the task was settled or archived, so this planner call was discarded")
 
 // boardScope is where one planner tool call reads and writes: as actor, on
 // the Board of project, whose directory is dir. A non-empty container
@@ -49,20 +51,32 @@ func (sc boardScope) card(ctx context.Context, st *board.Store, ref string) (boa
 	if ref == "" {
 		return board.Card{}, invalidBoard("a card ref is required: #12 or a card id")
 	}
-	notFound := &board.Error{Code: board.CodeNotFound, Message: fmt.Sprintf("card %s not found", ref)}
 	c, err := st.Card(ctx, ref)
-	if err != nil || c.ProjectID != sc.project {
-		return board.Card{}, cmp.Or[error](err, notFound)
+	if err != nil {
+		return board.Card{}, err
+	}
+	if in, err := sc.contains(ctx, st, c); err != nil || !in {
+		return board.Card{}, cmp.Or[error](err, &board.Error{Code: board.CodeNotFound, Message: fmt.Sprintf("card %s not found", ref)})
+	}
+	return c, nil
+}
+
+// contains reports whether c is inside the scope: on its Project's Board,
+// and in the container's subtree when there is one.
+func (sc boardScope) contains(ctx context.Context, st *board.Store, c board.Card) (bool, error) {
+	if c.ProjectID != sc.project {
+		return false, nil
 	}
 	for p := c; sc.container != "" && p.ID != sc.container; {
 		if p.ParentID == "" {
-			return board.Card{}, notFound
+			return false, nil
 		}
+		var err error
 		if p, err = st.Card(ctx, p.ParentID); err != nil {
-			return board.Card{}, err
+			return false, err
 		}
 	}
-	return c, nil
+	return true, nil
 }
 
 // toolReply is a planner tool's result, sent to the model as compact JSON:
@@ -89,12 +103,59 @@ func cardReply(c board.Card, format string, args ...any) toolReply {
 	return toolReply{Text: fmt.Sprintf(format, args...), Card: &toolCard{ID: c.ID, Seq: c.Seq, Kind: c.Kind, Title: c.Title, Status: c.Status}}
 }
 
+// maxToolReply bounds a planner tool's encoded result, well under the
+// 64 KiB of a tool result the transcript records whole: a result cut there
+// is no longer JSON, and its chip is lost.
+const maxToolReply = 32 << 10
+
+// toolCutNote ends a result text cut to fit maxToolReply.
+const toolCutNote = "\n… the rest was cut to fit the result"
+
 func (r toolReply) result(failed bool) agentapi.HostToolResult {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(r) // plain strings and numbers always encode
-	return agentapi.HostToolResult{Text: strings.TrimSuffix(b.String(), "\n"), Failed: failed}
+	encode := func() string {
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(r) // plain strings and numbers always encode
+		return strings.TrimSuffix(b.String(), "\n")
+	}
+	out := encode()
+	if len(out) > maxToolReply {
+		// The longest cut of the text that fits, found on the encoding
+		// itself, as escapes make it longer than the text.
+		text, lo, hi := r.Text, 0, len(r.Text)
+		for lo < hi {
+			mid := (lo + hi + 1) / 2
+			if r.Text = clipText(text, mid) + toolCutNote; len(encode()) <= maxToolReply {
+				lo = mid
+			} else {
+				hi = mid - 1
+			}
+		}
+		r.Text = clipText(text, lo) + toolCutNote
+		out = encode()
+	}
+	return agentapi.HostToolResult{Text: out, Failed: failed}
+}
+
+// clipText cuts s to at most n bytes at a rune boundary.
+func clipText(s string, n int) string {
+	if n >= len(s) {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// clipNote is s cut to at most n bytes, saying how many more it has.
+func clipNote(s string, n int) string {
+	cut := clipText(s, n)
+	if len(cut) == len(s) {
+		return s
+	}
+	return fmt.Sprintf("%s… %d more bytes", cut, len(s)-len(cut))
 }
 
 // toolFailure is a refused or failed call: the message, with the refusal's
@@ -144,7 +205,7 @@ func decodeToolArgs(raw json.RawMessage, v any) error {
 	if err := dec.Decode(v); err != nil {
 		return invalidBoard("invalid arguments: %s", strings.TrimPrefix(err.Error(), "json: "))
 	}
-	if dec.More() {
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return invalidBoard("invalid arguments: one JSON object is expected")
 	}
 	return nil
@@ -253,6 +314,11 @@ var boardToolSet = []boardTool{
 		}), (*Manager).toolRequest),
 }
 
+// isBoardTool reports whether name is one of the planner tools.
+func isBoardTool(name string) bool {
+	return slices.ContainsFunc(boardToolSet, func(t boardTool) bool { return t.Name == name })
+}
+
 // boardHostTools returns the named planner tools, every one when names is
 // empty, and the CallTool that runs their calls, each in the scope scope
 // resolves for it.
@@ -288,20 +354,39 @@ func (m *Manager) boardHostTools(scope func(context.Context, agentapi.HostToolCa
 // taskHostToolsLocked is the Manager's hostTools: every planner tool, for a
 // Task of a Project with Git while the planner is on. The switch is read
 // when the conversation opens, so turning it on reaches the Tasks opened
-// afterwards, and every call checks both again. The caller holds mu; the
-// store is used only by the calls.
+// afterwards, and every call checks both again. Each call is tied to the
+// Task while it runs (startCall). The caller holds mu; the store is used
+// only by the calls.
 func (m *Manager) taskHostToolsLocked(taskID, projectID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
 	if p := m.projects[projectID]; !m.settings.Planner || p == nil || p.NoGit != "" {
 		return nil, nil
 	}
-	return m.boardHostTools(func(ctx context.Context, call agentapi.HostToolCall) (boardScope, error) {
+	tools, run := m.boardHostTools(func(ctx context.Context, call agentapi.HostToolCall) (boardScope, error) {
 		return m.taskScope(ctx, taskID, call)
 	})
+	return tools, func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
+		ctx, end, err := m.startCall(ctx, taskID)
+		if err != nil {
+			return toolFailure(err)
+		}
+		defer end()
+		if m.boardCallHook != nil {
+			m.boardCallHook(ctx, call.Name)
+		}
+		res := run(ctx, call)
+		// A call cut short by the Task's end says so whatever step failed;
+		// a hold it made anyway is released by what ended the Task.
+		if errors.Is(context.Cause(ctx), errTaskEnded) {
+			return toolFailure(errTaskEnded)
+		}
+		return res
+	}
 }
 
-// taskScope is the scope of a call from the Task taskID: its agent, or the
-// subagent that made the call, on its Project's Board. It refuses while the
-// planner is off or the Project has no Git.
+// taskScope is the scope of a call from the Task taskID, which startCall
+// found active: its agent, or the subagent that made the call, on its
+// Project's Board. It refuses while the planner is off or the Project has no
+// Git.
 func (m *Manager) taskScope(ctx context.Context, taskID string, call agentapi.HostToolCall) (boardScope, error) {
 	if call.TaskID != taskID {
 		return boardScope{}, invalidBoard("the call does not belong to this task")
@@ -348,8 +433,15 @@ func cardLine(c board.Card, taskID string) string {
 	return b.String()
 }
 
-// maxToolComments bounds the comments board_get shows, newest kept.
-const maxToolComments = 10
+// What board_get shows of a card, so that its result stays under
+// maxToolReply: the newest comments, each body and the description cut, and
+// at most so many cards of each list.
+const (
+	maxToolComments    = 10
+	maxToolCommentText = 1 << 10
+	maxToolDesc        = 8 << 10
+	maxToolLinks       = 20
+)
 
 type refArgs struct {
 	Ref string `json:"ref"`
@@ -366,28 +458,42 @@ func (m *Manager) toolGet(ctx context.Context, sc boardScope, in refArgs) (toolR
 		if err != nil {
 			return err
 		}
-		text, err := detailText(ctx, st, sc.actor.TaskID, d)
+		text, err := detailText(ctx, st, sc, d)
 		reply = cardReply(c, "%s", text)
 		return err
 	})
 	return reply, err
 }
 
-// detailText is board_get's text for the card of d, as the Task taskID sees
-// it.
-func detailText(ctx context.Context, st *board.Store, taskID string, d board.Detail) (string, error) {
-	c := d.Card
+// detailText is board_get's text for the card of d, as the scope sees it:
+// its path starts at the container, and a linked card outside the scope is
+// left out.
+func detailText(ctx context.Context, st *board.Store, sc boardScope, d board.Detail) (string, error) {
+	c, taskID := d.Card, sc.actor.TaskID
 	var b strings.Builder
 	b.WriteString(cardLine(c, taskID))
 	path := []string{fmt.Sprintf("#%d", c.Seq)}
-	for id := c.ParentID; id != ""; {
-		parent, err := st.Card(ctx, id)
-		if err != nil {
+	for p := c; p.ID != sc.container && p.ParentID != ""; {
+		var err error
+		if p, err = st.Card(ctx, p.ParentID); err != nil {
 			return "", err
 		}
-		path, id = append([]string{fmt.Sprintf("#%d", parent.Seq)}, path...), parent.ParentID
+		path = append([]string{fmt.Sprintf("#%d", p.Seq)}, path...)
 	}
 	fmt.Fprintf(&b, "\nPath: %s\n", strings.Join(path, " › "))
+	// lines writes at most maxToolLinks cards under label.
+	lines := func(label string, cards []board.Card, line func(board.Card) string) {
+		if len(cards) == 0 {
+			return
+		}
+		fmt.Fprintf(&b, "\n%s:\n", label)
+		for _, l := range cards[:min(len(cards), maxToolLinks)] {
+			fmt.Fprintf(&b, "- %s\n", line(l))
+		}
+		if len(cards) > maxToolLinks {
+			fmt.Fprintf(&b, "- … %d more\n", len(cards)-maxToolLinks)
+		}
+	}
 	if c.WinCondition != "" {
 		fmt.Fprintf(&b, "Win condition: %s\n", c.WinCondition)
 	}
@@ -406,7 +512,7 @@ func detailText(ctx context.Context, st *board.Store, taskID string, d board.Det
 		fmt.Fprintf(&b, "Progress: %d of %d confirmed subtasks done, %d proposed.\n", c.Progress.Done, c.Progress.Total, c.Progress.Proposed)
 	}
 	if desc := strings.TrimSpace(c.Desc); desc != "" {
-		fmt.Fprintf(&b, "\nDescription:\n%s\n", desc)
+		fmt.Fprintf(&b, "\nDescription:\n%s\n", clipNote(desc, maxToolDesc))
 	}
 	if len(c.Checklist) > 0 {
 		b.WriteString("\nChecklist (index, state, text):\n")
@@ -418,6 +524,7 @@ func detailText(ctx context.Context, st *board.Store, taskID string, d board.Det
 			fmt.Fprintf(&b, "%d [%s] %s\n", i, mark, item.Text)
 		}
 	}
+	line := func(l board.Card) string { return cardLine(l, taskID) }
 	for _, links := range []struct {
 		label string
 		ids   []string
@@ -426,12 +533,17 @@ func detailText(ctx context.Context, st *board.Store, taskID string, d board.Det
 		if err != nil {
 			return "", err
 		}
-		if len(cards) > 0 {
-			fmt.Fprintf(&b, "\n%s:\n", links.label)
-			for _, l := range cards {
-				fmt.Fprintf(&b, "- %s\n", cardLine(l, taskID))
+		var in []board.Card
+		for _, l := range cards {
+			ok, err := sc.contains(ctx, st, l)
+			if err != nil {
+				return "", err
+			}
+			if ok {
+				in = append(in, l)
 			}
 		}
+		lines(links.label, in, line)
 	}
 	if c.PendingRequests > 0 {
 		fmt.Fprintf(&b, "\nPending requests for the owner: %d\n", c.PendingRequests)
@@ -441,16 +553,12 @@ func detailText(ctx context.Context, st *board.Store, taskID string, d board.Det
 		if err != nil {
 			return "", err
 		}
-		if len(pending) > 0 {
-			b.WriteString("\nPending subtasks, in order:\n")
-			for _, l := range pending {
-				fmt.Fprintf(&b, "- %s", cardLine(l, taskID))
-				if l.WinCondition != "" {
-					fmt.Fprintf(&b, ": %s", l.WinCondition)
-				}
-				b.WriteString("\n")
+		lines("Pending subtasks, in order", pending, func(l board.Card) string {
+			if l.WinCondition == "" {
+				return line(l)
 			}
-		}
+			return line(l) + ": " + l.WinCondition
+		})
 	}
 	if n := len(d.Comments); n > 0 {
 		fmt.Fprintf(&b, "\nComments, oldest first (%d of %d):\n", min(n, maxToolComments), n)
@@ -462,7 +570,7 @@ func detailText(ctx context.Context, st *board.Store, taskID string, d board.Det
 			case strings.HasPrefix(author, "task:"):
 				author = "another task"
 			}
-			fmt.Fprintf(&b, "- %s: %s\n", author, cm.Body)
+			fmt.Fprintf(&b, "- %s: %s\n", author, clipNote(cm.Body, maxToolCommentText))
 		}
 	}
 	return strings.TrimSuffix(b.String(), "\n"), nil
@@ -780,12 +888,10 @@ func (m *Manager) toolRequest(ctx context.Context, sc boardScope, in requestArgs
 
 // requestDone files a done claim (ADR 0005 §6): evaluateClaim gathers the
 // evidence and runs the subtask's acceptance command, then the request is
-// filed. The claim is bound to the Task: archiving it cancels the run and
-// files nothing.
+// filed. Like every call of the Task it ends when the Task is settled or
+// archived (startCall): the run is killed and nothing is filed.
 func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs) (toolReply, error) {
 	task := sc.actor.TaskID
-	ctx, end := m.startClaim(ctx, task)
-	defer end()
 	var c board.Card
 	var since time.Time
 	err := m.withBoard(func(st *board.Store) error {
@@ -812,10 +918,6 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 			_, err := st.FileRequest(ctx, sc.actor, c.ID, res.Request)
 			return err
 		})
-	}
-	// A claim cut short by the Task's archive says so, whatever step failed.
-	if ctx.Err() != nil {
-		return toolReply{}, context.Cause(ctx)
 	}
 	if err != nil {
 		return toolReply{}, err
@@ -851,59 +953,74 @@ func openHold(holds []board.Hold, task string) (board.Hold, bool) {
 	return holds[i], true
 }
 
-// claimRun is one done claim in progress; cancel ends it.
-type claimRun struct{ cancel context.CancelCauseFunc }
+// taskCall is one planner call of a Task in progress: cancel ends it, and
+// done is closed once it has returned.
+type taskCall struct {
+	cancel context.CancelCauseFunc
+	done   chan struct{}
+}
 
-// startClaim binds a done claim of the Task id to the Task: the returned
-// context ends with errClaimDiscarded when the Task is archived, or already
-// has been. end releases it.
-func (m *Manager) startClaim(ctx context.Context, id string) (context.Context, func()) {
-	ctx, cancel := context.WithCancelCause(ctx)
-	run := &claimRun{cancel: cancel}
+// startCall ties a planner call of the Task id to the Task. It refuses unless
+// the Task is active, checked under mu, where Settle and Archive change the
+// stage; the returned context ends with errTaskEnded once the Task leaves
+// the active stage. end must run when the call returns.
+func (m *Manager) startCall(ctx context.Context, id string) (context.Context, func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if s := m.sessions[id]; s == nil || s.stage == StageArchived {
-		cancel(errClaimDiscarded)
-		return ctx, func() {}
+	switch s := m.sessions[id]; {
+	case s == nil:
+		return nil, nil, newError(http.StatusNotFound, msgSessionNotFound)
+	case s.stage != StageActive:
+		return nil, nil, newError(http.StatusConflict, "the task is %s, so it can no longer use the planner", stageName(s.stage))
 	}
-	if m.claims == nil {
-		m.claims = map[string]map[*claimRun]struct{}{}
+	ctx, cancel := context.WithCancelCause(ctx)
+	call := &taskCall{cancel: cancel, done: make(chan struct{})}
+	if m.calls == nil {
+		m.calls = map[string]map[*taskCall]struct{}{}
 	}
-	if m.claims[id] == nil {
-		m.claims[id] = map[*claimRun]struct{}{}
+	if m.calls[id] == nil {
+		m.calls[id] = map[*taskCall]struct{}{}
 	}
-	m.claims[id][run] = struct{}{}
+	m.calls[id][call] = struct{}{}
 	return ctx, func() {
 		m.mu.Lock()
-		delete(m.claims[id], run)
-		if len(m.claims[id]) == 0 {
-			delete(m.claims, id)
+		delete(m.calls[id], call)
+		if len(m.calls[id]) == 0 {
+			delete(m.calls, id)
 		}
 		m.mu.Unlock()
 		cancel(nil)
-	}
+		close(call.done)
+	}, nil
 }
 
-// endClaims cancels the done claims the Task id is evaluating: their
-// acceptance runs are killed and their results discarded. A Task is deleted
-// only once archived, so archiving ends them all.
-func (m *Manager) endClaims(id string) {
+// endCalls cancels the planner calls of the Task id in progress, which kills
+// a done claim's acceptance run and discards its result, and returns once
+// they have all returned. The caller has moved the Task out of the active
+// stage, so no new call starts, and what it does next sees every hold the
+// calls made.
+func (m *Manager) endCalls(id string) {
 	m.mu.Lock()
-	runs := m.claims[id]
-	delete(m.claims, id)
+	calls := m.calls[id]
+	delete(m.calls, id)
 	m.mu.Unlock()
-	for run := range runs {
-		run.cancel(errClaimDiscarded)
+	for call := range calls {
+		call.cancel(errTaskEnded)
+	}
+	for call := range calls {
+		<-call.done
 	}
 }
 
 // taskWork returns the files the Task id's edit tools touched since since,
 // its subagents' included, and the span of its transcript since then; nil
 // when it has no item since then and nothing is missing. Only the retained
-// transcript is read; the span is marked partial when that may miss some.
+// transcript is read; the span is marked partial when that may miss some,
+// or a tool call since then was clipped.
 func (m *Manager) taskWork(id string, since time.Time) ([]string, *EvidenceTranscript) {
 	var tools []agentapi.Item
 	var span *EvidenceTranscript
+	clipped := false
 	m.mu.Lock()
 	if s := m.sessions[id]; s != nil {
 		// Unread, or trimmed at the front past the hold's start, or read
@@ -918,6 +1035,8 @@ func (m *Manager) taskWork(id string, since time.Time) ([]string, *EvidenceTrans
 			if it.Tool != nil {
 				tool := *it.Tool
 				tools = append(tools, agentapi.Item{Tool: &tool})
+				// A clipped input may have lost the path it edits.
+				clipped = clipped || it.Clipped
 			}
 			if it.AgentID == "" {
 				if span == nil {
@@ -931,6 +1050,10 @@ func (m *Manager) taskWork(id string, since time.Time) ([]string, *EvidenceTrans
 		}
 	}
 	m.mu.Unlock()
+	if clipped {
+		span = cmp.Or(span, &EvidenceTranscript{TaskID: id})
+		span.Partial = true
+	}
 	return touchedFiles(tools), span
 }
 

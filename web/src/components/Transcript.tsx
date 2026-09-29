@@ -13,8 +13,9 @@ import type { AgentTranscript } from '../state';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, DeclaredFileCard, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkdirContext, WorkingMark, useApp } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
+import { usePlannerOpenCard } from './planner/context';
 import { Button } from './ui/button';
-import { Chip } from './ui/chip';
+import { Chip, chipVariants } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Appear } from './ui/appear';
@@ -860,22 +861,24 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
     <ContextMenu.Root>
       <ContextMenu.Trigger render={<div className={cn('group/tool relative', className)} />}>
         <div ref={attach} id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')}>
-          <button
-            type="button"
-            aria-expanded={open}
-            className={cn('flex h-6 w-full items-center gap-2 rounded-full pr-8 pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
-            title={ended ? 'The turn ended before this tool reported a result' : undefined}
-            onClick={toggle}
-          >
-            <span className="flex size-4 shrink-0 items-center justify-center">
-              <ToolMark tone={tone} />
-            </span>
-            <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
-            {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
+          <div className={cn('flex items-center gap-1', t?.board_card && 'pr-8 pointer-coarse:pr-11')}>
+            <button
+              type="button"
+              aria-expanded={open}
+              className={cn('flex h-6 min-w-0 flex-1 items-center gap-2 rounded-full pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11', t?.board_card ? 'pr-1.5' : 'pr-8 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
+              title={ended ? 'The turn ended before this tool reported a result' : undefined}
+              onClick={toggle}
+            >
+              <span className="flex size-4 shrink-0 items-center justify-center">
+                <ToolMark tone={tone} />
+              </span>
+              <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
+              {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
+              <span className="sr-only">, {word}</span>
+              {decided.length > 0 && <ApprovalMark interactions={decided} />}
+            </button>
             {t?.board_card && <BoardCardChip card={t.board_card} />}
-            <span className="sr-only">, {word}</span>
-            {decided.length > 0 && <ApprovalMark interactions={decided} />}
-          </button>
+          </div>
           {opened && (
             <Collapse open={open} appear>
               <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}</div>
@@ -900,13 +903,26 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   );
 });
 
-/** The planner card a `board_*` call was about, as "#12 Title" on its row. */
+/**
+ * The planner card a planner tool call was about, as "#12 Title" beside its row. It opens the
+ * card in the planner, and is plain text while the planner is off.
+ */
 function BoardCardChip({ card }: Readonly<{ card: ToolBoardCard }>) {
-  return (
-    <Chip fill="well" className="max-w-48 font-sans" title={`#${card.seq} ${card.title}`}>
+  const openCard = usePlannerOpenCard();
+  const name = `#${card.seq} ${card.title}`;
+  const label = (
+    <>
       <span className="tabular-nums">#{card.seq}</span>{' '}
       <span className="truncate">{card.title}</span>
-    </Chip>
+    </>
+  );
+  if (!openCard) {
+    return <Chip fill="well" className="max-w-48 font-sans" title={name}>{label}</Chip>;
+  }
+  return (
+    <button type="button" className={cn(chipVariants({ fill: 'well' }), 'max-w-48 font-sans hover:text-body')} title={`Open ${name} in the planner`} onClick={() => openCard(card.id)}>
+      {label}
+    </button>
   );
 }
 
