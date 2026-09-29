@@ -459,3 +459,32 @@ No schema has `accept_cmd`, `paths`, `status`, `blocked`, `force`, restore or pu
 - uam gains its first database and its first large dependency (`modernc.org/sqlite`, BSD-3-Clause, pure Go). The binary grows. The size change is recorded in the port PR.
 - The planner is invisible until it is switched on, and it is unavailable on Projects without git.
 - Task transitions now call `reconcile`, and Settle can answer 409 `holds_undecided`.
+
+## Implementation amendments (2026-09-29)
+
+These record how `internal/board` reads this contract, plus two later decisions. Where they differ from a section above, they win.
+
+**Readings and deviations**
+
+- **Stored container status:** epics and stories store only `planned` or `cancelled`. Cancelled is their own state (dismissed, swept or cascaded); every other status is derived (§2).
+- **Derivation order:** cancelled itself → any leaf held: doing → no confirmed leaves: planned → every confirmed leaf cancelled: cancelled → every live confirmed leaf done: done, or doing while any leaf has a pending request → any confirmed leaf done: doing → otherwise planned.
+- **`cascade_id` on every cancel:** a single-leaf cancel, each swept subtree and each close-on-done get one too, so Restore always has a set to reopen.
+- **Replace rule per kind:** one pending request per card, Task and kind. A newer request replaces the older one for every kind, not only `change`.
+- **Accepting `blocked`** links the named blocker if there is one, otherwise it sets the flag; the hold stays. **Accepting `cancel`** runs the cancel or cascade.
+- **Not touches:** owner Release, owner cancel and accepting a cancel request don't confirm or re-pin anything. Releasing an unconfirmed subtask re-arms its expiry (§5).
+- **One-hold cap:** only a pending `done`, `blocked` or `split` request exempts a hold; a `change` or `cancel` request doesn't (§4).
+- **Cascades** skip containers that are already done. When a container reaches done, its own pending requests are withdrawn.
+- **Split done requests:** the done requests a split files for ticked items need no hold to be accepted. An owner's split files them with an empty Task ID.
+- **The sweep** also skips a subtree with a pending request anywhere in it, so inbox rows are never withdrawn silently.
+- **Reconcile** also takes `asOf`, the time the caller read its Task snapshot, and leaves alone any hold that started at or after it. It takes each Project's uncommitted paths too, for the "uncommitted: …" comment. It treats an unknown stage as ended and does not sweep.
+- **`scopes` table** (added to §13): one row per Task, holding its Project, its container and whether it is planning or working. Launch and Start planning write it, and §4 is enforced from it.
+- **Extra error codes:** `not_found`, `forbidden`, `limit` and `duplicate`, alongside §14's. `unconfirmed_parent` is gone (decision 2).
+- **Links:** both ends must be in one Project. Only the owner can unlink.
+- **Cancelled checks** use the card's own stored status. Nothing is created or moved under a cancelled card or anything below one, nothing is edited on a cancelled card until it is restored, and cancelled siblings don't count in the duplicate-title check. Ready, Launch and Claim refuse a subtask with a cancelled ancestor, as Restore does (§8).
+- **Restore** reopens a leaf as todo if it was ever held, otherwise as planned, and runs the duplicate-title check.
+- **Limits:** Purge deletes only subtrees that are entirely cancelled. A card moves between Projects only out of Unassigned.
+
+**Decisions**
+
+1. **Split under a story.** A leaf whose parent is a story splits into sibling leaves under that story, placed right after it and in order. Unticked items become planned siblings; ticked items become siblings with a pending done request that cites the tick. The original is cancelled with the automatic comment "split into #a, #b, …" and its own `cascade_id`, so Restore brings it back and leaves the siblings. A live hold moves to the first pending sibling. An unconfirmed, unheld leaf splits directly; a confirmed or held one files one split request, and accepting it applies everything at once. Under an epic or at the root, §7 is unchanged: the leaf becomes a story.
+2. **An owner touch confirms ancestors.** Any owner touch on a card (save, create, launch, accept, restore, confirm or a status change) also confirms and re-pins each unconfirmed ancestor in the same transaction. This replaces the `unconfirmed_parent` refusal. So launching a leaf under an agent-suggested story confirms the story, and the sweep can't expire it.
