@@ -253,7 +253,235 @@ export interface Settings {
   task_defaults?: TaskDefaults;
   /** Whether a Task's header offers a shell in its Project folder; off by default. Turning it off ends every open shell. */
   terminal: boolean;
+  /** The planner (ADR 0005): the Boards of git Projects; off by default, absent from a service older than it. */
+  planner?: boolean;
 }
+
+/* ---------- The planner (ADR 0005 §14–§15) ---------- */
+
+export type CardKind = 'epic' | 'story' | 'subtask';
+/** A subtask's stored status; a container's is derived from its confirmed subtasks and is never `todo`. */
+export type CardStatus = 'planned' | 'todo' | 'doing' | 'done' | 'cancelled';
+
+export interface ChecklistItem {
+  text: string;
+  done: boolean;
+}
+
+/** Done ÷ non-cancelled confirmed subtasks, counted; `proposed` is the unconfirmed ones. Containers only. */
+export interface CardProgress {
+  done: number;
+  total: number;
+  proposed: number;
+}
+
+/** How far a confirmed, unheld subtask is behind HEAD since its pin (§9). */
+export interface Staleness {
+  behind: number;
+  diverged: boolean;
+  files: string[];
+}
+
+/** One node on a Board: an epic, a story or a subtask. `{ref}` in a route is its id or its `#seq`. */
+export interface Card {
+  id: string;
+  seq: number;
+  /** Empty for the Unassigned list (kb import cards not moved into a Project yet). */
+  project_id: string;
+  kind: CardKind;
+  parent_id: string | null;
+  rank: number;
+  title: string;
+  desc: string;
+  win_condition: string;
+  status: CardStatus;
+  progress?: CardProgress;
+  prio: number;
+  due?: string;
+  effort?: 'S' | 'M' | 'L' | '';
+  labels: string[];
+  checklist: ChecklistItem[];
+  blocked: boolean;
+  blocked_by: string[];
+  blocks: string[];
+  confirmed: boolean;
+  /** Sent only while the card is unconfirmed. */
+  expires_at?: string;
+  /** The Task holding a doing subtask. */
+  held_by?: string;
+  pinned_sha: string;
+  /** Owner only: null inherits the Project default, `''` means none, otherwise the command. */
+  accept_cmd: string | null;
+  /** Owner only: globs the staleness check watches. */
+  paths: string[];
+  /** Sent only once computed. */
+  stale?: Staleness;
+  pending_requests: number;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+  moved_at: string;
+}
+
+export type RequestKind = 'done' | 'cancel' | 'blocked' | 'split' | 'change';
+export type RequestFlag = 'acceptance_could_not_run' | 'baseline_missing' | 'no_change_in_tree' | 'tests_or_build_changed' | 'overlap';
+
+/** The evidence rows of a done request (§6). */
+export interface Evidence {
+  baseline?: { head: string; dirty: string[] };
+  /** `pre_dirty`: the path was uncommitted when the hold began, and counts because its content changed since. */
+  diff?: { added: number; deleted: number; files: { path: string; added: number; deleted: number; by_task: boolean; pre_dirty?: boolean; overlap?: { card: number; task_id: string } }[] };
+  commits?: { sha: string; subject: string }[];
+  accept?: AcceptRun;
+  /** `partial`: uam's copy of the transcript may not reach back to the hold's start, so the touched files may be incomplete. */
+  transcript?: { task_id: string; from_item: string; to_item: string; partial?: boolean };
+  checklist?: { done: number; total: number };
+}
+
+export interface AcceptRun {
+  cmd: string;
+  cmd_hash: string;
+  head: string;
+  dirty: boolean;
+  exit: number;
+  tail: string;
+  ran_at: string;
+  /** The command changed since this run. */
+  stale: boolean;
+}
+
+/** An agent's ask for an owner decision on a card; the pending ones are the Inbox (the ADR's Request). */
+export interface BoardRequest {
+  id: string;
+  card_id: string;
+  task_id: string;
+  agent_id: string;
+  kind: RequestKind;
+  comment: string;
+  /**
+   * split: `{children: [{title, win_condition}]}`; change: `{patch: {the proposed fields}, proposed_accept_cmd?}`;
+   * blocked: `{blocker}` (a card id); a done request a split filed for a ticked item: `{split_of, tick}`.
+   */
+  payload: Record<string, unknown>;
+  evidence: Evidence;
+  flags: RequestFlag[];
+  base_revision: number;
+  status: 'pending' | 'accepted' | 'rejected' | 'withdrawn';
+  created_at: string;
+  decided_at?: string;
+  decision_comment?: string;
+}
+
+export interface CardComment {
+  id: string;
+  /** `owner`, `task:<id>` or `uam` (automatic comments). */
+  author: string;
+  body: string;
+  automatic: boolean;
+  created_at: string;
+}
+
+/** One attempt: a hold from its start to its end. */
+export interface Hold {
+  id: string;
+  task_id: string;
+  started_at: string;
+  baseline_head: string;
+  baseline_dirty: string[];
+  ended_at?: string;
+  end_reason?: string;
+}
+
+/** `GET /api/board`: one Project's cards, its pending requests and its revision. */
+export interface BoardData {
+  cards: Card[];
+  requests: BoardRequest[];
+  revision: number;
+}
+
+export interface CardDetail {
+  card: Card;
+  comments: CardComment[];
+  requests: BoardRequest[];
+  holds: Hold[];
+}
+
+export type BoardFrame = Extract<UpdateData, { name: 'board' }>;
+export type BoardJob = Extract<UpdateData, { name: 'board_job' }>;
+
+export type TriageVerdict = 'valid' | 'moot' | 'conflicts';
+
+export interface ImportReport {
+  imported: number;
+  updated: number;
+  unassigned: number;
+  comments: number;
+  links: number;
+  skipped: { id: string; reason: string }[];
+}
+
+/** The fields an owner edit may carry (`PATCH /api/board/cards/{ref}`); the edit confirms the card. */
+export type CardPatch = Partial<Pick<Card, 'title' | 'desc' | 'win_condition' | 'prio' | 'effort' | 'due' | 'labels' | 'checklist' | 'accept_cmd' | 'paths' | 'project_id'>>;
+
+/** What Settle decides for each subtask the Task holds (§5). */
+export type HoldDecision = { action: 'keep' | 'release' | 'cancel'; comment: string };
+
+/**
+ * The planner's error code, when a refusal carries one (`planner_off`, `no_git`, `guard_open_items`,
+ * `holds_undecided`, `invalid`, `not_found`, …). The UI decides on the code, never on the status.
+ */
+export function errorCode(e: unknown): string | undefined {
+  return e instanceof ApiError && typeof e.body.code === 'string' ? e.body.code : undefined;
+}
+
+/** What a refusal was about (`refs`): the open checklist items of `guard_open_items`, the `#seq` of each open blocker of `guard_blockers`. */
+function errorRefs(e: unknown): string[] {
+  return e instanceof ApiError && Array.isArray(e.body.refs) ? e.body.refs.map(String) : [];
+}
+
+/** A route this service does not have yet (a planner feature that lands later): 404 with no code. */
+export function routeMissing(e: unknown): boolean {
+  return isStatus(e, 404) && errorCode(e) === undefined;
+}
+
+/**
+ * A planner refusal in words: the service's own message, except where the UI can say it better
+ * (the planner off or unavailable, a busy acceptance run or import, a feature not here yet).
+ */
+export function plannerErrorText(e: unknown): string {
+  if (routeMissing(e)) return 'this service does not offer it yet';
+  switch (errorCode(e)) {
+    case 'planner_off':
+      return 'the planner is off; turn it on in Settings';
+    case 'planner_unavailable':
+      return 'the planner database could not be opened; see the service log';
+    case 'acceptance_busy':
+      return 'the acceptance command is already running in this project; try again in a moment';
+    case 'import_busy':
+      return 'the source board changed while it was copied; try again in a moment';
+  }
+  return describeError(e);
+}
+
+/** What stops an owner's Mark done (`guard_open_items`, `guard_blockers` or `guard_blocked`, §6), or null for any other outcome. */
+export type DoneGuard = { code: 'guard_open_items'; items: string[] } | { code: 'guard_blockers'; blockers: string[] } | { code: 'guard_blocked' };
+
+export function doneGuard(e: unknown): DoneGuard | null {
+  const code = errorCode(e);
+  if (code === 'guard_open_items') return { code, items: errorRefs(e) };
+  if (code === 'guard_blockers') return { code, blockers: errorRefs(e) };
+  if (code === 'guard_blocked') return { code };
+  return null;
+}
+
+/** The subtasks a Settle left undecided (`holds_undecided`), or null for any other outcome. */
+export function undecidedHolds(e: unknown): Card[] | null {
+  if (!(e instanceof ApiError) || errorCode(e) !== 'holds_undecided') return null;
+  return Array.isArray(e.body.cards) ? (e.body.cards as Card[]) : [];
+}
+
+/** A rejected request, and whether its reason reached the Task (§14). When it did not and the subtask is still held, the owner may Release it. */
+export type Rejection = BoardRequest & { steered: boolean };
 
 /**
  * A custom (BYOM) model, offered by Copilot as `name/model_id`. No key passes through the
@@ -612,6 +840,11 @@ export interface SnapshotData extends Representation {
   settings?: Settings;
   /** Absent from a service older than usage (#188). */
   usage?: AccountUsage;
+  /**
+   * With the planner on: each Board's revision by Project id (`''` for the Unassigned list), so
+   * a new stream fetches again only the Boards that moved while no stream was open (ADR 0005 §15).
+   */
+  boards?: Record<string, number>;
   sessions: SessionSummary[];
   session: SessionDetail | null;
 }
@@ -641,7 +874,11 @@ export type UpdateData =
   | { name: 'submission'; seq: number; session_id: string; submission: Submission }
   | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent }
   | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
-  | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks };
+  | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
+  /** One committed planner write, to everyone (§15); `project_id` is empty for the Unassigned list. */
+  | { name: 'board'; seq: number; project_id: string; revision: number; cards: Card[]; removed: string[]; requests: BoardRequest[] }
+  /** A Utility job's progress (Suggest stories). */
+  | { name: 'board_job'; seq: number; job_id: string; card_id: string; status: 'running' | 'done' | 'failed'; error?: string };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -661,6 +898,8 @@ export const UPDATE_EVENTS = [
   'subagent',
   'background_tasks',
   'turn_timing',
+  'board',
+  'board_job',
 ] as const;
 
 export class ApiError extends Error {
@@ -867,7 +1106,53 @@ export const api = {
   itemBody: (id: string, itemId: string, agentId: string, signal?: AbortSignal) => foregroundRead(() => call<BodyData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}?agent_id=${enc(agentId)}`, undefined, false, signal), signal),
   detailEventsUrl: (id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string) => `/api/events/detail?${detailEventsQuery(id, agentId, bodies, agentBefore, epoch, agentUntil)}`,
   eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}&tool_output=delta&history=recent&view=compact-v1` : '/api/events'),
+
+  /**
+   * Settle, deciding the subtasks the Task holds (§5): without a decision for each, the service
+   * answers 409 `holds_undecided` with the held cards (`undecidedHolds`), and the Settle dialog asks.
+   */
+  settle: (id: string, holds?: Record<string, HoldDecision>) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/settle`, holds ? { holds } : {}),
+  planner: plannerApi(),
 };
+
+/**
+ * The planner's routes (ADR 0005 §14). `ref` is a card id or its `#seq`; `project` is a Project
+ * id or `unassigned`. Replies whose shape the ADR leaves open resolve to `unknown`: the views
+ * follow the `board` frame, never those bodies.
+ */
+function plannerApi() {
+  const card = (ref: string, action = '') => `/api/board/cards/${enc(ref)}${action ? `/${action}` : ''}`;
+  type TaskSettings = Partial<Pick<TaskDefaults, 'model' | 'effort' | 'mode' | 'context_size'>>;
+  return {
+    board: (project: string, signal?: AbortSignal) => call<BoardData>('GET', `/api/board?project_id=${enc(project)}`, undefined, false, signal),
+    project: (id: string) => call<{ accept_cmd: string; git: string }>('GET', `/api/board/projects/${enc(id)}`),
+    setProject: (id: string, accept_cmd: string) => call<unknown>('PATCH', `/api/board/projects/${enc(id)}`, { accept_cmd }),
+    card: (ref: string, signal?: AbortSignal) => call<CardDetail>('GET', card(ref), undefined, false, signal),
+    create: (body: { project_id: string; kind: CardKind; parent_id: string | null; title: string; desc?: string; win_condition?: string; prio?: number; effort?: string; due?: string; labels?: string[]; checklist?: ChecklistItem[] }) => call<Card>('POST', '/api/board/cards', body),
+    edit: (ref: string, patch: CardPatch) => call<unknown>('PATCH', card(ref), patch),
+    confirm: (ref: string) => call<unknown>('POST', card(ref, 'confirm')),
+    dismiss: (ref: string) => call<unknown>('POST', card(ref, 'dismiss')),
+    /** Without a rank the card goes after its new parent's last child; `rank` is an index among the siblings. */
+    move: (ref: string, parent_id: string | null, rank?: number) => call<unknown>('POST', card(ref, 'move'), rank === undefined ? { parent_id } : { parent_id, rank }),
+    status: (ref: string, status: 'done' | 'cancelled' | 'todo', comment: string, force = false) => call<unknown>('POST', card(ref, 'status'), { status, comment, force }),
+    restore: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'restore'), { comment }),
+    split: (ref: string, children: { title: string; win_condition: string }[]) => call<unknown>('POST', card(ref, 'split'), { children }),
+    comment: (ref: string, body: string) => call<unknown>('POST', card(ref, 'comments'), { body }),
+    link: (blocker: string, blocked: string) => call<unknown>('POST', '/api/board/links', { blocker, blocked }),
+    unlink: (blocker: string, blocked: string) => call<unknown>('DELETE', `/api/board/links?blocker=${enc(blocker)}&blocked=${enc(blocked)}`),
+    /** On a subtask it launches that subtask; on a story it is Do whole story. */
+    launch: (ref: string, body: TaskSettings = {}) => call<{ card: Card; session: SessionSummary }>('POST', card(ref, 'launch'), body),
+    plan: (ref: string, body: { brief: string } & TaskSettings) => call<{ session: SessionSummary }>('POST', card(ref, 'plan'), body),
+    release: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'release'), { comment }),
+    check: (ref: string) => call<{ accept: AcceptRun }>('POST', card(ref, 'check')),
+    triage: (ref: string) => call<{ verdict: TriageVerdict; sentence: string; head: string }>('POST', card(ref, 'triage')),
+    suggest: (ref: string, body: { brief: string; document: string; max: number }) => call<{ job_id: string }>('POST', card(ref, 'suggest'), body),
+    accept: (id: string, comment: string) => call<unknown>('POST', `/api/board/requests/${enc(id)}/accept`, { comment }),
+    reject: (id: string, reason: string) => call<Rejection>('POST', `/api/board/requests/${enc(id)}/reject`, { reason }),
+    purge: (project_id: string) => call<{ purged: number }>('POST', '/api/board/purge', { project_id }),
+    import: (dir: string) => call<ImportReport>('POST', '/api/board/import', { dir }),
+  };
+}
 
 export interface Upload {
   done: Promise<Attachment & { id: string }>;

@@ -1,4 +1,4 @@
-import { ChevronRight, CircleCheck, FolderPlus, GitBranch, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
+import { ChevronRight, CircleCheck, FolderPlus, GitBranch, KanbanSquare, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
 import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -28,6 +28,8 @@ export interface WorkspaceActions {
   onToggleSidebar: () => void;
   settingsOpen: boolean;
   onSettings: () => void;
+  /** The planner, while Settings → Planner is on: whether its view is showing, and Plan (a Project's Board, or the last one shown). */
+  planner?: { open: boolean; onOpen: (projectId?: string) => void };
 }
 
 /**
@@ -404,7 +406,7 @@ export const Sidebar = memo(function Sidebar({
           <input type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
         <SidebarToggle id="sidebar-hide" open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
-        {projects.length > 0 && <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} />}
+        {projects.length > 0 && <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} onPlan={actions.planner && ((p) => actions.planner!.onOpen(p.id))} />}
         <Tip label="Add project">
           <Button size="icon" aria-label="Add project" className="text-muted" onClick={actions.onAddProject}>
             <FolderPlus />
@@ -442,6 +444,13 @@ export const Sidebar = memo(function Sidebar({
             <SettingsIcon />
           </Button>
         </Tip>
+        {actions.planner && (
+          <Tip label="Planner">
+            <Button size="icon" aria-label="Planner" aria-pressed={actions.planner.open} className="-ml-1 text-muted" onClick={() => actions.planner!.onOpen()}>
+              <KanbanSquare />
+            </Button>
+          </Tip>
+        )}
         <Tip label={connection === 'connected' ? 'Connected' : CONNECTION_TEXT[connection]}>
           <output className="flex size-7 items-center justify-center">
             <Dot tone={conn} pulse={connection !== 'connected'} />

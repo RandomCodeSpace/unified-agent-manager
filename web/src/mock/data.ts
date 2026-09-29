@@ -1004,8 +1004,9 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
 
   return { meta, projects, previous, settings: {
       send_default: 'steer',
-      // On here, unlike the service, so the Task header shows Terminal.
+      // On here, unlike the service, so the Task header shows Terminal and the sidebar the planner.
       terminal: true,
+      planner: true,
       // The setting names a model with effort and a long context, so the Settings section and a draft show them resolved.
       task_defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
       custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'UAM_BYOM_OPENROUTER', key_present: false }],
