@@ -12,6 +12,14 @@
 | **Archived** | The final stage of a Task. It is read-only, cannot be reopened, and can be deleted. |
 | **Imported Task** | A Task linked to an existing Copilot conversation. UAM checks whether another client holds that conversation before importing or sending work. |
 | **Legacy terminal record** | Saved metadata from UAM's retired terminal support. It remains on disk but is not an active Task and has no terminal controls in current UAM. |
+| **Board** | A Project's plan in the planner (ADR 0005): cards arranged as epics, stories and subtasks. It exists only for git Projects, behind a Settings switch. |
+| **Card** | One node on a Board: an epic, a story or a subtask. |
+| **Epic** / **Story** | Container cards. Their status and progress are derived from the subtasks under them, and they are done only when every confirmed subtask is done. |
+| **Subtask** | The leaf card, the unit of work a Task is launched on. It is never called a "task": a Task is always a UAM conversation. |
+| **Confirmed** | A card the owner has saved, launched, accepted or restored. Agents can't change its fields directly; they file change requests. |
+| **Hold** | The link between a doing subtask and the Task working on it. It ends only through the release rules in ADR 0005. |
+| **Request** | An agent's ask for an owner decision on a card: done, cancel, blocked, split or change. Pending Requests form the Inbox. |
+| **Finishing guard** | The refusal to finish a subtask with open checklist items, the blocked flag, or open blockers. Only the owner can override it. |
 
 See the [web guide](docs/web.md) for current behavior. Earlier terminal ADRs
 remain historical records of the retired interface.
