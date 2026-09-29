@@ -283,21 +283,22 @@ func (s *Store) write(ctx context.Context, fn func(*txn) error) ([]Change, error
 }
 
 func (s *Store) writeOnce(ctx context.Context, fn func(*txn) error) ([]Change, error) {
-	t, err := s.begin(ctx)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("board: begin: %w", err)
 	}
+	// After Commit this is a no-op; on any other exit, a panic in fn
+	// included, it releases the write lock.
+	defer func() { _ = tx.Rollback() }()
+	t := s.newTxn(ctx, tx)
 	if err := fn(t); err != nil {
-		_ = t.tx.Rollback()
 		return nil, err
 	}
 	changes, err := t.finish()
 	if err != nil {
-		_ = t.tx.Rollback()
 		return nil, err
 	}
-	if err := t.tx.Commit(); err != nil {
-		_ = t.tx.Rollback()
+	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("board: commit: %w", err)
 	}
 	return changes, nil
@@ -306,25 +307,21 @@ func (s *Store) writeOnce(ctx context.Context, fn func(*txn) error) ([]Change, e
 // read runs fn in a transaction that is always rolled back, so it sees one
 // consistent snapshot.
 func (s *Store) read(ctx context.Context, fn func(*txn) error) error {
-	t, err := s.begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = t.tx.Rollback() }()
-	return fn(t)
-}
-
-func (s *Store) begin(ctx context.Context) (*txn, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("board: begin: %w", err)
+		return fmt.Errorf("board: begin: %w", err)
 	}
+	defer func() { _ = tx.Rollback() }()
+	return fn(s.newTxn(ctx, tx))
+}
+
+func (s *Store) newTxn(ctx context.Context, tx *sql.Tx) *txn {
 	return &txn{
 		ctx: ctx, tx: tx, s: s, now: s.now().UTC(),
 		outlines: map[string]*outline{},
 		changes:  map[string]*changeSet{},
 		scopes:   map[string]*scope{},
-	}, nil
+	}
 }
 
 func (s *Store) notify(changes []Change) {
