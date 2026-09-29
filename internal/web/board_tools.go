@@ -831,6 +831,9 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 	if len(res.Request.Flags) > 0 {
 		text += " Flags: " + strings.Join(res.Request.Flags, ", ") + "."
 	}
+	if ev.Transcript != nil && ev.Transcript.Partial {
+		text += " The transcript uam holds does not reach back to the hold's start, so the files touched by this task may be incomplete."
+	}
 	return cardReply(c, "%s", text), nil
 }
 
@@ -891,12 +894,18 @@ func (m *Manager) endClaims(id string) {
 
 // taskWork returns the files the Task id's edit tools touched since since,
 // its subagents' included, and the span of its transcript since then; nil
-// when it has no item since then. Only the retained transcript is read.
+// when it has no item since then and nothing is missing. Only the retained
+// transcript is read; the span is marked partial when that may miss some.
 func (m *Manager) taskWork(id string, since time.Time) ([]string, *EvidenceTranscript) {
 	var tools []agentapi.Item
 	var span *EvidenceTranscript
 	m.mu.Lock()
 	if s := m.sessions[id]; s != nil {
+		// Unread, or trimmed at the front past the hold's start, or read
+		// without its subagents' items.
+		if s.history != HistoryLoaded || s.subagentsArchived || s.truncated && (len(s.items) == 0 || s.items[0].Time.After(since)) {
+			span = &EvidenceTranscript{TaskID: id, Partial: true}
+		}
 		for _, it := range s.items {
 			if it.Time.Before(since) {
 				continue
@@ -907,7 +916,10 @@ func (m *Manager) taskWork(id string, since time.Time) ([]string, *EvidenceTrans
 			}
 			if it.AgentID == "" {
 				if span == nil {
-					span = &EvidenceTranscript{TaskID: id, FromItem: it.ID}
+					span = &EvidenceTranscript{TaskID: id}
+				}
+				if span.FromItem == "" {
+					span.FromItem = it.ID
 				}
 				span.ToItem = it.ID
 			}

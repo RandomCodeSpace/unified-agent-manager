@@ -452,7 +452,7 @@ func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 	if f := evidenceFiles(ev)["made.txt"]; !f.ByTask || f.Added != 2 {
 		t.Fatalf("diff = %+v", ev.Diff)
 	}
-	if ev.Accept == nil || ev.Accept.Exit != 0 || !strings.Contains(ev.Accept.Tail, "checked") || ev.Transcript == nil || ev.Transcript.TaskID != task.ID || ev.Transcript.ToItem != "edit-1" {
+	if ev.Accept == nil || ev.Accept.Exit != 0 || !strings.Contains(ev.Accept.Tail, "checked") || ev.Transcript == nil || ev.Transcript.TaskID != task.ID || ev.Transcript.ToItem != "edit-1" || ev.Transcript.Partial {
 		t.Fatalf("evidence = %+v, accept %+v, transcript %+v", ev, ev.Accept, ev.Transcript)
 	}
 
@@ -462,8 +462,6 @@ func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 		return err
 	})
 	f.setAcceptCmd("exit 1")
-	gitIn(t, f.repo, "add", ".")
-	gitIn(t, f.repo, "commit", "-q", "-m", "made")
 	_, other := f.launch(none.ID)
 	if r := f.toolOK(other.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"nothing changed"}`, none.ID)); !strings.HasSuffix(r.Text, "0 commits. Flags: no_change_in_tree.") {
 		t.Fatalf("done without a command = %q", r.Text)
@@ -471,6 +469,62 @@ func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 	var bare Evidence
 	if err := json.Unmarshal(f.card(none.ID).Requests[0].Evidence, &bare); err != nil || bare.Accept != nil {
 		t.Fatalf("evidence without a command = %+v, %v", bare.Accept, err)
+	}
+}
+
+// A file already dirty when the owner launched the subtask, and unchanged
+// since, is not the Task's work: it is left out of the diff, so another hold
+// that touched it raises no overlap.
+func TestBoardToolsDoneLeavesOutWhatWasDirtyAtLaunch(t *testing.T) {
+	f := newPlanner(t)
+	writeRepoFile(t, f.repo, "pre.txt", "committed\n")
+	gitIn(t, f.repo, "add", ".")
+	gitIn(t, f.repo, "commit", "-q", "-m", "pre")
+	writeRepoFile(t, f.repo, "pre.txt", "dirty before the launch\n")
+	writeRepoFile(t, f.repo, "new.txt", "untracked before the launch\n")
+	mine, theirs := f.create(board.KindSubtask, "", "Mine"), f.create(board.KindSubtask, "", "Theirs")
+	_, task := f.launch(mine.ID)
+	_, other := f.launch(theirs.ID)
+	for _, p := range []string{"pre.txt", "new.txt"} {
+		f.conversation(other.ID).EmitItem(agentapi.Item{ID: "edit-" + p, Kind: agentapi.ItemTool, Time: time.Now(),
+			Tool: &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolCompleted, Input: fmt.Sprintf(`{"path":%q}`, p)}})
+	}
+	if d := f.card(mine.ID); len(d.Holds) != 1 || !slices.Equal(d.Holds[0].BaselineDirty, []string{"pre.txt", "new.txt"}) {
+		t.Fatalf("launch baseline = %+v", d.Holds)
+	}
+	r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"nothing to do"}`, mine.ID))
+	if !strings.HasSuffix(r.Text, "in 0 files (0 touched by this task), 0 commits. Flags: no_change_in_tree.") {
+		t.Fatalf("done = %q", r.Text)
+	}
+	var ev Evidence
+	if err := json.Unmarshal(f.card(mine.ID).Requests[0].Evidence, &ev); err != nil || len(ev.Diff.Files) != 0 {
+		t.Fatalf("diff = %+v, %v", ev.Diff, err)
+	}
+}
+
+// A transcript uam holds only from after the hold started marks the
+// evidence partial: the touched files may be incomplete.
+func TestBoardToolsDoneNotesAPartialTranscript(t *testing.T) {
+	f := newPlanner(t)
+	leaf := f.create(board.KindSubtask, "", "Leaf")
+	_, task := f.launch(leaf.ID)
+	f.conversation(task.ID).EmitItem(agentapi.Item{ID: "late", Kind: agentapi.ItemAssistant, Text: "hi", Time: time.Now().Add(time.Minute)})
+	waitUntil(t, "the item", func() bool {
+		f.m.mu.Lock()
+		defer f.m.mu.Unlock()
+		_, ok := f.m.sessions[task.ID].itemIdx[itemKey("", "late")]
+		return ok
+	})
+	f.m.mu.Lock()
+	f.m.sessions[task.ID].truncated = true
+	f.m.mu.Unlock()
+	r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, leaf.ID))
+	if !strings.Contains(r.Text, "may be incomplete") {
+		t.Fatalf("done = %q", r.Text)
+	}
+	var ev Evidence
+	if err := json.Unmarshal(f.card(leaf.ID).Requests[0].Evidence, &ev); err != nil || ev.Transcript == nil || !ev.Transcript.Partial || ev.Transcript.FromItem != "late" {
+		t.Fatalf("transcript = %+v, %v", ev.Transcript, err)
 	}
 }
 

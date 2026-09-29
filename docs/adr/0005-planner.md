@@ -487,6 +487,7 @@ These record how `internal/board` reads this contract, plus two later decisions.
 - **Agent tool parameters (§16):** `board_list` filters with `state`, and `board_link` takes `{ref, blocker}`, where `ref` is the blocked card, because no schema may have a `status` or `blocked` key. `board_request` also takes `proposed_accept_cmd`, for `done` only.
 - **Agent tool results (§16):** each result is compact JSON, `{text, code, refs, card}`. A refusal carries `code` and `refs`, such as the open checklist items; `card` (`id, seq, kind, title, status`) is the card the call was about. The adapter records only this text, so the transcript chip is rebuilt from it after a reload.
 - **Agent tool registration (§16):** the tools are added when a Task's conversation opens. Turning the switch on reaches Tasks opened afterwards, including a reopened one. Every call checks the switch and the Project's git again.
+- **Evidence transcript (§14):** `transcript.partial` is set when the transcript uam holds does not reach back to the hold's start, so the `by_task` files may be incomplete. A launch records its baseline the same way a claim does, with the blob names of the paths already dirty.
 
 **Decisions**
 
