@@ -462,6 +462,8 @@ func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 		return err
 	})
 	f.setAcceptCmd("exit 1")
+	gitIn(t, f.repo, "add", ".")
+	gitIn(t, f.repo, "commit", "-q", "-m", "made")
 	_, other := f.launch(none.ID)
 	if r := f.toolOK(other.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"nothing changed"}`, none.ID)); !strings.HasSuffix(r.Text, "0 commits. Flags: no_change_in_tree.") {
 		t.Fatalf("done without a command = %q", r.Text)
