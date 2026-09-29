@@ -260,3 +260,13 @@ func TestErrorMatching(t *testing.T) {
 		t.Fatal("a plain error has a code")
 	}
 }
+
+// The acceptance refusals are raised outside the store, and their codes are
+// part of the HTTP and tool contract.
+func TestAcceptanceCodes(t *testing.T) {
+	for code, want := range map[Code]string{CodeAcceptanceBusy: "acceptance_busy", CodeAcceptanceFailed: "acceptance_failed"} {
+		if err := fmt.Errorf("wrap: %w", &Error{Code: code, Message: "x"}); string(CodeOf(err)) != want {
+			t.Fatalf("code %q reads as %q", want, CodeOf(err))
+		}
+	}
+}

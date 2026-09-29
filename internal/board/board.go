@@ -243,6 +243,11 @@ const (
 	CodeForbidden      Code = "forbidden"
 	CodeLimit          Code = "limit"
 	CodeDuplicate      Code = "duplicate"
+	// The acceptance refusals (ADR 0005 §6), raised by the caller that runs
+	// acceptance: the Project's runner stayed busy past the timeout, or the
+	// command exited non-zero.
+	CodeAcceptanceBusy   Code = "acceptance_busy"
+	CodeAcceptanceFailed Code = "acceptance_failed"
 )
 
 // Error is a refusal from a board rule. Refs lists the cards or items the
