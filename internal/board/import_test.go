@@ -2,11 +2,15 @@ package board
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -325,17 +329,195 @@ func TestImportSkipsWhatItCannotTake(t *testing.T) {
 	f.must(err)
 	src := openSource(t, dir)
 	sourceExec(t, src, `UPDATE tasks SET title = 'Build the landing page' WHERE seq = 1`)
-	for i, bad := range []struct{ tags, status string }{{`["two words"]`, "todo"}, {`[]`, "archived"}} {
+	long := strings.Repeat("x", 501)
+	for i, add := range []struct{ id, title, status, tags, checks string }{
+		{"bad-label", "Bad task", "todo", `["two words"]`, `[]`},
+		{"bad-status", "Bad task", "archived", `[]`, `[]`},
+		{"bad-title", long, "todo", `[]`, `[]`},
+		// Older source boards hold blank checklist items; only they are dropped.
+		{"blank-items", "Sparse", "todo", `["project::website"]`, `[{"Text":"  ","Done":false},{"Text":"Real","Done":true},{"Text":"","Done":true}]`},
+	} {
 		sourceExec(t, src, `INSERT INTO tasks (id, seq, user, title, status, tags, checks, created_at, moved_at, updated_at)
-			VALUES (?, ?, 'default', 'Bad task', ?, ?, '[]', '', '', '')`, "bad-"+bad.status, 13+i, bad.status, bad.tags)
+			VALUES (?, ?, 'default', ?, ?, ?, ?, '', '', '')`, add.id, 13+i, add.title, add.status, add.tags, add.checks)
 	}
-	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Skipped: []ImportSkip{
+	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Imported: 1, Skipped: []ImportSkip{
 		{ID: sourceID(t, src, 1), Reason: `"Build the landing page": #1 is cancelled; restore it to take the changes`},
-		{ID: "bad-todo", Reason: `"Bad task": invalid label "two words": must not contain whitespace`},
-		{ID: "bad-archived", Reason: `"Bad task": unknown status "archived"`},
+		{ID: "bad-label", Reason: `"Bad task": invalid label "two words": must not contain whitespace`},
+		{ID: "bad-status", Reason: `"Bad task": unknown status "archived"`},
+		{ID: "bad-title", Reason: fmt.Sprintf("%q: title exceeds 500 bytes", long)},
 	}})
 	if got := f.card(landing.ID); got.Title != "Build landing page" {
 		t.Fatalf("cancelled card = %+v, want it untouched", got)
+	}
+	if got := f.byTitle(proj, "Sparse"); !slices.Equal(got.Checklist, []Check{{Text: "Real", Done: true}}) {
+		t.Fatalf("checklist = %+v, want only the item with text", got.Checklist)
+	}
+}
+
+func TestImportReopensDoneCards(t *testing.T) {
+	f := newFixture(t)
+	dir := sourceCopy(t, "import-v11")
+	f.importFrom(dir, websiteOnly)
+	// Set up analytics stays done under a story the owner then cancelled.
+	analytics, nav := f.byTitle(proj, "Set up analytics"), f.byTitle(proj, "Fix mobile nav")
+	story := f.create(owner, "", KindStory, "Metrics")
+	_, err := f.s.Edit(f.ctx, owner, analytics.ID, Patch{ParentID: &story.ID})
+	f.must(err)
+	f.create(owner, story.ID, KindSubtask, "Dashboards")
+	_, err = f.s.SetStatus(f.ctx, owner, story.ID, StatusCancelled, "not now", false)
+	f.must(err)
+	wantStatus(t, f.card(analytics.ID), StatusDone)
+
+	src := openSource(t, dir)
+	sourceExec(t, src, `UPDATE tasks SET status = 'todo' WHERE seq IN (3, 4)`)
+	skip := ImportSkip{ID: sourceID(t, src, 3),
+		Reason: fmt.Sprintf(`"Set up analytics": #3 is under cancelled #%d; restore that first`, story.Seq)}
+	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Updated: 1, Skipped: []ImportSkip{skip}})
+	wantStatus(t, f.card(nav.ID), StatusTodo)
+	wantStatus(t, f.card(analytics.ID), StatusDone)
+	// The refused reopen is tried again, and applies once the story is back.
+	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Skipped: []ImportSkip{skip}})
+	_, err = f.s.Restore(f.ctx, owner, story.ID, "back on")
+	f.must(err)
+	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Updated: 1})
+	wantStatus(t, f.card(analytics.ID), StatusTodo)
+}
+
+func TestImportLinksCardsTheOwnerMovedIn(t *testing.T) {
+	f := newFixture(t)
+	dir := sourceCopy(t, "import-v11")
+	f.importFrom(dir, websiteOnly)
+	design, rate := f.byTitle("", "Design REST endpoints"), f.byTitle("", "Rate limiting")
+	p2 := "p2"
+	for _, c := range []Card{design, rate} {
+		_, err := f.s.Edit(f.ctx, owner, c.ID, Patch{ProjectID: &p2})
+		f.must(err)
+	}
+	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Links: 1})
+	if got := f.card(rate.ID); !slices.Equal(got.BlockedBy, []string{design.ID}) {
+		t.Fatalf("moved card = %+v, want it blocked by #%d", got, design.Seq)
+	}
+}
+
+func TestImportRetriesALinkRefusedForACycle(t *testing.T) {
+	f := newFixture(t)
+	dir := sourceCopy(t, "import-v11")
+	f.importFrom(dir, websiteOnly)
+	landing, post, launch := f.byTitle(proj, "Build landing page"), f.byTitle(proj, "🚀 Write launch post"), f.byTitle(proj, "Launch")
+	f.must(f.s.Link(f.ctx, owner, landing.ID, post.ID))
+	src := openSource(t, dir)
+	sourceExec(t, src, `INSERT INTO task_links (scope, blocker_id, blocked_id) VALUES ('default', ?, ?)`, sourceID(t, src, 2), sourceID(t, src, 1))
+	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Skipped: []ImportSkip{{ID: sourceID(t, src, 1),
+		Reason: fmt.Sprintf(`"Build landing page": the link would create a cycle: #%d already blocks #%d`, landing.Seq, post.Seq)}}})
+
+	// Once the owner removes the cycle the link is made. The owner's unlink
+	// of an imported link stands.
+	f.must(f.s.Unlink(f.ctx, owner, landing.ID, post.ID))
+	f.must(f.s.Unlink(f.ctx, owner, landing.ID, launch.ID))
+	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Links: 1})
+	if got := f.card(landing.ID); !slices.Equal(got.BlockedBy, []string{post.ID}) {
+		t.Fatalf("landing page = %+v, want it blocked by #%d", got, post.Seq)
+	}
+	if got := f.card(launch.ID); !slices.Equal(got.BlockedBy, []string{post.ID}) {
+		t.Fatalf("launch = %+v, want the owner's unlink kept", got)
+	}
+}
+
+func TestImportKeepsRepeatedTitles(t *testing.T) {
+	f := newFixture(t)
+	dir := sourceCopy(t, "import-v11")
+	sourceExec(t, openSource(t, dir), `INSERT INTO tasks (id, seq, user, title, status, tags, checks, created_at, moved_at, updated_at)
+		VALUES ('again', 13, 'default', 'Launch', 'todo', '["project::website"]', '[]', '', '', '')`)
+	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Imported: 13, Unassigned: 5, Comments: 4, Links: 2})
+	launches := 0
+	snap, err := f.s.Board(f.ctx, proj)
+	f.must(err)
+	for _, c := range snap.Cards {
+		if c.Title == "Launch" && c.ParentID == "" {
+			launches++
+		}
+	}
+	if launches != 2 {
+		t.Fatalf("%d root cards titled Launch, want both kept", launches)
+	}
+}
+
+func TestImportRetriesACopyThatRacedAWriter(t *testing.T) {
+	f := newFixture(t)
+	dir := sourceCopy(t, "import-v11")
+	src := openSource(t, dir)
+	copies := 0
+	afterSourceCopy = func() {
+		copies++
+		if copies == 1 {
+			// The source app writes between the copies, so its WAL appears.
+			sourceExec(t, src, `UPDATE tasks SET title = 'Build the landing page' WHERE seq = 1`)
+		}
+	}
+	t.Cleanup(func() { afterSourceCopy = nil })
+	f.importFrom(dir, websiteOnly)
+	if copies != 2 {
+		t.Fatalf("copied %d times, want a second copy after the write", copies)
+	}
+	f.byTitle(proj, "Build the landing page")
+}
+
+func TestImportRefusesASourceThatKeepsChanging(t *testing.T) {
+	f := newFixture(t)
+	dir := sourceCopy(t, "import-v11")
+	src := openSource(t, dir)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	copies := 0
+	afterSourceCopy = func() {
+		copies++
+		sourceExec(t, src, `UPDATE tasks SET title = ? WHERE seq = 1`, fmt.Sprint("Title ", copies))
+	}
+	t.Cleanup(func() { afterSourceCopy = nil })
+	_, err := f.s.Import(f.ctx, dir, websiteOnly)
+	wantCode(t, err, CodeImportBusy)
+	if err.Error() != "the source database is being written; try again" || copies != 1+copyRetries {
+		t.Fatalf("refusal = %q after %d copies, want %d", err, copies, 1+copyRetries)
+	}
+	if entries, err := os.ReadDir(tmp); err != nil || len(entries) != 0 {
+		t.Fatalf("temporary directory holds %v, %v after the refusal", entries, err)
+	}
+	if f.count(proj)+f.count("") != 0 {
+		t.Fatal("a refused import wrote cards")
+	}
+}
+
+// TestOpenUpgradesAV1Board opens a board written before import_refs existed.
+func TestOpenUpgradesAV1Board(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	all := migrations
+	t.Cleanup(func() { migrations = all })
+	migrations = all[:1]
+	s, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := s.Create(context.Background(), owner, NewCard{ProjectID: proj, Kind: KindSubtask, Title: "Before"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	migrations = all
+	s, err = Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	var version string
+	if err := s.db.QueryRow(`SELECT v FROM meta WHERE k = 'schema_version'`).Scan(&version); err != nil || version != strconv.Itoa(len(migrations)) {
+		t.Fatalf("schema_version = %q, %v, want %d", version, err, len(migrations))
+	}
+	if got, err := s.Card(context.Background(), card.ID); err != nil || got.Title != "Before" {
+		t.Fatalf("card after the upgrade = %+v, %v", got, err)
+	}
+	r, err := s.Import(context.Background(), sourceCopy(t, "import-v11"), websiteOnly)
+	if err != nil || r.Imported != 12 {
+		t.Fatalf("import after the upgrade = %+v, %v", r, err)
 	}
 }
 
@@ -388,6 +570,21 @@ func TestImportRefusesMissingSources(t *testing.T) {
 	f.must(os.Mkdir(filepath.Join(dir, sourceFile), 0o700))
 	_, err = f.s.Import(f.ctx, dir, websiteOnly)
 	wantCode(t, err, CodeInvalid)
+
+	// Symbolic links are refused, for the database and for its WAL.
+	real := sourceCopy(t, "import-v11")
+	linked := t.TempDir()
+	f.must(os.Symlink(filepath.Join(real, sourceFile), filepath.Join(linked, sourceFile)))
+	walLinked := sourceCopy(t, "import-v11")
+	f.must(os.Symlink(filepath.Join(real, sourceFile), filepath.Join(walLinked, sourceFile+"-wal")))
+	// A file named as the source directory is refused too.
+	for _, dir := range []string{linked, walLinked, filepath.Join(real, sourceFile)} {
+		_, err = f.s.Import(f.ctx, dir, websiteOnly)
+		wantCode(t, err, CodeInvalid)
+	}
+	if f.count(proj)+f.count("") != 0 {
+		t.Fatal("a refused import wrote cards")
+	}
 }
 
 func TestImportNeverTouchesTheSource(t *testing.T) {

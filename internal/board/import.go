@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -36,6 +37,10 @@ const (
 const CodeImportSchema Code = "import_schema"
 
 var errImportSchema = refuse(CodeImportSchema, "This board needs kb v1.13.0 or newer: open it once with kb, then import again.")
+
+// CodeImportBusy refuses an import whose source kept changing while it was
+// copied.
+const CodeImportBusy Code = "import_busy"
 
 // importStatus maps a source status to the imported subtask's. There is no
 // hold on import, so a task in progress becomes todo.
@@ -76,26 +81,31 @@ func (r *ImportReport) skip(st *sourceTask, reason string) {
 //
 // The source is never opened in place: its database, with any -wal and -shm
 // files, is copied into a fresh owner-only temporary directory, read there
-// read-only, and deleted. Any other schema version is refused with
+// read-only, and deleted. Symbolic links are refused. A copy that raced a
+// writer is taken again, and a source that keeps changing is refused with
+// CodeImportBusy. Any schema version but v11 is refused with
 // CodeImportSchema.
 //
 // Each task of the source's default user becomes a confirmed subtask at the
 // root, with no pin, in the Project its project:: tag maps to, or in
-// Unassigned. Title, description, priority, due date, effort, checklist and
-// blocked flag carry over, and every tag but project:: and link:: becomes a
-// label. todo and doing become todo, done done and cancelled cancelled; a
-// task in progress gets the automatic comment "was in progress in kb", and a
-// done or cancelled one the automatic close comment "imported from kb".
-// Comments and cancel reasons are copied as uam's automatic comments, naming
-// their author, and blocker links where both cards are in one Project.
+// Unassigned. Title, description, priority, due date, effort, checklist
+// (without blank items) and blocked flag carry over, and every tag but
+// project:: and link:: becomes a label. Repeated titles are kept: the
+// duplicate-title rule does not apply to imports. todo and doing become todo,
+// done done and cancelled cancelled; a task in progress gets the automatic
+// comment "was in progress in kb", and a done or cancelled one the automatic
+// close comment "imported from kb". Comments and cancel reasons are copied as
+// uam's automatic comments, naming their author, and blocker links where both
+// cards are in one Project.
 //
 // Cards are keyed on the task's UUID, so importing again adds nothing twice.
 // A second import applies only what changed at the source since the last
 // one, so the owner's edits stand until the source changes the same field;
-// it moves a card still in Unassigned into a Project that now maps, and
-// copies new comments. A change to a held card, to a card cancelled here, or
-// a status the owner could not set directly is skipped and retried by the
-// next import. A purged card is never brought back.
+// it moves a card still in Unassigned into a Project that now maps, copies
+// new comments, and makes each source link not made yet, while the owner's
+// unlinks stand. A change to a held card, to a card cancelled here, or a
+// status the owner could not set directly is skipped and retried by the next
+// import. A purged card is never brought back.
 func (s *Store) Import(ctx context.Context, src string, projects map[string]string) (ImportReport, error) {
 	tasks, err := readSource(ctx, src)
 	if err != nil {
@@ -142,31 +152,141 @@ func readSource(ctx context.Context, dir string) ([]*sourceTask, error) {
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 	copied := filepath.Join(tmp, sourceFile)
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		err := copyFile(filepath.Join(dir, sourceFile+suffix), copied+suffix)
-		switch {
-		case errors.Is(err, os.ErrNotExist) && suffix == "":
-			return nil, refuse(CodeNotFound, "%s holds no %s", dir, sourceFile)
-		case errors.Is(err, os.ErrNotExist):
-		case err != nil:
-			return nil, err
-		}
+	if err := copySource(ctx, filepath.Join(dir, sourceFile), copied); err != nil {
+		return nil, err
 	}
 	return readCopy(ctx, copied)
 }
 
-// copyFile copies the regular file from into the new owner-only file to.
+// copyRetries is how many more times a copy that raced a writer is taken
+// before the import gives up.
+const copyRetries = 3
+
+// afterSourceCopy, when set, runs between copying the database and its WAL,
+// so tests can write to the source mid-copy.
+var afterSourceCopy func()
+
+// copySource copies the database src, with its -wal and -shm, to dst. A
+// writer that checkpoints between the copies would leave a state that never
+// existed, so the database and its WAL are stamped before and after, and the
+// copy is taken again while the stamps differ.
+func copySource(ctx context.Context, src, dst string) error {
+	for attempt := 0; attempt <= copyRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * 50 * time.Millisecond):
+			}
+		}
+		before, err := stampSource(src)
+		if err != nil {
+			return err
+		}
+		for i, suffix := range []string{"", "-wal", "-shm"} {
+			if i == 1 && afterSourceCopy != nil {
+				afterSourceCopy()
+			}
+			err := copyFile(src+suffix, dst+suffix)
+			switch {
+			case errors.Is(err, os.ErrNotExist) && suffix == "":
+				return sourceMissing(src)
+			case errors.Is(err, os.ErrNotExist):
+			case err != nil:
+				return err
+			}
+		}
+		after, err := stampSource(src)
+		if err != nil {
+			return err
+		}
+		if before == after {
+			return nil
+		}
+	}
+	return refuse(CodeImportBusy, "the source database is being written; try again")
+}
+
+func sourceMissing(src string) error {
+	return refuse(CodeNotFound, "%s holds no %s", filepath.Dir(src), sourceFile)
+}
+
+// fileStamp identifies one version of a source file: its device and inode,
+// size and modification time, and its first 32 bytes, which for a WAL are
+// the header whose salts change whenever a checkpoint restarts the log. The
+// zero stamp is an absent file.
+type fileStamp struct {
+	dev, ino  uint64
+	size, mod int64
+	header    [32]byte
+}
+
+// stampSource stamps the database src and its WAL.
+func stampSource(src string) ([2]fileStamp, error) {
+	var out [2]fileStamp
+	for i, path := range []string{src, src + "-wal"} {
+		f, info, err := openSourceFile(path)
+		switch {
+		case errors.Is(err, os.ErrNotExist) && i == 0:
+			return out, sourceMissing(src)
+		case errors.Is(err, os.ErrNotExist):
+			continue
+		case err != nil:
+			return out, err
+		}
+		st := fileStamp{size: info.Size(), mod: info.ModTime().UnixNano()}
+		if sys, ok := info.Sys().(*syscall.Stat_t); ok {
+			st.dev, st.ino = uint64(sys.Dev), sys.Ino // #nosec G115 -- a device number is never negative.
+		}
+		_, err = io.ReadFull(f, st.header[:])
+		_ = f.Close()
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			return out, fmt.Errorf("board: import: %w", err)
+		}
+		out[i] = st
+	}
+	return out, nil
+}
+
+// openSourceFile opens one source file to read it. It refuses a symbolic
+// link, anything but a regular file, and a file swapped between the check and
+// the open; a missing file is os.ErrNotExist.
+func openSourceFile(path string) (*os.File, os.FileInfo, error) {
+	link, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, syscall.ENOTDIR):
+		return nil, nil, invalid("%s is not a directory", filepath.Dir(path))
+	case err != nil:
+		return nil, nil, fmt.Errorf("board: import: %w", err)
+	case link.Mode()&os.ModeSymlink != 0:
+		return nil, nil, invalid("%s is a symbolic link", path)
+	case !link.Mode().IsRegular():
+		return nil, nil, invalid("%s is not a regular file", path)
+	}
+	f, err := os.Open(path) // #nosec G304 -- the owner's chosen import source, opened only to read it.
+	if err != nil {
+		return nil, nil, fmt.Errorf("board: import: %w", err)
+	}
+	info, err := f.Stat()
+	if err == nil && !os.SameFile(link, info) {
+		err = invalid("%s changed while it was opened", path)
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	return f, info, nil
+}
+
+// copyFile copies the source file from into the new owner-only file to,
+// replacing an earlier attempt's copy.
 func copyFile(from, to string) error {
-	info, err := os.Stat(from)
-	if err != nil {
+	if err := os.Remove(to); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("board: import: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return invalid("%s is not a regular file", from)
-	}
-	in, err := os.Open(from) // #nosec G304 -- the owner's chosen import source, opened only to read it.
+	in, _, err := openSourceFile(from)
 	if err != nil {
-		return fmt.Errorf("board: import: %w", err)
+		return err
 	}
 	defer func() { _ = in.Close() }()
 	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- inside the import's own temporary directory.
@@ -297,8 +417,11 @@ type importState struct {
 	// Status is the source status, before importStatus maps it.
 	Status string `json:"status"`
 	Reason string `json:"reason"`
-	// Blockers are the source IDs of the tasks blocking this one.
-	Blockers []string `json:"blockers"`
+	// Linked are the source IDs of the blockers whose links exist here, made
+	// by an import or found already made. A source blocker not in it is tried
+	// again by every import; one in it is never relinked, so the owner's
+	// unlink stands.
+	Linked []string `json:"linked"`
 }
 
 // mapTask maps st to the fields its card takes, and names the source project
@@ -312,13 +435,14 @@ func mapTask(st *sourceTask) (importState, string, error) {
 	if err := json.Unmarshal([]byte(st.Checks), &checks); err != nil {
 		return importState{}, "", invalid("unreadable checklist")
 	}
+	// Older source boards may hold blank checklist items; they are dropped.
+	checks = slices.DeleteFunc(checks, func(c Check) bool { return strings.TrimSpace(c.Text) == "" })
 	if _, ok := importStatus[st.Status]; !ok {
 		return importState{}, "", invalid("unknown status %q", st.Status)
 	}
 	s := importState{
 		Title: strings.TrimSpace(st.Title), Desc: st.Desc, Prio: st.Prio, Due: st.Due, Effort: st.Effort,
 		Labels: []string{}, Checklist: orEmpty(checks), Blocked: st.Blocked, Status: st.Status, Reason: st.Reason,
-		Blockers: orEmpty(st.Blockers),
 	}
 	if st.Emoji != "" {
 		s.Title = st.Emoji + " " + s.Title
@@ -344,13 +468,15 @@ func mapTask(st *sourceTask) (importState, string, error) {
 	return s, project, err
 }
 
-// importEntry is one source task's card after the import: its Project,
-// whether this import added or moved it, and the task's blockers as the last
-// import recorded them and as they are now.
+// importEntry is one source task's card after the import, with its Project,
+// the state and last comment number to record once its links are done, and
+// the blockers the last import recorded as linked.
 type importEntry struct {
+	st              *sourceTask
 	cardID, project string
-	placed          bool
-	before, after   []string
+	saved           importState
+	last            int64
+	linked          []string
 }
 
 // importNote is an automatic comment an import adds.
@@ -387,10 +513,17 @@ func (t *txn) importBoard(tasks []*sourceTask, projects map[string]string, r *Im
 		}
 	}
 	for _, st := range tasks {
-		if e := entries[st.ID]; e != nil {
-			if err := t.importLinks(st, e, entries, r); err != nil {
-				return err
-			}
+		e := entries[st.ID]
+		if e == nil {
+			continue
+		}
+		if err := t.importLinks(e, entries, r); err != nil {
+			return err
+		}
+		if err := t.exec(`INSERT INTO import_refs (source_id, card_id, state, last_comment) VALUES (?, ?, ?, ?)
+			ON CONFLICT(source_id) DO UPDATE SET state = excluded.state, last_comment = excluded.last_comment`,
+			st.ID, e.cardID, encode(e.saved), e.last); err != nil {
+			return err
 		}
 	}
 	for _, p := range settled {
@@ -420,7 +553,6 @@ func (t *txn) importTask(st *sourceTask, projects map[string]string, r *ImportRe
 	var (
 		n     *node
 		e     *importEntry
-		saved = next
 		notes []importNote
 	)
 	switch {
@@ -432,7 +564,7 @@ func (t *txn) importTask(st *sourceTask, projects map[string]string, r *ImportRe
 		if target == "" {
 			r.Unassigned++
 		}
-		e = &importEntry{cardID: n.ID, project: target, placed: true, after: next.Blockers}
+		e = &importEntry{st: st, cardID: n.ID, project: target, saved: next}
 		notes = importNotes(importState{}, next, n.stored.terminal())
 	case err != nil:
 		return nil, fmt.Errorf("board: read import ref: %w", err)
@@ -449,26 +581,23 @@ func (t *txn) importTask(st *sourceTask, projects map[string]string, r *ImportRe
 		if err != nil {
 			return nil, err
 		}
-		if _, n, err = t.cardIn(project, id); err != nil {
+		o, found, err := t.cardIn(project, id)
+		if err != nil {
 			return nil, err
 		}
-		e = &importEntry{cardID: id, project: project, before: prev.Blockers, after: next.Blockers}
-		if saved, notes, err = t.importUpdate(st, n, prev, next, target, e, r); err != nil {
+		n = found
+		e = &importEntry{st: st, cardID: id, project: project, linked: prev.Linked}
+		if e.saved, notes, err = t.importUpdate(o, n, prev, next, target, e, r); err != nil {
 			return nil, err
 		}
 	}
-	if last, err = t.importComments(n, st, last, r); err != nil {
+	if e.last, err = t.importComments(n, st, last, r); err != nil {
 		return nil, err
 	}
 	for _, note := range notes {
 		if _, err := t.addComment(n, AuthorUAM, "", note.body, true, note.close); err != nil {
 			return nil, err
 		}
-	}
-	if err := t.exec(`INSERT INTO import_refs (source_id, card_id, state, last_comment) VALUES (?, ?, ?, ?)
-		ON CONFLICT(source_id) DO UPDATE SET state = excluded.state, last_comment = excluded.last_comment`,
-		st.ID, e.cardID, encode(saved), last); err != nil {
-		return nil, err
 	}
 	return e, nil
 }
@@ -493,33 +622,32 @@ func (t *txn) importCard(st *sourceTask, next importState, target string) (*node
 }
 
 // importUpdate applies what changed at the source between prev and next to
-// the card n, and moves it out of Unassigned when target now maps. It
-// returns the state to record and the automatic comments to add. A change
-// the card can't take is skipped and left out of the recorded state, so the
-// next import tries it again.
-func (t *txn) importUpdate(st *sourceTask, n *node, prev, next importState, target string, e *importEntry, r *ImportReport) (importState, []importNote, error) {
+// the card n, in the outline o, and moves it out of Unassigned when target
+// now maps. It returns the state to record and the automatic comments to
+// add. A change the card can't take is skipped and left out of the recorded
+// state, so the next import tries it again.
+func (t *txn) importUpdate(o *outline, n *node, prev, next importState, target string, e *importEntry, r *ImportReport) (importState, []importNote, error) {
 	moved := n.ProjectID == "" && target != ""
 	if moved {
-		o, err := t.outline(target)
+		dst, err := t.outline(target)
 		if err != nil {
 			return importState{}, nil, err
 		}
 		t.removed("", n.ID)
 		n.ProjectID = target
-		if err := t.place(o, n, "", nil); err != nil {
+		if err := t.place(dst, n, "", nil); err != nil {
 			return importState{}, nil, err
 		}
-		e.project, e.placed = target, true
+		e.project = target
 	}
 	c := n.Card
 	fields := mergeFields(&c, prev, next)
 	to := importStatus[next.Status]
 	status := importStatus[prev.Status] != to && n.stored != to
 	saved := next
-	if reason := importConflict(n, fields, status, to); reason != "" {
-		r.skip(st, reason)
+	if reason := importConflict(o, n, fields, status, to); reason != "" {
+		r.skip(e.st, reason)
 		saved = prev
-		saved.Blockers = next.Blockers
 		fields, status = false, false
 		next = prev
 	}
@@ -580,10 +708,11 @@ func mergeFields(c *Card, prev, next importState) bool {
 	return changed
 }
 
-// importConflict says why the card n can't take a source change, "" when it
-// can: a held card and a card cancelled here keep their fields and status,
-// and a status change must be one the owner could make directly.
-func importConflict(n *node, fields, status bool, to Status) string {
+// importConflict says why the card n, in the outline o, can't take a source
+// change, "" when it can: a held card and a card cancelled here keep their
+// fields and status, and a status change must be one the owner could make
+// directly, which never reopens a card under a cancelled one.
+func importConflict(o *outline, n *node, fields, status bool, to Status) string {
 	if !fields && !status {
 		return ""
 	}
@@ -595,9 +724,14 @@ func importConflict(n *node, fields, status bool, to Status) string {
 	case !status:
 		return ""
 	}
-	o := map[Status]op{StatusDone: opDone, StatusCancelled: opCancel, StatusTodo: opReady}[to]
-	if err := permit(Owner(""), o, n.stored); err != nil {
+	move := map[Status]op{StatusDone: opDone, StatusCancelled: opCancel, StatusTodo: opReady}[to]
+	if err := permit(Owner(""), move, n.stored); err != nil {
 		return fmt.Sprintf("%s: %v", n.ref(), err)
+	}
+	if !to.terminal() {
+		if err := o.underCancelled(n, nil); err != nil {
+			return err.Error()
+		}
 	}
 	return ""
 }
@@ -638,14 +772,20 @@ func (t *txn) importComments(n *node, st *sourceTask, last int64, r *ImportRepor
 	return last, nil
 }
 
-// importLinks copies the blocker links of st's card e that are new since the
-// last import, or that this import made possible by adding or moving a card,
-// where both cards are in one Project. Links the source dropped since are
-// removed.
-func (t *txn) importLinks(st *sourceTask, e *importEntry, entries map[string]*importEntry, r *ImportReport) error {
-	for _, id := range e.after {
+// importLinks links e's card to each source blocker not yet linked, where
+// both cards are in one Project, and records in e which are linked. A link
+// the store refuses, such as one closing a cycle, is skipped and tried again
+// next time. Links recorded before that the source has dropped since are
+// removed; the rest are left alone, so the owner's unlink stands.
+func (t *txn) importLinks(e *importEntry, entries map[string]*importEntry, r *ImportReport) error {
+	linked := []string{}
+	for _, id := range e.st.Blockers {
+		if slices.Contains(e.linked, id) {
+			linked = append(linked, id)
+			continue
+		}
 		b := entries[id]
-		if b == nil || e.project == "" || b.project != e.project || (!e.placed && !b.placed && slices.Contains(e.before, id)) {
+		if b == nil || e.project == "" || b.project != e.project {
 			continue
 		}
 		o, err := t.outline(e.project)
@@ -656,24 +796,34 @@ func (t *txn) importLinks(st *sourceTask, e *importEntry, entries map[string]*im
 		switch code := CodeOf(err); {
 		case err == nil:
 			r.Links++
+			linked = append(linked, id)
 		case code == CodeDuplicate:
+			linked = append(linked, id)
 		case code == CodeInvalid:
-			r.skip(st, err.Error())
+			r.skip(e.st, err.Error())
 		default:
 			return err
 		}
 	}
-	for _, id := range e.before {
-		b := entries[id]
-		if b == nil || slices.Contains(e.after, id) {
+	e.saved.Linked = linked
+	for _, id := range e.linked {
+		if slices.Contains(e.st.Blockers, id) {
 			continue
 		}
-		res, err := t.tx.ExecContext(t.ctx, `DELETE FROM links WHERE blocker_id = ? AND blocked_id = ?`, b.cardID, e.cardID)
+		var blocker string
+		err := t.tx.QueryRowContext(t.ctx, `SELECT card_id FROM import_refs WHERE source_id = ?`, id).Scan(&blocker)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("board: read import ref: %w", err)
+		}
+		res, err := t.tx.ExecContext(t.ctx, `DELETE FROM links WHERE blocker_id = ? AND blocked_id = ?`, blocker, e.cardID)
 		if err != nil {
 			return fmt.Errorf("board: delete link: %w", err)
 		}
 		if n, err := res.RowsAffected(); err == nil && n > 0 {
-			t.changed(b.project, b.cardID)
+			t.changed(e.project, blocker)
 			t.changed(e.project, e.cardID)
 		}
 	}
