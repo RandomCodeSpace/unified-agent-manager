@@ -163,9 +163,12 @@ type Manager struct {
 	// accept runs the planner's acceptance commands, one per Project at a
 	// time (board_evidence.go).
 	accept acceptRunners
-	// claims are the done claims each Task's planner tools are evaluating,
-	// which archiving the Task cancels (board_tools.go). Guarded by mu.
-	claims map[string]map[*claimRun]struct{}
+	// calls are each Task's planner tool calls in progress, which settling or
+	// archiving the Task cancels and waits for (board_tools.go). Guarded by
+	// mu. boardCallHook, when set, runs as each such call starts; tests set
+	// it before the calls.
+	calls         map[string]map[*taskCall]struct{}
+	boardCallHook func(ctx context.Context, tool string)
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -3320,12 +3323,12 @@ func (m *Manager) Reopen(id string) (SessionSummary, error) {
 
 // Archive moves an active or settled Task to its final stage; nothing moves
 // it back. An active Task must meet the same conditions as for Settle.
-// Archiving discards the Task's done claims in progress and releases its
+// Archiving ends the Task's planner calls in progress, then releases its
 // planner holds.
 func (m *Manager) Archive(id string) (SessionSummary, error) {
 	summary, err := m.moveStage(id, StageArchived, StageActive, StageSettled)
 	if err == nil {
-		m.endClaims(id)
+		m.endCalls(id)
 	}
 	return m.reconciled(summary, err)
 }

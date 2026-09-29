@@ -65,6 +65,7 @@ func TestCompactProjectionCarriesTheBoardCard(t *testing.T) {
 	for _, got := range []*compactTool{
 		tool("board_edit", agentapi.ToolFailed, output), tool("bash", agentapi.ToolCompleted, output),
 		tool("board_list", agentapi.ToolCompleted, `{"text":"No cards match."}`), tool("board_get", agentapi.ToolCompleted, "not JSON"),
+		tool("board_other", agentapi.ToolCompleted, output),
 	} {
 		if got.BoardCard != nil {
 			t.Fatalf("%s %s has a board card", got.Name, got.Status)

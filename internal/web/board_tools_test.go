@@ -274,9 +274,74 @@ func TestBoardToolsReadAndAnnotate(t *testing.T) {
 	// Strict arguments: unknown ones, missing refs, oversized calls.
 	f.toolRefused(task.ID, "board_get", `{"ref":"#2","status":"done"}`, string(board.CodeInvalid))
 	f.toolRefused(task.ID, "board_get", `{}`, string(board.CodeInvalid))
-	f.toolRefused(task.ID, "board_get", `{"ref":"#2"} {}`, string(board.CodeInvalid))
+	for _, extra := range []string{` {}`, `]`, `}`} {
+		f.toolRefused(task.ID, "board_get", `{"ref":"#2"}`+extra, string(board.CodeInvalid))
+	}
 	f.toolRefused(task.ID, "board_edit", `{"ref":"#2","accept_cmd":"true"}`, string(board.CodeInvalid))
 	f.toolRefused(task.ID, "board_get", `{"ref":"`+strings.Repeat("x", agentapi.MaxHostToolArguments)+`"}`, string(board.CodeInvalid))
+}
+
+// board_get on a large card stays under maxToolReply, so the transcript
+// records its result whole: the description and comment bodies are cut, and
+// the lists say how many more they have. A card larger still has its text
+// cut at the end.
+func TestBoardToolsGetBoundsALargeCard(t *testing.T) {
+	f := newPlanner(t)
+	story := f.create(board.KindStory, "", "Big", fmt.Sprintf(`,"desc":%q`, strings.Repeat("d", 60<<10)))
+	leaf := f.create(board.KindSubtask, story.ID, "Leaf")
+	for i := range 24 {
+		f.create(board.KindSubtask, story.ID, fmt.Sprintf("Pending %d", i))
+	}
+	f.store(func(ctx context.Context, st *board.Store) error {
+		for range 12 {
+			if _, err := st.AddComment(ctx, board.Owner(""), story.ID, strings.Repeat("c", 10<<10)); err != nil {
+				return err
+			}
+		}
+		for i := range 25 {
+			blocker, err := st.Create(ctx, board.Owner(""), board.NewCard{ProjectID: f.project, Kind: board.KindSubtask, Title: fmt.Sprintf("Blocker %d", i)})
+			if err != nil {
+				return err
+			}
+			if err := st.Link(ctx, board.Owner(""), blocker.ID, leaf.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	task := f.newTask(f.project)
+	get := func(ref string) toolReply {
+		t.Helper()
+		res, err := f.conversation(task.ID).CallTool(context.Background(), agentapi.HostToolCall{Name: "board_get", CallID: "get", Arguments: json.RawMessage(fmt.Sprintf(`{"ref":%q}`, ref))})
+		if err != nil || len(res.Text) > maxToolReply || res.Failed {
+			t.Fatalf("get %s: %d bytes, failed %v, %v", ref, len(res.Text), res.Failed, err)
+		}
+		return decodeReply(t, res)
+	}
+	r := get(story.ID)
+	for _, part := range []string{"… 53248 more bytes", "(10 of 12)", ": " + strings.Repeat("c", 1<<10) + "… 9216 more bytes", "- … 5 more"} {
+		if !strings.Contains(r.Text, part) {
+			t.Fatalf("story text lacks %q", part)
+		}
+	}
+	if r.Card == nil || r.Card.ID != story.ID || strings.Contains(r.Text, toolCutNote) {
+		t.Fatalf("story reply cut or without its card: %+v", r.Card)
+	}
+	if r := get(leaf.ID); !strings.Contains(r.Text, "Blocked by:\n") || strings.Count(r.Text, `"Blocker `) != maxToolLinks || !strings.Contains(r.Text, "- … 5 more") {
+		t.Fatalf("leaf text = %q", r.Text)
+	}
+
+	// A hundred checklist items and labels, each escaped to twice its size.
+	var items, labels []string
+	for i := range 100 {
+		items = append(items, fmt.Sprintf(`{"text":%q}`, strings.Repeat(`"`, 490)))
+		labels = append(labels, fmt.Sprintf("%q", fmt.Sprintf("l%d%s", i, strings.Repeat(`"`, 490))))
+	}
+	huge := f.create(board.KindSubtask, "", "Huge", `,"checklist":[`+strings.Join(items, ",")+`],"labels":[`+strings.Join(labels, ",")+`]`)
+	r = get(huge.ID)
+	if r.Card == nil || r.Card.ID != huge.ID || !strings.HasSuffix(r.Text, toolCutNote) || len(r.Text) < maxToolReply/4 {
+		t.Fatalf("huge reply: card %+v, %d bytes of text", r.Card, len(r.Text))
+	}
 }
 
 // A planning Task proposes under its container: its edits of proposals
@@ -502,6 +567,23 @@ func TestBoardToolsDoneLeavesOutWhatWasDirtyAtLaunch(t *testing.T) {
 	}
 }
 
+// A launch whose baseline can't be read is refused before any Task starts:
+// the subtask stays as it was, and nothing holds it.
+func TestBoardLaunchRefusedWithoutABaseline(t *testing.T) {
+	f := newPlanner(t)
+	leaf := f.create(board.KindSubtask, "", "Leaf")
+	writeRepoFile(t, f.repo, filepath.Join(".git", "index"), "not an index")
+	if w := f.do(http.MethodPost, "/api/board/cards/"+leaf.ID+"/launch", `{}`); w.Code < 400 {
+		t.Fatalf("launch = %d %s", w.Code, w.Body)
+	}
+	if n := len(f.ts.prov.Conversations()); n != 0 {
+		t.Fatalf("%d conversations opened", n)
+	}
+	if d := f.card(leaf.ID); d.Card.Status != leaf.Status || d.Card.HeldBy != "" || len(d.Holds) != 0 {
+		t.Fatalf("after the refused launch = %+v", d)
+	}
+}
+
 // A transcript uam holds only from after the hold started marks the
 // evidence partial: the touched files may be incomplete.
 func TestBoardToolsDoneNotesAPartialTranscript(t *testing.T) {
@@ -524,6 +606,30 @@ func TestBoardToolsDoneNotesAPartialTranscript(t *testing.T) {
 	}
 	var ev Evidence
 	if err := json.Unmarshal(f.card(leaf.ID).Requests[0].Evidence, &ev); err != nil || ev.Transcript == nil || !ev.Transcript.Partial || ev.Transcript.FromItem != "late" {
+		t.Fatalf("transcript = %+v, %v", ev.Transcript, err)
+	}
+}
+
+// A tool call clipped since the hold started, whose input may have lost the
+// path it edits, marks the transcript partial too.
+func TestBoardToolsDoneNotesAClippedToolCall(t *testing.T) {
+	f := newPlanner(t)
+	leaf := f.create(board.KindSubtask, "", "Leaf")
+	_, task := f.launch(leaf.ID)
+	f.conversation(task.ID).EmitItem(agentapi.Item{ID: "big", Kind: agentapi.ItemTool, Clipped: true, Time: time.Now().Add(time.Minute),
+		Tool: &agentapi.ToolCall{Name: "create", Input: `{"file_text":"xxx`, Status: agentapi.ToolCompleted}})
+	waitUntil(t, "the item", func() bool {
+		f.m.mu.Lock()
+		defer f.m.mu.Unlock()
+		_, ok := f.m.sessions[task.ID].itemIdx[itemKey("", "big")]
+		return ok
+	})
+	r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, leaf.ID))
+	if !strings.Contains(r.Text, "may be incomplete") {
+		t.Fatalf("done = %q", r.Text)
+	}
+	var ev Evidence
+	if err := json.Unmarshal(f.card(leaf.ID).Requests[0].Evidence, &ev); err != nil || ev.Transcript == nil || !ev.Transcript.Partial {
 		t.Fatalf("transcript = %+v, %v", ev.Transcript, err)
 	}
 }
@@ -572,7 +678,7 @@ func TestBoardToolsArchiveDiscardsARunningClaim(t *testing.T) {
 	}
 	select {
 	case res := <-results:
-		if r := decodeReply(t, res); !res.Failed || r.Text != errClaimDiscarded.Error() {
+		if r := decodeReply(t, res); !res.Failed || r.Text != errTaskEnded.Error() {
 			t.Fatalf("claim after archive = %+v", r)
 		}
 	case <-time.After(10 * time.Second):
@@ -585,11 +691,77 @@ func TestBoardToolsArchiveDiscardsARunningClaim(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.repo, "finished")); !os.IsNotExist(err) {
 		t.Fatalf("the command ran on: %v", err)
 	}
-	// An archived Task's claim is discarded before it starts.
-	ctx, end := f.m.startClaim(context.Background(), task.ID)
-	defer end()
-	if context.Cause(ctx) != errClaimDiscarded {
-		t.Fatalf("claim of an archived task = %v", context.Cause(ctx))
+	// An archived Task's calls are refused before they start.
+	res := conv.Request().CallTool(context.Background(), agentapi.HostToolCall{Name: "board_get", CallID: "c2", TaskID: task.ID,
+		Arguments: json.RawMessage(fmt.Sprintf(`{"ref":%q}`, leaf.ID))})
+	if r := decodeReply(t, res); !res.Failed || !strings.Contains(r.Text, "the task is archived") {
+		t.Fatalf("call of an archived task = %+v", r)
+	}
+}
+
+// A board_claim in flight when the Task is archived or settled ends before
+// the holds are reconciled or decided, and a hold it made as the Task ended
+// is released: no hold is left on an ended Task.
+func TestBoardToolsTaskEndReleasesAClaimInFlight(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		end     func(*Manager, string, string) error
+		oneHeld bool
+	}{
+		{"archive", func(m *Manager, task, _ string) error {
+			_, err := m.Archive(task)
+			return err
+		}, false},
+		{"settle", func(m *Manager, task, one string) error {
+			_, err := m.SettleHolds(task, map[string]HoldDecision{one: {Action: holdKeep}})
+			return err
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPlanner(t)
+			story := f.create(board.KindStory, "", "Story")
+			one := f.create(board.KindSubtask, story.ID, "One")
+			two := f.create(board.KindSubtask, story.ID, "Two")
+			_, task := f.launch(story.ID)
+			f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"one is done"}`, one.ID))
+			f.idle(task.ID)
+			head := gitOutput(t, f.repo, "rev-parse", "HEAD")
+			entered := make(chan struct{})
+			f.m.boardCallHook = func(ctx context.Context, tool string) {
+				if tool != "board_claim" {
+					return
+				}
+				close(entered)
+				<-ctx.Done()
+				// The claim's write commits just as the Task ends.
+				if err := f.m.withBoard(func(st *board.Store) error {
+					_, err := st.Claim(context.Background(), board.Agent(task.ID, ""), two.ID, board.Baseline{Head: head})
+					return err
+				}); err != nil {
+					t.Error(err)
+				}
+			}
+			conv := f.conversation(task.ID)
+			results := make(chan agentapi.HostToolResult, 1)
+			go func() {
+				res, _ := conv.CallTool(context.Background(), agentapi.HostToolCall{Name: "board_claim", CallID: "c1",
+					Arguments: json.RawMessage(fmt.Sprintf(`{"ref":%q}`, two.ID))})
+				results <- res
+			}()
+			<-entered
+			if err := tc.end(f.m, task.ID, one.ID); err != nil {
+				t.Fatal(err)
+			}
+			if res := <-results; !res.Failed || decodeReply(t, res).Text != errTaskEnded.Error() {
+				t.Fatalf("claim as the task ended = %+v", res)
+			}
+			if d := f.card(two.ID); d.Card.HeldBy != "" || d.Card.Status != board.StatusTodo {
+				t.Fatalf("the claimed subtask after the task ended = %+v", d.Card)
+			}
+			if held := f.card(one.ID).Card.HeldBy == task.ID; held != tc.oneHeld {
+				t.Fatalf("the kept subtask held = %v, want %v", held, tc.oneHeld)
+			}
+		})
 	}
 }
 
@@ -601,8 +773,13 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	story := f.create(board.KindStory, epic.ID, "Story")
 	inside := f.create(board.KindSubtask, story.ID, "Inside")
 	f.create(board.KindSubtask, epic.ID, "Outside")
+	// The actor is a Utility job, which no Task session has: its calls are
+	// not tied to one.
+	f.store(func(ctx context.Context, st *board.Store) error {
+		return st.StartPlanning(ctx, board.Owner(""), story.ID, "utility-job")
+	})
 	tools, call := f.m.boardHostTools(func(context.Context, agentapi.HostToolCall) (boardScope, error) {
-		return boardScope{actor: board.Agent("utility", ""), project: f.project, dir: f.repo, container: story.ID}, nil
+		return boardScope{actor: board.Agent("utility-job", ""), project: f.project, dir: f.repo, container: story.ID}, nil
 	}, "board_create", "board_edit", "board_get", "board_list")
 	if got := toolNames(tools); !slices.Equal(got, []string{"board_get", "board_list", "board_create", "board_edit"}) {
 		t.Fatalf("tools = %q", got)
@@ -624,5 +801,26 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	}
 	if r, failed := run("board_claim", `{"ref":"#3"}`); !failed || r.Code != string(board.CodeInvalid) {
 		t.Fatalf("a tool outside the subset = %+v", r)
+	}
+	r, failed := run("board_create", fmt.Sprintf(`{"kind":"subtask","parent":%q,"title":"Found by the job"}`, story.ID))
+	if failed || r.Card == nil || r.Card.Title != "Found by the job" {
+		t.Fatalf("create = %+v", r)
+	}
+	if d := f.card(r.Card.ID); d.Card.ParentID == nil || *d.Card.ParentID != story.ID || d.Card.Confirmed {
+		t.Fatalf("created = %+v", d.Card)
+	}
+
+	// board_get shows nothing outside the container: the path starts at it,
+	// and a blocker outside it is left out.
+	sibling := f.create(board.KindSubtask, story.ID, "Sibling")
+	f.store(func(ctx context.Context, st *board.Store) error {
+		if err := st.Link(ctx, board.Owner(""), "#4", inside.ID); err != nil {
+			return err
+		}
+		return st.Link(ctx, board.Owner(""), sibling.ID, inside.ID)
+	})
+	get, _ := run("board_get", fmt.Sprintf(`{"ref":%q}`, inside.ID))
+	if !strings.Contains(get.Text, "\nPath: #2 › #3\n") || !strings.Contains(get.Text, "Blocked by:\n- #6 subtask \"Sibling\"") || strings.Contains(get.Text, "#4") || strings.Contains(get.Text, "#1") {
+		t.Fatalf("get inside = %q", get.Text)
 	}
 }
