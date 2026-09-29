@@ -2,7 +2,7 @@ import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, 
 import { Bot, Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
-import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolStatus, type TurnTiming } from '../api';
+import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolBoardCard, type ToolStatus, type TurnTiming } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
@@ -872,6 +872,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
             </span>
             <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
             {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
+            {t?.board_card && <BoardCardChip card={t.board_card} />}
             <span className="sr-only">, {word}</span>
             {decided.length > 0 && <ApprovalMark interactions={decided} />}
           </button>
@@ -898,6 +899,16 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
     </ContextMenu.Root>
   );
 });
+
+/** The planner card a `board_*` call was about, as "#12 Title" on its row. */
+function BoardCardChip({ card }: Readonly<{ card: ToolBoardCard }>) {
+  return (
+    <Chip fill="well" className="max-w-48 font-sans" title={`#${card.seq} ${card.title}`}>
+      <span className="tabular-nums">#{card.seq}</span>{' '}
+      <span className="truncate">{card.title}</span>
+    </Chip>
+  );
+}
 
 /** The images a tool's result returned, as thumbnails that open the viewer, and its note on any left out. */
 function ToolImages({ item, sessionId, className }: Readonly<{ item: Item; sessionId?: string; className?: string }>) {
