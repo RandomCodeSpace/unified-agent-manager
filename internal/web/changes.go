@@ -490,11 +490,17 @@ func (m *Manager) kickBranchLocked(projectID string) {
 // runGit runs one read-only git command in dir with structured arguments
 // (no shell) and a timeout, keeping at most limit bytes of output.
 func runGit(ctx context.Context, git, dir string, limit int, args ...string) ([]byte, int, string, error) {
+	return runGitInput(ctx, git, dir, nil, limit, args...)
+}
+
+// runGitInput is runGit with stdin as git's standard input.
+func runGitInput(ctx context.Context, git, dir string, stdin io.Reader, limit int, args ...string) ([]byte, int, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
 	argv := append([]string{"-C", dir}, gitBase...)
 	argv = append(argv, args...)
 	cmd := exec.CommandContext(ctx, git, argv...) // #nosec G204 G702 -- resolved git binary, fixed commands, user paths after --, no shell.
+	cmd.Stdin = stdin
 	// Optional locks off keeps `git status` from rewriting the index.
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "GIT_PAGER=cat")
 	stdout := &cappedBuffer{limit: limit}

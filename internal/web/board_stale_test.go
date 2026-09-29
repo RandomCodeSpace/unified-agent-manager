@@ -174,6 +174,41 @@ func TestStaleBatchSkipsHeldAndIneligibleCards(t *testing.T) {
 	}
 }
 
+// A pin git cannot read leaves only its own card without staleness.
+func TestStaleBatchSkipsAnUnreadablePin(t *testing.T) {
+	ctx := context.Background()
+	repo, pin, _ := staleRepo(t)
+	gitIn(t, repo, "switch", "-q", "-c", "side")
+	writeRepoFile(t, repo, "side.txt", "only on the side branch\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "side")
+	broken := gitOutput(t, repo, "rev-parse", "HEAD")
+	tree := gitOutput(t, repo, "rev-parse", "HEAD^{tree}")
+	gitIn(t, repo, "switch", "-q", "main")
+	// Without its tree the side commit still reads as a commit, but its files
+	// cannot be listed.
+	if err := os.Remove(filepath.Join(repo, ".git", "objects", tree[:2], tree[2:])); err != nil {
+		t.Fatal(err)
+	}
+	cards := []board.Card{
+		{ID: "broken", Kind: board.KindSubtask, Status: board.StatusTodo, PinnedSHA: broken, Paths: []string{"**"}},
+		{ID: "fine", Kind: board.KindSubtask, Status: board.StatusTodo, PinnedSHA: pin, Paths: []string{"docs/**"}},
+	}
+	var c staleCache
+	got, err := c.staleBatch(ctx, repo, cards)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["broken"]; ok || len(got) != 1 || got["fine"].Behind != 2 || !slices.Equal(got["fine"].Files, []string{"docs/readme.md"}) {
+		t.Fatalf("batch = %+v", got)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := c.staleBatch(cancelled, repo, cards); err == nil {
+		t.Fatal("a cancelled batch succeeded")
+	}
+}
+
 func TestMatchPath(t *testing.T) {
 	for _, tc := range []struct {
 		pattern, name string
@@ -190,6 +225,9 @@ func TestMatchPath(t *testing.T) {
 		{"internal/**/web/*.go", "internal/x/y/api/a.go", false},
 		{"internal", "internal/web/a.go", true},
 		{"/internal/", "internal/web/a.go", true},
+		{"./docs/*.md", "docs/readme.md", true},
+		{"./*.go", "a.go", true},
+		{"./*.go", "pkg/a.go", false},
 		{"internal/*", "internal/web/a.go", true},
 		{"internal/web/a.go", "internal", false},
 		{"inter", "internal/a.go", false},

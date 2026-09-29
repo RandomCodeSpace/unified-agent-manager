@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,19 +65,20 @@ func TestEvidenceBaselineCommitsDirtyAndOverlap(t *testing.T) {
 		"pkg/a.go":      {Path: "pkg/a.go", Added: 2, Deleted: 1, ByTask: true},
 		"pkg/new.go":    {Path: "pkg/new.go", Added: 3, ByTask: true},
 		"pkg/a_test.go": {Path: "pkg/a_test.go", Added: 1, Overlap: &EvidenceOverlap{Card: 9, TaskID: "task-c"}},
+		"pre.txt":       {Path: "pre.txt", Added: 1, PreDirty: true},
 	}
 	if len(files) != len(want) {
 		t.Fatalf("diff files = %+v, want %v", ev.Diff.Files, want)
 	}
 	for p, w := range want {
 		got := files[p]
-		if got.Added != w.Added || got.Deleted != w.Deleted || got.ByTask != w.ByTask || (got.Overlap == nil) != (w.Overlap == nil) ||
-			(got.Overlap != nil && *got.Overlap != *w.Overlap) {
+		if got.Added != w.Added || got.Deleted != w.Deleted || got.ByTask != w.ByTask || got.PreDirty != w.PreDirty ||
+			(got.Overlap == nil) != (w.Overlap == nil) || (got.Overlap != nil && *got.Overlap != *w.Overlap) {
 			t.Fatalf("%s = %+v (overlap %+v), want %+v", p, got, got.Overlap, w)
 		}
 	}
-	if ev.Diff.Added != 6 || ev.Diff.Deleted != 1 {
-		t.Fatalf("diff totals = +%d -%d, want +6 -1", ev.Diff.Added, ev.Diff.Deleted)
+	if ev.Diff.Added != 7 || ev.Diff.Deleted != 1 {
+		t.Fatalf("diff totals = +%d -%d, want +7 -1", ev.Diff.Added, ev.Diff.Deleted)
 	}
 	if len(ev.Commits) != 1 || ev.Commits[0].SHA != gitOutput(t, repo, "rev-parse", "HEAD") || ev.Commits[0].Subject != "feat: red change" {
 		t.Fatalf("commits = %+v", ev.Commits)
@@ -119,8 +121,202 @@ func TestEvidenceRefusesOutsideGitAndBadBaselines(t *testing.T) {
 	if _, err := collectEvidence(ctx, repo, board.Baseline{Head: "--output=/tmp/x"}, nil, nil); err == nil {
 		t.Fatal("an option as the baseline HEAD was accepted")
 	}
-	if _, err := collectEvidence(ctx, repo, board.Baseline{Head: strings.Repeat("ab", 20)}, nil, nil); err == nil {
-		t.Fatal("an unknown baseline HEAD was accepted")
+}
+
+// A baseline commit that no longer exists still gives evidence: the touched
+// files against HEAD, no commits, flagged.
+func TestEvidenceWithTheBaselineCommitGone(t *testing.T) {
+	ctx := context.Background()
+	repo := branchRepo(t)
+	writeRepoFile(t, repo, "t.go", "one\n")
+	writeRepoFile(t, repo, "other.go", "one\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "base")
+	writeRepoFile(t, repo, "t.go", "one\ntwo\n")
+	writeRepoFile(t, repo, "other.go", "one\ntwo\n")
+	writeRepoFile(t, repo, "new.go", "x\n")
+	gone := board.Baseline{Head: strings.Repeat("ab", 20)}
+	ev, err := collectEvidence(ctx, repo, gone, []string{"t.go", "new.go"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := evidenceFiles(ev)
+	if len(files) != 2 || files["t.go"].Added != 1 || files["new.go"].Added != 1 || len(ev.Commits) != 0 || !ev.baselineMissing {
+		t.Fatalf("evidence = %+v", ev)
+	}
+	if flags := evidenceFlags(ev, "", false); !slices.Equal(flags, []string{board.FlagBaselineMissing}) {
+		t.Fatalf("flags = %q", flags)
+	}
+	ev, err = collectEvidence(ctx, repo, gone, nil, nil)
+	if err != nil || len(ev.Diff.Files) != 0 || !slices.Equal(evidenceFlags(ev, "", false), []string{board.FlagBaselineMissing}) {
+		t.Fatalf("with nothing touched: %+v, %v", ev, err)
+	}
+}
+
+// Paths dirty when the hold started count only when their content changed
+// since, so an earlier attempt's leftovers are not this attempt's work.
+func TestEvidencePreDirtyPaths(t *testing.T) {
+	ctx := context.Background()
+	repo := branchRepo(t)
+	for _, name := range []string{"kept.txt", "changed.txt", "reverted.txt"} {
+		writeRepoFile(t, repo, name, "base\n")
+	}
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "base")
+	for _, name := range []string{"kept.txt", "changed.txt", "reverted.txt"} {
+		writeRepoFile(t, repo, name, "base\nleftover\n")
+	}
+	for _, name := range []string{"left.txt", "rewritten.txt", "removed.txt"} {
+		writeRepoFile(t, repo, name, "untracked\n")
+	}
+	base, err := baseline(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(base.Dirty) != 6 || len(base.Blobs) != 6 || base.Blobs["kept.txt"] == "" {
+		t.Fatalf("baseline = %+v", base)
+	}
+	// Only the baseline survives the store, so read it back as the store does.
+	stored := func(b board.Baseline) board.Baseline {
+		t.Helper()
+		data, err := json.Marshal(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out board.Baseline
+		if err := json.Unmarshal(data, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	ev, err := collectEvidence(ctx, repo, stored(base), nil, nil)
+	if err != nil || len(ev.Diff.Files) != 0 || !slices.Equal(evidenceFlags(ev, "", false), []string{board.FlagNoChangeInTree}) {
+		t.Fatalf("untouched leftovers = %+v, %v", ev.Diff, err)
+	}
+
+	writeRepoFile(t, repo, "changed.txt", "base\nleftover\nmore\n")
+	writeRepoFile(t, repo, "reverted.txt", "base\n")
+	writeRepoFile(t, repo, "rewritten.txt", "untracked\nagain\n")
+	if err := os.Remove(filepath.Join(repo, "removed.txt")); err != nil {
+		t.Fatal(err)
+	}
+	ev, err = collectEvidence(ctx, repo, stored(base), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := evidenceFiles(ev)
+	want := map[string]int{"changed.txt": 2, "reverted.txt": 0, "rewritten.txt": 2, "removed.txt": 0}
+	if len(files) != len(want) {
+		t.Fatalf("files = %+v, want %v", ev.Diff.Files, want)
+	}
+	for p, added := range want {
+		if f, ok := files[p]; !ok || !f.PreDirty || f.Added != added {
+			t.Fatalf("%s = %+v, want pre-dirty with +%d", p, f, added)
+		}
+	}
+	if evidenceFlags(ev, "", false) != nil {
+		t.Fatalf("flags = %q", evidenceFlags(ev, "", false))
+	}
+
+	// A baseline stored without blob names cannot prove a path unchanged.
+	old := stored(base)
+	old.Blobs = nil
+	ev, err = collectEvidence(ctx, repo, old, nil, nil)
+	if f, ok := evidenceFiles(ev)["kept.txt"]; err != nil || !ok || !f.PreDirty {
+		t.Fatalf("an old baseline hid kept.txt: %+v, %v", ev.Diff.Files, err)
+	}
+}
+
+// Every dirty path is recorded, not only the listed ones.
+func TestEvidencePreDirtyBeyondTheListCap(t *testing.T) {
+	ctx := context.Background()
+	repo := branchRepo(t)
+	for i := range maxChangedFiles + 5 {
+		writeRepoFile(t, repo, fmt.Sprintf("u%04d.txt", i), "x\n")
+	}
+	base, err := baseline(ctx, repo)
+	if err != nil || len(base.Dirty) != maxChangedFiles+5 || len(base.Blobs) != maxChangedFiles+5 {
+		t.Fatalf("baseline has %d paths and %d blobs, %v", len(base.Dirty), len(base.Blobs), err)
+	}
+	last := fmt.Sprintf("u%04d.txt", maxChangedFiles+4)
+	writeRepoFile(t, repo, last, "x\ny\n")
+	ev, err := collectEvidence(ctx, repo, base, nil, nil)
+	if err != nil || len(ev.Diff.Files) != 1 || ev.Diff.Files[0].Path != last || !ev.Diff.Files[0].PreDirty {
+		t.Fatalf("files = %+v, %v", ev.Diff.Files, err)
+	}
+	if len(ev.Baseline.Dirty) != maxChangedFiles || ev.Baseline.Blobs != nil {
+		t.Fatalf("the evidence baseline lists %d paths, blobs %v", len(ev.Baseline.Dirty), ev.Baseline.Blobs != nil)
+	}
+}
+
+// A file name that is not UTF-8 does not survive the store's JSON; it must
+// then count as changed, never be hidden.
+func TestEvidenceNonUTF8PreDirtyPathIsNeverHidden(t *testing.T) {
+	ctx := context.Background()
+	repo := branchRepo(t)
+	name := "bad\xff.txt"
+	if err := os.WriteFile(filepath.Join(repo, name), []byte("x\n"), 0o644); err != nil {
+		t.Skipf("the file system refuses the name: %v", err)
+	}
+	base, err := baseline(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored board.Baseline
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	ev, err := collectEvidence(ctx, repo, stored, nil, nil)
+	if _, ok := evidenceFiles(ev)[name]; err != nil || !ok {
+		t.Fatalf("the unchanged file was hidden: %+v, %v", ev.Diff.Files, err)
+	}
+}
+
+// The flags see every changed file, not only the listed ones.
+func TestEvidenceFlagsCountFilesBeyondTheList(t *testing.T) {
+	ctx := context.Background()
+	repo := branchRepo(t)
+	base, err := baseline(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range maxChangedFiles {
+		writeRepoFile(t, repo, fmt.Sprintf("a%04d.txt", i), "x\n")
+	}
+	writeRepoFile(t, repo, "zz_test.go", "package zz\n")
+	ev, err := collectEvidence(ctx, repo, base, nil, []heldFiles{{Card: 3, TaskID: "task-2", Files: []string{"zz_test.go"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ev.Diff.Files) != maxChangedFiles || slices.ContainsFunc(ev.Diff.Files, func(f EvidenceFile) bool { return f.Path == "zz_test.go" }) ||
+		ev.Diff.Added != maxChangedFiles+1 {
+		t.Fatalf("listed %d files, +%d", len(ev.Diff.Files), ev.Diff.Added)
+	}
+	if flags := evidenceFlags(ev, "make", false); !slices.Equal(flags, []string{board.FlagTestsOrBuildChanged, board.FlagOverlap}) {
+		t.Fatalf("flags = %q", flags)
+	}
+}
+
+// A path removed from the index is both deleted and untracked; it is listed
+// once.
+func TestEvidenceListsAnUntrackedRemovalOnce(t *testing.T) {
+	ctx := context.Background()
+	repo := branchRepo(t)
+	writeRepoFile(t, repo, "f.txt", "one\ntwo\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "base")
+	base, err := baseline(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "rm", "-q", "--cached", "f.txt")
+	ev, err := collectEvidence(ctx, repo, base, nil, nil)
+	if err != nil || len(ev.Diff.Files) != 1 || ev.Diff.Files[0] != (EvidenceFile{Path: "f.txt", Deleted: 2}) {
+		t.Fatalf("files = %+v, %v", ev.Diff.Files, err)
 	}
 }
 
@@ -238,6 +434,32 @@ func TestAcceptRunnerShellFallbackAndStartFailure(t *testing.T) {
 	res, err := r.run(ctx, filepath.Join(repo, "missing"), "true")
 	if !errors.Is(err, errAcceptanceNotRun) || res.Exit != -1 || !strings.Contains(res.Tail, "did not start") || res.CmdHash == "" {
 		t.Fatalf("a missing directory ran: %+v, %v", res, err)
+	}
+}
+
+// endsAfterFirstCheck is a context that reads as live on its first Err and
+// as cancelled after, so it ends between run's first check and the start.
+type endsAfterFirstCheck struct {
+	context.Context
+	checks atomic.Int32
+}
+
+func (c *endsAfterFirstCheck) Err() error {
+	if c.checks.Add(1) > 1 {
+		return context.Canceled
+	}
+	return nil
+}
+
+// A start that fails because the caller's context ended reports the
+// context, not "could not run", so no flagged claim is filed.
+func TestAcceptRunnerStartFailureAfterCancel(t *testing.T) {
+	acceptEnv(t)
+	var r acceptRunners
+	ctx := &endsAfterFirstCheck{Context: context.Background()}
+	res, err := r.run(ctx, filepath.Join(t.TempDir(), "missing"), "true")
+	if !errors.Is(err, context.Canceled) || errors.Is(err, errAcceptanceNotRun) || res != (AcceptResult{}) {
+		t.Fatalf("run = %+v, %v", res, err)
 	}
 }
 
@@ -489,10 +711,10 @@ func TestClaimRefusalsStopBeforeTheRun(t *testing.T) {
 			!strings.Contains(err.Error(), "boom") || !strings.Contains(err.Error(), "red by design") {
 			t.Fatalf("exit %d: %v", exit, err)
 		}
-		if res.Evidence.Accept == nil || res.Evidence.Accept.Exit != exit || res.Request.Kind != "" {
+		if res.Evidence.Accept == nil || res.Evidence.Accept.Exit != exit || res.Evidence.Diff.Files == nil || res.Request.Kind != "" {
 			t.Fatalf("exit %d: result = %+v", exit, res)
 		}
-		if !slices.Equal(*calls, []string{"check task-1 #12", "detail card-1", "run touch ran"}) {
+		if !slices.Equal(*calls, []string{"check task-1 #12", "detail card-1", "holds", "run touch ran"}) {
 			t.Fatalf("exit %d: calls = %q", exit, *calls)
 		}
 	}
@@ -533,32 +755,41 @@ func TestClaimWithNoCommandAndNoChange(t *testing.T) {
 	}
 }
 
-func TestClaimRunsThenCollectsEvidence(t *testing.T) {
+// The evidence is gathered before the run: files the acceptance command
+// writes, such as a lockfile, are not the Task's work.
+func TestClaimCollectsEvidenceBeforeTheRun(t *testing.T) {
 	acceptEnv(t)
-	repo, calls, st := claimScene(t, "echo generated > made-by-acceptance.txt")
-	writeRepoFile(t, repo, "x_test.go", "package x\n")
+	repo, calls, st := claimScene(t, "echo generated > go.sum")
+	writeRepoFile(t, repo, "x.go", "package x\n")
 	runner := fakeRunner{calls: calls, real: &acceptRunners{}}
 	res, err := evaluateClaim(context.Background(), st, runner, claimInput{
-		Actor: board.Agent("task-1", ""), Ref: "#12", Dir: repo, Comment: "done", Touched: []string{"x_test.go"},
+		Actor: board.Agent("task-1", ""), Ref: "#12", Dir: repo, Comment: "done", Touched: []string{"x.go"},
 		OtherHolds: func(_ context.Context, card board.Card) ([]heldFiles, error) {
 			*calls = append(*calls, "holds "+card.ID)
-			return []heldFiles{{Card: 13, TaskID: "task-2", Files: []string{"x_test.go"}}}, nil
+			return []heldFiles{{Card: 13, TaskID: "task-2", Files: []string{"x.go"}}}, nil
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(*calls, []string{"check task-1 #12", "detail card-1", "run echo generated > made-by-acceptance.txt", "holds card-1"}) {
+	if !slices.Equal(*calls, []string{"check task-1 #12", "detail card-1", "holds card-1", "run echo generated > go.sum"}) {
 		t.Fatalf("calls = %q", *calls)
 	}
+	if _, err := os.Stat(filepath.Join(repo, "go.sum")); err != nil {
+		t.Fatalf("the command did not run: %v", err)
+	}
 	files := evidenceFiles(res.Evidence)
-	if _, ok := files["made-by-acceptance.txt"]; !ok || !files["x_test.go"].ByTask || files["x_test.go"].Overlap == nil {
-		t.Fatalf("evidence was not collected after the run: %+v", res.Evidence.Diff)
+	if _, ok := files["go.sum"]; ok || len(files) != 1 || !files["x.go"].ByTask || files["x.go"].Overlap == nil {
+		t.Fatalf("evidence = %+v", res.Evidence.Diff)
 	}
 	if a := res.Evidence.Accept; a == nil || a.Exit != 0 || a.CmdHash != commandHash(st.fin.AcceptCmd) {
 		t.Fatalf("accept = %+v", a)
 	}
-	if want := []string{board.FlagTestsOrBuildChanged, board.FlagOverlap}; !slices.Equal(res.Request.Flags, want) {
+	var filed Evidence
+	if err := json.Unmarshal(res.Request.Evidence, &filed); err != nil || filed.Accept == nil || len(filed.Diff.Files) != 1 {
+		t.Fatalf("filed evidence = %s, %v", res.Request.Evidence, err)
+	}
+	if want := []string{board.FlagOverlap}; !slices.Equal(res.Request.Flags, want) {
 		t.Fatalf("flags = %q, want %q", res.Request.Flags, want)
 	}
 }
