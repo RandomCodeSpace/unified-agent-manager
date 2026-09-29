@@ -538,6 +538,23 @@ func (c *Conversation) ID() string { return c.id }
 // Request returns the OpenRequest that produced the conversation.
 func (c *Conversation) Request() agentapi.OpenRequest { return c.req }
 
+// CallTool calls one of the conversation's host tools as an adapter would:
+// call.Name must be among OpenRequest.Tools, and call.TaskID becomes the
+// request's SessionID. It fails with agentapi.ErrClosed after Close.
+func (c *Conversation) CallTool(ctx context.Context, call agentapi.HostToolCall) (agentapi.HostToolResult, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return agentapi.HostToolResult{}, agentapi.ErrClosed
+	}
+	if c.req.CallTool == nil || !slices.ContainsFunc(c.req.Tools, func(t agentapi.HostTool) bool { return t.Name == call.Name }) {
+		return agentapi.HostToolResult{}, fmt.Errorf("fake %s conversation has no host tool %q", c.provider.name, call.Name)
+	}
+	call.TaskID = c.req.SessionID
+	return c.req.CallTool(ctx, call), nil
+}
+
 func (c *Conversation) History(context.Context) (agentapi.History, error) {
 	h := agentapi.History{
 		Items:     append([]agentapi.Item(nil), c.history.Items...),
