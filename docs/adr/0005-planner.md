@@ -408,7 +408,7 @@ The preamble is deterministic. It contains:
 
 **Settle:** `POST /api/sessions/{id}/settle` takes an optional body, `{"holds": {"<card id>": {"action": "keep|release|cancel", "comment": ""}}}`. If the Task holds subtasks and the body doesn't decide each one, the answer is 409 `holds_undecided` with the held cards, and the UI shows the Settle dialog (§5).
 
-**Reject:** rejecting a request while its Task is Active sends the reason to that Task through its normal send path (a steer while a turn runs). Otherwise the reason becomes a comment and the hold is released.
+**Reject:** rejecting a request while its Task is Active sends the reason to that Task through its normal send path (a steer while a turn runs). Otherwise the reason becomes a comment and the hold is released. The reply is the request plus `steered`, true only when the reason reached the Task; when it is false and the subtask is still held, the UI offers Release.
 
 ## 15. Live updates
 

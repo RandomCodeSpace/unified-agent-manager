@@ -234,6 +234,26 @@ func TestPlannerBoardFrames(t *testing.T) {
 	}
 	f.call(http.MethodPost, "/api/board/cards/"+two.ID+"/comments", `{"body":"note"}`, http.StatusCreated, nil)
 	frameOf(t, sub, "board")
+	// The Project's default acceptance command is a Board write too.
+	f.call(http.MethodPatch, "/api/board/projects/"+f.project, `{"accept_cmd":"make test"}`, http.StatusOK, nil)
+	fr = frameOf(t, sub, "board")
+	var latest int64
+	if err := json.Unmarshal(fr.data["revision"], &latest); err != nil || latest != 7 || string(fr.data["cards"]) != "[]" {
+		t.Fatalf("settings frame = %v", fr.data)
+	}
+
+	// A change that arrives after a newer one went out is dropped: a browser
+	// behind it sees the gap and reloads.
+	f.store(func(_ context.Context, st *board.Store) error {
+		f.m.boardChanged(st)(board.Change{ProjectID: f.project, Revision: latest - 1, Cards: []string{one.ID}})
+		f.m.boardChanged(st)(board.Change{ProjectID: f.project, Revision: latest})
+		return nil
+	})
+	f.call(http.MethodPost, "/api/board/cards/"+one.ID+"/comments", `{"body":"later"}`, http.StatusCreated, nil)
+	fr = frameOf(t, sub, "board")
+	if err := json.Unmarshal(fr.data["revision"], &ev.Revision); err != nil || ev.Revision != latest+1 {
+		t.Fatalf("frame after stale changes = %v", fr.data)
+	}
 }
 
 // The snapshot carries each Board's revision while the planner is on, so a
@@ -393,14 +413,14 @@ func TestPlannerCardRoutes(t *testing.T) {
 		t.Fatalf("purged = %v", purged)
 	}
 	f.refused(http.MethodPost, "/api/board/purge", `{}`, http.StatusBadRequest, string(board.CodeInvalid))
-	f.refused(http.MethodPost, "/api/board/purge", `{"project_id":"gone"}`, http.StatusNotFound, "")
+	f.refused(http.MethodPost, "/api/board/purge", `{"project_id":"gone"}`, http.StatusNotFound, string(board.CodeNotFound))
 	var snap BoardSnapshot
 	f.call(http.MethodGet, "/api/board?project_id="+f.project, "", http.StatusOK, &snap)
 	if len(snap.Cards) != 7 || snap.Revision == 0 {
 		t.Fatalf("board = %d cards, revision %d", len(snap.Cards), snap.Revision)
 	}
 	f.refused(http.MethodGet, "/api/board", "", http.StatusBadRequest, string(board.CodeInvalid))
-	f.refused(http.MethodGet, "/api/board?project_id=gone", "", http.StatusNotFound, "")
+	f.refused(http.MethodGet, "/api/board?project_id=gone", "", http.StatusNotFound, string(board.CodeNotFound))
 	// check, triage, suggest and import come with later features.
 	for _, action := range []string{"check", "triage", "suggest"} {
 		if w := f.do(http.MethodPost, "/api/board/cards/"+one.ID+"/"+action, `{}`); w.Code != http.StatusNotFound {
@@ -428,7 +448,7 @@ func TestPlannerProjectSettings(t *testing.T) {
 		t.Fatalf("project settings = %+v", p)
 	}
 	f.refused(http.MethodPatch, "/api/board/projects/"+f.project, `{}`, http.StatusBadRequest, string(board.CodeInvalid))
-	f.refused(http.MethodGet, "/api/board/projects/gone", "", http.StatusNotFound, "")
+	f.refused(http.MethodGet, "/api/board/projects/gone", "", http.StatusNotFound, string(board.CodeNotFound))
 	plain := addProject(t, f.m, t.TempDir())
 	f.call(http.MethodGet, "/api/board/projects/"+plain, "", http.StatusOK, &p)
 	if p.Git != noGitRepository {
@@ -452,6 +472,28 @@ func TestPlannerRefusesProjectsWithoutGit(t *testing.T) {
 	})
 	f.refused(http.MethodPost, "/api/board/cards/"+c.ID+"/confirm", `{}`, http.StatusConflict, codeNoGit)
 	f.refused(http.MethodPost, "/api/board/cards/"+c.ID+"/launch", `{}`, http.StatusConflict, codeNoGit)
+	// The Project's state is checked before the card's: planning on a
+	// subtask, or launching a held one, is no_git here too.
+	f.refused(http.MethodPost, "/api/board/cards/"+c.ID+"/plan", `{}`, http.StatusConflict, codeNoGit)
+	var other board.Card
+	var req board.Request
+	f.store(func(ctx context.Context, st *board.Store) error {
+		var err error
+		if other, err = st.Create(ctx, board.Owner(""), board.NewCard{ProjectID: plain, Kind: board.KindSubtask, Title: "Other"}); err != nil {
+			return err
+		}
+		if _, err = st.Launch(ctx, board.Owner(""), c.ID, "task-1", board.Baseline{}); err != nil {
+			return err
+		}
+		req, err = st.FileRequest(ctx, board.Agent("task-1", ""), c.ID, board.RequestInput{Kind: board.RequestDone, Comment: "done"})
+		return err
+	})
+	f.refused(http.MethodPost, "/api/board/cards/"+c.ID+"/launch", `{}`, http.StatusConflict, codeNoGit)
+	f.refused(http.MethodGet, "/api/board/cards/"+c.ID, "", http.StatusConflict, codeNoGit)
+	f.refused(http.MethodPost, "/api/board/links", fmt.Sprintf(`{"blocker":%q,"blocked":%q}`, other.ID, c.ID), http.StatusConflict, codeNoGit)
+	f.refused(http.MethodDelete, "/api/board/links?blocker="+other.ID+"&blocked="+c.ID, "", http.StatusConflict, codeNoGit)
+	f.refused(http.MethodPost, "/api/board/requests/"+req.ID+"/accept", `{}`, http.StatusConflict, codeNoGit)
+	f.refused(http.MethodPost, "/api/board/requests/"+req.ID+"/reject", `{"reason":"no"}`, http.StatusConflict, codeNoGit)
 	if len(f.m.List()) != 0 {
 		t.Fatal("a refused launch created a task")
 	}
@@ -557,7 +599,9 @@ func (p failingSends) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	return conv, err
 }
 
-func TestPlannerLaunchFailureLeavesNothingBehind(t *testing.T) {
+// A launch whose first prompt fails discards its Task and releases the hold;
+// the attempt, its comment and the launch's confirmation of the subtask stay.
+func TestPlannerFailedLaunchDiscardsTaskAndReleasesHold(t *testing.T) {
 	prov := agenttest.NewProvider("fake", allCaps)
 	m := startManager(t, openTestStore(t), failingSends{prov})
 	srv, err := NewServer(ServerConfig{Manager: m, Token: testToken, Version: "test"})
@@ -568,7 +612,20 @@ func TestPlannerLaunchFailureLeavesNothingBehind(t *testing.T) {
 	repo := branchRepo(t)
 	f := &plannerFixture{t: t, ts: &testServer{srv: srv, m: m, prov: prov}, m: m, repo: repo, project: addProject(t, m, repo)}
 	f.call(http.MethodPatch, "/api/settings", `{"planner":true}`, http.StatusOK, nil)
-	leaf := f.create(board.KindSubtask, "", "Leaf")
+	// An agent's proposal, so the launch is what confirms it.
+	epic := f.create(board.KindEpic, "", "Epic")
+	var leaf board.Card
+	f.store(func(ctx context.Context, st *board.Store) error {
+		if err := st.StartPlanning(ctx, board.Owner(""), epic.ID, "planner"); err != nil {
+			return err
+		}
+		var err error
+		leaf, err = st.Create(ctx, board.Agent("planner", ""), board.NewCard{Kind: board.KindSubtask, ParentID: epic.ID, Title: "Leaf"})
+		return err
+	})
+	if leaf.Confirmed() {
+		t.Fatal("an agent's subtask is confirmed")
+	}
 	w := f.do(http.MethodPost, "/api/board/cards/"+leaf.ID+"/launch", `{}`)
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "first prompt") {
 		t.Fatalf("failed launch = %d %s", w.Code, w.Body)
@@ -577,7 +634,7 @@ func TestPlannerLaunchFailureLeavesNothingBehind(t *testing.T) {
 		t.Fatalf("tasks after a failed launch = %+v", list)
 	}
 	d := f.card(leaf.ID)
-	if d.Card.Status != board.StatusTodo || d.Card.HeldBy != "" || len(d.Holds) != 1 || d.Holds[0].EndReason != string(board.ReleaseEnded) ||
+	if d.Card.Status != board.StatusTodo || d.Card.HeldBy != "" || !d.Card.Confirmed || len(d.Holds) != 1 || d.Holds[0].EndReason != string(board.ReleaseEnded) ||
 		!slices.ContainsFunc(comments(d), func(c string) bool { return strings.HasPrefix(c, "uam: attempt #1 ended, uncommitted: none") }) {
 		t.Fatalf("leaf after a failed launch = %+v, comments %v", d, comments(d))
 	}
@@ -652,6 +709,51 @@ func TestPlannerSettleDecidesEachHold(t *testing.T) {
 	}
 }
 
+// Settle's decisions run after the Task settled: one that fails is logged and
+// leaves its subtask held, the others still apply, and Settle succeeds.
+func TestPlannerSettleDecisionFailureStillSettles(t *testing.T) {
+	f := newPlanner(t)
+	story := f.create(board.KindStory, "", "Story")
+	one, two := f.create(board.KindSubtask, story.ID, "One"), f.create(board.KindSubtask, story.ID, "Two")
+	_, task := f.launch(story.ID)
+	f.store(func(ctx context.Context, st *board.Store) error {
+		agent := board.Agent(task.ID, "")
+		if _, err := st.FileRequest(ctx, agent, one.ID, board.RequestInput{Kind: board.RequestDone, Comment: "done"}); err != nil {
+			return err
+		}
+		_, err := st.Claim(ctx, agent, two.ID, board.Baseline{})
+		return err
+	})
+	f.idle(task.ID)
+	tooLong := strings.Repeat("x", 64<<10+1)
+	var summary SessionSummary
+	f.call(http.MethodPost, "/api/sessions/"+task.ID+"/settle", fmt.Sprintf(`{"holds":{%q:{"action":"release","comment":%q},%q:{"action":"cancel","comment":"moot"}}}`, one.ID, tooLong, two.ID), http.StatusOK, &summary)
+	if summary.Stage != StageSettled {
+		t.Fatalf("settle = %+v", summary)
+	}
+	if c := f.card(one.ID).Card; c.HeldBy != task.ID || c.Status != board.StatusDoing {
+		t.Fatalf("the failed decision's subtask = %+v", c)
+	}
+	if c := f.card(two.ID).Card; c.Status != board.StatusCancelled {
+		t.Fatalf("the other decision's subtask = %+v", c)
+	}
+}
+
+// A decision never ends a hold its Task no longer has: the subtask may be
+// another Task's by the time the decision runs.
+func TestPlannerHoldDecisionSkipsAnotherTasksHold(t *testing.T) {
+	f := newPlanner(t)
+	leaf := f.create(board.KindSubtask, "", "Leaf")
+	held, first := f.launch(leaf.ID)
+	f.call(http.MethodPost, "/api/board/cards/"+leaf.ID+"/release", `{}`, http.StatusOK, nil)
+	_, second := f.launch(leaf.ID)
+	stale := board.Card{ID: held.ID, HeldBy: first.ID}
+	f.m.applyHoldDecisions(first.ID, board.Owner(""), []board.Card{stale}, map[string]HoldDecision{leaf.ID: {Action: holdCancel, Comment: "moot"}})
+	if c := f.card(leaf.ID).Card; c.HeldBy != second.ID || c.Status != board.StatusDoing {
+		t.Fatalf("the relaunched subtask = %+v", c)
+	}
+}
+
 func TestPlannerRequestsAcceptAndReject(t *testing.T) {
 	f := newPlanner(t)
 	one, two := f.create(board.KindSubtask, "", "One"), f.create(board.KindSubtask, "", "Two")
@@ -669,10 +771,10 @@ func TestPlannerRequestsAcceptAndReject(t *testing.T) {
 
 	// Rejecting while the Task runs a turn steers it, and the hold stays.
 	r := file(one.ID, taskOne.ID)
-	var got BoardRequest
+	var got Rejection
 	f.refused(http.MethodPost, "/api/board/requests/"+r.ID+"/reject", `{"reason":" "}`, http.StatusBadRequest, string(board.CodeInvalid))
 	f.call(http.MethodPost, "/api/board/requests/"+r.ID+"/reject", `{"reason":"the test still fails"}`, http.StatusOK, &got)
-	if got.Status != board.RequestRejected || got.DecisionComment != "the test still fails" || string(got.Evidence) != "{}" {
+	if got.Status != board.RequestRejected || got.DecisionComment != "the test still fails" || string(got.Evidence) != "{}" || !got.Steered {
 		t.Fatalf("rejected = %+v", got)
 	}
 	if steers := f.conversation(taskOne.ID).Steers(); len(steers) != 1 || steers[0] != "The owner rejected your done request on #1 One: the test still fails" {
@@ -687,12 +789,23 @@ func TestPlannerRequestsAcceptAndReject(t *testing.T) {
 	r = file(one.ID, taskOne.ID)
 	f.idle(taskOne.ID)
 	f.call(http.MethodPost, "/api/sessions/"+taskOne.ID+"/settle", fmt.Sprintf(`{"holds":{%q:{"action":"keep"}}}`, one.ID), http.StatusOK, nil)
-	f.call(http.MethodPost, "/api/board/requests/"+r.ID+"/reject", `{"reason":"start over"}`, http.StatusOK, nil)
-	if d := f.card(one.ID); d.Card.Status != board.StatusTodo || !slices.Contains(comments(d), "owner: start over") {
+	got = Rejection{Steered: true}
+	f.call(http.MethodPost, "/api/board/requests/"+r.ID+"/reject", `{"reason":"start over"}`, http.StatusOK, &got)
+	if d := f.card(one.ID); got.Steered || d.Card.Status != board.StatusTodo || !slices.Contains(comments(d), "owner: start over") {
 		t.Fatalf("settled reject = %+v, %v", d.Card, comments(d))
 	}
 	if steers := f.conversation(taskOne.ID).Steers(); len(steers) != 1 {
 		t.Fatalf("a settled task was steered: %q", steers)
+	}
+
+	// A steer that fails says so; the hold stays for the owner to release.
+	r = file(two.ID, taskTwo.ID)
+	f.conversation(taskTwo.ID).SetSteerHook(func(context.Context, string) error { return errors.New("gone") })
+	if w := f.do(http.MethodPost, "/api/board/requests/"+r.ID+"/reject", `{"reason":"redo"}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"steered":false`) {
+		t.Fatalf("reject with a failed steer = %d %s", w.Code, w.Body)
+	}
+	if c := f.card(two.ID).Card; c.HeldBy != taskTwo.ID {
+		t.Fatalf("hold after a failed steer = %+v", c)
 	}
 
 	// Accept marks the subtask done and ends the hold.
@@ -702,9 +815,10 @@ func TestPlannerRequestsAcceptAndReject(t *testing.T) {
 	if len(snap.Requests) != 1 || snap.Requests[0].ID != r.ID || snap.Requests[0].Kind != board.RequestDone || len(snap.Requests[0].Payload) == 0 {
 		t.Fatalf("inbox = %+v", snap.Requests)
 	}
-	f.call(http.MethodPost, "/api/board/requests/"+r.ID+"/accept", ``, http.StatusOK, &got)
-	if got.Status != board.RequestAccepted {
-		t.Fatalf("accepted = %+v", got)
+	var accepted BoardRequest
+	f.call(http.MethodPost, "/api/board/requests/"+r.ID+"/accept", ``, http.StatusOK, &accepted)
+	if accepted.Status != board.RequestAccepted {
+		t.Fatalf("accepted = %+v", accepted)
 	}
 	if d := f.card(two.ID); d.Card.Status != board.StatusDone || d.Holds[0].EndReason != string(board.ReleaseAccepted) {
 		t.Fatalf("accepted card = %+v", d)
@@ -757,6 +871,33 @@ func TestPlannerRemoveProjectMovesCardsToUnassigned(t *testing.T) {
 	f.call(http.MethodGet, "/api/board?project_id="+next, "", http.StatusOK, &snap)
 	if len(snap.Cards) != 2 {
 		t.Fatalf("moved board = %+v", snap.Cards)
+	}
+}
+
+// A Project removed while the planner was off has its cards moved to
+// Unassigned when the planner opens again.
+func TestPlannerOpenUnassignsRemovedProjects(t *testing.T) {
+	f := newPlanner(t)
+	epic := f.create(board.KindEpic, "", "Epic")
+	leaf := f.create(board.KindSubtask, epic.ID, "Leaf")
+	f.call(http.MethodPatch, "/api/settings", `{"planner":false}`, http.StatusOK, nil)
+	if err := f.m.RemoveProject(f.project); err != nil {
+		t.Fatal(err)
+	}
+	f.call(http.MethodPatch, "/api/settings", `{"planner":true}`, http.StatusOK, nil)
+	var snap BoardSnapshot
+	f.call(http.MethodGet, "/api/board?project_id=unassigned", "", http.StatusOK, &snap)
+	if len(snap.Cards) != 2 || snap.Cards[0].ID != epic.ID || snap.Cards[1].ID != leaf.ID || snap.Revision == 0 {
+		t.Fatalf("unassigned after reopening = %+v", snap)
+	}
+	sub, frame, err := f.m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.m.Unsubscribe(sub)
+	var revs map[string]int64
+	if err := json.Unmarshal(parseFrame(t, frame).data["boards"], &revs); err != nil || revs[""] != snap.Revision {
+		t.Fatalf("snapshot boards = %v, %v; want Unassigned at %d", revs, err, snap.Revision)
 	}
 }
 
@@ -839,7 +980,8 @@ func TestPlannerBrokenDatabaseStillSettles(t *testing.T) {
 	}
 	prov := agenttest.NewProvider("fake", allCaps)
 	m := startManager(t, st, prov)
-	if _, err := m.Board(unassignedBoard); !errors.Is(err, errPlannerBroken) {
+	var broken *Error
+	if _, err := m.Board(unassignedBoard); !errors.As(err, &broken) || broken.Status != http.StatusServiceUnavailable || broken.Code != codePlannerUnavailable {
 		t.Fatalf("board with a broken database = %v", err)
 	}
 	sum, _ := createSession(t, m, prov)

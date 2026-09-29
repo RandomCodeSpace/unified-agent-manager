@@ -19,14 +19,17 @@ import (
 
 // The refusal codes the web layer adds to the board's (ADR 0005 §14).
 const (
-	codePlannerOff     = "planner_off"
-	codeNoGit          = "no_git"
-	codeHoldsUndecided = "holds_undecided"
+	codePlannerOff         = "planner_off"
+	codeNoGit              = "no_git"
+	codeHoldsUndecided     = "holds_undecided"
+	codePlannerUnavailable = "planner_unavailable"
 )
 
 var (
 	errPlannerOff    = &Error{Status: http.StatusConflict, Message: "the planner is off; turn it on in Settings", Code: codePlannerOff}
-	errPlannerBroken = newError(http.StatusServiceUnavailable, "the planner database could not be opened; see the service log")
+	errPlannerBroken = &Error{Status: http.StatusServiceUnavailable, Message: "the planner database could not be opened; see the service log", Code: codePlannerUnavailable}
+	// errBoardProject is errProjectNotFound with the board's not_found code.
+	errBoardProject = &Error{Status: http.StatusNotFound, Message: errProjectNotFound.Message, Code: string(board.CodeNotFound)}
 )
 
 // boardDB is the planner database (ADR 0005 §13), open while the Settings
@@ -92,7 +95,8 @@ func invalidBoard(format string, args ...any) *Error {
 }
 
 // openBoard opens board.db beside sessions.json, runs the expiry sweep and
-// Reconcile, and only then takes planner calls (ADR 0005 §5, §8, §13).
+// Reconcile, moves the cards of Projects removed meanwhile to Unassigned, and
+// only then takes planner calls (ADR 0005 §5, §8, §11, §13).
 func (m *Manager) openBoard(ctx context.Context) error {
 	st, err := board.Open(filepath.Join(filepath.Dir(m.store.Path()), board.FileName), board.Options{})
 	if err != nil {
@@ -107,7 +111,7 @@ func (m *Manager) openBoard(ctx context.Context) error {
 		_ = st.Close()
 		return err
 	}
-	revs, err := st.Revisions(ctx)
+	revs, err := m.unassignRemoved(ctx, st)
 	if err != nil {
 		_ = st.Close()
 		return err
@@ -120,6 +124,33 @@ func (m *Manager) openBoard(ctx context.Context) error {
 	m.board.st, m.board.broken = st, false
 	m.board.mu.Unlock()
 	return nil
+}
+
+// unassignRemoved moves to Unassigned the cards of every Project st knows
+// that is no longer one: it was removed while the planner was off, or its
+// cards' move failed. It returns every Board's revision afterwards.
+func (m *Manager) unassignRemoved(ctx context.Context, st *board.Store) (map[string]int64, error) {
+	revs, err := st.Revisions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	var removed []string
+	for id := range revs {
+		if id != "" && m.projects[id] == nil {
+			removed = append(removed, id)
+		}
+	}
+	m.mu.Unlock()
+	if len(removed) == 0 {
+		return revs, nil
+	}
+	for _, id := range removed {
+		if _, err := st.Unassign(ctx, id); err != nil {
+			return nil, err
+		}
+	}
+	return st.Revisions(ctx)
 }
 
 // closeBoard closes the planner store once no call uses it. Planner calls
@@ -174,7 +205,12 @@ func (m *Manager) boardChanged(st *board.Store) func(board.Change) {
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		if m.boardRevs != nil && c.Revision > m.boardRevs[c.ProjectID] {
+		if m.boardRevs != nil {
+			// Writers call back concurrently. A frame older than one already
+			// sent is dropped; a browser behind it sees the gap and reloads.
+			if c.Revision <= m.boardRevs[c.ProjectID] {
+				return
+			}
 			m.boardRevs[c.ProjectID] = c.Revision
 		}
 		if err != nil {
@@ -305,7 +341,7 @@ func (m *Manager) boardDir(ctx context.Context, projectID string) (string, error
 	m.mu.Unlock()
 	switch {
 	case p == nil:
-		return "", errProjectNotFound
+		return "", errBoardProject
 	case noGit != "":
 		return "", noGitError(noGit)
 	}
@@ -439,7 +475,7 @@ func (m *Manager) BoardProject(id string) (BoardProject, error) {
 	}
 	m.mu.Unlock()
 	if p == nil {
-		return BoardProject{}, errProjectNotFound
+		return BoardProject{}, errBoardProject
 	}
 	var ps board.ProjectSettings
 	err := m.withBoard(func(st *board.Store) error {
@@ -469,6 +505,7 @@ type BoardCardDetail struct {
 }
 
 // CardDetail returns the card ref with its comments, requests and attempts.
+// A card on a Project with no repository is refused, as its Board is.
 func (m *Manager) CardDetail(ref string) (BoardCardDetail, error) {
 	var d board.Detail
 	err := m.withBoard(func(st *board.Store) error {
@@ -476,6 +513,12 @@ func (m *Manager) CardDetail(ref string) (BoardCardDetail, error) {
 		d, err = st.Detail(m.ctx, ref)
 		return err
 	})
+	if err == nil && d.Card.ProjectID != "" {
+		_, err = m.boardDir(m.ctx, d.Card.ProjectID)
+	}
+	if err != nil {
+		return BoardCardDetail{}, err
+	}
 	out := BoardCardDetail{Card: boardCard(d.Card), Comments: make([]BoardComment, 0, len(d.Comments)), Requests: boardRequests(d.Requests), Holds: make([]BoardHold, 0, len(d.Holds))}
 	for _, c := range d.Comments {
 		out.Comments = append(out.Comments, boardComment(c))
@@ -483,7 +526,7 @@ func (m *Manager) CardDetail(ref string) (BoardCardDetail, error) {
 	for _, h := range d.Holds {
 		out.Holds = append(out.Holds, boardHold(h))
 	}
-	return out, err
+	return out, nil
 }
 
 // CreateCard is the owner's create; the card is confirmed. A card under a
@@ -631,24 +674,38 @@ func (m *Manager) SettleHolds(id string, decisions map[string]HoldDecision) (Ses
 	if _, err := m.moveStage(id, StageSettled, StageActive); err != nil {
 		return SessionSummary{}, err
 	}
+	m.applyHoldDecisions(id, a, held, decisions)
+	m.reconcileBoard()
+	return m.Summary(id)
+}
+
+// applyHoldDecisions applies the settled Task id's release and cancel
+// decisions as a. The Task is settled already, so a decision that fails is
+// logged and the rest still run; its subtask stays held, as if kept. A
+// subtask the Task no longer holds is left alone, so a decision never ends
+// another Task's hold.
+func (m *Manager) applyHoldDecisions(id string, a board.Actor, held []board.Card, decisions map[string]HoldDecision) {
 	for _, c := range held {
 		d := decisions[c.ID]
+		if d.Action != holdRelease && d.Action != holdCancel {
+			continue
+		}
 		err := m.withBoard(func(st *board.Store) error {
-			var err error
-			switch d.Action {
-			case holdRelease:
+			current, err := st.Card(m.ctx, c.ID)
+			if err != nil || current.HeldBy != id {
+				return err
+			}
+			if d.Action == holdRelease {
 				_, err = st.ReleaseHold(m.ctx, a, c.ID, board.ReleaseSettled, d.Comment)
-			case holdCancel:
+			} else {
 				_, err = st.SetStatus(m.ctx, a, c.ID, board.StatusCancelled, d.Comment, false)
 			}
 			return err
 		})
 		if err != nil {
-			return SessionSummary{}, err
+			log.Warn("apply a settle decision failed", "session", id, "card", c.ID, "action", d.Action, "error", err)
 		}
 	}
-	m.reconcileBoard()
-	return m.Summary(id)
 }
 
 // LaunchRequest is the launch and plan body (ADR 0005 §14): the new Task's
@@ -699,16 +756,18 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 		return c, SessionSummary{}, err
 	case c.ProjectID == "":
 		return c, SessionSummary{}, &Error{Status: http.StatusConflict, Message: "Unassigned cards are read-only; move the card into a project first", Code: string(board.CodeReadOnly)}
+	}
+	dir, err := m.boardDir(ctx, c.ProjectID)
+	if err != nil {
+		return c, SessionSummary{}, err
+	}
+	switch {
 	case plan && c.Kind == board.KindSubtask:
 		return c, SessionSummary{}, invalidBoard("#%d is a subtask; plan with an agent on an epic or a story", c.Seq)
 	case !plan && c.Kind == board.KindSubtask && c.Status != board.StatusPlanned && c.Status != board.StatusTodo:
 		return c, SessionSummary{}, invalidBoard("#%d is %s; only a planned or todo subtask can be launched", c.Seq, c.Status)
 	case !plan && c.Kind != board.KindSubtask && len(pending) == 0:
 		return c, SessionSummary{}, invalidBoard("#%d has no pending confirmed subtasks", c.Seq)
-	}
-	dir, err := m.boardDir(ctx, c.ProjectID)
-	if err != nil {
-		return c, SessionSummary{}, err
 	}
 	a := board.Owner(gitHead(ctx, dir))
 	base := board.Baseline{Head: a.Head}
@@ -953,14 +1012,23 @@ func (m *Manager) AcceptRequest(id, comment string) (BoardRequest, error) {
 	return boardRequest(out), err
 }
 
+// Rejection is a rejected request and whether its reason reached the
+// requesting Task. Steered is false when the Task was not Active, so the
+// store released its hold, and when sending the reason failed, so the hold
+// stays with a Task that did not hear why; the owner may then Release it.
+type Rejection struct {
+	BoardRequest
+	Steered bool `json:"steered"`
+}
+
 // RejectRequest rejects the pending request id with reason (ADR 0005 §14).
 // While the requesting Task is Active its hold stays, and the reason goes to
 // the Task through its send path, as a steer while a turn runs. Otherwise the
 // store releases the hold with the reason as a comment.
-func (m *Manager) RejectRequest(id, reason string) (BoardRequest, error) {
+func (m *Manager) RejectRequest(id, reason string) (Rejection, error) {
 	r, c, a, err := m.requestOwner(m.ctx, id)
 	if err != nil {
-		return BoardRequest{}, err
+		return Rejection{}, err
 	}
 	m.mu.Lock()
 	s := m.sessions[r.TaskID]
@@ -972,15 +1040,18 @@ func (m *Manager) RejectRequest(id, reason string) (BoardRequest, error) {
 		out, err = st.Reject(m.ctx, a, id, reason, active)
 		return err
 	}); err != nil {
-		return BoardRequest{}, err
+		return Rejection{}, err
 	}
+	steered := false
 	if active {
 		text := fmt.Sprintf("The owner rejected your %s request on %s: %s", r.Kind, cardRef(c), strings.TrimSpace(reason))
 		if err := m.sendRejection(r.TaskID, text); err != nil {
 			log.Warn("send a planner rejection to the task failed", "session", r.TaskID, "error", err)
+		} else {
+			steered = true
 		}
 	}
-	return boardRequest(out), nil
+	return Rejection{BoardRequest: boardRequest(out), Steered: steered}, nil
 }
 
 func (m *Manager) sendRejection(taskID, text string) error {
