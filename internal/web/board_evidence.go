@@ -111,11 +111,14 @@ type AcceptResult struct {
 	Stale   bool      `json:"stale"`
 }
 
-// EvidenceTranscript is the span of the claiming Task's transcript.
+// EvidenceTranscript is the span of the claiming Task's transcript. Partial
+// is set when the transcript uam holds does not reach back to the hold's
+// start, so the files marked by_task may be incomplete.
 type EvidenceTranscript struct {
 	TaskID   string `json:"task_id"`
 	FromItem string `json:"from_item"`
 	ToItem   string `json:"to_item"`
+	Partial  bool   `json:"partial,omitempty"`
 }
 
 // EvidenceChecklist is the subtask's checklist state.

@@ -1,5 +1,8 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, test } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import type { Item } from '../../src/api';
+import { PlannerContext, type PlannerContextValue } from '../../src/components/planner/context';
+import { ToolRow } from '../../src/components/Transcript';
 import { saveDensity } from '../../src/lib/density';
 import { log, openMenu, openTask } from './render';
 
@@ -161,5 +164,34 @@ describe('history', () => {
     const menu = await openMenu(user, 'Actions for subagent Audit the remaining packages');
     await user.click(menu.getByRole('menuitem', { name: 'Show where it was spawned' }));
     await waitFor(() => expect(document.getElementById('item-h-audit')?.classList.contains('animate-flash')).toBe(true));
+  });
+});
+
+describe('planner', () => {
+  const item: Item = {
+    id: 'board-1', kind: 'tool', time: '2026-09-29T12:00:00Z',
+    tool: { name: 'board_get', status: 'completed', display_arg: '#12', board_card: { id: 'c1', seq: 12, kind: 'subtask', title: 'Make it', status: 'doing' } },
+  };
+
+  test('a planner tool call names its card beside its row, and the name opens the card', () => {
+    const openCard = vi.fn();
+    const planner = { enabled: true, openCard } as unknown as PlannerContextValue;
+    const view = render(<PlannerContext.Provider value={planner}><ToolRow item={item} live={false} /></PlannerContext.Provider>);
+    fireEvent.click(view.getByRole('button', { name: '#12 Make it' }));
+    expect(openCard).toHaveBeenCalledWith('c1');
+    // The chip sits outside the row's toggle, so opening the card leaves the row folded.
+    expect(view.getByRole('button', { name: /^board_get/ }).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  test('the card name is plain text while the planner is off or absent, and a failed call has none', () => {
+    const planner = { enabled: false, openCard: vi.fn() } as unknown as PlannerContextValue;
+    const view = render(<PlannerContext.Provider value={planner}><ToolRow item={item} live={false} /></PlannerContext.Provider>);
+    expect(view.getByTitle('#12 Make it').tagName).toBe('SPAN');
+    expect(view.queryByRole('button', { name: '#12 Make it' })).toBeNull();
+    view.rerender(<ToolRow item={item} live={false} />);
+    expect(view.getByTitle('#12 Make it').textContent).toBe('#12 Make it');
+    expect(view.queryByRole('button', { name: '#12 Make it' })).toBeNull();
+    view.rerender(<ToolRow item={{ ...item, tool: { name: 'board_get', status: 'failed', display_arg: '#12' } }} live={false} />);
+    expect(view.queryByTitle('#12 Make it')).toBeNull();
   });
 });

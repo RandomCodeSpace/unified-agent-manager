@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
 )
 
 func compactFrame(t *testing.T, part initialDetailFrame) frame {
@@ -46,6 +47,29 @@ func TestCompactProjectionPreservesDisplayAndSemanticContent(t *testing.T) {
 	reasoning := projectItem(agentapi.Item{Kind: agentapi.ItemReasoning, Text: "secret thought"})
 	if reasoning.Text != "" || !reasoning.Compact.HasReasoning {
 		t.Fatal("reasoning was not deferred")
+	}
+}
+
+// A completed board_* call's result names its card for the transcript's
+// chip, also as read back from the provider's record; a failed call,
+// another tool or a result without a card names none.
+func TestCompactProjectionCarriesTheBoardCard(t *testing.T) {
+	c := board.Card{ID: "c1", Seq: 12, Kind: board.KindSubtask, Title: "Make it", Status: board.StatusDoing}
+	output := cardReply(c, "Updated #12.").result(false).Text
+	tool := func(name string, status agentapi.ToolStatus, output string) *compactTool {
+		return projectItem(agentapi.Item{Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: name, Status: status, Output: output}}).Tool
+	}
+	if got := tool("board_edit", agentapi.ToolCompleted, output); got.BoardCard == nil || *got.BoardCard != (toolCard{ID: "c1", Seq: 12, Kind: board.KindSubtask, Title: "Make it", Status: board.StatusDoing}) || got.Output != "" {
+		t.Fatalf("board card = %+v", got)
+	}
+	for _, got := range []*compactTool{
+		tool("board_edit", agentapi.ToolFailed, output), tool("bash", agentapi.ToolCompleted, output),
+		tool("board_list", agentapi.ToolCompleted, `{"text":"No cards match."}`), tool("board_get", agentapi.ToolCompleted, "not JSON"),
+		tool("board_other", agentapi.ToolCompleted, output),
+	} {
+		if got.BoardCard != nil {
+			t.Fatalf("%s %s has a board card", got.Name, got.Status)
+		}
 	}
 }
 
@@ -792,6 +816,8 @@ func TestCompactWindowAccountingMatchesBrowser(t *testing.T) {
 		{ID: "chat界", Kind: agentapi.ItemAssistant, Text: "line\n<界😀>&", Time: now, EndedAt: now, AgentID: "agent", Delivery: "steer", Attachments: []agentapi.Attachment{{ID: "upload", Name: "文😀", MIME: "text/plain", Size: 20, NotNative: true}, {Name: "empty", MIME: ""}}},
 		{ID: "tool", Kind: agentapi.ItemTool, Text: "hidden", Time: now, Tool: &agentapi.ToolCall{Name: "edit", Title: "Edit file", Status: agentapi.ToolCompleted, Input: `{"path":"文😀.go","content":"hidden"}`, Output: "hidden"}, Images: []agentapi.Image{{ID: "image", MIME: "image/png", Name: "文", Size: 123}, {ID: "zero"}}, ImagesNote: "note"},
 		{ID: "ask", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "ask_user", Input: "<\n界", Output: "😀", Status: agentapi.ToolCompleted}},
+		{ID: "board", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "board_get", Input: `{"ref":"#12"}`, Status: agentapi.ToolCompleted,
+			Output: `{"text":"hidden","card":{"id":"c1","seq":12,"kind":"subtask","title":"界😀","status":"doing"}}`}},
 		{ID: "thought", Kind: agentapi.ItemReasoning, Text: "hidden"},
 	} {
 		projected := projectItem(it)

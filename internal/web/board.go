@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -119,7 +121,6 @@ func (m *Manager) openBoard(ctx context.Context) error {
 	m.mu.Lock()
 	m.boardRevs = revs
 	m.mu.Unlock()
-	// TODO(#253): register the board_* agent tools through m.hostTools.
 	m.board.mu.Lock()
 	m.board.st, m.board.broken = st, false
 	m.board.mu.Unlock()
@@ -634,16 +635,7 @@ func (m *Manager) SettleHolds(id string, decisions map[string]HoldDecision) (Ses
 	m.mu.Unlock()
 	var held []board.Card
 	if active {
-		err := m.withBoard(func(st *board.Store) error {
-			all, err := st.Held(m.ctx)
-			for _, c := range all {
-				if c.HeldBy == id {
-					held = append(held, c)
-				}
-			}
-			return err
-		})
-		if err != nil && !plannerDown(err) {
+		if held, err = m.heldBy(id); err != nil {
 			return SessionSummary{}, err
 		}
 	}
@@ -674,9 +666,52 @@ func (m *Manager) SettleHolds(id string, decisions map[string]HoldDecision) (Ses
 	if _, err := m.moveStage(id, StageSettled, StageActive); err != nil {
 		return SessionSummary{}, err
 	}
+	// The Task's planner calls end before its holds are decided.
+	m.endCalls(id)
+	held, decisions = m.withLateHolds(id, held, decisions)
 	m.applyHoldDecisions(id, a, held, decisions)
 	m.reconcileBoard()
 	return m.Summary(id)
+}
+
+// heldBy lists the subtasks the Task id holds; none while the planner is
+// off.
+func (m *Manager) heldBy(id string) ([]board.Card, error) {
+	var held []board.Card
+	err := m.withBoard(func(st *board.Store) error {
+		all, err := st.Held(m.ctx)
+		for _, c := range all {
+			if c.HeldBy == id {
+				held = append(held, c)
+			}
+		}
+		return err
+	})
+	if plannerDown(err) {
+		err = nil
+	}
+	return held, err
+}
+
+// withLateHolds adds to held, and to decisions as a release, each subtask
+// the settling Task id claimed after held was read: nobody decided it, so it
+// returns to todo rather than stay held by a settled Task.
+func (m *Manager) withLateHolds(id string, held []board.Card, decisions map[string]HoldDecision) ([]board.Card, map[string]HoldDecision) {
+	now, err := m.heldBy(id)
+	if err != nil {
+		log.Warn("read a settled task's holds failed", "session", id, "error", err)
+	}
+	out := maps.Clone(decisions)
+	for _, c := range now {
+		if slices.ContainsFunc(held, func(h board.Card) bool { return h.ID == c.ID }) {
+			continue
+		}
+		if out == nil {
+			out = map[string]HoldDecision{}
+		}
+		held, out[c.ID] = append(held, c), HoldDecision{Action: holdRelease}
+	}
+	return held, out
 }
 
 // applyHoldDecisions applies the settled Task id's release and cancel
@@ -770,9 +805,12 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 		return c, SessionSummary{}, invalidBoard("#%d has no pending confirmed subtasks", c.Seq)
 	}
 	a := board.Owner(gitHead(ctx, dir))
-	base := board.Baseline{Head: a.Head}
+	// A launch's hold measures its evidence from here, as a claim's does.
+	var base board.Baseline
 	if !plan {
-		base.Dirty, _ = uncommitted(ctx, dir)
+		if base, err = baseline(ctx, dir); err != nil {
+			return c, SessionSummary{}, err
+		}
 	}
 	create := m.launchSelection(req)
 	create.ProjectID = c.ProjectID
