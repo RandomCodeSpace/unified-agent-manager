@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"path"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
@@ -21,6 +23,9 @@ import (
 const (
 	staleCacheSize = 512
 	maxStaleFiles  = 100
+	// maxStaleLog bounds the log since a pin that a launch preamble and a
+	// triage prompt carry.
+	maxStaleLog = 50
 )
 
 // Stale is a subtask's staleness: Behind counts the commits on HEAD that
@@ -97,8 +102,7 @@ func (c *staleCache) staleBatch(ctx context.Context, dir string, cards []board.C
 	}
 	facts := map[string]*pinFacts{}
 	for _, card := range cards {
-		if card.Kind != board.KindSubtask || !card.Confirmed() || card.HeldBy != "" ||
-			card.Status == board.StatusDone || card.Status == board.StatusCancelled || !isRev(card.PinnedSHA) {
+		if !staleCandidate(card) {
 			continue
 		}
 		key := newStaleKey(dir, card.PinnedSHA, head, card.Paths)
@@ -116,6 +120,96 @@ func (c *staleCache) staleBatch(ctx context.Context, dir string, cards []board.C
 		out[card.ID] = s
 	}
 	return out, nil
+}
+
+// staleCandidate reports whether staleness is computed for card (ADR 0005
+// §9): a confirmed subtask that is not done, cancelled or held, with a pin.
+func staleCandidate(card board.Card) bool {
+	return card.Kind == board.KindSubtask && card.Confirmed() && card.HeldBy == "" &&
+		card.Status != board.StatusDone && card.Status != board.StatusCancelled && isRev(card.PinnedSHA)
+}
+
+// staleReport is what a stale subtask's launch preamble and triage prompt
+// carry (ADR 0005 §9): its staleness against head, and the log since its
+// pin, newest first and at most maxStaleLog commits. The log is empty when
+// the pin is gone from the repository.
+type staleReport struct {
+	Stale
+	pin, head string
+	gone      bool
+	log       []EvidenceCommit
+}
+
+// report is card's stale report against the current HEAD of the repository
+// at dir. ok is false when staleness is not computed for card, or HEAD is
+// still at its pin.
+func (c *staleCache) report(ctx context.Context, dir string, card board.Card) (r staleReport, ok bool, err error) {
+	if !staleCandidate(card) {
+		return r, false, nil
+	}
+	repo, err := openEvidenceRepo(ctx, dir)
+	if err != nil {
+		return r, false, err
+	}
+	r.pin = card.PinnedSHA
+	if r.head, err = repo.head(ctx); err != nil || r.head == "" {
+		return r, false, err
+	}
+	if r.Stale, err = c.staleFor(ctx, dir, r.pin, r.head, card.Paths); err != nil || r.Behind == 0 && !r.Diverged {
+		return r, false, err
+	}
+	exists, err := repo.hasCommit(ctx, r.pin)
+	if err != nil {
+		return r, false, err
+	}
+	if r.gone = !exists; exists {
+		if r.log, err = repo.commitsSince(ctx, r.pin, maxStaleLog); err != nil {
+			return r, false, err
+		}
+	}
+	return r, true, nil
+}
+
+// String is the report as text for a model: where HEAD is against the pin,
+// the log since it, and the changed files that match the subtask's paths.
+func (r staleReport) String() string {
+	var b strings.Builder
+	switch {
+	case r.gone:
+		fmt.Fprintf(&b, "It was pinned at commit %s, which is no longer in the repository's history, so there is no log since it. HEAD is now %s.\n",
+			shortRev(r.pin), shortRev(r.head))
+	case r.Diverged:
+		fmt.Fprintf(&b, "It was pinned at commit %s. HEAD is now %s, %s ahead of the pin, and no longer descends from it.\n",
+			shortRev(r.pin), shortRev(r.head), commitCount(r.Behind))
+	default:
+		fmt.Fprintf(&b, "It was pinned at commit %s. HEAD is now %s, %s ahead of the pin.\n", shortRev(r.pin), shortRev(r.head), commitCount(r.Behind))
+	}
+	if len(r.log) > 0 {
+		b.WriteString("Log since the pin, newest first:\n")
+		for _, commit := range r.log {
+			fmt.Fprintf(&b, "- %s %s\n", shortRev(commit.SHA), commit.Subject)
+		}
+		if more := r.Behind - len(r.log); more > 0 {
+			fmt.Fprintf(&b, "- and %s before these\n", commitCount(more))
+		}
+	}
+	if len(r.Files) > 0 {
+		b.WriteString("Files changed since the pin that match the subtask's paths:\n")
+		for _, f := range r.Files {
+			fmt.Fprintf(&b, "- %s\n", displaytext.Sanitize(f))
+		}
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// shortRev abbreviates a commit name for text.
+func shortRev(rev string) string { return rev[:min(len(rev), 12)] }
+
+func commitCount(n int) string {
+	if n == 1 {
+		return "1 commit"
+	}
+	return fmt.Sprintf("%d commits", n)
 }
 
 func newStaleKey(dir, pin, head string, paths []string) staleKey {

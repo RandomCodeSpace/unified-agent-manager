@@ -1,7 +1,7 @@
 // Package agenttest provides a scriptable agentapi.Provider for tests of the
 // web service. Tests drive events explicitly and decide how the model catalog,
 // the command list and each Send, RunCommand, Steer, Respond, Cancel,
-// SetModel, Title, SetTitle or Diff call behave; every call is recorded so a
+// SetModel, Title, RunUtility, SetTitle or Diff call behave; every call is recorded so a
 // test can prove what the service did (and did not) ask the provider to do.
 package agenttest
 
@@ -37,6 +37,8 @@ type Provider struct {
 	quotaCalls  int
 	titleHook   func(ctx context.Context, req agentapi.TitleRequest) (string, error)
 	titles      []agentapi.TitleRequest
+	utilityHook func(ctx context.Context, req agentapi.UtilityRequest) (string, error)
+	utilities   []agentapi.UtilityRequest
 	known       map[string]agentapi.History
 	convs       []*Conversation
 	opens       []agentapi.OpenRequest
@@ -135,6 +137,39 @@ func (p *Provider) TitleRequests() []agentapi.TitleRequest {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]agentapi.TitleRequest(nil), p.titles...)
+}
+
+// SetUtilityHook decides how RunUtility behaves; the hook plays the model,
+// calling req.CallTool as it would. Without a hook RunUtility fails. The
+// service runs Utility jobs only on a provider created with the host tools
+// capability.
+func (p *Provider) SetUtilityHook(hook func(ctx context.Context, req agentapi.UtilityRequest) (string, error)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.utilityHook = hook
+}
+
+func (p *Provider) RunUtility(ctx context.Context, req agentapi.UtilityRequest) (string, error) {
+	p.mu.Lock()
+	p.utilities = append(p.utilities, req)
+	hook := p.utilityHook
+	p.mu.Unlock()
+	if hook == nil {
+		return "", fmt.Errorf("fake %s has no utility hook", p.name)
+	}
+	if req.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
+		defer cancel()
+	}
+	return hook(ctx, req)
+}
+
+// UtilityRequests returns every RunUtility call, oldest first.
+func (p *Provider) UtilityRequests() []agentapi.UtilityRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]agentapi.UtilityRequest(nil), p.utilities...)
 }
 
 // SetCommands decides what every conversation's Commands returns.

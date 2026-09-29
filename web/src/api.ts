@@ -877,8 +877,8 @@ export type UpdateData =
   | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
   /** One committed planner write, to everyone (§15); `project_id` is empty for the Unassigned list. */
   | { name: 'board'; seq: number; project_id: string; revision: number; cards: Card[]; removed: string[]; requests: BoardRequest[] }
-  /** A Utility job's progress (Suggest stories). */
-  | { name: 'board_job'; seq: number; job_id: string; card_id: string; status: 'running' | 'done' | 'failed'; error?: string };
+  /** A planner job on a card: a suggestion, or a Check at HEAD whose last frame carries its run (`accept`). */
+  | { name: 'board_job'; seq: number; job_id: string; card_id: string; kind: 'suggest' | 'check'; status: 'running' | 'done' | 'failed'; error?: string; accept?: AcceptRun };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1144,7 +1144,8 @@ function plannerApi() {
     launch: (ref: string, body: TaskSettings = {}) => call<{ card: Card; session: SessionSummary }>('POST', card(ref, 'launch'), body),
     plan: (ref: string, body: { brief: string } & TaskSettings) => call<{ session: SessionSummary }>('POST', card(ref, 'plan'), body),
     release: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'release'), { comment }),
-    check: (ref: string) => call<{ accept: AcceptRun }>('POST', card(ref, 'check')),
+    /** Starts Check at HEAD; its `board_job` frames carry the run. */
+    check: (ref: string) => call<{ job_id: string }>('POST', card(ref, 'check')),
     triage: (ref: string) => call<{ verdict: TriageVerdict; sentence: string; head: string }>('POST', card(ref, 'triage')),
     suggest: (ref: string, body: { brief: string; document: string; max: number }) => call<{ job_id: string }>('POST', card(ref, 'suggest'), body),
     accept: (id: string, comment: string) => call<unknown>('POST', `/api/board/requests/${enc(id)}/accept`, { comment }),
