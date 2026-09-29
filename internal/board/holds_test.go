@@ -17,7 +17,7 @@ func TestLaunch(t *testing.T) {
 	wantStatus(t, f.card(story.ID), StatusDoing)
 	holds := f.detail(one.ID).Holds
 	if len(holds) != 1 || holds[0].Attempt != 1 || holds[0].TaskID != "task-1" || holds[0].EndedAt != nil ||
-		holds[0].Baseline.Head != "base" || !slices.Equal(holds[0].Baseline.Dirty, []string{"x.go"}) {
+		holds[0].Baseline.Head != "base" || !slices.Equal(holds[0].Baseline.Dirty, []string{"x.go"}) || holds[0].Baseline.Blobs["x.go"] != "b10b" {
 		t.Fatalf("holds = %+v", holds)
 	}
 	// The Task is scoped to the subtask's parent.
@@ -69,6 +69,25 @@ func TestLaunch(t *testing.T) {
 	wantCode(t, f.s.StartPlanning(f.ctx, owner, leaf.ID, "planner"), CodeInvalid)
 	wantCode(t, f.s.StartPlanning(f.ctx, owner, epic.ID, ""), CodeInvalid)
 	wantCode(t, f.s.StartPlanning(f.ctx, owner, "#99", "p"), CodeNotFound)
+}
+
+// A hold stored before baselines had blob names still reads, with none.
+func TestHoldFromBeforeBaselineBlobs(t *testing.T) {
+	f := newFixture(t)
+	_, _, one, _ := f.tree()
+	f.launch(one.ID, "task-1")
+	f.raw(`ALTER TABLE holds DROP COLUMN baseline_blobs`)
+	f.raw(`DROP TABLE import_refs`)
+	f.raw(`UPDATE meta SET v = '1' WHERE k = 'schema_version'`)
+	f.must(f.s.Close())
+	s, err := Open(f.path, Options{})
+	f.must(err)
+	defer func() { _ = s.Close() }()
+	d, err := s.Detail(f.ctx, one.ID)
+	f.must(err)
+	if len(d.Holds) != 1 || len(d.Holds[0].Baseline.Blobs) != 0 || !slices.Equal(d.Holds[0].Baseline.Dirty, []string{"x.go"}) {
+		t.Fatalf("holds = %+v", d.Holds)
+	}
 }
 
 func TestClaim(t *testing.T) {

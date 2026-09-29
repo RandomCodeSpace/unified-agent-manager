@@ -154,7 +154,7 @@ func (f *fixture) tree() (epic, story, one, two Card) {
 
 func (f *fixture) launch(ref, task string) Card {
 	f.t.Helper()
-	c, err := f.s.Launch(f.ctx, owner, ref, task, Baseline{Head: "base", Dirty: []string{"x.go"}})
+	c, err := f.s.Launch(f.ctx, owner, ref, task, Baseline{Head: "base", Dirty: []string{"x.go"}, Blobs: map[string]string{"x.go": "b10b"}})
 	if err != nil {
 		f.t.Fatalf("launch %s: %v", ref, err)
 	}
@@ -258,5 +258,15 @@ func TestErrorMatching(t *testing.T) {
 	}
 	if CodeOf(errors.New("plain")) != "" {
 		t.Fatal("a plain error has a code")
+	}
+}
+
+// The acceptance refusals are raised outside the store, and their codes are
+// part of the HTTP and tool contract.
+func TestAcceptanceCodes(t *testing.T) {
+	for code, want := range map[Code]string{CodeAcceptanceBusy: "acceptance_busy", CodeAcceptanceFailed: "acceptance_failed"} {
+		if err := fmt.Errorf("wrap: %w", &Error{Code: code, Message: "x"}); string(CodeOf(err)) != want {
+			t.Fatalf("code %q reads as %q", want, CodeOf(err))
+		}
 	}
 }
