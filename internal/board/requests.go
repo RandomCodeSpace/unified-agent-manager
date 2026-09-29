@@ -41,9 +41,12 @@ const (
 	FlagNoChangeInTree        = "no_change_in_tree"
 	FlagTestsOrBuildChanged   = "tests_or_build_changed"
 	FlagOverlap               = "overlap"
+	// FlagBaselineMissing marks evidence gathered without the hold's
+	// baseline commit, which no longer exists.
+	FlagBaselineMissing = "baseline_missing"
 )
 
-var knownFlags = []string{FlagAcceptanceCouldNotRun, FlagNoChangeInTree, FlagTestsOrBuildChanged, FlagOverlap}
+var knownFlags = []string{FlagAcceptanceCouldNotRun, FlagNoChangeInTree, FlagTestsOrBuildChanged, FlagOverlap, FlagBaselineMissing}
 
 // Request is one inbox row. BaseRevision is the card's revision when it was
 // filed.
@@ -775,6 +778,9 @@ func (s *Store) SetProjectAcceptCmd(ctx context.Context, a Actor, projectID, cmd
 		return invalid("acceptance command exceeds %d bytes", maxTextBytes)
 	}
 	_, err := s.write(ctx, func(t *txn) error {
+		// The default is part of the Project's Board, so writing it is a
+		// change: the revision moves and a change is reported.
+		t.set(projectID)
 		return t.exec(`INSERT INTO project_settings (project_id, accept_cmd) VALUES (?, ?)
 			ON CONFLICT(project_id) DO UPDATE SET accept_cmd = excluded.accept_cmd`, projectID, cmd)
 	})

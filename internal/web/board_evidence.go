@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -25,9 +26,9 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 )
 
-// Evidence-backed done (ADR 0005 §6): a done claim runs the subtask's
-// owner-authored acceptance command, then records what changed in the
-// Project's working tree since the hold started.
+// Evidence-backed done (ADR 0005 §6): a done claim records what changed in
+// the Project's working tree since the hold started, then runs the
+// subtask's owner-authored acceptance command.
 const (
 	acceptTimeout   = 10 * time.Minute
 	acceptTailBytes = 64 << 10
@@ -54,11 +55,17 @@ type Evidence struct {
 	Accept     *AcceptResult       `json:"accept,omitempty"`
 	Transcript *EvidenceTranscript `json:"transcript,omitempty"`
 	Checklist  EvidenceChecklist   `json:"checklist"`
+
+	// What the flags need, over every changed file rather than the listed
+	// ones: whether any is a test, build or CI file, whether any overlaps
+	// another hold, and whether the baseline commit was gone.
+	testsOrBuild, overlap, baselineMissing bool
 }
 
 // EvidenceDiff is the working tree compared with the baseline HEAD, plus
-// the untracked files that were not dirty at the baseline. The totals count
-// every file; Files lists at most maxChangedFiles.
+// the untracked files. A path already dirty at the baseline appears only
+// when its content changed since. The totals count every file; Files lists
+// at most maxChangedFiles.
 type EvidenceDiff struct {
 	Added   int            `json:"added"`
 	Deleted int            `json:"deleted"`
@@ -67,13 +74,15 @@ type EvidenceDiff struct {
 
 // EvidenceFile is one changed file. ByTask is set when the claiming Task's
 // edit tools touched it, and Overlap names another live hold whose Task
-// touched it.
+// touched it. PreDirty marks a path already dirty at the baseline; its line
+// counts include the changes it had then.
 type EvidenceFile struct {
-	Path    string           `json:"path"`
-	Added   int              `json:"added"`
-	Deleted int              `json:"deleted"`
-	ByTask  bool             `json:"by_task"`
-	Overlap *EvidenceOverlap `json:"overlap,omitempty"`
+	Path     string           `json:"path"`
+	Added    int              `json:"added"`
+	Deleted  int              `json:"deleted"`
+	ByTask   bool             `json:"by_task"`
+	PreDirty bool             `json:"pre_dirty"`
+	Overlap  *EvidenceOverlap `json:"overlap,omitempty"`
 }
 
 // EvidenceOverlap is another live hold: its subtask's #seq and its Task.
@@ -137,8 +146,8 @@ func isRev(s string) bool {
 }
 
 // baseline is the working tree state a hold's evidence is measured from:
-// HEAD, "" before the first commit, and the paths git status reports, at
-// most maxChangedFiles.
+// HEAD, "" before the first commit, every path git status reports, and the
+// blob name of each one's content.
 func baseline(ctx context.Context, dir string) (board.Baseline, error) {
 	base := board.Baseline{Dirty: []string{}}
 	repo, err := openEvidenceRepo(ctx, dir)
@@ -152,10 +161,54 @@ func baseline(ctx context.Context, dir string) (board.Baseline, error) {
 	if err != nil {
 		return base, err
 	}
-	for _, e := range entries[:min(len(entries), maxChangedFiles)] {
+	for _, e := range entries {
 		base.Dirty = append(base.Dirty, e.path)
 	}
+	base.Blobs = repo.blobNames(ctx, base.Dirty)
 	return base, nil
+}
+
+// blobNames maps each path to the blob name of its content in the working
+// tree, or "" when it does not exist, hashing with one `git hash-object`
+// that writes nothing. A path that is not a regular file, that
+// --stdin-paths cannot carry, or that git could not read is left out, so
+// it counts as changed.
+func (r *gitRepo) blobNames(ctx context.Context, paths []string) map[string]string {
+	out := map[string]string{}
+	root, err := os.OpenRoot(r.top)
+	if err != nil {
+		return out
+	}
+	defer func() { _ = root.Close() }()
+	var files []string
+	for _, p := range paths {
+		info, err := root.Lstat(p)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			out[p] = ""
+		case err == nil && info.Mode().IsRegular() && !strings.ContainsAny(p, "\r\n") && !strings.HasPrefix(p, `"`):
+			files = append(files, p)
+		}
+	}
+	if len(files) == 0 {
+		return out
+	}
+	stdin := strings.NewReader(strings.Join(files, "\n") + "\n")
+	res, code, _, err := runGitInput(ctx, r.git, r.top, stdin, 65*len(files)+1, "hash-object", "--no-filters", "--stdin-paths")
+	names := strings.Fields(string(res))
+	if err != nil || code != 0 || len(names) != len(files) {
+		return out
+	}
+	for i, p := range files {
+		out[p] = names[i]
+	}
+	return out
+}
+
+// hasCommit reports whether rev names a commit in the repository.
+func (r *gitRepo) hasCommit(ctx context.Context, rev string) (bool, error) {
+	_, code, _, err := runGit(ctx, r.git, r.top, 4096, "cat-file", "-e", rev+"^{commit}")
+	return err == nil && code == 0, err
 }
 
 // openEvidenceRepo is openRepo, with a directory outside git refused.
@@ -217,10 +270,14 @@ func touchedFiles(items []agentapi.Item) []string {
 
 // collectEvidence records what changed in the repository at dir since
 // base: the working tree compared with the baseline HEAD, the untracked
-// files that were not dirty then, and the commits since, at most
-// maxEvidenceCommits. touched are the claiming Task's edited files and
-// otherHolds the Project's other live holds; their paths may be relative to
-// dir or absolute.
+// files, and the commits since, at most maxEvidenceCommits. A path already
+// dirty at the baseline is left out unless its content changed since.
+// touched are the claiming Task's edited files and otherHolds the Project's
+// other live holds; their paths may be relative to dir or absolute.
+//
+// When the baseline commit no longer exists, the evidence is only the
+// touched files compared with HEAD, with no commits, and baselineMissing is
+// set.
 func collectEvidence(ctx context.Context, dir string, base board.Baseline, touched []string, otherHolds []heldFiles) (Evidence, error) {
 	ev := Evidence{
 		Baseline: board.Baseline{Head: base.Head, Dirty: append([]string{}, base.Dirty[:min(len(base.Dirty), maxChangedFiles)]...)},
@@ -235,18 +292,36 @@ func collectEvidence(ctx context.Context, dir string, base board.Baseline, touch
 		return ev, err
 	}
 	from := base.Head
+	if from != "" {
+		ok, err := repo.hasCommit(ctx, from)
+		if err != nil {
+			return ev, err
+		}
+		if !ok {
+			ev.baselineMissing, from = true, ""
+			if repo.hasHead {
+				from = "HEAD"
+			}
+		}
+	}
 	if from == "" {
 		if from, err = repo.emptyTree(ctx); err != nil {
 			return ev, err
 		}
 	}
-	files, err := repo.numstatSince(ctx, from)
+	tracked, err := repo.numstatSince(ctx, from)
 	if err != nil {
 		return ev, err
 	}
-	if files, err = repo.addUntracked(ctx, files, base.Dirty); err != nil {
+	entries, _, err := repo.status(ctx)
+	if err != nil {
 		return ev, err
 	}
+	root, err := os.OpenRoot(repo.top)
+	if err != nil {
+		return ev, newError(http.StatusBadGateway, "could not open working tree: %s", shortError(err))
+	}
+	defer func() { _ = root.Close() }()
 	resolve := repoPaths(repo.top, dir)
 	mine := map[string]bool{}
 	for _, p := range touched {
@@ -263,15 +338,73 @@ func collectEvidence(ctx context.Context, dir string, base board.Baseline, touch
 			}
 		}
 	}
+
+	// A pre-dirty path is left out only when its content provably has not
+	// changed. Paths that are not UTF-8 do not survive the store's JSON, so
+	// they never match a pre-dirty path and count as changed.
+	was, now := base.Blobs, repo.blobNames(ctx, base.Dirty)
+	preDirty := make(map[string]bool, len(base.Dirty))
+	for _, p := range base.Dirty {
+		preDirty[p] = true
+	}
+	var files []EvidenceFile
+	seen := map[string]bool{}
+	admit := func(p string) (EvidenceFile, bool) {
+		if seen[p] || (ev.baselineMissing && !mine[p]) {
+			return EvidenceFile{}, false
+		}
+		seen[p] = true
+		f := EvidenceFile{Path: p, ByTask: mine[p], Overlap: others[p]}
+		if preDirty[p] {
+			before, recorded := was[p]
+			after, hashed := now[p]
+			if recorded && hashed && before == after {
+				return f, false
+			}
+			f.PreDirty = true
+		}
+		return f, true
+	}
+	for _, t := range tracked {
+		if f, ok := admit(t.Path); ok {
+			f.Added, f.Deleted = t.Added, t.Deleted
+			files = append(files, f)
+		}
+	}
+	budget := untrackedBudget
+	for _, e := range entries {
+		if !e.untracked {
+			continue
+		}
+		// A path removed from the index is listed by the diff already.
+		if f, ok := admit(e.path); ok {
+			f.Added, budget = countLines(root, e.path, budget)
+			files = append(files, f)
+		}
+	}
+	// A pre-dirty path whose content changed back to HEAD's is in neither
+	// list, but the Task changed it.
+	for _, p := range base.Dirty {
+		before, recorded := was[p]
+		after, hashed := now[p]
+		if recorded && hashed && before != after {
+			if f, ok := admit(p); ok {
+				files = append(files, f)
+			}
+		}
+	}
 	for _, f := range files {
 		ev.Diff.Added += f.Added
 		ev.Diff.Deleted += f.Deleted
+		ev.testsOrBuild = ev.testsOrBuild || testOrBuildPath(f.Path)
+		ev.overlap = ev.overlap || f.Overlap != nil
 		if len(ev.Diff.Files) < maxChangedFiles {
-			f.ByTask, f.Overlap = mine[f.Path], others[f.Path]
 			ev.Diff.Files = append(ev.Diff.Files, f)
 		}
 	}
-	ev.Commits, err = repo.commitsSince(ctx, base.Head, maxEvidenceCommits)
+	if !ev.baselineMissing {
+		ev.Commits, err = repo.commitsSince(ctx, base.Head, maxEvidenceCommits)
+	}
 	return ev, err
 }
 
@@ -315,30 +448,6 @@ func (r *gitRepo) numstatSince(ctx context.Context, from string) ([]EvidenceFile
 func nulRecords(out []byte) []string {
 	recs := strings.Split(string(out), "\x00")
 	return recs[:len(recs)-1]
-}
-
-// addUntracked appends the untracked files that were not dirty at the
-// baseline, counting their lines.
-func (r *gitRepo) addUntracked(ctx context.Context, files []EvidenceFile, dirty []string) ([]EvidenceFile, error) {
-	entries, _, err := r.status(ctx)
-	if err != nil {
-		return nil, err
-	}
-	root, err := os.OpenRoot(r.top)
-	if err != nil {
-		return nil, newError(http.StatusBadGateway, "could not open working tree: %s", shortError(err))
-	}
-	defer func() { _ = root.Close() }()
-	budget := untrackedBudget
-	for _, e := range entries {
-		if !e.untracked || slices.Contains(dirty, e.path) {
-			continue
-		}
-		f := EvidenceFile{Path: e.path}
-		f.Added, budget = countLines(root, e.path, budget)
-		files = append(files, f)
-	}
-	return files, nil
 }
 
 // commitsSince lists the commits on HEAD since from, every commit when from
@@ -507,6 +616,9 @@ func (r *acceptRunners) run(ctx context.Context, dir, cmd string) (AcceptResult,
 	tail := &tailBuffer{limit: acceptTailBytes}
 	c.Stdout, c.Stderr = tail, tail
 	if err := c.Start(); err != nil {
+		if ctx.Err() != nil {
+			return AcceptResult{}, context.Cause(ctx)
+		}
 		return notRun("the shell did not start", err)
 	}
 	_ = c.Wait() // the exit code is read from the process state
@@ -568,7 +680,7 @@ type claimInput struct {
 	// touchedFiles lists them.
 	Touched []string
 	// OtherHolds lists the live holds in card's Project other than the
-	// claiming Task's; nil means none. It is called after the run.
+	// claiming Task's; nil means none. It is called before the run.
 	OtherHolds func(ctx context.Context, card board.Card) ([]heldFiles, error)
 	Transcript *EvidenceTranscript
 }
@@ -582,9 +694,10 @@ type claimResult struct {
 }
 
 // evaluateClaim evaluates a done claim in ADR 0005 §6's order: the store's
-// finishing guard, the resolved acceptance command, its run when
-// non-empty, then the evidence since the hold started. It writes nothing:
-// the caller files Request, and FileRequest repeats the guard.
+// finishing guard and the resolved acceptance command, then the evidence
+// since the hold started, then the command's run when it is non-empty. It
+// writes nothing: the caller files Request, and FileRequest repeats the
+// guard.
 //
 // A command that exits non-zero, 127 included, refuses the claim with
 // acceptance_failed; the result still carries the run. A runner busy past
@@ -608,26 +721,8 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 	}
 	base := detail.Holds[i].Baseline
 
-	var accept *AcceptResult
-	notRun := false
-	if cmd != "" {
-		res, err := runner.run(ctx, in.Dir, cmd)
-		switch {
-		case errors.Is(err, errAcceptanceNotRun):
-			notRun = true
-		case err != nil:
-			return out, err
-		}
-		accept = &res
-		if !notRun && res.Exit != 0 {
-			out.Evidence.Accept = accept
-			return out, &board.Error{Code: board.CodeAcceptanceFailed, Message: fmt.Sprintf(
-				"the acceptance command exited %d, so the claim is refused. If this subtask is red by design, "+
-					"such as one that adds a failing test, fold the red and green steps into one subtask, or ask "+
-					"the owner to set this subtask's command to ''.\n\nOutput tail:\n%s", res.Exit, res.Tail)}
-		}
-	}
-
+	// The evidence is the Task's work, gathered before the run so files the
+	// command writes (build output, lockfiles) are not counted as the Task's.
 	var others []heldFiles
 	if in.OtherHolds != nil {
 		if others, err = in.OtherHolds(ctx, fin.Card); err != nil {
@@ -638,7 +733,7 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 	if err != nil {
 		return out, err
 	}
-	ev.Accept, ev.Transcript = accept, in.Transcript
+	ev.Transcript = in.Transcript
 	for _, c := range fin.Card.Checklist {
 		ev.Checklist.Total++
 		if c.Done {
@@ -646,6 +741,25 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 		}
 	}
 	out.Evidence = ev
+
+	notRun := false
+	if cmd != "" {
+		res, err := runner.run(ctx, in.Dir, cmd)
+		switch {
+		case errors.Is(err, errAcceptanceNotRun):
+			notRun = true
+		case err != nil:
+			return out, err
+		}
+		ev.Accept = &res
+		out.Evidence = ev
+		if !notRun && res.Exit != 0 {
+			return out, &board.Error{Code: board.CodeAcceptanceFailed, Message: fmt.Sprintf(
+				"the acceptance command exited %d, so the claim is refused. If this subtask is red by design, "+
+					"such as one that adds a failing test, fold the red and green steps into one subtask, or ask "+
+					"the owner to set this subtask's command to ''.\n\nOutput tail:\n%s", res.Exit, res.Tail)}
+		}
+	}
 	data, err := marshalEvidence(ev)
 	if err != nil {
 		return out, err
@@ -657,18 +771,21 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 
 // evidenceFlags are the flags of a done request with evidence ev, whose
 // acceptance command is cmd; notRun is set when its shell did not start.
+// Without the baseline commit, whether nothing changed cannot be told.
 func evidenceFlags(ev Evidence, cmd string, notRun bool) []string {
 	var flags []string
 	if notRun {
 		flags = append(flags, board.FlagAcceptanceCouldNotRun)
 	}
-	if cmd == "" && len(ev.Diff.Files) == 0 && len(ev.Commits) == 0 {
+	if ev.baselineMissing {
+		flags = append(flags, board.FlagBaselineMissing)
+	} else if cmd == "" && len(ev.Diff.Files) == 0 && len(ev.Commits) == 0 {
 		flags = append(flags, board.FlagNoChangeInTree)
 	}
-	if slices.ContainsFunc(ev.Diff.Files, func(f EvidenceFile) bool { return testOrBuildPath(f.Path) }) {
+	if ev.testsOrBuild {
 		flags = append(flags, board.FlagTestsOrBuildChanged)
 	}
-	if slices.ContainsFunc(ev.Diff.Files, func(f EvidenceFile) bool { return f.Overlap != nil }) {
+	if ev.overlap {
 		flags = append(flags, board.FlagOverlap)
 	}
 	return flags

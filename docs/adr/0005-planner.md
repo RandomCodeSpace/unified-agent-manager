@@ -408,7 +408,7 @@ The preamble is deterministic. It contains:
 
 **Settle:** `POST /api/sessions/{id}/settle` takes an optional body, `{"holds": {"<card id>": {"action": "keep|release|cancel", "comment": ""}}}`. If the Task holds subtasks and the body doesn't decide each one, the answer is 409 `holds_undecided` with the held cards, and the UI shows the Settle dialog (§5).
 
-**Reject:** rejecting a request while its Task is Active sends the reason to that Task through its normal send path (a steer while a turn runs). Otherwise the reason becomes a comment and the hold is released.
+**Reject:** rejecting a request while its Task is Active sends the reason to that Task through its normal send path (a steer while a turn runs). Otherwise the reason becomes a comment and the hold is released. The reply is the request plus `steered`, true only when the reason reached the Task; when it is false and the subtask is still held, the UI offers Release.
 
 ## 15. Live updates
 
@@ -478,7 +478,8 @@ These record how `internal/board` reads this contract, plus two later decisions.
 - **The sweep** also skips a subtree with a pending request anywhere in it, so inbox rows are never withdrawn silently.
 - **Reconcile** also takes `asOf`, the time the caller read its Task snapshot, and leaves alone any hold that started at or after it. It takes each Project's uncommitted paths too, for the "uncommitted: …" comment. It treats an unknown stage as ended and does not sweep.
 - **`scopes` table** (added to §13): one row per Task, holding its Project, its container and whether it is planning or working. Launch and Start planning write it, and §4 is enforced from it.
-- **Extra error codes:** `not_found`, `forbidden`, `limit` and `duplicate`, alongside §14's. `unconfirmed_parent` is gone (decision 2).
+- **Extra error codes:** `not_found`, `forbidden`, `limit`, `duplicate`, `acceptance_busy` and `acceptance_failed`, alongside §14's. `unconfirmed_parent` is gone (decision 2).
+- **Evidence (§6):** it is gathered before the acceptance run. A hold's baseline also keeps a blob hash for each dirty path (`holds.baseline_blobs`), so a path dirty at the start counts only if its content changed, marked `pre_dirty` on its file row. When the baseline commit no longer exists, the done request is filed with the flag `baseline_missing`, the touched files compared with HEAD, and no commits.
 - **Links:** both ends must be in one Project. Only the owner can unlink.
 - **Cancelled checks** use the card's own stored status. Nothing is created or moved under a cancelled card or anything below one, nothing is edited on a cancelled card until it is restored, and cancelled siblings don't count in the duplicate-title check. Ready, Launch and Claim refuse a subtask with a cancelled ancestor, as Restore does (§8).
 - **Restore** reopens a leaf as todo if it was ever held, otherwise as planned, and runs the duplicate-title check.

@@ -192,8 +192,13 @@ func TestEditOwner(t *testing.T) {
 		c.AcceptCmd == nil || *c.AcceptCmd != cmd.String || !slices.Equal(c.Paths, paths) || !slices.Equal(c.Labels, labels) {
 		t.Fatalf("owner edit = %+v", c)
 	}
-	// The acceptance command is tri-state.
+	// The acceptance command is tri-state. Setting the Project default is a
+	// change to the Project's Board.
+	before, changes := f.revision(), len(f.changes)
 	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "make check"))
+	if f.revision() != before+1 || len(f.changes) != changes+1 || f.changes[changes].ProjectID != proj || len(f.changes[changes].Cards) != 0 {
+		t.Fatalf("setting the default: revision %d → %d, changes %+v", before, f.revision(), f.changes[changes:])
+	}
 	for _, tc := range []struct {
 		set  sql.NullString
 		want string

@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // Staleness (ADR 0005 §9): how far HEAD has moved from a subtask's pin,
@@ -59,6 +60,7 @@ type pinFacts struct {
 	gone     bool
 	changed  []string
 	listed   bool
+	err      error // why the pin could not be read
 }
 
 // staleFor is the staleness of a subtask pinned at pin, with paths, against
@@ -103,7 +105,12 @@ func (c *staleCache) staleBatch(ctx context.Context, dir string, cards []board.C
 		s, ok := c.get(key)
 		if !ok {
 			if s, err = c.compute(ctx, repo, key, card.Paths, facts); err != nil {
-				return nil, err
+				if ctx.Err() != nil {
+					return nil, context.Cause(ctx)
+				}
+				// One unreadable pin leaves only its own cards without staleness.
+				log.Warn("planner staleness failed", "card", card.ID, "pin", card.PinnedSHA, "error", err)
+				continue
 			}
 		}
 		out[card.ID] = s
@@ -122,10 +129,11 @@ func (c *staleCache) compute(ctx context.Context, repo *gitRepo, key staleKey, p
 		f := facts[key.pin]
 		if f == nil {
 			f = &pinFacts{}
-			if err := f.read(ctx, repo, key.pin, key.head); err != nil {
-				return Stale{}, err
-			}
+			f.err = f.read(ctx, repo, key.pin, key.head)
 			facts[key.pin] = f
+		}
+		if f.err != nil {
+			return Stale{}, f.err
 		}
 		s.Behind, s.Diverged = f.behind, f.diverged
 		if len(paths) > 0 && !f.gone {
@@ -159,11 +167,11 @@ func (f *pinFacts) read(ctx context.Context, repo *gitRepo, pin, head string) er
 	case 1:
 		f.diverged = true
 	default:
-		_, code, _, err := runGit(ctx, repo.git, repo.top, 4096, "cat-file", "-e", pin+"^{commit}")
+		exists, err := repo.hasCommit(ctx, pin)
 		if err != nil {
 			return err
 		}
-		if code == 0 {
+		if exists {
 			return newError(http.StatusBadGateway, "git merge-base failed: %s", gitMessage(stderr))
 		}
 		f.diverged, f.gone = true, true
@@ -232,8 +240,10 @@ func (c *staleCache) put(key staleKey, s Stale) {
 // matchPath reports whether name, a slash-separated work tree path, matches
 // pattern segment by segment with path.Match, where a "**" segment matches
 // any number of segments. A pattern that matches a directory matches every
-// file under it.
+// file under it. Patterns are rooted at the work tree, with or without a
+// leading "./" or "/".
 func matchPath(pattern, name string) bool {
+	pattern = strings.TrimPrefix(pattern, "./")
 	return matchSegments(strings.Split(strings.Trim(pattern, "/"), "/"), strings.Split(name, "/"))
 }
 

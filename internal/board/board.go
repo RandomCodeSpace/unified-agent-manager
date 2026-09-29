@@ -183,10 +183,13 @@ type Comment struct {
 	CreatedAt time.Time
 }
 
-// Baseline is the working tree state recorded when a hold starts.
+// Baseline is the working tree state recorded when a hold starts. Blobs
+// maps each dirty path to the blob name of its content then, "" when the
+// path did not exist; a dirty path missing from it counts as changed since.
 type Baseline struct {
-	Head  string   `json:"head"`
-	Dirty []string `json:"dirty"`
+	Head  string            `json:"head"`
+	Dirty []string          `json:"dirty"`
+	Blobs map[string]string `json:"blobs,omitempty"`
 }
 
 // Hold is one attempt at a subtask by a Task.
