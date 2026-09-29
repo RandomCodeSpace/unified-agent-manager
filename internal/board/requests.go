@@ -781,8 +781,46 @@ func (s *Store) SetProjectAcceptCmd(ctx context.Context, a Actor, projectID, cmd
 		// The default is part of the Project's Board, so writing it is a
 		// change: the revision moves and a change is reported.
 		t.set(projectID)
-		return t.exec(`INSERT INTO project_settings (project_id, accept_cmd) VALUES (?, ?)
-			ON CONFLICT(project_id) DO UPDATE SET accept_cmd = excluded.accept_cmd`, projectID, cmd)
+		if err := t.exec(`INSERT INTO project_settings (project_id, accept_cmd) VALUES (?, ?)
+			ON CONFLICT(project_id) DO UPDATE SET accept_cmd = excluded.accept_cmd`, projectID, cmd); err != nil {
+			return err
+		}
+		return t.commandChanged(projectID, "")
 	})
 	return err
+}
+
+// commandChanged reports as changed the pending done requests on cardID, or
+// with cardID "" on every card of project inheriting the default, after a
+// write to the acceptance command they resolve to. Their evidence is
+// unchanged, but readers show an acceptance row stale once its command is no
+// longer the card's (ADR 0005 §6), so the board frame carries them again.
+func (t *txn) commandChanged(project, cardID string) error {
+	query := `SELECT r.id FROM requests r JOIN cards c ON c.id = r.card_id
+		WHERE r.status = 'pending' AND r.kind = 'done' AND c.project_id = ? AND c.accept_cmd IS NULL`
+	args := []any{project}
+	if cardID != "" {
+		query = `SELECT id FROM requests WHERE status = 'pending' AND kind = 'done' AND card_id = ?`
+		args = []any{cardID}
+	}
+	rows, err := t.tx.QueryContext(t.ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("board: query requests: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("board: query requests: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("board: query requests: %w", err)
+	}
+	for _, id := range ids {
+		t.requestChanged(project, id)
+	}
+	return nil
 }

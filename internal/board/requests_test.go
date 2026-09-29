@@ -1,6 +1,7 @@
 package board
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -487,5 +488,39 @@ func TestSplitIntoSiblingsByRequest(t *testing.T) {
 	if restored.Status != StatusTodo || f.card(part.ID).HeldBy != "worker" || f.card(x.ID).Status != StatusDone ||
 		len(f.children(story.ID)) != 5 {
 		t.Fatalf("restored = %+v", restored)
+	}
+}
+
+// Editing an acceptance command, a card's own or the Project default its
+// card inherits, reports the pending done requests it bears on, so the board
+// frame carries their evidence to be shown stale (ADR 0005 §6).
+func TestCommandEditReportsPendingDoneRequests(t *testing.T) {
+	f := newFixture(t)
+	_, story, one, two := f.tree()
+	f.launch(one.ID, "task-1")
+	f.launch(two.ID, "task-2")
+	first := f.done(one.ID, Agent("task-1", ""))
+	second := f.done(two.ID, Agent("task-2", ""))
+	_, err := f.s.FileRequest(f.ctx, Agent("task-1", ""), story.ID, RequestInput{Kind: RequestCancel, Comment: "not needed"})
+	f.must(err)
+	last := func() Change {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.changes[len(f.changes)-1]
+	}
+	_, err = f.s.Edit(f.ctx, owner, one.ID, Patch{AcceptCmd: &sql.NullString{String: "make check", Valid: true}})
+	f.must(err)
+	if got := last().Requests; !slices.Equal(got, []string{first.ID}) {
+		t.Fatalf("card command edit reported requests %v, want %v", got, []string{first.ID})
+	}
+	// #3 has its own command now, so only #4 inherits the default.
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "go test ./..."))
+	if got := last().Requests; !slices.Equal(got, []string{second.ID}) {
+		t.Fatalf("default command edit reported requests %v, want %v", got, []string{second.ID})
+	}
+	_, err = f.s.Edit(f.ctx, owner, two.ID, Patch{Title: ptr("Two, renamed")})
+	f.must(err)
+	if got := last().Requests; len(got) != 0 {
+		t.Fatalf("an edit without a command reported requests %v", got)
 	}
 }

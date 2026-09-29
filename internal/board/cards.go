@@ -433,6 +433,11 @@ func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan) er
 	if err := t.updateCard(n); err != nil {
 		return err
 	}
+	if p.AcceptCmd != nil {
+		if err := t.commandChanged(o.project, n.ID); err != nil {
+			return err
+		}
+	}
 	if plan.moving && oldParent != "" {
 		t.changed(o.project, oldParent)
 	}
