@@ -1,7 +1,7 @@
 import { X } from 'lucide-react';
 import { useContext, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { PlannerContext } from './planner/context';
-import { api, describeError, resolveTaskDefaults, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
+import { api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { byCodeUnit } from '../lib/order';
 import { Field, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
@@ -295,6 +295,8 @@ function PlannerSection({ settings, saving, projects, providers, onSave }: Reado
   const [report, setReport] = useState<ImportReport | null>(null);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  // A service without the import route yet (it lands after the planner): the form stays, disabled.
+  const [importMissing, setImportMissing] = useState(false);
   const noGit = projects.some((p) => p.no_git === 'not_installed');
   const utility = providers
     .filter((p) => p.capabilities.titles)
@@ -310,7 +312,8 @@ function PlannerSection({ settings, saving, projects, providers, onSave }: Reado
     try {
       setReport(await api.planner.import(dir.trim()));
     } catch (err) {
-      setImportError(describeError(err));
+      if (routeMissing(err)) setImportMissing(true);
+      else setImportError(plannerErrorText(err));
     } finally {
       setImporting(false);
     }
@@ -326,11 +329,12 @@ function PlannerSection({ settings, saving, projects, providers, onSave }: Reado
           <span id="planner-import-label" className="text-ui font-medium text-ink">Import from kb</span>
           <Note id="planner-import-help">Copy cards from a kb board directory. Cards whose project name matches a project here join its board; the rest wait in Unassigned. Running it again adds no duplicates.</Note>
           <div className="flex flex-wrap items-center gap-2">
-            <Input aria-labelledby="planner-import-label" aria-describedby="planner-import-help" className="max-w-md flex-1 text-ui" spellCheck={false} autoComplete="off" placeholder="/home/you/.local/share/kb" value={dir} disabled={importing} onChange={(e) => setDir(e.target.value)} />
-            <Button type="submit" variant="secondary" size="lg" loading={importing} disabled={!dir.trim()}>
+            <Input aria-labelledby="planner-import-label" aria-describedby="planner-import-help" className="max-w-md flex-1 text-ui" spellCheck={false} autoComplete="off" placeholder="/home/you/.local/share/kb" value={dir} disabled={importing || importMissing} onChange={(e) => setDir(e.target.value)} />
+            <Button type="submit" variant="secondary" size="lg" loading={importing} disabled={!dir.trim() || importMissing}>
               Import
             </Button>
           </div>
+          {importMissing && <Note role="status">This service cannot import yet; an update adds it.</Note>}
           {importError && <Note tone="error" role="alert">Could not import: {importError}</Note>}
           {report && (
             <div role="status" className="flex flex-col gap-1 rounded-md bg-tint-well px-3 py-2 text-caption text-body">

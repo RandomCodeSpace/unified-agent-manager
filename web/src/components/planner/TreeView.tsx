@@ -1,6 +1,6 @@
 import { Check, ChevronRight, ListPlus, Plus, Sparkles, X } from 'lucide-react';
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type SubmitEvent } from 'react';
-import { api, describeError, type Card, type CardKind } from '../../api';
+import { api, plannerErrorText, type Card, type CardKind } from '../../api';
 import { KIND_LABEL, STATUS_LABEL, buildOutline, openBlockerSeqs, type OutlineNode } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
@@ -88,7 +88,7 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
     try {
       await op();
     } catch (e) {
-      notify({ tone: 'error', text: `Could not ${verb}: ${describeError(e)}` });
+      notify({ tone: 'error', text: `Could not ${verb}: ${plannerErrorText(e)}` });
     } finally {
       setBusy(({ [id]: _, ...rest }) => rest);
     }
@@ -181,7 +181,7 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
                       setUi({ creating: null, selected: card.id });
                       move(card.id);
                     } catch (e) {
-                      notify({ tone: 'error', text: `Could not add the ${KIND_LABEL[row.kind].toLowerCase()}: ${describeError(e)}` });
+                      notify({ tone: 'error', text: `Could not add the ${KIND_LABEL[row.kind].toLowerCase()}: ${plannerErrorText(e)}` });
                     }
                   }}
                 />

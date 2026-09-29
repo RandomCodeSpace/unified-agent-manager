@@ -32,7 +32,11 @@ function json(status: number, body?: unknown): Response {
   if (body === undefined) return new Response(null, { status });
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
-const refuse = (status: number, code: string, error: string, extra: Json = {}) => json(status, { error, code, ...extra });
+/** A refusal as internal/web writes one: `{error, code, refs?, cards?}`, its status from the code (web.boardError). */
+const STATUS: Record<string, number> = { invalid: 400, not_found: 404, forbidden: 403, planner_unavailable: 503 };
+const refuse = (code: string, error: string, extra: Json = {}) => json(STATUS[code] ?? 409, { error, code, ...extra });
+/** A route the service does not have: the catch-all's plain 404, with no code. */
+const noRoute = () => json(404, { error: 'not found' });
 
 interface Seeded {
   cards: Card[];
@@ -162,9 +166,9 @@ function seedBoard(big: boolean): Seeded {
     req(1, 5, 'done', 't15', 'Cached pages past the reading window are evicted on every window move; the live tail stays. Three tests cover it.', { evidence: evidence5, flags: ['tests_or_build_changed', 'overlap'] }),
     req(2, 8, 'done', 't1', 'The unused fields were already gone on this branch; nothing to change.', {
       flags: ['no_change_in_tree', 'acceptance_could_not_run'],
-      evidence: { baseline: { head: 'c41d2e8', dirty: ['internal/web/snapshot.go'] }, diff: { added: 0, deleted: 0, files: [] }, commits: [], transcript: { task_id: 't1', from_item: 'i1', to_item: 'i7' }, checklist: { done: 0, total: 0 } },
+      evidence: { baseline: { head: 'c41d2e8', dirty: ['internal/web/snapshot.go'] }, diff: { added: 0, deleted: 0, files: [] }, commits: [], transcript: { task_id: 't1', from_item: 'i1', to_item: 'i7', partial: true }, checklist: { done: 0, total: 0 } },
     }),
-    req(3, 9, 'change', 't1', 'Previews are also needed for the Task the user last opened, not only the open one.', { payload: { title: 'Send subagent previews only for recent Tasks', win_condition: 'Only the five recent Tasks carry subagent previews.' } }),
+    req(3, 9, 'change', 't1', 'Previews are also needed for the Task the user last opened, not only the open one.', { payload: { patch: { title: 'Send subagent previews only for recent Tasks', win_condition: 'Only the five recent Tasks carry subagent previews.' } } }),
     req(4, 20, 'blocked', 't19', 'The darwin targets need the signing step first; the notarization call fails without a key.', { payload: { blocker: 'cp1-22' } }),
     req(5, 28, 'split', 't18', 'This is four pieces of work: reading the merged pull requests comes first, then the three checklist items; the commit type already parses.', {
       payload: { children: [{ title: 'Read merged pull requests since the last tag', win_condition: 'The list matches git log between the two tags.' }] },
@@ -271,8 +275,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
   const misplaced = (kind: CardKind, parentId: unknown, project: string): Response | null => {
     if (parentId === null || parentId === undefined || parentId === '') return null;
     const parent = byId(String(parentId));
-    if (!parent || parent.project_id !== project) return refuse(404, 'invalid', 'parent not found');
-    return RANK[parent.kind] < RANK[kind] ? null : refuse(409, 'invalid', `a ${parent.kind} cannot hold a ${kind}`);
+    if (!parent || parent.project_id !== project) return refuse('not_found', 'parent not found');
+    return RANK[parent.kind] < RANK[kind] ? null : refuse('invalid', `a ${parent.kind} cannot hold a ${kind}`);
   };
 
   /**
@@ -397,10 +401,10 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if (c.kind !== 'subtask') {
       pending = leavesUnder(c.id, childIndex(cards)).filter((l) => l.confirmed && (l.status === 'planned' || l.status === 'todo'));
       const first = pending.find((l) => !openBlockers(l).length && !l.blocked);
-      if (!first) return refuse(409, 'invalid', 'nothing under this card is ready to launch');
+      if (!first) return refuse('invalid', 'nothing under this card is ready to launch');
       leaf = first;
     }
-    if (leaf.status !== 'planned' && leaf.status !== 'todo') return refuse(409, 'invalid', `a ${leaf.status} subtask cannot be launched`);
+    if (leaf.status !== 'planned' && leaf.status !== 'todo') return refuse('invalid', `a ${leaf.status} subtask cannot be launched`);
     const session = host.createTask(leaf.project_id, `#${leaf.seq} ${leaf.title}`, preamble(leaf, pending));
     commit(() => {
       touch(leaf);
@@ -413,8 +417,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
 
   function accept(r: BoardRequest, comment: string): Response | null {
     const c = byId(r.card_id);
-    if (!c) return refuse(404, 'invalid', 'card not found');
-    if (r.kind === 'done' && (c.status !== 'doing' || c.held_by !== r.task_id)) return refuse(409, 'not_held', 'the subtask is not held by the Task that asked');
+    if (!c) return refuse('not_found', 'card not found');
+    if (r.kind === 'done' && (c.status !== 'doing' || c.held_by !== r.task_id)) return refuse('not_held', 'the subtask is not held by the Task that asked');
     commit(() => {
       Object.assign(r, { status: 'accepted', decided_at: now(), decision_comment: comment });
       touch(c);
@@ -444,9 +448,11 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         case 'split':
           splitCard(c, Array.isArray(r.payload.children) ? (r.payload.children as { title: string; win_condition?: string; done?: boolean }[]) : [], true);
           break;
-        case 'change':
-          for (const key of ['title', 'desc', 'win_condition', 'prio', 'effort', 'labels'] as const) if (key in r.payload) (c as unknown as Json)[key] = r.payload[key];
+        case 'change': {
+          const patch = (r.payload.patch ?? {}) as Json;
+          for (const key of ['title', 'desc', 'win_condition', 'prio', 'effort', 'labels'] as const) if (key in patch) (c as unknown as Json)[key] = patch[key];
           break;
+        }
       }
     });
     return null;
@@ -470,12 +476,12 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
   function route(method: string, url: URL, body: Json): Response | null {
     const path = url.pathname;
     if (!path.startsWith('/api/board')) return null;
-    if (!host.settings().planner) return refuse(409, 'planner_off', 'the planner is off');
+    if (!host.settings().planner) return refuse('planner_off', 'the planner is off');
     const project = (pid: string) => host.projects().find((p) => p.id === pid);
     const gitless = (pid: string) => {
       const p = project(pid);
-      if (pid && !p) return refuse(404, 'invalid', 'project not found');
-      return p?.no_git ? refuse(409, 'no_git', p.no_git === 'not_installed' ? 'git is not installed' : 'the project is not a git repository') : null;
+      if (pid && !p) return refuse('not_found', 'project not found');
+      return p?.no_git ? refuse('no_git', p.no_git === 'not_installed' ? 'git is not installed' : 'the project is not a git repository') : null;
     };
     let m: RegExpMatchArray | null;
 
@@ -491,7 +497,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if ((m = path.match(/^\/api\/board\/projects\/([^/]+)$/))) {
       const pid = decodeURIComponent(m[1]);
       const p = project(pid);
-      if (!p) return refuse(404, 'invalid', 'project not found');
+      if (!p) return refuse('not_found', 'project not found');
       if (method === 'GET') return json(200, { accept_cmd: acceptDefaults[pid] ?? '', git: p.no_git ?? '' });
       if (method === 'PATCH') {
         acceptDefaults[pid] = String(body.accept_cmd ?? '');
@@ -504,7 +510,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       if (refused) return refused;
       const kind = body.kind as CardKind;
       const title = String(body.title ?? '').trim();
-      if (!title || !['epic', 'story', 'subtask'].includes(kind)) return refuse(400, 'invalid', 'a card needs a kind and a title');
+      if (!title || !['epic', 'story', 'subtask'].includes(kind)) return refuse('invalid', 'a card needs a kind and a title');
       const wrong = misplaced(kind, body.parent_id, pid);
       if (wrong) return wrong;
       const parent = body.parent_id ? byId(String(body.parent_id)) : undefined;
@@ -517,10 +523,10 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if (path === '/api/board/links') {
       const blocker = byId(String(body.blocker ?? url.searchParams.get('blocker') ?? ''));
       const blocked = byId(String(body.blocked ?? url.searchParams.get('blocked') ?? ''));
-      if (!blocker || !blocked) return refuse(404, 'invalid', 'card not found');
+      if (!blocker || !blocked) return refuse('not_found', 'card not found');
       if (method === 'POST') {
         // Links point only at confirmed cards (§3); the refusal is a plain invalid.
-        if (!blocker.confirmed) return refuse(409, 'invalid', 'a blocker link may point only at a confirmed card');
+        if (!blocker.confirmed) return refuse('invalid', 'a blocker link may point only at a confirmed card');
         return done(commit(() => {
           if (!blocked.blocked_by.includes(blocker.id)) blocked.blocked_by.push(blocker.id);
           if (!blocker.blocks.includes(blocked.id)) blocker.blocks.push(blocked.id);
@@ -535,30 +541,33 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     }
     if ((m = path.match(/^\/api\/board\/requests\/([^/]+)\/(accept|reject)$/)) && method === 'POST') {
       const r = requests.find((x) => x.id === decodeURIComponent(m![1]));
-      if (!r || r.status !== 'pending') return refuse(404, 'invalid', 'no pending request');
+      if (!r || r.status !== 'pending') return refuse('not_found', 'no pending request');
       if (m[2] === 'accept') return accept(r, String(body.comment ?? '').trim()) ?? json(200, r);
       const reason = String(body.reason ?? '').trim();
-      if (!reason) return refuse(400, 'invalid', 'a rejection needs a reason');
+      if (!reason) return refuse('invalid', 'a rejection needs a reason');
       const c = byId(r.card_id)!;
+      // An Active Task hears the reason as a steer and keeps its hold (steered); otherwise the hold is released with the reason.
+      const steered = liveTask(r.task_id);
       return done(commit(() => {
         Object.assign(r, { status: 'rejected', decided_at: now(), decision_comment: reason });
-        // A live holder hears the reason as a steer and keeps the hold; otherwise it is released with the reason.
-        if (c.held_by === r.task_id && !liveTask(r.task_id)) releaseHold(c, 'todo', 'rejected', reason, 'uam');
+        if (c.held_by === r.task_id && !steered) releaseHold(c, 'todo', 'rejected', reason, 'uam');
         else say(c, 'owner', `Rejected: ${reason}`);
-      }), () => json(200, r));
+      }), () => json(200, { ...r, steered }));
     }
     if (path === '/api/board/purge' && method === 'POST') {
       const pid = String(body.project_id ?? '');
+      const index = childIndex(cards);
+      const allCancelled = (c: Card): boolean => c.status === 'cancelled' && (index.get(c.id) ?? []).every(allCancelled);
+      const gone = new Set(cards.filter((c) => c.project_id === pid && allCancelled(c)).map((c) => c.id));
       return done(commit(() => {
-        const gone = new Set(cards.filter((c) => c.project_id === pid && c.status === 'cancelled').map((c) => c.id));
         cards = cards.filter((c) => !gone.has(c.id)).map((c) => (c.blocked_by.some((b) => gone.has(b)) || c.blocks.some((b) => gone.has(b)) ? { ...c, blocked_by: c.blocked_by.filter((b) => !gone.has(b)), blocks: c.blocks.filter((b) => !gone.has(b)) } : c));
         requests = requests.filter((r) => !gone.has(r.card_id));
-      }), () => json(204));
+      }), () => json(200, { purged: gone.size }));
     }
     if (path === '/api/board/import' && method === 'POST') {
       const dir = String(body.dir ?? '').trim();
-      if (!dir.startsWith('/')) return refuse(400, 'invalid', 'dir must be an absolute path');
-      if (dir.endsWith('/missing')) return refuse(400, 'invalid', `no board database in ${dir}`);
+      if (!dir.startsWith('/')) return refuse('invalid', 'dir must be an absolute path');
+      if (dir.endsWith('/missing')) return refuse('invalid', `no board database in ${dir}`);
       const incoming = [
         { key: 'imp-1', title: 'Document the release checklist', status: 'todo' as const },
         { key: 'imp-2', title: 'Rotate the deploy token', status: 'done' as const },
@@ -576,15 +585,15 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       return json(200, { imported: fresh.length, updated: incoming.length - fresh.length, unassigned: fresh.length, comments: fresh.filter((i) => i.status === 'done').length, links: 0, skipped: [{ id: '0f3a9c2e-7d41-4b8e-9a60-2c5d1e8b7f14', reason: 'a card without a title' }] });
     }
 
-    if (!(m = path.match(/^\/api\/board\/cards\/([^/]+)(?:\/([a-z]+))?$/))) return refuse(404, 'invalid', `mock: no board route for ${method} ${path}`);
+    if (!(m = path.match(/^\/api\/board\/cards\/([^/]+)(?:\/([a-z]+))?$/))) return noRoute();
     const c = find(m[1]);
-    if (!c) return refuse(404, 'invalid', 'card not found');
+    if (!c) return refuse('not_found', 'card not found');
     const action = m[2] ?? '';
     const comment = String(body.comment ?? '').trim();
     const ok = () => json(200, c);
     if (action === '' && method === 'GET') return json(200, { card: c, comments: comments[c.id] ?? [], requests: requests.filter((r) => r.card_id === c.id), holds: holds[c.id] ?? [] });
     // Unassigned cards are read-only until the owner moves one into a git Project (§11).
-    if (!c.project_id && !(action === '' && method === 'PATCH' && Object.keys(body).every((k) => k === 'project_id'))) return refuse(409, 'read_only', 'move this card into a project first');
+    if (!c.project_id && !(action === '' && method === 'PATCH' && Object.keys(body).every((k) => k === 'project_id'))) return refuse('read_only', 'move this card into a project first');
     switch (`${method} ${action}`) {
       case 'PATCH ': {
         if (typeof body.project_id === 'string' && body.project_id !== c.project_id) {
@@ -600,7 +609,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       case 'POST confirm':
         return done(commit(() => touch(c)), ok);
       case 'POST dismiss':
-        if (c.confirmed) return refuse(409, 'invalid', 'only a suggestion can be dismissed');
+        if (c.confirmed) return refuse('invalid', 'only a suggestion can be dismissed');
         return done(commit(() => {
           const walk = (pid: string): Card[] => cards.filter((k) => k.parent_id === pid).flatMap((k) => [k, ...walk(k.id)]);
           for (const node of [c, ...walk(c.id)]) {
@@ -613,22 +622,27 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         const wrong = misplaced(c.kind, body.parent_id, c.project_id);
         if (wrong) return wrong;
         return done(commit(() => {
-          c.parent_id = (body.parent_id as string | null) ?? null;
-          c.rank = Number(body.rank ?? c.rank);
+          c.parent_id = (body.parent_id as string | null) || null;
+          const siblings = cards.filter((x) => x.project_id === c.project_id && x.parent_id === c.parent_id && x.id !== c.id).sort((a, b) => a.rank - b.rank);
+          const at = body.rank === undefined || body.rank === null ? siblings.length : Math.min(Number(body.rank), siblings.length);
+          [...siblings.slice(0, at), c, ...siblings.slice(at)].forEach((x, i) => (x.rank = i));
           touch(c);
         }), ok);
       }
       case 'POST status': {
         const status = body.status as CardStatus;
-        if (!comment && status !== 'todo') return refuse(400, 'invalid', 'a comment is required');
+        if (!comment && status !== 'todo') return refuse('invalid', 'a comment is required');
         if (c.kind !== 'subtask') {
-          if (status !== 'cancelled') return refuse(409, 'invalid', "a container's status is derived");
+          if (status !== 'cancelled') return refuse('invalid', "a container's status is derived");
           return done(commit(() => cascade(c, comment)), ok);
         }
         if (status === 'done' && !body.force) {
-          if (c.checklist.some((i) => !i.done)) return refuse(409, 'guard_open_items', 'open checklist items', { items: c.checklist.filter((i) => !i.done).map((i) => i.text) });
-          if (c.blocked) return refuse(409, 'guard_blocked', 'the subtask is marked blocked');
-          if (openBlockers(c).length) return refuse(409, 'guard_blockers', 'open blockers', { blockers: openBlockers(c).map((b) => b.id) });
+          // internal/board's guard: open items (refs: their texts), the blocked flag, open blockers (refs: #seq).
+          const open = c.checklist.filter((i) => !i.done);
+          if (open.length) return refuse('guard_open_items', `${open.length} of ${c.checklist.length} checklist items are still open on #${c.seq}`, { refs: open.map((i) => i.text) });
+          if (c.blocked) return refuse('guard_blocked', `#${c.seq} is flagged blocked`);
+          const blockers = openBlockers(c);
+          if (blockers.length) return refuse('guard_blockers', `${blockers.map((b) => `#${b.seq}`).join(', ')} still ${blockers.length === 1 ? 'blocks' : 'block'} #${c.seq}`, { refs: blockers.map((b) => `#${b.seq}`) });
         }
         return done(commit(() => {
           if (status === 'done' || status === 'todo') touch(c);
@@ -641,11 +655,11 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         }), ok);
       }
       case 'POST restore': {
-        if (!comment) return refuse(400, 'invalid', 'a comment is required');
-        if (c.status !== 'cancelled') return refuse(409, 'invalid', 'only a cancelled card can be restored');
+        if (!comment) return refuse('invalid', 'a comment is required');
+        if (c.status !== 'cancelled') return refuse('invalid', 'only a cancelled card can be restored');
         const tag = cascadeOf.get(c.id);
         const parent = c.parent_id ? byId(c.parent_id) : undefined;
-        if (parent?.status === 'cancelled' && cascadeOf.get(parent.id) === tag) return refuse(409, 'invalid', 'restore the cancelled parent instead');
+        if (parent?.status === 'cancelled' && cascadeOf.get(parent.id) === tag) return refuse('invalid', 'restore the cancelled parent instead');
         return done(commit(() => {
           const nodes = tag ? cards.filter((x) => cascadeOf.get(x.id) === tag) : [c];
           for (const node of nodes) {
@@ -658,29 +672,29 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       }
       case 'POST comments': {
         const text = String(body.body ?? '').trim();
-        if (!text) return refuse(400, 'invalid', 'a comment needs a body');
+        if (!text) return refuse('invalid', 'a comment needs a body');
         return done(commit(() => say(c, 'owner', text)), () => json(201, comments[c.id].at(-1)));
       }
       case 'POST split': {
         const children = Array.isArray(body.children) ? (body.children as { title: string; win_condition: string }[]) : [];
-        if (c.kind !== 'subtask') return refuse(409, 'invalid', 'only a subtask can be split');
-        if (!children.length && !c.checklist.length) return refuse(400, 'invalid', 'a split needs children');
+        if (c.kind !== 'subtask') return refuse('invalid', 'only a subtask can be split');
+        if (!children.length && !c.checklist.length) return refuse('invalid', 'a split needs children');
         return done(commit(() => splitCard(c, children, false)), ok);
       }
       case 'POST launch':
         return launch(c);
       case 'POST plan': {
-        if (c.kind === 'subtask') return refuse(409, 'invalid', 'plan with an agent on an epic or a story');
+        if (c.kind === 'subtask') return refuse('invalid', 'plan with an agent on an epic or a story');
         const brief = String(body.brief ?? '').trim();
         const session = host.createTask(c.project_id, `Plan #${c.seq} ${c.title}`, `${preamble(c)}\nPlan the work under this card: create and edit unconfirmed stories and subtasks only.${brief ? `\nBrief: ${brief}` : ''}`);
         return json(201, { session });
       }
       case 'POST release':
-        if (c.status !== 'doing') return refuse(409, 'not_held', 'the subtask is not held');
+        if (c.status !== 'doing') return refuse('not_held', 'the subtask is not held');
         return done(commit(() => releaseHold(c, 'todo', 'released', comment || undefined)), ok);
       case 'POST check': {
         const cmd = c.accept_cmd ?? acceptDefaults[c.project_id] ?? '';
-        if (!cmd) return refuse(409, 'invalid', 'no acceptance command for this subtask');
+        if (!cmd) return refuse('invalid', 'no acceptance command for this subtask');
         const failing = c.seq % 2 === 0;
         return json(200, { accept: { cmd, cmd_hash: `sha256:${(c.seq * 7919).toString(16)}…`, head: head(c), dirty: false, exit: failing ? 1 : 0, tail: failing ? `--- FAIL: TestRelease (0.02s)\n    release_test.go:41: missing target darwin/arm64\nFAIL` : 'ok  \tinternal/web\t2.114s', ran_at: now(), stale: false } });
       }
@@ -690,7 +704,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         return json(200, { verdict, sentence, head: head(c) });
       }
       case 'POST suggest': {
-        if (c.kind === 'subtask') return refuse(409, 'invalid', 'suggest stories under an epic or a story');
+        if (c.kind === 'subtask') return refuse('invalid', 'suggest stories under an epic or a story');
         const job = id('job');
         const max = Math.max(1, Math.min(5, Number(body.max) || 2));
         host.broadcast('board_job', { job_id: job, card_id: c.id, status: 'running' });
@@ -707,7 +721,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         return json(202, { job_id: job });
       }
     }
-    return refuse(404, 'invalid', `mock: no board route for ${method} ${path}`);
+    return noRoute();
   }
 
   /**
@@ -718,8 +732,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     const held = cards.filter((c) => c.held_by === taskId);
     if (!held.length) return null;
     const decisions = (body.holds ?? {}) as Record<string, { action?: string; comment?: string }>;
-    if (held.some((c) => !decisions[c.id]?.action)) return refuse(409, 'holds_undecided', 'decide what happens to the subtasks this task holds', { cards: held });
-    if (held.some((c) => decisions[c.id].action === 'cancel' && !decisions[c.id].comment?.trim())) return refuse(400, 'invalid', 'cancelling a subtask needs a comment');
+    if (held.some((c) => !decisions[c.id]?.action)) return refuse('holds_undecided', 'decide what happens to the subtasks this task holds', { cards: held });
+    if (held.some((c) => decisions[c.id].action === 'cancel' && !decisions[c.id].comment?.trim())) return refuse('invalid', 'cancelling a subtask needs a comment');
     commit(() => {
       for (const c of held) {
         const d = decisions[c.id];

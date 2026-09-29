@@ -1,5 +1,5 @@
 import { useState, type SubmitEvent } from 'react';
-import { describeError, type Card, type HoldDecision } from '../../api';
+import { plannerErrorText, type Card, type HoldDecision } from '../../api';
 import { Button } from '../ui/button';
 import { Dialog } from '../ui/dialog';
 import { Input } from '../ui/input';
@@ -36,7 +36,7 @@ export function SettleDialog({ ask, onClose }: Readonly<{ ask: SettleAsk | null;
       await shown.settle(decisions);
       onClose();
     } catch (err) {
-      setError(describeError(err));
+      setError(plannerErrorText(err));
     } finally {
       setBusy(false);
     }

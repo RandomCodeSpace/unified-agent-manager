@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyBoardFrame, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests } from '../src/lib/board.ts';
+import { applyBoardFrame, boardOf, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests } from '../src/lib/board.ts';
 import { initialState, reducer } from '../src/state.ts';
 
 let seq = 0;
@@ -278,4 +278,11 @@ test('a Board still loading at a snapshot is fetched again even when the revisio
   state = reducer(state, snapshot({ p1: 1 }));
   state = reducer(state, { type: 'board_loaded', key: 'p1', data: { cards: [], requests: [], revision: 1 } });
   assert.equal(state.boards.p1.stale, true, 'the reply may predate the new stream');
+});
+
+test('a card opened from outside the planner is found on its own Board', () => {
+  const here = card({ project_id: 'p3' });
+  const boards = { p1: { data: { cards: [card({})], requests: [], revision: 1 } }, p3: { data: { cards: [here], requests: [], revision: 2 } }, unassigned: { data: null } };
+  assert.equal(boardOf(boards, here.id), 'p3');
+  assert.equal(boardOf(boards, 'gone'), undefined);
 });

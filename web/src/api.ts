@@ -324,15 +324,17 @@ export interface Card {
 }
 
 export type RequestKind = 'done' | 'cancel' | 'blocked' | 'split' | 'change';
-export type RequestFlag = 'acceptance_could_not_run' | 'no_change_in_tree' | 'tests_or_build_changed' | 'overlap';
+export type RequestFlag = 'acceptance_could_not_run' | 'baseline_missing' | 'no_change_in_tree' | 'tests_or_build_changed' | 'overlap';
 
 /** The evidence rows of a done request (§6). */
 export interface Evidence {
   baseline?: { head: string; dirty: string[] };
-  diff?: { added: number; deleted: number; files: { path: string; added: number; deleted: number; by_task: boolean; overlap?: { card: number; task_id: string } }[] };
+  /** `pre_dirty`: the path was uncommitted when the hold began, and counts because its content changed since. */
+  diff?: { added: number; deleted: number; files: { path: string; added: number; deleted: number; by_task: boolean; pre_dirty?: boolean; overlap?: { card: number; task_id: string } }[] };
   commits?: { sha: string; subject: string }[];
   accept?: AcceptRun;
-  transcript?: { task_id: string; from_item: string; to_item: string };
+  /** `partial`: uam's copy of the transcript may not reach back to the hold's start, so the touched files may be incomplete. */
+  transcript?: { task_id: string; from_item: string; to_item: string; partial?: boolean };
   checklist?: { done: number; total: number };
 }
 
@@ -356,7 +358,10 @@ export interface BoardRequest {
   agent_id: string;
   kind: RequestKind;
   comment: string;
-  /** split: `{children: [{title, win_condition}]}`; change: the proposed fields; blocked: `{blocker}`. */
+  /**
+   * split: `{children: [{title, win_condition}]}`; change: `{patch: {the proposed fields}, proposed_accept_cmd?}`;
+   * blocked: `{blocker}` (a card id); a done request a split filed for a ticked item: `{split_of, tick}`.
+   */
   payload: Record<string, unknown>;
   evidence: Evidence;
   flags: RequestFlag[];
@@ -421,28 +426,62 @@ export type CardPatch = Partial<Pick<Card, 'title' | 'desc' | 'win_condition' | 
 /** What Settle decides for each subtask the Task holds (§5). */
 export type HoldDecision = { action: 'keep' | 'release' | 'cancel'; comment: string };
 
-/** The planner's error code, when a refusal carries one (`planner_off`, `no_git`, `guard_open_items`, `holds_undecided`, …). */
+/**
+ * The planner's error code, when a refusal carries one (`planner_off`, `no_git`, `guard_open_items`,
+ * `holds_undecided`, `invalid`, `not_found`, …). The UI decides on the code, never on the status.
+ */
 export function errorCode(e: unknown): string | undefined {
   return e instanceof ApiError && typeof e.body.code === 'string' ? e.body.code : undefined;
 }
 
-/** What stops an owner's Mark done (409 `guard_open_items`, `guard_blockers` or `guard_blocked`, §6), or null for any other outcome. */
+/** What a refusal was about (`refs`): the open checklist items of `guard_open_items`, the `#seq` of each open blocker of `guard_blockers`. */
+function errorRefs(e: unknown): string[] {
+  return e instanceof ApiError && Array.isArray(e.body.refs) ? e.body.refs.map(String) : [];
+}
+
+/** A route this service does not have yet (a planner feature that lands later): 404 with no code. */
+export function routeMissing(e: unknown): boolean {
+  return isStatus(e, 404) && errorCode(e) === undefined;
+}
+
+/**
+ * A planner refusal in words: the service's own message, except where the UI can say it better
+ * (the planner off or unavailable, a busy acceptance run or import, a feature not here yet).
+ */
+export function plannerErrorText(e: unknown): string {
+  if (routeMissing(e)) return 'this service does not offer it yet';
+  switch (errorCode(e)) {
+    case 'planner_off':
+      return 'the planner is off; turn it on in Settings';
+    case 'planner_unavailable':
+      return 'the planner database could not be opened; see the service log';
+    case 'acceptance_busy':
+      return 'the acceptance command is already running in this project; try again in a moment';
+    case 'import_busy':
+      return 'the source board changed while it was copied; try again in a moment';
+  }
+  return describeError(e);
+}
+
+/** What stops an owner's Mark done (`guard_open_items`, `guard_blockers` or `guard_blocked`, §6), or null for any other outcome. */
 export type DoneGuard = { code: 'guard_open_items'; items: string[] } | { code: 'guard_blockers'; blockers: string[] } | { code: 'guard_blocked' };
 
 export function doneGuard(e: unknown): DoneGuard | null {
-  if (!isStatus(e, 409)) return null;
   const code = errorCode(e);
-  if (code === 'guard_open_items') return { code, items: Array.isArray(e.body.items) ? e.body.items.map(String) : [] };
-  if (code === 'guard_blockers') return { code, blockers: Array.isArray(e.body.blockers) ? e.body.blockers.map(String) : [] };
+  if (code === 'guard_open_items') return { code, items: errorRefs(e) };
+  if (code === 'guard_blockers') return { code, blockers: errorRefs(e) };
   if (code === 'guard_blocked') return { code };
   return null;
 }
 
-/** The subtasks a Settle left undecided (409 `holds_undecided`), or null for any other outcome. */
+/** The subtasks a Settle left undecided (`holds_undecided`), or null for any other outcome. */
 export function undecidedHolds(e: unknown): Card[] | null {
-  if (!isStatus(e, 409) || errorCode(e) !== 'holds_undecided') return null;
+  if (!(e instanceof ApiError) || errorCode(e) !== 'holds_undecided') return null;
   return Array.isArray(e.body.cards) ? (e.body.cards as Card[]) : [];
 }
+
+/** A rejected request, and whether its reason reached the Task (§14). When it did not and the subtask is still held, the owner may Release it. */
+export type Rejection = BoardRequest & { steered: boolean };
 
 /**
  * A custom (BYOM) model, offered by Copilot as `name/model_id`. No key passes through the
@@ -1082,7 +1121,8 @@ function plannerApi() {
     edit: (ref: string, patch: CardPatch) => call<unknown>('PATCH', card(ref), patch),
     confirm: (ref: string) => call<unknown>('POST', card(ref, 'confirm')),
     dismiss: (ref: string) => call<unknown>('POST', card(ref, 'dismiss')),
-    move: (ref: string, parent_id: string | null, rank: number) => call<unknown>('POST', card(ref, 'move'), { parent_id, rank }),
+    /** Without a rank the card goes after its new parent's last child; `rank` is an index among the siblings. */
+    move: (ref: string, parent_id: string | null, rank?: number) => call<unknown>('POST', card(ref, 'move'), rank === undefined ? { parent_id } : { parent_id, rank }),
     status: (ref: string, status: 'done' | 'cancelled' | 'todo', comment: string, force = false) => call<unknown>('POST', card(ref, 'status'), { status, comment, force }),
     restore: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'restore'), { comment }),
     split: (ref: string, children: { title: string; win_condition: string }[]) => call<unknown>('POST', card(ref, 'split'), { children }),
@@ -1097,8 +1137,8 @@ function plannerApi() {
     triage: (ref: string) => call<{ verdict: TriageVerdict; sentence: string; head: string }>('POST', card(ref, 'triage')),
     suggest: (ref: string, body: { brief: string; document: string; max: number }) => call<{ job_id: string }>('POST', card(ref, 'suggest'), body),
     accept: (id: string, comment: string) => call<unknown>('POST', `/api/board/requests/${enc(id)}/accept`, { comment }),
-    reject: (id: string, reason: string) => call<unknown>('POST', `/api/board/requests/${enc(id)}/reject`, { reason }),
-    purge: (project_id: string) => call<unknown>('POST', '/api/board/purge', { project_id }),
+    reject: (id: string, reason: string) => call<Rejection>('POST', `/api/board/requests/${enc(id)}/reject`, { reason }),
+    purge: (project_id: string) => call<{ purged: number }>('POST', '/api/board/purge', { project_id }),
     import: (dir: string) => call<ImportReport>('POST', '/api/board/import', { dir }),
   };
 }

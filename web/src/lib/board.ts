@@ -256,6 +256,11 @@ export function openBlockerSeqs(card: Card, byId: ReadonlyMap<string, Card>): st
     .join(', ');
 }
 
+/** The key of the loaded Board that holds card `id` (a Project id or `unassigned`), if any does. */
+export function boardOf(boards: Readonly<Record<string, { data: BoardData | null }>>, id: string): string | undefined {
+  return Object.keys(boards).find((k) => boards[k].data?.cards.some((c) => c.id === id));
+}
+
 /** Pending requests per Project key, for the Needs-you count. */
 export function pendingRequests(boards: Readonly<Record<string, { data: BoardData | null }>>): number {
   let n = 0;

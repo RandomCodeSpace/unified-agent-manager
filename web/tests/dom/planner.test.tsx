@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import { copyStyles, popMode } from '../../src/components/planner/PopOut';
-import { renderApp, sidebar, type User } from './render';
+import { openMenu, renderApp, sidebar, type User } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
 
@@ -538,6 +538,147 @@ describe('the planner’s frames and streams', () => {
       expect(fetchSpy.mock.calls.map(([url]) => String(url)).filter((u) => u.includes('/api/board?'))).toEqual([]);
     } finally {
       fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * Answers the requests `match` picks with `answer`, a reply shaped as internal/web sends it (it
+ * may start from the mock's own, `real`); every other request goes to the mock. Call it after
+ * renderApp, which installs the mock.
+ */
+function serviceReply(match: (url: string, method: string) => boolean, answer: (real: () => Promise<Response>) => Promise<Response>) {
+  const real = window.fetch;
+  return vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+    const url = String(input instanceof Request ? input.url : input);
+    return match(url, init?.method ?? 'GET') ? answer(() => real(input, init)) : real(input, init);
+  });
+}
+
+const reply = (status: number, body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }));
+
+describe('parity with the service', () => {
+  test('Mark done names the open blockers the refusal lists by #seq', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 9);
+    await user.click(panel.getByRole('button', { name: 'Mark done' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Mark #9 done?' }));
+    await user.type(dialog.getByRole('textbox', { name: 'Comment (required)' }), 'Previews moved to the detail stream.');
+    await user.click(dialog.getByRole('button', { name: 'Mark done' }));
+    const alert = within(await dialog.findByRole('alert'));
+    expect(alert.getByText('Open blockers')).toBeTruthy();
+    expect(alert.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['#8 Drop unused fields from the task summary']);
+    expect(dialog.getByRole('button', { name: 'Finish anyway' })).toBeTruthy();
+  });
+
+  test('a planner database that cannot open says so where the plan would be', async () => {
+    renderApp('#planner=p1');
+    const spy = serviceReply((url) => url.includes('/api/board?project_id=p1'), () => reply(503, { error: 'the planner database could not be opened; see the service log', code: 'planner_unavailable' }));
+    try {
+      expect((await screen.findByRole('alert')).textContent).toContain('Could not load the plan: the planner database could not be opened; see the service log');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('a project without git shows why it has no plan, and offers no authoring', async () => {
+    renderApp('#planner=p2');
+    expect(await screen.findByText('dotfiles is not a git repository, so it has no plan.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'New epic' })).toBeNull();
+  });
+
+  test('a rejection the Task did not hear offers Release in its inbox row', async () => {
+    const { user, tree } = await openPlanner();
+    // The Task is Active, so the hold stays; sending it the reason failed (steered false).
+    const spy = serviceReply(
+      (url, method) => method === 'POST' && url.endsWith('/reject'),
+      async (real) => {
+        const r = await real();
+        return reply(r.status, { ...(await r.json()), steered: false });
+      },
+    );
+    try {
+      await user.click(screen.getByRole('button', { name: 'Inbox, 6 pending' }));
+      const inbox = within(await screen.findByRole('list', { name: 'Pending requests' }));
+      const request = within(inbox.getByRole('article', { name: 'Done request on #8' }));
+      await user.click(request.getByRole('button', { name: 'Reject' }));
+      await user.type(request.getByRole('textbox', { name: 'Reason' }), 'The fields are still read by the Task list.');
+      await user.click(request.getByRole('button', { name: 'Reject request' }));
+      expect(await request.findByText('The Task did not get the reason and still holds #8.')).toBeTruthy();
+      await user.click(request.getByRole('button', { name: 'Release #8' }));
+      await waitFor(() => expect(inbox.queryByRole('article', { name: 'Done request on #8' })).toBeNull());
+      await user.click(screen.getByRole('button', { name: 'Close inbox' }));
+      expect(await tree.findByRole('treeitem', { name: '#8 Drop unused fields from the task summary, To do' })).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('a heard rejection leaves the inbox', async () => {
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('button', { name: 'Inbox, 6 pending' }));
+    const inbox = within(await screen.findByRole('list', { name: 'Pending requests' }));
+    const request = within(inbox.getByRole('article', { name: 'Done request on #8' }));
+    await user.click(request.getByRole('button', { name: 'Reject' }));
+    await user.type(request.getByRole('textbox', { name: 'Reason' }), 'The fields are still read by the Task list.');
+    await user.click(request.getByRole('button', { name: 'Reject request' }));
+    await waitFor(() => expect(inbox.queryByRole('article', { name: 'Done request on #8' })).toBeNull());
+  });
+
+  test('the inbox shows a partial transcript, the proposed patch and every flag', async () => {
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('button', { name: 'Inbox, 6 pending' }));
+    const inbox = within(await screen.findByRole('list', { name: 'Pending requests' }));
+    expect(within(inbox.getByRole('article', { name: 'Done request on #8' })).getByText('Touched files may be incomplete')).toBeTruthy();
+    expect(within(inbox.getByRole('article', { name: 'Done request on #5' })).queryByText('Touched files may be incomplete')).toBeNull();
+    const change = within(inbox.getByRole('article', { name: 'Change request on #9' }));
+    expect(change.getByText('Send subagent previews only for recent Tasks')).toBeTruthy();
+    expect(change.getByText('win condition')).toBeTruthy();
+  });
+
+  test('the card panel shows a partial transcript in its evidence trail', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 8);
+    const trail = within(await panel.findByRole('region', { name: 'Evidence trail' }));
+    expect(await trail.findByText('Touched files may be incomplete')).toBeTruthy();
+  });
+
+  test('Purge reports how many cards went', async () => {
+    const { user } = await openPlanner();
+    const menu = await openMenu(user, 'Planner actions');
+    await user.click(menu.getByRole('menuitem', { name: 'Purge cancelled (1)' }));
+    const dialog = within(await screen.findByRole('alertdialog', { name: 'Purge 1 cancelled card?' }));
+    await user.click(dialog.getByRole('button', { name: 'Purge' }));
+    expect(await screen.findByText('Purged 1 card.')).toBeTruthy();
+  });
+
+  test('without the import route the import stays, disabled, and says why', async () => {
+    const { user } = renderApp('#settings');
+    const spy = serviceReply((url, method) => method === 'POST' && url.endsWith('/api/board/import'), () => reply(404, { error: 'not found' }));
+    try {
+      const planner = within(await screen.findByRole('region', { name: 'Planner' }));
+      const form = within(planner.getByRole('form', { name: 'Import from kb' }));
+      await user.type(form.getByRole('textbox', { name: 'Import from kb' }), '/home/dev/.local/share/kb');
+      await user.click(form.getByRole('button', { name: 'Import' }));
+      expect(await form.findByText('This service cannot import yet; an update adds it.')).toBeTruthy();
+      expect((form.getByRole('textbox', { name: 'Import from kb' }) as HTMLInputElement).disabled).toBe(true);
+      expect((form.getByRole('button', { name: 'Import' }) as HTMLButtonElement).disabled).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('an import refusal shows the service’s reason', async () => {
+    const { user } = renderApp('#settings');
+    const spy = serviceReply((url, method) => method === 'POST' && url.endsWith('/api/board/import'), () => reply(409, { error: 'the source database is being written; try again', code: 'import_busy' }));
+    try {
+      const planner = within(await screen.findByRole('region', { name: 'Planner' }));
+      const form = within(planner.getByRole('form', { name: 'Import from kb' }));
+      await user.type(form.getByRole('textbox', { name: 'Import from kb' }), '/home/dev/.local/share/kb');
+      await user.click(form.getByRole('button', { name: 'Import' }));
+      expect((await form.findByRole('alert')).textContent).toBe('Could not import: the source board changed while it was copied; try again in a moment');
+    } finally {
+      spy.mockRestore();
     }
   });
 });

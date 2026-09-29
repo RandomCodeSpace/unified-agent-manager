@@ -1,6 +1,6 @@
-import { Check, ChevronRight, FileDiff, GitCommitHorizontal, MessageSquareText, SquareCheck, SquareTerminal, X } from 'lucide-react';
+import { Check, ChevronRight, FileDiff, GitCommitHorizontal, MessageSquareText, SquareCheck, SquareTerminal, Undo2, X } from 'lucide-react';
 import { useMemo, useState, type ReactNode, type SubmitEvent } from 'react';
-import { api, describeError, type BoardRequest, type Card, type Evidence, type RequestFlag, type RequestKind, type SessionSummary } from '../../api';
+import { api, plannerErrorText, type BoardRequest, type Card, type Evidence, type Rejection, type RequestFlag, type RequestKind, type SessionSummary } from '../../api';
 import { cn } from '../../lib/cn';
 import { relTime } from '../common';
 import { Button } from '../ui/button';
@@ -14,6 +14,7 @@ export const REQUEST_LABEL: Record<RequestKind, string> = { done: 'Done', cancel
 
 const FLAG_TEXT: Record<RequestFlag, string> = {
   acceptance_could_not_run: 'Acceptance could not run',
+  baseline_missing: 'Baseline commit missing',
   no_change_in_tree: 'No change in tree',
   tests_or_build_changed: 'Tests or build files changed',
   overlap: 'Overlaps another hold',
@@ -60,6 +61,7 @@ export function EvidenceRows({ evidence: ev }: Readonly<{ evidence: Evidence }>)
                 <span className="min-w-0 truncate text-ink" title={f.path}>{f.path}</span>
                 <span className="shrink-0 tabular-nums"><span className="text-success">+{f.added}</span> <span className="text-error">−{f.deleted}</span></span>
                 {!f.by_task && <span className="shrink-0 text-muted">not by this task</span>}
+                {f.pre_dirty && <span className="shrink-0 text-muted">uncommitted when the hold began</span>}
                 {f.overlap && <Chip tone="warning">overlaps with #{f.overlap.card}{taskLabel(sessions, f.overlap.task_id)}</Chip>}
               </li>
             ))}
@@ -103,6 +105,7 @@ export function EvidenceRows({ evidence: ev }: Readonly<{ evidence: Evidence }>)
         <MessageSquareText aria-hidden="true" className="size-3.5 shrink-0" />
         Transcript
         <TaskChip taskId={t.task_id} />
+        {t.partial && <span className="text-warning">Touched files may be incomplete</span>}
       </div>,
     );
   }
@@ -153,12 +156,15 @@ function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; 
     );
   }
   if (r.kind === 'change') {
-    const fields = Object.entries(r.payload);
+    // The proposed fields ride in `patch`; a proposed acceptance command is text only until the owner copies it.
+    const patch = r.payload.patch && typeof r.payload.patch === 'object' ? (r.payload.patch as Record<string, unknown>) : {};
+    const fields = Object.entries(patch);
+    if (typeof r.payload.proposed_accept_cmd === 'string' && r.payload.proposed_accept_cmd) fields.push(['proposed acceptance command', r.payload.proposed_accept_cmd]);
     return (
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-caption">
         {fields.map(([k, v]) => (
           <div key={k} className="contents">
-            <dt className="text-muted">{k.replace('_', ' ')}</dt>
+            <dt className="text-muted">{k.replaceAll('_', ' ')}</dt>
             <dd className="min-w-0">
               {card && k in card && <span className="text-muted line-through">{String((card as unknown as Record<string, unknown>)[k] ?? '')}</span>}
               <span className="block text-ink">{String(v)}</span>
@@ -178,8 +184,17 @@ function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; 
 /**
  * One request: its kind, card, Task and comment, its flags and evidence, and (while pending)
  * Accept, and Reject with a required reason, both inline so they work in a popped-out window.
+ * A rejection whose reason did not reach the Task (`steered` false) goes to `onUnheard`; shown
+ * with `unheard`, the row offers Release, since the Task still holds the subtask without knowing why.
  */
-export function RequestItem({ request: r, byId, showCard = true }: Readonly<{ request: BoardRequest; byId: ReadonlyMap<string, Card>; showCard?: boolean }>) {
+export function RequestItem({ request: r, byId, showCard = true, onUnheard, unheard = false, onDismiss }: Readonly<{
+  request: BoardRequest;
+  byId: ReadonlyMap<string, Card>;
+  showCard?: boolean;
+  onUnheard?: (r: Rejection) => void;
+  unheard?: boolean;
+  onDismiss?: () => void;
+}>) {
   const { openCard, notify } = useShownBoard();
   const { sessions } = usePlannerTasks();
   const card = byId.get(r.card_id);
@@ -195,14 +210,18 @@ export function RequestItem({ request: r, byId, showCard = true }: Readonly<{ re
       await op();
       setRejecting(false);
     } catch (e) {
-      notify({ tone: 'error', text: `Could not ${verb}: ${describeError(e)}` });
+      notify({ tone: 'error', text: `Could not ${verb}: ${plannerErrorText(e)}` });
     } finally {
       setBusy(false);
     }
   }
   const reject = (e: SubmitEvent) => {
     e.preventDefault();
-    if (reason.trim()) void decide(() => api.planner.reject(r.id, reason.trim()), 'reject the request');
+    if (!reason.trim()) return;
+    void decide(async () => {
+      const rejection = await api.planner.reject(r.id, reason.trim());
+      if (!rejection.steered) onUnheard?.(rejection);
+    }, 'reject the request');
   };
   const overlap = r.evidence.diff?.files.find((f) => f.overlap)?.overlap;
 
@@ -236,6 +255,18 @@ export function RequestItem({ request: r, byId, showCard = true }: Readonly<{ re
       <Proposal request={r} card={card} byId={byId} />
       <EvidenceRows evidence={r.evidence} />
       {r.decision_comment && <p className="text-caption text-muted">Decision: {r.decision_comment}</p>}
+      {unheard && card && (
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+          <p className="mr-auto text-caption text-muted">The Task did not get the reason and still holds #{card.seq}.</p>
+          <Button size="sm" onClick={onDismiss}>
+            Keep it held
+          </Button>
+          <Button size="sm" variant="primary" loading={busy} onClick={() => void decide(() => api.planner.release(card.id, r.decision_comment ?? ''), 'release the subtask')}>
+            <Undo2 />
+            Release #{card.seq}
+          </Button>
+        </div>
+      )}
       {pending && !rejecting && (
         <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button size="sm" variant="danger" disabled={busy} onClick={() => setRejecting(true)}>
@@ -266,17 +297,32 @@ export function RequestItem({ request: r, byId, showCard = true }: Readonly<{ re
   );
 }
 
-/** The Inbox (§10): the shown Board's pending requests, oldest first. */
+/**
+ * The Inbox (§10): the shown Board's pending requests, oldest first. A rejection the Task did
+ * not hear stays in its place, offering Release, while the Task still holds the subtask.
+ */
 export function InboxList() {
   const { board, cards } = useShownBoard();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
-  const requests = useMemo(() => [...(board?.data?.requests ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at)), [board?.data?.requests]);
+  const [unheard, setUnheard] = useState<Rejection[]>([]);
+  const requests = useMemo(() => {
+    const pending = board?.data?.requests ?? [];
+    const kept = unheard.filter((r) => byId.get(r.card_id)?.held_by === r.task_id && !pending.some((p) => p.id === r.id));
+    return [...pending, ...kept].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }, [board?.data?.requests, unheard, byId]);
+  const drop = (id: string) => setUnheard((list) => list.filter((x) => x.id !== id));
   if (!requests.length) return <p className="px-1 py-4 text-ui text-muted">Nothing to decide.</p>;
   return (
     <ul className="flex flex-col gap-2" aria-label="Pending requests">
       {requests.map((r) => (
         <li key={r.id}>
-          <RequestItem request={r} byId={byId} />
+          <RequestItem
+            request={r}
+            byId={byId}
+            unheard={r.status === 'rejected'}
+            onUnheard={(x) => setUnheard((list) => [...list.filter((y) => y.id !== x.id), x])}
+            onDismiss={() => drop(r.id)}
+          />
         </li>
       ))}
     </ul>

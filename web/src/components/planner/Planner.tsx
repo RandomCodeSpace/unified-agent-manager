@@ -1,7 +1,7 @@
 import { Ellipsis, Inbox, KanbanSquare, PictureInPicture2, Plus, Trash2, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, describeError, errorCode, type BoardJob, type Project } from '../../api';
-import { childIndex } from '../../lib/board';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { api, plannerErrorText, type BoardJob, type Project } from '../../api';
+import { boardOf, childIndex } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
 import { Note, ProjectBadge, Skeleton, useApp } from '../common';
@@ -57,7 +57,7 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
     api.planner
       .board(key)
       .then((data) => dispatch({ type: 'board_loaded', key, data }))
-      .catch((e: unknown) => dispatch({ type: 'board_failed', key, error: errorCode(e) === 'planner_off' ? 'The planner is off.' : describeError(e) }))
+      .catch((e: unknown) => dispatch({ type: 'board_failed', key, error: plannerErrorText(e) }))
       .finally(() => inflight.current.delete(key));
   }, [dispatch]);
 
@@ -110,9 +110,15 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
     setPop({ kind, win: null });
   }, []);
 
-  // Stable, so the memoised rows that take it keep their props.
+  // The Boards as of the last render, for openCard: it stays stable, so the memoised rows that take it keep their props.
+  const boardsNow = useRef(boards);
+  useLayoutEffect(() => {
+    boardsNow.current = boards;
+  });
+  /** Shows a card, switching to its Board when another is shown: callers outside the planner (a transcript's card chip) name only the card. */
   const openCard = useCallback((id: string) => {
-    setUi({ selected: id, panel: 'card' });
+    const home = boardOf(boardsNow.current, id);
+    setUi((u) => ({ ...(home && home !== u.project ? { project: home, epic: null, creating: null } : {}), selected: id, panel: 'card' }));
     onShowPlanner();
   }, [setUi, onShowPlanner]);
 
@@ -182,7 +188,8 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
 
   let body: ReactNode;
   if (project?.no_git) {
-    body = <Empty>{project.name} is not a git repository, so it has no plan.</Empty>;
+    // Planner writes and launches need Git (§14 no_git): the reason, and no authoring.
+    body = <Empty>{project.no_git === 'not_installed' ? `Git is not installed where uam can find it, so ${project.name} has no plan.` : `${project.name} is not a git repository, so it has no plan.`}</Empty>;
   } else if (!key) {
     body = <Empty>Add a git project to plan its work.</Empty>;
   } else if (!board?.data && board?.error) {
@@ -321,9 +328,11 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
         onConfirm={async () => {
           setPurgeBusy(true);
           try {
-            await api.planner.purge(key);
+            // Only subtrees that are cancelled all the way down go; a cancelled card with a live one under it stays.
+            const { purged } = await api.planner.purge(key);
+            p.notify({ tone: 'muted', text: `Purged ${purged} ${purged === 1 ? 'card' : 'cards'}.${purged < cancelled ? ' Cancelled cards with open work under them stay.' : ''}` });
           } catch (e) {
-            p.notify({ tone: 'error', text: `Could not purge: ${describeError(e)}` });
+            p.notify({ tone: 'error', text: `Could not purge: ${plannerErrorText(e)}` });
           } finally {
             setPurgeBusy(false);
             setPurging(false);

@@ -1,6 +1,6 @@
 import { ArrowLeft, Ban, Check, CheckCheck, FolderInput, GitCommitHorizontal, Link2, ListChecks, MoveRight, Pencil, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, describeError, type AcceptRun, type Card, type CardDetail, type TriageVerdict } from '../../api';
+import { api, plannerErrorText, type AcceptRun, type Card, type CardDetail, type TriageVerdict } from '../../api';
 import { cardPath, openBlockerSeqs } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, useApp } from '../common';
@@ -96,7 +96,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
         setDetail(d);
         setDetailError(null);
       })
-      .catch((e: unknown) => !controller.signal.aborted && setDetailError(describeError(e)));
+      .catch((e: unknown) => !controller.signal.aborted && setDetailError(plannerErrorText(e)));
     return () => controller.abort();
   }, [c.id, c.revision]);
 
@@ -106,7 +106,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
     try {
       return await op();
     } catch (e) {
-      notify({ tone: 'error', text: `Could not ${verb}: ${describeError(e)}` });
+      notify({ tone: 'error', text: `Could not ${verb}: ${plannerErrorText(e)}` });
       return undefined;
     } finally {
       setBusy(null);
@@ -340,7 +340,7 @@ function Links({ card: c, byId, onOpen, readOnly }: Readonly<{ card: Card; byId:
   const blocks = c.blocks.map((id) => byId.get(id)).filter((x): x is Card => !!x);
   const candidates = [...byId.values()].filter((x) => x.id !== c.id && x.confirmed && x.kind === 'subtask' && !c.blocked_by.includes(x.id) && x.status !== 'cancelled');
   if (readOnly && !blockers.length && !blocks.length) return null;
-  const act = (verb: string, op: () => Promise<unknown>) => op().catch((e: unknown) => notify({ tone: 'error', text: `Could not ${verb}: ${describeError(e)}` }));
+  const act = (verb: string, op: () => Promise<unknown>) => op().catch((e: unknown) => notify({ tone: 'error', text: `Could not ${verb}: ${plannerErrorText(e)}` }));
   const row = (x: Card, remove?: () => void) => (
     <li key={x.id} className="flex min-w-0 items-center gap-1.5">
       <StatusMark status={x.status} />
@@ -424,7 +424,7 @@ function OwnerFields({ card: c }: Readonly<{ card: Card }>) {
     try {
       await api.planner.edit(c.id, { accept_cmd, paths: nextPaths });
     } catch (e) {
-      notify({ tone: 'error', text: `Could not save the acceptance settings: ${describeError(e)}` });
+      notify({ tone: 'error', text: `Could not save the acceptance settings: ${plannerErrorText(e)}` });
     } finally {
       setBusy(false);
     }
@@ -485,7 +485,7 @@ function MoveToProject({ card: c, projects }: Readonly<{ card: Card; projects: {
               await api.planner.edit(c.id, { project_id: target });
               setUi({ project: target, selected: c.id, panel: 'card' });
             } catch (e) {
-              notify({ tone: 'error', text: `Could not move the card: ${describeError(e)}` });
+              notify({ tone: 'error', text: `Could not move the card: ${plannerErrorText(e)}` });
             } finally {
               setBusy(false);
             }

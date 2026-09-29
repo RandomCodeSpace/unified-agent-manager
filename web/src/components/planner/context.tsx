@@ -49,7 +49,7 @@ export interface PlannerContextValue {
   boards: Record<string, BoardState>;
   jobs: Record<string, BoardJob>;
   projects: Project[];
-  /** Select a card and show it in the main pane's card panel (opening the Planner view when it is elsewhere). */
+  /** Select a card and show it in the main pane's card panel, on its own Board (opening the Planner view when it is elsewhere). */
   openCard: (id: string) => void;
   /** Show a Task (a held subtask's chip, a transcript link). */
   openTask: (id: string) => void;
@@ -83,6 +83,15 @@ export function usePlanner(): PlannerContextValue {
   const ctx = useContext(PlannerContext);
   if (!ctx) throw new Error('usePlanner outside PlannerContext');
   return ctx;
+}
+
+/**
+ * Opens a card from outside the planner (a transcript's card chip): the context's openCard, or
+ * null while the planner is off or outside its provider, so the caller shows plain text instead.
+ */
+export function usePlannerOpenCard(): ((id: string) => void) | null {
+  const ctx = useContext(PlannerContext);
+  return ctx?.enabled ? ctx.openCard : null;
 }
 
 /** The shown Board's cards (empty until it loads) and an id index. */

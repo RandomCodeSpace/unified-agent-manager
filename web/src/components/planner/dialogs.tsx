@@ -1,6 +1,6 @@
 import { Plus, X } from 'lucide-react';
 import { useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { api, describeError, doneGuard, type Card, type CardKind, type DoneGuard } from '../../api';
+import { api, plannerErrorText, doneGuard, type Card, type CardKind, type DoneGuard } from '../../api';
 import { Field } from '../TaskDefaults';
 import { Button } from '../ui/button';
 import { Dialog } from '../ui/dialog';
@@ -47,7 +47,7 @@ export function ReasonDialog({ ask, onClose }: Readonly<{ ask: ReasonAsk | null;
       await shown.run(text.trim());
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(plannerErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -102,7 +102,7 @@ export function BriefDialog({ ask, onClose }: Readonly<{ ask: BriefAsk | null; o
       await shown.run({ brief: brief.trim(), document: doc.trim(), max: Math.max(1, Math.min(10, Number(max) || 3)) });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(plannerErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -166,7 +166,7 @@ export function DoneDialog({ card, byId, open, onClose }: Readonly<{ card: Card;
     } catch (err) {
       const g = doneGuard(err);
       if (g) setGuard(g);
-      else setError(describeError(err));
+      else setError(plannerErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -210,9 +210,10 @@ export function DoneDialog({ card, byId, open, onClose }: Readonly<{ card: Card;
               <>
                 <span className="font-medium text-ink">Open blockers</span>
                 <ul className="list-disc pl-4">
-                  {guard.blockers.map((id) => {
-                    const b = byId.get(id);
-                    return <li key={id}>{b ? `#${b.seq} ${b.title}` : id}</li>;
+                  {/* The service names each open blocker by its #seq. */}
+                  {guard.blockers.map((ref) => {
+                    const b = [...byId.values()].find((x) => `#${x.seq}` === ref);
+                    return <li key={ref}>{b ? `#${b.seq} ${b.title}` : ref}</li>;
                   })}
                 </ul>
               </>
@@ -245,7 +246,7 @@ export function moveTargets(card: Card, cards: readonly Card[]): Card[] {
   return cards.filter((x) => kinds.includes(x.kind) && x.id !== card.id && x.status !== 'cancelled');
 }
 
-/** Owner Move (§3): a picker over the valid parents; the card goes last under its new parent. */
+/** Owner Move (§3): a picker over the valid parents; the card goes last under its new parent (a move without a rank). */
 export function MoveDialog({ card, cards, open, onClose }: Readonly<{ card: Card; cards: readonly Card[]; open: boolean; onClose: () => void }>) {
   const [target, setTarget] = useState(card.parent_id ?? TOP_LEVEL);
   const [error, setError] = useState<string | null>(null);
@@ -268,11 +269,10 @@ export function MoveDialog({ card, cards, open, onClose }: Readonly<{ card: Card
     setBusy(true);
     setError(null);
     try {
-      const siblings = cards.filter((x) => (x.parent_id ?? TOP_LEVEL) === target && x.id !== card.id);
-      await api.planner.move(card.id, target || null, Math.max(0, ...siblings.map((x) => x.rank)) + 1);
+      await api.planner.move(card.id, target || null);
       onClose();
     } catch (err) {
-      setError(describeError(err));
+      setError(plannerErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -318,7 +318,7 @@ export function SplitDialog({ card, byId, open, onClose }: Readonly<{ card: Card
       await api.planner.split(card.id, given);
       onClose();
     } catch (err) {
-      setError(describeError(err));
+      setError(plannerErrorText(err));
     } finally {
       setBusy(false);
     }
