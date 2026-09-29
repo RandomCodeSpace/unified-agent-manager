@@ -183,10 +183,13 @@ type Comment struct {
 	CreatedAt time.Time
 }
 
-// Baseline is the working tree state recorded when a hold starts.
+// Baseline is the working tree state recorded when a hold starts. Blobs
+// maps each dirty path to the blob name of its content then, "" when the
+// path did not exist; a dirty path missing from it counts as changed since.
 type Baseline struct {
-	Head  string   `json:"head"`
-	Dirty []string `json:"dirty"`
+	Head  string            `json:"head"`
+	Dirty []string          `json:"dirty"`
+	Blobs map[string]string `json:"blobs,omitempty"`
 }
 
 // Hold is one attempt at a subtask by a Task.
@@ -243,6 +246,11 @@ const (
 	CodeForbidden      Code = "forbidden"
 	CodeLimit          Code = "limit"
 	CodeDuplicate      Code = "duplicate"
+	// The acceptance refusals (ADR 0005 §6), raised by the caller that runs
+	// acceptance: the Project's runner stayed busy past the timeout, or the
+	// command exited non-zero.
+	CodeAcceptanceBusy   Code = "acceptance_busy"
+	CodeAcceptanceFailed Code = "acceptance_failed"
 )
 
 // Error is a refusal from a board rule. Refs lists the cards or items the

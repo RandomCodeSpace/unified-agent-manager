@@ -222,8 +222,12 @@ func (t *txn) startHold(n *node, taskID string, base Baseline) error {
 	if err := t.tx.QueryRowContext(t.ctx, `SELECT COUNT(*) + 1 FROM holds WHERE card_id = ?`, n.ID).Scan(&attempt); err != nil {
 		return fmt.Errorf("board: count attempts: %w", err)
 	}
-	if err := t.exec(`INSERT INTO holds (id, card_id, task_id, attempt, started_at, baseline_head, baseline_status)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, t.s.newID(), n.ID, taskID, attempt, stamp(t.now), base.Head, encode(orEmpty(base.Dirty))); err != nil {
+	blobs := base.Blobs
+	if blobs == nil {
+		blobs = map[string]string{}
+	}
+	if err := t.exec(`INSERT INTO holds (id, card_id, task_id, attempt, started_at, baseline_head, baseline_status, baseline_blobs)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, t.s.newID(), n.ID, taskID, attempt, stamp(t.now), base.Head, encode(orEmpty(base.Dirty)), encode(blobs)); err != nil {
 		return err
 	}
 	return t.setStatus(n, StatusDoing, taskID, "")
@@ -347,7 +351,7 @@ func (s *Store) Reconcile(ctx context.Context, tasks map[string]Stage, asOf time
 // holds lists a card's attempts, oldest first.
 func (t *txn) holds(cardID string) ([]Hold, error) {
 	rows, err := t.tx.QueryContext(t.ctx, `SELECT id, task_id, attempt, started_at, baseline_head, baseline_status,
-		ended_at, end_reason FROM holds WHERE card_id = ? ORDER BY attempt`, cardID)
+		baseline_blobs, ended_at, end_reason FROM holds WHERE card_id = ? ORDER BY attempt`, cardID)
 	if err != nil {
 		return nil, fmt.Errorf("board: list holds: %w", err)
 	}
@@ -355,12 +359,15 @@ func (t *txn) holds(cardID string) ([]Hold, error) {
 	var out []Hold
 	for rows.Next() {
 		h := Hold{CardID: cardID}
-		var started, dirty, ended, reason string
-		if err := rows.Scan(&h.ID, &h.TaskID, &h.Attempt, &started, &h.Baseline.Head, &dirty, &ended, &reason); err != nil {
+		var started, dirty, blobs, ended, reason string
+		if err := rows.Scan(&h.ID, &h.TaskID, &h.Attempt, &started, &h.Baseline.Head, &dirty, &blobs, &ended, &reason); err != nil {
 			return nil, fmt.Errorf("board: scan hold: %w", err)
 		}
 		h.EndReason = ReleaseReason(reason)
 		if err := json.Unmarshal([]byte(dirty), &h.Baseline.Dirty); err != nil {
+			return nil, fmt.Errorf("board: hold %s baseline: %w", h.ID, err)
+		}
+		if err := json.Unmarshal([]byte(blobs), &h.Baseline.Blobs); err != nil {
 			return nil, fmt.Errorf("board: hold %s baseline: %w", h.ID, err)
 		}
 		if err := parseStamps([]string{started}, &h.StartedAt); err != nil {

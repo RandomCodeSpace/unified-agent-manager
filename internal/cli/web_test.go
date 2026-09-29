@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/daemonruntime"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/web"
@@ -421,6 +422,26 @@ func TestWebTokenSet(t *testing.T) {
 	}
 }
 
+// waitEchoOff waits until the terminal stops echoing. The prompt is printed
+// just before echo goes off, so typing on seeing it can race the switch.
+func waitEchoOff(t *testing.T, tty *os.File) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		st, err := unix.IoctlGetTermios(int(tty.Fd()), ioctlGetTermios)
+		if err != nil {
+			t.Fatalf("read the terminal mode: %v", err)
+		}
+		if st.Lflag&unix.ECHO == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the prompt never turned echo off")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // At a terminal the token is typed at a prompt that does not echo it.
 func TestWebTokenSetPromptDoesNotEcho(t *testing.T) {
 	t.Setenv("UAM_SESSION_DIR", secureSessionDir(t))
@@ -443,6 +464,7 @@ func TestWebTokenSetPromptDoesNotEcho(t *testing.T) {
 		}
 		seen = append(seen, buf[:n]...)
 	}
+	waitEchoOff(t, tty)
 	_, _ = ptmx.Write([]byte(chosen + "\n"))
 	var runErr error
 	select {
