@@ -24,6 +24,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
@@ -123,6 +124,9 @@ type Manager struct {
 	pick func(n int) int
 	// branchAt is when each Project's branch was last read.
 	branchAt map[string]time.Time
+	// boardRevs is each Board's latest revision while the planner store is
+	// open, and nil otherwise (board.go).
+	boardRevs map[string]int64
 	// quota is each usage provider's quota cache; quotaPolled is when the
 	// latest read began.
 	quota       map[string]*quotaCache
@@ -152,6 +156,9 @@ type Manager struct {
 	// registers and the CallTool bound to that Task. It may run with mu held.
 	// Nothing sets it yet.
 	hostTools func(taskID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
+	// board is the planner database while the Settings switch is on
+	// (board.go).
+	board boardDB
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -482,7 +489,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	for id, p := range cfg.WebProjects {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge)}
 	}
-	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
+	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults)}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
@@ -503,7 +510,18 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.sessions[s.id] = s
 	}
 	usage := m.usageProviderLocked()
+	planner := m.settings.Planner
 	m.mu.Unlock()
+	// The Task records are loaded, so Reconcile runs before the planner
+	// takes a write.
+	if planner {
+		if err := m.openBoard(ctx); err != nil {
+			log.Warn("open the planner database failed", "error", err)
+			m.board.mu.Lock()
+			m.board.broken = true
+			m.board.mu.Unlock()
+		}
+	}
 	m.loadUploads()
 	m.sweepUploads()
 	m.wg.Add(3)
@@ -1085,8 +1103,17 @@ var errProjectNotFound = newError(http.StatusNotFound, "project not found")
 
 // RemoveProject deletes a Project and its Task records. It is refused unless
 // every Task in it is archived. Conversations are never deleted at the
-// provider, and the directory is not touched.
+// provider, and the directory is not touched. The Project's planner cards
+// move to Unassigned.
 func (m *Manager) RemoveProject(id string) error {
+	if err := m.removeProject(id); err != nil {
+		return err
+	}
+	m.unassignBoard(id)
+	return nil
+}
+
+func (m *Manager) removeProject(id string) error {
 	m.projectMu.Lock()
 	defer m.projectMu.Unlock()
 	m.mu.Lock()
@@ -1167,10 +1194,12 @@ func (m *Manager) Settings() Settings {
 // CustomModels, when not nil, replaces every custom model; an empty list
 // removes them all. TaskDefaults replaces the settings a new Task starts
 // with; they are checked as a Task's selection is. Turning Terminal off
-// closes every open terminal.
+// closes every open terminal. Turning Planner on opens the planner database,
+// and turning it off closes it; it cannot turn on without Git.
 type SettingsPatch struct {
 	SendDefault  *string
 	Terminal     *bool
+	Planner      *bool
 	HiddenModels map[string][]string
 	TitleModel   map[string]string
 	CustomModels *[]store.WebCustomModel
@@ -1253,6 +1282,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.Terminal != nil {
 		next.Terminal = *p.Terminal
 	}
+	if p.Planner != nil {
+		next.Planner = *p.Planner
+	}
 	if len(hidden) > 0 {
 		next.HiddenModels = withProviders(current.HiddenModels, hidden)
 	}
@@ -1266,12 +1298,22 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		next.TaskDefaults = defaults
 	}
 	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
-	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults {
+	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults {
 		return current, nil
+	}
+	opening := next.Planner && !current.Planner
+	if opening {
+		if _, err := execpath.Resolve("git"); err != nil {
+			return Settings{}, noGitError(noGitInstalled)
+		}
+		if err := m.openBoard(m.ctx); err != nil {
+			return Settings{}, fmt.Errorf("open the planner database: %w", err)
+		}
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		cfg.WebSettings.SendDefault = next.SendDefault
 		cfg.WebSettings.Terminal = next.Terminal
+		cfg.WebSettings.Planner = next.Planner
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
 		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, titles)
@@ -1280,7 +1322,13 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		}
 		return nil
 	}); err != nil {
+		if opening {
+			m.closeBoard()
+		}
 		return Settings{}, fmt.Errorf("save web settings: %w", err)
+	}
+	if current.Planner && !next.Planner {
+		m.closeBoard()
 	}
 	if customChanged {
 		m.setCustomModels(*p.CustomModels)
@@ -1411,6 +1459,14 @@ func withProviders[V string | []string](current, change map[string]V) map[string
 // is refused for any other stage. The conversation is never deleted at the
 // provider.
 func (m *Manager) Delete(id string) error {
+	if err := m.deleteTask(id); err != nil {
+		return err
+	}
+	m.reconcileBoard()
+	return nil
+}
+
+func (m *Manager) deleteTask(id string) error {
 	s, err := m.lookup(id)
 	if err != nil {
 		return err
@@ -3238,21 +3294,31 @@ func (m *Manager) keepsOpenLocked(s *webSession) bool {
 
 // Settle marks an active Task complete and closes its conversation. It is
 // refused while the Task is busy, has queued prompts, waits for an answer, or
-// still runs subagents or background tasks.
+// still runs subagents or background tasks. A Task holding planner subtasks
+// settles through SettleHolds.
 func (m *Manager) Settle(id string) (SessionSummary, error) {
-	return m.moveStage(id, StageSettled, StageActive)
+	return m.SettleHolds(id, nil)
 }
 
 // Reopen makes a settled Task active again. Its next prompt reopens the same
 // conversation.
 func (m *Manager) Reopen(id string) (SessionSummary, error) {
-	return m.moveStage(id, StageActive, StageSettled)
+	return m.reconciled(m.moveStage(id, StageActive, StageSettled))
 }
 
 // Archive moves an active or settled Task to its final stage; nothing moves
 // it back. An active Task must meet the same conditions as for Settle.
+// Archiving releases the Task's planner holds.
 func (m *Manager) Archive(id string) (SessionSummary, error) {
-	return m.moveStage(id, StageArchived, StageActive, StageSettled)
+	return m.reconciled(m.moveStage(id, StageArchived, StageActive, StageSettled))
+}
+
+// reconciled reconciles the planner after a Task transition that succeeded.
+func (m *Manager) reconciled(summary SessionSummary, err error) (SessionSummary, error) {
+	if err == nil {
+		m.reconcileBoard()
+	}
+	return summary, err
 }
 
 // moveStage moves a Task from one of the stages in from to stage to. Leaving
@@ -3719,6 +3785,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	if err := m.flush(); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("persist web sessions: %w", err)
 	}
+	m.closeBoard()
 	return firstErr
 }
 

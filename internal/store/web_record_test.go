@@ -268,6 +268,35 @@ func TestWebTaskDefaultsRoundTripAndLoadClean(t *testing.T) {
 	}
 }
 
+// The planner switch is a known setting: it survives a save once, and off
+// writes no key.
+func TestWebPlannerSettingRoundTrip(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.Path(), []byte(`{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":{"planner":true}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil || !cfg.WebSettings.Planner {
+		t.Fatalf("stored planner loaded as %v, %v", cfg.WebSettings.Planner, err)
+	}
+	if err := s.Update(func(cfg *Config) error { cfg.WebSettings.SendDefault = WebSendQueue; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil || strings.Count(string(data), `"planner"`) != 1 || string(webSettingsField(t, s.Path(), "planner")) != "true" {
+		t.Fatalf("planner after save: %s, %v", data, err)
+	}
+	if err := s.Update(func(cfg *Config) error { cfg.WebSettings.Planner = false; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if raw := webSettingsField(t, s.Path(), "planner"); raw != nil {
+		t.Fatalf("planner off saved as %s", raw)
+	}
+}
+
 // Per-Project defaults from before the setting migrate into it on load: the
 // newest Project's valid ones when the setting is unset, never over a set one;
 // every Project loses them and the next save writes none.

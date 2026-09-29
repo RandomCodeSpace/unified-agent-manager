@@ -370,14 +370,14 @@ func TestTitleModelSetting(t *testing.T) {
 	if got, err := set(map[string]string{"plain": store.WebTitleModelNone}); err != nil || got.TitleModel["plain"] != store.WebTitleModelNone {
 		t.Fatalf("opt out plain = %+v, %v", got, err)
 	}
-	if f := frameOf(t, sub, "settings"); string(f.data["settings"]) != `{"send_default":"steer","terminal":false,"title_model":{"plain":"none"}}` {
+	if f := frameOf(t, sub, "settings"); string(f.data["settings"]) != `{"send_default":"steer","terminal":false,"planner":false,"title_model":{"plain":"none"}}` {
 		t.Fatalf("opt-out settings frame = %s", f.data["settings"])
 	}
 	got, err := set(map[string]string{"fake": "auto"})
 	if err != nil || got.TitleModel["fake"] != "auto" || len(got.TitleModel) != 2 {
 		t.Fatalf("set auto = %+v, %v", got, err)
 	}
-	if f := frameOf(t, sub, "settings"); string(f.data["settings"]) != `{"send_default":"steer","terminal":false,"title_model":{"fake":"auto","plain":"none"}}` {
+	if f := frameOf(t, sub, "settings"); string(f.data["settings"]) != `{"send_default":"steer","terminal":false,"planner":false,"title_model":{"fake":"auto","plain":"none"}}` {
 		t.Fatalf("settings frame = %s", f.data["settings"])
 	}
 	// A clear needs no titles capability; it clears only what it names.
@@ -424,13 +424,13 @@ func TestTitleModelRoute(t *testing.T) {
 			t.Fatalf("PATCH %s = %s", body, got)
 		}
 	}
-	if w := ts.do(http.MethodGet, "/api/settings", "", auth); strings.TrimSpace(w.Body.String()) != `{"send_default":"steer","terminal":false}` {
+	if w := ts.do(http.MethodGet, "/api/settings", "", auth); strings.TrimSpace(w.Body.String()) != `{"send_default":"steer","terminal":false,"planner":false}` {
 		t.Fatalf("GET after refused PATCHes = %s", w.Body)
 	}
-	if got := patch(`{"title_model":{"fake":"none"}}`, http.StatusOK); got != `{"send_default":"steer","terminal":false,"title_model":{"fake":"none"}}` {
+	if got := patch(`{"title_model":{"fake":"none"}}`, http.StatusOK); got != `{"send_default":"steer","terminal":false,"planner":false,"title_model":{"fake":"none"}}` {
 		t.Fatalf("PATCH opt-out = %s", got)
 	}
-	if got := patch(`{"title_model":{"fake":""}}`, http.StatusOK); got != `{"send_default":"steer","terminal":false}` {
+	if got := patch(`{"title_model":{"fake":""}}`, http.StatusOK); got != `{"send_default":"steer","terminal":false,"planner":false}` {
 		t.Fatalf("PATCH unset = %s", got)
 	}
 	ts.prov.SetModels([]agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6)}, nil)

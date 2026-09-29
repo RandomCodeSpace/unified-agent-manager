@@ -205,7 +205,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}/queue/{request_id}", s.handleQueueCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/close", s.handleClose)
-	mux.HandleFunc("POST /api/sessions/{id}/settle", s.handleStage((*Manager).Settle))
+	mux.HandleFunc("POST /api/sessions/{id}/settle", s.handleSettle)
 	mux.HandleFunc("POST /api/sessions/{id}/reopen", s.handleStage((*Manager).Reopen))
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleStage((*Manager).Archive))
 	mux.HandleFunc("POST /api/sessions/{id}/interactions/{iid}", s.handleAnswer)
@@ -215,6 +215,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/events/detail", s.handleDetailEvents)
 	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}", s.handleItemBody)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
+	s.boardRoutes(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
@@ -365,11 +366,24 @@ func writeFailure(w http.ResponseWriter, err error) {
 		log.Error("web request failed", "error", err)
 	}
 	var webErr *Error
-	if errors.As(err, &webErr) && webErr.ProjectID != "" {
-		writeJSON(w, status, map[string]string{"error": msg, "project_id": webErr.ProjectID})
+	if !errors.As(err, &webErr) {
+		writeError(w, status, msg)
 		return
 	}
-	writeError(w, status, msg)
+	body := map[string]any{"error": msg}
+	if webErr.ProjectID != "" {
+		body["project_id"] = webErr.ProjectID
+	}
+	if webErr.Code != "" {
+		body["code"] = webErr.Code
+	}
+	if len(webErr.Refs) > 0 {
+		body["refs"] = webErr.Refs
+	}
+	if webErr.Cards != nil {
+		body["cards"] = webErr.Cards
+	}
+	writeJSON(w, status, body)
 }
 
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -502,6 +516,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			patch.Terminal = new(bool)
 			if json.Unmarshal(raw, patch.Terminal) != nil || string(raw) == "null" {
 				writeError(w, http.StatusBadRequest, "terminal must be true or false")
+				return
+			}
+		case "planner":
+			patch.Planner = new(bool)
+			if json.Unmarshal(raw, patch.Planner) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "planner must be true or false")
 				return
 			}
 		case "hidden_models":
