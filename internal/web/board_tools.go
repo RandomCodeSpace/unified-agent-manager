@@ -240,7 +240,7 @@ var boardToolSet = []boardTool{
 				"win_condition": stringProp("One line saying what done means."),
 			})),
 		}), (*Manager).toolSplit),
-	defineTool("board_request", "Ask the owner to decide on a card. done: you finished the subtask you hold; its acceptance command runs first and evidence of the change is attached. "+
+	defineTool("board_request", "Ask the owner to decide on a card. done: you finished the subtask you hold; its acceptance command must pass, and evidence of the change is attached. "+
 		"cancel: the card should not be done. blocked: you can't go on, because of the blocker card or what the comment says.",
 		toolSchema([]string{"ref", "kind", "comment"}, map[string]any{
 			"ref":                 refProp,
@@ -773,8 +773,8 @@ func (m *Manager) toolRequest(ctx context.Context, sc boardScope, in requestArgs
 	return reply, err
 }
 
-// requestDone files a done claim (ADR 0005 §6): evaluateClaim runs the
-// subtask's acceptance command and gathers the evidence, then the request is
+// requestDone files a done claim (ADR 0005 §6): evaluateClaim gathers the
+// evidence and runs the subtask's acceptance command, then the request is
 // filed. The claim is bound to the Task: archiving it cancels the run and
 // files nothing.
 func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs) (toolReply, error) {
