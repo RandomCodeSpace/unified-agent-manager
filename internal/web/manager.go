@@ -152,13 +152,20 @@ type Manager struct {
 	// them until they end, and Shutdown waits for it.
 	terminals  map[*terminal]struct{}
 	terminalWG sync.WaitGroup
-	// hostTools, when set, returns the host tools a Task's conversation
-	// registers and the CallTool bound to that Task. It may run with mu held.
-	// Nothing sets it yet.
-	hostTools func(taskID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
+	// hostTools, when set, returns the host tools the conversation of a Task
+	// in a Project registers and the CallTool bound to that Task. It runs
+	// with mu held, so it takes no lock and never uses the planner store.
+	// NewManager sets it to the planner's tools (board_tools.go).
+	hostTools func(taskID, projectID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
 	// board is the planner database while the Settings switch is on
 	// (board.go).
 	board boardDB
+	// accept runs the planner's acceptance commands, one per Project at a
+	// time (board_evidence.go).
+	accept acceptRunners
+	// claims are the done claims each Task's planner tools are evaluating,
+	// which archiving the Task cancels (board_tools.go). Guarded by mu.
+	claims map[string]map[*claimRun]struct{}
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -201,6 +208,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		m.providers[p.Name()] = p
 		m.order = append(m.order, p.Name())
 	}
+	m.hostTools = m.taskHostToolsLocked
 	return m
 }
 
@@ -1963,8 +1971,11 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	// A new conversation has no earlier record: everything streams in.
 	s.history = HistoryLoaded
 	s.gen = 1
+	m.mu.Lock()
+	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}, project.ID)
+	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
-	conv, err := prov.Open(ctx, m.withHostTools(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}))
+	conv, err := prov.Open(ctx, open)
 	cancel()
 	if err != nil {
 		log.Warn("open web conversation failed", "provider", prov.Name(), "error", err)
@@ -2170,10 +2181,11 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 	}
 }
 
-// withHostTools adds the host tools of req's Task to req, when there are any.
-func (m *Manager) withHostTools(req agentapi.OpenRequest) agentapi.OpenRequest {
+// withHostToolsLocked adds the host tools of req's Task, in the Project
+// projectID, to req, when there are any. The caller holds mu.
+func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, projectID string) agentapi.OpenRequest {
 	if m.hostTools != nil {
-		req.Tools, req.CallTool = m.hostTools(req.SessionID)
+		req.Tools, req.CallTool = m.hostTools(req.SessionID, projectID)
 	}
 	return req
 }
@@ -2220,7 +2232,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.cancelHistoryLocked(s)
 	s.gen++
 	gen := s.gen
-	req := m.withHostTools(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)})
+	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}, s.projectID)
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
 	s.context = nil
@@ -3308,9 +3320,14 @@ func (m *Manager) Reopen(id string) (SessionSummary, error) {
 
 // Archive moves an active or settled Task to its final stage; nothing moves
 // it back. An active Task must meet the same conditions as for Settle.
-// Archiving releases the Task's planner holds.
+// Archiving discards the Task's done claims in progress and releases its
+// planner holds.
 func (m *Manager) Archive(id string) (SessionSummary, error) {
-	return m.reconciled(m.moveStage(id, StageArchived, StageActive, StageSettled))
+	summary, err := m.moveStage(id, StageArchived, StageActive, StageSettled)
+	if err == nil {
+		m.endClaims(id)
+	}
+	return m.reconciled(summary, err)
 }
 
 // reconciled reconciles the planner after a Task transition that succeeded.

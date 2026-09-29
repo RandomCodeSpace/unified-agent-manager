@@ -1,5 +1,7 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'vitest';
+import type { Item } from '../../src/api';
+import { ToolRow } from '../../src/components/Transcript';
 import { saveDensity } from '../../src/lib/density';
 import { log, openMenu, openTask } from './render';
 
@@ -161,5 +163,18 @@ describe('history', () => {
     const menu = await openMenu(user, 'Actions for subagent Audit the remaining packages');
     await user.click(menu.getByRole('menuitem', { name: 'Show where it was spawned' }));
     await waitFor(() => expect(document.getElementById('item-h-audit')?.classList.contains('animate-flash')).toBe(true));
+  });
+});
+
+describe('planner', () => {
+  test('a board_* call names its planner card on its row', () => {
+    const item: Item = {
+      id: 'board-1', kind: 'tool', time: '2026-09-29T12:00:00Z',
+      tool: { name: 'board_get', status: 'completed', display_arg: '#12', board_card: { id: 'c1', seq: 12, kind: 'subtask', title: 'Make it', status: 'doing' } },
+    };
+    const view = render(<ToolRow item={item} live={false} />);
+    expect(view.getByTitle('#12 Make it').textContent).toBe('#12 Make it');
+    view.rerender(<ToolRow item={{ ...item, tool: { name: 'board_get', status: 'failed', display_arg: '#12' } }} live={false} />);
+    expect(view.queryByTitle('#12 Make it')).toBeNull();
   });
 });

@@ -332,6 +332,15 @@ export interface FileDeclaration {
   type_hint?: string;
 }
 
+/** A planner card as a `board_*` tool's result names it. */
+export interface ToolBoardCard {
+  id: string;
+  seq: number;
+  kind: 'epic' | 'story' | 'subtask';
+  title: string;
+  status: string;
+}
+
 export interface ToolCall {
   name: string;
   title?: string;
@@ -345,6 +354,8 @@ export interface ToolCall {
   path?: string;
   has_input?: boolean;
   has_output?: boolean;
+  /** The planner card a completed `board_*` call was about, read from its result. */
+  board_card?: ToolBoardCard;
   /** Client-only semantic outcome retained after page eviction. */
   question_outcome?: 'pending' | 'answered' | 'declined' | 'none' | 'failed';
 }

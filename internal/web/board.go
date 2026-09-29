@@ -119,7 +119,6 @@ func (m *Manager) openBoard(ctx context.Context) error {
 	m.mu.Lock()
 	m.boardRevs = revs
 	m.mu.Unlock()
-	// TODO(#253): register the board_* agent tools through m.hostTools.
 	m.board.mu.Lock()
 	m.board.st, m.board.broken = st, false
 	m.board.mu.Unlock()
@@ -770,9 +769,12 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 		return c, SessionSummary{}, invalidBoard("#%d has no pending confirmed subtasks", c.Seq)
 	}
 	a := board.Owner(gitHead(ctx, dir))
-	base := board.Baseline{Head: a.Head}
+	// A launch's hold measures its evidence from here, as a claim's does.
+	var base board.Baseline
 	if !plan {
-		base.Dirty, _ = uncommitted(ctx, dir)
+		if base, err = baseline(ctx, dir); err != nil {
+			return c, SessionSummary{}, err
+		}
 	}
 	create := m.launchSelection(req)
 	create.ProjectID = c.ProjectID
