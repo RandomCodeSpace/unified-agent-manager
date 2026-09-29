@@ -2,7 +2,7 @@ import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { UPDATE_EVENTS, api, describeError, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, undecidedHolds, type Card, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -12,7 +12,10 @@ import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { needsYouCount, newsReader, pageTitle, tasksOf } from './lib/tasks';
+import { mostRecentProject, needsYouCount, newsReader, pageTitle, tasksOf } from './lib/tasks';
+import { pendingRequests } from './lib/board';
+import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
+import { SettleDialog, type SettleAsk } from './components/planner/SettleDialog';
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
 import { useResizable } from './lib/useResizable';
@@ -45,6 +48,8 @@ const HASH_PREFIX = '#task=';
 /** A wait shorter than this shows nothing new: no loading veil or placeholder, no connection banner. */
 const QUIET_MS = 600;
 const SETTINGS_HASH = '#settings';
+/** The Planner view: `#planner=<project id or unassigned>`. */
+const PLANNER_PREFIX = '#planner=';
 /** The shell fills the viewport and keeps clear of the notch, rounded corners and home indicator of an installed app (`viewport-fit=cover`). */
 /** Typing anywhere (Settings forms, a subagent follow-up) counts as unsent work, like a composer draft. */
 function editing(): boolean {
@@ -70,6 +75,11 @@ function readJSON<T>(key: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function hashPlanner(): string | null {
+  const h = window.location.hash;
+  return h.startsWith(PLANNER_PREFIX) ? decodeURIComponent(h.slice(PLANNER_PREFIX.length)) || null : null;
 }
 
 function hashSelection(): string | null {
@@ -108,6 +118,9 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() => readJSON<boolean>(SIDEBAR_KEY, true));
   const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
   const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === SETTINGS_HASH);
+  const [plannerOpen, setPlannerOpen] = useState(() => window.location.hash.startsWith(PLANNER_PREFIX));
+  // Settle found subtasks the Task holds: the dialog decides each (ADR 0005 §5).
+  const [settleAsk, setSettleAsk] = useState<SettleAsk | null>(null);
   // New task opens a draft for a Project on its defaults; nothing exists on the service until its first Send.
   // `tick` refocuses its composer when New task is chosen again.
   const [newTask, setNewTask] = useState<{ projectId: string; defaults: TaskDefaults; tick: number } | null>(null);
@@ -192,15 +205,6 @@ export default function App() {
     if (decision === 'reload') window.location.reload();
     else if (decision === 'offer') setUpdated(true);
   }, [meta]);
-
-  // Keep the view in the URL fragment so a reload lands on it: `#settings`, else the selected task.
-  useEffect(() => {
-    const id = state.selectedId;
-    let next = '';
-    if (settingsOpen) next = SETTINGS_HASH;
-    else if (id) next = `${HASH_PREFIX}${encodeURIComponent(id)}`;
-    if (window.location.hash !== next) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next}`);
-  }, [state.selectedId, settingsOpen]);
 
   /**
    * Hides or shows the sidebar (wide layout), remembered per browser. Focus follows the
@@ -404,7 +408,7 @@ export default function App() {
   const late = useLate(state.connection !== 'connected', QUIET_MS);
   const loading = late && state.connection === 'connecting';
   const connection = late && !loading ? state.connection : 'connected';
-  const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen, QUIET_MS);
+  const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen && !plannerOpen, QUIET_MS);
 
   // A refresh with the catalogs on screen keeps them on a failure (checkVersion); without them it is a retry of the first read.
   const refreshMeta = useCallback(() => (meta ? checkVersion(true) : setMetaAttempt((n) => n + 1)), [meta, checkVersion]);
@@ -462,8 +466,43 @@ export default function App() {
     setSheetOpen(false);
     setDrawerOpen(false);
     setSettingsOpen(false);
+    setPlannerOpen(false);
     setNewTask(null);
   }, [recentTasks]);
+
+  /** The Planner view in the main pane (like Settings, it keeps the selected Task behind it). */
+  const showPlanner = useCallback(() => {
+    setPlannerOpen(true);
+    setSettingsOpen(false);
+    setNewTask(null);
+    setDrawerOpen(false);
+    setSheetOpen(false);
+  }, []);
+  const openTask = useCallback((id: string) => select(id), [select]);
+  const plannerOn = !!state.settings.planner && state.loaded;
+  const planner = usePlannerController({
+    enabled: plannerOn,
+    boards: state.boards,
+    jobs: state.boardJobs,
+    projects: state.projects,
+    sessions: state.sessions,
+    dispatch,
+    onShowPlanner: showPlanner,
+    onOpenTask: openTask,
+    initialProject: hashPlanner(),
+  });
+  const plannerProject = planner.value.ui.project;
+  const setPlannerUi = planner.value.setUi;
+
+  // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#planner=…`, else the selected task.
+  useEffect(() => {
+    const id = state.selectedId;
+    let next = '';
+    if (settingsOpen) next = SETTINGS_HASH;
+    else if (plannerOpen) next = `${PLANNER_PREFIX}${encodeURIComponent(plannerProject ?? '')}`;
+    else if (id) next = `${HASH_PREFIX}${encodeURIComponent(id)}`;
+    if (window.location.hash !== next) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next}`);
+  }, [state.selectedId, settingsOpen, plannerOpen, plannerProject]);
   // A `#task=` fragment the user navigates to (back/forward, a pasted URL) selects that Task; the
   // write above uses replaceState, which fires no hashchange.
   useEffect(() => {
@@ -592,7 +631,25 @@ export default function App() {
         if (!current || current.name === name) return;
         await runTask(id, () => api.rename(id, name), 'rename the task').catch(() => {});
       },
-      settle: (id) => void runTask(id, () => api.stage(id, 'settle'), 'settle the task').catch(() => {}),
+      // A Task holding subtasks answers 409 holds_undecided: the Settle dialog decides each, then settles.
+      settle: (id) =>
+        void runTask(id, async () => {
+          try {
+            return await api.settle(id);
+          } catch (e) {
+            const held = undecidedHolds(e);
+            if (!held) throw e;
+            const task = state.sessions.find((s) => s.id === id);
+            setSettleAsk({
+              taskName: task ? `“${taskName(task) || 'New task'}”` : 'this task',
+              cards: held as Card[],
+              settle: async (holds) => {
+                const s = await api.settle(id, holds);
+                dispatch({ type: 'upsert_session', session: s });
+              },
+            });
+          }
+        }, 'settle the task').catch(() => {}),
       reopen: (id) => void runTask(id, () => api.stage(id, 'reopen'), 'reopen the task').catch(() => {}),
       archive: (id) => openTaskDialog({ kind: 'archive', id }),
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
@@ -617,17 +674,29 @@ export default function App() {
       settingsOpen,
       onSettings: () => {
         setSettingsOpen((o) => !o);
+        setPlannerOpen(false);
         setDrawerOpen(false);
         setNewTask(null);
       },
+      planner: plannerOn
+        ? {
+            open: plannerOpen && !settingsOpen,
+            onOpen: (projectId) => {
+              if (projectId) setPlannerUi({ project: projectId, selected: null, epic: null, panel: null });
+              if (plannerOpen && !settingsOpen && !projectId) setPlannerOpen(false);
+              else showPlanner();
+            },
+          }
+        : undefined,
     }),
-    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar],
+    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, plannerOn, plannerOpen, setPlannerUi, showPlanner],
   );
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
 
   // The tab title and the installed app's badge carry how many Tasks wait for the user; the title names the open Task.
-  const attention = useMemo(() => needsYouCount(state.sessions), [state.sessions]);
+  // Pending planner requests need the owner too (ADR 0005 §10): they fold into the same count.
+  const attention = useMemo(() => needsYouCount(state.sessions) + (plannerOn ? pendingRequests(state.boards) : 0), [state.sessions, state.boards, plannerOn]);
   // A new Task shows as "New task"; only real Tasks count as needing you.
   let openName: string | null = null;
   if (selected) openName = taskName(selected);
@@ -651,7 +720,7 @@ export default function App() {
   let shown: SessionDetail | null = null;
   if (state.detail && selected) shown = state.detail;
   else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous;
-  const stale = !settingsOpen && !newTask && !!shown && shown !== state.detail;
+  const stale = !settingsOpen && !plannerOpen && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
   const terminalProject = terminalId && state.settings.terminal ? state.projects.find((p) => p.id === terminalId) : undefined;
@@ -710,8 +779,13 @@ export default function App() {
   const columns = sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]';
 
   let pane: React.ReactNode;
+  // The Board the planner opens on: the filtered Project when it has git, else the most recently active git Project.
+  const gitProjects = state.projects.filter((p) => !p.no_git);
+  const defaultBoard = (filter && gitProjects.some((p) => p.id === filter) ? filter : mostRecentProject(gitProjects, state.sessions, state.selectedId)?.id) ?? null;
   if (settingsOpen) {
     pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} />;
+  } else if (plannerOpen) {
+    pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={() => setPlannerOpen(false)} />;
   } else if (newTask && newTaskProject) {
     pane = <NewTaskPane key={newTask.projectId} project={newTaskProject} defaults={newTask.defaults} onSend={createTask} leading={leading} />;
   } else if (shown) {
@@ -765,6 +839,7 @@ export default function App() {
 
   return (
     <AppContext.Provider value={ctx}>
+      <PlannerContext.Provider value={planner.value}>
       <TaskActionsContext.Provider value={taskActions}>
         <TooltipProvider delay={400} closeDelay={0}>
           <div
@@ -818,8 +893,8 @@ export default function App() {
                 <div className="flex min-h-0 flex-1 flex-col" inert={stale} aria-busy={stale || undefined}>
                   {pane}
                 </div>
-                {/* Settings and a new Task do not wait on the stream. */}
-                <LoadingVeil show={loading && !settingsOpen && !newTask} />
+                {/* Settings, the planner and a new Task do not wait on the stream. */}
+                <LoadingVeil show={loading && !settingsOpen && !plannerOpen && !newTask} />
               </div>
               {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} onClose={closeTerminal} />}
             </main>
@@ -885,9 +960,12 @@ export default function App() {
               busy={!!taskDialog && !!busyTasks[taskDialog.id]}
               onConfirm={() => void confirmTaskDialog()}
             />
+            <SettleDialog ask={settleAsk} onClose={() => setSettleAsk(null)} />
+            {planner.host}
           </div>
         </TooltipProvider>
       </TaskActionsContext.Provider>
+      </PlannerContext.Provider>
     </AppContext.Provider>
   );
 }

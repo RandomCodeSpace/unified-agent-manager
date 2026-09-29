@@ -12,8 +12,8 @@ describe('app shell', () => {
     expect(side.getByRole('button', { name: /Fix re-attach redraw regression/ })).toBeTruthy();
     expect(side.getByRole('button', { name: /Archived 2/ })).toBeTruthy();
     expect(side.getByRole('status').textContent).toContain('Connected');
-    // Seven tasks wait for the user: two for permission, five for an answer.
-    expect(document.title).toBe('(7) UAM');
+    // Seven tasks wait for the user (two for permission, five for an answer), and six planner requests once the Boards load.
+    await waitFor(() => expect(document.title).toBe('(13) UAM'));
   });
 
   test('opening a task from the sidebar shows it and keeps it in the URL', async () => {

@@ -5,6 +5,7 @@
 
 import { BADGE_COLORS, LIVE, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { itemCursor } from '../lib/historyWindow';
+import { boardMock } from './board';
 import { seed, type MockState, type MockTask } from './data';
 
 type Json = Record<string, unknown>;
@@ -158,6 +159,27 @@ export function install(): { received: Received[] } {
   };
   const find = (id: string) => st.tasks.find((t) => t.id === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
+  // The planner (ADR 0005); `?mock&bigplan` adds about 200 cards to notes-site.
+  const board = boardMock({
+    broadcast: (name, payload) => broadcast(name, payload),
+    projects: () => st.projects,
+    settings: () => st.settings,
+    task: (id) => { const t = find(id); return t && summary(t); },
+    createTask: (projectId, name, prompt) => {
+      const p = st.projects.find((x) => x.id === projectId)!;
+      const d = st.settings.task_defaults;
+      const t: MockTask = {
+        id: nextId('t'), project_id: p.id, provider: 'copilot', name, title: '', workdir: p.dir, conversation_id: nextId('conv'),
+        model: d?.model ?? 'auto', last_model: '', effort: d?.effort, context_size: d?.context_size, mode: d?.mode, subagents_running: 0,
+        state: 'working', open: true, pending: 0, created_at: now(), updated_at: now(), capabilities: st.meta.providers[0].capabilities,
+        items: [{ id: nextId('u'), kind: 'user', text: prompt, time: now() }], interactions: [], subagents: [], history_truncated: false, last_submission: null, agentItems: {},
+      };
+      st.tasks.push(t);
+      broadcast('session', { session: summary(t) });
+      void reply(t, 'Reading the card and the files it names, then I will claim the next subtask.', t.model === 'auto' ? 'mai-code-1.1-flash' : t.model);
+      return summary(t);
+    },
+  }, { big: new URLSearchParams(window.location.search).has('bigplan') });
   /** Stored uploads by id: the bytes and the record the routes hand out. */
   const uploads = new Map<string, Attachment & { id: string; task: string; bytes: Uint8Array }>();
   /** The service's badge rule, roughly: first letter or digit plus one from the rest, unique text, an unused tone. */
@@ -605,6 +627,8 @@ export function install(): { received: Received[] } {
     if (path === '/api/auth') return json(200, { authenticated: true, required: false });
     if (path === '/api/logout') return json(204);
     if (path === '/api/meta') return json(200, st.meta);
+    const planned = board.route(method, url, body);
+    if (planned) return planned;
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
     if (path === '/api/settings/custom-models/discover' && method === 'POST') {
@@ -613,7 +637,12 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'planner') return fail(400, `unknown setting "${key}"`);
+      if (body.planner !== undefined) {
+        if (typeof body.planner !== 'boolean') return fail(400, 'planner must be true or false');
+        st.settings = { ...st.settings, planner: body.planner };
+        broadcast('settings', { settings: st.settings });
+      }
       if (body.terminal !== undefined) {
         if (typeof body.terminal !== 'boolean') return fail(400, 'terminal must be true or false');
         st.settings = { ...st.settings, terminal: body.terminal };
@@ -811,6 +840,10 @@ export function install(): { received: Received[] } {
         case 'settle':
           if (stage !== 'active') return fail(409, `a ${stage} task cannot be settled`);
           if (blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
+          if (st.settings.planner) {
+            const holds = board.settle(t.id, body);
+            if (holds) return holds;
+          }
           touch(t, { stage: 'settled', settled_at: now(), state: 'closed', open: false });
           return json(200, summary(t));
         case 'reopen':
@@ -821,6 +854,7 @@ export function install(): { received: Received[] } {
           if (stage === 'archived') return fail(409, 'the task is already archived');
           if (stage === 'active' && blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
           touch(t, { stage: 'archived', archived_at: now(), state: 'closed', open: false });
+          board.ended(t.id);
           return json(200, summary(t));
       }
     }
