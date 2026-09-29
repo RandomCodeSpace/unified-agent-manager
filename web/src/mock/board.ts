@@ -164,8 +164,8 @@ function seedBoard(big: boolean): Seeded {
     }),
     req(3, 9, 'change', 't1', 'Previews are also needed for the Task the user last opened, not only the open one.', { payload: { title: 'Send subagent previews only for recent Tasks', win_condition: 'Only the five recent Tasks carry subagent previews.' } }),
     req(4, 20, 'blocked', 't19', 'The darwin targets need the signing step first; the notarization call fails without a key.', { payload: { blocker: 'cp1-22' } }),
-    req(5, 28, 'split', 't18', 'This is three pieces of work; the first is done already.', {
-      payload: { children: [{ title: 'Parse the conventional commit type', win_condition: 'Every merged PR gets a type or "other".', done: true }, { title: 'Group feat and fix entries', win_condition: 'Features and fixes are separate sections.' }, { title: 'Fold chores into one line', win_condition: 'Chores collapse to a count.' }] },
+    req(5, 28, 'split', 't18', 'This is four pieces of work: reading the merged pull requests comes first, then the three checklist items; the commit type already parses.', {
+      payload: { children: [{ title: 'Read merged pull requests since the last tag', win_condition: 'The list matches git log between the two tags.' }] },
     }),
     req(6, 29, 'cancel', 't18', 'The pull request template already produces upgrade notes; this section would repeat them.'),
   ];
@@ -234,12 +234,19 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     const t = host.task(taskId);
     return !!t && (t.stage ?? 'active') === 'active' && LIVE.includes(t.state);
   };
-  /** An owner save, launch, accept or restore: confirmed and re-pinned (§1). */
-  const touch = (c: Card) => {
+  const confirmAndPin = (c: Card) => {
     c.confirmed = true;
     delete c.expires_at;
     c.pinned_sha = head(c);
     delete c.stale;
+  };
+  /**
+   * An owner touch (save, create, move, checklist, confirm, launch, accept, restore, status done
+   * or todo): the card is confirmed and re-pinned (§1), and so is every unconfirmed ancestor.
+   */
+  const touch = (c: Card) => {
+    confirmAndPin(c);
+    for (let at = c.parent_id ? byId(c.parent_id) : undefined; at; at = at.parent_id ? byId(at.parent_id) : undefined) if (!at.confirmed) confirmAndPin(at);
   };
   const withdraw = (c: Card) => {
     for (const r of requests) if (r.card_id === c.id && r.status === 'pending') Object.assign(r, { status: 'withdrawn', decided_at: now() });
@@ -258,6 +265,49 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if (comment) say(c, author, comment, author === 'uam');
   };
   const openBlockers = (c: Card) => c.blocked_by.map(byId).filter((b): b is Card => !!b && b.status !== 'done' && b.status !== 'cancelled');
+
+  /**
+   * A split (§7): the given children first, then the checklist items. Under a story they become
+   * sibling subtasks right after the original, which is cancelled ("split into #a, #b, …"); under
+   * an epic or at the root the original turns into a story holding them. Ticked items are
+   * accepted with the split when a request is accepted, else they wait with a done request. A
+   * live hold moves to the first pending new subtask.
+   */
+  function splitCard(c: Card, given: { title: string; win_condition?: string; done?: boolean }[], accepted: boolean) {
+    const parent = c.parent_id ? byId(c.parent_id) : undefined;
+    const under = parent?.kind === 'story' ? parent : undefined;
+    const items = [...given, ...c.checklist.map((i) => ({ title: i.text, win_condition: '', done: i.done }))];
+    const holder = c.held_by;
+    endHold(c, 'split');
+    withdraw(c);
+    const made: Card[] = [];
+    for (const it of items) {
+      const leaf = card(nextSeq++, c.project_id, 'subtask', null, it.title, { parent_id: under ? under.id : c.id, win_condition: it.win_condition ?? '', status: it.done && accepted ? 'done' : 'planned', created_at: now(), min: 0 });
+      cards.push(leaf);
+      made.push(leaf);
+      if (!it.done) continue;
+      if (accepted) say(leaf, 'owner', `Accepted with the split: ticked on #${c.seq}.`);
+      else requests.push({ id: id('rq'), card_id: leaf.id, task_id: holder ?? '', agent_id: '', kind: 'done', comment: `Ticked on #${c.seq}'s checklist before the split.`, payload: {}, evidence: {}, flags: [], base_revision: 0, status: 'pending', created_at: now() });
+    }
+    if (under) {
+      // Right after the original, in order: the story's children are ranked again.
+      const order = cards.filter((x) => x.parent_id === under.id && !made.includes(x)).sort((a, b) => a.rank - b.rank || a.seq - b.seq);
+      order.splice(order.indexOf(c) + 1, 0, ...made);
+      order.forEach((x, i) => (x.rank = i));
+      c.status = 'cancelled';
+      say(c, 'uam', `split into ${made.map((x) => `#${x.seq}`).join(', ')}`, true);
+    } else {
+      c.kind = 'story';
+      c.checklist = [];
+      made.forEach((x, i) => (x.rank = i));
+    }
+    const first = made.find((x) => x.status !== 'done');
+    if (holder && first) {
+      first.status = 'doing';
+      first.held_by = holder;
+      (holds[first.id] ??= []).push({ id: id('ho'), task_id: holder, started_at: now(), baseline_head: head(first), baseline_dirty: [] });
+    }
+  }
 
   /**
    * Every write goes through here: the change, then the derived fields (confirmed, pending
@@ -382,27 +432,9 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
           if (c.held_by) releaseHold(c, 'todo', 'blocked', `blocked: ${r.comment}`, 'uam');
           break;
         }
-        case 'split': {
-          const children = Array.isArray(r.payload.children) ? (r.payload.children as { title: string; win_condition?: string; done?: boolean }[]) : [];
-          const holder = c.held_by;
-          endHold(c, 'split');
-          withdraw(c);
-          c.kind = 'story';
-          delete c.held_by;
-          let first: Card | undefined;
-          children.forEach((ch, i) => {
-            const leaf = card(nextSeq++, c.project_id, 'subtask', null, ch.title, { parent_id: c.id, rank: i, win_condition: ch.win_condition ?? '', status: ch.done ? 'done' : 'planned', created_at: now(), min: 0 });
-            cards.push(leaf);
-            if (ch.done) say(leaf, 'owner', 'Accepted with the split: ticked on the parent.');
-            else if (!first) first = leaf;
-          });
-          if (holder && first) {
-            first.status = 'doing';
-            first.held_by = holder;
-            (holds[first.id] ??= []).push({ id: id('ho'), task_id: holder, started_at: now(), baseline_head: head(first), baseline_dirty: [] });
-          }
+        case 'split':
+          splitCard(c, Array.isArray(r.payload.children) ? (r.payload.children as { title: string; win_condition?: string; done?: boolean }[]) : [], true);
           break;
-        }
         case 'change':
           for (const key of ['title', 'desc', 'win_condition', 'prio', 'effort', 'labels'] as const) if (key in r.payload) (c as unknown as Json)[key] = r.payload[key];
           break;
@@ -466,14 +498,18 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       if (!title || !['epic', 'story', 'subtask'].includes(kind)) return refuse(400, 'invalid', 'a card needs a kind and a title');
       const parent = body.parent_id ? byId(String(body.parent_id)) : undefined;
       const c = card(nextSeq++, pid, kind, null, title, { parent_id: parent?.id ?? null, win_condition: String(body.win_condition ?? ''), desc: String(body.desc ?? ''), created_at: now(), min: 0 });
-      return done(commit(() => void cards.push(c)), () => json(201, c));
+      return done(commit(() => {
+        cards.push(c);
+        touch(c);
+      }), () => json(201, c));
     }
     if (path === '/api/board/links') {
       const blocker = byId(String(body.blocker ?? url.searchParams.get('blocker') ?? ''));
       const blocked = byId(String(body.blocked ?? url.searchParams.get('blocked') ?? ''));
       if (!blocker || !blocked) return refuse(404, 'invalid', 'card not found');
       if (method === 'POST') {
-        if (!blocker.confirmed) return refuse(409, 'unconfirmed_parent', 'a blocker link may point only at a confirmed card');
+        // Links point only at confirmed cards (§3); the refusal is a plain invalid.
+        if (!blocker.confirmed) return refuse(409, 'invalid', 'a blocker link may point only at a confirmed card');
         return done(commit(() => {
           if (!blocked.blocked_by.includes(blocker.id)) blocked.blocked_by.push(blocker.id);
           if (!blocker.blocks.includes(blocked.id)) blocker.blocks.push(blocked.id);
@@ -581,7 +617,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
           if (openBlockers(c).length) return refuse(409, 'guard_blockers', 'open blockers', { blockers: openBlockers(c).map((b) => b.id) });
         }
         return done(commit(() => {
-          touch(c);
+          if (status === 'done' || status === 'todo') touch(c);
           if (c.held_by) releaseHold(c, status, status === 'cancelled' ? 'cancelled' : 'owner');
           else {
             withdraw(c);
@@ -613,14 +649,9 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       }
       case 'POST split': {
         const children = Array.isArray(body.children) ? (body.children as { title: string; win_condition: string }[]) : [];
-        if (!children.length) return refuse(400, 'invalid', 'a split needs children');
-        return done(commit(() => {
-          c.kind = 'story';
-          children.forEach((ch, i) => {
-            const leaf = card(nextSeq++, c.project_id, 'subtask', null, ch.title, { parent_id: c.id, rank: i, win_condition: ch.win_condition, created_at: now(), min: 0 });
-            cards.push(leaf);
-          });
-        }), ok);
+        if (c.kind !== 'subtask') return refuse(409, 'invalid', 'only a subtask can be split');
+        if (!children.length && !c.checklist.length) return refuse(400, 'invalid', 'a split needs children');
+        return done(commit(() => splitCard(c, children, false)), ok);
       }
       case 'POST launch':
         return launch(c);

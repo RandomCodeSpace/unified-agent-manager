@@ -150,7 +150,7 @@ const VIEW_ITEMS = [
 export function PlannerView({ leading, inline, onClose, defaultProject }: Readonly<{ leading?: ReactNode; inline: boolean; onClose: () => void; defaultProject: string | null }>) {
   const p = usePlanner();
   const { narrow } = useApp();
-  const { ui, setUi, projects, boards, enabled } = p;
+  const { ui, setUi, projects, boards } = p;
   const git = projects.filter((x) => !x.no_git);
   const unassigned = boards.unassigned?.data?.cards.length ?? 0;
   const project = projects.find((x) => x.id === ui.project);
@@ -177,9 +177,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const closePanel = () => setUi({ panel: null });
 
   let body: ReactNode;
-  if (!enabled) {
-    body = <Empty>The planner is off. Turn it on in Settings → Planner.</Empty>;
-  } else if (project?.no_git) {
+  if (project?.no_git) {
     body = <Empty>{project.name} is not a git repository, so it has no plan.</Empty>;
   } else if (!key) {
     body = <Empty>Add a git project to plan its work.</Empty>;

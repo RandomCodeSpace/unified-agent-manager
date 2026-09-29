@@ -109,6 +109,11 @@ export function install(): { received: Received[] } {
   const received: Received[] = [];
   // `?mock&slow=1500` holds every reply and the first snapshot that long, to look at the loading states.
   const slow = Math.max(0, Number(new URLSearchParams(window.location.search).get('slow')) || 0);
+  // `?mock&planner=off` starts with the planner off; `?mock&planner=unset` is a service that predates it (no setting, no routes).
+  const plannerMode = new URLSearchParams(window.location.search).get('planner');
+  const plannerKnown = plannerMode !== 'unset';
+  if (!plannerKnown) delete st.settings.planner;
+  else if (plannerMode === 'off') st.settings.planner = false;
   const createdBy = new Map<string, string>();
   const sources = new Set<FakeEventSource>();
   let seq = 1;
@@ -627,7 +632,7 @@ export function install(): { received: Received[] } {
     if (path === '/api/auth') return json(200, { authenticated: true, required: false });
     if (path === '/api/logout') return json(204);
     if (path === '/api/meta') return json(200, st.meta);
-    const planned = board.route(method, url, body);
+    const planned = plannerKnown ? board.route(method, url, body) : null;
     if (planned) return planned;
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
@@ -637,7 +642,7 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'planner') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
       if (body.planner !== undefined) {
         if (typeof body.planner !== 'boolean') return fail(400, 'planner must be true or false');
         st.settings = { ...st.settings, planner: body.planner };

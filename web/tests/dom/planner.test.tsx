@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { copyStyles, popMode } from '../../src/components/planner/PopOut';
-import { renderApp, sidebar } from './render';
+import { renderApp, sidebar, type User } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
 
@@ -42,6 +42,47 @@ describe('planner', () => {
     await waitFor(() => expect(tree.queryByRole('button', { name: 'Confirm Benchmark snapshot size per Task count' })).toBeNull());
     expect(tree.getByRole('treeitem', { name: /^#11 Benchmark snapshot size per Task count, Planned/ })).toBeTruthy();
     expect(tree.getByRole('treeitem', { name: /^#7 Trim the snapshot payload/ }).textContent).toContain('0/3');
+  });
+
+  test('confirming a card inside a suggestion confirms its unconfirmed parents too', async () => {
+    const { user, tree } = await openPlanner();
+    // #16 is a suggested story under #1, and #17 its suggested subtask.
+    await user.click(tree.getAllByRole('treeitem', { name: '+1 suggested' })[1]);
+    await tree.findByRole('treeitem', { name: /^#17 Split the diagram renderer/ });
+    await user.click(tree.getByRole('button', { name: 'Confirm Split the diagram renderer into its own chunk' }));
+    await waitFor(() => expect(tree.queryByRole('button', { name: 'Confirm Lazy-load the diagram renderer' })).toBeNull());
+    expect(tree.queryByRole('button', { name: 'Confirm Split the diagram renderer into its own chunk' })).toBeNull();
+    // Both are part of the plan now, and #1 counts #17.
+    expect(tree.getByRole('treeitem', { name: /^#16 Lazy-load the diagram renderer, Planned/ })).toBeTruthy();
+    expect(tree.getByRole('treeitem', { name: /^#1 Faster first load of long transcripts/ }).textContent).toContain('4/10');
+  });
+
+  test('accepting a split under a story adds siblings after the subtask, cancels it and moves its hold', async () => {
+    const { user, tree } = await openPlanner();
+    await user.click(screen.getByRole('button', { name: 'Inbox, 6 pending' }));
+    const inbox = within(await screen.findByRole('list', { name: 'Pending requests' }));
+    const request = within(inbox.getByRole('article', { name: 'Split request on #28' }));
+    // The given child first, then #28's three checklist items; the ticked one is accepted with the split.
+    expect(request.getByText('Adds 4 subtasks to #27 Changelog from merged pull requests right after #28, which is cancelled. The hold moves to the first pending one.')).toBeTruthy();
+    const listed = request.getAllByRole('listitem').map((li) => li.textContent);
+    expect(listed[0]).toContain('Read merged pull requests since the last tag');
+    expect(listed[1]).toContain('Parse the commit type (ticked: accepted with the split)');
+    await user.click(request.getByRole('button', { name: 'Accept' }));
+    await waitFor(() => expect(inbox.queryByRole('article', { name: 'Split request on #28' })).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Close inbox' }));
+    await waitFor(() => expect(tree.queryByRole('treeitem', { name: /^#28 / })).toBeNull());
+    const rows = tree.getAllByRole('treeitem').map((r) => r.getAttribute('aria-label') ?? r.textContent ?? '');
+    const at = rows.findIndex((r) => r.startsWith('#27 '));
+    expect(rows.slice(at + 1, at + 7)).toEqual([
+      '#37 Read merged pull requests since the last tag, Doing',
+      '#38 Parse the commit type, Done',
+      '#39 Group feat and fix, Planned',
+      '#40 Fold chores into one line, Planned',
+      '#29 Write the upgrade notes section, Planned',
+      '#30 Link each entry to its pull request, Planned',
+    ]);
+    // The hold moved with the Task: #37 carries its chip.
+    expect(within(tree.getByRole('treeitem', { name: /^#37 / })).getByRole('button', { name: /^Open task / })).toBeTruthy();
   });
 
   test('clicking a card opens its detail; the view switch keeps the selection', async () => {
@@ -174,5 +215,104 @@ describe('planner', () => {
     // Off, the planner leaves the sidebar and its requests the Needs-you count.
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Planner' })).toBeNull());
     await waitFor(() => expect(document.title).toBe('(7) UAM'));
+  });
+});
+
+/** What the planner shows in one state of the setting: Settings' Planner card, the sidebar entry, Plan in the Project menu, and the Needs-you count. */
+async function plannerSurface(user: User) {
+  const side = await sidebar();
+  await screen.findByRole('region', { name: 'Shell access' });
+  const settingsCard = screen.queryByRole('region', { name: 'Planner' });
+  const entry = side.queryByRole('button', { name: 'Planner' });
+  await user.click(side.getByRole('button', { name: 'Project filter: all projects' }));
+  await screen.findByRole('button', { name: 'Edit unified-agent-manager' });
+  const plan = screen.queryAllByRole('button', { name: /^Plan / }).length;
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit unified-agent-manager' })).toBeNull());
+  return { settingsCard, entry, plan };
+}
+
+/** Settles t15 (it holds #5 while the planner is on) from the header menu; returns the body of the first settle request. */
+async function settleT15(user: User) {
+  const side = await sidebar();
+  // The row itself, not its hover Settle.
+  const row = side.getAllByRole('button', { name: /Remove unused exports across packages/ }).find((b) => !b.getAttribute('aria-label')?.startsWith('Settle'));
+  await user.click(row!);
+  await waitFor(() => expect(header().textContent).toBe('Remove unused exports across packages'));
+  const fetchSpy = vi.spyOn(window, 'fetch');
+  try {
+    await user.click(await screen.findByRole('button', { name: 'Task actions' }));
+    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Settle' }));
+    const call = await waitFor(() => {
+      const found = fetchSpy.mock.calls.find(([url]) => String(url).endsWith('/api/sessions/t15/settle'));
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    return call[1]?.body;
+  } finally {
+    fetchSpy.mockRestore();
+  }
+}
+
+const settleWait = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+describe('the planner setting', () => {
+  test('unknown to the service: no planner anywhere, and Settle is the plain call it always was', async () => {
+    const { user } = renderApp('?planner=unset#settings');
+    const { settingsCard, entry, plan } = await plannerSurface(user);
+    expect(settingsCard).toBeNull();
+    expect(entry).toBeNull();
+    expect(plan).toBe(0);
+    await settleWait();
+    expect(document.title).toBe('(7) UAM');
+    // The request Settle always sent, and the Task settles with no question about holds.
+    expect(await settleT15(user)).toBe('{}');
+    expect(await screen.findByText('Settled. Reopen this task to continue the same conversation.')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  test('off: only the Settings switch, and Settle stays the plain call', async () => {
+    const { user } = renderApp('?planner=off#settings');
+    const { settingsCard, entry, plan } = await plannerSurface(user);
+    expect(settingsCard).toBeTruthy();
+    const card = within(settingsCard!);
+    expect(card.getByRole('switch', { name: 'Planner' }).getAttribute('aria-checked')).toBe('false');
+    expect(card.queryByRole('form', { name: 'Import from kb' })).toBeNull();
+    expect(entry).toBeNull();
+    expect(plan).toBe(0);
+    await settleWait();
+    expect(document.title).toBe('(7) UAM');
+    expect(await settleT15(user)).toBe('{}');
+    expect(await screen.findByText('Settled. Reopen this task to continue the same conversation.')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  test('on: the switch, the import, the sidebar entry, Plan per git project and pending requests in the count', async () => {
+    const { user } = renderApp('#settings');
+    const { settingsCard, entry, plan } = await plannerSurface(user);
+    const card = within(settingsCard!);
+    expect(card.getByRole('switch', { name: 'Planner' }).getAttribute('aria-checked')).toBe('true');
+    expect(card.getByRole('form', { name: 'Import from kb' })).toBeTruthy();
+    expect(entry).toBeTruthy();
+    // dotfiles has no git: two of the three Projects can be planned.
+    expect(plan).toBe(2);
+    await waitFor(() => expect(document.title).toBe('(13) UAM'));
+    // Settle asks first: t15 holds a subtask.
+    expect(await settleT15(user)).toBe('{}');
+    expect(await screen.findByRole('dialog', { name: 'Settle “Remove unused exports across packages”?' })).toBeTruthy();
+  });
+});
+
+describe('the map', () => {
+  test('opens at scale 1 from the roots; Fit zooms out no further than the limit', async () => {
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('radio', { name: 'Map' }));
+    const map = await screen.findByRole('group', { name: /Plan map/ });
+    const layer = map.firstElementChild as HTMLElement;
+    await waitFor(() => expect(layer.style.transform).toBe('translate3d(24px, 24px, 0) scale(1)'));
+    expect(within(map).getByRole('button', { name: /^#1 · Epic · Doing/ })).toBeTruthy();
+    // The test environment lays nothing out (a 0 × 0 viewport): Fit stops at the 0.4 limit.
+    await user.click(screen.getByRole('button', { name: 'Fit the plan' }));
+    expect(layer.style.transform).toMatch(/scale\(0\.4\)$/);
   });
 });

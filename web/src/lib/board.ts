@@ -149,10 +149,13 @@ export function buildOutline(cards: readonly Card[], filters: Filters): { roots:
 
 /* ---------- The Map's layout ---------- */
 
-export const MAP_NODE_W = 216;
-export const MAP_NODE_H = 40;
+export const MAP_NODE_W = 248;
+export const MAP_NODE_H = 48;
 export const MAP_COL_GAP = 72;
-export const MAP_ROW = 52;
+export const MAP_ROW = 60;
+/** The Map's zoom limits. */
+export const MAP_MIN_K = 0.4;
+export const MAP_MAX_K = 2;
 const COLUMN: Record<CardKind, number> = { epic: 0, story: 1, subtask: 2 };
 
 export interface MapNode {
@@ -205,6 +208,32 @@ export function layoutMap(cards: readonly Card[], filters: Filters): { nodes: Ma
   for (const n of nodes) for (const blocker of n.card.blocked_by ?? []) if (drawn.has(blocker)) edges.push({ from: blocker, to: n.card.id, kind: 'blocker' });
   const width = nodes.length ? Math.max(...nodes.map((n) => n.x)) + MAP_NODE_W : 0;
   return { nodes, edges, width, height: Math.max(0, row * MAP_ROW - (MAP_ROW - MAP_NODE_H)) };
+}
+
+/** Where the Map's layer sits (`x`, `y`) and its scale (`k`). */
+export interface MapView {
+  x: number;
+  y: number;
+  k: number;
+}
+
+const leftEdge = (nodes: readonly MapNode[]) => (nodes.length ? Math.min(...nodes.map((n) => n.x)) : 0);
+
+/** The Map as it opens: scale 1, the plan's top-left corner (the roots) `pad` in from the viewport's. */
+export function openingView(layout: { nodes: readonly MapNode[] }, pad: number): MapView {
+  return { k: 1, x: pad - leftEdge(layout.nodes), y: pad };
+}
+
+/**
+ * The whole plan in a `w` × `h` viewport (Fit): never above scale 1 nor below the zoom limit,
+ * centred across when it fits, and from the top. A plan too large even at the limit shows its top-left.
+ */
+export function fitView(layout: { nodes: readonly MapNode[]; width: number; height: number }, w: number, h: number, pad: number): MapView {
+  const left = leftEdge(layout.nodes);
+  const bw = Math.max(1, layout.width - left);
+  const k = Math.min(1, Math.max(MAP_MIN_K, Math.min((w - pad * 2) / bw, (h - pad * 2) / Math.max(layout.height, 1))));
+  const x = bw * k <= w - pad * 2 ? (w - bw * k) / 2 - left * k : pad - left * k;
+  return { k, x, y: pad };
 }
 
 /** Pending requests per Project key, for the Needs-you count. */

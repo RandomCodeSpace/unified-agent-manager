@@ -479,7 +479,11 @@ export default function App() {
     setSheetOpen(false);
   }, []);
   const openTask = useCallback((id: string) => select(id), [select]);
-  const plannerOn = !!state.settings.planner && state.loaded;
+  // Only `true` shows the planner: `false` leaves its Settings switch, and a service that does not know the setting (undefined) shows none of it.
+  const plannerOn = state.settings.planner === true && state.loaded;
+  // A `#planner=` link on a service without the planner on lands on the usual view.
+  if (state.loaded && !plannerOn && plannerOpen) setPlannerOpen(false);
+  const plannerShown = plannerOpen && plannerOn;
   const planner = usePlannerController({
     enabled: plannerOn,
     boards: state.boards,
@@ -631,9 +635,10 @@ export default function App() {
         if (!current || current.name === name) return;
         await runTask(id, () => api.rename(id, name), 'rename the task').catch(() => {});
       },
-      // A Task holding subtasks answers 409 holds_undecided: the Settle dialog decides each, then settles.
+      // With the planner on, a Task holding subtasks answers 409 holds_undecided: the Settle dialog decides each, then settles.
       settle: (id) =>
         void runTask(id, async () => {
+          if (!plannerOn) return api.stage(id, 'settle');
           try {
             return await api.settle(id);
           } catch (e) {
@@ -656,7 +661,7 @@ export default function App() {
       close: (id) => openTaskDialog({ kind: 'close', id }),
       busy: busyTasks,
     }),
-    [renaming, busyTasks, select, runTask, state.sessions, openTaskDialog],
+    [renaming, busyTasks, select, runTask, state.sessions, openTaskDialog, plannerOn],
   );
 
   const actions: WorkspaceActions = useMemo(
@@ -720,7 +725,7 @@ export default function App() {
   let shown: SessionDetail | null = null;
   if (state.detail && selected) shown = state.detail;
   else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous;
-  const stale = !settingsOpen && !plannerOpen && !newTask && !!shown && shown !== state.detail;
+  const stale = !settingsOpen && !plannerShown && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
   const terminalProject = terminalId && state.settings.terminal ? state.projects.find((p) => p.id === terminalId) : undefined;
@@ -784,7 +789,7 @@ export default function App() {
   const defaultBoard = (filter && gitProjects.some((p) => p.id === filter) ? filter : mostRecentProject(gitProjects, state.sessions, state.selectedId)?.id) ?? null;
   if (settingsOpen) {
     pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} />;
-  } else if (plannerOpen) {
+  } else if (plannerShown) {
     pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={() => setPlannerOpen(false)} />;
   } else if (newTask && newTaskProject) {
     pane = <NewTaskPane key={newTask.projectId} project={newTaskProject} defaults={newTask.defaults} onSend={createTask} leading={leading} />;
@@ -894,7 +899,7 @@ export default function App() {
                   {pane}
                 </div>
                 {/* Settings, the planner and a new Task do not wait on the stream. */}
-                <LoadingVeil show={loading && !settingsOpen && !plannerOpen && !newTask} />
+                <LoadingVeil show={loading && !settingsOpen && !plannerShown && !newTask} />
               </div>
               {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} onClose={closeTerminal} />}
             </main>

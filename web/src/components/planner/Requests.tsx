@@ -119,10 +119,19 @@ function taskLabel(sessions: SessionSummary[], id: string): string {
 /** What a split or change request proposes. */
 function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; card: Card | undefined; byId: ReadonlyMap<string, Card> }>) {
   if (r.kind === 'split') {
-    const children = Array.isArray(r.payload.children) ? (r.payload.children as { title: string; win_condition?: string; done?: boolean }[]) : [];
+    // The given children first, then the checklist items (§7).
+    const given = Array.isArray(r.payload.children) ? (r.payload.children as { title: string; win_condition?: string; done?: boolean }[]) : [];
+    const children = [...given, ...(card?.checklist ?? []).map((i) => ({ title: i.text, win_condition: '', done: i.done }))];
+    const parent = card?.parent_id ? byId.get(card.parent_id) : undefined;
+    const count = `${children.length} ${children.length === 1 ? 'subtask' : 'subtasks'}`;
+    const hold = card?.held_by ? ' The hold moves to the first pending one.' : '';
     return (
       <div className="flex flex-col gap-0.5">
-        <p className="text-caption text-muted">Turns #{card?.seq} into a story with {children.length} subtasks:</p>
+        <p className="text-caption text-muted">
+          {parent?.kind === 'story'
+            ? `Adds ${count} to #${parent.seq} ${parent.title} right after #${card?.seq}, which is cancelled.${hold}`
+            : `Turns #${card?.seq} into a story with ${count}.${hold}`}
+        </p>
         <ul className="flex flex-col gap-0.5 pl-1">
           {children.map((c, i) => (
             <li key={i} className="flex min-w-0 items-start gap-1.5 text-caption">

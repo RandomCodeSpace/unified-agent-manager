@@ -525,7 +525,8 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               </div>;
             })}
           </Section>}
-          {loaded && <PlannerSection settings={settings} saving={saving} projects={projects} providers={meta?.providers ?? []} onSave={(patch) => void save(patch)} />}
+          {/* A service that does not know the planner setting yet has no planner: no row at all. */}
+          {loaded && settings.planner !== undefined && <PlannerSection settings={settings} saving={saving} projects={projects} providers={meta?.providers ?? []} onSave={(patch) => void save(patch)} />}
           {loaded && <Section id="shell" title="Shell access">
             <Row id="terminal" label="Terminal" help="Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on this machine as the uam user, without the agent's permission prompts.">
               <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />

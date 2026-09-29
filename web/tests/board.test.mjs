@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyBoardFrame, buildOutline, deriveBoard, deriveContainer, layoutMap, MAP_ROW, pendingRequests } from '../src/lib/board.ts';
+import { applyBoardFrame, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openingView, pendingRequests } from '../src/lib/board.ts';
 import { initialState, reducer } from '../src/state.ts';
 
 let seq = 0;
@@ -181,4 +181,43 @@ test('the map filtered to one epic draws only its subtree', () => {
   const { nodes } = layoutMap([e1, e2, s], { epic: e2.id, showCancelled: false });
   assert.deepEqual(nodes.map((n) => n.card.id).sort(), [e2.id, s.id].sort());
   assert.equal(nodes.find((n) => n.card.id === s.id).y, 0);
+});
+
+test('the map opens at scale 1 with its roots a margin in from the top-left', () => {
+  const epic = card({ kind: 'epic' });
+  const story = card({ kind: 'story', parent_id: epic.id });
+  const layout = layoutMap([epic, story, card({ parent_id: story.id })], { epic: null, showCancelled: false });
+  assert.deepEqual(openingView(layout, 24), { k: 1, x: 24, y: 24 });
+  // A board of loose subtasks (Unassigned) starts at its subtask column, not at empty epic space.
+  const loose = layoutMap([card({})], { epic: null, showCancelled: false });
+  assert.equal(loose.nodes[0].x > 0, true);
+  assert.deepEqual(openingView(loose, 24), { k: 1, x: 24 - loose.nodes[0].x, y: 24 });
+});
+
+test('Fit shows the whole plan within the zoom limits', () => {
+  assert.ok(MAP_MIN_K >= 0.4 && MAP_MAX_K <= 2);
+  const leaves = (n) => {
+    const story = card({ kind: 'story' });
+    return [story, ...Array.from({ length: n }, () => card({ parent_id: story.id }))];
+  };
+  // A small plan never grows past 1, centred across, from the top.
+  const small = layoutMap(leaves(2), { epic: null, showCancelled: false });
+  const fitSmall = fitView(small, 2000, 1000, 24);
+  assert.equal(fitSmall.k, 1);
+  assert.equal(fitSmall.y, 24);
+  const left = small.nodes.find((n) => n.card.kind === 'story').x;
+  assert.equal(fitSmall.x, (2000 - (small.width - left)) / 2 - left);
+  // A taller one shrinks until it fits.
+  const tall = layoutMap(leaves(30), { epic: null, showCancelled: false });
+  const fitTall = fitView(tall, 1200, 900, 24);
+  assert.ok(fitTall.k < 1 && fitTall.k >= MAP_MIN_K);
+  assert.ok(tall.height * fitTall.k <= 900 - 48 + 0.001);
+  // One too tall even at the limit stops there, from the top; one too wide as well starts at its left edge.
+  const huge = layoutMap(leaves(300), { epic: null, showCancelled: false });
+  const fitHuge = fitView(huge, 1200, 900, 24);
+  assert.equal(fitHuge.k, MAP_MIN_K);
+  assert.equal(fitHuge.y, 24);
+  const hugeLeft = huge.nodes.find((n) => n.card.kind === 'story').x;
+  assert.equal(fitHuge.x, (1200 - (huge.width - hugeLeft) * MAP_MIN_K) / 2 - hugeLeft * MAP_MIN_K);
+  assert.equal(fitView(huge, 200, 900, 24).x, 24 - hugeLeft * MAP_MIN_K);
 });

@@ -1,17 +1,13 @@
 import { Maximize, Minus, Plus } from 'lucide-react';
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, type KeyboardEvent, type PointerEvent } from 'react';
 import type { Card, CardStatus } from '../../api';
-import { KIND_LABEL, MAP_NODE_H, MAP_NODE_W, STATUS_LABEL, layoutMap, type MapEdge, type MapNode } from '../../lib/board';
+import { KIND_LABEL, MAP_MAX_K, MAP_MIN_K, MAP_NODE_H, MAP_NODE_W, STATUS_LABEL, fitView, layoutMap, openingView, type MapEdge, type MapNode } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { useShownBoard } from './context';
 import { ProgressRing } from './parts';
 
-const MIN_K = 0.2;
-const MAX_K = 2;
 const PAD = 24;
-/** The smallest scale the first fit uses, where node text still reads. */
-const READABLE_K = 0.6;
 
 // Only doing cards take a coloured outline; the dot carries every status.
 const DOT: Record<CardStatus, string> = { planned: 'bg-raised border-faint', todo: 'bg-raised border-muted', doing: 'bg-accent border-accent', done: 'bg-success border-success', cancelled: 'bg-hairline-strong border-hairline-strong' };
@@ -35,7 +31,7 @@ export function MapView() {
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean; distance?: number; k?: number } | null>(null);
   const dragged = useRef(false);
-  const fitted = useRef<string | null>(null);
+  const opened = useRef<string | null>(null);
   const marker = useId();
 
   const paint = useCallback(() => {
@@ -52,30 +48,29 @@ export function MapView() {
   }, [paint]);
   const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
     const v = view.current;
-    const k = Math.min(MAX_K, Math.max(MIN_K, v.k * factor));
+    const k = Math.min(MAP_MAX_K, Math.max(MAP_MIN_K, v.k * factor));
     v.x = cx - ((cx - v.x) * k) / v.k;
     v.y = cy - ((cy - v.y) * k) / v.k;
     v.k = k;
     schedule();
   }, [schedule]);
-  /** Fits the plan in view, no smaller than `least`: the first fit keeps a large plan readable, from its top. */
-  const fit = useCallback((least = MIN_K) => {
+  /** Fit: the whole plan in view, within the zoom limits. */
+  const fit = useCallback(() => {
     const el = viewport.current;
     if (!el || !layout.width) return;
-    const { clientWidth: w, clientHeight: h } = el;
-    const k = Math.min(1, Math.max(least, Math.min((w - PAD * 2) / layout.width, (h - PAD * 2) / Math.max(layout.height, 1))));
-    view.current = { k, x: Math.max(PAD, (w - layout.width * k) / 2), y: PAD };
-    // Written now, not on the next frame: a remount (StrictMode's included) must not lose the first fit.
+    view.current = fitView(layout, el.clientWidth, el.clientHeight, PAD);
     paint();
-  }, [layout.width, layout.height, paint]);
+  }, [layout, paint]);
 
-  // Fit once per Board and filter; later updates keep the reader's view.
-  const fitKey = `${ui.project}:${ui.epic}:${ui.showCancelled}:${!!board?.data}`;
+  // Each Board and filter opens at scale 1 from the roots, so labels read; later updates keep the reader's view.
+  const openKey = `${ui.project}:${ui.epic}:${ui.showCancelled}:${!!board?.data}`;
   useLayoutEffect(() => {
-    if (fitted.current === fitKey || !layout.width) return;
-    fitted.current = fitKey;
-    fit(READABLE_K);
-  }, [fitKey, fit, layout.width]);
+    if (opened.current === openKey || !layout.width) return;
+    opened.current = openKey;
+    view.current = openingView(layout, PAD);
+    // Written now, not on the next frame: a remount (StrictMode's included) must not lose it.
+    paint();
+  }, [openKey, layout, paint]);
   useEffect(() => () => {
     cancelAnimationFrame(frame.current);
     frame.current = 0;
@@ -132,7 +127,7 @@ export function MapView() {
     if (pts.length === 2 && g.distance && g.k) {
       const r = viewport.current!.getBoundingClientRect();
       const mid = { x: (pts[0].x + pts[1].x) / 2 - r.left, y: (pts[0].y + pts[1].y) / 2 - r.top };
-      const k = Math.min(MAX_K, Math.max(MIN_K, (g.k * Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)) / g.distance));
+      const k = Math.min(MAP_MAX_K, Math.max(MAP_MIN_K, (g.k * Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)) / g.distance));
       const v = view.current;
       v.x = mid.x - ((mid.x - v.x) * k) / v.k;
       v.y = mid.y - ((mid.y - v.y) * k) / v.k;
@@ -293,7 +288,7 @@ const Node = memo(function Node({ node, selected, onOpen }: Readonly<{ node: Map
       {c.kind === 'subtask' ? <span aria-hidden="true" className={cn('size-2.5 shrink-0 rounded-full border-[1.5px]', DOT[c.status])} /> : <ProgressRing card={c} />}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-meta tabular-nums text-muted">{meta}</span>
-        <span className={cn('truncate text-caption text-ink', c.kind !== 'subtask' && 'font-semibold')}>{c.title}</span>
+        <span className={cn('truncate text-ui text-ink', c.kind !== 'subtask' && 'font-semibold')}>{c.title}</span>
       </span>
       {(c.pending_requests > 0 || c.held_by) && (
         <span aria-hidden="true" className="absolute top-1.5 right-2 flex items-center gap-1">
