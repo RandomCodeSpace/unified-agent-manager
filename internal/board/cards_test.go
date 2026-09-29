@@ -345,6 +345,34 @@ func TestAgentEdits(t *testing.T) {
 	wantCode(t, err, CodeForbidden)
 }
 
+// An agent limited to proposals, a Utility job, edits its proposals and
+// never files a change request: its edit of a confirmed card is refused in
+// the edit's own transaction.
+func TestProposalsOnlyAgentEdits(t *testing.T) {
+	f := newFixture(t)
+	_, story, one, _ := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, story.ID, "job-1"))
+	job := Agent("job-1", "")
+	job.Proposals = true
+	mine := f.create(job, story.ID, KindSubtask, "Proposed")
+	res, err := f.s.Edit(f.ctx, job, mine.ID, Patch{Desc: ptr("refined")})
+	f.must(err)
+	if res.Request != nil || res.Card.Desc != "refined" || res.Card.Confirmed() {
+		t.Fatalf("proposal edit = %+v", res)
+	}
+	before := f.revision()
+	_, err = f.s.Edit(f.ctx, job, one.ID, Patch{Title: ptr("One v2")})
+	wantCode(t, err, CodeForbidden)
+	if d := f.detail(one.ID); f.revision() != before || len(d.Requests) != 0 || d.Card.Title != "One" {
+		t.Fatalf("a refused edit wrote: requests %+v, card %+v", d.Requests, d.Card)
+	}
+	// Once the owner confirms the proposal, it is out of the job's reach too.
+	_, err = f.s.Confirm(f.ctx, owner, mine.ID)
+	f.must(err)
+	_, err = f.s.Edit(f.ctx, job, mine.ID, Patch{Desc: ptr("again")})
+	wantCode(t, err, CodeForbidden)
+}
+
 func TestMoveOutOfUnassigned(t *testing.T) {
 	f := newFixture(t)
 	epic := f.create(owner, "", KindEpic, "Epic")

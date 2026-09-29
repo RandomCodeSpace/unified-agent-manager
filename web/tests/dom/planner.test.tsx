@@ -99,6 +99,22 @@ describe('planner', () => {
     expect(board.getByRole('button', { name: '#6 Measure first paint on a 5,000-item Task' }).getAttribute('aria-pressed')).toBe('true');
   });
 
+  test('Check at HEAD waits for its job, then shows the run from the job’s last frame', async () => {
+    const { user, tree } = await openPlanner();
+    await user.click(tree.getByRole('treeitem', { name: /^#6 Measure first paint/ }));
+    const panel = within(await screen.findByLabelText('Card #6'));
+    await user.click(panel.getByRole('button', { name: 'Check at HEAD' }));
+    // The route answers with the job at once; the run lands later, in a board_job frame.
+    expect(await panel.findByText('Checking at HEAD…')).toBeTruthy();
+    expect(panel.queryByText(/exited/)).toBeNull();
+    const run = await panel.findByText(/exited 1 at/, undefined, { timeout: 3000 });
+    expect(run.textContent).toMatch(/^make test exited 1 at /);
+    expect(panel.getByText(/--- FAIL: TestRelease/)).toBeTruthy();
+    expect(panel.queryByText('Checking at HEAD…')).toBeNull();
+    // A check job is not a suggestion: the card never says it is suggesting.
+    expect(panel.queryByText('Suggesting…')).toBeNull();
+  });
+
   test('on the Board a held subtask’s Task chip opens that Task', async () => {
     const { user } = await openPlanner();
     await user.click(screen.getByRole('radio', { name: 'Board' }));

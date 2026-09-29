@@ -295,6 +295,9 @@ func (t *txn) edit(a Actor, project, id string, p Patch) (*Request, error) {
 	if err := t.inScope(o, a, n); err != nil {
 		return nil, err
 	}
+	if !a.owner() && a.Proposals && n.Confirmed() {
+		return nil, refuse(CodeForbidden, "%s is confirmed; this agent edits only proposals", n.ref())
+	}
 	o2 := opEdit
 	if n.Confirmed() {
 		o2 = opChange

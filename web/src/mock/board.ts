@@ -696,7 +696,14 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         const cmd = c.accept_cmd ?? acceptDefaults[c.project_id] ?? '';
         if (!cmd) return refuse('invalid', 'no acceptance command for this subtask');
         const failing = c.seq % 2 === 0;
-        return json(200, { accept: { cmd, cmd_hash: `sha256:${(c.seq * 7919).toString(16)}…`, head: head(c), dirty: false, exit: failing ? 1 : 0, tail: failing ? `--- FAIL: TestRelease (0.02s)\n    release_test.go:41: missing target darwin/arm64\nFAIL` : 'ok  \tinternal/web\t2.114s', ran_at: now(), stale: false } });
+        // A job, as the service runs it: the run comes in its last board_job frame.
+        const job = id('job');
+        host.broadcast('board_job', { job_id: job, card_id: c.id, kind: 'check', status: 'running' });
+        window.setTimeout(() => {
+          const accept = { cmd, cmd_hash: `sha256:${(c.seq * 7919).toString(16)}…`, head: head(c), dirty: false, exit: failing ? 1 : 0, tail: failing ? `--- FAIL: TestRelease (0.02s)\n    release_test.go:41: missing target darwin/arm64\nFAIL` : 'ok  \tinternal/web\t2.114s', ran_at: now(), stale: false };
+          host.broadcast('board_job', { job_id: job, card_id: c.id, kind: 'check', status: 'done', accept });
+        }, 600);
+        return json(202, { job_id: job });
       }
       case 'POST triage': {
         const verdict = c.stale?.diverged ? 'conflicts' : (c.stale?.behind ?? 0) > 10 ? 'valid' : 'moot';
@@ -707,7 +714,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         if (c.kind === 'subtask') return refuse('invalid', 'suggest stories under an epic or a story');
         const job = id('job');
         const max = Math.max(1, Math.min(5, Number(body.max) || 2));
-        host.broadcast('board_job', { job_id: job, card_id: c.id, status: 'running' });
+        host.broadcast('board_job', { job_id: job, card_id: c.id, kind: 'suggest', status: 'running' });
         window.setTimeout(() => {
           commit(() => {
             for (let i = 0; i < max; i++) {
@@ -716,7 +723,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
               cards.push(s);
             }
           });
-          host.broadcast('board_job', { job_id: job, card_id: c.id, status: 'done' });
+          host.broadcast('board_job', { job_id: job, card_id: c.id, kind: 'suggest', status: 'done' });
         }, 1200);
         return json(202, { job_id: job });
       }

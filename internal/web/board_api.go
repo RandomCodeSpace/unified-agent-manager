@@ -325,14 +325,15 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]SessionSummary{"session": summary})
 }
 
-// handleCheckCard is Check at HEAD: {accept}, the run, red or green.
+// handleCheckCard starts Check at HEAD: 202 {job_id}, then board_job frames,
+// the last carrying the run.
 func (s *Server) handleCheckCard(w http.ResponseWriter, r *http.Request) {
-	res, err := s.m.CheckCard(r.Context(), r.PathValue("ref"))
+	id, err := s.m.CheckCard(r.PathValue("ref"))
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]AcceptResult{"accept": res})
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": id})
 }
 
 func (s *Server) handleTriageCard(w http.ResponseWriter, r *http.Request) {

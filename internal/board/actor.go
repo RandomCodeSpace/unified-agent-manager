@@ -20,6 +20,10 @@ type Actor struct {
 	// Head is the Project's HEAD at the time of an owner write. Every owner
 	// touch pins the touched card to it.
 	Head string
+	// Proposals limits an agent to proposals, as a Utility job is (ADR 0005
+	// §18): its edit of a confirmed card is refused rather than filed as a
+	// change request.
+	Proposals bool
 }
 
 // Owner is the owner actor. head is the Project's HEAD, "" when unknown.

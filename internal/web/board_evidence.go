@@ -209,43 +209,68 @@ func requestView(ctx context.Context, st *board.Store, r board.Request) (BoardRe
 	return out[0], nil
 }
 
-// CheckCard is "Check at HEAD" (ADR 0005 §9): it runs the subtask ref's
-// resolved acceptance command in its Project's working tree through the
-// Project's runner, as a done claim would, and returns the run. A non-zero
-// exit is a red result, not an error; a runner still busy past the timeout
-// refuses with acceptance_busy. The run is recorded nowhere: green rows go
-// stale only in done requests' evidence, which carries the command's hash.
-func (m *Manager) CheckCard(ctx context.Context, ref string) (AcceptResult, error) {
+// CheckCard starts "Check at HEAD" (ADR 0005 §9) on the subtask ref: a job
+// that runs its resolved acceptance command in its Project's working tree
+// through the Project's runner, as a done claim would. What can be told at
+// once is checked before the job starts: a subtask, of a Project with git,
+// with a command. The run can outlast what a proxy lets a request take, so
+// its outcome comes in board_job frames: done with the run, red or green
+// (exit -1 when the shell did not start), or failed with why, such as a
+// runner still busy past the timeout. The run is recorded nowhere: green
+// rows go stale only in done requests' evidence, which carries the
+// command's hash. It returns the job ID.
+func (m *Manager) CheckCard(ref string) (string, error) {
 	var c board.Card
 	var cmd string
 	err := m.withBoard(func(st *board.Store) error {
 		var err error
-		if c, err = st.Card(ctx, ref); err != nil {
+		if c, err = st.Card(m.ctx, ref); err != nil {
 			return err
 		}
-		cmd, err = acceptCmdOf(ctx, st, c, map[string]string{})
+		cmd, err = acceptCmdOf(m.ctx, st, c, map[string]string{})
 		return err
 	})
 	switch {
 	case err != nil:
-		return AcceptResult{}, err
+		return "", err
 	case c.ProjectID == "":
-		return AcceptResult{}, errUnassigned
+		return "", errUnassigned
 	case c.Kind != board.KindSubtask:
-		return AcceptResult{}, invalidBoard("#%d is a %s; only a subtask has an acceptance command", c.Seq, c.Kind)
+		return "", invalidBoard("#%d is a %s; only a subtask has an acceptance command", c.Seq, c.Kind)
 	}
-	dir, err := m.boardDir(ctx, c.ProjectID)
+	dir, err := m.boardDir(m.ctx, c.ProjectID)
 	if err != nil {
-		return AcceptResult{}, err
+		return "", err
 	}
-	ctx, cancel := m.bound(ctx)
+	if cmd == "" {
+		return "", invalidBoard("#%d has no acceptance command; set one on it or on its project", c.Seq)
+	}
+	m.mu.Lock()
+	job, err := m.startJobLocked(jobCheck, c)
+	if err == nil {
+		m.broadcastJobLocked(job, jobRunning, "", nil)
+	}
+	m.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
+	go m.runCheck(job, dir, cmd)
+	return job.id, nil
+}
+
+// runCheck runs one check job to its end, bound to the service rather than
+// to the request that started it.
+func (m *Manager) runCheck(job *boardJob, dir, cmd string) {
+	ctx, cancel := m.bound(context.Background())
 	defer cancel()
 	res, err := m.accept.run(ctx, dir, cmd)
-	if errors.Is(err, errAcceptanceNotRun) {
-		// The result says why, with exit -1.
-		return res, nil
+	switch {
+	case err == nil, errors.Is(err, errAcceptanceNotRun):
+		// A shell that did not start is a result too: exit -1, and why.
+		m.endJob(job, jobDone, "", &res)
+	default:
+		m.endJob(job, jobFailed, clipRunes(displaytext.Sanitize(err.Error()), maxDetailRunes), nil)
 	}
-	return res, boardError(err)
 }
 
 // isRev reports whether s is a hexadecimal object name, which git can never

@@ -22,9 +22,15 @@ import (
 // The planner's Utility jobs (ADR 0005 §18) run on the Utility model in
 // throwaway conversations: triage judges a stale subtask and writes nothing;
 // a suggestion job proposes cards under a container through a subset of the
-// planner tools, as an agent whose Task is the job.
+// planner tools, as an agent whose Task is the job. Check at HEAD is a job
+// too, though it runs no model: like a suggestion it can outlast what a
+// proxy in front of the service lets a request take, so both answer 202 and
+// report through board_job frames.
 const (
-	triageTimeout   = 2 * time.Minute
+	// triageTimeout keeps a triage within what the sign-in proxy in front
+	// of the service lets a request take, so a slow model fails as
+	// utility_failed rather than as the proxy's page.
+	triageTimeout   = 75 * time.Second
 	triageCacheSize = 256
 	maxTriageRunes  = 300
 
@@ -39,7 +45,7 @@ const (
 var (
 	errUtilityUnavailable = &Error{Status: http.StatusConflict, Code: codeUtilityUnavailable,
 		Message: "no available provider can run the planner's Utility jobs; choose a Utility model in Settings"}
-	errSuggestBusy = &Error{Status: http.StatusConflict, Code: codeSuggestBusy, Message: "suggestions for this card are already being made; wait for them"}
+	errJobBusy = &Error{Status: http.StatusConflict, Code: codeJobBusy, Message: "a job is already running on this card; wait for it to end"}
 )
 
 // UtilityModel is the provider and model the planner's Utility jobs run on
@@ -66,9 +72,9 @@ func (m *Manager) plannerUtilityLocked() (runner agentapi.UtilityRunner, model U
 	return nil, UtilityModel{}, false
 }
 
-// startUtilityLocked claims the planner's Utility provider for one job,
+// startUtilityLocked claims the planner's Utility provider for one triage,
 // counted in titles so Shutdown waits for it to delete its conversation;
-// the caller calls titles.Done when the job ends. The caller holds mu.
+// the caller calls titles.Done when it ends. The caller holds mu.
 func (m *Manager) startUtilityLocked() (agentapi.UtilityRunner, UtilityModel, error) {
 	runner, model, ok := m.plannerUtilityLocked()
 	switch {
@@ -264,21 +270,74 @@ type SuggestRequest struct {
 	Max      int    `json:"max"`
 }
 
-// The board_job statuses.
+// The board_job kinds and statuses.
 const (
+	jobSuggest = "suggest"
+	jobCheck   = "check"
+
 	jobRunning = "running"
 	jobDone    = "done"
 	jobFailed  = "failed"
 )
 
-// boardJobEvent is the board_job frame (ADR 0005 §15): a Utility job on a
-// card started, finished or failed.
+// boardJobEvent is the board_job frame (ADR 0005 §15): a planner job on a
+// card started, finished or failed. Accept is a finished check's run; Error
+// says why a job failed.
 type boardJobEvent struct {
-	Seq    uint64 `json:"seq"`
-	JobID  string `json:"job_id"`
-	CardID string `json:"card_id"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	Seq    uint64        `json:"seq"`
+	JobID  string        `json:"job_id"`
+	CardID string        `json:"card_id"`
+	Kind   string        `json:"kind"`
+	Status string        `json:"status"`
+	Error  string        `json:"error,omitempty"`
+	Accept *AcceptResult `json:"accept,omitempty"`
+}
+
+// boardJob is one running planner job: its ID, its kind and its card.
+type boardJob struct {
+	id, kind string
+	card     board.Card
+}
+
+// startJobLocked registers a job of kind on the card c, one job per card,
+// and counts it in titles so Shutdown waits for it. It is refused while the
+// service shuts down. The caller holds mu, and ends the job with endJob.
+func (m *Manager) startJobLocked(kind string, c board.Card) (*boardJob, error) {
+	switch {
+	case m.closed:
+		return nil, errShuttingDown
+	case m.boardJobs[c.ID] != "":
+		return nil, errJobBusy
+	}
+	id, err := newUUID()
+	if err != nil {
+		return nil, fmt.Errorf("generate job id: %w", err)
+	}
+	if m.boardJobs == nil {
+		m.boardJobs = map[string]string{}
+	}
+	m.boardJobs[c.ID] = id
+	m.titles.Add(1)
+	return &boardJob{id: id, kind: kind, card: c}, nil
+}
+
+// endJob frees the job's card and, unless status is "", sends the job's
+// last frame. Nothing of the job runs after it.
+func (m *Manager) endJob(job *boardJob, status, msg string, accept *AcceptResult) {
+	m.mu.Lock()
+	if m.boardJobs[job.card.ID] == job.id {
+		delete(m.boardJobs, job.card.ID)
+	}
+	if status != "" {
+		m.broadcastJobLocked(job, status, msg, accept)
+	}
+	m.mu.Unlock()
+	m.titles.Done()
+}
+
+func (m *Manager) broadcastJobLocked(job *boardJob, status, msg string, accept *AcceptResult) {
+	ev := boardJobEvent{JobID: job.id, CardID: job.card.ID, Kind: job.kind, Status: status, Error: msg, Accept: accept}
+	m.broadcastLocked("board_job", "", func(seq uint64) any { ev.Seq = seq; return ev })
 }
 
 // suggestTools are a suggestion job's only tools (ADR 0005 §18).
@@ -312,24 +371,24 @@ func suggestPrompt(c board.Card, req SuggestRequest, limit int) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-// suggestJob is one running suggestion job: its ID, which is also the Task
-// ID its tool calls act as, and the container it plans under.
+// suggestJob is one running suggestion job. Its ID is also the Task ID its
+// tool calls act as.
 type suggestJob struct {
-	id, project, dir string
-	card             board.Card
-	req              SuggestRequest
-	limit            int
-	runner           agentapi.UtilityRunner
-	model            UtilityModel
+	*boardJob
+	dir    string
+	req    SuggestRequest
+	limit  int
+	runner agentapi.UtilityRunner
+	model  UtilityModel
 }
 
 // Suggest starts a suggestion job on the container ref (ADR 0005 §4, §18):
 // a store-less Utility conversation whose only tools are board_create,
 // board_edit, board_get and board_list, scoped to the container, acting as
-// an agent whose Task is the job. So the per-Task caps apply to the job, and
-// what it writes are proposals. A document makes it split the document into
-// cards. One job runs per container at a time; the job reports through
-// board_job frames. It returns the job ID.
+// an agent whose Task is the job and who may write proposals only. So the
+// per-Task caps apply to the job, and it files no change request. A
+// document makes it split the document into cards. One job runs per card at
+// a time; the job reports through board_job frames. It returns the job ID.
 func (m *Manager) Suggest(ref string, req SuggestRequest) (string, error) {
 	limit := req.Max
 	switch {
@@ -357,65 +416,69 @@ func (m *Manager) Suggest(ref string, req SuggestRequest) (string, error) {
 		return "", errUnassigned
 	case c.Kind == board.KindSubtask:
 		return "", invalidBoard("#%d is a subtask; suggest cards under an epic or a story", c.Seq)
+	case c.Status == board.StatusCancelled:
+		return "", invalidBoard("#%d is cancelled; restore it before suggesting cards under it", c.Seq)
 	}
 	dir, err := m.boardDir(m.ctx, c.ProjectID)
 	if err != nil {
 		return "", err
 	}
-	id, err := newUUID()
-	if err != nil {
-		return "", fmt.Errorf("generate job id: %w", err)
-	}
-	job := &suggestJob{id: id, project: c.ProjectID, dir: dir, card: c, req: req, limit: limit}
+	job := &suggestJob{dir: dir, req: req, limit: limit}
 	m.mu.Lock()
-	if m.suggestJobs[c.ID] != "" {
-		m.mu.Unlock()
-		return "", errSuggestBusy
+	var ok bool
+	if job.runner, job.model, ok = m.plannerUtilityLocked(); !ok {
+		err = errUtilityUnavailable
+	} else {
+		job.boardJob, err = m.startJobLocked(jobSuggest, c)
 	}
-	if job.runner, job.model, err = m.startUtilityLocked(); err != nil {
-		m.mu.Unlock()
+	m.mu.Unlock()
+	if err != nil {
 		return "", err
 	}
-	if m.suggestJobs == nil {
-		m.suggestJobs = map[string]string{}
-	}
-	m.suggestJobs[c.ID] = id
-	m.mu.Unlock()
 	// The store scopes the job's agent to the container, as it does a
 	// planning Task's.
-	if err := m.withBoard(func(st *board.Store) error { return st.StartPlanning(m.ctx, board.Owner(""), c.ID, id) }); err != nil {
-		m.endSuggest(job, nil, false)
+	if err := m.withBoard(func(st *board.Store) error { return st.StartPlanning(m.ctx, board.Owner(""), c.ID, job.id) }); err != nil {
+		m.endJob(job.boardJob, "", "", nil)
 		return "", err
 	}
 	m.mu.Lock()
-	m.broadcastJobLocked(job, jobRunning, "")
+	m.broadcastJobLocked(job.boardJob, jobRunning, "", nil)
 	m.mu.Unlock()
 	go m.runSuggest(job)
-	return id, nil
+	return job.id, nil
 }
 
-// runSuggest runs one suggestion job to its end.
+// runSuggest runs one suggestion job to its end. Its tool calls end first,
+// so no card is written after its last frame.
 func (m *Manager) runSuggest(job *suggestJob) {
 	ctx, cancel := context.WithTimeout(m.ctx, suggestTimeout)
 	defer cancel()
+	actor := board.Agent(job.id, "")
+	actor.Proposals = true
+	project := job.card.ProjectID
 	tools, call := m.boardHostTools(func(ctx context.Context, _ agentapi.HostToolCall) (boardScope, error) {
 		// The job is not a Task: its scope is the container, checked again
 		// on every call as a Task's is.
 		if err := m.boardOn(); err != nil {
 			return boardScope{}, err
 		}
-		dir, err := m.boardDir(ctx, job.project)
+		dir, err := m.boardDir(ctx, project)
 		if err != nil {
 			return boardScope{}, err
 		}
-		return boardScope{actor: board.Agent(job.id, ""), project: job.project, dir: dir, container: job.card.ID, proposals: true}, nil
+		return boardScope{actor: actor, project: project, dir: dir, container: job.card.ID}, nil
 	}, suggestTools...)
+	calls := &jobCalls{ctx: ctx}
 	_, err := job.runner.RunUtility(ctx, agentapi.UtilityRequest{Model: job.model.Model, Workdir: job.dir, Purpose: "planner-suggest",
-		System: suggestSystem, Prompt: suggestPrompt(job.card, job.req, job.limit), Tools: tools, CallTool: job.capped(call), Timeout: suggestTimeout})
+		System: suggestSystem, Prompt: suggestPrompt(job.card, job.req, job.limit), Tools: tools, CallTool: calls.wrap(job.capped(call)), Timeout: suggestTimeout})
+	cancel()
+	calls.close()
 	if err != nil {
 		log.Warn("planner suggestion job failed", "job", job.id, "card", job.card.ID, "error", err)
+		m.endJob(job.boardJob, jobFailed, utilityFailed("the suggestion job", err).Message, nil)
+		return
 	}
-	m.endSuggest(job, err, true)
+	m.endJob(job.boardJob, jobDone, "", nil)
 }
 
 // capped refuses the job's board_create calls past its limit.
@@ -437,25 +500,37 @@ func (job *suggestJob) capped(call func(context.Context, agentapi.HostToolCall) 
 	}
 }
 
-// endSuggest frees the job's container and, when it started, reports how it
-// ended.
-func (m *Manager) endSuggest(job *suggestJob, err error, started bool) {
-	m.mu.Lock()
-	if m.suggestJobs[job.card.ID] == job.id {
-		delete(m.suggestJobs, job.card.ID)
-	}
-	if started {
-		if err != nil {
-			m.broadcastJobLocked(job, jobFailed, utilityFailed("the suggestion job", err).Message)
-		} else {
-			m.broadcastJobLocked(job, jobDone, "")
-		}
-	}
-	m.mu.Unlock()
-	m.titles.Done()
+// jobCalls are a job's tool calls in progress. Each ends with the job's
+// context, and close refuses any later call and waits for those running,
+// so the job ends only once none does.
+type jobCalls struct {
+	ctx    context.Context
+	mu     sync.Mutex
+	wg     sync.WaitGroup
+	closed bool
 }
 
-func (m *Manager) broadcastJobLocked(job *suggestJob, status, msg string) {
-	ev := boardJobEvent{JobID: job.id, CardID: job.card.ID, Status: status, Error: msg}
-	m.broadcastLocked("board_job", "", func(seq uint64) any { ev.Seq = seq; return ev })
+func (c *jobCalls) wrap(call func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult {
+	return func(ctx context.Context, hc agentapi.HostToolCall) agentapi.HostToolResult {
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			return toolFailure(errors.New("the job has ended"))
+		}
+		c.wg.Add(1)
+		c.mu.Unlock()
+		defer c.wg.Done()
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		stop := context.AfterFunc(c.ctx, cancel)
+		defer stop()
+		return call(ctx, hc)
+	}
+}
+
+func (c *jobCalls) close() {
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+	c.wg.Wait()
 }

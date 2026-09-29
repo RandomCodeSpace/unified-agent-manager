@@ -1,6 +1,6 @@
 import { ArrowLeft, Ban, Check, CheckCheck, FolderInput, GitCommitHorizontal, Link2, ListChecks, MoveRight, Pencil, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, plannerErrorText, type AcceptRun, type Card, type CardDetail, type TriageVerdict } from '../../api';
+import { api, plannerErrorText, type Card, type CardDetail, type TriageVerdict } from '../../api';
 import { cardPath, openBlockerSeqs } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, useApp } from '../common';
@@ -78,14 +78,17 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
   const [editing, setEditing] = useState(false);
   const [reason, setReason] = useState<ReasonAsk | null>(null);
   const [brief, setBrief] = useState<BriefAsk | null>(null);
-  const [check, setCheck] = useState<AcceptRun | null>(null);
+  // Check at HEAD is a job: its run arrives in the job's last board_job frame.
+  const [checkJob, setCheckJob] = useState<string | null>(null);
   const [triage, setTriage] = useState<{ verdict: TriageVerdict; sentence: string; head: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [comment, setComment] = useState('');
   const unassigned = !c.project_id;
   const leaf = c.kind === 'subtask';
   const path = cardPath(c, byId).slice(0, -1);
-  const job = Object.values(jobs).filter((j) => j.card_id === c.id).at(-1);
+  const job = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'suggest').at(-1);
+  const checking = checkJob ? jobs[checkJob] : undefined;
+  const check = checking?.status === 'done' ? checking.accept : undefined;
 
   // The trail (comments, requests, holds) follows the card: fetched again on each of its revisions.
   useEffect(() => {
@@ -129,7 +132,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
     }
     if (leaf && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'done', label: 'Mark done', icon: <CheckCheck />, onClick: () => setDialog('done') });
     if (leaf && c.status === 'doing') actions.push({ key: 'release', label: 'Release', icon: <Undo2 />, onClick: () => setReason({ title: `Release #${c.seq}?`, description: 'The subtask goes back to To do and its Task stops holding it. Pending requests are withdrawn.', label: 'Comment (optional)', confirm: 'Release', required: false, run: (t) => api.planner.release(c.id, t) }) });
-    if (leaf && c.confirmed && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, onClick: () => void run('check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && setCheck(r.accept)) });
+    if (leaf && c.confirmed && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, onClick: () => void run('check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && setCheckJob(r.job_id)) });
     if (leaf && c.stale) actions.push({ key: 'triage', label: 'Triage', icon: <Stethoscope />, onClick: () => void run('triage', 'triage the subtask', () => api.planner.triage(c.id)).then((r) => r && setTriage(r)) });
     if (c.kind !== 'epic' && c.status !== 'cancelled' && (c.parent_id || moveTargets(c, cards).length > 0)) actions.push({ key: 'move', label: 'Move to…', icon: <MoveRight />, onClick: () => setDialog('move') });
     if (leaf && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'split', label: 'Split', icon: <Split />, onClick: () => setDialog('split') });
@@ -196,6 +199,8 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
           </div>
           {job?.status === 'running' && <Loading label="Suggesting…" delay={0} />}
           {job?.status === 'failed' && <Note tone="error">Suggesting failed{job.error ? `: ${job.error}` : '.'}</Note>}
+          {checkJob && (!checking || checking.status === 'running') && <Loading label="Checking at HEAD…" delay={0} />}
+          {checking?.status === 'failed' && <Note tone="error">Check at HEAD failed{checking.error ? `: ${checking.error}` : '.'}</Note>}
         </div>
 
         {unassigned ? <MoveToProject card={c} projects={projects} /> : actions.length > 0 && (
