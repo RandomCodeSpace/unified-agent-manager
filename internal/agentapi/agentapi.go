@@ -18,6 +18,7 @@ package agentapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -74,6 +75,9 @@ type Capabilities struct {
 	// holds one open (Importer).
 	Import         bool `json:"import"`
 	ExecutionModes bool `json:"execution_modes,omitempty"`
+	// HostTools is true when the provider registers OpenRequest.Tools in its
+	// conversations and implements UtilityRunner.
+	HostTools bool `json:"host_tools,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
@@ -126,6 +130,33 @@ type SubagentSummarizer interface {
 type SubagentSummaryRequest struct {
 	Model, Workdir      string
 	Description, Result string
+}
+
+// UtilityRunner is implemented by a provider whose Capabilities.HostTools is
+// true. RunUtility asks req.Model to answer req.Prompt in a throwaway
+// conversation whose whole system message is req.System and whose only
+// tools are req.Tools: no provider tools, no discovered configuration, no
+// session store, and every permission request rejected. It returns the
+// model's final reply as it came and deletes the conversation whatever the
+// outcome. ctx bounds the whole call.
+type UtilityRunner interface {
+	RunUtility(ctx context.Context, req UtilityRequest) (string, error)
+}
+
+// UtilityRequest is one UtilityRunner call.
+type UtilityRequest struct {
+	// Model is a model ID from Provider.Models; Workdir is the project
+	// directory the conversation runs in.
+	Model, Workdir string
+	// Purpose names the job in the provider's client name and logs, such as
+	// "title".
+	Purpose        string
+	System, Prompt string
+	// Tools and CallTool are as in OpenRequest. Their calls have no TaskID.
+	Tools    []HostTool
+	CallTool func(context.Context, HostToolCall) HostToolResult
+	// Timeout, when positive, also bounds the whole call.
+	Timeout time.Duration
 }
 
 // CustomModelUser is implemented by a provider that can offer custom
@@ -385,6 +416,59 @@ type OpenRequest struct {
 	// ValidateFile checks a declaration candidate without granting access or
 	// reading file bytes, and returns its normalized absolute display path.
 	ValidateFile func(context.Context, string) (string, error)
+	// Tools are the web service's host tools, registered beside the
+	// adapter's own when Capabilities.HostTools is set. CallTool, bound to
+	// this Task by the web service, runs each of their calls.
+	Tools    []HostTool
+	CallTool func(context.Context, HostToolCall) HostToolResult
+}
+
+// MaxHostToolArguments bounds the JSON arguments of one host tool call;
+// adapters refuse a larger call without calling CallTool.
+const MaxHostToolArguments = 64 << 10
+
+// HostTool is a tool the web service runs in-process. Adapters register it
+// as given, without a permission prompt and never deferred, and forward each
+// call to CallTool; they never interpret it. Name is unique among the
+// conversation's tools and must not clash with a provider tool: an adapter
+// that finds a clash, or a tool of that name from an MCP server, fails the
+// open. Parameters is the JSON Schema object of the arguments.
+type HostTool struct {
+	Name        string
+	Description string
+	Parameters  map[string]any
+}
+
+// HostToolCall is one call of a HostTool.
+type HostToolCall struct {
+	Name string
+	// CallID is the provider's tool call ID, the ID of the call's ItemTool
+	// item. A call repeated with the same CallID gets the first one's result
+	// without reaching CallTool again.
+	CallID string
+	// TaskID is the conversation's OpenRequest.SessionID, the Task the call
+	// belongs to.
+	TaskID string
+	// AgentID is the subagent instance that made the call, as in
+	// Item.AgentID; it is empty for the main agent and when the provider does
+	// not say.
+	AgentID string
+	// Arguments is the model's JSON object as received, at most
+	// MaxHostToolArguments bytes.
+	Arguments json.RawMessage
+}
+
+// HostToolResult is what a host tool call returns. CallTool returns
+// promptly and stops when its context ends: the call was cancelled or the
+// conversation closed.
+type HostToolResult struct {
+	// Text is what the model sees.
+	Text string
+	// Failed marks a refused or failed call; Text says why.
+	Failed bool
+	// Payload is optional JSON the web service keeps for its own display of
+	// the call, such as a Planner card. Adapters never send it to the model.
+	Payload json.RawMessage
 }
 
 // EventSink receives adapter events. Implementations must not block.
