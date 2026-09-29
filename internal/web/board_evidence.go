@@ -98,8 +98,9 @@ type EvidenceCommit struct {
 }
 
 // AcceptResult is one acceptance run. Head and Dirty are the tree it ran
-// against; Exit is -1 when the shell did not start. Stale is set by the
-// reader once the command changes (compare CmdHash).
+// against; Exit is -1 when the shell did not start. Stale is stored false
+// and set as the API sends a done request, once CmdHash is not the hash of
+// the command its card resolves to (requestViews).
 type AcceptResult struct {
 	Cmd     string    `json:"cmd"`
 	CmdHash string    `json:"cmd_hash"`
@@ -132,6 +133,119 @@ type EvidenceChecklist struct {
 func commandHash(cmd string) string {
 	sum := sha256.Sum256([]byte(cmd))
 	return hex.EncodeToString(sum[:])
+}
+
+// acceptCmdOf is the acceptance command c resolves to: its own when set,
+// else its Project's default, read from st once per Project into defaults.
+func acceptCmdOf(ctx context.Context, st *board.Store, c board.Card, defaults map[string]string) (string, error) {
+	if c.AcceptCmd != nil {
+		return *c.AcceptCmd, nil
+	}
+	if cmd, ok := defaults[c.ProjectID]; ok {
+		return cmd, nil
+	}
+	ps, err := st.ProjectSettings(ctx, c.ProjectID)
+	if err == nil {
+		defaults[c.ProjectID] = ps.AcceptCmd
+	}
+	return ps.AcceptCmd, err
+}
+
+// requestViews is list as the API sends it. A done request's acceptance
+// row is marked stale when it ran a command other than the one its card
+// resolves to now, so editing a command shows the earlier green rows for it
+// stale (ADR 0005 §6) with nothing stored. cards are cards already read;
+// any other a row needs is read from st.
+func requestViews(ctx context.Context, st *board.Store, list []board.Request, cards []board.Card) ([]BoardRequest, error) {
+	out := boardRequests(list)
+	byID := make(map[string]board.Card, len(cards))
+	for _, c := range cards {
+		byID[c.ID] = c
+	}
+	defaults := map[string]string{}
+	for i, r := range list {
+		if r.Kind != board.RequestDone || len(r.Evidence) == 0 {
+			continue
+		}
+		var ev map[string]json.RawMessage
+		var accept *AcceptResult
+		if json.Unmarshal(r.Evidence, &ev) != nil || json.Unmarshal(ev["accept"], &accept) != nil || accept == nil {
+			continue
+		}
+		c, ok := byID[r.CardID]
+		if !ok {
+			var err error
+			if c, err = st.Card(ctx, r.CardID); errors.Is(err, board.ErrNotFound) {
+				continue
+			} else if err != nil {
+				return nil, err
+			}
+			byID[c.ID] = c
+		}
+		cmd, err := acceptCmdOf(ctx, st, c, defaults)
+		if err != nil {
+			return nil, err
+		}
+		if accept.CmdHash == commandHash(cmd) {
+			continue
+		}
+		accept.Stale = true
+		if ev["accept"], err = json.Marshal(accept); err != nil {
+			return nil, err
+		}
+		if out[i].Evidence, err = json.Marshal(ev); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// requestView is requestViews of one request.
+func requestView(ctx context.Context, st *board.Store, r board.Request) (BoardRequest, error) {
+	out, err := requestViews(ctx, st, []board.Request{r}, nil)
+	if err != nil {
+		return BoardRequest{}, err
+	}
+	return out[0], nil
+}
+
+// CheckCard is "Check at HEAD" (ADR 0005 §9): it runs the subtask ref's
+// resolved acceptance command in its Project's working tree through the
+// Project's runner, as a done claim would, and returns the run. A non-zero
+// exit is a red result, not an error; a runner still busy past the timeout
+// refuses with acceptance_busy. The run is recorded nowhere: green rows go
+// stale only in done requests' evidence, which carries the command's hash.
+func (m *Manager) CheckCard(ctx context.Context, ref string) (AcceptResult, error) {
+	var c board.Card
+	var cmd string
+	err := m.withBoard(func(st *board.Store) error {
+		var err error
+		if c, err = st.Card(ctx, ref); err != nil {
+			return err
+		}
+		cmd, err = acceptCmdOf(ctx, st, c, map[string]string{})
+		return err
+	})
+	switch {
+	case err != nil:
+		return AcceptResult{}, err
+	case c.ProjectID == "":
+		return AcceptResult{}, errUnassigned
+	case c.Kind != board.KindSubtask:
+		return AcceptResult{}, invalidBoard("#%d is a %s; only a subtask has an acceptance command", c.Seq, c.Kind)
+	}
+	dir, err := m.boardDir(ctx, c.ProjectID)
+	if err != nil {
+		return AcceptResult{}, err
+	}
+	ctx, cancel := m.bound(ctx)
+	defer cancel()
+	res, err := m.accept.run(ctx, dir, cmd)
+	if errors.Is(err, errAcceptanceNotRun) {
+		// The result says why, with exit -1.
+		return res, nil
+	}
+	return res, boardError(err)
 }
 
 // isRev reports whether s is a hexadecimal object name, which git can never

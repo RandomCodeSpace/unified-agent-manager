@@ -421,15 +421,6 @@ func TestPlannerCardRoutes(t *testing.T) {
 	}
 	f.refused(http.MethodGet, "/api/board", "", http.StatusBadRequest, string(board.CodeInvalid))
 	f.refused(http.MethodGet, "/api/board?project_id=gone", "", http.StatusNotFound, string(board.CodeNotFound))
-	// check, triage, suggest and import come with later features.
-	for _, action := range []string{"check", "triage", "suggest"} {
-		if w := f.do(http.MethodPost, "/api/board/cards/"+one.ID+"/"+action, `{}`); w.Code != http.StatusNotFound {
-			t.Fatalf("%s = %d", action, w.Code)
-		}
-	}
-	if w := f.do(http.MethodPost, "/api/board/import", `{"dir":"/x"}`); w.Code != http.StatusNotFound {
-		t.Fatalf("import = %d", w.Code)
-	}
 }
 
 func TestPlannerProjectSettings(t *testing.T) {

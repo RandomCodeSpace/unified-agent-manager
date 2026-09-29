@@ -2,6 +2,9 @@ package web
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,7 +17,14 @@ import (
 // directory.
 func importSource(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "board", "testdata", "import-v11", "kb.db"))
+	return importFixture(t, "import-v11")
+}
+
+// importFixture copies the board package's import fixture name into a
+// fresh directory.
+func importFixture(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "board", "testdata", name, "kb.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,14 +35,15 @@ func importSource(t *testing.T) string {
 	return dir
 }
 
-func openBoard(t *testing.T) *board.Store {
+// plannerStore turns m's planner on and returns its store, for reading
+// what an import wrote.
+func plannerStore(t *testing.T, m *Manager) *board.Store {
 	t.Helper()
-	bs, err := board.Open(filepath.Join(t.TempDir(), board.FileName), board.Options{})
-	if err != nil {
+	on := true
+	if _, err := m.UpdateSettings(SettingsPatch{Planner: &on}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = bs.Close() })
-	return bs
+	return m.board.st
 }
 
 // gitProject adds a fresh git work tree as a Project named name.
@@ -58,12 +69,12 @@ func boardCount(t *testing.T, bs *board.Store, projectID string) int {
 
 func TestImportBoardMapsSourceProjectsByName(t *testing.T) {
 	m, _, _ := newTestManager(t)
-	bs := openBoard(t)
+	bs := plannerStore(t, m)
 	website := gitProject(t, m, "website")
 	if _, err := m.AddProject(t.TempDir(), "api"); err != nil {
 		t.Fatal(err)
 	}
-	r, err := m.ImportBoard(context.Background(), bs, importSource(t))
+	r, err := m.ImportBoard(context.Background(), importSource(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,15 +86,41 @@ func TestImportBoardMapsSourceProjectsByName(t *testing.T) {
 
 func TestImportBoardLeavesAmbiguousNamesUnassigned(t *testing.T) {
 	m, _, _ := newTestManager(t)
-	bs := openBoard(t)
+	plannerStore(t, m)
 	gitProject(t, m, "website")
 	gitProject(t, m, "website")
 	gitProject(t, m, "API")
-	r, err := m.ImportBoard(context.Background(), bs, importSource(t))
+	r, err := m.ImportBoard(context.Background(), importSource(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Imported != 12 || r.Unassigned != 12 {
 		t.Fatalf("report = %+v, want every card Unassigned: website is shared and API differs in case", r)
 	}
+}
+
+// POST /api/board/import answers with the report, and refuses with a status
+// for each case: an empty or relative dir, a directory without a source, a
+// source at another schema (422 import_schema), a source that kept changing
+// (409 import_busy), and the planner off.
+func TestImportRoute(t *testing.T) {
+	f := newPlanner(t)
+	body := func(dir string) string { return fmt.Sprintf(`{"dir":%q}`, dir) }
+	var r board.ImportReport
+	f.call(http.MethodPost, "/api/board/import", body(importSource(t)), http.StatusOK, &r)
+	if r.Imported != 12 || r.Unassigned != 12 || r.Skipped == nil {
+		t.Fatalf("report = %+v", r)
+	}
+	f.refused(http.MethodPost, "/api/board/import", body(""), http.StatusBadRequest, string(board.CodeInvalid))
+	f.refused(http.MethodPost, "/api/board/import", body("relative/kb"), http.StatusBadRequest, string(board.CodeInvalid))
+	f.refused(http.MethodPost, "/api/board/import", body(t.TempDir()), http.StatusNotFound, string(board.CodeNotFound))
+	f.refused(http.MethodPost, "/api/board/import", body(importFixture(t, "import-v10")), http.StatusUnprocessableEntity, string(board.CodeImportSchema))
+	// A source that keeps changing can't be staged from here; its refusal
+	// maps like any board conflict.
+	var busy *Error
+	if !errors.As(boardError(&board.Error{Code: board.CodeImportBusy, Message: "busy"}), &busy) || busy.Status != http.StatusConflict || busy.Code != string(board.CodeImportBusy) {
+		t.Fatalf("import_busy = %+v", busy)
+	}
+	f.call(http.MethodPatch, "/api/settings", `{"planner":false}`, http.StatusOK, nil)
+	f.refused(http.MethodPost, "/api/board/import", body(importSource(t)), http.StatusConflict, codePlannerOff)
 }

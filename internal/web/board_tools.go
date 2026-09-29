@@ -31,12 +31,14 @@ var errClaimDiscarded = errors.New("the task was archived, so its done claim was
 // boardScope is where one planner tool call reads and writes: as actor, on
 // the Board of project, whose directory is dir. A non-empty container
 // narrows refs further to that card's subtree, as a Utility job's tools
-// need (ADR 0005 §18).
+// need (ADR 0005 §18), and proposals limits edits to unconfirmed cards, so
+// such a job files no change request.
 type boardScope struct {
 	actor     board.Actor
 	project   string
 	dir       string
 	container string
+	proposals bool
 }
 
 // card resolves ref, a card UUID or #seq, inside the scope. A card of
@@ -578,6 +580,9 @@ func (m *Manager) toolEdit(ctx context.Context, sc boardScope, in editArgs) (too
 		c, err := sc.card(ctx, st, in.Ref)
 		if err != nil {
 			return err
+		}
+		if sc.proposals && c.Confirmed() {
+			return &board.Error{Code: board.CodeForbidden, Message: fmt.Sprintf("#%d is confirmed; this job edits only proposals", c.Seq)}
 		}
 		p := board.Patch{Title: in.Title, Desc: in.Desc, WinCondition: in.WinCondition, Prio: in.Prio, Effort: in.Effort, Labels: in.Labels, Rank: in.Rank}
 		if in.Parent != nil {

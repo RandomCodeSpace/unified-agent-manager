@@ -13,8 +13,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
 )
 
-// boardRoutes registers the planner's routes (ADR 0005 §14). Check at HEAD,
-// triage, suggest and the kb import come with their own features.
+// boardRoutes registers the planner's routes (ADR 0005 §14).
 func (s *Server) boardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/board", s.handleBoard)
 	mux.HandleFunc("GET /api/board/projects/{id}", s.handleBoardProject)
@@ -56,11 +55,15 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/board/cards/{ref}/comments", s.handleCommentCard)
 	mux.HandleFunc("POST /api/board/cards/{ref}/launch", s.handleLaunch)
 	mux.HandleFunc("POST /api/board/cards/{ref}/plan", s.handlePlan)
+	mux.HandleFunc("POST /api/board/cards/{ref}/check", s.handleCheckCard)
+	mux.HandleFunc("POST /api/board/cards/{ref}/triage", s.handleTriageCard)
+	mux.HandleFunc("POST /api/board/cards/{ref}/suggest", s.handleSuggest)
 	mux.HandleFunc("POST /api/board/links", s.handleLink)
 	mux.HandleFunc("DELETE /api/board/links", s.handleUnlink)
 	mux.HandleFunc("POST /api/board/requests/{id}/accept", s.handleAcceptRequest)
 	mux.HandleFunc("POST /api/board/requests/{id}/reject", s.handleRejectRequest)
 	mux.HandleFunc("POST /api/board/purge", s.handlePurge)
+	mux.HandleFunc("POST /api/board/import", s.handleImportBoard)
 }
 
 type commentBody struct {
@@ -320,6 +323,54 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]SessionSummary{"session": summary})
+}
+
+// handleCheckCard is Check at HEAD: {accept}, the run, red or green.
+func (s *Server) handleCheckCard(w http.ResponseWriter, r *http.Request) {
+	res, err := s.m.CheckCard(r.Context(), r.PathValue("ref"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]AcceptResult{"accept": res})
+}
+
+func (s *Server) handleTriageCard(w http.ResponseWriter, r *http.Request) {
+	t, err := s.m.TriageCard(r.Context(), r.PathValue("ref"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+// handleSuggest starts a suggestion job: 202 {job_id}, then board_job frames.
+func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request) {
+	var req SuggestRequest
+	if !decodeOptionalBody(w, r, &req) {
+		return
+	}
+	id, err := s.m.Suggest(r.PathValue("ref"), req)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": id})
+}
+
+func (s *Server) handleImportBoard(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Dir string `json:"dir"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	report, err := s.m.ImportBoard(r.Context(), body.Dir)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleLink(w http.ResponseWriter, r *http.Request) {

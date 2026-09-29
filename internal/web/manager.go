@@ -135,8 +135,9 @@ type Manager struct {
 	// loop checks for a due one (tests set it before Start).
 	quotaKick chan struct{}
 	quotaTick time.Duration
-	// titles counts title jobs, which Shutdown waits for before providers
-	// stop: a job deletes its throwaway conversation on the way out.
+	// titles counts title jobs and the planner's Utility jobs, which
+	// Shutdown waits for before providers stop: a job deletes its throwaway
+	// conversation on the way out.
 	// titleSlots bounds provider calls shared by titles and subagent summaries.
 	titles         sync.WaitGroup
 	titleSlots     chan struct{}
@@ -166,6 +167,13 @@ type Manager struct {
 	// claims are the done claims each Task's planner tools are evaluating,
 	// which archiving the Task cancels (board_tools.go). Guarded by mu.
 	claims map[string]map[*claimRun]struct{}
+	// stale computes the planner's staleness (board_stale.go), and triage
+	// keeps its triage answers (board_ai.go).
+	stale  staleCache
+	triage triageCache
+	// suggestJobs maps a container to its running suggestion job
+	// (board_ai.go). Guarded by mu.
+	suggestJobs map[string]string
 }
 
 // NewManager builds a manager for providers. Start must run before use.
