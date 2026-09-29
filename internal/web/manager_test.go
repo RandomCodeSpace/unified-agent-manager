@@ -804,3 +804,56 @@ func TestCreateWithRepeatedRequestIDReturnsSameSession(t *testing.T) {
 		t.Fatalf("repeat create reached the provider: opens=%d", len(prov.Opens()))
 	}
 }
+
+// Opens pass the host tools the Manager was given, with a CallTool bound to
+// the Task, on create and on reopen; without any, opens carry none.
+func TestOpensPassHostToolsBoundToTheTask(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	plain, conv := createSession(t, m, prov)
+	if req := conv.Request(); req.Tools != nil || req.CallTool != nil {
+		t.Fatalf("open without host tools = %+v", req)
+	}
+	if _, err := conv.CallTool(context.Background(), agentapi.HostToolCall{Name: "board_get"}); err == nil {
+		t.Fatalf("task %s answered a tool it does not have", plain.ID)
+	}
+	var mu sync.Mutex
+	var calls []agentapi.HostToolCall
+	tools := []agentapi.HostTool{{Name: "board_get", Parameters: map[string]any{"type": "object"}}, {Name: "board_list"}}
+	m.hostTools = func(taskID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
+		return tools, func(_ context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
+			mu.Lock()
+			defer mu.Unlock()
+			calls = append(calls, call)
+			return agentapi.HostToolResult{Text: "for " + taskID}
+		}
+	}
+	sum, conv := createSession(t, m, prov)
+	if req := conv.Request(); len(req.Tools) != 2 || req.CallTool == nil {
+		t.Fatalf("create request tools = %+v", req.Tools)
+	}
+	result, err := conv.CallTool(context.Background(), agentapi.HostToolCall{Name: "board_get", CallID: "call-1", AgentID: "sub-1", Arguments: []byte(`{}`)})
+	if err != nil || result.Text != "for "+sum.ID {
+		t.Fatalf("call = %+v, %v", result, err)
+	}
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conv.CallTool(context.Background(), agentapi.HostToolCall{Name: "board_get"}); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("call after close = %v", err)
+	}
+	if _, err := m.Commands(context.Background(), sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	reopened := prov.Last()
+	if reopened == conv || reopened.Request().ConversationID != sum.ConversationID || len(reopened.Request().Tools) != 2 {
+		t.Fatalf("reopen request = %+v", reopened.Request())
+	}
+	if _, err := reopened.CallTool(context.Background(), agentapi.HostToolCall{Name: "board_list", CallID: "call-2"}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 2 || calls[0].TaskID != sum.ID || calls[0].AgentID != "sub-1" || calls[0].CallID != "call-1" || calls[1].TaskID != sum.ID || calls[1].Name != "board_list" {
+		t.Fatalf("calls = %+v", calls)
+	}
+}
