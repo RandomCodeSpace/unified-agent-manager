@@ -32,6 +32,28 @@ describe('planner', () => {
     expect(window.location.hash).toBe('#planner=p3');
   });
 
+  test('the Project picker lists every Project by badge and name, one without git disabled with why, and Unassigned last', async () => {
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('button', { name: 'Project: unified-agent-manager' }));
+    const list = within(await screen.findByRole('listbox', { name: 'Projects' }));
+    const options = list.getAllByRole('option');
+    expect(options.map((o) => o.getAttribute('aria-current') === 'true')).toEqual([true, false, false, false]);
+    expect(options.at(-1)!.getAttribute('aria-label')).toBe('Unassigned, 1 card');
+    const dotfiles = list.getByRole('option', { name: /^dotfiles/ });
+    expect(dotfiles.getAttribute('aria-disabled')).toBe('true');
+    expect(within(dotfiles).getByText('Not a git repository, so it has no plan.')).toBeTruthy();
+    await user.click(dotfiles);
+    expect(screen.getByRole('listbox', { name: 'Projects' })).toBeTruthy();
+    // The search box keeps focus; Enter picks the highlighted match.
+    await user.type(screen.getByRole('combobox', { name: 'Search projects' }), 'notes');
+    expect(list.getAllByRole('option').map((o) => o.textContent)).toEqual(['NSnotes-site']);
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(screen.queryByRole('listbox', { name: 'Projects' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Project: notes-site' })).toBeTruthy();
+    const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    expect(await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
+  });
+
   test('the Tree folds suggestions behind +N suggested, and Confirm makes one part of the plan', async () => {
     const { user, tree } = await openPlanner();
     expect(tree.queryByRole('treeitem', { name: /^#11 / })).toBeNull();
@@ -360,6 +382,12 @@ async function pick(user: User, within_: ReturnType<typeof within>, name: string
   await user.click(await screen.findByRole('option', { name: option }));
 }
 
+/** Picks a Board in the Planner header's Project picker. */
+async function pickProject(user: User, option: RegExp) {
+  await user.click(screen.getByRole('button', { name: /^Project: / }));
+  await user.click(await within(await screen.findByRole('listbox', { name: 'Projects' })).findByRole('option', { name: option }));
+}
+
 /** Opens a card's detail from the Tree. */
 async function openCard(user: User, tree: ReturnType<typeof within>, seq: number) {
   await user.click(tree.getByRole('treeitem', { name: new RegExp(`^#${seq} `) }));
@@ -381,7 +409,7 @@ describe('owner authoring', () => {
     await api.createProject({ dir: '/home/user/projects/empty-plan' });
     await user.click(side.getByRole('button', { name: 'Planner' }));
     await waitFor(() => expect(header().textContent).toBe('Planner'));
-    await pick(user, within(document.body), 'Project', 'empty-plan');
+    await pickProject(user, /^empty-plan/);
     expect(await screen.findByText('Nothing is planned for empty-plan yet.')).toBeTruthy();
     // The header's New epic, and the empty state's.
     await user.click(screen.getAllByRole('button', { name: 'New epic' }).at(-1)!);
@@ -470,16 +498,20 @@ describe('owner authoring', () => {
 
   test('an Unassigned card moves into a project, and its plan opens on it', async () => {
     const { user } = await openPlanner();
-    await pick(user, within(document.body), 'Project', 'Unassigned (1)');
+    await pickProject(user, /^Unassigned, 1 card/);
     const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
     const panel = await openCard(user, tree, 36);
     await user.click(panel.getByRole('button', { name: 'Move' }));
     // The card opens in its new plan, no longer read-only.
     expect(await panel.findByRole('button', { name: 'Mark done' })).toBeTruthy();
     await closeCard(user);
-    expect(screen.getByRole('combobox', { name: 'Project' }).textContent).toContain('unified-agent-manager');
+    expect(screen.getByRole('button', { name: 'Project: unified-agent-manager' })).toBeTruthy();
     const plan = within(screen.getByRole('tree', { name: 'Plan outline' }));
     expect(await plan.findByRole('treeitem', { name: /^#36 Investigate the flaky clipboard test on Firefox/ })).toBeTruthy();
+    // Empty now and not shown, Unassigned leaves the picker.
+    await user.click(screen.getByRole('button', { name: 'Project: unified-agent-manager' }));
+    const list = within(await screen.findByRole('listbox', { name: 'Projects' }));
+    expect(list.queryByRole('option', { name: /^Unassigned/ })).toBeNull();
   });
 
   test('a card update keeps what the owner is typing in its owner fields', async () => {

@@ -1,5 +1,5 @@
-import { ArrowLeft, Check, KanbanSquare, Layers, Search, Settings } from 'lucide-react';
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import { ArrowLeft, Check, ChevronDown, CircleDashed, KanbanSquare, Layers, Search, Settings } from 'lucide-react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { Project, SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { filteredProject, newTaskProject, searchProjects } from '../lib/tasks';
@@ -12,9 +12,10 @@ import { Popover } from './ui/popover';
 import { Tip } from './ui/tooltip';
 
 /**
- * The two Project lists a search box drives (T3 Code): the sidebar's filter dropdown and
- * the New task palette. The box keeps focus; the highlight is virtual (`aria-activedescendant`),
- * arrows move it, Enter picks it, Esc closes the surface and a pointer over a row takes it.
+ * The Project lists a search box drives (T3 Code): the sidebar's filter dropdown (and the
+ * Planner's Board picker, the same list) and the New task palette. The box keeps focus; the
+ * highlight is virtual (`aria-activedescendant`), arrows move it, Enter picks it, Esc closes
+ * the surface and a pointer over a row takes it.
  */
 
 /** The highlighted index, clamped to the list; `initial` is used once, on mount. */
@@ -99,13 +100,88 @@ export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onPlan
   );
 }
 
-function FilterList({ projects, filter, input, onPick, onEdit, onPlan }: Readonly<{ projects: Project[]; filter: string | null; input: RefObject<HTMLInputElement | null>; onPick: (id: string | null) => void; onEdit: (p: Project) => void; onPlan?: (p: Project) => void }>) {
+/* ---------- Planner Board picker ---------- */
+
+/** Why a Project has no plan, in the words the Planner uses for it (§14 no_git). */
+const noPlan = (p: Project) => {
+  if (p.no_git === 'not_installed') return 'Git is not installed where uam can find it.';
+  return p.no_git ? 'Not a git repository, so it has no plan.' : undefined;
+};
+
+/**
+ * The Planner header's Board picker: the filter's list, opening below and start-aligned, with
+ * every Project (one without git listed, disabled, with the reason) and Unassigned last with
+ * its card count while it has cards or is shown. The trigger is the Board's badge, name and a chevron.
+ */
+export function PlannerProjectPicker({ projects, value, unassigned, onPick }: Readonly<{ projects: Project[]; value: string; unassigned: number; onPick: (id: string) => void }>) {
+  const [open, setOpen] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const project = projects.find((p) => p.id === value);
+  const name = project?.name ?? (value === 'unassigned' ? 'Unassigned' : 'Choose a project');
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger render={<Button size="md" aria-label={`Project: ${name}`} className="min-w-0 max-w-64 shrink px-2 sm:ml-1" />}>
+        {project ? <ProjectBadge badge={project.badge} /> : <CircleDashed className="text-muted" />}
+        {/* A phone's header has room for the badge and the chevron only; the label names the Board. */}
+        <span className="min-w-0 truncate max-[480px]:hidden">{name}</span>
+        <ChevronDown className="text-muted" />
+      </Popover.Trigger>
+      <Popover.Content side="bottom" align="start" sideOffset={4} initialFocus={input} className="w-72 max-w-(--available-width) gap-0 p-1">
+        <FilterList
+          projects={projects}
+          filter={value}
+          input={input}
+          all={false}
+          reason={noPlan}
+          tail={unassigned || value === 'unassigned' ? { id: 'unassigned', label: 'Unassigned', icon: <CircleDashed />, count: unassigned } : undefined}
+          onPick={(id) => {
+            if (id) onPick(id);
+            setOpen(false);
+          }}
+        />
+      </Popover.Content>
+    </Popover.Root>
+  );
+}
+
+/** A row of the list: a Project, All projects (`id` null), or an extra entry after the Projects. */
+interface FilterRow {
+  id: string | null;
+  label: string;
+  project?: Project;
+  icon?: ReactNode;
+  /** Why the row cannot be picked; shown under its name, and the row is disabled. */
+  reason?: string;
+  count?: number;
+}
+
+/**
+ * The searchable Project list. The sidebar filter heads it with All projects and gives each
+ * Project its Plan and gear buttons; the Planner's picker lists no All projects, disables the
+ * Projects `reason` names, and ends with its `tail` entry while that matches the search.
+ */
+function FilterList({ projects, filter, input, onPick, onEdit, onPlan, all = true, reason, tail }: Readonly<{
+  projects: Project[];
+  filter: string | null;
+  input: RefObject<HTMLInputElement | null>;
+  onPick: (id: string | null) => void;
+  onEdit?: (p: Project) => void;
+  onPlan?: (p: Project) => void;
+  all?: boolean;
+  reason?: (p: Project) => string | undefined;
+  tail?: FilterRow;
+}>) {
   const id = useId();
   const [query, setQuery] = useState('');
   const matches = useMemo(() => searchProjects(projects, query), [projects, query]);
+  const q = query.trim().toLocaleLowerCase();
   // All projects heads the list unless a search is on.
-  const rows: (Project | null)[] = query.trim() ? matches : [null, ...matches];
-  const { active, setActive, list, onKeyDown } = useHighlight(rows.length, 0, (i) => onPick(rows[i]?.id ?? null));
+  const rows: FilterRow[] = [
+    ...(all && !q ? [{ id: null, label: 'All projects', icon: <Layers /> }] : []),
+    ...matches.map((p) => ({ id: p.id, label: p.name, project: p, reason: reason?.(p) })),
+    ...(tail && tail.label.toLocaleLowerCase().includes(q) ? [tail] : []),
+  ];
+  const { active, setActive, list, onKeyDown } = useHighlight(rows.length, 0, (i) => !rows[i].reason && onPick(rows[i].id));
   return (
     <>
       <label className="flex items-center gap-1.5 px-2 pb-1 text-muted">
@@ -130,26 +206,34 @@ function FilterList({ projects, filter, input, onPick, onEdit, onPlan }: Readonl
         />
       </label>
       <div ref={list} role="listbox" id={`${id}-list`} aria-label="Projects" className="max-h-[min(60dvh,360px)] overflow-y-auto overscroll-contain pt-1">
-        {rows.map((p, i) => {
-          const current = (p?.id ?? null) === filter;
-          const pick = () => onPick(p?.id ?? null);
+        {rows.map((row, i) => {
+          const p = row.project;
+          const current = row.id === filter;
+          const pick = () => !row.reason && onPick(row.id);
           return (
             // Not a button: the gear inside is one. The row is reached through the search box (`aria-activedescendant`), never focused itself.
             <div
-              key={p?.id ?? 'all'}
+              key={row.id ?? 'all'}
               role="option"
               tabIndex={-1}
               id={`${id}-${i}`}
               aria-selected={i === active}
               aria-current={current || undefined}
+              aria-disabled={row.reason ? true : undefined}
+              aria-label={row.count === undefined ? undefined : `${row.label}, ${row.count} ${row.count === 1 ? 'card' : 'cards'}`}
               data-highlighted={i === active ? '' : undefined}
-              className={cn(itemClass, 'pr-1', current && 'text-ink')}
+              className={cn(itemClass, 'pr-1', current && 'text-ink', row.reason && 'items-start py-1.5')}
               onPointerMove={() => i !== active && setActive(i)}
               onClick={pick}
               onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && pick()}
             >
-              {p ? <ProjectBadge badge={p.badge} /> : <Layers />}
-              <span className="min-w-0 flex-1 truncate">{p ? p.name : 'All projects'}</span>
+              {/* A disabled row dims its badge and name; its reason stays readable in caption beneath (DESIGN.md menus). */}
+              {p ? <ProjectBadge badge={p.badge} className={cn(row.reason && 'opacity-45')} /> : row.icon}
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className={cn('truncate', row.reason && 'opacity-45')}>{row.label}</span>
+                {row.reason && <span className="text-caption text-muted">{row.reason}</span>}
+              </span>
+              {row.count !== undefined && <span className="text-caption tabular-nums text-muted">{row.count}</span>}
               {current && <Check aria-hidden="true" strokeWidth={2.5} className="!size-3.5 !text-accent" />}
               {p && onPlan && !p.no_git && (
                 <Button
@@ -165,7 +249,7 @@ function FilterList({ projects, filter, input, onPick, onEdit, onPlan }: Readonl
                   <KanbanSquare />
                 </Button>
               )}
-              {p && (
+              {p && onEdit && (
                 <Button
                   size="icon-sm"
                   aria-label={`Edit ${p.name}`}

@@ -4,7 +4,7 @@ import { api, plannerErrorText, type BoardJob, type Project } from '../../api';
 import { boardOf, childIndex } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
-import { Note, ProjectBadge, Skeleton, useApp } from '../common';
+import { Note, Skeleton, useApp } from '../common';
 import { Button } from '../ui/button';
 import { usePresence } from '../ui/collapse';
 import { AlertDialog } from '../ui/dialog';
@@ -13,6 +13,7 @@ import { Segmented } from '../ui/segmented';
 import { Select } from '../ui/select';
 import { Switch } from '../ui/switch';
 import { Tip } from '../ui/tooltip';
+import { PlannerProjectPicker } from '../ProjectPicker';
 import { PanelHeader, SidePanel } from '../Subagents';
 import { BoardView } from './BoardView';
 import { CardPanel } from './CardPanel';
@@ -158,7 +159,6 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const p = usePlanner();
   const { narrow } = useApp();
   const { ui, setUi, projects, boards } = p;
-  const git = projects.filter((x) => !x.no_git);
   const unassigned = boards.unassigned?.data?.cards.length ?? 0;
   const project = projects.find((x) => x.id === ui.project);
   const key = ui.project ?? '';
@@ -236,15 +236,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
           {leading}
           <KanbanSquare aria-hidden="true" className="size-4 shrink-0 text-muted max-sm:hidden" />
           <h1 className="shrink-0 text-display-sm text-ink max-sm:sr-only">Planner</h1>
-          <Select
-            aria-label="Project"
-            className="h-8 w-auto max-w-56 min-w-0 bg-transparent shadow-none hover:not-data-disabled:bg-tint-hover sm:ml-1"
-            value={key}
-            // Base UI reports null when the chosen option leaves the list (the Unassigned entry, once its last card moves): not a pick.
-            onValueChange={(v) => v && setUi({ project: v, selected: null, epic: null, panel: null, creating: null })}
-            items={[...git.map((x) => ({ value: x.id, label: x.name })), ...(unassigned || key === 'unassigned' ? [{ value: 'unassigned', label: `Unassigned (${unassigned})` }] : [])]}
-          />
-          {project && <ProjectBadge badge={project.badge} className="-ml-0.5 max-sm:hidden" />}
+          <PlannerProjectPicker projects={projects} value={key} unassigned={unassigned} onPick={(v) => setUi({ project: v, selected: null, epic: null, panel: null, creating: null })} />
           <span className="flex-1" />
           {author && (
             <Tip label="New epic">
