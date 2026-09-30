@@ -374,7 +374,9 @@ func TestBoardToolsPlanUnderTheContainer(t *testing.T) {
 	f.toolRefused(plan, "board_create", `{"kind":"epic","parent":"#1","title":"E"}`, string(board.CodeInvalid))
 	f.toolRefused(plan, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"S"}`, outside.ID), string(board.CodeForbidden))
 	f.toolRefused(plan, "board_create", `{"kind":"story","parent":"#1","title":" story "}`, string(board.CodeDuplicate))
-	f.toolRefused(plan, "board_create", `{"kind":"subtask","title":"No parent"}`, string(board.CodeForbidden))
+	if r := f.toolRefused(plan, "board_create", `{"kind":"subtask","title":"No parent"}`, string(board.CodeInvalid)); r.Text != "a subtask needs a parent: the epic or story to create it under" {
+		t.Fatalf("no parent = %+v", r)
+	}
 	f.toolRefused(plan, "board_create", `{"kind":"epic","title":"From a planning task"}`, string(board.CodeForbidden))
 
 	for i := range board.CapUnconfirmed - 1 {
@@ -412,9 +414,27 @@ func TestBoardToolsProposeRootEpics(t *testing.T) {
 	}
 	second := f.toolOK(task, "board_create", `{"kind":"epic","parent":" ","title":"Sync"}`).Card
 	f.toolRefused(task, "board_create", `{"kind":"epic","title":" offline MODE "}`, string(board.CodeDuplicate))
-	f.toolRefused(task, "board_create", `{"kind":"story","title":"Loose story"}`, string(board.CodeForbidden))
-	f.toolRefused(task, "board_create", `{"kind":"subtask","title":"Loose subtask"}`, string(board.CodeForbidden))
-	f.toolRefused(task, "board_create", fmt.Sprintf(`{"kind":"epic","parent":%q,"title":"Nested"}`, second.ID), string(board.CodeInvalid))
+	for _, kind := range []board.Kind{board.KindStory, board.KindSubtask} {
+		r := f.toolRefused(task, "board_create", fmt.Sprintf(`{"kind":%q,"parent":"","title":"Loose"}`, kind), string(board.CodeInvalid))
+		if want := fmt.Sprintf("a %s needs a parent: the epic or story to create it under", kind); r.Text != want {
+			t.Fatalf("loose %s = %q, want %q", kind, r.Text, want)
+		}
+	}
+	if r := f.toolRefused(task, "board_create", fmt.Sprintf(`{"kind":"epic","parent":%q,"title":"Nested"}`, second.ID), string(board.CodeInvalid)); r.Text != "an epic cannot hold an epic" {
+		t.Fatalf("nested = %q", r.Text)
+	}
+	// It proposes and nothing more: its own epic is outside any scope it has.
+	for name, args := range map[string]string{
+		"board_edit":      `{"ref":%q,"title":"Renamed"}`,
+		"board_comment":   `{"ref":%q,"body":"note"}`,
+		"board_checklist": `{"ref":%q,"add":["item"]}`,
+		"board_link":      `{"ref":%q,"blocker":"#1"}`,
+	} {
+		f.toolRefused(task, name, fmt.Sprintf(args, r.Card.ID), string(board.CodeForbidden))
+	}
+	if d := f.card(r.Card.ID); d.Card.Title != "Offline mode" || len(d.Comments) != 0 || len(d.Card.Checklist) != 0 || len(d.Card.BlockedBy) != 0 || len(d.Requests) != 0 {
+		t.Fatalf("a refused call wrote: %+v", d)
+	}
 	for i := range board.CapUnconfirmed - 2 {
 		f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"epic","title":"Epic %d"}`, i))
 	}
@@ -860,6 +880,10 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	}
 	if d := f.card(r.Card.ID); d.Card.ParentID == nil || *d.Card.ParentID != story.ID || d.Card.Confirmed {
 		t.Fatalf("created = %+v", d.Card)
+	}
+	// Scoped to its container, the job proposes no epic at the root.
+	if r, failed := run("board_create", `{"kind":"epic","title":"Epic from the job"}`); !failed || r.Code != string(board.CodeForbidden) {
+		t.Fatalf("root epic from the job = %+v", r)
 	}
 
 	// board_get shows nothing outside the container: the path starts at it,

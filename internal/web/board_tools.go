@@ -256,7 +256,8 @@ var boardToolSet = []boardTool{
 			"parent": stringProp("Only the direct children of this card. " + refDesc),
 		}), (*Manager).toolList),
 	defineTool("board_create", "Propose a card: an epic at the root of the board, with no parent; a story under an epic; or a subtask under a story or an epic. "+
-		"A task started from a card creates only under that card's container, so it proposes no epics. The card stays a proposal until the owner confirms it.",
+		"A task not started from a card may propose only epics, and can't change them afterwards; a task started from a card creates only within its scope and proposes no epics. "+
+		"The card stays a proposal until the owner confirms it.",
 		toolSchema([]string{"kind", "title"}, map[string]any{
 			"kind":          enumProp("An epic holds stories and subtasks and needs no parent; a story holds subtasks; a subtask is one piece of work.", string(board.KindEpic), string(board.KindStory), string(board.KindSubtask)),
 			"parent":        stringProp("For a story or subtask: the epic or story to create it under. Leave it out for an epic. " + refDesc),
@@ -648,6 +649,9 @@ type createArgs struct {
 }
 
 func (m *Manager) toolCreate(ctx context.Context, sc boardScope, in createArgs) (toolReply, error) {
+	if strings.TrimSpace(in.Parent) == "" && (in.Kind == board.KindStory || in.Kind == board.KindSubtask) {
+		return toolReply{}, invalidBoard("a %s needs a parent: the epic or story to create it under", in.Kind)
+	}
 	var reply toolReply
 	err := m.withBoard(func(st *board.Store) error {
 		// No parent is the root, where the store takes only an epic, and only

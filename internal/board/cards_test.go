@@ -174,12 +174,24 @@ func TestAgentRootEpics(t *testing.T) {
 	}
 	f.create(free, "", KindEpic, "After the dismiss")
 
-	// Unconfirmed, they expire with the window.
+	// A Task planning under a proposed epic adds proposals of its own there.
+	f.must(f.s.StartPlanning(f.ctx, owner, proposed[1].ID, "decomposer"))
+	story := f.create(Agent("decomposer", ""), proposed[1].ID, KindStory, "Story under a proposal")
+	leaf := f.create(Agent("decomposer", ""), story.ID, KindSubtask, "Leaf under a proposal")
+
+	// Unconfirmed, they expire with the window, and a root proposal takes
+	// its proposed subtree with it.
 	f.clock.advance(ExpiryWindow)
 	f.create(owner, "", KindEpic, "A write sweeps")
 	for _, c := range f.children("") {
 		if c.CreatedBy == "task:free" && !c.Confirmed() && c.Status != StatusCancelled {
 			t.Fatalf("%s outlived its expiry: %+v", c.Title, c)
+		}
+	}
+	swept := f.card(proposed[1].ID)
+	for _, id := range []string{story.ID, leaf.ID} {
+		if c := f.card(id); c.Status != StatusCancelled || c.CascadeID == "" || c.CascadeID != swept.CascadeID || !hasComment(f.comments(id), "uam: expired unconfirmed") {
+			t.Fatalf("%s under the swept epic = %+v", c.Title, c)
 		}
 	}
 	// And they count toward the created cap: with nothing left to confirm,

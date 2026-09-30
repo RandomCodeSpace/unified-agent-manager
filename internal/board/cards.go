@@ -159,7 +159,7 @@ func (t *txn) create(a Actor, project, parentID string, in NewCard) (*node, erro
 	if parentID != "" {
 		parent := o.byID[parentID]
 		if !parent.Kind.canHold(in.Kind) {
-			return nil, invalid("a %s cannot hold a %s", parent.Kind, in.Kind)
+			return nil, parent.Kind.holdRefusal(in.Kind)
 		}
 		if parent.stored == StatusCancelled {
 			return nil, invalid("%s is cancelled", parent.ref())
@@ -407,7 +407,7 @@ func (t *txn) checkParent(o *outline, a Actor, n *node, parent string) error {
 	}
 	pn := o.byID[parent]
 	if !pn.Kind.canHold(n.Kind) {
-		return invalid("a %s cannot hold a %s", pn.Kind, n.Kind)
+		return pn.Kind.holdRefusal(n.Kind)
 	}
 	if pn.stored == StatusCancelled {
 		return invalid("%s is cancelled", pn.ref())

@@ -52,6 +52,17 @@ func (k Kind) level() int {
 // canHold reports whether a card of kind k may be the parent of kind child.
 func (k Kind) canHold(child Kind) bool { return k.level() < child.level() }
 
+// holdRefusal refuses a card of kind child under a card of kind k.
+func (k Kind) holdRefusal(child Kind) error {
+	article := func(k Kind) string {
+		if k == KindEpic {
+			return "an"
+		}
+		return "a"
+	}
+	return invalid("%s %s cannot hold %s %s", article(k), k, article(child), child)
+}
+
 // Status is a leaf's stored status, or a container's derived one.
 type Status string
 

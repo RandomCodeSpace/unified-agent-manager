@@ -277,7 +277,8 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   }, [ui.project, projects, defaultProject, setUi]);
 
   const cards = board?.data?.cards;
-  const epics = useMemo(() => (cards ? (childIndex(cards).get('') ?? []).filter((c) => c.kind === 'epic') : []), [cards]);
+  // Cancelled epics (expired proposals among them) leave the filter, except the one it is set to.
+  const epics = useMemo(() => (cards ? (childIndex(cards).get('') ?? []).filter((c) => c.kind === 'epic' && (c.status !== 'cancelled' || c.id === ui.epic)) : []), [cards, ui.epic]);
   const stale = cards?.filter((c) => c.stale).length ?? 0;
   const cancelled = cards?.filter((c) => c.status === 'cancelled').length ?? 0;
   const pending = board?.data?.requests.length ?? 0;
