@@ -864,6 +864,15 @@ describe('the floating pop-out', () => {
     expect(within(await panel()).getByText('empty-plan')).toBeTruthy();
   });
 
+  test('a stored Hide that is not a map of booleans counts as none', async () => {
+    for (const junk of ['null', '[true]', '{"p1":"yes"}']) {
+      localStorage.setItem('uam.plannerHidden', junk);
+      const { unmount } = await openTask('t1');
+      expect(await panel()).toBeTruthy();
+      unmount();
+    }
+  });
+
   test('the box and a Hide per Project last across a reload; a phone starts as the tab whatever was chosen', async () => {
     const first = await openTask('t1');
     const grip = within(await panel()).getByRole('button', { name: 'Move the pop-out (arrow keys)' });

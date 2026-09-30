@@ -33,14 +33,18 @@ export function plannerKeys(enabled: boolean, projects: readonly Project[]): str
 
 const HIDDEN_KEY = 'uam.plannerHidden';
 
-/** The owner's Hide or Show of the pop-out, per Project. A phone forgets the Shows, so its panel starts folded. */
+/** The owner's Hide or Show of the pop-out, per Project; anything else stored counts as none. A phone forgets the Shows, so its panel starts folded. */
 function readHidden(phone: boolean): Record<string, boolean> {
   try {
-    const all = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '{}') as Record<string, boolean>;
-    return phone ? Object.fromEntries(Object.entries(all).filter(([, h]) => h)) : all;
+    const v: unknown = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '{}');
+    if (v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((h) => typeof h === 'boolean')) {
+      const all = v as Record<string, boolean>;
+      return phone ? Object.fromEntries(Object.entries(all).filter(([, h]) => h)) : all;
+    }
   } catch {
-    return {};
+    // Unreadable: as if nothing were stored.
   }
+  return {};
 }
 
 /**
