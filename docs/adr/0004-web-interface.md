@@ -1195,7 +1195,7 @@ probe folder was not trusted, and this host has no user MCP configuration.
 | `GET /api/sessions/{id}/commands` | – | `{"commands": [{"name", "description", "kind", "input_hint"}]}`; opens the conversation as a viewer does; 409 when it is not open |
 | `GET /api/sessions/{id}/files?q=&limit=` | – | `{"files": [{"path", "type"}], "reason"}`; `type` is `file` or `directory`; `limit` 1 to 200, default 50, else 400 |
 | `GET /api/projects/{id}/files?q=&limit=` | – | The same list for a Project's directory, for a new Task that does not exist yet; 404 for an unknown Project |
-| `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path, or for files on a steer during a turn |
+| `POST /api/sessions/{id}/prompt` | gains `"files"?: [string]` | 400 naming a refused path |
 | `POST /api/sessions/{id}/command` | `{"request_id", "name", "arguments", "files"?}` | 202 `Submission`; 400 invalid `request_id` or name, or a refused file; 404 not a listed command; 409 while a turn runs; 413 arguments over the prompt limit |
 
 `QueuedPrompt` gains `files` (omitted when empty).
@@ -1292,7 +1292,7 @@ No request carries base64 in JSON.
 |---|---|---|
 | `POST /api/sessions/{id}/attachments?name=` | the raw file, `Content-Type: application/octet-stream` | 201 `{"id", "name", "mime", "size"}`; 400 empty file or refused by the model gate; 404 unknown Task; 409 settled or archived Task; 413 over a limit; 415 wrong request type or file type |
 | `GET /api/sessions/{id}/attachments/{attachment_id}` | – | the file; 404 for an unknown Task or attachment, or another Task's |
-| `POST /api/sessions/{id}/prompt` | gains `"attachments"?: [string]` | 400 for an unknown ID, more than 5, too many images, a gate refusal, or attachments on a steer |
+| `POST /api/sessions/{id}/prompt` | gains `"attachments"?: [string]` | 400 for an unknown ID, more than 5, too many images, or a gate refusal |
 | `POST /api/sessions/{id}/command` | gains `"attachments"?: [string]` | the same checks |
 | `GET /api/meta` | each model gains `"media"?: {"images", "pdf", "max_images"?, "types"?}` | absent when the model reports nothing |
 
@@ -1347,8 +1347,8 @@ The owner asked for text from the Project's name and a random colour.
 The service stores the web interface's settings, so they apply in every
 browser. The first says what Enter does in the composer while a turn runs:
 `steer`, the owner's default, or `queue`. The other action stays on
-Ctrl/Cmd+Enter. Files and attachments queue because steering accepts text
-only. If the provider refuses steering as unsupported, the draft stays in
+Ctrl/Cmd+Enter. Files and attachments go with a steer as with any other
+message. If the provider refuses steering as unsupported, the draft stays in
 place and the next Enter queues it with an explanation. Commands stay
 blocked during a turn because the server cannot queue commands.
 The browser applies the setting: the prompt API does not

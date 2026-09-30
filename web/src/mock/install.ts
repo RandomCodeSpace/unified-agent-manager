@@ -1028,10 +1028,11 @@ export function install(): { received: Received[] } {
         case 'prompt': {
           received.push({ route: 'prompt', session: t.id, body });
           if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
-          const text = String(body.text ?? '');
-          if (!text.trim()) return fail(400, 'prompt text is required');
+          // As the service: blank text beside files or uploads goes as none.
+          const text = String(body.text ?? '').trim() ? String(body.text) : '';
           const extras = checkExtras(t, body);
           if (extras instanceof Response) return extras;
+          if (!text && !extras.files.length && !extras.attachments.length) return fail(400, 'prompt text, a file or an attachment is required');
           const withAttachments = extras.attachments.length ? { attachments: extras.attachments } : {};
           const sub = { request_id: String(body.request_id ?? ''), status: 'accepted' as const, time: now() };
           if (busy(t)) {

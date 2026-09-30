@@ -288,6 +288,58 @@ func TestPromptAttachmentsSendOnceAndStay(t *testing.T) {
 	}
 }
 
+// A message of only uploads or file references is sent, steered and queued
+// with no text, never with the blanks typed; a message with nothing is
+// refused before it reaches the provider.
+func TestAttachmentOnlyMessages(t *testing.T) {
+	m, _, sum, conv, _ := uploadTask(t, "docs")
+	doc := []byte("codeword: PLUM")
+	a := mustUpload(t, m, sum.ID, "note.txt", doc)
+	if err := os.WriteFile(filepath.Join(sum.Workdir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []PromptRequest{{}, {Text: " \n\t"}, {Text: " ", Files: []string{}, Attachments: []string{}}, {Mode: ModeQueue}, {Mode: ModeSteer}} {
+		req.RequestID = mustUUID(t)
+		if _, err := m.Submit(sum.ID, req); statusOf(err) != http.StatusBadRequest || err.Error() != "prompt text, a file or an attachment is required" {
+			t.Fatalf("empty %+v = %v", req, err)
+		}
+	}
+	if n := len(conv.Prompts()); n != 0 {
+		t.Fatalf("empty messages sent %d prompts", n)
+	}
+
+	rid := mustUUID(t)
+	sub, err := m.Submit(sum.ID, PromptRequest{Text: " \n", RequestID: rid, Attachments: []string{a.ID}})
+	if err != nil || sub.Status != SubmissionAccepted {
+		t.Fatalf("attachment-only send = %+v, %v", sub, err)
+	}
+	if again, err := m.Submit(sum.ID, PromptRequest{Text: " \n", RequestID: rid, Attachments: []string{a.ID}}); err != nil || again != sub {
+		t.Fatalf("retry = %+v, %v", again, err)
+	}
+	if p := conv.Prompts(); len(p) != 1 || p[0].Text != "" || len(p[0].Attachments) != 1 || !bytes.Equal(p[0].Attachments[0].Data, doc) {
+		t.Fatalf("sent %+v", p)
+	}
+
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	if sub, err := m.Submit(sum.ID, PromptRequest{RequestID: mustUUID(t), Mode: ModeSteer, Files: []string{"main.go"}}); err != nil || sub.Status != SubmissionAccepted {
+		t.Fatalf("file-only steer = %+v, %v", sub, err)
+	}
+	if p := conv.SteerPrompts(); len(p) != 1 || p[0].Text != "" || len(p[0].Files) != 1 || p[0].Files[0].Rel != "main.go" {
+		t.Fatalf("steered %+v", p)
+	}
+	if sub, err := m.Submit(sum.ID, PromptRequest{Text: "\t", RequestID: mustUUID(t), Mode: ModeQueue, Attachments: []string{a.ID}}); err != nil || sub.Status != SubmissionQueued {
+		t.Fatalf("attachment-only queue = %+v, %v", sub, err)
+	}
+	if q := detail(t, m, sum.ID).Queue; len(q) != 1 || q[0].Text != "" || len(q[0].Attachments) != 1 {
+		t.Fatalf("queue = %+v", q)
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "queued prompt sent", func() bool { return len(conv.Prompts()) == 2 })
+	if p := conv.Prompts()[1]; p.Text != "" || len(p.Attachments) != 1 || !bytes.Equal(p.Attachments[0].Data, doc) {
+		t.Fatalf("drained %+v", p)
+	}
+}
+
 // A PDF also goes as a named copy on disk: Copilot reads a document it can
 // pass natively by its name, and otherwise gives the agent the path.
 func TestPromptPDFCarriesANamedCopy(t *testing.T) {

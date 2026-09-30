@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -118,6 +120,16 @@ func TestTitleTriggerRules(t *testing.T) {
 	mustSubmit(t, m, uncertain.ID, "maybe", mustUUID(t), ModeSend, SubmissionUncertain)
 	conv.SetSendHook(nil)
 	mustSubmit(t, m, uncertain.ID, "again", mustUUID(t), ModeSend, SubmissionAccepted)
+
+	// A first message of only a file has no text to title from; the Task
+	// keeps the provider's title.
+	fileOnly, _ := create("")
+	if err := os.WriteFile(filepath.Join(fileOnly.Workdir, "notes.txt"), []byte("notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if sub, err := m.Submit(fileOnly.ID, PromptRequest{RequestID: mustUUID(t), Files: []string{"notes.txt"}}); err != nil || sub.Status != SubmissionAccepted {
+		t.Fatalf("file-only first message = %+v, %v", sub, err)
+	}
 
 	// Opted out, a first message keeps the provider's title.
 	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": store.WebTitleModelNone}}); err != nil {

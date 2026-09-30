@@ -453,7 +453,20 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       state: 'interrupted',
       created_at: ago(60 * 26 + 5),
       updated_at: ago(60 * 26),
-      items: [{ id: 'i1', kind: 'user', time: ago(60 * 26 + 5), text: 'Remove every mention of the tmux backend from docs/ now that the native backend shipped.' }],
+      items: [
+        { id: 'i1', kind: 'user', time: ago(60 * 26 + 5), text: 'Remove every mention of the tmux backend from docs/ now that the native backend shipped.' },
+        // A message of only attachments, one of them no longer stored.
+        {
+          id: 'i2',
+          kind: 'user',
+          time: ago(60 * 26 + 2),
+          text: '',
+          attachments: [
+            { id: 'att-png-seed5', name: 'tmux-pane.png', mime: 'image/png', size: 20480 },
+            { name: 'old-notes.txt', mime: 'text/plain' },
+          ],
+        },
+      ],
     }),
     task({
       id: 't6',

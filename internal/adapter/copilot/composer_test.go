@@ -80,6 +80,35 @@ func TestWebSendAttachesReferencedFiles(t *testing.T) {
 	}
 }
 
+// A message of only an upload or a file goes with an empty prompt: nothing is
+// added, and a steer the turn did not use is reported without an empty quote.
+func TestWebAttachmentOnlyMessageSendsAnEmptyPrompt(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	data := "png"
+	name := "shot.png"
+	if err := h.conv.Send(ctx, agentapi.Prompt{Attachments: []agentapi.Blob{{Name: name, MIME: "image/png", Data: []byte(data)}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.conv.Steer(ctx, agentapi.Prompt{Files: composerFiles[:1]}); err != nil { // msg-2
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(data))
+	want := [][]copilot.Attachment{{&rpc.AttachmentBlob{Data: &encoded, MIMEType: "image/png", DisplayName: &name}}, wantFileAttachments()[:1]}
+	if len(h.fs.msgs) != len(want) {
+		t.Fatalf("sent %d messages, want %d: %+v", len(h.fs.msgs), len(want), h.fs.msgs)
+	}
+	for i, msg := range h.fs.msgs {
+		if msg.Prompt != "" || msg.DisplayPrompt != "" || !reflect.DeepEqual(msg.Attachments, want[i]) {
+			t.Fatalf("message %d sent %+v", i, msg)
+		}
+	}
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{Aborted: copilot.Bool(true)}))
+	if got := notices(h.sink.all()); len(got) != 1 || got[0] != "steer-undelivered:msg-2|Steer not delivered: the turn was stopped" {
+		t.Fatalf("notices = %q", got)
+	}
+}
+
 func TestWebCommandsListSupportedAndDisabledNativeCommands(t *testing.T) {
 	h := openWeb(t)
 	h.fs.commands = []rpc.SlashCommandInfo{
