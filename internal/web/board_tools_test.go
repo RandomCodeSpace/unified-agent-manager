@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -217,8 +218,8 @@ func promptTask(t *testing.T, m *Manager, prov *agenttest.Provider, id, text str
 }
 
 // A Task opened with the planner off gets the tools on its next prompt once
-// the switch is on: the prompt reopens the conversation. A prompt whose
-// Task already has the right tools reopens nothing.
+// the switch is on: the prompt reopens the conversation. A slash command,
+// and a prompt whose Task already has the right tools, reopen nothing.
 func TestPromptReopensATaskForThePlannerSwitchedOn(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	project := gitProject(t, m, "app")
@@ -234,6 +235,11 @@ func TestPromptReopensATaskForThePlannerSwitchedOn(t *testing.T) {
 		t.Fatal("a prompt reopened a task that has the right tools")
 	}
 	setPlanner(t, m, true)
+	prov.SetCommands([]agentapi.Command{{Name: "review"}}, nil)
+	if _, err := m.Command(sum.ID, CommandRequest{RequestID: mustUUID(t), Name: "review"}); err != nil || len(prov.Opens()) != 1 || len(first.CommandRuns()) != 1 {
+		t.Fatalf("command = %v, opens %d, runs %d", err, len(prov.Opens()), len(first.CommandRuns()))
+	}
+	first.EmitTurn(agentapi.TurnCompleted, "")
 	conv, reopened := promptTask(t, m, prov, sum.ID, "after")
 	if !reopened || conv == first || first.Closes() != 1 || conv.Request().ConversationID != sum.ConversationID {
 		t.Fatalf("reopened %v, closes %d, request %+v", reopened, first.Closes(), conv.Request())
@@ -280,35 +286,25 @@ func TestPromptReopensATaskThatLostTheTools(t *testing.T) {
 	}
 }
 
-// A conversation that still runs or waits for something is not reopened for
-// its tools: the prompt, or a steer into the waiting turn, goes to it as it
-// is.
+// A conversation that still runs or waits for something, an idle
+// subagent's follow-up included, is not reopened for its tools: the prompt
+// goes to it as it is.
 func TestPromptKeepsABusyConversationWithStaleTools(t *testing.T) {
-	for name, tc := range map[string]struct {
-		keep func(*agenttest.Conversation)
-		mode string
-		sent func(*agenttest.Conversation) []string
-	}{
-		"background task": {
-			keep: func(c *agenttest.Conversation) {
-				c.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{{ID: "server", Status: "running"}}}})
-			},
-			mode: ModeSend, sent: (*agenttest.Conversation).Sends,
+	for name, keep := range map[string]func(*Manager, string, *agenttest.Conversation){
+		"background task": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{{ID: "server", Status: "running"}}}})
 		},
-		"subagent": {
-			keep: func(c *agenttest.Conversation) {
-				c.EmitSubagent(agentapi.Subagent{ID: "sa", Status: agentapi.SubagentRunning})
-			},
-			mode: ModeSend, sent: (*agenttest.Conversation).Sends,
+		"running subagent": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.EmitSubagent(agentapi.Subagent{ID: "sa", Status: agentapi.SubagentRunning})
 		},
-		"question": {
-			keep: func(c *agenttest.Conversation) {
-				c.EmitTurn(agentapi.TurnWorking, "")
-				ix := question("q1")
-				ix.State = agentapi.InteractionPending
-				c.EmitInteraction(ix)
-			},
-			mode: ModeSteer, sent: (*agenttest.Conversation).Steers,
+		"idle subagent": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.EmitSubagent(agentapi.Subagent{ID: "sa", Status: agentapi.SubagentIdle})
+		},
+		"paused queue": func(m *Manager, id string, _ *agenttest.Conversation) {
+			m.mu.Lock()
+			s := m.sessions[id]
+			s.queue, s.queuePaused = []QueuedPrompt{{RequestID: "queued", Text: "later"}}, true
+			m.mu.Unlock()
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -318,13 +314,35 @@ func TestPromptKeepsABusyConversationWithStaleTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			conv := prov.Last()
-			tc.keep(conv)
+			keep(m, sum.ID, conv)
 			setPlanner(t, m, true)
-			mustSubmit(t, m, sum.ID, "prompt", mustUUID(t), tc.mode, SubmissionAccepted)
-			if len(prov.Opens()) != 1 || conv.Closes() != 0 || !slices.Equal(tc.sent(conv), []string{"prompt"}) {
-				t.Fatalf("opens %d, closes %d, sent %q", len(prov.Opens()), conv.Closes(), tc.sent(conv))
+			mustSubmit(t, m, sum.ID, "prompt", mustUUID(t), ModeSend, SubmissionAccepted)
+			if len(prov.Opens()) != 1 || conv.Closes() != 0 || !slices.Equal(conv.Sends(), []string{"prompt"}) {
+				t.Fatalf("opens %d, closes %d, sent %q", len(prov.Opens()), conv.Closes(), conv.Sends())
 			}
 		})
+	}
+}
+
+// Reopening for the tools keeps the transcript the Task holds, even when
+// the reopened conversation's record cannot be read.
+func TestToolsReopenKeepsTheTranscript(t *testing.T) {
+	prov := newScripted("fake")
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: gitProject(t, m, "app"), Name: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := prov.Last()
+	first.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "earlier"})
+	setPlanner(t, m, true)
+	prov.script(func(p *scriptedProvider) { p.historyErr = errors.New("record unreadable") })
+	if _, reopened := promptTask(t, m, prov.Provider, sum.ID, "after"); !reopened || first.Closes() != 1 {
+		t.Fatalf("reopened %v, closes %d", reopened, first.Closes())
+	}
+	d := detail(t, m, sum.ID)
+	if d.History != HistoryLoaded || !slices.ContainsFunc(d.Items, func(it agentapi.Item) bool { return it.ID == "a1" && it.Text == "earlier" }) {
+		t.Fatalf("history %q %q, items %+v", d.History, d.HistoryReason, d.Items)
 	}
 }
 

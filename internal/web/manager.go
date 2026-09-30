@@ -270,8 +270,9 @@ type webSession struct {
 	timingRevision    uint64
 
 	conv agentapi.Conversation
-	// convTools is whether conv opened with host tools.
-	convTools bool
+	// convBoardTools is whether conv opened with the planner tools
+	// (boardToolsLocked).
+	convBoardTools bool
 	// gen identifies the current conversation; events from an older one are
 	// ignored.
 	gen     uint64
@@ -1986,7 +1987,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	s.gen = 1
 	m.mu.Lock()
 	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}, project.ID)
-	s.convTools = len(open.Tools) > 0
+	s.convBoardTools = m.boardToolsLocked(project.ID)
 	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	conv, err := prov.Open(ctx, open)
@@ -2247,6 +2248,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	s.gen++
 	gen := s.gen
 	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}, s.projectID)
+	boardTools := m.boardToolsLocked(s.projectID)
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
 	s.context = nil
@@ -2303,7 +2305,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	switch {
 	case err == nil && !stale:
 		s.conv = conv
-		s.convTools = len(req.Tools) > 0
+		s.convBoardTools = boardTools
 		s.activeAt = m.now()
 		if s.base == StateClosed || s.base == StateFailed {
 			s.setBase(StateIdle, "")
@@ -2606,7 +2608,9 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	if sub, found, err := m.checkedPrompt(s, reqID); found || err != nil {
 		return sub, err
 	}
-	m.closeForToolsLocked(s)
+	if in.command == "" {
+		m.closeForToolsLocked(s)
+	}
 	if err := m.openLocked(s, true); err != nil {
 		if errors.Is(err, errShuttingDown) {
 			return Submission{}, err
@@ -3286,25 +3290,29 @@ func (m *Manager) closeIdle(s *webSession) {
 		return
 	}
 	before := m.summaryLocked(s)
-	conv := m.suspendLocked(s)
+	conv := m.suspendLocked(s, true)
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 	m.closeConversation(conv)
 	log.Info("closed idle web conversation", "session", s.id, "idle", idle.Round(time.Second))
 }
 
-// closeForToolsLocked closes s's conversation when it opened with other host
-// tools than the Task gets now (boardToolsLocked), so the openLocked that
-// follows reopens it with the current ones. A conversation that still runs
-// or waits for anything is left as it is. The caller holds s.op.
+// closeForToolsLocked closes s's conversation when it opened with or without
+// the planner tools and the Task now gets the other (boardToolsLocked), so
+// the openLocked that follows reopens it with the current ones. A
+// conversation that still runs or waits for anything, an idle subagent's
+// follow-up included, is left as it is. The transcript is kept for the
+// viewer; the reopen merges the provider's record into it. The caller holds
+// s.op.
 func (m *Manager) closeForToolsLocked(s *webSession) {
 	m.mu.Lock()
-	if m.closed || s.removed || s.conv == nil || s.convTools == m.boardToolsLocked(s.projectID) || s.runsOrWaitsLocked() {
+	if m.closed || s.removed || s.conv == nil || s.convBoardTools == m.boardToolsLocked(s.projectID) || s.runsOrWaitsLocked() ||
+		slices.ContainsFunc(s.subagents, func(sa *agentapi.Subagent) bool { return sa.Status == agentapi.SubagentIdle }) {
 		m.mu.Unlock()
 		return
 	}
 	before := m.summaryLocked(s)
-	conv := m.suspendLocked(s)
+	conv := m.suspendLocked(s, false)
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 	m.closeConversation(conv)
@@ -3313,15 +3321,15 @@ func (m *Manager) closeForToolsLocked(s *webSession) {
 
 // suspendLocked detaches s from its open conversation and returns it for the
 // caller to close outside mu. The Task keeps its state; its next view or
-// prompt reopens the conversation, as after a restart.
-func (m *Manager) suspendLocked(s *webSession) agentapi.Conversation {
+// prompt reopens the conversation, as after a restart. dropHistory drops the
+// transcript when the provider keeps it, for the reopen to read it again.
+func (m *Manager) suspendLocked(s *webSession, dropHistory bool) agentapi.Conversation {
 	conv := s.conv
 	s.conv = nil
 	s.gen++
 	m.endSubagentsLocked(s)
 	m.forgetBackgroundTaskStateLocked(s)
-	// The provider keeps the transcript; the reopen reads it again.
-	if m.infos[s.provider].Capabilities.History {
+	if dropHistory && m.infos[s.provider].Capabilities.History {
 		m.dropHistoryLocked(s)
 	}
 	return conv
