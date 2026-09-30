@@ -818,18 +818,28 @@ describe('the floating pop-out', () => {
     expect(box(el)).toEqual(restored);
   });
 
-  test('Hide folds it into a tab with the pending count; the tab, by click or Enter, brings it back', async () => {
-    const { user } = await openPlanner();
+  test('Hide folds it into a tab with the pending count; the tab, by click or Enter, brings it back; focus follows', async () => {
+    const { user, tree } = await openPlanner();
     await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-    await user.click(within(await panel()).getByRole('button', { name: 'Hide the pop-out' }));
+    within(await panel()).getByRole('button', { name: 'Hide the pop-out' }).focus();
+    await user.keyboard('{Enter}');
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull());
+    // Focus on the control that went moves to what took its place: the tab, then the panel's grip.
     const tab = screen.getByRole('button', { name: 'Show the planner, 6 pending' });
-    tab.focus();
+    await waitFor(() => expect(document.activeElement).toBe(tab));
     await user.keyboard('{Enter}');
     const pop = within(await panel());
+    await waitFor(() => expect(document.activeElement).toBe(pop.getByRole('button', { name: 'Move the pop-out (arrow keys)' })));
     await user.click(pop.getByRole('button', { name: 'Hide the pop-out' }));
     await user.click(await screen.findByRole('button', { name: 'Show the planner, 6 pending' }));
     expect(await panel()).toBeTruthy();
+    // Focus elsewhere stays put.
+    await user.click(within(await panel()).getByRole('button', { name: 'Hide the pop-out' }));
+    const row = tree.getByRole('treeitem', { name: /^#1 / });
+    row.focus();
+    fireEvent.click(await screen.findByRole('button', { name: 'Show the planner, 6 pending' }));
+    await panel();
+    expect(document.activeElement).toBe(row);
   });
 
   test('closing a pop-out over another Project’s Task keeps the Planner’s Board, selection and filter, and stores no Hide', async () => {

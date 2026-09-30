@@ -1,5 +1,5 @@
 import { GripHorizontal, KanbanSquare, Maximize2, Minimize2, Minus, PictureInPicture2, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
@@ -123,6 +123,8 @@ export const PopOutHost = memo(function PopOutHost({ win, kind, onKind, folded, 
     win.addEventListener('pagehide', gone);
     return () => win.removeEventListener('pagehide', gone);
   }, [win, onClose]);
+  // Hide and Show remove the control they are pressed on: focus on it moves to what takes its place.
+  const refocusRef = useRef(false);
   if (win) {
     const close = (
       <Button size="icon" aria-label="Close the pop-out" className="text-muted" onClick={() => win.close()}>
@@ -131,20 +133,36 @@ export const PopOutHost = memo(function PopOutHost({ win, kind, onKind, folded, 
     );
     return createPortal(<PopContent kind={kind} onKind={onKind} controls={close} inWindow />, win.document.body);
   }
-  if (folded) return <PopTab onOpen={() => onFold(false)} />;
-  return <FloatingPanel kind={kind} onKind={onKind} onHide={() => onFold(true)} onClose={onClose} onWindow={onWindow} />;
+  const fold = (to: boolean, e: MouseEvent<HTMLElement>) => {
+    refocusRef.current = e.currentTarget === e.currentTarget.ownerDocument.activeElement;
+    onFold(to);
+  };
+  if (folded) return <PopTab onOpen={(e) => fold(false, e)} refocusRef={refocusRef} />;
+  return <FloatingPanel kind={kind} onKind={onKind} onHide={(e) => fold(true, e)} onClose={onClose} onWindow={onWindow} refocusRef={refocusRef} />;
 });
+
+/** Focuses `el` once on mount when `refocusRef` asks (the control it replaced had focus). */
+function useRefocus(refocusRef: RefObject<boolean>, el: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    if (!refocusRef.current) return;
+    refocusRef.current = false;
+    el.current?.focus();
+  }, [refocusRef, el]);
+}
 
 /**
  * The folded pop-out: a tab on the right edge, halfway down, with the Board's pending requests.
  * There it clears a Task's header controls and its composer at every width.
  */
-function PopTab({ onOpen }: Readonly<{ onOpen: () => void }>) {
+function PopTab({ onOpen, refocusRef }: Readonly<{ onOpen: (e: MouseEvent<HTMLElement>) => void; refocusRef: RefObject<boolean> }>) {
   const { ui, boards } = usePlanner();
   const pending = ui.project ? (boards[ui.project]?.data?.requests.length ?? 0) : 0;
+  const button = useRef<HTMLButtonElement>(null);
+  useRefocus(refocusRef, button);
   return (
     <Tip label="Show the planner" side="left">
       <button
+        ref={button}
         type="button"
         aria-label={pending ? `Show the planner, ${pending} pending` : 'Show the planner'}
         className="fixed top-1/2 right-[env(safe-area-inset-right)] z-30 flex h-10 -translate-y-1/2 items-center gap-1.5 rounded-l-md bg-raised pr-2 pl-2.5 text-muted shadow-float transition-colors duration-100 animate-fade-in hover:text-ink pointer-coarse:h-11"
@@ -184,8 +202,17 @@ function readBox(): Box | null {
  * double-click on the header toggles it. Position and size are custom properties written to the
  * CSSOM (a transform and two lengths), so nothing re-renders per pointer move.
  */
-function FloatingPanel({ kind, onKind, onHide, onClose, onWindow }: Readonly<{ kind: PopKind; onKind: (k: PopKind) => void; onHide: () => void; onClose?: () => void; onWindow?: () => void }>) {
+function FloatingPanel({ kind, onKind, onHide, onClose, onWindow, refocusRef }: Readonly<{
+  kind: PopKind;
+  onKind: (k: PopKind) => void;
+  onHide: (e: MouseEvent<HTMLElement>) => void;
+  onClose?: () => void;
+  onWindow?: () => void;
+  refocusRef: RefObject<boolean>;
+}>) {
   const panel = useRef<HTMLElement>(null);
+  const grip = useRef<HTMLButtonElement>(null);
+  useRefocus(refocusRef, grip);
   const box = useRef<Box>({ x: 0, y: 0, w: 520, h: 640 });
   const phone = useRef(false);
   const [max, setMax] = useState(false);
@@ -313,7 +340,7 @@ function FloatingPanel({ kind, onKind, onHide, onClose, onWindow }: Readonly<{ k
         }}
         handle={
           !max && (
-            <button type="button" data-grip="" aria-label="Move the pop-out (arrow keys)" className="flex size-6 shrink-0 cursor-move items-center justify-center rounded-xs text-faint hover:text-body" onKeyDown={(e) => keys('move', e)}>
+            <button ref={grip} type="button" data-grip="" aria-label="Move the pop-out (arrow keys)" className="flex size-6 shrink-0 cursor-move items-center justify-center rounded-xs text-faint hover:text-body" onKeyDown={(e) => keys('move', e)}>
               <GripHorizontal aria-hidden="true" className="size-4" />
             </button>
           )
