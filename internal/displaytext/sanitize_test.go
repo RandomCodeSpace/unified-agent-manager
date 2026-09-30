@@ -64,5 +64,19 @@ func FuzzSanitize(f *testing.F) {
 		if twice := Sanitize(got); twice != got {
 			t.Fatalf("not idempotent: %q != %q", twice, got)
 		}
+		text := SanitizeText(in)
+		if !utf8.ValidString(text) {
+			t.Fatalf("SanitizeText: invalid UTF-8: %q", text)
+		}
+		if strings.ContainsAny(text, "\x1b\x07\x00\x7f\r") {
+			t.Fatalf("SanitizeText: unsafe control survived: %q", text)
+		}
+		if twice := SanitizeText(text); twice != text {
+			t.Fatalf("SanitizeText: not idempotent: %q != %q", twice, text)
+		}
+		// Apart from the kept tabs and line breaks, both modes drop the same things.
+		if flat := strings.NewReplacer("\t", " ", "\n", " ").Replace(text); flat != Sanitize(strings.ReplaceAll(in, "\r\n", "\n")) {
+			t.Fatalf("SanitizeText differs from Sanitize beyond whitespace: %q vs %q", flat, Sanitize(in))
+		}
 	})
 }

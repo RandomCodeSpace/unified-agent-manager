@@ -111,6 +111,10 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 		result, err = executor.ExecuteCommand(ctx, req.Name, agentapi.Prompt{Text: req.Arguments, Files: files, Attachments: blobs})
 		cancel()
 	}
+	if result != nil {
+		// The reply carries the same cleaned result as the saved and broadcast one.
+		result = cleanCommandResult(*result)
+	}
 	sub := Submission{RequestID: req.RequestID, Status: SubmissionAccepted, Time: m.now(), CommandResult: result}
 	if err != nil {
 		sub.Status, sub.Error = SubmissionRejected, shortError(err)

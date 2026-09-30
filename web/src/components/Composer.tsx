@@ -1143,8 +1143,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       {commandResult && commandResult.kind !== 'action' && (
         <div className="px-3.5 py-2 text-ui text-body">
           <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon-sm" variant="subtle" aria-label="Dismiss command result" onClick={() => dismissResult()}><X /></Button></div>
-          {/* Long output (/skills, /env) scrolls here instead of pushing the composer off screen. */}
-          <div className="max-h-[min(40dvh,360px)] overflow-y-auto overscroll-contain">{resultBody}</div>
+          {commandResult.kind === 'select' ? resultBody : (
+            // Long output (/skills, /env) scrolls here instead of pushing the composer off screen.
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling.
+            <div role="region" aria-label="Command output" tabIndex={0} className="max-h-[min(40dvh,360px)] overflow-y-auto overscroll-contain">{resultBody}</div>
+          )}
         </div>
       )}
       {queueStrip.mounted && (
