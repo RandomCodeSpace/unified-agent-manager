@@ -93,7 +93,8 @@ export function InlinePicker({
                   'flex min-h-[30px] w-full cursor-default items-center gap-2 rounded-sm px-2 py-1 text-left text-ui text-body outline-hidden transition-colors duration-100 pointer-coarse:min-h-11 [&_svg]:size-4 [&_svg]:shrink-0',
                   // A clear gray step on the raised popup; the row's secondary text lifts a step so it stays readable on it.
                   i === highlighted && 'bg-hairline text-ink [&_.text-faint]:text-muted [&_.text-muted]:text-body',
-                  item.disabled && 'text-muted',
+                  // Dimmed like a disabled menu item; the note under the rows gives the reason.
+                  item.disabled && 'opacity-45',
                 )}
                 onMouseMove={() => i !== highlighted && onHighlight(i)}
                 onClick={() => onPick(item)}

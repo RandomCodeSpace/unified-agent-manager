@@ -19,6 +19,18 @@ func TestSanitizeRemovesTerminalControls(t *testing.T) {
 	}
 }
 
+func TestSanitizeTextKeepsLines(t *testing.T) {
+	in := "Context Usage\r\n  \u25cb System\t9.5k\rnext\n\x1b[31mred\x1b[0m\x00\x1b]52;c;YQ==\x07"
+	want := "Context Usage\n  \u25cb System\t9.5k\nnext\nred"
+	got := SanitizeText(in)
+	if got != want {
+		t.Fatalf("SanitizeText() = %q, want %q", got, want)
+	}
+	if twice := SanitizeText(got); twice != got {
+		t.Fatalf("SanitizeText() is not idempotent: once %q, twice %q", got, twice)
+	}
+}
+
 func TestSanitizeIsUTF8SafeAndIdempotent(t *testing.T) {
 	in := string([]byte{'o', 'k', 0xff, 0xfe}) + " 🚀\x1b[999999999999999999999Cdone"
 	got := Sanitize(in)
@@ -51,6 +63,20 @@ func FuzzSanitize(f *testing.F) {
 		}
 		if twice := Sanitize(got); twice != got {
 			t.Fatalf("not idempotent: %q != %q", twice, got)
+		}
+		text := SanitizeText(in)
+		if !utf8.ValidString(text) {
+			t.Fatalf("SanitizeText: invalid UTF-8: %q", text)
+		}
+		if strings.ContainsAny(text, "\x1b\x07\x00\x7f\r") {
+			t.Fatalf("SanitizeText: unsafe control survived: %q", text)
+		}
+		if twice := SanitizeText(text); twice != text {
+			t.Fatalf("SanitizeText: not idempotent: %q != %q", twice, text)
+		}
+		// Apart from the kept tabs and line breaks, both modes drop the same things.
+		if flat := strings.NewReplacer("\t", " ", "\n", " ").Replace(text); flat != Sanitize(strings.ReplaceAll(in, "\r\n", "\n")) {
+			t.Fatalf("SanitizeText differs from Sanitize beyond whitespace: %q vs %q", flat, Sanitize(in))
 		}
 	})
 }

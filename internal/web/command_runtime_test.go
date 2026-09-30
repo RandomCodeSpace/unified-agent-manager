@@ -89,6 +89,20 @@ func TestCommandRuntimeDurableReservationReplayAndNoTurn(t *testing.T) {
 	}
 }
 
+func TestCommandRuntimeResultKeepsLines(t *testing.T) {
+	m, _, _, sum, _, wrapped := commandManager(t)
+	wrapped.execute = func(context.Context, string, agentapi.Prompt) (*agentapi.CommandResult, error) {
+		return &agentapi.CommandResult{Kind: "text", Text: "a\r\nb\tc\x1b[31m", Title: "one\ntwo", PrefillInput: "p\r\nq"}, nil
+	}
+	sub, err := m.Command(sum.ID, CommandRequest{RequestID: mustUUID(t), Name: "review"})
+	if err != nil || sub.CommandResult == nil {
+		t.Fatalf("command=%+v %v", sub, err)
+	}
+	if r := sub.CommandResult; r.Text != "a\nb\tc" || r.PrefillInput != "p\nq" || r.Title != "one two" {
+		t.Fatalf("result=%+v", r)
+	}
+}
+
 func TestCommandRuntimeAliasesPermissionBoundaryAndBusy(t *testing.T) {
 	m, _, _, sum, conv, wrapped := commandManager(t)
 	var calls atomic.Int32

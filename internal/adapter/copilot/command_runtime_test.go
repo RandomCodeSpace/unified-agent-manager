@@ -78,6 +78,28 @@ func TestWebCommandResultsDoNotStartForeground(t *testing.T) {
 	}
 }
 
+func TestWebCommandTextKeepsLines(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		result  rpc.SlashCommandInvocationResult
+		text    string
+		prefill string
+	}{
+		{"text", &rpc.SlashCommandTextResult{Text: "Context Usage\r\n  System Prompt  9.5k\x1b[31m\n  Free Space  104.8k"}, "Context Usage\n  System Prompt  9.5k\n  Free Space  104.8k", ""},
+		{"completed", &rpc.SlashCommandCompletedResult{Message: copilot.String("done\r\nnext")}, "done\nnext", ""},
+		{"timeline", &rpc.SlashCommandAddTimelineEntryResult{Entry: rpc.SlashCommandTimelineEntry{Text: "a\nb"}, PrefillInput: copilot.String("fix\r\nthis")}, "a\nb", "fix\nthis"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := runtimeHarness(t)
+			h.fs.invoke = tc.result
+			result, err := h.conv.(agentapi.CommandExecutor).ExecuteCommand(context.Background(), "goal", agentapi.Prompt{})
+			if err != nil || result == nil || result.Text != tc.text || result.PrefillInput != tc.prefill {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+		})
+	}
+}
+
 func TestWebAutopilotLifecycleAndStop(t *testing.T) {
 	h, runtime := runtimeHarness(t)
 	mode := rpc.SessionModeAutopilot

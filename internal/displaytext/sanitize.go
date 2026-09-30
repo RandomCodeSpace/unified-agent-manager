@@ -20,6 +20,16 @@ const (
 // OSC, DCS, SOS, PM, and APC control sequences; drops unsafe control runes;
 // and turns horizontal tabs and line breaks into spaces.
 func Sanitize(s string) string {
+	return sanitize(s, false)
+}
+
+// SanitizeText is Sanitize for multi-line text such as a command's output:
+// it keeps tabs and line breaks, with CRLF and a lone CR as LF.
+func SanitizeText(s string) string {
+	return sanitize(strings.ReplaceAll(s, "\r\n", "\n"), true)
+}
+
+func sanitize(s string, lines bool) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	state := ground
@@ -27,7 +37,7 @@ func Sanitize(s string) string {
 		// Accept the legacy single-byte C1 representation as well as valid
 		// UTF-8 C1 runes. DecodeRuneInString otherwise treats it as invalid.
 		if s[i] >= 0x80 && s[i] <= 0x9f {
-			state = step(state, rune(s[i]), &b)
+			state = step(state, rune(s[i]), &b, lines)
 			i++
 			continue
 		}
@@ -36,16 +46,16 @@ func Sanitize(s string) string {
 			i++ // discard invalid bytes; output is always valid UTF-8
 			continue
 		}
-		state = step(state, r, &b)
+		state = step(state, r, &b, lines)
 		i += size
 	}
 	return b.String()
 }
 
-func step(state parseState, r rune, b *strings.Builder) parseState {
+func step(state parseState, r rune, b *strings.Builder, lines bool) parseState {
 	switch state {
 	case escape:
-		return stepEscape(r, b)
+		return stepEscape(r, b, lines)
 	case csi:
 		if r == 0x1b {
 			return escape
@@ -65,11 +75,11 @@ func step(state parseState, r rune, b *strings.Builder) parseState {
 		}
 		return controlString
 	default:
-		return appendGround(r, b)
+		return appendGround(r, b, lines)
 	}
 }
 
-func stepEscape(r rune, b *strings.Builder) parseState {
+func stepEscape(r rune, b *strings.Builder, lines bool) parseState {
 	switch r {
 	case '[':
 		return csi
@@ -78,7 +88,7 @@ func stepEscape(r rune, b *strings.Builder) parseState {
 	case 0x1b:
 		return escape
 	default:
-		return appendGround(r, b)
+		return appendGround(r, b, lines)
 	}
 }
 
@@ -93,7 +103,7 @@ func stepControlString(r rune) parseState {
 	}
 }
 
-func appendGround(r rune, b *strings.Builder) parseState {
+func appendGround(r rune, b *strings.Builder, lines bool) parseState {
 	switch r {
 	case 0x1b:
 		return escape
@@ -102,7 +112,14 @@ func appendGround(r rune, b *strings.Builder) parseState {
 	case 0x90, 0x98, 0x9d, 0x9e, 0x9f:
 		return controlString
 	case '\t', '\n', '\r':
-		b.WriteByte(' ')
+		switch {
+		case !lines:
+			b.WriteByte(' ')
+		case r == '\t':
+			b.WriteByte('\t')
+		default:
+			b.WriteByte('\n')
+		}
 		return ground
 	}
 	if r < 0x20 || r == 0x7f || r >= 0x80 && r <= 0x9f {

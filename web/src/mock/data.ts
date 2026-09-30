@@ -959,6 +959,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
     { name: 'review', description: 'Review the uncommitted changes and report problems', kind: 'command', input_hint: '' },
     { name: 'autopilot', description: 'Keep working between turns until the task is done', kind: 'command', input_hint: '[on|off]', aliases: ['goal'], allow_during_turn: true },
     { name: 'allow-all', description: 'Allow every permission request without asking', kind: 'command', input_hint: '[on|off]', aliases: ['yolo'], allow_during_turn: true },
+    { name: 'context', description: 'Show context window token usage', kind: 'command', input_hint: '' },
+    { name: 'compact', description: 'Summarize conversation history to reduce context', kind: 'command', input_hint: '', disabled_reason: 'This native command has no supported web handler yet' },
     { name: 'commit', description: 'Write a conventional commit for the staged changes', kind: 'skill', input_hint: '[scope]' },
     { name: 'release-notes', description: 'Draft release notes from recent commits', kind: 'skill', input_hint: '<range>' },
     { name: 'diagnosing-bugs', description: 'Reproduce, isolate and fix a bug from its symptom', kind: 'skill', input_hint: '<symptom>' },
