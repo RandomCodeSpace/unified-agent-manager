@@ -183,9 +183,10 @@ A static actor table (owner or agent) sits in one transition function in `intern
 - **Actions:** Launch, Do whole story, Plan with agent, Suggest stories, Confirm, Release, Cancel (with a comment), Restore (with a comment), Check at HEAD, Triage, and Purge cancelled.
 - **The Settle dialog** for held leaves (§5).
 
-**Floating picture-in-picture.** Any of the three views, or the Inbox, can pop out into a floating window that stays above other windows while you work in a Task or another app.
-- Built on the Document Picture-in-Picture API: Chromium browsers, with a user gesture. The window is rendered through a React portal from the main app, so it needs no new route and no second SSE stream.
-- Where the API is missing (Safari, Firefox, iPhone), the same view opens as a floating in-page panel that can be dragged and resized.
+**Floating picture-in-picture.** Any of the three views, or the Inbox, can pop out into a floating panel above the page while you work in a Task.
+- On every browser the pop-out is an in-page panel. You can drag it by its header (touch too), resize it, maximise it, and hide it into a small tab. Its box, and a Hide per Project, persist.
+- While a Task of a git Project is open, the panel shows that Project's Board on its own. It opens expanded when the Board has a live card, and otherwise, or on a phone, as the tab. It never shows over the Planner view. An explicit pop-out stays up across navigation.
+- Where the Document Picture-in-Picture API exists (Chromium, not on a phone), a header button moves the panel into a separate window, which needs the user's gesture. The window is rendered through a React portal from the main app, so it needs no new route and no second SSE stream.
 - The prototype must confirm that the window works under uam's strict CSP: stylesheets copied as same-origin links, and no inline styles. It must also work behind the owner's sign-in proxy.
 
 **Performance and style:**

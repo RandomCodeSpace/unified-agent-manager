@@ -1,8 +1,8 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
-import { copyStyles, popMode } from '../../src/components/planner/PopOut';
-import { openMenu, renderApp, sidebar, type User } from './render';
+import { PHONE, copyStyles, popMode } from '../../src/components/planner/PopOut';
+import { openMenu, openTask, renderApp, sidebar, type User } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
 
@@ -164,15 +164,16 @@ describe('planner', () => {
     await waitFor(() => expect(document.title).toBe('(12) UAM'));
   });
 
-  test('without Picture-in-Picture the pop-out is a floating panel on the page', async () => {
+  test('the pop-out is a floating panel on the page, with no separate window where the API is missing', async () => {
     const { user } = await openPlanner();
     await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-    const pop = within(await screen.findByRole('dialog', { name: 'Planner pop-out' }));
+    const pop = within(await screen.findByRole('region', { name: 'Planner pop-out' }));
     expect(pop.getByRole('radio', { name: 'Tree' }).getAttribute('aria-checked')).toBe('true');
+    expect(pop.queryByRole('button', { name: 'Open in a separate window' })).toBeNull();
     await user.click(pop.getByRole('radio', { name: /Inbox/ }));
     expect(await pop.findByRole('list', { name: 'Pending requests' })).toBeTruthy();
     await user.click(pop.getByRole('button', { name: 'Close the pop-out' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Planner pop-out' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull());
   });
 
   test('with Picture-in-Picture the view renders into the window, styled by links', async () => {
@@ -200,11 +201,15 @@ describe('planner', () => {
     window.documentPictureInPicture = { requestWindow };
     try {
       const { user } = await openPlanner();
+      // The floating panel first, never a window on its own; the window is the panel's own button.
       await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-      await waitFor(() => expect(requestWindow).toHaveBeenCalledOnce());
+      const float = within(await screen.findByRole('region', { name: 'Planner pop-out' }));
+      expect(requestWindow).not.toHaveBeenCalled();
+      await user.click(float.getByRole('button', { name: 'Open in a separate window' }));
+      await waitFor(() => expect(requestWindow).toHaveBeenCalledWith({ width: 520, height: 680 }));
       const inWindow = within(pipDoc.body);
       expect(await inWindow.findByRole('treeitem', { name: /^#1 Faster first load/ })).toBeTruthy();
-      expect(screen.queryByRole('dialog', { name: 'Planner pop-out' })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
       // Menus would open in the page, not the window: the window's rows offer none.
       expect(inWindow.queryByRole('button', { name: /^Actions for / })).toBeNull();
       expect([...pipDoc.head.querySelectorAll('link[rel="stylesheet"]')].map((l) => (l as HTMLLinkElement).href)).toContain(link.href);
@@ -218,7 +223,7 @@ describe('planner', () => {
     }
   });
 
-  test('a phone, or a browser without the API, gets the floating panel', () => {
+  test('a phone, or a browser without the API, has no separate window', () => {
     const api = { requestWindow: async () => window };
     const media = (matches: boolean) => (() => ({ matches })) as unknown as Window['matchMedia'];
     expect(popMode({ documentPictureInPicture: api, matchMedia: media(false) } as unknown as Window)).toBe('pip');
@@ -565,6 +570,7 @@ describe('the planner’s frames and streams', () => {
     try {
       const { user } = await openPlanner();
       await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
+      await user.click(within(await screen.findByRole('region', { name: 'Planner pop-out' })).getByRole('button', { name: 'Open in a separate window' }));
       const row = await within(pipDoc.body).findByRole('treeitem', { name: /^#1 Faster first load/ });
       fireEvent.keyDown(row, { key: 'ArrowDown' });
       expect(own).toHaveBeenCalled();
@@ -788,5 +794,106 @@ describe('card menus', () => {
     await user.clear(title);
     await user.type(title, 'Sign the macOS build{Enter}');
     expect(await board.findByRole('button', { name: '#22 Sign the macOS build' })).toBeTruthy();
+  });
+});
+
+describe('the floating pop-out', () => {
+  const panel = () => screen.findByRole('region', { name: 'Planner pop-out' });
+  const box = (el: HTMLElement) => ['--fp-x', '--fp-y', '--fp-w', '--fp-h'].map((k) => el.style.getPropertyValue(k));
+
+  test('Maximise fills the viewport and Restore returns the box; a double-click on the header does the same', async () => {
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
+    const el = await panel();
+    const pop = within(el);
+    const restored = box(el);
+    expect(restored[2]).toBe('520px');
+    await user.click(pop.getByRole('button', { name: 'Maximise the pop-out' }));
+    expect(box(el)).toEqual(['8px', '8px', `${window.innerWidth - 16}px`, `${window.innerHeight - 16}px`]);
+    await user.click(pop.getByRole('button', { name: 'Restore the pop-out' }));
+    expect(box(el)).toEqual(restored);
+    await user.dblClick(pop.getByText('unified-agent-manager'));
+    expect(pop.getByRole('button', { name: 'Restore the pop-out' })).toBeTruthy();
+    await user.dblClick(pop.getByText('unified-agent-manager'));
+    expect(box(el)).toEqual(restored);
+  });
+
+  test('Hide folds it into a tab with the pending count; the tab, by click or Enter, brings it back', async () => {
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
+    await user.click(within(await panel()).getByRole('button', { name: 'Hide the pop-out' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull());
+    const tab = screen.getByRole('button', { name: 'Show the planner, 6 pending' });
+    tab.focus();
+    await user.keyboard('{Enter}');
+    const pop = within(await panel());
+    await user.click(pop.getByRole('button', { name: 'Hide the pop-out' }));
+    await user.click(await screen.findByRole('button', { name: 'Show the planner, 6 pending' }));
+    expect(await panel()).toBeTruthy();
+  });
+
+  test('over a git Project’s Task it shows on its own, on that Task’s Board, and never over the Planner', async () => {
+    const { user } = await openTask('t8');
+    const pop = within(await panel());
+    expect(pop.getByText('notes-site')).toBeTruthy();
+    expect(await pop.findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
+    // Only folds: no close for a panel nobody opened.
+    expect(pop.queryByRole('button', { name: 'Close the pop-out' })).toBeNull();
+    await user.click((await sidebar()).getByRole('button', { name: 'Planner' }));
+    await waitFor(() => expect(header().textContent).toBe('Planner'));
+    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Project: notes-site' })).toBeTruthy();
+    // The one popped out here stays across the way back to a Task.
+    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
+    await panel();
+    await user.click((await sidebar()).getByRole('button', { name: /Fix re-attach redraw regression/ }));
+    await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
+    expect(within(await panel()).getByText('notes-site')).toBeTruthy();
+  });
+
+  test('a Task without git shows none, and one whose Board is empty starts as the tab', async () => {
+    const { user } = await openTask('t6');
+    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Show the planner/ })).toBeNull();
+    const project = await api.createProject({ dir: '/home/user/projects/empty-plan' });
+    const task = await api.createSession({ project_id: project.id, provider: 'copilot', request_id: 'empty-plan-task' });
+    window.location.hash = `#task=${task.id}`;
+    const tab = await screen.findByRole('button', { name: 'Show the planner' });
+    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+    await user.click(tab);
+    expect(within(await panel()).getByText('empty-plan')).toBeTruthy();
+  });
+
+  test('the box and a Hide per Project last across a reload; a phone starts as the tab whatever was chosen', async () => {
+    const first = await openTask('t1');
+    const grip = within(await panel()).getByRole('button', { name: 'Move the pop-out (arrow keys)' });
+    grip.focus();
+    await first.user.keyboard('{ArrowLeft}{ArrowDown}');
+    const moved = box(await panel());
+    expect(JSON.parse(localStorage.getItem('uam.plannerBox')!)).toMatchObject({ x: parseInt(moved[0]), y: parseInt(moved[1]) });
+    first.unmount();
+
+    const second = await openTask('t1');
+    expect(box(await panel())).toEqual(moved);
+    await second.user.click(within(await panel()).getByRole('button', { name: 'Hide the pop-out' }));
+    expect(JSON.parse(localStorage.getItem('uam.plannerHidden')!)).toEqual({ p1: true });
+    second.unmount();
+
+    const third = await openTask('t1');
+    expect(await screen.findByRole('button', { name: /^Show the planner/ })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+    third.unmount();
+
+    // A Show chosen on a laptop does not open it over a phone's conversation.
+    localStorage.setItem('uam.plannerHidden', JSON.stringify({ p1: false }));
+    const media = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ ...media.call(window, q), matches: q === PHONE, addEventListener: () => {}, removeEventListener: () => {} })) as typeof window.matchMedia;
+    try {
+      await openTask('t1');
+      expect(await screen.findByRole('button', { name: /^Show the planner/ })).toBeTruthy();
+      expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+    } finally {
+      window.matchMedia = media;
+    }
   });
 });
