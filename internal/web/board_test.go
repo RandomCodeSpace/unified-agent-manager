@@ -515,7 +515,7 @@ func TestPlannerLaunchHoldsAndSendsThePreamble(t *testing.T) {
 		"Subtask: #3 One\nPath: #1 › #2 › #3\nWin condition: one passes\n\nDescription:\nDo the thing.\n\n" +
 		"Checklist:\n- [ ] write it\n\n" +
 		"Rules:\n- Read and update the board with the board tools.\n- Finish with a done request.\n" +
-		"- Never mark anything done yourself: only the owner closes work.\n"
+		"- Never mark anything done yourself: a done request is accepted at once when its acceptance command passes, and otherwise waits for the owner.\n"
 	if len(sends) != 1 || sends[0] != want {
 		t.Fatalf("preamble = %q, want %q", sends, want)
 	}
@@ -808,7 +808,7 @@ func TestPlannerRequestsAcceptAndReject(t *testing.T) {
 	}
 	var accepted BoardRequest
 	f.call(http.MethodPost, "/api/board/requests/"+r.ID+"/accept", ``, http.StatusOK, &accepted)
-	if accepted.Status != board.RequestAccepted {
+	if accepted.Status != board.RequestAccepted || accepted.DecidedBy != board.AuthorOwner {
 		t.Fatalf("accepted = %+v", accepted)
 	}
 	if d := f.card(two.ID); d.Card.Status != board.StatusDone || d.Holds[0].EndReason != string(board.ReleaseAccepted) {

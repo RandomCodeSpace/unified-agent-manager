@@ -182,7 +182,8 @@ function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; 
 }
 
 /**
- * One request: its kind, card, Task and comment, its flags and evidence, and (while pending)
+ * One request: its kind, card, Task and comment, its flags and evidence, how it was decided
+ * ("Accepted automatically" when its acceptance command passed), and (while pending)
  * Accept, and Reject with a required reason, both inline so they work in a popped-out window.
  * A rejection whose reason did not reach the Task (`steered` false) goes to `onUnheard`; shown
  * with `unheard`, the row offers Release, since the Task still holds the subtask without knowing why.
@@ -202,6 +203,7 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const pending = r.status === 'pending';
+  const auto = r.decided_by === 'uam';
 
   async function decide(op: () => Promise<unknown>, verb: string) {
     setBusy(true);
@@ -237,7 +239,7 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
             #{card.seq} {card.title}
           </button>
         )}
-        {!pending && <span className="text-caption text-muted capitalize">{r.status}</span>}
+        {!pending && <span className={cn('text-caption text-muted', !auto && 'capitalize')}>{auto ? 'Accepted automatically' : r.status}</span>}
         <span className="flex-1" />
         <TaskChip taskId={r.task_id} />
         <time className="shrink-0 text-caption tabular-nums text-muted" dateTime={r.created_at} title={new Date(r.created_at).toLocaleString()}>{relTime(r.created_at)}</time>

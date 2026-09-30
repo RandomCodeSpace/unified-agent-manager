@@ -548,6 +548,25 @@ describe('owner authoring', () => {
     expect(await tree.findByRole('treeitem', { name: '#15 Cover anchoring with a DOM test, Done' })).toBeTruthy();
   });
 
+  test('Reopen puts a done subtask back to To do through the status API, with an optional comment', async () => {
+    const { user, tree } = await openPlanner();
+    const status = vi.spyOn(api.planner, 'status');
+    try {
+      const panel = await openCard(user, tree, 4);
+      expect(panel.queryByRole('button', { name: 'Mark done' })).toBeNull();
+      await user.click(panel.getByRole('button', { name: 'Reopen' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Reopen #4?' }));
+      await user.type(dialog.getByRole('textbox', { name: 'Comment (optional)' }), 'A cold start still misses the cache.');
+      await user.click(dialog.getByRole('button', { name: 'Reopen' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Reopen #4?' })).toBeNull());
+      expect(status).toHaveBeenCalledWith('cp1-4', 'todo', 'A cold start still misses the cache.');
+      await closeCard(user);
+      expect(await tree.findByRole('treeitem', { name: '#4 Cache archive pages in IndexedDB, To do' })).toBeTruthy();
+    } finally {
+      status.mockRestore();
+    }
+  });
+
   test('Move to… puts a subtask last under another story', async () => {
     const { user, tree } = await openPlanner();
     const panel = await openCard(user, tree, 22);
@@ -775,6 +794,18 @@ describe('parity with the service', () => {
     const panel = await openCard(user, tree, 8);
     const trail = within(await panel.findByRole('region', { name: 'Evidence trail' }));
     expect(await trail.findByText('Touched files may be incomplete')).toBeTruthy();
+  });
+
+  test('the evidence trail tells a request accepted automatically from the owner’s, and keeps its evidence', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 4);
+    const trail = within(await panel.findByRole('region', { name: 'Evidence trail' }));
+    const request = within(await trail.findByRole('article', { name: 'Done request on #4' }));
+    expect(request.getByText('Accepted automatically')).toBeTruthy();
+    expect(request.getByText('make test')).toBeTruthy();
+    expect(request.getByText('exit 0')).toBeTruthy();
+    expect(request.queryByRole('button', { name: 'Accept' })).toBeNull();
+    expect(await panel.findByText('Accepted automatically: the acceptance command passed')).toBeTruthy();
   });
 
   test('Purge reports how many cards went', async () => {

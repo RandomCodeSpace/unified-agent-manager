@@ -742,7 +742,7 @@ func TestClaimWithNoCommandAndNoChange(t *testing.T) {
 		t.Fatalf("calls = %q", *calls)
 	}
 	in := res.Request
-	if in.Kind != board.RequestDone || in.Comment != "done" || in.ProposedAcceptCmd != "make test" || !slices.Equal(in.Flags, []string{board.FlagNoChangeInTree}) {
+	if in.Kind != board.RequestDone || in.Comment != "done" || in.ProposedAcceptCmd != "make test" || in.PassedCmd != "" || !slices.Equal(in.Flags, []string{board.FlagNoChangeInTree}) {
 		t.Fatalf("request = %+v", in)
 	}
 	var ev Evidence
@@ -792,6 +792,9 @@ func TestClaimCollectsEvidenceBeforeTheRun(t *testing.T) {
 	if want := []string{board.FlagOverlap}; !slices.Equal(res.Request.Flags, want) {
 		t.Fatalf("flags = %q, want %q", res.Request.Flags, want)
 	}
+	if res.Request.PassedCmd != st.fin.AcceptCmd {
+		t.Fatalf("passed = %q", res.Request.PassedCmd)
+	}
 }
 
 func TestClaimFiledWhenAcceptanceCouldNotRun(t *testing.T) {
@@ -802,7 +805,7 @@ func TestClaimFiledWhenAcceptanceCouldNotRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(res.Request.Flags, []string{board.FlagAcceptanceCouldNotRun}) || res.Evidence.Accept == nil || res.Evidence.Accept.Exit != -1 {
+	if !slices.Equal(res.Request.Flags, []string{board.FlagAcceptanceCouldNotRun}) || res.Evidence.Accept == nil || res.Evidence.Accept.Exit != -1 || res.Request.PassedCmd != "" {
 		t.Fatalf("result = %+v", res)
 	}
 	st.holds = nil

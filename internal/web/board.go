@@ -1056,7 +1056,7 @@ func (p preambleInput) String() string {
 	default:
 		b.WriteString("- Finish with a done request.\n")
 	}
-	b.WriteString("- Never mark anything done yourself: only the owner closes work.\n")
+	b.WriteString("- Never mark anything done yourself: a done request is accepted at once when its acceptance command passes, and otherwise waits for the owner.\n")
 	return b.String()
 }
 
@@ -1246,6 +1246,8 @@ type BoardRequest struct {
 	CreatedAt       time.Time           `json:"created_at"`
 	DecidedAt       *time.Time          `json:"decided_at,omitempty"`
 	DecisionComment string              `json:"decision_comment,omitempty"`
+	// DecidedBy is owner, or uam for a done request accepted automatically.
+	DecidedBy string `json:"decided_by,omitempty"`
 }
 
 // BoardComment is one comment on a card; its author is owner, task:<id> or
@@ -1323,7 +1325,7 @@ func boardRequest(r board.Request) BoardRequest {
 	return BoardRequest{
 		ID: r.ID, CardID: r.CardID, TaskID: r.TaskID, AgentID: r.AgentID, Kind: r.Kind, Comment: r.Comment,
 		Payload: jsonObject(r.Payload), Evidence: jsonObject(r.Evidence), Flags: nonNil(r.Flags), BaseRevision: r.BaseRevision,
-		Status: r.Status, CreatedAt: r.CreatedAt, DecidedAt: r.DecidedAt, DecisionComment: r.DecisionComment,
+		Status: r.Status, CreatedAt: r.CreatedAt, DecidedAt: r.DecidedAt, DecisionComment: r.DecisionComment, DecidedBy: r.DecidedBy,
 	}
 }
 

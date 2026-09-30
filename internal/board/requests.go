@@ -65,7 +65,15 @@ type Request struct {
 	CreatedAt       time.Time
 	DecidedAt       *time.Time
 	DecisionComment string
+	// DecidedBy is AuthorOwner, or AuthorUAM for a done request accepted
+	// automatically; "" while pending, when withdrawn, and for decisions
+	// stored before it was recorded, which were the owner's.
+	DecidedBy string
 }
+
+// AutoAcceptComment is the automatic comment on a subtask whose done request
+// was accepted because its acceptance command passed.
+const AutoAcceptComment = "Accepted automatically: the acceptance command passed"
 
 // RequestInput is an agent's done, cancel or blocked request. Split
 // requests are filed by Split and change requests by Edit.
@@ -81,6 +89,11 @@ type RequestInput struct {
 	// ProposedAcceptCmd is text only; it never runs until the owner copies
 	// it into the subtask.
 	ProposedAcceptCmd string
+	// PassedCmd is the acceptance command the caller ran for a done request
+	// and saw exit 0, "" when none ran or it did not pass. While the subtask
+	// still resolves to it, the request is accepted as soon as it is filed
+	// (ADR 0005 decision 5).
+	PassedCmd string
 }
 
 // SplitChild is one subtask a split creates.
@@ -164,7 +177,9 @@ func (t *txn) acceptCmd(n *node) (string, error) {
 // ref. A done request needs the subtask doing and held by the agent's Task
 // and passes the finishing guard; the caller supplies its evidence and
 // flags. A newer request of the same kind from the same Task replaces the
-// older pending one.
+// older pending one. A done request whose PassedCmd is the command the
+// subtask resolves to is accepted at once, as the owner's Accept would
+// accept it, and is returned accepted.
 func (s *Store) FileRequest(ctx context.Context, a Actor, ref string, in RequestInput) (Request, error) {
 	if err := permit(a, opRequest, ""); err != nil {
 		return Request{}, err
@@ -197,9 +212,35 @@ func (s *Store) FileRequest(ctx context.Context, a Actor, ref string, in Request
 			}
 		}
 		out, err = t.fileRequest(o, a, n, f)
-		return err
+		if err != nil || in.PassedCmd == "" {
+			return err
+		}
+		cmd, err := t.acceptCmd(n)
+		if err != nil || cmd != in.PassedCmd {
+			return err
+		}
+		return t.acceptPassed(o, a, n, &out)
 	})
 	return out, err
+}
+
+// acceptPassed accepts the done request r on n just filed, because the
+// acceptance command n resolves to passed (ADR 0005 decision 5). It takes the
+// owner's Accept path, but records uam as the decider and adds an automatic
+// comment saying so; r keeps its evidence. r is read back as accepted.
+func (t *txn) acceptPassed(o *outline, a Actor, n *node, r *Request) error {
+	if err := t.decide(r, RequestAccepted, AuthorUAM, ""); err != nil {
+		return err
+	}
+	if err := t.acceptDone(o, a, n, r, false); err != nil {
+		return err
+	}
+	if _, err := t.addComment(n, AuthorUAM, "", AutoAcceptComment, true, false); err != nil {
+		return err
+	}
+	var err error
+	*r, err = t.request(r.ID)
+	return err
 }
 
 // requestFiling is a validated request, ready to write.
@@ -222,8 +263,8 @@ func checkInput(in RequestInput) (requestFiling, error) {
 	if f.comment, err = checkComment(in.Comment); err != nil {
 		return f, err
 	}
-	if in.Kind != RequestDone && (len(in.Evidence) > 0 || len(in.Flags) > 0 || in.ProposedAcceptCmd != "") {
-		return f, invalid("only a done request carries evidence, flags or a proposed command")
+	if in.Kind != RequestDone && (len(in.Evidence) > 0 || len(in.Flags) > 0 || in.ProposedAcceptCmd != "" || in.PassedCmd != "") {
+		return f, invalid("only a done request carries evidence, flags or an acceptance command")
 	}
 	if in.Kind != RequestBlocked && in.Blocker != "" {
 		return f, invalid("only a blocked request names a blocker")
@@ -471,7 +512,7 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 			return err
 		}
 		if accept {
-			if err := t.decide(&req, RequestAccepted, ""); err != nil {
+			if err := t.decide(&req, RequestAccepted, AuthorOwner, ""); err != nil {
 				return err
 			}
 			if err := t.markDone(o, kid, &req, a); err != nil {
@@ -509,21 +550,12 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 		return Request{}, err
 	}
 	return s.decideWrite(ctx, id, func(t *txn, o *outline, n *node, r *Request, p payload) error {
-		if err := t.decide(r, RequestAccepted, strings.TrimSpace(comment)); err != nil {
+		if err := t.decide(r, RequestAccepted, AuthorOwner, strings.TrimSpace(comment)); err != nil {
 			return err
 		}
 		switch r.Kind {
 		case RequestDone:
-			if n.stored.terminal() {
-				return invalid("%s is already %s", n.ref(), n.stored)
-			}
-			if p.SplitOf == "" && (n.stored != StatusDoing || n.HeldBy != r.TaskID) {
-				return refuse(CodeNotHeld, "%s is not held by the requesting Task", n.ref())
-			}
-			if err := t.guard(o, n); err != nil {
-				return err
-			}
-			return t.markDone(o, n, r, a)
+			return t.acceptDone(o, a, n, r, p.SplitOf != "")
 		case RequestCancel:
 			if n.stored == StatusCancelled || n.Status == StatusDone {
 				return invalid("%s is already %s", n.ref(), n.Status)
@@ -568,8 +600,24 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 	})
 }
 
+// acceptDone marks the subtask n done by accepting the done request r, which
+// needs n doing and held by r's Task, unless a split filed r for a ticked
+// item (split), and the finishing guard to pass.
+func (t *txn) acceptDone(o *outline, a Actor, n *node, r *Request, split bool) error {
+	if n.stored.terminal() {
+		return invalid("%s is already %s", n.ref(), n.stored)
+	}
+	if !split && (n.stored != StatusDoing || n.HeldBy != r.TaskID) {
+		return refuse(CodeNotHeld, "%s is not held by the requesting Task", n.ref())
+	}
+	if err := t.guard(o, n); err != nil {
+		return err
+	}
+	return t.markDone(o, n, r, a)
+}
+
 // markDone marks the subtask n done by accepting r: the claim text becomes the
-// close comment, the hold ends, and the owner's acceptance confirms n.
+// close comment, the hold ends, and the acceptance confirms n.
 func (t *txn) markDone(o *outline, n *node, r *Request, a Actor) error {
 	author := AuthorUAM
 	if r.TaskID != "" {
@@ -604,7 +652,7 @@ func (s *Store) Reject(ctx context.Context, a Actor, id, reason string, holderAc
 		return Request{}, invalid("a rejection needs a reason")
 	}
 	return s.decideWrite(ctx, id, func(t *txn, _ *outline, n *node, r *Request, _ payload) error {
-		if err := t.decide(r, RequestRejected, body); err != nil {
+		if err := t.decide(r, RequestRejected, AuthorOwner, body); err != nil {
 			return err
 		}
 		if holderActive || r.TaskID == "" || n.HeldBy != r.TaskID {
@@ -657,10 +705,10 @@ func (s *Store) decideWrite(ctx context.Context, id string, fn func(*txn, *outli
 	return out, err
 }
 
-// decide records the owner's decision on r.
-func (t *txn) decide(r *Request, status RequestStatus, comment string) error {
-	if err := t.exec(`UPDATE requests SET status = ?, decided_at = ?, decision_comment = ? WHERE id = ?`,
-		string(status), stamp(t.now), comment, r.ID); err != nil {
+// decide records the decision on r by, the owner or uam.
+func (t *txn) decide(r *Request, status RequestStatus, by, comment string) error {
+	if err := t.exec(`UPDATE requests SET status = ?, decided_at = ?, decision_comment = ?, decided_by = ? WHERE id = ?`,
+		string(status), stamp(t.now), comment, by, r.ID); err != nil {
 		return err
 	}
 	project, _, err := t.locate(r.CardID)
@@ -685,7 +733,7 @@ func (s *Store) Request(ctx context.Context, id string) (Request, error) {
 }
 
 const requestCols = `SELECT r.id, r.card_id, r.task_id, r.agent_id, r.kind, r.comment, r.payload, r.evidence, r.flags,
-	r.base_revision, r.status, r.created_at, r.decided_at, r.decision_comment
+	r.base_revision, r.status, r.created_at, r.decided_at, r.decision_comment, r.decided_by
 	FROM requests r JOIN cards c ON c.id = r.card_id `
 
 func (t *txn) request(id string) (Request, error) {
@@ -710,7 +758,7 @@ func (t *txn) queryRequests(query string, args ...any) ([]Request, error) {
 		var r Request
 		var kind, status, payloadText, evidence, flags, created, decided string
 		if err := rows.Scan(&r.ID, &r.CardID, &r.TaskID, &r.AgentID, &kind, &r.Comment, &payloadText, &evidence, &flags,
-			&r.BaseRevision, &status, &created, &decided, &r.DecisionComment); err != nil {
+			&r.BaseRevision, &status, &created, &decided, &r.DecisionComment, &r.DecidedBy); err != nil {
 			return nil, fmt.Errorf("board: scan request: %w", err)
 		}
 		r.Kind, r.Status, r.Payload = RequestKind(kind), RequestStatus(status), json.RawMessage(payloadText)

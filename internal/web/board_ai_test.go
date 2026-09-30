@@ -163,14 +163,22 @@ func TestCheckAtHead(t *testing.T) {
 
 // Editing a command, the Project default a subtask inherits or its own,
 // shows the green rows of earlier runs stale (ADR 0005 §6) in the inbox,
-// the card detail and the board frame, with nothing stored.
+// the card detail and the board frame, with nothing stored. A green row
+// waits in the inbox only on a request filed before decision 5, which
+// accepts one as it is filed: the request is filed here as such.
 func TestEditingACommandShowsEarlierGreenRowsStale(t *testing.T) {
-	acceptEnv(t)
 	f := newPlanner(t)
 	f.setAcceptCmd("true")
 	leaf := f.create(board.KindSubtask, "", "Leaf")
 	_, task := f.launch(leaf.ID)
-	f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, leaf.ID))
+	evidence, err := marshalEvidence(Evidence{Accept: &AcceptResult{Cmd: "true", CmdHash: commandHash("true"), Exit: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.store(func(ctx context.Context, st *board.Store) error {
+		_, err := st.FileRequest(ctx, board.Agent(task.ID, ""), leaf.ID, board.RequestInput{Kind: board.RequestDone, Comment: "done", Evidence: evidence})
+		return err
+	})
 	inbox := func() BoardRequest {
 		t.Helper()
 		snap := f.snapshot()

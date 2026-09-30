@@ -845,7 +845,8 @@ type claimResult struct {
 // acceptance_failed; the result still carries the run. A runner busy past
 // the timeout refuses with acceptance_busy. When ctx ends the run is
 // discarded and ctx's cause returned. Only a shell that does not start
-// files the claim, flagged acceptance_could_not_run.
+// files the claim, flagged acceptance_could_not_run. A command that exits 0
+// is the Request's PassedCmd, so the store accepts the request as it files it.
 func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in claimInput) (claimResult, error) {
 	fin, err := st.CheckFinishable(ctx, in.Actor, in.Ref)
 	if err != nil {
@@ -884,7 +885,7 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 	}
 	out.Evidence = ev
 
-	notRun := false
+	notRun, passed := false, ""
 	if cmd != "" {
 		res, err := runner.run(ctx, in.Dir, cmd)
 		switch {
@@ -901,13 +902,18 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 					"such as one that adds a failing test, fold the red and green steps into one subtask, or ask "+
 					"the owner to set this subtask's command to ''.\n\nOutput tail:\n%s", res.Exit, res.Tail)}
 		}
+		if !notRun {
+			passed = cmd
+		}
 	}
 	data, err := marshalEvidence(ev)
 	if err != nil {
 		return out, err
 	}
+	// Only the owner's command that ran green accepts the request as it is
+	// filed (ADR 0005 decision 5); the proposed one is text for the owner.
 	out.Request = board.RequestInput{Kind: board.RequestDone, Comment: in.Comment, Evidence: data,
-		Flags: evidenceFlags(ev, cmd, notRun), ProposedAcceptCmd: in.ProposedAcceptCmd}
+		Flags: evidenceFlags(ev, cmd, notRun), ProposedAcceptCmd: in.ProposedAcceptCmd, PassedCmd: passed}
 	return out, nil
 }
 

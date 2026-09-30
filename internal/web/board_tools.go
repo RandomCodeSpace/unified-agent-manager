@@ -303,8 +303,9 @@ var boardToolSet = []boardTool{
 				"win_condition": stringProp("One line saying what done means."),
 			})),
 		}), (*Manager).toolSplit),
-	defineTool("board_request", "Ask the owner to decide on a card. done: you finished the subtask you hold; its acceptance command must pass, and evidence of the change is attached. "+
-		"cancel: the card should not be done. blocked: you can't go on, because of the blocker card or what the comment says.",
+	defineTool("board_request", "File a request on a card. done: you finished the subtask you hold, and evidence of the change is attached. "+
+		"When the owner set an acceptance command, it runs and must pass, and then the subtask is done at once; with none set, the request waits for the owner to accept. "+
+		"cancel: the card should not be done. blocked: you can't go on, because of the blocker card or what the comment says. The owner decides cancel and blocked.",
 		toolSchema([]string{"ref", "kind", "comment"}, map[string]any{
 			"ref":                 refProp,
 			"kind":                enumProp("What to ask for.", string(board.RequestDone), string(board.RequestCancel), string(board.RequestBlocked)),
@@ -832,7 +833,7 @@ func (m *Manager) toolClaim(ctx context.Context, sc boardScope, in refArgs) (too
 	if err != nil {
 		return toolReply{}, err
 	}
-	return cardReply(c, "You hold #%d now. Finish it with a done request (board_request); only the owner closes it.", c.Seq), nil
+	return cardReply(c, "You hold #%d now. Finish it with a done request (board_request); you never mark it done yourself.", c.Seq), nil
 }
 
 type splitArgs struct {
@@ -906,8 +907,9 @@ func (m *Manager) toolRequest(ctx context.Context, sc boardScope, in requestArgs
 
 // requestDone files a done claim (ADR 0005 §6): evaluateClaim gathers the
 // evidence and runs the subtask's acceptance command, then the request is
-// filed. Like every call of the Task it ends when the Task is settled or
-// archived (startCall): the run is killed and nothing is filed.
+// filed, and accepted at once when the command passed (decision 5). Like
+// every call of the Task it ends when the Task is settled or archived
+// (startCall): the run is killed and nothing is filed.
 func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs) (toolReply, error) {
 	task := sc.actor.TaskID
 	var c board.Card
@@ -931,14 +933,22 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 			Touched: touched, OtherHolds: m.otherHolds(task), Transcript: span,
 		})
 	}
+	var filed board.Request
 	if err == nil {
 		err = m.withBoard(func(st *board.Store) error {
-			_, err := st.FileRequest(ctx, sc.actor, c.ID, res.Request)
+			var err error
+			if filed, err = st.FileRequest(ctx, sc.actor, c.ID, res.Request); err != nil || filed.Status != board.RequestAccepted {
+				return err
+			}
+			c, err = st.Card(ctx, c.ID)
 			return err
 		})
 	}
 	if err != nil {
 		return toolReply{}, err
+	}
+	if filed.Status == board.RequestAccepted {
+		return cardReply(c, "#%d is done; the acceptance command passed. Claim the next pending subtask, if any.", c.Seq), nil
 	}
 	ev := res.Evidence
 	byTask := 0
@@ -947,8 +957,15 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 			byTask++
 		}
 	}
-	text := fmt.Sprintf("Filed a done request on #%d for the owner to accept. Evidence: +%d −%d in %d files (%d touched by this task), %d commits",
-		c.Seq, ev.Diff.Added, ev.Diff.Deleted, len(ev.Diff.Files), byTask, len(ev.Commits))
+	why := "the acceptance command changed while it ran"
+	switch {
+	case ev.Accept == nil:
+		why = "no acceptance command is set"
+	case slices.Contains(res.Request.Flags, board.FlagAcceptanceCouldNotRun):
+		why = "the acceptance command could not run"
+	}
+	text := fmt.Sprintf("Filed a done request on #%d; it waits for the owner to accept, because %s. Evidence: +%d −%d in %d files (%d touched by this task), %d commits",
+		c.Seq, why, ev.Diff.Added, ev.Diff.Deleted, len(ev.Diff.Files), byTask, len(ev.Commits))
 	if ev.Accept != nil && ev.Accept.Exit >= 0 {
 		text += fmt.Sprintf(", acceptance command exited %d", ev.Accept.Exit)
 	}

@@ -653,9 +653,11 @@ func TestBoardToolsClaim(t *testing.T) {
 }
 
 // Split applies at once to a proposal nobody holds and is a request on a
-// confirmed or held subtask; blocked names its blocker.
+// confirmed or held subtask; blocked names its blocker. Neither is accepted
+// by a passing acceptance command: only done is.
 func TestBoardToolsSplitAndBlocked(t *testing.T) {
 	f := newPlanner(t)
+	f.setAcceptCmd("true")
 	epic := f.create(board.KindEpic, "", "Epic")
 	blocker := f.create(board.KindSubtask, epic.ID, "Blocker")
 	plan := f.planTask(epic.ID)
@@ -693,6 +695,9 @@ func TestBoardToolsSplitAndBlocked(t *testing.T) {
 		if req.Kind == board.RequestBlocked {
 			_ = json.Unmarshal(req.Payload, &payload)
 		}
+		if req.Status != board.RequestPending {
+			t.Fatalf("%s request = %+v", req.Kind, req)
+		}
 	}
 	if !slices.Equal(kinds, []board.RequestKind{board.RequestSplit, board.RequestBlocked}) || payload.Blocker != blocker.ID {
 		t.Fatalf("requests = %v, blocker %q", kinds, payload.Blocker)
@@ -722,8 +727,10 @@ func TestBoardToolsDoneRefusedWithOpenItems(t *testing.T) {
 }
 
 // A done claim runs the owner's acceptance command, then files the request
-// with evidence of the Task's work since the hold started. A subtask whose
-// command is the empty one, none, runs nothing.
+// with evidence of the Task's work since the hold started; a command that
+// passes accepts it at once (ADR 0005 decision 5), and the owner can reopen
+// the subtask. A subtask whose command is the empty one, none, runs nothing
+// and waits for the owner.
 func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 	acceptEnv(t)
 	f := newPlanner(t)
@@ -734,13 +741,18 @@ func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 	f.conversation(task.ID).EmitItem(agentapi.Item{ID: "edit-1", Kind: agentapi.ItemTool, Time: time.Now(),
 		Tool: &agentapi.ToolCall{Name: "create", Status: agentapi.ToolCompleted, Input: `{"path":"made.txt"}`}})
 	r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"made it","proposed_accept_cmd":"make check"}`, leaf.ID))
-	if want := "Filed a done request on #1 for the owner to accept. Evidence: +2 −0 in 1 files (1 touched by this task), 0 commits, acceptance command exited 0."; r.Text != want {
-		t.Fatalf("done = %q, want %q", r.Text, want)
+	if want := "#1 is done; the acceptance command passed. Claim the next pending subtask, if any."; r.Text != want || r.Card == nil || r.Card.Status != board.StatusDone {
+		t.Fatalf("done = %+v, want %q", r, want)
 	}
 	d := f.card(leaf.ID)
 	if len(d.Requests) != 1 || d.Requests[0].Kind != board.RequestDone || d.Requests[0].Comment != "made it" || d.Requests[0].TaskID != task.ID ||
-		!strings.Contains(string(d.Requests[0].Payload), `"proposed_accept_cmd":"make check"`) {
+		!strings.Contains(string(d.Requests[0].Payload), `"proposed_accept_cmd":"make check"`) ||
+		d.Requests[0].Status != board.RequestAccepted || d.Requests[0].DecidedBy != board.AuthorUAM {
 		t.Fatalf("requests = %+v", d.Requests)
+	}
+	if d.Card.Status != board.StatusDone || d.Card.HeldBy != "" || d.Holds[0].EndReason != string(board.ReleaseAccepted) ||
+		!slices.Equal(comments(d), []string{"task:" + task.ID + ": made it", "uam: " + board.AutoAcceptComment}) || !d.Comments[1].Automatic {
+		t.Fatalf("accepted = %+v, comments %q", d, comments(d))
 	}
 	var ev Evidence
 	if err := json.Unmarshal(d.Requests[0].Evidence, &ev); err != nil {
@@ -752,6 +764,12 @@ func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 	if ev.Accept == nil || ev.Accept.Exit != 0 || !strings.Contains(ev.Accept.Tail, "checked") || ev.Transcript == nil || ev.Transcript.TaskID != task.ID || ev.Transcript.ToItem != "edit-1" || ev.Transcript.Partial {
 		t.Fatalf("evidence = %+v, accept %+v, transcript %+v", ev, ev.Accept, ev.Transcript)
 	}
+	// The owner reopens it.
+	var reopened BoardCard
+	f.call(http.MethodPost, "/api/board/cards/"+leaf.ID+"/status", `{"status":"todo","comment":"one more case"}`, http.StatusOK, &reopened)
+	if reopened.Status != board.StatusTodo || reopened.HeldBy != "" || !slices.Contains(comments(f.card(leaf.ID)), "owner: one more case") {
+		t.Fatalf("reopened = %+v", reopened)
+	}
 
 	none := f.create(board.KindSubtask, "", "Nothing to run")
 	f.store(func(ctx context.Context, st *board.Store) error {
@@ -760,12 +778,50 @@ func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 	})
 	f.setAcceptCmd("exit 1")
 	_, other := f.launch(none.ID)
-	if r := f.toolOK(other.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"nothing changed"}`, none.ID)); !strings.HasSuffix(r.Text, "0 commits. Flags: no_change_in_tree.") {
-		t.Fatalf("done without a command = %q", r.Text)
+	// No argument lets an agent say a command passed.
+	f.toolRefused(other.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"x","passed_cmd":"true"}`, none.ID), string(board.CodeInvalid))
+	r = f.toolOK(other.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"nothing changed","proposed_accept_cmd":"true"}`, none.ID))
+	if want := "Filed a done request on #2; it waits for the owner to accept, because no acceptance command is set. Evidence: +0 −0 in 0 files (0 touched by this task), 0 commits. Flags: no_change_in_tree."; r.Text != want || r.Card.Status != board.StatusDoing {
+		t.Fatalf("done without a command = %+v, want %q", r, want)
 	}
+	d = f.card(none.ID)
 	var bare Evidence
-	if err := json.Unmarshal(f.card(none.ID).Requests[0].Evidence, &bare); err != nil || bare.Accept != nil {
-		t.Fatalf("evidence without a command = %+v, %v", bare.Accept, err)
+	if err := json.Unmarshal(d.Requests[0].Evidence, &bare); err != nil || bare.Accept != nil || d.Requests[0].Status != board.RequestPending || d.Requests[0].DecidedBy != "" {
+		t.Fatalf("request without a command = %+v, accept %+v, %v", d.Requests[0], bare.Accept, err)
+	}
+	var snap BoardSnapshot
+	f.call(http.MethodGet, "/api/board?project_id="+f.project, "", http.StatusOK, &snap)
+	if len(snap.Requests) != 1 || snap.Requests[0].ID != d.Requests[0].ID {
+		t.Fatalf("inbox = %+v", snap.Requests)
+	}
+	// Rejecting it while the Task is live still steers the Task, which keeps the hold.
+	var rejected Rejection
+	f.call(http.MethodPost, "/api/board/requests/"+d.Requests[0].ID+"/reject", `{"reason":"add a test"}`, http.StatusOK, &rejected)
+	if !rejected.Steered || rejected.DecidedBy != "owner" || f.card(none.ID).Card.HeldBy != other.ID {
+		t.Fatalf("rejected = %+v", rejected)
+	}
+}
+
+// A shell that does not start files the claim flagged, for the owner to
+// accept: nothing passed.
+func TestBoardToolsDoneWaitsWhenAcceptanceCouldNotRun(t *testing.T) {
+	acceptEnv(t)
+	shell := filepath.Join(t.TempDir(), "shell")
+	if err := os.WriteFile(shell, []byte{0, 1, 2, 3}, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL", shell)
+	f := newPlanner(t)
+	f.setAcceptCmd("true")
+	leaf := f.create(board.KindSubtask, "", "Leaf")
+	_, task := f.launch(leaf.ID)
+	r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, leaf.ID))
+	if !strings.HasPrefix(r.Text, "Filed a done request on #1; it waits for the owner to accept, because the acceptance command could not run.") ||
+		!strings.Contains(r.Text, board.FlagAcceptanceCouldNotRun) {
+		t.Fatalf("done = %q", r.Text)
+	}
+	if d := f.card(leaf.ID); d.Card.Status != board.StatusDoing || d.Requests[0].Status != board.RequestPending {
+		t.Fatalf("after a run that did not start = %+v", d)
 	}
 }
 

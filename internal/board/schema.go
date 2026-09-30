@@ -167,4 +167,9 @@ CREATE TABLE import_refs (
   last_comment INTEGER NOT NULL DEFAULT 0
 );
 `,
+	// v4: who decided a request, owner or uam (a done request accepted
+	// automatically because its acceptance command passed). It is empty while
+	// pending, when withdrawn, and for decisions stored before v4, which were
+	// all the owner's.
+	`ALTER TABLE requests ADD COLUMN decided_by TEXT NOT NULL DEFAULT '';`,
 }
