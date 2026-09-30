@@ -71,10 +71,12 @@ A static actor table (owner or agent) sits in one transition function in `intern
 - claim a leaf, moving it from planned or todo to doing;
 - file `done`, `cancel`, `blocked` and `split` requests.
 
+**A Task with no scope**, one neither launched from a card nor planning under one (§4), may propose epics at the root, and write nothing else (decision 4).
+
 **Agents never:**
 - set done, cancelled or the blocked flag;
 - write `accept_cmd` or `paths`, which appear in no tool schema;
-- create epics or root nodes, or reparent a node outside their scope;
+- create a story or subtask at the root, or an epic from a Task with a scope, or reparent a node outside their scope;
 - restore or purge.
 
 **The owner** may do everything. That includes marking a leaf done directly, with a comment: the finishing guard applies, and `force` exists on leaves only.
@@ -88,7 +90,7 @@ A static actor table (owner or agent) sits in one transition function in `intern
 - **Utility scout:** "Suggest stories" on a container follows the same rules. What it writes are unconfirmed nodes, so suggestions and agent decomposition are one mechanism.
 - **Caps** are counted per Task, and calls made by subagents count against their Task:
   - 20 created nodes;
-  - 10 unconfirmed children per container;
+  - 10 unconfirmed children per container, the root counting as one;
   - 20 comments per card;
   - one hold without a pending request at a time.
 - A duplicate normalised title among live siblings is refused. The FTS similarity check is information only.
@@ -438,7 +440,7 @@ The preamble is deterministic. It contains:
 |---|---|
 | `board_get` | `{ref}` — for a container, also the pending subtasks depth-first, blocked ones last |
 | `board_list` | `{query, status, kind, parent}` |
-| `board_create` | `{kind: story|subtask, parent, title, desc, win_condition, prio, effort, labels, checklist}` |
+| `board_create` | `{kind: epic|story|subtask, parent, title, desc, win_condition, prio, effort, labels, checklist}` — an epic takes no `parent` |
 | `board_edit` | `{ref, title, desc, win_condition, prio, effort, labels, parent, rank}` — on a confirmed card this becomes a `change` request |
 | `board_checklist` | `{ref, tick: [index], untick: [index], add: [text]}` |
 | `board_comment` | `{ref, body}` |
@@ -474,7 +476,7 @@ No schema has `accept_cmd`, `paths`, `status`, `blocked`, `force`, restore or pu
 
 ## Implementation amendments (2026-09-29)
 
-These record how `internal/board` reads this contract, plus two later decisions. Where they differ from a section above, they win.
+These record how `internal/board` reads this contract, plus four later decisions. Where they differ from a section above, they win.
 
 **Readings and deviations**
 
@@ -499,7 +501,7 @@ These record how `internal/board` reads this contract, plus two later decisions.
 - **Import (§11):** any source schema other than v11 is refused with `import_schema`, and a source that keeps changing while it is copied with `import_busy`. Imports are exempt from the duplicate-title rule, because the source allows repeated titles and refusing them would drop cards. An `import_refs` table maps each source UUID to its card, with the state last imported and the highest comment copied. Running the import again applies only the fields the source changed since the last run, so the owner's edits survive; it copies only new comments, makes each source link once both cards share a Project, removes links the source dropped while leaving the owner's unlinks alone, and moves a card still in Unassigned once its source project matches. A change aimed at a held card, a card cancelled in uam, or a status the owner couldn't set directly is skipped, reported and retried on the next run. A purged card is never recreated. Only git Projects match, and a name shared by several Projects matches none.
 - **Agent tool parameters (§16):** `board_list` filters with `state`, and `board_link` takes `{ref, blocker}`, where `ref` is the blocked card, because no schema may have a `status` or `blocked` key. `board_request` also takes `proposed_accept_cmd`, for `done` only.
 - **Agent tool results (§16):** each result is compact JSON, `{text, code, refs, card}`. A refusal carries `code` and `refs`, such as the open checklist items; `card` (`id, seq, kind, title, status`) is the card the call was about. The adapter records only this text, so the transcript chip is rebuilt from it after a reload. A result stays under 32 KiB, well under the 64 KiB the transcript records whole: `board_get` cuts the description and comment bodies and shows at most 20 cards per list, saying how many more there are, and a longer text is cut at the end.
-- **Agent tool registration (§16):** the tools are added when a Task's conversation opens. Turning the switch on reaches Tasks opened afterwards, including a reopened one. Every call checks the switch and the Project's git again. A call runs only while its Task is active. Settling or archiving the Task ends its calls in progress before its holds are decided, and a hold such a call made anyway is released.
+- **Agent tool registration (§16):** the tools are added when a Task's conversation opens. When the switch or the Project's git changes while the conversation is open, the next prompt sent to the Task reopens it with the current tools. Only a prompt does this: slash commands, queued prompts and steers into a running turn never reopen it. The reopen waits while anything runs or waits in the conversation: a turn, a pending request, a queued prompt, a subagent that is running or idle, a background task or an active objective. Until then the prompt goes to the open conversation, which keeps the tools it opened with. The transcript shown stays in place across the reopen. A reopen that fails fails the prompt, as it does after a restart. Every call checks the switch and the Project's git again. A call runs only while its Task is active. Settling or archiving the Task ends its calls in progress before its holds are decided, and a hold such a call made anyway is released.
 - **Evidence transcript (§14):** `transcript.partial` is set when the transcript uam holds does not reach back to the hold's start, so the `by_task` files may be incomplete, and when a tool call since then was clipped. A launch records its baseline the same way a claim does, with the blob names of the paths already dirty.
 - **Check at HEAD (§9, §14):** `check` answers 202 `{job_id}`, not `{accept}`, because a run can outlast what the sign-in proxy in front of the service lets a request take. What can be told at once is refused at once: a container or a subtask with no resolved command is `invalid`, an Unassigned card is `read_only`, and a Project without git is `no_git`. The job then runs the resolved command (the subtask's own, else the Project default) through the Project's runner. The run is bound to the service, not to the request. Its last `board_job` frame is `done` with the run in `accept`, red and green alike (`exit` -1 when the shell did not start), or `failed` with `error` when the runner stayed busy past the timeout or the run could not finish. The run is recorded nowhere.
 - **Planner jobs (§15):** a suggestion and a check are both jobs, one per card at a time. A second job on the same card is refused with `job_busy` (409), and jobs are refused while the service shuts down. Shutdown ends running jobs and waits for them. The `board_job` frame is `{seq, job_id, card_id, kind: suggest|check, status, error, accept}`. `error` is sent only when the job failed, and `accept` only on a finished check.
@@ -516,3 +518,4 @@ These record how `internal/board` reads this contract, plus two later decisions.
 1. **Split under a story.** A leaf whose parent is a story splits into sibling leaves under that story, placed right after it and in order. Unticked items become planned siblings; ticked items become siblings with a pending done request that cites the tick. The original is cancelled with the automatic comment "split into #a, #b, …" and its own `cascade_id`, so Restore brings it back and leaves the siblings. A live hold moves to the first pending sibling. An unconfirmed, unheld leaf splits directly; a confirmed or held one files one split request, and accepting it applies everything at once. Under an epic or at the root, §7 is unchanged: the leaf becomes a story.
 2. **An owner touch confirms ancestors.** Any owner touch on a card (save, create, launch, accept, restore, confirm or a status change) also confirms and re-pins each unconfirmed ancestor in the same transaction. This replaces the `unconfirmed_parent` refusal. So launching a leaf under an agent-suggested story confirms the story, and the sweep can't expire it.
 3. **Board revisions in the snapshot** (added to §15). While the planner is on, the `snapshot` frame carries `boards`: each Project's board revision, plus `""` for Unassigned. It is omitted while the planner is off. A client reloads only the boards it holds an older revision of.
+4. **Agents propose epics** (2026-09-30; changes §3, §4 and §16). `board_create` also takes kind `epic` with no parent, from a Task with no scope: one that was neither launched from a card nor started with Plan with agent. Such a Task sees the whole Project board (§16) and before this decision could write nothing. Now it may propose epics at the root and nothing else, so it can't edit, comment on or add under an epic it proposed. A Task with a scope writes only within its container, so a planning Task, a working Task (one launched on a root subtask included) and a Utility job propose no epics. An agent's epic is a proposal like any other: it expires 14 days after creation unless the owner confirms it, it counts toward the 20 created cards, the root counts as its container for the 10 unconfirmed children, and a duplicate live title at the root is refused. The owner confirms or dismisses it in the Tree, where root proposals fold into "+N suggested" at the root, and can confirm or cancel it from the card panel; the epic filter shows a proposed epic too, and lists no cancelled epic except the one it is set to, so expired proposals don't linger there. Stories and subtasks still need a parent, and an epic under any card is refused by the kind rule (`invalid`), as it is for the owner.

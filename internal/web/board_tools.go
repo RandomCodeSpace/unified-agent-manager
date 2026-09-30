@@ -255,10 +255,12 @@ var boardToolSet = []boardTool{
 			"kind":   enumProp("Only cards of this kind.", string(board.KindEpic), string(board.KindStory), string(board.KindSubtask)),
 			"parent": stringProp("Only the direct children of this card. " + refDesc),
 		}), (*Manager).toolList),
-	defineTool("board_create", "Propose a story or subtask under an epic or story in your scope. It stays a proposal until the owner confirms it.",
-		toolSchema([]string{"kind", "parent", "title"}, map[string]any{
-			"kind":          enumProp("A story holds subtasks; a subtask is one piece of work.", string(board.KindStory), string(board.KindSubtask)),
-			"parent":        stringProp("The epic or story to create it under. " + refDesc),
+	defineTool("board_create", "Propose a card: an epic at the root of the board, with no parent; a story under an epic; or a subtask under a story or an epic. "+
+		"A task not started from a card may propose only epics, and can't change them afterwards; a task started from a card creates only within its scope and proposes no epics. "+
+		"The card stays a proposal until the owner confirms it.",
+		toolSchema([]string{"kind", "title"}, map[string]any{
+			"kind":          enumProp("An epic holds stories and subtasks and needs no parent; a story holds subtasks; a subtask is one piece of work.", string(board.KindEpic), string(board.KindStory), string(board.KindSubtask)),
+			"parent":        stringProp("For a story or subtask: the epic or story to create it under. Leave it out for an epic. " + refDesc),
 			"title":         stringProp("One line."),
 			"desc":          stringProp("Markdown description."),
 			"win_condition": stringProp("One line saying what done means."),
@@ -349,14 +351,22 @@ func (m *Manager) boardHostTools(scope func(context.Context, agentapi.HostToolCa
 	}
 }
 
+// boardToolsLocked reports whether a Task of the Project projectID gets the
+// planner tools: the planner is on and the Project has Git. The caller holds
+// mu.
+func (m *Manager) boardToolsLocked(projectID string) bool {
+	p := m.projects[projectID]
+	return m.settings.Planner && p != nil && p.NoGit == ""
+}
+
 // taskHostToolsLocked is the Manager's hostTools: every planner tool, for a
-// Task of a Project with Git while the planner is on. The switch is read
-// when the conversation opens, so turning it on reaches the Tasks opened
-// afterwards, and every call checks both again. Each call is tied to the
-// Task while it runs (startCall). The caller holds mu; the store is used
-// only by the calls.
+// Task of a Project with Git while the planner is on (boardToolsLocked).
+// Both are read when the conversation opens; a Task whose conversation
+// opened with another answer reopens on its next prompt (send), and every
+// call checks both again. Each call is tied to the Task while it runs
+// (startCall). The caller holds mu; the store is used only by the calls.
 func (m *Manager) taskHostToolsLocked(taskID, projectID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
-	if p := m.projects[projectID]; !m.settings.Planner || p == nil || p.NoGit != "" {
+	if !m.boardToolsLocked(projectID) {
 		return nil, nil
 	}
 	tools, run := m.boardHostTools(func(ctx context.Context, call agentapi.HostToolCall) (boardScope, error) {
@@ -647,11 +657,19 @@ type createArgs struct {
 }
 
 func (m *Manager) toolCreate(ctx context.Context, sc boardScope, in createArgs) (toolReply, error) {
+	if strings.TrimSpace(in.Parent) == "" && (in.Kind == board.KindStory || in.Kind == board.KindSubtask) {
+		return toolReply{}, invalidBoard("a %s needs a parent: the epic or story to create it under", in.Kind)
+	}
 	var reply toolReply
 	err := m.withBoard(func(st *board.Store) error {
-		parent, err := sc.card(ctx, st, in.Parent)
-		if err != nil {
-			return err
+		// No parent is the root, where the store takes only an epic, and only
+		// from a Task with no scope.
+		var parent board.Card
+		if strings.TrimSpace(in.Parent) != "" {
+			var err error
+			if parent, err = sc.card(ctx, st, in.Parent); err != nil {
+				return err
+			}
 		}
 		checklist := make([]board.Check, 0, len(in.Checklist))
 		for _, text := range in.Checklist {
@@ -662,7 +680,11 @@ func (m *Manager) toolCreate(ctx context.Context, sc boardScope, in createArgs) 
 		if err != nil {
 			return err
 		}
-		reply = cardReply(c, "Created #%d under #%d. It stays a proposal until the owner confirms it.", c.Seq, parent.Seq)
+		where := "at the root of the board"
+		if parent.ID != "" {
+			where = fmt.Sprintf("under #%d", parent.Seq)
+		}
+		reply = cardReply(c, "Created #%d %s. It stays a proposal until the owner confirms it.", c.Seq, where)
 		return nil
 	})
 	return reply, err

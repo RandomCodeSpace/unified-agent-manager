@@ -2,6 +2,7 @@ package board
 
 import (
 	"database/sql"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -93,10 +94,14 @@ func TestCreateRules(t *testing.T) {
 	if got := f.card(proposed.ID); !under.Confirmed() || !got.Confirmed() || got.PinnedSHA != "head-2" {
 		t.Fatalf("owner card %+v under %+v", under, got)
 	}
-	// Agents never create epics or root cards, or outside their scope.
+	// Agents create no epic under a card, by the kind rule the owner's cards
+	// follow too, no story at the root, no epic there from a Task with a
+	// scope, and nothing outside their scope.
 	_, err = f.s.Create(f.ctx, agent, NewCard{ProjectID: proj, Kind: KindEpic, ParentID: epic.ID, Title: "x"})
-	wantCode(t, err, CodeForbidden)
+	wantCode(t, err, CodeInvalid)
 	_, err = f.s.Create(f.ctx, agent, NewCard{ProjectID: proj, Kind: KindStory, Title: "x"})
+	wantCode(t, err, CodeForbidden)
+	_, err = f.s.Create(f.ctx, agent, NewCard{ProjectID: proj, Kind: KindEpic, Title: "x"})
 	wantCode(t, err, CodeForbidden)
 	other := f.create(owner, "", KindEpic, "Other")
 	_, err = f.s.Create(f.ctx, agent, NewCard{ProjectID: proj, Kind: KindStory, ParentID: other.ID, Title: "x"})
@@ -108,6 +113,97 @@ func TestCreateRules(t *testing.T) {
 	f.must(err)
 	_, err = f.s.Create(f.ctx, owner, NewCard{ProjectID: proj, Kind: KindStory, ParentID: other.ID, Title: "x"})
 	wantCode(t, err, CodeInvalid)
+}
+
+// Decision 4: a Task with no scope proposes epics at the root, as proposals
+// like any other: they expire, the root is their container for the
+// unconfirmed cap, they count toward the created cap, and a duplicate root
+// title is refused. Only epics go at the root, and a Task launched from a
+// card or planning under one creates none there.
+func TestAgentRootEpics(t *testing.T) {
+	f := newFixture(t)
+	f.create(owner, "", KindEpic, "Owner's epic")
+	free := Agent("free", "sub")
+	first := f.create(free, "", KindEpic, "Proposed epic")
+	if first.Confirmed() || first.ExpiresAt == nil || !first.ExpiresAt.Equal(f.clock.Now().Add(ExpiryWindow)) ||
+		first.CreatedBy != "task:free" || first.ParentID != "" || first.Status != StatusPlanned || first.PinnedSHA != "" {
+		t.Fatalf("agent epic %+v", first)
+	}
+	for _, in := range []struct {
+		card NewCard
+		code Code
+	}{
+		{NewCard{Kind: KindStory, Title: "Loose story"}, CodeForbidden},
+		{NewCard{Kind: KindSubtask, Title: "Loose subtask"}, CodeForbidden},
+		{NewCard{Kind: KindEpic, ParentID: first.ID, Title: "Nested"}, CodeInvalid},
+		// The Task writes nothing else, not even under its own epic.
+		{NewCard{Kind: KindStory, ParentID: first.ID, Title: "Story"}, CodeForbidden},
+		{NewCard{Kind: KindEpic, Title: " proposed EPIC "}, CodeDuplicate},
+		{NewCard{Kind: KindEpic, Title: "Owner's epic"}, CodeDuplicate},
+	} {
+		in.card.ProjectID = proj
+		_, err := f.s.Create(f.ctx, free, in.card)
+		wantCode(t, err, in.code)
+	}
+	_, err := f.s.Create(f.ctx, free, NewCard{Kind: KindEpic, Title: "Unassigned"})
+	wantCode(t, err, CodeReadOnly)
+	// Planning under a card, or working on a root subtask, scopes the Task.
+	f.must(f.s.StartPlanning(f.ctx, owner, "#1", "planner"))
+	f.launch(f.create(owner, "", KindSubtask, "Loose").ID, "worker")
+	for _, task := range []string{"planner", "worker"} {
+		_, err := f.s.Create(f.ctx, Agent(task, ""), NewCard{ProjectID: proj, Kind: KindEpic, Title: "From " + task})
+		wantCode(t, err, CodeForbidden)
+	}
+
+	// The root is one container for the unconfirmed cap.
+	var proposed []Card
+	for i := range CapUnconfirmed - 1 {
+		proposed = append(proposed, f.create(free, "", KindEpic, fmt.Sprintf("Epic %d", i)))
+	}
+	_, err = f.s.Create(f.ctx, free, NewCard{ProjectID: proj, Kind: KindEpic, Title: "One too many"})
+	wantCode(t, err, CodeLimit)
+	// The owner confirms one and dismisses another; each frees a place.
+	c, err := f.s.Confirm(f.ctx, Owner("head-2"), first.ID)
+	f.must(err)
+	if !c.Confirmed() || c.ExpiresAt != nil || c.PinnedSHA != "head-2" {
+		t.Fatalf("confirmed agent epic %+v", c)
+	}
+	f.create(free, "", KindEpic, "After the confirm")
+	if c, err = f.s.Dismiss(f.ctx, owner, proposed[0].ID); err != nil || c.Status != StatusCancelled {
+		t.Fatalf("dismissed %+v, %v", c, err)
+	}
+	f.create(free, "", KindEpic, "After the dismiss")
+
+	// A Task planning under a proposed epic adds proposals of its own there.
+	f.must(f.s.StartPlanning(f.ctx, owner, proposed[1].ID, "decomposer"))
+	story := f.create(Agent("decomposer", ""), proposed[1].ID, KindStory, "Story under a proposal")
+	leaf := f.create(Agent("decomposer", ""), story.ID, KindSubtask, "Leaf under a proposal")
+
+	// Unconfirmed, they expire with the window, and a root proposal takes
+	// its proposed subtree with it.
+	f.clock.advance(ExpiryWindow)
+	f.create(owner, "", KindEpic, "A write sweeps")
+	for _, c := range f.children("") {
+		if c.CreatedBy == "task:free" && !c.Confirmed() && c.Status != StatusCancelled {
+			t.Fatalf("%s outlived its expiry: %+v", c.Title, c)
+		}
+	}
+	swept := f.card(proposed[1].ID)
+	for _, id := range []string{story.ID, leaf.ID} {
+		if c := f.card(id); c.Status != StatusCancelled || c.CascadeID == "" || c.CascadeID != swept.CascadeID || !hasComment(f.comments(id), "uam: expired unconfirmed") {
+			t.Fatalf("%s under the swept epic = %+v", c.Title, c)
+		}
+	}
+	// And they count toward the created cap: with nothing left to confirm,
+	// the Task's 21st card is refused.
+	for i := range CapCreated - 12 {
+		f.create(free, "", KindEpic, fmt.Sprintf("Late %d", i))
+	}
+	_, err = f.s.Create(f.ctx, free, NewCard{ProjectID: proj, Kind: KindEpic, Title: "Past the cap"})
+	wantCode(t, err, CodeLimit)
+	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d cards", CapCreated)) {
+		t.Fatalf("past the created cap: %v", err)
+	}
 }
 
 // Test plan 18: the duplicate-title refusal ignores cancelled siblings.
