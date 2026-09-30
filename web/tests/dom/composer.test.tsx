@@ -117,16 +117,47 @@ describe('pickers', () => {
     expect(await screen.findAllByText('This native command has no supported web handler yet')).not.toHaveLength(0);
   });
 
-  test('command text output keeps its lines, in mono', async () => {
+  test('a longer command output opens in the side panel, in mono with its lines, not in the composer', async () => {
     const { user } = await openTask('t3');
     await user.type(composer(), '/context');
+    await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/context/ });
     await user.keyboard('{Enter}');
     expect(composer().value).toBe('/context ');
     await user.keyboard('{Enter}');
-    const out = await screen.findByText(/^Context Usage/);
+    const region = await screen.findByRole('region', { name: 'Output of /context' });
+    const out = within(region).getByText(/^Context Usage/);
     expect(out.tagName).toBe('PRE');
     expect(out.textContent?.split('\n')).toHaveLength(4);
     expect(out.textContent).toContain('  · · · · · · · · · ·   ○ System Prompt     9.5k   (7%)');
+    expect(screen.queryByText('Command result')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Close command output' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
+  });
+
+  test('beside the conversation, the output panel keeps composer focus on Esc and gives way to Files', async () => {
+    const happy = (window as unknown as { happyDOM: { setViewport: (v: { width: number; height: number }) => void } }).happyDOM;
+    happy.setViewport({ width: 1440, height: 900 });
+    try {
+      const { user } = await openTask('t3');
+      const run = async () => {
+        await user.click(composer());
+        await user.type(composer(), '/context');
+        await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/context/ });
+        await user.keyboard('{Enter}{Enter}');
+        return screen.findByRole('region', { name: 'Output of /context' });
+      };
+      const region = await run();
+      expect(region.closest('aside')?.getAttribute('aria-label')).toBe('Command output');
+      expect(screen.getByText('Output of /context is in the side panel.')).toBeTruthy();
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
+      expect(document.activeElement).toBe(composer());
+      await run();
+      await user.click(screen.getByRole('button', { name: 'Browse files' }));
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
+    } finally {
+      happy.setViewport({ width: 1024, height: 768 });
+    }
   });
 
   test('$ lists skills only, and Escape closes the list', async () => {
