@@ -11,7 +11,7 @@
 | **Settled** | A Task marked complete by the user. It is read-only and its conversation is closed. Reopening makes it active; the next prompt continues the same conversation. |
 | **Archived** | The final stage of a Task. It is read-only, cannot be reopened, and can be deleted. |
 | **Imported Task** | A Task linked to an existing Copilot conversation. UAM checks whether another client holds that conversation before importing or sending work. |
-| **Spawned Task** | A Task another Task's agent started with `uam_create_task`, in an existing Project. It runs in safe mode, records the Task that started it (`spawned_by`), and cannot start Tasks itself. |
+| **Spawned Task** | A Task another Task's agent started with `uam_create_task`, in an existing Project. It starts in safe mode, records the Task that started it (`spawned_by`), and cannot start Tasks itself. |
 | **Legacy terminal record** | Saved metadata from UAM's retired terminal support. It remains on disk but is not an active Task and has no terminal controls in current UAM. |
 | **Board** | A Project's plan in the planner (ADR 0005): cards arranged as epics, stories and subtasks. It exists only for git Projects, behind a Settings switch. |
 | **Card** | One node on a Board: an epic, a story or a subtask. |

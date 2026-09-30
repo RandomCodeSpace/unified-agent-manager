@@ -182,8 +182,11 @@ type Manager struct {
 	// check (board_ai.go). Guarded by mu.
 	boardJobs map[string]string
 	// spawns maps each Task uam_create_task is creating to the Task that
-	// called it, until the create ends (create_task.go). Guarded by mu.
-	spawns map[string]string
+	// called it, until the create ends, and spawnWait bounds how long the
+	// call waits for it: viewWait, which tests shorten (create_task.go).
+	// Guarded by mu.
+	spawns    map[string]string
+	spawnWait time.Duration
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -210,6 +213,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		quota:     map[string]*quotaCache{},
 		quotaKick: make(chan struct{}, 1),
 		quotaTick: quotaCheck,
+		spawnWait: viewWait,
 
 		titleSlots:  make(chan struct{}, maxTitleJobs),
 		summaryJobs: make(chan subagentSummaryJob, maxSubagents),
@@ -2086,6 +2090,11 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 		return newError(http.StatusConflict, "the project was removed")
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
+		// Once Shutdown has begun, the Task would not be listed, so its
+		// record is not written either.
+		if m.isClosed() {
+			return errShuttingDown
+		}
 		if check != nil {
 			if err := check(cfg); err != nil {
 				return err

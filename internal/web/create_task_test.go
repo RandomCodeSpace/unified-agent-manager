@@ -3,10 +3,13 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -23,24 +26,23 @@ func spawnCall(t *testing.T, conv *agenttest.Conversation, call agentapi.HostToo
 	return res
 }
 
-// spawnOK requires a uam_create_task call to be taken, waits for the Task
-// it started, and returns that Task and its conversation.
+// startedTask is the Task ID a uam_create_task result names.
+var startedTask = regexp.MustCompile(`^Started task ([0-9a-f-]{36})\b`)
+
+// spawnOK requires a uam_create_task call to create its Task within the
+// call, and returns that Task and its conversation.
 func spawnOK(t *testing.T, m *Manager, prov *agenttest.Provider, conv *agenttest.Conversation, callID, args string) (SessionSummary, *agenttest.Conversation) {
 	t.Helper()
 	res := spawnCall(t, conv, agentapi.HostToolCall{CallID: callID, Arguments: json.RawMessage(args)})
-	id, err := spawnID(conv.Request().SessionID, callID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Failed || !strings.Contains(res.Text, id) || !strings.Contains(res.Text, "no reply comes back to you") {
+	match := startedTask.FindStringSubmatch(res.Text)
+	if res.Failed || match == nil || strings.Contains(res.Text, "still opening") || !strings.Contains(res.Text, "no reply comes back to you") {
 		t.Fatalf("uam_create_task %s = %+v", args, res)
 	}
-	waitSpawns(t, m)
-	sum, err := m.Summary(id)
+	sum, err := m.Summary(match[1])
 	if err != nil {
-		t.Fatalf("task %s: %v", id, err)
+		t.Fatalf("task %s: %v", match[1], err)
 	}
-	return sum, taskConv(t, prov, id)
+	return sum, taskConv(t, prov, sum.ID)
 }
 
 // taskConv returns the latest conversation opened for the Task id.
@@ -105,8 +107,8 @@ func namedProject(t *testing.T, m *Manager, name string) string {
 }
 
 // A Task starts a Task in an existing Project, named by its ID or its exact
-// name: the prompt is its first message, it runs in safe mode whatever the
-// Task defaults say, and it records its creator but does not get the tool.
+// name: the prompt is its first message, it starts in safe mode whatever
+// the Task defaults say, and it records its creator but does not get the tool.
 func TestCreateTaskStartsATaskInAnExistingProject(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	caller, conv := createSession(t, m, prov)
@@ -204,37 +206,24 @@ func TestCreateTaskModel(t *testing.T) {
 	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p","model":"gone"}`, `model "gone" is not offered`)
 }
 
-// A Task starts at most maxSpawns Tasks, its subagents' included, counted
-// over the stored records: archiving one keeps its place, deleting it frees
-// it, and the count survives a restart. A repeated call starts nothing new.
+// A Task starts at most maxSpawns Tasks, counted over the stored records:
+// archiving one keeps its place, deleting it frees it, and the count
+// survives a restart.
 func TestCreateTaskCap(t *testing.T) {
 	prov := agenttest.NewProvider("fake", allCaps)
 	st := openTestStore(t)
 	m := startManager(t, st, prov)
 	caller, conv := createSession(t, m, prov)
 	namedProject(t, m, "Target")
-	for i := range maxSpawns {
-		call := agentapi.HostToolCall{CallID: fmt.Sprintf("call-%d", i), Arguments: json.RawMessage(`{"project":"Target","prompt":"p"}`)}
-		if i%2 == 1 {
-			call.AgentID = "sub-1"
-		}
-		if res := spawnCall(t, conv, call); res.Failed || !strings.Contains(res.Text, fmt.Sprintf("You can start %d more.", maxSpawns-1-i)) {
+	first, firstConv := spawnOK(t, m, prov, conv, "call-0", `{"project":"Target","prompt":"p"}`)
+	for i := 1; i < maxSpawns; i++ {
+		res := spawnCall(t, conv, agentapi.HostToolCall{CallID: fmt.Sprintf("call-%d", i), Arguments: json.RawMessage(`{"project":"Target","prompt":"p"}`)})
+		if res.Failed || !strings.Contains(res.Text, fmt.Sprintf("You can start %d more.", maxSpawns-1-i)) {
 			t.Fatalf("call %d = %+v", i, res)
 		}
 	}
-	waitSpawns(t, m)
-	firstID, err := spawnID(caller.ID, "call-0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err := m.Summary(firstID)
-	if err != nil || first.SpawnedBy != caller.ID {
-		t.Fatalf("first created task = %+v, %v", first, err)
-	}
-	firstConv := taskConv(t, prov, first.ID)
-	opens := len(prov.Opens())
-	if res := spawnCall(t, conv, agentapi.HostToolCall{CallID: "call-0", Arguments: json.RawMessage(`{"project":"Target","prompt":"p"}`)}); res.Failed || !strings.Contains(res.Text, "already started task "+first.ID) || len(prov.Opens()) != opens {
-		t.Fatalf("repeated call = %+v, opens %d → %d", res, opens, len(prov.Opens()))
+	if first.SpawnedBy != caller.ID {
+		t.Fatalf("first created task = %+v", first)
 	}
 	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p"}`, "already started 5 tasks")
 
@@ -284,6 +273,88 @@ func TestCreateTaskSpawnedBySurvivesARestart(t *testing.T) {
 	mustSubmit(t, m, child.ID, "again", mustUUID(t), ModeSend, SubmissionAccepted)
 	if req := prov.Last().Request(); req.SessionID != child.ID || req.Tools != nil {
 		t.Fatalf("reopened created task = %+v", req)
+	}
+}
+
+// blockSpawnOpens makes the scripted provider's opens wait for release,
+// which returns each open's error.
+func blockSpawnOpens(prov *scriptedProvider) chan error {
+	release := make(chan error)
+	prov.script(func(p *scriptedProvider) { p.onOpen = func(agentapi.OpenRequest) error { return <-release } })
+	return release
+}
+
+// A create that fails within the call is refused with its error, and holds
+// no place in the cap.
+func TestCreateTaskReturnsAFailedCreate(t *testing.T) {
+	prov := newScripted("fake")
+	m := startManager(t, openTestStore(t), prov)
+	caller, conv := createSession(t, m, prov.Provider)
+	prov.script(func(p *scriptedProvider) {
+		p.onOpen = func(agentapi.OpenRequest) error { return errors.New("the key variable is unset") }
+	})
+	res := spawnCall(t, conv, agentapi.HostToolCall{CallID: "call-1", Arguments: json.RawMessage(fmt.Sprintf(`{"project":%q,"prompt":"p"}`, caller.ProjectID))})
+	if !res.Failed || !strings.Contains(res.Text, "the task was not created") || !strings.Contains(res.Text, "the key variable is unset") {
+		t.Fatalf("failed create = %+v", res)
+	}
+	m.mu.Lock()
+	n := m.spawnsLocked(caller.ID)
+	m.mu.Unlock()
+	if len(m.List()) != 1 || n != 0 {
+		t.Fatalf("tasks %d, spawns %d", len(m.List()), n)
+	}
+}
+
+// A create still opening when the wait ends is reported by its ID, and the
+// Task appears with its prompt once it opens.
+func TestCreateTaskStillOpening(t *testing.T) {
+	prov := newScripted("fake")
+	m := startManager(t, openTestStore(t), prov)
+	caller, conv := createSession(t, m, prov.Provider)
+	m.mu.Lock()
+	m.spawnWait = 10 * time.Millisecond
+	m.mu.Unlock()
+	release := blockSpawnOpens(prov)
+	res := spawnCall(t, conv, agentapi.HostToolCall{CallID: "call-1", Arguments: json.RawMessage(fmt.Sprintf(`{"project":%q,"prompt":"later"}`, caller.ProjectID))})
+	match := startedTask.FindStringSubmatch(res.Text)
+	if res.Failed || match == nil || !strings.Contains(res.Text, "It is still opening") || !strings.Contains(res.Text, "You can start 4 more.") {
+		t.Fatalf("slow create = %+v", res)
+	}
+	release <- nil
+	waitSpawns(t, m)
+	if sum, err := m.Summary(match[1]); err != nil || sum.SpawnedBy != caller.ID || !slices.Equal(taskConv(t, prov.Provider, sum.ID).Sends(), []string{"later"}) {
+		t.Fatalf("created task = %+v, %v", sum, err)
+	}
+}
+
+// A create that finishes while the service shuts down writes no record.
+func TestCreateTaskDuringShutdownWritesNoRecord(t *testing.T) {
+	prov := newScripted("fake")
+	st := openTestStore(t)
+	m := startManager(t, st, prov)
+	caller, conv := createSession(t, m, prov.Provider)
+	m.mu.Lock()
+	m.spawnWait = 10 * time.Millisecond
+	m.mu.Unlock()
+	release := blockSpawnOpens(prov)
+	if res := spawnCall(t, conv, agentapi.HostToolCall{CallID: "call-1", Arguments: json.RawMessage(fmt.Sprintf(`{"project":%q,"prompt":"p"}`, caller.ProjectID))}); !strings.Contains(res.Text, "still opening") {
+		t.Fatalf("slow create = %+v", res)
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- m.Shutdown(context.Background()) }()
+	waitUntil(t, "shutdown to begin", m.isClosed)
+	release <- nil
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range cfg.Sessions {
+		if rec.Web != nil && rec.Web.SpawnedBy != "" {
+			t.Fatalf("a create during shutdown left a record: %+v", rec)
+		}
 	}
 }
 

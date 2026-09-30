@@ -2,13 +2,12 @@ package web
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -18,8 +17,8 @@ import (
 
 // uam_create_task is the host tool through which a Task starts another Task
 // in an existing Project, with a first message (docs/web.md). The new Task
-// runs in safe mode and records its creator (spawnedBy); it does not get the
-// tool, and one Task may create at most maxSpawns.
+// starts in safe mode and records its creator (spawnedBy); it does not get
+// the tool, and one Task may create at most maxSpawns.
 
 const (
 	createTaskToolName = "uam_create_task"
@@ -35,7 +34,7 @@ const (
 var createTaskTool = agentapi.HostTool{
 	Name: createTaskToolName,
 	Description: fmt.Sprintf("Start a new uam task in an existing project, with prompt as its first message. "+
-		"The task runs on its own in safe mode: the owner sees it in the uam sidebar, and nothing from it comes back to you. "+
+		"The task starts in safe mode and runs on its own: the owner sees it in the uam sidebar, and nothing from it comes back to you. "+
 		"You can start at most %d tasks.", maxSpawns),
 	Parameters: toolSchema([]string{"project", "prompt"}, map[string]any{
 		"project": stringProp("An existing project: its ID, or its exact name."),
@@ -82,9 +81,10 @@ func (m *Manager) createTask(ctx context.Context, taskID string, call agentapi.H
 }
 
 // startSpawn checks a uam_create_task call as Create checks a request, then
-// creates the Task in the background, since opening its conversation may
-// take a while, and returns at once with the new Task's ID. The ID comes
-// from the call, so a repeated call finds the Task the first one started.
+// creates the Task and waits up to spawnWait for it. A create that fails in
+// that time is refused with its error. Opening a conversation can take
+// longer: then the call says the Task is still opening, and a failure after
+// that is only logged.
 func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.HostToolCall) (string, error) {
 	if call.TaskID != taskID {
 		return "", errors.New("the call does not belong to this task")
@@ -96,7 +96,7 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	if err := checkSpawnPrompt(in.Prompt); err != nil {
 		return "", err
 	}
-	_, end, err := m.startCall(ctx, taskID)
+	ctx, end, err := m.startCall(ctx, taskID)
 	if err != nil {
 		return "", err
 	}
@@ -118,25 +118,26 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	if err != nil {
 		return "", err
 	}
-	if req.id, err = spawnID(taskID, call.CallID); err != nil {
+	if req.id, err = newUUID(); err != nil {
 		return "", fmt.Errorf("generate task id: %w", err)
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	switch n := m.spawnsLocked(taskID); {
+	n, wait := m.spawnsLocked(taskID), m.spawnWait
+	switch {
 	case m.closed:
+		m.mu.Unlock()
 		return "", errShuttingDown
-	case m.sessions[req.id] != nil || m.spawns[req.id] != "":
-		return fmt.Sprintf("This call already started task %s.", req.id), nil
 	case n >= maxSpawns:
+		m.mu.Unlock()
 		return "", newError(http.StatusConflict, "this task has already started %d tasks, the most one task may start", n)
 	}
 	if m.spawns == nil {
 		m.spawns = map[string]string{}
 	}
 	m.spawns[req.id] = taskID
-	left := maxSpawns - m.spawnsLocked(taskID)
+	done := make(chan error, 1)
 	m.wg.Add(1)
+	m.mu.Unlock()
 	go func() {
 		defer m.wg.Done()
 		_, err := m.createChecked(req, prov, workdir, mode)
@@ -146,14 +147,27 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 		if err != nil {
 			log.Warn("uam_create_task did not create its task", "session", taskID, "task", req.id, "error", err)
 		}
+		done <- err
 	}()
 	task := fmt.Sprintf("task %s", req.id)
 	if req.Name != "" {
 		task = fmt.Sprintf("task %s %q", req.id, req.Name)
 	}
-	return fmt.Sprintf("Started %s in project %q (%s), with your prompt as its first message. "+
-		"It runs on its own in safe mode: the owner sees it in the uam sidebar, and no reply comes back to you. "+
-		"You can start %d more.", task, projectName, req.ProjectID, left), nil
+	tail := fmt.Sprintf("It starts in safe mode and runs on its own: the owner sees it in the uam sidebar, and no reply comes back to you. "+
+		"You can start %d more.", maxSpawns-n-1)
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			return "", fmt.Errorf("the task was not created: %w", err)
+		}
+		return fmt.Sprintf("Started %s in project %q (%s), with your prompt as its first message. %s", task, projectName, req.ProjectID, tail), nil
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	return fmt.Sprintf("Started %s in project %q (%s). It is still opening; it appears in the uam sidebar when ready, with your prompt as its first message. %s",
+		task, projectName, req.ProjectID, tail), nil
 }
 
 // checkSpawnPrompt refuses a first message that is blank, longer than
@@ -249,13 +263,9 @@ func (m *Manager) spawnsLocked(caller string) int {
 	return n
 }
 
-// spawnRoom refuses to store rec, a Task uam_create_task creates, when its
-// ID is taken or the stored records already name its creator maxSpawns
-// times.
+// spawnRoom refuses to store rec, a Task uam_create_task creates, when the
+// stored records already name its creator maxSpawns times.
 func spawnRoom(cfg *store.Config, rec store.SessionRecord) error {
-	if _, taken := cfg.Sessions[store.Key(rec.Agent, rec.ID)]; taken {
-		return errors.New("a task with this id is already recorded")
-	}
 	n := 0
 	for _, r := range cfg.Sessions {
 		if r.Web != nil && r.Web.SpawnedBy == rec.Web.SpawnedBy {
@@ -266,19 +276,4 @@ func spawnRoom(cfg *store.Config, rec store.SessionRecord) error {
 		return fmt.Errorf("task %s has already started %d tasks", rec.Web.SpawnedBy, n)
 	}
 	return nil
-}
-
-// spawnID is the ID of the Task the call callID of the Task caller creates.
-// It is derived from both, as an RFC 9562 version 8 UUID, so a repeated call
-// finds the Task the first one created; a call without an ID gets a random
-// one.
-func spawnID(caller, callID string) (string, error) {
-	if callID == "" {
-		return newUUID()
-	}
-	sum := sha256.Sum256([]byte(caller + "\x00" + callID))
-	sum[6] = sum[6]&0x0f | 0x80
-	sum[8] = sum[8]&0x3f | 0x80
-	h := hex.EncodeToString(sum[:16])
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32], nil
 }

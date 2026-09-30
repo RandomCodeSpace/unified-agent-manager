@@ -332,10 +332,12 @@ are logged only at debug level (`UAM_DEBUG=1`).
   model is checked as for New task; without one, the Task gets the model
   New task would pick from the Task defaults in Settings, and effort and
   context size stay at their defaults. The new Task always starts in safe
-  mode. The call returns at once with the new Task's ID while its
-  conversation opens; the Task then appears in the sidebar with the message
-  sent. It runs on its own: nothing from it goes back to the Task that
-  started it. Its conversation begins with "Started by another task", and
+  mode. The call waits up to 15 seconds for the Task to be created and
+  sent the message, then returns the new Task's ID. If the create fails in
+  that time, the call fails with the reason. If the conversation is still
+  opening, the call says so, and the Task appears in the sidebar once it
+  opens; a failure after that is only written to the service log. The Task
+  runs on its own: nothing from it goes back to the Task that started it. Its conversation begins with "Started by another task", and
   the API lists that Task as `spawned_by`, which survives restarts. A Task
   started this way does not get the tool itself. One Task can start at
   most 5 Tasks, its subagents' calls included. Every Task it started counts
