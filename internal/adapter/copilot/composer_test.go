@@ -53,6 +53,31 @@ func TestWebSkillDirectoriesOnCreateAndResume(t *testing.T) {
 	}
 }
 
+// Every Task session, created or resumed, appends the ask_user rule to
+// Copilot's system message; a utility session keeps only its own message.
+func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
+	h := openWeb(t)
+	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-2", ConversationID: "s-1", Workdir: "/work", Events: &recSink{}}); err != nil {
+		t.Fatal(err)
+	}
+	want := copilot.SystemMessageConfig{Mode: "append", Content: taskSystem}
+	if got := h.fc.create[0].SystemMessage; got == nil || !reflect.DeepEqual(*got, want) {
+		t.Fatalf("create system message = %+v", got)
+	}
+	if got := h.fc.resume[0].SystemMessage; got == nil || !reflect.DeepEqual(*got, want) {
+		t.Fatalf("resume system message = %+v", got)
+	}
+	h.fc.mu.Lock()
+	h.fc.reply = func(context.Context, copilot.MessageOptions) (string, error) { return "ok", nil }
+	h.fc.mu.Unlock()
+	if _, err := h.p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Purpose: "title", System: "Write a title.", Prompt: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.fc.create[1].SystemMessage; got == nil || got.Mode != "replace" || got.Content != "Write a title." {
+		t.Fatalf("utility system message = %+v", got)
+	}
+}
+
 var composerFiles = []agentapi.File{{Path: "/work/src/a.go", Rel: "src/a.go"}, {Path: "/work/docs", Rel: "docs", Dir: true}}
 
 func wantFileAttachments() []copilot.Attachment {

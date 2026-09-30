@@ -26,6 +26,12 @@ export interface Alongside {
 /** The steer's text when only files ride along beside the answer, so the model reads what they are for. */
 export const ALONGSIDE_TEXT = 'Files for my answer.';
 
+/** How an option the agent recommends ends: "(Recommended)", in any case, trailing space allowed. */
+const RECOMMENDED = /\(recommended\)\s*$/i;
+
+/** The first option the agent marked as recommended, staged when its question arrives; undefined when none is. */
+export const recommendedChoice = (choices: readonly string[] | undefined): string | undefined => choices?.find((c) => RECOMMENDED.test(c));
+
 /** Whether the composer can send now: an option is staged, or the question takes free text and some is typed. */
 export const canAnswer = (question: Pick<Question, 'custom'>, staged: readonly string[], text: string): boolean => staged.length > 0 || (question.custom && !!text.trim());
 

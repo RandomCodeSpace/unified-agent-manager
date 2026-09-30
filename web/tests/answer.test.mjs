@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ALONGSIDE_TEXT, answerFromComposer, answerPlaceholder, canAnswer } from '../src/lib/answer.ts';
+import { ALONGSIDE_TEXT, answerFromComposer, answerPlaceholder, canAnswer, recommendedChoice } from '../src/lib/answer.ts';
 
 const both = { custom: true };
 const optionsOnly = { custom: false };
@@ -58,4 +58,12 @@ test('the placeholder says whether typed text answers or annotates', () => {
   assert.equal(answerPlaceholder(both, false), 'Type your answer…');
   assert.equal(answerPlaceholder(both, true), 'Add a note (sent with your answer)…');
   assert.equal(answerPlaceholder(optionsOnly, false), 'Add a note (sent with your answer)…');
+});
+
+test('the recommended option is the first whose label ends with "(Recommended)", in any case', () => {
+  assert.equal(recommendedChoice(['Arcade / reflex game (Recommended)', 'Puzzle']), 'Arcade / reflex game (Recommended)');
+  assert.equal(recommendedChoice(['npm', 'pnpm (recommended)  ', 'yarn (RECOMMENDED)']), 'pnpm (recommended)  ');
+  assert.equal(recommendedChoice(['Recommended defaults', '(Recommended) first', 'npm']), undefined);
+  assert.equal(recommendedChoice([]), undefined);
+  assert.equal(recommendedChoice(undefined), undefined);
 });

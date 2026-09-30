@@ -827,7 +827,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           title: 'Which package manager does this project use?',
           state: 'pending',
           time: ago(2),
-          questions: [{ text: 'Which package manager should the lockfile and CI use?', choices: ['npm', 'pnpm', 'yarn'], custom: false }],
+          questions: [{ text: 'Which package manager should the lockfile and CI use?', choices: ['pnpm (Recommended)', 'npm', 'yarn'], custom: false }],
         },
       ],
     }),

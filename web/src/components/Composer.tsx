@@ -1,7 +1,7 @@
 import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
-import { answerFromComposer, answerPlaceholder, canAnswer } from '../lib/answer';
+import { answerFromComposer, answerPlaceholder, canAnswer, recommendedChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
@@ -577,8 +577,13 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // when the question arrives and comes back when it resolves, however it resolves. The parked draft
   // is what the storage keeps meanwhile. An answer left unsent stays only where the draft was empty.
   const answeringId = answering?.interaction.id ?? null;
-  // The options chosen on the question, its own: another question starts with none.
+  // The options chosen on the question, its own: another question starts with its recommended option
+  // staged, else none. Once per question, so a pick the owner changes or clears stays that way.
   const [chosen, setChosen] = useState<{ id: string; choices: string[] }>({ id: '', choices: [] });
+  if (answering && chosen.id !== answering.interaction.id) {
+    const recommended = recommendedChoice(answering.question.choices);
+    setChosen({ id: answering.interaction.id, choices: recommended ? [recommended] : NO_CHOICES });
+  }
   const staged = answeringId && chosen.id === answeringId ? chosen.choices : NO_CHOICES;
   const [parked, setParked] = useState<{ id: string; text: string; files: string[]; uploads: Pending[] } | null>(null);
   if (answeringId && parked?.id !== answeringId) {
