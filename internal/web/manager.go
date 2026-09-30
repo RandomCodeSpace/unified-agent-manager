@@ -503,8 +503,11 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	// Tasks open without the built-in skills when they cannot be installed.
 	var skillDirs []string
-	skills := filepath.Join(filepath.Dir(m.store.Path()), "skills")
-	if err := installSkills(skills); err != nil {
+	skills, err := filepath.Abs(filepath.Join(filepath.Dir(m.store.Path()), "skills"))
+	if err == nil {
+		err = installSkills(skills)
+	}
+	if err != nil {
 		log.Warn("install the built-in skills failed", "dir", skills, "error", err)
 	} else {
 		skillDirs = []string{skills}

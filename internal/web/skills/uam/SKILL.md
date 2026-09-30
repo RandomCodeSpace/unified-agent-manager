@@ -1,14 +1,13 @@
 ---
 name: uam
-description: Guide to uam, the web app this Copilot session runs inside. Use when the owner mentions uam, a Task, a Project or the Planner; when a reply should show the owner a file, image or diagram; and before calling a board_* tool.
+description: This session is a uam Task. The owner reads your replies in a browser, often on a phone, that folds tool calls and their output away, so state results and errors in the reply itself. Load this skill before showing the owner a file, image or diagram, before calling a board_* tool, and when the owner mentions uam or the Planner.
 ---
 
 # uam
 
 This conversation is a **Task** in uam, a web service that runs Copilot
-sessions on a Linux host and shows them in a browser, often on a phone. The
-**owner**, the one person who uses this uam, reads your replies there. Work
-keeps running after the browser closes.
+sessions on a Linux host and shows them in the **owner's** browser, often on
+a phone.
 
 ## Vocabulary
 
@@ -19,9 +18,7 @@ keeps running after the browser closes.
 - **Steer**: a message the owner sends while you work. It reaches you before
   your next step. A **queued** message waits until the turn ends.
 - **Safe / Yolo**: the permission policy. In Safe each permission request
-  waits for the owner; in Yolo uam allows each one once.
-- **Interactive / Autopilot**: the execution mode. Plan mode is unavailable:
-  a request to exit plan mode is always refused.
+  waits for the owner.
 - **Questions**: an `ask_user` question shows above the owner's composer with
   its choices, and waits for an answer with no time limit. Offer choices; the
   owner often answers from a phone.
@@ -31,64 +28,51 @@ keeps running after the browser closes.
 ## What the owner sees
 
 - **Compact view is the default.** Each turn folds into one line such as
-  "Took 1m 2s · 3 commands · 2 files read", which hides tool calls, their
-  output, thoughts and failures. Put everything the owner must read in the
-  reply text: results, the errors that matter, decisions, next steps.
+  "Took 1m 2s · 3 commands · 1 failed". Tool calls, their output and thoughts
+  are hidden; a failure shows only as a count. Put what the owner must read
+  in the reply: results, the errors that matter, decisions, next steps.
 - **Markdown** renders with GitHub extensions (tables, task lists). Raw HTML
   and math do not render: write formulas as code.
-- **Code blocks** with a language tag are highlighted. They never wrap and
-  scroll sideways, and the screen may be 390px wide.
+- **Code blocks** never wrap; on a phone they scroll sideways, so keep lines
+  short. Common language tags are highlighted.
 - **Diagrams**: a fenced `mermaid` block renders as a diagram. Other diagram
   languages stay code, and a block Mermaid cannot parse shows as code.
 - **Images**: `![alt](path)` shows a png, jpeg, gif or webp file up to
-  20 MiB inside the Task's directory. An image at a web address stays a link:
-  the page loads nothing from other origins.
+  20 MiB inside the Task's directory. An image at a web address stays a link.
 - **File links**: a Markdown link to a file in the Task's directory, or a
-  path in inline code such as `src/app.go`, becomes a chip that opens a
-  preview. Write the path relative to the Task's directory, or absolute. A
-  bare file name without `/` links only after a tool call in this Task named
-  it.
+  path in inline code that contains a `/` (`src/app.go`, `./Makefile`),
+  becomes a chip that opens a preview. Write paths relative to the Task's
+  directory, or absolute.
 
 ## Showing a file: uam_show_file
 
 Call `uam_show_file` to put a card for a file in the conversation: a report,
-a screenshot, a generated PDF or HTML page. It shows the file without reading
-it or granting access.
-
-- The file is a regular file inside the Task's directory (a relative path
-  resolves against it) or one you created under the system temp directory. A
-  temp file opens only when the owner clicks it.
-- Text previews show the first 64 KiB. HTML stays interactive in an isolated
-  frame. PDFs and other types offer Open in new tab and Download.
-- A session gets 128 cards.
+a screenshot, a generated PDF or HTML page. The file is a regular file inside
+the Task's directory, or one you created under the system temp directory.
+Text previews show the first 64 KiB; an HTML page stays interactive.
 
 ## Planner: the board_* tools
 
 The Planner is the owner's agile board per Project, with Epic, Story and
-Subtask cards. The `board_*` tools are present only while the owner has the
-Planner on and the Project is a git repository; without them, this Task has
-no Planner.
+Subtask cards. The `board_*` tools are present while the owner has the
+Planner on and the Project is a git repository.
 
-- **The owner closes work.** Finish with `board_request` (`done`, `cancel` or
-  `blocked`); the owner accepts or rejects it. A rejection reaches you as a
-  steer with the reason, and you keep the subtask.
-- **Proposals**: cards you create with `board_create` stay proposals until
-  the owner confirms them, and expire after 14 days. You create stories and
-  subtasks; epics are the owner's. An edit to a confirmed card becomes a
-  change request.
-- **One hold**: `board_claim` holds one subtask at a time and records `HEAD`
-  as the baseline for the evidence.
-- **Done**: a done request needs every checklist item ticked with
-  `board_checklist` and no open blocker. uam then gathers the evidence itself
-  (diff, commits, files this Task touched) and runs the owner's acceptance
-  command; a failing command refuses the request.
-- **Caps per Task**: 20 created cards, 10 unconfirmed children per epic or
-  story, 20 comments per card.
-
-The flow: read with `board_list` or `board_get`, `board_claim` the subtask,
-do the work, tick its checklist, file `board_request` done, then claim the
-next one. A Task launched from the Planner starts with a preamble that names
-its card and its rules.
+- **Scope**: a Task started from the Planner works only under the card its
+  first message names. "Launch" and "Do whole story" start it holding a
+  subtask: finish that with a done request, then `board_claim` the next
+  pending one. "Plan with agent" creates and edits under its card and holds
+  nothing. Any other Task reads the board and may propose epics.
+- **The owner closes work.** `board_request` files done, cancel or blocked,
+  and the owner accepts or rejects it. A rejection reaches you as a steer
+  with the reason, and you keep the subtask.
+- **Done** needs every checklist item ticked with `board_checklist` and no
+  open blocker. uam then gathers the evidence itself (diff, commits, files
+  this Task touched) and runs the owner's acceptance command; a failing
+  command refuses the request.
+- **Proposals**: cards you create stay unconfirmed until the owner confirms
+  them, and expire after 14 days. Caps per Task: 20 created cards, 10
+  unconfirmed children per card or 10 epics at the root, 20 comments per
+  card.
 
 ## Attachments
 
