@@ -71,10 +71,12 @@ A static actor table (owner or agent) sits in one transition function in `intern
 - claim a leaf, moving it from planned or todo to doing;
 - file `done`, `cancel`, `blocked` and `split` requests.
 
+**A Task with no scope**, one neither launched from a card nor planning under one (§4), may propose epics at the root, and write nothing else (decision 4).
+
 **Agents never:**
 - set done, cancelled or the blocked flag;
 - write `accept_cmd` or `paths`, which appear in no tool schema;
-- create epics or root nodes, or reparent a node outside their scope;
+- create a story or subtask at the root, or an epic from a Task with a scope, or reparent a node outside their scope;
 - restore or purge.
 
 **The owner** may do everything. That includes marking a leaf done directly, with a comment: the finishing guard applies, and `force` exists on leaves only.
@@ -88,7 +90,7 @@ A static actor table (owner or agent) sits in one transition function in `intern
 - **Utility scout:** "Suggest stories" on a container follows the same rules. What it writes are unconfirmed nodes, so suggestions and agent decomposition are one mechanism.
 - **Caps** are counted per Task, and calls made by subagents count against their Task:
   - 20 created nodes;
-  - 10 unconfirmed children per container;
+  - 10 unconfirmed children per container, the root counting as one;
   - 20 comments per card;
   - one hold without a pending request at a time.
 - A duplicate normalised title among live siblings is refused. The FTS similarity check is information only.
@@ -438,7 +440,7 @@ The preamble is deterministic. It contains:
 |---|---|
 | `board_get` | `{ref}` — for a container, also the pending subtasks depth-first, blocked ones last |
 | `board_list` | `{query, status, kind, parent}` |
-| `board_create` | `{kind: story|subtask, parent, title, desc, win_condition, prio, effort, labels, checklist}` |
+| `board_create` | `{kind: epic|story|subtask, parent, title, desc, win_condition, prio, effort, labels, checklist}` — an epic takes no `parent` |
 | `board_edit` | `{ref, title, desc, win_condition, prio, effort, labels, parent, rank}` — on a confirmed card this becomes a `change` request |
 | `board_checklist` | `{ref, tick: [index], untick: [index], add: [text]}` |
 | `board_comment` | `{ref, body}` |
@@ -474,7 +476,7 @@ No schema has `accept_cmd`, `paths`, `status`, `blocked`, `force`, restore or pu
 
 ## Implementation amendments (2026-09-29)
 
-These record how `internal/board` reads this contract, plus two later decisions. Where they differ from a section above, they win.
+These record how `internal/board` reads this contract, plus four later decisions. Where they differ from a section above, they win.
 
 **Readings and deviations**
 
@@ -516,3 +518,4 @@ These record how `internal/board` reads this contract, plus two later decisions.
 1. **Split under a story.** A leaf whose parent is a story splits into sibling leaves under that story, placed right after it and in order. Unticked items become planned siblings; ticked items become siblings with a pending done request that cites the tick. The original is cancelled with the automatic comment "split into #a, #b, …" and its own `cascade_id`, so Restore brings it back and leaves the siblings. A live hold moves to the first pending sibling. An unconfirmed, unheld leaf splits directly; a confirmed or held one files one split request, and accepting it applies everything at once. Under an epic or at the root, §7 is unchanged: the leaf becomes a story.
 2. **An owner touch confirms ancestors.** Any owner touch on a card (save, create, launch, accept, restore, confirm or a status change) also confirms and re-pins each unconfirmed ancestor in the same transaction. This replaces the `unconfirmed_parent` refusal. So launching a leaf under an agent-suggested story confirms the story, and the sweep can't expire it.
 3. **Board revisions in the snapshot** (added to §15). While the planner is on, the `snapshot` frame carries `boards`: each Project's board revision, plus `""` for Unassigned. It is omitted while the planner is off. A client reloads only the boards it holds an older revision of.
+4. **Agents propose epics** (2026-09-30; changes §3, §4 and §16). `board_create` also takes kind `epic` with no parent, from a Task with no scope: one that was neither launched from a card nor started with Plan with agent. Such a Task sees the whole Project board (§16) and before this decision could write nothing. Now it may propose epics at the root and nothing else, so it can't edit, comment on or add under an epic it proposed. A Task with a scope writes only within its container, so a planning Task, a working Task (one launched on a root subtask included) and a Utility job propose no epics. An agent's epic is a proposal like any other: it expires 14 days after creation unless the owner confirms it, it counts toward the 20 created cards, the root counts as its container for the 10 unconfirmed children, and a duplicate live title at the root is refused. The owner confirms or dismisses it in the Tree, where root proposals fold into "+N suggested" at the root, and can confirm or cancel it from the card panel; the epic filter shows a proposed epic too, and lists no cancelled epic except the one it is set to, so expired proposals don't linger there. Stories and subtasks still need a parent, and an epic under any card is refused by the kind rule (`invalid`), as it is for the owner.

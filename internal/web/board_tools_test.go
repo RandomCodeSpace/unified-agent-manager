@@ -524,10 +524,13 @@ func TestBoardToolsPlanUnderTheContainer(t *testing.T) {
 	if d := f.card(story.ID); d.Card.Title != "Story" || len(d.Requests) != 1 || d.Requests[0].Kind != board.RequestChange || d.Requests[0].Status != board.RequestPending {
 		t.Fatalf("confirmed card after edit = %+v", d)
 	}
-	f.toolRefused(plan, "board_create", `{"kind":"epic","parent":"#1","title":"E"}`, string(board.CodeForbidden))
+	f.toolRefused(plan, "board_create", `{"kind":"epic","parent":"#1","title":"E"}`, string(board.CodeInvalid))
 	f.toolRefused(plan, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"S"}`, outside.ID), string(board.CodeForbidden))
 	f.toolRefused(plan, "board_create", `{"kind":"story","parent":"#1","title":" story "}`, string(board.CodeDuplicate))
-	f.toolRefused(plan, "board_create", `{"kind":"subtask","title":"No parent"}`, string(board.CodeInvalid))
+	if r := f.toolRefused(plan, "board_create", `{"kind":"subtask","title":"No parent"}`, string(board.CodeInvalid)); r.Text != "a subtask needs a parent: the epic or story to create it under" {
+		t.Fatalf("no parent = %+v", r)
+	}
+	f.toolRefused(plan, "board_create", `{"kind":"epic","title":"From a planning task"}`, string(board.CodeForbidden))
 
 	for i := range board.CapUnconfirmed - 1 {
 		agent := ""
@@ -541,6 +544,75 @@ func TestBoardToolsPlanUnderTheContainer(t *testing.T) {
 	if r, failed := f.callTool(plan, "sub-2", "board_create", `{"kind":"subtask","parent":"#2","title":"One too many"}`); !failed || r.Code != string(board.CodeLimit) {
 		t.Fatalf("past the cap = %+v, %v", r, failed)
 	}
+}
+
+// A Task not started from a card proposes epics at the root (ADR 0005
+// decision 4): each stays a proposal with its expiry until the owner
+// confirms or dismisses it, within the caps and the duplicate rule. Stories
+// and subtasks still need a parent, and a Task started from a card proposes
+// no epic.
+func TestBoardToolsProposeRootEpics(t *testing.T) {
+	f := newPlanner(t)
+	epic := f.create(board.KindEpic, "", "Owner's epic")
+	leaf := f.create(board.KindSubtask, epic.ID, "Leaf")
+	task := f.newTask(f.project).ID
+
+	r := f.toolOK(task, "board_create", `{"kind":"epic","title":"Offline mode","win_condition":"works offline","prio":1}`)
+	if r.Card == nil || r.Card.Kind != board.KindEpic || r.Card.Status != board.StatusPlanned || r.Text != fmt.Sprintf("Created #%d at the root of the board. It stays a proposal until the owner confirms it.", r.Card.Seq) {
+		t.Fatalf("create = %+v", r)
+	}
+	c := f.card(r.Card.ID).Card
+	if c.Confirmed || c.ParentID != nil || c.ExpiresAt == nil || !c.ExpiresAt.Equal(c.CreatedAt.Add(board.ExpiryWindow)) || c.WinCondition != "works offline" || c.Prio != 1 {
+		t.Fatalf("created = %+v", c)
+	}
+	second := f.toolOK(task, "board_create", `{"kind":"epic","parent":" ","title":"Sync"}`).Card
+	f.toolRefused(task, "board_create", `{"kind":"epic","title":" offline MODE "}`, string(board.CodeDuplicate))
+	for _, kind := range []board.Kind{board.KindStory, board.KindSubtask} {
+		r := f.toolRefused(task, "board_create", fmt.Sprintf(`{"kind":%q,"parent":"","title":"Loose"}`, kind), string(board.CodeInvalid))
+		if want := fmt.Sprintf("a %s needs a parent: the epic or story to create it under", kind); r.Text != want {
+			t.Fatalf("loose %s = %q, want %q", kind, r.Text, want)
+		}
+	}
+	if r := f.toolRefused(task, "board_create", fmt.Sprintf(`{"kind":"epic","parent":%q,"title":"Nested"}`, second.ID), string(board.CodeInvalid)); r.Text != "an epic cannot hold an epic" {
+		t.Fatalf("nested = %q", r.Text)
+	}
+	// It proposes and nothing more: its own epic is outside any scope it has.
+	for name, args := range map[string]string{
+		"board_edit":      `{"ref":%q,"title":"Renamed"}`,
+		"board_comment":   `{"ref":%q,"body":"note"}`,
+		"board_checklist": `{"ref":%q,"add":["item"]}`,
+		"board_link":      `{"ref":%q,"blocker":"#1"}`,
+	} {
+		f.toolRefused(task, name, fmt.Sprintf(args, r.Card.ID), string(board.CodeForbidden))
+	}
+	if d := f.card(r.Card.ID); d.Card.Title != "Offline mode" || len(d.Comments) != 0 || len(d.Card.Checklist) != 0 || len(d.Card.BlockedBy) != 0 || len(d.Requests) != 0 {
+		t.Fatalf("a refused call wrote: %+v", d)
+	}
+	for i := range board.CapUnconfirmed - 2 {
+		f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"epic","title":"Epic %d"}`, i))
+	}
+	f.toolRefused(task, "board_create", `{"kind":"epic","title":"One too many"}`, string(board.CodeLimit))
+
+	// A Task planning under a card, or launched from one, proposes no epic.
+	plan := f.planTask(epic.ID)
+	_, worker := f.launch(leaf.ID)
+	for _, id := range []string{plan, worker.ID} {
+		f.toolRefused(id, "board_create", `{"kind":"epic","title":"From a scoped task"}`, string(board.CodeForbidden))
+	}
+
+	// The owner confirms one and dismisses the other.
+	var got BoardCard
+	f.call(http.MethodPost, "/api/board/cards/"+r.Card.ID+"/confirm", ``, http.StatusOK, &got)
+	if !got.Confirmed || got.ExpiresAt != nil || got.PinnedSHA != gitOutput(t, f.repo, "rev-parse", "HEAD") {
+		t.Fatalf("confirmed = %+v", got)
+	}
+	f.call(http.MethodPost, "/api/board/cards/"+second.ID+"/dismiss", `{}`, http.StatusOK, &got)
+	if got.Status != board.StatusCancelled {
+		t.Fatalf("dismissed = %+v", got)
+	}
+	// Each frees a place under the cap.
+	f.toolOK(task, "board_create", `{"kind":"epic","title":"After the owner decided"}`)
+	f.toolOK(task, "board_create", `{"kind":"epic","title":"Sync"}`)
 }
 
 // Claim holds a pending subtask for "Do whole story", within the one-hold
@@ -961,6 +1033,10 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	}
 	if d := f.card(r.Card.ID); d.Card.ParentID == nil || *d.Card.ParentID != story.ID || d.Card.Confirmed {
 		t.Fatalf("created = %+v", d.Card)
+	}
+	// Scoped to its container, the job proposes no epic at the root.
+	if r, failed := run("board_create", `{"kind":"epic","title":"Epic from the job"}`); !failed || r.Code != string(board.CodeForbidden) {
+		t.Fatalf("root epic from the job = %+v", r)
 	}
 
 	// board_get shows nothing outside the container: the path starts at it,

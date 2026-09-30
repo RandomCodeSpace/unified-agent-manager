@@ -37,7 +37,7 @@ func TestDeriveTable(t *testing.T) {
 }
 
 func TestActorTable(t *testing.T) {
-	agentOps := map[op]bool{opCreate: true, opEdit: true, opChange: true, opChecklist: true, opComment: true,
+	agentOps := map[op]bool{opCreate: true, opCreateEpic: true, opEdit: true, opChange: true, opChecklist: true, opComment: true,
 		opLink: true, opClaim: true, opRequest: true, opSplit: true}
 	ownerless := map[op]bool{opClaim: true, opRequest: true}
 	agent := Agent("task", "sub")
