@@ -832,6 +832,40 @@ describe('the floating pop-out', () => {
     expect(await panel()).toBeTruthy();
   });
 
+  test('closing a pop-out over another Project’s Task keeps the Planner’s Board, selection and filter, and stores no Hide', async () => {
+    const { user, tree } = await openPlanner();
+    await pick(user, within(document.body), 'Epic', /^#1 /);
+    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
+    await panel();
+    await openCard(user, tree, 2);
+    await closeCard(user);
+    // The row, not its hover actions (Settle).
+    await user.click((await sidebar()).getAllByRole('button', { name: /Accessibility pass on the post template/ })[0]);
+    await waitFor(() => expect(header().textContent).toMatch(/^Accessibility pass on the post template/));
+    expect(within(await panel()).getByText('unified-agent-manager')).toBeTruthy();
+    await user.click(within(await panel()).getByRole('button', { name: 'Close the pop-out' }));
+    // This Task's panel takes its place, as the tab for this visit.
+    expect(await screen.findByRole('button', { name: /^Show the planner/ })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+    expect(localStorage.getItem('uam.plannerHidden')).toBeNull();
+    await user.click((await sidebar()).getByRole('button', { name: 'Planner' }));
+    await waitFor(() => expect(header().textContent).toBe('Planner'));
+    expect(screen.getByRole('button', { name: 'Project: unified-agent-manager' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Epic' }).textContent).toContain('#1 Faster first load');
+    const plan = within(screen.getByRole('tree', { name: 'Plan outline' }));
+    expect(plan.getByRole('treeitem', { name: /^#2 / }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  test('a pop-out from the Planner keeps its own Hide: a stored Hide neither folds it nor is erased', async () => {
+    localStorage.setItem('uam.plannerHidden', JSON.stringify({ p1: true, p3: true }));
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
+    await panel();
+    await pickProject(user, /^notes-site/);
+    expect(await within(await panel()).findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem('uam.plannerHidden')!)).toEqual({ p1: true, p3: true });
+  });
+
   test('over a git Project’s Task it shows on its own, on that Task’s Board, and never over the Planner', async () => {
     const { user } = await openTask('t8');
     const pop = within(await panel());
@@ -851,7 +885,7 @@ describe('the floating pop-out', () => {
     expect(within(await panel()).getByText('notes-site')).toBeTruthy();
   });
 
-  test('a Task without git shows none, and one whose Board is empty starts as the tab', async () => {
+  test('a Task without git shows none, and one whose Board is empty starts as the tab and stays one as cards land', async () => {
     const { user } = await openTask('t6');
     expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Show the planner/ })).toBeNull();
@@ -860,8 +894,14 @@ describe('the floating pop-out', () => {
     window.location.hash = `#task=${task.id}`;
     const tab = await screen.findByRole('button', { name: 'Show the planner' });
     expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+    // Decided once for the visit: a first card (a planning Task's) does not open it over the conversation.
+    await act(() => api.planner.create({ project_id: project.id, kind: 'epic', parent_id: null, title: 'Plan the empty project', win_condition: 'It has a plan' }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
     await user.click(tab);
-    expect(within(await panel()).getByText('empty-plan')).toBeTruthy();
+    const pop = within(await panel());
+    expect(pop.getByText('empty-plan')).toBeTruthy();
+    expect(await pop.findByRole('treeitem', { name: /Plan the empty project/ })).toBeTruthy();
   });
 
   test('a stored Hide that is not a map of booleans counts as none', async () => {

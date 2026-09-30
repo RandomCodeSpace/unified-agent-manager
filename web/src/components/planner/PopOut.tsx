@@ -1,5 +1,5 @@
 import { GripHorizontal, KanbanSquare, Maximize2, Minimize2, Minus, PictureInPicture2, X } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
@@ -101,11 +101,13 @@ function PopContent({ kind, onKind, controls, handle, headerProps, inWindow = fa
 /**
  * The popped-out view (ADR 0005 §10, as the owner reworked it): a floating panel over the page,
  * which folds into a tab (`folded`); or, when the owner moved it there, a separate
- * Picture-in-Picture window, rendered from the main app through a portal. Both read the same view
- * state, so selection and filters carry, and closing either keeps them. `onClose` is absent for
- * the panel a Task shows on its own, which only folds; `onWindow` where the browser has no windows.
+ * Picture-in-Picture window, rendered from the main app through a portal. It reads the planner
+ * context it is given: the Planner's view state for an explicit pop-out, so selection and filters
+ * carry and closing keeps them, or the Task's panel's own. `onClose` is absent for the panel a
+ * Task shows on its own, which only folds; `onWindow` where the browser has no windows.
+ * Memoised: the app renders on every streamed delta, and the views under it need none of those.
  */
-export function PopOutHost({ win, kind, onKind, folded, onFold, onClose, onWindow }: Readonly<{
+export const PopOutHost = memo(function PopOutHost({ win, kind, onKind, folded, onFold, onClose, onWindow }: Readonly<{
   win: Window | null;
   kind: PopKind;
   onKind: (k: PopKind) => void;
@@ -131,7 +133,7 @@ export function PopOutHost({ win, kind, onKind, folded, onFold, onClose, onWindo
   }
   if (folded) return <PopTab onOpen={() => onFold(false)} />;
   return <FloatingPanel kind={kind} onKind={onKind} onHide={() => onFold(true)} onClose={onClose} onWindow={onWindow} />;
-}
+});
 
 /**
  * The folded pop-out: a tab on the right edge, halfway down, with the Board's pending requests.

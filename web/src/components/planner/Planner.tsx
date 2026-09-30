@@ -33,14 +33,11 @@ export function plannerKeys(enabled: boolean, projects: readonly Project[]): str
 
 const HIDDEN_KEY = 'uam.plannerHidden';
 
-/** The owner's Hide or Show of the pop-out, per Project; anything else stored counts as none. A phone forgets the Shows, so its panel starts folded. */
-function readHidden(phone: boolean): Record<string, boolean> {
+/** The owner's last Hide (true) or Show (false) of a Task's panel, per Project; anything else stored counts as none. */
+function readHidden(): Record<string, boolean> {
   try {
     const v: unknown = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '{}');
-    if (v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((h) => typeof h === 'boolean')) {
-      const all = v as Record<string, boolean>;
-      return phone ? Object.fromEntries(Object.entries(all).filter(([, h]) => h)) : all;
-    }
+    if (v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((h) => typeof h === 'boolean')) return v as Record<string, boolean>;
   } catch {
     // Unreadable: as if nothing were stored.
   }
@@ -52,7 +49,7 @@ function readHidden(phone: boolean): Record<string, boolean> {
  * Boards it follows. Each followed Board is fetched once, then kept by `board` frames; one that
  * went stale (a revision gap, a new stream) is fetched again. The Needs-you count reads them all.
  */
-export function usePlannerController({ enabled, boards, jobs, projects, dispatch, onShowPlanner, onOpenTask, initialProject, taskProject }: Readonly<{
+export function usePlannerController({ enabled, boards, jobs, projects, dispatch, onShowPlanner, onOpenTask, initialProject, taskId, taskProject }: Readonly<{
   enabled: boolean;
   boards: Record<string, BoardState>;
   jobs: Record<string, BoardJob>;
@@ -61,28 +58,35 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
   onShowPlanner: () => void;
   onOpenTask: (id: string) => void;
   initialProject: string | null;
-  /** The git Project of the Task on screen, if one is (not over Settings, the Planner or a new Task). */
+  /** The Task on screen and its Project, when it is a git Project's (not over Settings, the Planner or a new Task). */
+  taskId: string | null;
   taskProject: string | null;
 }>) {
   const [ui, setUiState] = useState<PlannerUi>(() => ({ ...INITIAL_UI, project: initialProject }));
   const [notice, notify] = useState<PlannerNotice | null>(null);
   /*
    * The pop-out, in two ideas (ADR 0005 §10, as the owner reworked it):
-   * - `pop`, the explicit pop-out: the owner popped a view out (the Planner's buttons). It stays
-   *   up across navigation, on the Board it shows, until closed; `win` is its separate window
-   *   when the owner moved it into one.
-   * - otherwise the auto panel, derived, nothing stored: while a git Project's Task is open, its
-   *   Board shows in the panel and `ui.project` follows the Task. Never over the Planner view.
-   * Either shows expanded or folded into a tab. `hidden` is the owner's choice per Project (Hide
-   * sets true, opening the tab false; persisted). Without one the auto panel starts folded while
-   * its Board has no live card, and on a phone always, so it never covers the conversation unasked.
+   * - `pop`, the explicit pop-out: the owner popped a view out (the Planner's buttons). It renders
+   *   the Planner's own view state (`ui`), so selection and filters carry between them, and stays
+   *   up across navigation until closed. `folded` is its Hide, for as long as it is up; `win` is
+   *   its separate window when the owner moved it into one.
+   * - otherwise the Task's panel, while a git Project's Task is open: that Project's Board, in a
+   *   view state of its own (`taskUi`), so following Tasks never moves the Planner's Board,
+   *   selection or filters (invariant 21). Never over the Planner view. `visit` is its fold,
+   *   decided once per Task opened: the owner's last Hide or Show for the Project (`hidden`,
+   *   persisted; only those two buttons write it), else expanded only over a Board with a live
+   *   card; on a phone always the tab. So it never covers the conversation unasked, not even
+   *   when the Board fills later.
    */
   const [kind, setKind] = useState<PopKind>('tree');
-  const [pop, setPop] = useState<{ win: Window | null } | null>(null);
+  const [pop, setPop] = useState<{ win: Window | null; folded: boolean } | null>(null);
+  const [taskUi, setTaskUiState] = useState<PlannerUi>(INITIAL_UI);
+  const [visit, setVisit] = useState<{ task: string; folded: boolean } | null>(null);
+  const [hidden, setHidden] = useState(readHidden);
   const phone = useMedia(PHONE);
-  const [hidden, setHidden] = useState(() => readHidden(window.matchMedia(PHONE).matches));
   const inflight = useRef(new Set<string>());
   const setUi = useCallback((patch: Partial<PlannerUi> | ((u: PlannerUi) => Partial<PlannerUi>)) => setUiState((u) => ({ ...u, ...(typeof patch === 'function' ? patch(u) : patch) })), []);
+  const setTaskUi = useCallback((patch: Partial<PlannerUi> | ((u: PlannerUi) => Partial<PlannerUi>)) => setTaskUiState((u) => ({ ...u, ...(typeof patch === 'function' ? patch(u) : patch) })), []);
 
   const load = useCallback((key: string) => {
     if (inflight.current.has(key)) return;
@@ -105,12 +109,30 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
     for (const key of Object.keys(boards)) if (!wanted.includes(key)) dispatch({ type: 'board_dropped', key });
   }, [keys, boards, load, dispatch]);
 
-  /** Records the owner's Hide (true) or Show (false) of a Project's pop-out; `undefined` forgets it. */
-  const fold = useCallback((project: string | null, value: boolean | undefined) => {
+  // The Task's panel: its Board once loaded (or failed), folded as this visit decided.
+  const popped = pop !== null;
+  const auto = enabled && !popped && taskId !== null && taskProject !== null;
+  const taskBoard = taskProject ? boards[taskProject] : undefined;
+  if (!auto && visit) setVisit(null);
+  if (auto && visit?.task !== taskId && (taskBoard?.data || taskBoard?.error)) {
+    const live = !!taskBoard.data?.cards.some((c) => c.status !== 'cancelled');
+    setVisit({ task: taskId, folded: phone || (hidden[taskProject] ?? !live) });
+  }
+  if (auto && taskUi.project !== taskProject) setTaskUiState((u) => ({ ...u, project: taskProject, selected: null, epic: null, panel: null, creating: null }));
+  // As of the last render, for the stable callbacks below.
+  const now = useRef({ taskId, taskProject, popped });
+  useLayoutEffect(() => {
+    now.current = { taskId, taskProject, popped };
+  });
+
+  const foldPop = useCallback((folded: boolean) => setPop((p) => p && { ...p, folded }), []);
+  /** The owner's Hide (true) or Show (false) of the Task's panel: for this visit, and remembered for the Project. */
+  const foldTask = useCallback((folded: boolean) => {
+    const project = now.current.taskProject;
+    setVisit((v) => v && { ...v, folded });
     if (!project) return;
     setHidden((h) => {
-      const { [project]: _, ...rest } = h;
-      const next = value === undefined ? rest : { ...rest, [project]: value };
+      const next = { ...h, [project]: folded };
       try {
         localStorage.setItem(HIDDEN_KEY, JSON.stringify(next));
       } catch {
@@ -119,14 +141,6 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
       return next;
     });
   }, []);
-  // The auto panel follows the open Task's Project, and so the Planner opens on it next.
-  const auto = enabled && !pop && !!taskProject;
-  if (auto && ui.project !== taskProject) setUiState((u) => ({ ...u, project: taskProject, selected: null, epic: null, panel: null, creating: null }));
-  // As of the last render, for the stable callbacks below.
-  const now = useRef({ project: ui.project, taskProject });
-  useLayoutEffect(() => {
-    now.current = { project: ui.project, taskProject };
-  });
 
   // The open Picture-in-Picture window, so closing the pop-out can close it too.
   const pipWin = useRef<Window | null>(null);
@@ -135,9 +149,10 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
     pipWin.current = null;
     if (win && !win.closed) win.close();
     setPop(null);
-    // Over a Task the auto panel would take its place at once: it folds into its tab instead.
-    fold(now.current.taskProject, true);
-  }, [fold]);
+    // Over a Task, its panel takes the pop-out's place as the tab for this visit, so Close opens no other panel.
+    const { taskId: task, taskProject: project } = now.current;
+    setVisit(task && project ? { task, folded: true } : null);
+  }, []);
   // The planner turned off: nothing to pop out.
   const [wasEnabled, setWasEnabled] = useState(enabled);
   if (enabled !== wasEnabled) {
@@ -154,18 +169,23 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
   const popOut = useCallback((k: PopKind) => {
     setKind(k);
     const open = pipWin.current;
-    setPop({ win: open && !open.closed ? open : null });
-    fold(now.current.project, undefined);
-  }, [fold]);
-  /** Moves the pop-out into a separate window; called from the click that asked, for the window's user gesture. */
+    setPop({ win: open && !open.closed ? open : null, folded: false });
+  }, []);
+  /**
+   * Moves the pop-out into a separate window; called from the click that asked, for the window's
+   * user gesture. The window is the explicit pop-out, on the Planner's view state: from the Task's
+   * panel, the Planner switches to that Board first, as a pick of it in the Planner would.
+   */
   const toWindow = useCallback(() => {
+    const board = now.current.popped ? null : now.current.taskProject;
     openPipWindow()
       .then((win) => {
         pipWin.current = win;
-        setPop({ win });
+        if (board) setUi((u) => (u.project === board ? {} : { project: board, selected: null, epic: null, panel: null, creating: null }));
+        setPop({ win, folded: false });
       })
       .catch(() => {});
-  }, []);
+  }, [setUi]);
 
   // The Boards as of the last render, for openCard: it stays stable, so the memoised rows that take it keep their props.
   const boardsNow = useRef(boards);
@@ -188,19 +208,27 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
     openCard,
     openTask: onOpenTask,
     reload: load,
-    popout: pop ? kind : null,
+    popout: popped ? kind : null,
     popOut,
     closePopout,
     notice,
     notify,
     enabled,
-  }), [ui, setUi, boards, jobs, projects, openCard, onOpenTask, load, pop, kind, popOut, closePopout, notice, enabled]);
+  }), [ui, setUi, boards, jobs, projects, openCard, onOpenTask, load, popped, kind, popOut, closePopout, notice, enabled]);
 
-  const live = !!ui.project && !!boards[ui.project]?.data?.cards.some((c) => c.status !== 'cancelled');
-  const folded = (ui.project ? hidden[ui.project] : undefined) ?? (!pop && (phone || !live));
-  const host = enabled && (pop || auto) ? (
-    <PopOutHost win={pop?.win ?? null} kind={kind} onKind={setKind} folded={folded} onFold={(f) => fold(ui.project, f)} onClose={pop ? closePopout : undefined} onWindow={popMode() === 'pip' ? toWindow : undefined} />
-  ) : null;
+  const taskValue: PlannerContextValue = useMemo(() => ({ ...value, ui: taskUi, setUi: setTaskUi }), [value, taskUi, setTaskUi]);
+
+  // Every prop is stable across renders that change nothing here (a streamed reply's deltas), so the memoised host skips them.
+  const onWindow = popMode() === 'pip' ? toWindow : undefined;
+  let host: ReactNode = null;
+  if (enabled && pop) host = <PopOutHost win={pop.win} kind={kind} onKind={setKind} folded={pop.folded} onFold={foldPop} onClose={closePopout} onWindow={onWindow} />;
+  else if (auto && visit?.task === taskId) {
+    host = (
+      <PlannerContext.Provider value={taskValue}>
+        <PopOutHost win={null} kind={kind} onKind={setKind} folded={visit.folded} onFold={foldTask} onWindow={onWindow} />
+      </PlannerContext.Provider>
+    );
+  }
   return { value, host };
 }
 
