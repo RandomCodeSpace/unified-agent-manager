@@ -669,20 +669,32 @@ interface MessageParts { item: Item; text: string; sessionId?: string; streaming
 
 function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   const attachments = item.attachments ?? [];
+  const chips = attachments.length > 0 && !!sessionId;
   const accepted = item.steer_status === 'accepted';
+  const width = 'max-w-[min(88%,720px)] max-sm:max-w-[88%]';
+  const bubble = (
+    // A steer the provider accepted but has not recorded yet reads bold italic; delivered, it settles to normal text.
+    <div className={cn('flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised', accepted && 'font-semibold italic')} title={accepted ? 'Accepted: sent to the agent, delivery not confirmed yet' : undefined}>
+      <span className="sr-only">{accepted ? 'You (accepted, not delivered yet): ' : 'You: '}</span>
+      {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
+      {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
+      {text && (whole?.status === 'whole' ? plainText(text) : <Markdown text={text} />)}
+      {whole && <WholeNote whole={whole} />}
+      {chips && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
+      {/* Nothing to show (a message of only file references, which the item does not list): say so rather than draw an empty bubble. */}
+      {!text && !whole && !chips && <span className="text-caption text-muted">No text</span>}
+    </div>
+  );
   return (
     <div data-history-anchor={item.id} className={cn('flex justify-end', className)}>
-      <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" side="left" className="max-w-[min(88%,720px)] max-sm:max-w-[88%]">
-        {/* A steer the provider accepted but has not recorded yet reads bold italic; delivered, it settles to normal text. */}
-        <div className={cn('flex flex-col gap-2 rounded-lg bg-bubble px-3.5 py-2.5 text-chat text-ink shadow-raised', accepted && 'font-semibold italic')} title={accepted ? 'Accepted: sent to the agent, delivery not confirmed yet' : undefined}>
-          <span className="sr-only">{accepted ? 'You (accepted, not delivered yet): ' : 'You: '}</span>
-          {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
-          {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
-          {text && (whole?.status === 'whole' ? plainText(text) : <Markdown text={text} />)}
-          {whole && <WholeNote whole={whole} />}
-          {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
-        </div>
-      </Copyable>
+      {/* A message without text has nothing to copy: its chips alone. */}
+      {text ? (
+        <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" side="left" className={width}>
+          {bubble}
+        </Copyable>
+      ) : (
+        <div className={width}>{bubble}</div>
+      )}
     </div>
   );
 }

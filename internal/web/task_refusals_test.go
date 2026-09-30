@@ -126,7 +126,7 @@ func TestRequestsTheTaskCannotTakeAreRefused(t *testing.T) {
 		status  int
 		message string
 	}{
-		{"blank prompt", errOf2(m.Submit(sum.ID, PromptRequest{Text: " \n\t", RequestID: mustUUID(t)})), http.StatusBadRequest, "prompt text is required"},
+		{"blank prompt", errOf2(m.Submit(sum.ID, PromptRequest{Text: " \n\t", RequestID: mustUUID(t)})), http.StatusBadRequest, "prompt text, a file or an attachment is required"},
 		{"oversized command arguments", errOf2(m.Command(sum.ID, CommandRequest{RequestID: mustUUID(t), Name: "review", Arguments: strings.Repeat("x", maxPromptBytes+1)})), http.StatusRequestEntityTooLarge, "arguments are too large"},
 		{"prompt dropping the model", errOf2(m.Submit(sum.ID, PromptRequest{Text: "hi", RequestID: mustUUID(t), Settings: &PromptSettings{}})), http.StatusBadRequest, "model must be an offered model ID"},
 		{"unknown mode", errOf(m.SetMode(sum.ID, "turbo")), http.StatusBadRequest, "mode must be safe or yolo"},

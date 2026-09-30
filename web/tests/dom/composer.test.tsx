@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
+import { api, newRequestId } from '../../src/api';
 import { choose, composer, log, openMenu, openTask, renderApp } from './render';
 
 const sendButton = (name: string | RegExp) => screen.getByRole('button', { name });
@@ -256,13 +257,99 @@ describe('attachments', () => {
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
     const remove = await screen.findByRole('button', { name: 'Remove build.log' });
-    await waitFor(() => expect(sendButton('Send')).toHaveProperty('disabled', true));
+    // An upload in flight, with no text yet, is not a message.
+    expect(await screen.findByRole('button', { name: 'Send. Wait for the upload to finish' })).toHaveProperty('disabled', true);
     await user.type(composer(), 'See the log');
     await waitFor(() => expect(sendButton('Send')).toHaveProperty('disabled', false), { timeout: 3000 });
     expect(remove).toBeTruthy();
     await user.keyboard('{Enter}');
     expect(await log().findByText('See the log')).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull());
+  });
+
+  test('an attachment alone is a message: Enter sends it without the blanks typed, and the transcript shows its chip', async () => {
+    const { user, mock } = await openTask('t3');
+    expect(sendButton('Send')).toHaveProperty('disabled', true);
+    await user.type(composer(), '  ');
+    expect(sendButton('Send')).toHaveProperty('disabled', true);
+    const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
+    await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
+    await waitFor(() => expect(sendButton('Send')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await user.click(composer());
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull());
+    const sent = mock.received.filter((r) => r.route === 'prompt');
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body.text).toBe('');
+    expect(sent[0].body.attachments).toHaveLength(1);
+    // Chips only: no text, and no Copy for text it does not have.
+    const bubble = (await log().findByTitle('Open build.log')).closest<HTMLElement>('[data-history-anchor]')!;
+    expect(bubble.textContent).toBe('You: build.log17 B');
+    expect(within(bubble).queryByRole('button', { name: 'Copy message' })).toBeNull();
+    await waitFor(() => expect(composer().value).toBe(''));
+  });
+
+  test('an attachment alone steers a running turn with Enter', async () => {
+    const { user, mock } = await openTask('t1');
+    const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
+    await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
+    await waitFor(() => expect(sendButton('Steer')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await user.click(composer());
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull());
+    const sent = mock.received.filter((r) => r.route === 'prompt');
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toMatchObject({ text: '', mode: 'steer' });
+    expect(sent[0].body.attachments).toHaveLength(1);
+    expect(await log().findByTitle('Open build.log')).toBeTruthy();
+  });
+
+  test('an attachment alone queues with its name as the label', async () => {
+    const { user } = await openTask('t1');
+    const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
+    await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
+    await waitFor(() => expect(sendButton('Steer')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await user.click(composer());
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(await screen.findByText('2 queued')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Cancel queued prompt: build.log' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Cancel this queued prompt?' });
+    expect(within(dialog).getByText('It will not be sent; nothing else changes.')).toBeTruthy();
+    expect(within(dialog).getByText('build.log')).toBeTruthy();
+  });
+
+  test('after a stopped attachment-only turn, Resend puts its upload back', async () => {
+    const { user } = await openTask('t3');
+    const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
+    await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
+    await waitFor(() => expect(sendButton('Send')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await user.click(composer());
+    await user.keyboard('{Enter}');
+    await user.click(await screen.findByRole('button', { name: 'Stop turn' }));
+    expect(await log().findByText('Turn stopped.')).toBeTruthy();
+    await user.click(await screen.findByRole('button', { name: 'Resend last prompt' }));
+    expect(await screen.findByRole('button', { name: 'Remove build.log' })).toBeTruthy();
+    expect(composer().value).toBe('');
+    expect(sendButton('Send')).toHaveProperty('disabled', false);
+  });
+
+  test('Resend puts back only the uploads still stored', async () => {
+    const { user } = await openTask('t5');
+    expect(await log().findByText('old-notes.txt')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Resend last prompt' }));
+    expect(await screen.findByRole('button', { name: 'Remove tmux-pane.png' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Remove old-notes.txt' })).toBeNull();
+    expect(composer().value).toBe('');
+    expect(sendButton('Send')).toHaveProperty('disabled', false);
+  });
+
+  test('a message of only file references reads "No text", and Resend offers no older prompt', async () => {
+    const { user } = await openTask('t3');
+    await api.prompt('t3', '', newRequestId(), 'send', { files: ['internal/vterm/redraw_test.go'] });
+    expect(await log().findByText('No text')).toBeTruthy();
+    await user.click(await screen.findByRole('button', { name: 'Stop turn' }));
+    expect(await log().findByText('Turn stopped.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Resend last prompt' })).toBeNull();
   });
 
   test('a model without image input refuses an image before it uploads', async () => {

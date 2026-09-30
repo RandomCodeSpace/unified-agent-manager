@@ -1,6 +1,6 @@
 import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
+import { LIVE, api, describeError, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -51,6 +51,9 @@ export function contextReason(model: Model | undefined, supported: boolean): str
   if (!supported) return 'Context size selection is unavailable for this provider.';
   return model?.context_sizes?.some((s) => s.id !== 'default') ? '' : 'This model uses its default context size.';
 }
+
+/** A queued prompt's name: its text, or for one without text what it carries. */
+const queuedLabel = (q: QueuedPrompt): string => q.text || [...(q.attachments ?? []).map((a) => a.name), ...(q.files ?? [])].join(', ');
 
 const MAX_FILE_REFS = 20;
 const LIST_ID = 'composer-picker';
@@ -313,7 +316,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const queue = session.queue ?? [];
   // Cancelling a queued prompt or clearing the queue loses its text, so each is confirmed first (DESIGN.md Confirmations).
   const riskConfirm = useConfirm<{ run: () => void }>();
-  const discard = useConfirm<{ kind: 'one'; id: string; text: string } | { kind: 'all'; count: number }>();
+  const discard = useConfirm<{ kind: 'one'; id: string; text: string; label: string } | { kind: 'all'; count: number }>();
   function confirmDiscard() {
     const d = discard.target;
     if (!d) return;
@@ -621,7 +624,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // After a turn that failed, was stopped or was interrupted, the last prompt can come back into an empty
   // composer: its text and its stored uploads (file references are not recorded on the item). Never sent by itself.
   const failedTurn = session.state === 'failed' || session.state === 'interrupted' || session.state === 'cancelled';
-  const resendable = failedTurn && !locked && !text.trim() && !files.length && !uploads.length ? lastPrompt(session.items) : null;
+  const lastSent = failedTurn && !locked && !text.trim() && !files.length && !uploads.length ? lastPrompt(session.items) : null;
+  // Offered only when there is something to put back: its text or an upload with a stored copy. A prompt of
+  // only file references, or of uploads without an ID, offers nothing rather than an older prompt.
+  const resendable = lastSent?.text?.trim() || lastSent?.attachments?.some((a) => a.id) ? lastSent : null;
   function resend() {
     if (!resendable) return;
     const t = resendable.text ?? '';
@@ -645,7 +651,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const blocked = describeBlocked();
   const settingsSteerReason = live && selectionChanged ? 'Model, effort and context changes apply to the next turn. Steering keeps the current settings.' : '';
   const steerBlocked = steerUnavailable || settingsSteerReason;
-  const empty = answering ? !canAnswer(answering.question, staged, text) : !text.trim();
+  // A message needs text, a file reference or a finished upload; blank text alongside them goes as none.
+  const empty = answering ? !canAnswer(answering.question, staged, text) : !text.trim() && !files.length && !uploads.some((u) => u.status === 'done');
   const cannotSubmit = !!busy || locked || session.state === 'starting' || empty || !!blocked;
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The one send button is Enter's.
   const steerDefault = appSettings.send_default === 'steer';
@@ -1026,6 +1033,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (discard.target?.kind !== 'all') return 'Cancel this queued prompt?';
     return discard.target.count === 1 ? 'Clear the queued prompt?' : `Clear ${discard.target.count} queued prompts?`;
   }
+  /** What cancelling loses: the text, or for a prompt of only attachments or files, just its sending. */
+  function describeDiscardLoss(): string {
+    if (discard.target?.kind === 'all') return 'Their text is not kept; nothing else changes.';
+    return discard.target?.text ? 'Its text is not kept; nothing else changes.' : 'It will not be sent; nothing else changes.';
+  }
   // A command's result under the composer: choices to pick from, Markdown, or plain text.
   let resultBody: ReactNode = null;
   if (commandResult?.kind === 'select') {
@@ -1178,11 +1190,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
               <li key={q.request_id} className="flex items-start gap-2 text-ui text-body">
                 <span className="mt-0.5 w-4 shrink-0 text-right text-caption tabular-nums text-muted">{i + 1}</span>
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="truncate" title={q.text}>{q.text}</span>
+                  {q.text && <span className="truncate" title={q.text}>{q.text}</span>}
                   {q.settings && <span className="text-caption text-muted">{modelName(meta, session.provider, q.settings.model)} · {q.settings.effort || 'Default'} effort · {sizeLabel(q.settings.context_size)} context</span>}
                   <QueuedExtras files={q.files} attachments={q.attachments} />
                 </span>
-                <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel queued prompt: ${q.text}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: q.text })}>
+                <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel queued prompt: ${queuedLabel(q)}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: q.text, label: queuedLabel(q) })}>
                   <X />
                 </Button>
               </li>
@@ -1208,14 +1220,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <AlertDialog
           {...discard.props}
           title={describeDiscard()}
-          description={discard.target?.kind === 'all' ? 'Their text is not kept; nothing else changes.' : 'Its text is not kept; nothing else changes.'}
+          description={describeDiscardLoss()}
           confirmLabel={discard.target?.kind === 'all' ? 'Clear queue' : 'Cancel prompt'}
           cancelLabel="Keep"
           onConfirm={confirmDiscard}
         >
           {discard.target?.kind === 'one' && (
-            <p className="mt-3 line-clamp-3 rounded-sm bg-sunken px-3 py-2 text-ui text-ink" title={discard.target.text}>
-              {discard.target.text}
+            <p className="mt-3 line-clamp-3 rounded-sm bg-sunken px-3 py-2 text-ui text-ink" title={discard.target.label}>
+              {discard.target.label}
             </p>
           )}
         </AlertDialog>
