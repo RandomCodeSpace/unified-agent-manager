@@ -371,9 +371,10 @@ function Links({ card: c, byId, onOpen, readOnly }: Readonly<{ card: Card; byId:
           <Select
             aria-label="Add a blocker"
             value={adding}
-            className="h-8 min-w-0 flex-1"
+            className={cn('h-8 min-w-0 flex-1', !adding && 'text-muted')}
             onValueChange={setAdding}
-            items={[{ value: '', label: 'Add a blocker…' }, ...candidates.map((x) => ({ value: x.id, label: `#${x.seq} ${x.title}` }))]}
+            // The placeholder is the trigger's text only; the list offers the candidates.
+            items={[{ value: '', label: 'Add a blocker…', hidden: true }, ...candidates.map((x) => ({ value: x.id, label: `#${x.seq} ${x.title}` }))]}
           />
           <Button size="md" variant="secondary" disabled={!adding} onClick={() => void act('add the link', () => api.planner.link(adding, c.id)).then(() => setAdding(''))}>
             <Link2 />
