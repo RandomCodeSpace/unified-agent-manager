@@ -1,6 +1,6 @@
-import { ArrowLeft, Ban, Check, CheckCheck, FolderInput, GitCommitHorizontal, Link2, ListChecks, MoveRight, Pencil, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow, X } from 'lucide-react';
+import { ArrowLeft, FolderInput, GitCommitHorizontal, Link2, ListChecks, Pencil, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, plannerErrorText, type Card, type CardDetail, type TriageVerdict } from '../../api';
+import { api, plannerErrorText, type Card, type CardDetail } from '../../api';
 import { cardPath, openBlockerSeqs } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, useApp } from '../common';
@@ -10,8 +10,8 @@ import { Chip } from '../ui/chip';
 import { Input } from '../ui/input';
 import { Segmented } from '../ui/segmented';
 import { Select } from '../ui/select';
+import { useCardActions, type TriageResult } from './actions';
 import { usePlannerTasks, useShownBoard } from './context';
-import { BriefDialog, DoneDialog, MoveDialog, ReasonDialog, SplitDialog, moveTargets, type BriefAsk, type ReasonAsk } from './dialogs';
 import { CardMarkers, KindIcon, ProgressText, StatusMark, TaskChip, expiresIn, kindLabel } from './parts';
 import { RequestItem } from './Requests';
 import { CardEditor } from './TreeView';
@@ -50,9 +50,9 @@ export function CardPanel({ inline, open, onClose, onClosed }: Readonly<{ inline
         )}
         {card ? (
           <>
+            {/* The title is the body's, where it is edited; the header names the card by its number. */}
             <KindIcon kind={card.kind} />
-            <span className="shrink-0 text-caption tabular-nums text-muted">#{card.seq}</span>
-            <span className="min-w-0 flex-1 truncate text-title text-ink" title={card.title}>{card.title}</span>
+            <span className="min-w-0 flex-1 text-ui tabular-nums text-body">#{card.seq}</span>
             <StatusMark status={card.status} label />
           </>
         ) : (
@@ -70,24 +70,22 @@ export function CardPanel({ inline, open, onClose, onClosed }: Readonly<{ inline
 }
 
 function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void }>) {
-  const { notify, projects, jobs, cards } = useShownBoard();
+  const { projects, jobs } = useShownBoard();
   const { sessions } = usePlannerTasks();
-  const [dialog, setDialog] = useState<'done' | 'move' | 'split' | null>(null);
   const [detail, setDetail] = useState<CardDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const [reason, setReason] = useState<ReasonAsk | null>(null);
-  const [brief, setBrief] = useState<BriefAsk | null>(null);
-  // Check at HEAD is a job: its run arrives in the job's last board_job frame.
-  const [checkJob, setCheckJob] = useState<string | null>(null);
-  const [triage, setTriage] = useState<{ verdict: TriageVerdict; sentence: string; head: string } | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [triage, setTriage] = useState<TriageResult | null>(null);
   const [comment, setComment] = useState('');
+  const cardActions = useCardActions({ onTriage: (_, t) => setTriage(t) });
+  const busy = cardActions.busy?.key ?? null;
+  const run = <T,>(key: string, verb: string, op: () => Promise<T>) => cardActions.run(c.id, key, verb, op);
   const unassigned = !c.project_id;
   const leaf = c.kind === 'subtask';
   const path = cardPath(c, byId).slice(0, -1);
   const job = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'suggest').at(-1);
-  const checking = checkJob ? jobs[checkJob] : undefined;
+  // Check at HEAD is a job, started here or from a row's menu: its run arrives in the job's last board_job frame.
+  const checking = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'check').at(-1);
   const check = checking?.status === 'done' ? checking.accept : undefined;
 
   // The trail (comments, requests, holds) follows the card: fetched again on each of its revisions.
@@ -103,50 +101,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
     return () => controller.abort();
   }, [c.id, c.revision]);
 
-  async function run<T>(key: string, verb: string, op: () => Promise<T>): Promise<T | undefined> {
-    setBusy(key);
-    notify(null);
-    try {
-      return await op();
-    } catch (e) {
-      notify({ tone: 'error', text: `Could not ${verb}: ${plannerErrorText(e)}` });
-      return undefined;
-    } finally {
-      setBusy(null);
-    }
-  }
-  const launch = async (label: string) => {
-    const res = await run('launch', label === 'Launch' ? 'launch the subtask' : 'start the story', () => api.planner.launch(c.id));
-    if (res) notify({ tone: 'muted', text: `Launched #${res.card.seq} ${res.card.title} in a new task.`, task: res.session.id });
-  };
-
-  // The owner's actions for this card as it stands (§10).
-  const actions: { key: string; label: string; icon: ReactNode; onClick: () => void; primary?: boolean; danger?: boolean }[] = [];
-  if (!unassigned) {
-    if (!c.confirmed) actions.push({ key: 'confirm', label: 'Confirm', icon: <Check />, primary: true, onClick: () => void run('confirm', 'confirm the card', () => api.planner.confirm(c.id)) });
-    if (leaf && (c.status === 'planned' || c.status === 'todo')) actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: c.confirmed, onClick: () => void launch('Launch') });
-    if (c.kind === 'story' && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'launch', label: 'Do whole story', icon: <Play />, onClick: () => void launch('Do whole story') });
-    if (!leaf && c.status !== 'cancelled') {
-      actions.push({ key: 'plan', label: 'Plan with agent', icon: <Workflow />, onClick: () => setBrief({ kind: 'plan', title: `Plan #${c.seq} with an agent`, run: async ({ brief: b }) => { const r = await api.planner.plan(c.id, { brief: b }); notify({ tone: 'muted', text: `A planning task started for #${c.seq}.`, task: r.session.id }); } }) });
-      actions.push({ key: 'suggest', label: c.kind === 'epic' ? 'Suggest stories' : 'Suggest subtasks', icon: <Sparkles />, onClick: () => setBrief({ kind: 'suggest', title: c.kind === 'epic' ? `Suggest stories for #${c.seq}` : `Suggest subtasks for #${c.seq}`, run: (body) => api.planner.suggest(c.id, body) }) });
-    }
-    if (leaf && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'done', label: 'Mark done', icon: <CheckCheck />, onClick: () => setDialog('done') });
-    if (leaf && c.status === 'doing') actions.push({ key: 'release', label: 'Release', icon: <Undo2 />, onClick: () => setReason({ title: `Release #${c.seq}?`, description: 'The subtask goes back to To do and its Task stops holding it. Pending requests are withdrawn.', label: 'Comment (optional)', confirm: 'Release', required: false, run: (t) => api.planner.release(c.id, t) }) });
-    if (leaf && c.confirmed && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, onClick: () => void run('check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && setCheckJob(r.job_id)) });
-    if (leaf && c.stale) actions.push({ key: 'triage', label: 'Triage', icon: <Stethoscope />, onClick: () => void run('triage', 'triage the subtask', () => api.planner.triage(c.id)).then((r) => r && setTriage(r)) });
-    if (c.kind !== 'epic' && c.status !== 'cancelled' && (c.parent_id || moveTargets(c, cards).length > 0)) actions.push({ key: 'move', label: 'Move to…', icon: <MoveRight />, onClick: () => setDialog('move') });
-    if (leaf && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'split', label: 'Split', icon: <Split />, onClick: () => setDialog('split') });
-    if (c.status !== 'cancelled' && c.status !== 'done') {
-      actions.push({
-        key: 'cancel',
-        label: 'Cancel',
-        icon: <Ban />,
-        danger: true,
-        onClick: () => setReason({ title: `Cancel #${c.seq}?`, description: leaf ? 'The subtask is cancelled; its hold and pending requests end. Restore brings it back.' : 'Every open subtask under it is cancelled with this comment. Restore brings back exactly these.', label: 'Why (required)', confirm: 'Cancel card', danger: true, required: true, run: (t) => api.planner.status(c.id, 'cancelled', t) }),
-      });
-    }
-    if (c.status === 'cancelled') actions.push({ key: 'restore', label: 'Restore', icon: <RotateCcw />, onClick: () => setReason({ title: `Restore #${c.seq}?`, description: 'The card and everything its cancel took with it reopen, confirmed.', label: 'Why (required)', confirm: 'Restore', required: true, run: (t) => api.planner.restore(c.id, t) }) });
-  }
+  const actions = cardActions.actionsOf(c);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-2 pb-6">
@@ -154,12 +109,12 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
         <div className="flex flex-col gap-2">
           {path.length > 0 && (
             <nav aria-label="Card path" className="flex min-w-0 flex-wrap items-center gap-1 text-caption text-muted">
-              {path.map((p) => (
+              {path.map((p, i) => (
                 <span key={p.id} className="flex min-w-0 items-center gap-1">
+                  {i > 0 && <span aria-hidden="true" className="text-faint">›</span>}
                   <button type="button" className="truncate hover:text-ink hover:underline" onClick={() => onOpen(p.id)}>
                     #{p.seq} {p.title}
                   </button>
-                  <span aria-hidden="true" className="text-faint">›</span>
                 </span>
               ))}
             </nav>
@@ -199,7 +154,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
           </div>
           {job?.status === 'running' && <Loading label="Suggesting…" delay={0} />}
           {job?.status === 'failed' && <Note tone="error">Suggesting failed{job.error ? `: ${job.error}` : '.'}</Note>}
-          {checkJob && (!checking || checking.status === 'running') && <Loading label="Checking at HEAD…" delay={0} />}
+          {checking?.status === 'running' && <Loading label="Checking at HEAD…" delay={0} />}
           {checking?.status === 'failed' && <Note tone="error">Check at HEAD failed{checking.error ? `: ${checking.error}` : '.'}</Note>}
         </div>
 
@@ -215,12 +170,13 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
         )}
 
         {check && (
-          <Note tone={check.exit === 0 ? 'muted' : 'error'} className="flex flex-col gap-1">
-            <span>
+          // The run's tail is a block of its own: a <pre> cannot sit inside the Note's paragraph.
+          <div className="flex flex-col gap-1">
+            <Note tone={check.exit === 0 ? 'muted' : 'error'}>
               <span className="font-mono text-code-sm">{check.cmd}</span> exited {check.exit} at {check.head}.
-            </span>
+            </Note>
             {check.tail && <pre className="max-h-40 overflow-auto rounded-sm bg-code-bg px-2 py-1.5 font-mono text-code-sm text-ink shadow-well">{check.tail}</pre>}
-          </Note>
+          </div>
         )}
         {triage && (
           <div className="flex flex-col gap-1.5 rounded-md bg-tint-well px-3 py-2">
@@ -229,7 +185,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
             </p>
             <div className="flex flex-wrap gap-1.5">
               {triage.verdict === 'valid' && <Button size="sm" variant="secondary" onClick={() => void run('repin', 're-pin the subtask', () => api.planner.confirm(c.id)).then(() => setTriage(null))}>Re-pin at {triage.head}</Button>}
-              {triage.verdict === 'moot' && <Button size="sm" variant="danger" onClick={() => setReason({ title: `Cancel #${c.seq}?`, label: 'Why (required)', confirm: 'Cancel card', danger: true, required: true, initial: triage.sentence, run: (t) => api.planner.status(c.id, 'cancelled', t) })}>Cancel with this comment</Button>}
+              {triage.verdict === 'moot' && <Button size="sm" variant="danger" onClick={() => cardActions.ask({ title: `Cancel #${c.seq}?`, label: 'Why (required)', confirm: 'Cancel card', danger: true, required: true, initial: triage.sentence, run: (t) => api.planner.status(c.id, 'cancelled', t) })}>Cancel with this comment</Button>}
               {triage.verdict === 'conflicts' && <Button size="sm" variant="secondary" onClick={() => setComment(triage.sentence)}>Add as a comment</Button>}
             </div>
           </div>
@@ -323,11 +279,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
 
         {leaf && !unassigned && <OwnerFields key={c.id} card={c} />}
       </div>
-      <ReasonDialog ask={reason} onClose={() => setReason(null)} />
-      <BriefDialog ask={brief} onClose={() => setBrief(null)} />
-      <DoneDialog card={c} byId={byId} open={dialog === 'done'} onClose={() => setDialog(null)} />
-      <MoveDialog card={c} cards={cards} open={dialog === 'move'} onClose={() => setDialog(null)} />
-      <SplitDialog card={c} byId={byId} open={dialog === 'split'} onClose={() => setDialog(null)} />
+      {cardActions.dialogs}
     </div>
   );
 }
@@ -371,9 +323,10 @@ function Links({ card: c, byId, onOpen, readOnly }: Readonly<{ card: Card; byId:
           <Select
             aria-label="Add a blocker"
             value={adding}
-            className="h-8 min-w-0 flex-1"
+            className={cn('h-8 min-w-0 flex-1', !adding && 'text-muted')}
             onValueChange={setAdding}
-            items={[{ value: '', label: 'Add a blocker…' }, ...candidates.map((x) => ({ value: x.id, label: `#${x.seq} ${x.title}` }))]}
+            // The placeholder is the trigger's text only; the list offers the candidates.
+            items={[{ value: '', label: 'Add a blocker…', hidden: true }, ...candidates.map((x) => ({ value: x.id, label: `#${x.seq} ${x.title}` }))]}
           />
           <Button size="md" variant="secondary" disabled={!adding} onClick={() => void act('add the link', () => api.planner.link(adding, c.id)).then(() => setAdding(''))}>
             <Link2 />

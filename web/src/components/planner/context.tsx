@@ -9,7 +9,8 @@ export type PopKind = PlannerViewKind | 'inbox';
 /**
  * The planner's view state, one for the whole app: the main pane and a popped-out window
  * render from it, so a selection or a filter made in one shows in the other, and closing
- * either loses neither (ADR 0005 §10, test plan 21).
+ * either loses neither (ADR 0005 §10, test plan 21). The panel a Task shows on its own keeps
+ * a second one, so following Tasks never moves this one.
  */
 export interface PlannerUi {
   /** The Board shown: a Project id, or `unassigned`. */

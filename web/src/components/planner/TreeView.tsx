@@ -1,4 +1,4 @@
-import { Check, ChevronRight, ListPlus, Plus, Sparkles, X } from 'lucide-react';
+import { Check, ChevronRight, ListPlus, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type SubmitEvent } from 'react';
 import { api, plannerErrorText, type Card, type CardKind } from '../../api';
 import { KIND_LABEL, STATUS_LABEL, buildOutline, openBlockerSeqs, type OutlineNode } from '../../lib/board';
@@ -6,7 +6,9 @@ import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
 import { Input } from '../ui/input';
-import { useShownBoard, type PlannerCreating } from './context';
+import type { ActionItem } from '../ui/menu';
+import { CardMenuButton, CardMenus, useCardActions, useCardMenuHandle, type CardMenuHandle } from './actions';
+import { useShownBoard, type PlannerCreating, type PlannerUi } from './context';
 import { CardMarkers, KindIcon, ProgressRing, ProgressText, StatusMark, TaskChip, expiresIn } from './parts';
 
 type Row =
@@ -50,6 +52,8 @@ interface RowActions {
   add: (parent: string, kind: CardKind) => void;
   confirm: (id: string) => void;
   dismiss: (id: string) => void;
+  /** The view's "…" menu the rows' buttons open; absent where no menu can open (a Picture-in-Picture window). */
+  menu?: CardMenuHandle;
 }
 
 /**
@@ -57,11 +61,15 @@ interface RowActions {
  * show their progress; a parent's suggestions fold into one "+N suggested" row with Confirm and
  * Dismiss. Arrow keys move and fold, Enter opens the card, F2 edits its title and win condition
  * in place (an owner save confirms the card). Containers add stories and subtasks under them;
- * the root takes a subtask too (§3). Rows are memoised on their card, so a `board` frame
- * re-renders only the rows of the cards it changed.
+ * the root takes a subtask too (§3). Each row's "…" button and context menu hold its card's
+ * actions (`menus`; off in a Picture-in-Picture window, where menus cannot open). Rows are
+ * memoised on their card, so a `board` frame re-renders only the rows of the cards it changed.
  */
-export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>) {
+export function TreeView({ readOnly = false, menus = true }: Readonly<{ readOnly?: boolean; menus?: boolean }>) {
   const { ui, setUi, cards, openCard, notify } = useShownBoard();
+  // Check at HEAD shows its run in the card panel, so a row's check opens the card there.
+  const cardActions = useCardActions({ onCheck: (c) => openCard(c.id) });
+  const menuHandle = useCardMenuHandle();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const outline = useMemo(() => buildOutline(cards, { epic: ui.epic, showCancelled: ui.showCancelled }), [cards, ui.epic, ui.showCancelled]);
   const creating = readOnly ? null : ui.creating;
@@ -138,6 +146,15 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
     e.preventDefault();
   }
 
+  /** A row's menu: what its hover buttons and keys do (add, edit, dismiss a suggestion), then the card's actions. */
+  function menu(c: Card): ActionItem[] {
+    if (readOnly || !c.project_id) return cardActions.menuOf(c, [{ key: 'edit', label: 'Edit', icon: <Pencil />, disabled: true, reason: 'An Unassigned card is read-only until it moves into a Project.', onSelect: () => {} }]);
+    const lead: ActionItem[] = addsOf(c, readOnly).map((kind) => ({ key: `add-${kind}`, label: kind === 'story' ? 'Add story' : 'Add subtask', icon: kind === 'story' ? <ListPlus /> : <Plus />, takesFocus: true, onSelect: () => setUi(adding(c.id, kind)) }));
+    lead.push({ key: 'edit', label: 'Edit', icon: <Pencil />, takesFocus: true, onSelect: () => setEditing(c.id) });
+    const trail: ActionItem[] = c.confirmed ? [] : [{ key: 'dismiss', label: 'Dismiss', icon: <X />, onSelect: () => void run(c.id, 'dismiss the card', () => api.planner.dismiss(c.id)) }];
+    return cardActions.menuOf(c, lead, trail);
+  }
+
   // The latest handlers, reached through one stable object: the rows' props stay equal across frames.
   const latest = useRef({ onKeyDown, run, openCard, toggleFold, toggleSuggested });
   useLayoutEffect(() => {
@@ -152,78 +169,86 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
     },
     fold: (id) => latest.current.toggleFold(id),
     edit: (id) => setEditing(id),
-    add: (parent, kind) => setUi((u) => ({ creating: { parent, kind }, folded: parent ? { ...u.folded, [parent]: false } : u.folded })),
+    add: (parent, kind) => setUi(adding(parent, kind)),
     confirm: (id) => void latest.current.run(id, 'confirm the card', () => api.planner.confirm(id)),
     dismiss: (id) => void latest.current.run(id, 'dismiss the card', () => api.planner.dismiss(id)),
-  }), [setUi]);
+    menu: menus ? menuHandle : undefined,
+  }), [setUi, menus, menuHandle]);
 
   const project = ui.project && ui.project !== 'unassigned' ? ui.project : '';
   const addRoot = !readOnly && !!project && !creating;
 
   if (!rows.length) return <p className="px-4 py-6 text-ui text-muted">{ui.epic ? 'Nothing under this epic matches the filters.' : 'No cards yet.'}</p>;
 
+  const treeProps = { ref: tree, role: 'tree', 'aria-label': 'Plan outline', className: 'flex flex-col' };
+  const items = rows.map((row) => {
+    const tabbable = row === current;
+    if (row.type === 'suggested') return <SuggestedRow key={row.key} rowKey={row.key} count={row.count} level={row.level} open={!!ui.suggestedOpen[row.parent]} tabbable={tabbable} actions={actions} />;
+    if (row.type === 'create') {
+      return (
+        <div key={row.key} role="treeitem" aria-level={row.level} aria-selected={false} tabIndex={-1} style={indentOf(row.level)} className="py-1 pr-2">
+          <CreateForm
+            kind={row.kind}
+            parent={row.parent ? byId.get(row.parent) : undefined}
+            onCancel={() => setUi({ creating: null })}
+            onCreate={async (fields) => {
+              try {
+                const card = await api.planner.create({ project_id: project, kind: row.kind, parent_id: row.parent || null, ...fields });
+                setUi({ creating: null, selected: card.id });
+                move(card.id);
+              } catch (e) {
+                notify({ tone: 'error', text: `Could not add the ${KIND_LABEL[row.kind].toLowerCase()}: ${plannerErrorText(e)}` });
+              }
+            }}
+          />
+        </div>
+      );
+    }
+    const c = row.node.card;
+    if (editing === c.id) {
+      return (
+        <div key={row.key} role="treeitem" aria-level={row.level} aria-selected={ui.selected === c.id} tabIndex={-1} data-row={row.key} style={indentOf(row.level)} className="py-1 pr-2" onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setEditing(null), move(c.id))}>
+          <CardEditor
+            card={c}
+            onCancel={() => {
+              setEditing(null);
+              move(c.id);
+            }}
+            onSave={async (patch) => {
+              setEditing(null);
+              move(c.id);
+              await run(c.id, 'save the card', () => api.planner.edit(c.id, patch));
+            }}
+          />
+        </div>
+      );
+    }
+    return (
+      <CardRow
+        key={row.key}
+        card={c}
+        level={row.level}
+        selected={ui.selected === c.id}
+        folded={!!ui.folded[c.id]}
+        suggestion={row.suggestion}
+        tabbable={tabbable}
+        busy={!!busy[c.id]}
+        blockers={openBlockerSeqs(c, byId)}
+        readOnly={readOnly}
+        actions={actions}
+      />
+    );
+  });
   return (
     <div className="flex flex-col px-2 py-2">
-      <div ref={tree} role="tree" aria-label="Plan outline" className="flex flex-col">
-        {rows.map((row) => {
-          const tabbable = row === current;
-          if (row.type === 'suggested') return <SuggestedRow key={row.key} rowKey={row.key} count={row.count} level={row.level} open={!!ui.suggestedOpen[row.parent]} tabbable={tabbable} actions={actions} />;
-          if (row.type === 'create') {
-            return (
-              <div key={row.key} role="treeitem" aria-level={row.level} aria-selected={false} tabIndex={-1} style={indentOf(row.level)} className="py-1 pr-2">
-                <CreateForm
-                  kind={row.kind}
-                  parent={row.parent ? byId.get(row.parent) : undefined}
-                  onCancel={() => setUi({ creating: null })}
-                  onCreate={async (fields) => {
-                    try {
-                      const card = await api.planner.create({ project_id: project, kind: row.kind, parent_id: row.parent || null, ...fields });
-                      setUi({ creating: null, selected: card.id });
-                      move(card.id);
-                    } catch (e) {
-                      notify({ tone: 'error', text: `Could not add the ${KIND_LABEL[row.kind].toLowerCase()}: ${plannerErrorText(e)}` });
-                    }
-                  }}
-                />
-              </div>
-            );
-          }
-          const c = row.node.card;
-          if (editing === c.id) {
-            return (
-              <div key={row.key} role="treeitem" aria-level={row.level} aria-selected={ui.selected === c.id} tabIndex={-1} data-row={row.key} style={indentOf(row.level)} className="py-1 pr-2" onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setEditing(null), move(c.id))}>
-                <CardEditor
-                  card={c}
-                  onCancel={() => {
-                    setEditing(null);
-                    move(c.id);
-                  }}
-                  onSave={async (patch) => {
-                    setEditing(null);
-                    move(c.id);
-                    await run(c.id, 'save the card', () => api.planner.edit(c.id, patch));
-                  }}
-                />
-              </div>
-            );
-          }
-          return (
-            <CardRow
-              key={row.key}
-              card={c}
-              level={row.level}
-              selected={ui.selected === c.id}
-              folded={!!ui.folded[c.id]}
-              suggestion={row.suggestion}
-              tabbable={tabbable}
-              busy={!!busy[c.id]}
-              blockers={openBlockerSeqs(c, byId)}
-              readOnly={readOnly}
-              actions={actions}
-            />
-          );
-        })}
-      </div>
+      {menus ? (
+        <CardMenus handle={menuHandle} items={(id) => (byId.has(id) ? menu(byId.get(id)!) : [])} render={<div />} {...treeProps}>
+          {items}
+        </CardMenus>
+      ) : (
+        <div {...treeProps}>{items}</div>
+      )}
+      {cardActions.dialogs}
       {addRoot && (
         <div className="flex pt-1 pl-2">
           <Button size="sm" className="text-muted" aria-label="Add a subtask at the root" onClick={() => actions.add('', 'subtask')}>
@@ -237,6 +262,15 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
 }
 
 const indentOf = (level: number) => ({ paddingLeft: `${(level - 1) * 20 + 8}px` });
+
+/** The view state that opens the add form under `parent` (`''` for the root), unfolding it. */
+const adding = (parent: string, kind: CardKind) => (u: PlannerUi): Partial<PlannerUi> => ({ creating: { parent, kind }, folded: parent ? { ...u.folded, [parent]: false } : u.folded });
+
+/** What the owner adds under a card (§3): an epic takes stories and subtasks, a story subtasks. */
+function addsOf(c: Card, readOnly: boolean): CardKind[] {
+  if (readOnly || c.kind === 'subtask' || c.status === 'cancelled') return [];
+  return c.kind === 'epic' ? ['story', 'subtask'] : ['subtask'];
+}
 
 const SuggestedRow = memo(function SuggestedRow({ rowKey, count, level, open, tabbable, actions }: Readonly<{ rowKey: string; count: number; level: number; open: boolean; tabbable: boolean; actions: RowActions }>) {
   return (
@@ -259,7 +293,11 @@ const SuggestedRow = memo(function SuggestedRow({ rowKey, count, level, open, ta
   );
 });
 
-/** One card's row. Memoised: it renders again only when its card object or its own view state changes. */
+/**
+ * One card's row. Memoised: it renders again only when its card object or its own view state changes.
+ * Its counts sit in one right-aligned column; the add and "…" buttons show with the row's hover or
+ * focus (always on a touch screen, and while the menu is open), so a long outline stays quiet.
+ */
 const CardRow = memo(function CardRow({ card: c, level, selected, folded, suggestion, tabbable, busy, blockers, readOnly, actions }: Readonly<{
   card: Card;
   level: number;
@@ -273,9 +311,8 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
   actions: RowActions;
 }>) {
   const container = c.kind !== 'subtask';
-  // Owner authoring (§3): an epic takes stories and subtasks, a story subtasks.
-  let adds: CardKind[] = [];
-  if (!readOnly && container && c.status !== 'cancelled') adds = c.kind === 'epic' ? ['story', 'subtask'] : ['subtask'];
+  const adds = addsOf(c, readOnly);
+  const menu = actions.menu;
   return (
     <div
       role="treeitem"
@@ -286,6 +323,7 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
       aria-label={`#${c.seq} ${c.title}, ${STATUS_LABEL[c.status]}`}
       tabIndex={tabbable ? 0 : -1}
       data-row={c.id}
+      data-card={c.id}
       style={indentOf(level)}
       className={cn(
         'group/row flex min-h-8 cursor-pointer items-center gap-1.5 rounded-sm pr-1.5 text-ui transition-colors duration-100 focus-visible:-outline-offset-2 pointer-coarse:min-h-11',
@@ -324,12 +362,21 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
       <span className={cn('min-w-0 truncate', c.kind === 'epic' ? 'font-semibold text-ink' : c.kind === 'story' && 'font-medium text-ink', c.status === 'cancelled' && 'line-through')} title={c.title}>
         {c.title}
       </span>
+      {/* The win condition fills the room on a wide screen; without one, a spacer does, so the right cluster keeps the edge. */}
       {c.win_condition && <span className="hidden min-w-0 flex-1 truncate text-caption text-muted lg:block" title={c.win_condition}>{c.win_condition}</span>}
-      <span className="min-w-0 flex-1 lg:hidden" />
+      <span className={cn('min-w-0 flex-1', c.win_condition && 'lg:hidden')} />
       <span className="flex shrink-0 items-center gap-1">
-        {adds.length > 0 && (
-          // Shown with the row's hover or focus (always on a touch screen), so a long outline stays quiet.
-          <span className="flex items-center gap-0.5 opacity-0 transition-opacity duration-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100">
+        {suggestion && (
+          <Chip title={expiresIn(c.expires_at)}>
+            <Sparkles aria-hidden="true" className="size-3" />
+            <span className="max-sm:sr-only">Suggested</span>
+          </Chip>
+        )}
+        <CardMarkers card={c} blockers={blockers} compact />
+        {c.held_by && <TaskChip taskId={c.held_by} className="max-sm:max-w-24" />}
+        {!c.confirmed && !readOnly && <SuggestionActions busy={busy} title={c.title} onConfirm={() => actions.confirm(c.id)} onDismiss={() => actions.dismiss(c.id)} />}
+        {(adds.length > 0 || menu) && (
+          <span className="flex items-center gap-0.5 opacity-0 transition-opacity duration-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100 has-data-popup-open:opacity-100 pointer-coarse:opacity-100">
             {adds.map((kind) => (
               <Button
                 key={kind}
@@ -345,19 +392,12 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
                 {kind === 'story' ? <ListPlus /> : <Plus />}
               </Button>
             ))}
+            {menu && <CardMenuButton handle={menu} card={c.id} label={`Actions for #${c.seq}`} />}
           </span>
         )}
-        {suggestion && (
-          <Chip title={expiresIn(c.expires_at)}>
-            <Sparkles aria-hidden="true" className="size-3" />
-            <span className="max-sm:sr-only">Suggested</span>
-          </Chip>
-        )}
-        <CardMarkers card={c} blockers={blockers} compact />
-        {c.held_by && <TaskChip taskId={c.held_by} className="max-sm:max-w-24" />}
-        {container && <ProgressText card={c} />}
-        {!c.confirmed && !readOnly && <SuggestionActions busy={busy} title={c.title} onConfirm={() => actions.confirm(c.id)} onDismiss={() => actions.dismiss(c.id)} />}
       </span>
+      {/* The counts' column; a subtask keeps its room too, but on a phone, where the title needs it more. */}
+      <span className={cn('min-w-8 shrink-0 text-right', !container && 'max-sm:hidden')}>{container && <ProgressText card={c} />}</span>
     </div>
   );
 });
@@ -394,7 +434,8 @@ function CreateForm({ kind, parent, onCreate, onCancel }: Readonly<{ kind: CardK
     setBusy(false);
   };
   return (
-    <form aria-label={parent ? `New ${noun} in #${parent.seq}` : `New ${noun}`} className="flex flex-col gap-1.5 rounded-md bg-tint-well p-2" onSubmit={(e) => void submit(e)}>
+    // The browser's own context menu for its inputs (paste), not the view's card menu.
+    <form aria-label={parent ? `New ${noun} in #${parent.seq}` : `New ${noun}`} className="flex flex-col gap-1.5 rounded-md bg-tint-well p-2" onSubmit={(e) => void submit(e)} onContextMenu={(e) => e.stopPropagation()}>
       {/* eslint-disable-next-line jsx-a11y/no-autofocus -- Add opens this form to type the new card's title into. */}
       <Input size="md" aria-label="Title" placeholder={`New ${noun}`} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && onCancel()} />
       <Input size="md" aria-label="Win condition" placeholder="What done means, in one line" value={win} onChange={(e) => setWin(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && onCancel()} />
@@ -420,7 +461,8 @@ export function CardEditor({ card, onSave, onCancel, extra }: Readonly<{ card: C
     void onSave({ title: title.trim(), win_condition: win.trim() });
   };
   return (
-    <form aria-label={`Edit #${card.seq}`} className="flex flex-col gap-1.5 rounded-md bg-tint-well p-2" onSubmit={submit}>
+    // The browser's own context menu for its inputs (paste), not the view's card menu.
+    <form aria-label={`Edit #${card.seq}`} className="flex flex-col gap-1.5 rounded-md bg-tint-well p-2" onSubmit={submit} onContextMenu={(e) => e.stopPropagation()}>
       {/* eslint-disable-next-line jsx-a11y/no-autofocus -- F2 and double-click move focus into the editor they open. */}
       <Input size="md" aria-label="Title" value={title} autoFocus onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && onCancel()} />
       <Input size="md" aria-label="Win condition" placeholder="What done means, in one line" value={win} onChange={(e) => setWin(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && onCancel()} />

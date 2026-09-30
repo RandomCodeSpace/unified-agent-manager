@@ -485,6 +485,9 @@ export default function App() {
   // A `#planner=` link on a service without the planner on lands on the usual view.
   if (state.loaded && !plannerOn && plannerOpen) setPlannerOpen(false);
   const plannerShown = plannerOpen && plannerOn;
+  // The Task on screen, when it is a git Project's: the planner's pop-out shows its Board there on its own.
+  const selectedTask = state.selectedId ? state.sessions.find((s) => s.id === state.selectedId) : undefined;
+  const planTask = selectedTask && !settingsOpen && !plannerOpen && !newTask && state.projects.some((p) => p.id === selectedTask.project_id && !p.no_git) ? selectedTask : undefined;
   const planner = usePlannerController({
     enabled: plannerOn,
     boards: state.boards,
@@ -494,6 +497,8 @@ export default function App() {
     onShowPlanner: showPlanner,
     onOpenTask: openTask,
     initialProject: hashPlanner(),
+    taskId: planTask?.id ?? null,
+    taskProject: planTask?.project_id ?? null,
   });
   const plannerTasks = useMemo(() => ({ sessions: state.sessions, openTask }), [state.sessions, openTask]);
   const plannerProject = planner.value.ui.project;
