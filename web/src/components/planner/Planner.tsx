@@ -278,7 +278,8 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
           {epics.length > 0 && (
             <Select
               aria-label="Epic"
-              className="h-7 w-auto max-w-64 min-w-0 text-caption"
+              // A quiet filter like Show cancelled beside it: caption text, no well, the tint on hover.
+              className="h-7 w-auto max-w-64 min-w-0 gap-1 bg-transparent px-1.5 text-caption text-body shadow-none"
               value={ui.epic ?? ''}
               onValueChange={(v) => setUi({ epic: v || null })}
               items={[{ value: '', label: 'All epics' }, ...epics.map((e) => ({ value: e.id, label: `#${e.seq} ${e.title}` }))]}

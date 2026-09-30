@@ -9,7 +9,7 @@ const twMerge = extendTailwindMerge({
     theme: { spacing: ['rail', 'drawer', 'header', 'sheet', 'panel'] },
     classGroups: {
       'font-size': [{ text: ['badge', 'eyebrow', 'keycap', 'meta', 'caption', 'code-sm', 'ui', 'code', 'title', 'chat', 'chat-lg', 'display-sm', 'display-md'] }],
-      shadow: [{ shadow: ['float', 'modal'] }],
+      shadow: [{ shadow: ['raised', 'float', 'modal', 'well', 'focus', 'focus-float'] }],
     },
   },
 });
