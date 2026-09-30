@@ -4,7 +4,7 @@ import { api, plannerErrorText, type BoardJob, type Project } from '../../api';
 import { boardOf, childIndex, epicOf } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
-import { Note, Skeleton, useApp, useMedia } from '../common';
+import { Note, Skeleton, useApp } from '../common';
 import { Button } from '../ui/button';
 import { usePresence } from '../ui/collapse';
 import { AlertDialog } from '../ui/dialog';
@@ -20,7 +20,7 @@ import { CardPanel } from './CardPanel';
 import { INITIAL_UI, PlannerContext, usePlanner, type PlannerContextValue, type PlannerNotice, type PlannerUi, type PlannerViewKind, type PopKind } from './context';
 import { MapView } from './MapView';
 import { NoticeBar } from './parts';
-import { PHONE, PopOutHost, openPipWindow, popMode } from './PopOut';
+import { PopOutHost, openPipWindow, popMode } from './PopOut';
 import { InboxList } from './Requests';
 import { TreeView } from './TreeView';
 
@@ -29,19 +29,6 @@ export { PlannerContext };
 /** The Boards to follow: every git Project's, and the Unassigned list, while the planner is on. */
 export function plannerKeys(enabled: boolean, projects: readonly Project[]): string[] {
   return enabled ? [...projects.filter((p) => !p.no_git).map((p) => p.id), 'unassigned'] : [];
-}
-
-const HIDDEN_KEY = 'uam.plannerHidden';
-
-/** The owner's last Hide (true) or Show (false) of a Task's panel, per Project; anything else stored counts as none. */
-function readHidden(): Record<string, boolean> {
-  try {
-    const v: unknown = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? '{}');
-    if (v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((h) => typeof h === 'boolean')) return v as Record<string, boolean>;
-  } catch {
-    // Unreadable: as if nothing were stored.
-  }
-  return {};
 }
 
 /**
@@ -72,18 +59,14 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
    *   its separate window when the owner moved it into one.
    * - otherwise the Task's panel, while a git Project's Task is open: that Project's Board, in a
    *   view state of its own (`taskUi`), so following Tasks never moves the Planner's Board,
-   *   selection or filters (invariant 21). Never over the Planner view. `visit` is its fold,
-   *   decided once per Task opened: the owner's last Hide or Show for the Project (`hidden`,
-   *   persisted; only those two buttons write it), else expanded only over a Board with a live
-   *   card; on a phone always the tab. So it never covers the conversation unasked, not even
-   *   when the Board fills later.
+   *   selection or filters (invariant 21). Never over the Planner view. `visit` is its fold for
+   *   the Task opened: each visit starts as the tab, at every width, and the tab and Hide change
+   *   it for that visit only. So it never covers the conversation unasked.
    */
   const [kind, setKind] = useState<PopKind>('tree');
   const [pop, setPop] = useState<{ win: Window | null; folded: boolean } | null>(null);
   const [taskUi, setTaskUiState] = useState<PlannerUi>(INITIAL_UI);
   const [visit, setVisit] = useState<{ task: string; folded: boolean } | null>(null);
-  const [hidden, setHidden] = useState(readHidden);
-  const phone = useMedia(PHONE);
   const inflight = useRef(new Set<string>());
   const setUi = useCallback((patch: Partial<PlannerUi> | ((u: PlannerUi) => Partial<PlannerUi>)) => setUiState((u) => ({ ...u, ...(typeof patch === 'function' ? patch(u) : patch) })), []);
   const setTaskUi = useCallback((patch: Partial<PlannerUi> | ((u: PlannerUi) => Partial<PlannerUi>)) => setTaskUiState((u) => ({ ...u, ...(typeof patch === 'function' ? patch(u) : patch) })), []);
@@ -109,15 +92,12 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
     for (const key of Object.keys(boards)) if (!wanted.includes(key)) dispatch({ type: 'board_dropped', key });
   }, [keys, boards, load, dispatch]);
 
-  // The Task's panel: its Board once loaded (or failed), folded as this visit decided.
+  // The Task's panel: the tab once its Board has loaded (or failed), until the owner opens it this visit.
   const popped = pop !== null;
   const auto = enabled && !popped && taskId !== null && taskProject !== null;
   const taskBoard = taskProject ? boards[taskProject] : undefined;
   if (!auto && visit) setVisit(null);
-  if (auto && visit?.task !== taskId && (taskBoard?.data || taskBoard?.error)) {
-    const live = !!taskBoard.data?.cards.some((c) => c.status !== 'cancelled');
-    setVisit({ task: taskId, folded: phone || (hidden[taskProject] ?? !live) });
-  }
+  if (auto && visit?.task !== taskId && (taskBoard?.data || taskBoard?.error)) setVisit({ task: taskId, folded: true });
   if (auto && taskUi.project !== taskProject) setTaskUiState((u) => ({ ...u, project: taskProject, selected: null, epic: null, panel: null, creating: null }));
   // As of the last render, for the stable callbacks below.
   const now = useRef({ taskId, taskProject, popped });
@@ -126,21 +106,8 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
   });
 
   const foldPop = useCallback((folded: boolean) => setPop((p) => p && { ...p, folded }), []);
-  /** The owner's Hide (true) or Show (false) of the Task's panel: for this visit, and remembered for the Project. */
-  const foldTask = useCallback((folded: boolean) => {
-    const project = now.current.taskProject;
-    setVisit((v) => v && { ...v, folded });
-    if (!project) return;
-    setHidden((h) => {
-      const next = { ...h, [project]: folded };
-      try {
-        localStorage.setItem(HIDDEN_KEY, JSON.stringify(next));
-      } catch {
-        // Storage full or off: the choice lasts this visit.
-      }
-      return next;
-    });
-  }, []);
+  /** The owner's Hide (true) or Show (false) of the Task's panel: for this visit only. */
+  const foldTask = useCallback((folded: boolean) => setVisit((v) => v && { ...v, folded }), []);
 
   // The open Picture-in-Picture window, so closing the pop-out can close it too.
   const pipWin = useRef<Window | null>(null);

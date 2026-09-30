@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
-import { PHONE, copyStyles, popMode } from '../../src/components/planner/PopOut';
+import { copyStyles, popMode } from '../../src/components/planner/PopOut';
 import { openMenu, openTask, renderApp, sidebar, type User } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
@@ -923,6 +923,12 @@ describe('card menus', () => {
 
 describe('the floating pop-out', () => {
   const panel = () => screen.findByRole('region', { name: 'Planner pop-out' });
+  const tab = () => screen.findByRole('button', { name: /^Show the planner/ });
+  /** The Task's panel is the tab alone. */
+  const folded = async () => {
+    expect(await tab()).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+  };
   const box = (el: HTMLElement) => ['--fp-x', '--fp-y', '--fp-w', '--fp-h'].map((k) => el.style.getPropertyValue(k));
 
   test('Maximise fills the viewport and Restore returns the box; a double-click on the header does the same', async () => {
@@ -966,7 +972,7 @@ describe('the floating pop-out', () => {
     expect(document.activeElement).toBe(row);
   });
 
-  test('closing a pop-out over another Project’s Task keeps the Planner’s Board, selection and filter, and stores no Hide', async () => {
+  test('closing a pop-out over another Project’s Task keeps the Planner’s Board, selection and filter', async () => {
     const { user, tree } = await openPlanner();
     await pick(user, within(document.body), 'Epic', /^#1 /);
     await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
@@ -981,7 +987,6 @@ describe('the floating pop-out', () => {
     // This Task's panel takes its place, as the tab for this visit.
     expect(await screen.findByRole('button', { name: /^Show the planner/ })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-    expect(localStorage.getItem('uam.plannerHidden')).toBeNull();
     await user.click((await sidebar()).getByRole('button', { name: 'Planner' }));
     await waitFor(() => expect(header().textContent).toBe('Planner'));
     expect(screen.getByRole('button', { name: 'Project: unified-agent-manager' })).toBeTruthy();
@@ -995,6 +1000,7 @@ describe('the floating pop-out', () => {
     await pick(user, within(document.body), 'Epic', /^#18 /);
     await user.click((await sidebar()).getAllByRole('button', { name: /Fix re-attach redraw regression/ })[0]);
     await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
+    await user.click(await tab());
     await user.click(await within(await panel()).findByRole('treeitem', { name: /^#2 / }));
     expect(await screen.findByLabelText('Card #2')).toBeTruthy();
     await closeCard(user);
@@ -1023,6 +1029,7 @@ describe('the floating pop-out', () => {
       const { user } = await openPlanner();
       await user.click((await sidebar()).getAllByRole('button', { name: /Accessibility pass on the post template/ })[0]);
       await waitFor(() => expect(header().textContent).toMatch(/^Accessibility pass on the post template/));
+      await user.click(await tab());
       await user.click(within(await panel()).getByRole('button', { name: 'Open in a separate window' }));
       expect(await within(pipDoc.body).findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
       expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
@@ -1039,18 +1046,42 @@ describe('the floating pop-out', () => {
     }
   });
 
-  test('a pop-out from the Planner keeps its own Hide: a stored Hide neither folds it nor is erased', async () => {
+  test('a pop-out from the Planner opens expanded and follows the Planner’s Board, whatever an earlier version stored', async () => {
     localStorage.setItem('uam.plannerHidden', JSON.stringify({ p1: true, p3: true }));
     const { user } = await openPlanner();
     await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
     await panel();
     await pickProject(user, /^notes-site/);
     expect(await within(await panel()).findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
-    expect(JSON.parse(localStorage.getItem('uam.plannerHidden')!)).toEqual({ p1: true, p3: true });
   });
 
-  test('over a git Project’s Task it shows on its own, on that Task’s Board, and never over the Planner', async () => {
+  test('a git Project’s Task starts as the tab alone, over live cards and a Show an earlier version stored', async () => {
+    localStorage.setItem('uam.plannerHidden', JSON.stringify({ p1: false }));
+    await openTask('t1');
+    await folded();
+    // Decided once for the visit: nothing opens it later.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+  });
+
+  test('opened, then left for another Task and come back to, it starts as the tab again; Hide folds it for the visit', async () => {
+    const { user } = await openTask('t1');
+    await user.click(await tab());
+    await user.click(within(await panel()).getByRole('button', { name: 'Hide the pop-out' }));
+    await folded();
+    await user.click(await tab());
+    expect(within(await panel()).getByText('unified-agent-manager')).toBeTruthy();
+    window.location.hash = '#task=t8';
+    await waitFor(() => expect(header().textContent).toMatch(/^Accessibility pass on the post template/));
+    await folded();
+    window.location.hash = '#task=t1';
+    await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
+    await folded();
+  });
+
+  test('over a git Project’s Task its tab opens that Task’s Board, and it never shows over the Planner', async () => {
     const { user } = await openTask('t8');
+    await user.click(await tab());
     const pop = within(await panel());
     expect(pop.getByText('notes-site')).toBeTruthy();
     expect(await pop.findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
@@ -1087,17 +1118,20 @@ describe('the floating pop-out', () => {
     expect(await pop.findByRole('treeitem', { name: /Plan the empty project/ })).toBeTruthy();
   });
 
-  test('a stored Hide that is not a map of booleans counts as none', async () => {
-    for (const junk of ['null', '[true]', '{"p1":"yes"}']) {
+  test('junk stored under an earlier version’s key or the box’s leaves the tab and the panel working', async () => {
+    for (const junk of ['null', '[true]', '{"p1":"yes"}', '{']) {
       localStorage.setItem('uam.plannerHidden', junk);
-      const { unmount } = await openTask('t1');
-      expect(await panel()).toBeTruthy();
+      localStorage.setItem('uam.plannerBox', junk);
+      const { user, unmount } = await openTask('t1');
+      await user.click(await tab());
+      expect(box(await panel())[2]).toBe('520px');
       unmount();
     }
   });
 
-  test('the box and a Hide per Project last across a reload; a phone starts as the tab whatever was chosen', async () => {
+  test('the box lasts across a reload, and a Show does not: the next visit starts as the tab', async () => {
     const first = await openTask('t1');
+    await first.user.click(await tab());
     const grip = within(await panel()).getByRole('button', { name: 'Move the pop-out (arrow keys)' });
     grip.focus();
     await first.user.keyboard('{ArrowLeft}{ArrowDown}');
@@ -1106,26 +1140,8 @@ describe('the floating pop-out', () => {
     first.unmount();
 
     const second = await openTask('t1');
+    await folded();
+    await second.user.click(await tab());
     expect(box(await panel())).toEqual(moved);
-    await second.user.click(within(await panel()).getByRole('button', { name: 'Hide the pop-out' }));
-    expect(JSON.parse(localStorage.getItem('uam.plannerHidden')!)).toEqual({ p1: true });
-    second.unmount();
-
-    const third = await openTask('t1');
-    expect(await screen.findByRole('button', { name: /^Show the planner/ })).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-    third.unmount();
-
-    // A Show chosen on a laptop does not open it over a phone's conversation.
-    localStorage.setItem('uam.plannerHidden', JSON.stringify({ p1: false }));
-    const media = window.matchMedia;
-    window.matchMedia = ((q: string) => ({ ...media.call(window, q), matches: q === PHONE, addEventListener: () => {}, removeEventListener: () => {} })) as typeof window.matchMedia;
-    try {
-      await openTask('t1');
-      expect(await screen.findByRole('button', { name: /^Show the planner/ })).toBeTruthy();
-      expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-    } finally {
-      window.matchMedia = media;
-    }
   });
 });
