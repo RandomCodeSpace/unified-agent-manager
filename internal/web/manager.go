@@ -158,6 +158,9 @@ type Manager struct {
 	// with mu held, so it takes no lock and never uses the planner store.
 	// NewManager sets it to the planner's tools (board_tools.go).
 	hostTools func(taskID, projectID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
+	// skillDirs hold the built-in skills every Task's conversation loads
+	// (skills.go); Start installs them.
+	skillDirs []string
 	// board is the planner database while the Settings switch is on
 	// (board.go).
 	board boardDB
@@ -501,8 +504,20 @@ func (m *Manager) Start(ctx context.Context) error {
 			assignBadges(&cfg, nil)
 		}
 	}
+	// Tasks open without the built-in skills when they cannot be installed.
+	var skillDirs []string
+	skills, err := filepath.Abs(filepath.Join(filepath.Dir(m.store.Path()), "skills"))
+	if err == nil {
+		err = installSkills(skills)
+	}
+	if err != nil {
+		log.Warn("install the built-in skills failed", "dir", skills, "error", err)
+	} else {
+		skillDirs = []string{skills}
+	}
 	m.mu.Lock()
 	m.infos = infos
+	m.skillDirs = skillDirs
 	for name, info := range infos {
 		if info.Available {
 			m.modelsAt[name] = m.now()
@@ -2197,8 +2212,10 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 }
 
 // withHostToolsLocked adds the host tools of req's Task, in the Project
-// projectID, to req, when there are any. The caller holds mu.
+// projectID, when there are any, and the built-in skills to req. The caller
+// holds mu.
 func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, projectID string) agentapi.OpenRequest {
+	req.SkillDirectories = m.skillDirs
 	if m.hostTools != nil {
 		req.Tools, req.CallTool = m.hostTools(req.SessionID, projectID)
 	}

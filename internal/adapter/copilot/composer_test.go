@@ -32,6 +32,27 @@ func TestWebConfigDiscoveryOnCreateAndResume(t *testing.T) {
 	}
 }
 
+func TestWebSkillDirectoriesOnCreateAndResume(t *testing.T) {
+	fc := &fakeClient{}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	skills := []string{"/state/skills"}
+	for _, req := range []agentapi.OpenRequest{
+		{SessionID: "s-1", Workdir: "/work", Events: &recSink{}, SkillDirectories: skills},
+		{SessionID: "s-2", ConversationID: "s-1", Workdir: "/work", Events: &recSink{}, SkillDirectories: skills},
+	} {
+		if _, err := p.Open(context.Background(), req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := fc.create[0].SkillDirectories; !reflect.DeepEqual(got, skills) {
+		t.Fatalf("create skill directories = %v", got)
+	}
+	if got := fc.resume[0].SkillDirectories; !reflect.DeepEqual(got, skills) {
+		t.Fatalf("resume skill directories = %v", got)
+	}
+}
+
 var composerFiles = []agentapi.File{{Path: "/work/src/a.go", Rel: "src/a.go"}, {Path: "/work/docs", Rel: "docs", Dir: true}}
 
 func wantFileAttachments() []copilot.Attachment {

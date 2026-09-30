@@ -773,6 +773,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
 			EnableConfigDiscovery: copilot.Bool(true),
+			SkillDirectories:      req.SkillDirectories,
 		})
 	} else {
 		sess, err = client.ResumeSession(ctx, req.ConversationID, &copilot.ResumeSessionConfig{
@@ -790,6 +791,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnEvent:               c.onEvent,
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
+			SkillDirectories:      req.SkillDirectories,
 		})
 	}
 	if err != nil {

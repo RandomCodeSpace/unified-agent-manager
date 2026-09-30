@@ -421,6 +421,9 @@ type OpenRequest struct {
 	// this Task by the web service, runs each of their calls.
 	Tools    []HostTool
 	CallTool func(context.Context, HostToolCall) HostToolResult
+	// SkillDirectories are directories of the web service's own skills, each
+	// holding <name>/SKILL.md, loaded beside the ones the provider discovers.
+	SkillDirectories []string
 }
 
 // MaxHostToolArguments bounds the JSON arguments of one host tool call;

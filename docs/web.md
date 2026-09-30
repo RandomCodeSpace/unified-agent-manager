@@ -213,7 +213,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   for the directory: your and the project's skills, the project's custom
   agents, custom instructions, hooks in `.github/hooks/`, and the built-in
   GitHub MCP server. Hooks run their commands without asking, as they do in
-  the terminal.
+  the terminal. Every Task also gets uam's built-in `uam` skill, which tells
+  the agent what uam is, how its replies and files show here, and how to use
+  the Planner tools. uam writes it to `skills/uam/SKILL.md` beside
+  `sessions.json` at each start.
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is
