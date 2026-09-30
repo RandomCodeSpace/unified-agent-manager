@@ -7,6 +7,7 @@ import { Segmented } from '../ui/segmented';
 import { BoardView } from './BoardView';
 import { usePlanner, type PopKind } from './context';
 import { MapView } from './MapView';
+import { NoticeBar } from './parts';
 import { InboxList } from './Requests';
 import { TreeView } from './TreeView';
 
@@ -68,8 +69,12 @@ const KIND_ITEMS = [
   { value: 'inbox', label: 'Inbox' },
 ];
 
-/** What a pop-out shows: its own choice of view over the shared view state, a compact header and a close. */
-function PopContent({ kind, onKind, onClose, handle, headerProps }: Readonly<{ kind: PopKind; onKind: (k: PopKind) => void; onClose: () => void; handle?: ReactNode; headerProps?: HTMLAttributes<HTMLDivElement> }>) {
+/**
+ * What a pop-out shows: its own choice of view over the shared view state, a compact header and a
+ * close, and the planner's notice. In a separate window (`inWindow`) the views offer no menus: they
+ * would open in the page's document, not the window's.
+ */
+function PopContent({ kind, onKind, onClose, handle, headerProps, inWindow = false }: Readonly<{ kind: PopKind; onKind: (k: PopKind) => void; onClose: () => void; handle?: ReactNode; headerProps?: HTMLAttributes<HTMLDivElement>; inWindow?: boolean }>) {
   const { ui, projects, boards } = usePlanner();
   const project = projects.find((p) => p.id === ui.project);
   const pending = ui.project ? (boards[ui.project]?.data?.requests.length ?? 0) : 0;
@@ -83,9 +88,10 @@ function PopContent({ kind, onKind, onClose, handle, headerProps }: Readonly<{ k
           <X />
         </Button>
       </div>
+      <NoticeBar className="mx-2 mb-1" />
       <div className={cn('flex min-h-0 flex-1 flex-col', kind !== 'map' && 'overflow-y-auto overscroll-contain', kind === 'inbox' && 'px-2 pb-2')}>
-        {kind === 'tree' && <TreeView />}
-        {kind === 'board' && <BoardView />}
+        {kind === 'tree' && <TreeView menus={!inWindow} />}
+        {kind === 'board' && <BoardView menus={!inWindow} />}
         {kind === 'map' && <MapView />}
         {kind === 'inbox' && <InboxList />}
       </div>
@@ -106,7 +112,7 @@ export function PopOutHost({ win, kind, onKind, onClose }: Readonly<{ win: Windo
     win.addEventListener('pagehide', gone);
     return () => win.removeEventListener('pagehide', gone);
   }, [win, onClose]);
-  if (win) return createPortal(<PopContent kind={kind} onKind={onKind} onClose={() => win.close()} />, win.document.body);
+  if (win) return createPortal(<PopContent kind={kind} onKind={onKind} onClose={() => win.close()} inWindow />, win.document.body);
   return <FloatingPanel kind={kind} onKind={onKind} onClose={onClose} />;
 }
 

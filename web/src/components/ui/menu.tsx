@@ -111,6 +111,8 @@ export const Menu = {
     );
   },
   Trigger: BaseMenu.Trigger,
+  /** One menu for many triggers (a long list's rows): each `Trigger` passes the `handle` and its `payload`. */
+  createHandle: BaseMenu.createHandle,
   Group: BaseMenu.Group,
   RadioGroup: BaseMenu.RadioGroup,
   Content({

@@ -1,10 +1,11 @@
-import { Bot, Check, Circle, CircleDashed, CircleDot, Layers, Link2, ListTree, Lock, Minus, SquareCheck, TriangleAlert } from 'lucide-react';
+import { Bot, Check, Circle, CircleDashed, CircleDot, Layers, Link2, ListTree, Lock, Minus, SquareCheck, TriangleAlert, X } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 import { taskName, type Card, type CardKind, type CardStatus } from '../../api';
 import { KIND_LABEL, STATUS_LABEL } from '../../lib/board';
 import { cn } from '../../lib/cn';
+import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
-import { usePlannerTasks } from './context';
+import { usePlanner, usePlannerTasks } from './context';
 
 /**
  * Card state marks (DESIGN.md State marks, extended): colour only where it means something —
@@ -145,4 +146,23 @@ export function expiresIn(iso: string | undefined, now = Date.now()): string {
   const days = Math.ceil((Date.parse(iso) - now) / 86400000);
   if (days <= 0) return 'expires today';
   return `expires in ${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
+/** The planner's last notice (a failed action, a launch with its Task), over the view it came from: the Planner's or the pop-out's. */
+export function NoticeBar({ className }: Readonly<{ className?: string }>) {
+  const { notice, notify, openTask } = usePlanner();
+  if (!notice) return null;
+  return (
+    <p role={notice.tone === 'error' ? 'alert' : 'status'} className={cn('flex items-center gap-2 rounded-sm px-3 py-1.5 text-caption animate-fade-in', notice.tone === 'error' ? 'bg-error-wash text-error' : 'bg-surface text-body', className)}>
+      <span className="min-w-0 flex-1">{notice.text}</span>
+      {notice.task && (
+        <Button size="sm" variant="secondary" onClick={() => openTask(notice.task!)}>
+          Open task
+        </Button>
+      )}
+      <Button size="icon-sm" aria-label="Dismiss" className="text-current" onClick={() => notify(null)}>
+        <X />
+      </Button>
+    </p>
+  );
 }

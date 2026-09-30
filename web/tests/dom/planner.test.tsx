@@ -205,6 +205,8 @@ describe('planner', () => {
       const inWindow = within(pipDoc.body);
       expect(await inWindow.findByRole('treeitem', { name: /^#1 Faster first load/ })).toBeTruthy();
       expect(screen.queryByRole('dialog', { name: 'Planner pop-out' })).toBeNull();
+      // Menus would open in the page, not the window: the window's rows offer none.
+      expect(inWindow.queryByRole('button', { name: /^Actions for / })).toBeNull();
       expect([...pipDoc.head.querySelectorAll('link[rel="stylesheet"]')].map((l) => (l as HTMLLinkElement).href)).toContain(link.href);
       expect(pipDoc.querySelector('style')).toBeNull();
       // The window's own close ends the pop-out.
@@ -728,5 +730,63 @@ describe('parity with the service', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+/** The item labels of the open menu. */
+const itemsOf = (menu: ReturnType<typeof within>) => menu.getAllByRole('menuitem').map((i) => i.textContent);
+
+describe('card menus', () => {
+  const SUBTASK = ['Open', 'Edit', 'Launch', 'Mark done', 'Check at HEAD', 'Move to…', 'Split', 'Cancel'];
+
+  test('a Tree row’s … button and its context menu hold the same actions, which open the card panel’s dialogs', async () => {
+    const { user, tree } = await openPlanner();
+    expect(itemsOf(await openMenu(user, 'Actions for #22'))).toEqual(SUBTASK);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    fireEvent.contextMenu(tree.getByRole('treeitem', { name: /^#22 / }));
+    const context = within(await screen.findByRole('menu'));
+    expect(itemsOf(context)).toEqual(SUBTASK);
+    await user.click(context.getByRole('menuitem', { name: 'Move to…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Move #22' }));
+    await pick(user, dialog, 'Move to', '#12 Keep the transcript steady while pages land (in #1)');
+    await user.click(dialog.getByRole('button', { name: 'Move' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Move #22' })).toBeNull());
+    const rows = labels(tree);
+    expect(rows[rows.findIndex((r) => r.startsWith('#15 ')) + 1]).toBe('#22 Set up the macOS signing step, To do');
+  });
+
+  test('a container’s menu adds under it and edits in place; an Unassigned card’s Edit says why it is off', async () => {
+    const { user, tree } = await openPlanner();
+    const menu = await openMenu(user, 'Actions for #2');
+    expect(itemsOf(menu)).toEqual(['Open', 'Add subtask', 'Edit', 'Do whole story', 'Plan with agent', 'Suggest subtasks', 'Move to…', 'Cancel']);
+    await user.click(menu.getByRole('menuitem', { name: 'Add subtask' }));
+    expect(await screen.findByRole('form', { name: 'New subtask in #2' })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await user.click(await openMenu(user, 'Actions for #7').then((m) => m.getByRole('menuitem', { name: 'Edit' })));
+    expect(await tree.findByRole('form', { name: 'Edit #7' })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await pickProject(user, /^Unassigned/);
+    const unassigned = await openMenu(user, 'Actions for #36');
+    expect(itemsOf(unassigned)).toEqual(['Open', 'Edit']);
+    expect(unassigned.getByRole('menuitem', { name: 'Edit' }).getAttribute('aria-disabled')).toBe('true');
+    expect(unassigned.getByText('An Unassigned card is read-only until it moves into a Project.')).toBeTruthy();
+  });
+
+  test('a Board card’s … button and context menu hold its actions; Edit opens the editor on the card', async () => {
+    const { user } = await openPlanner();
+    await user.click(screen.getByRole('radio', { name: 'Board' }));
+    const board = within(await screen.findByRole('region', { name: 'Board' }));
+    fireEvent.contextMenu(board.getByRole('button', { name: '#22 Set up the macOS signing step' }));
+    expect(itemsOf(within(await screen.findByRole('menu')))).toEqual(SUBTASK);
+    await user.keyboard('{Escape}');
+    const menu = await openMenu(user, 'Actions for #22');
+    expect(itemsOf(menu)).toEqual(SUBTASK);
+    await user.click(menu.getByRole('menuitem', { name: 'Edit' }));
+    const form = within(await board.findByRole('form', { name: 'Edit #22' }));
+    const title = form.getByRole('textbox', { name: 'Title' });
+    await user.clear(title);
+    await user.type(title, 'Sign the macOS build{Enter}');
+    expect(await board.findByRole('button', { name: '#22 Sign the macOS build' })).toBeTruthy();
   });
 });

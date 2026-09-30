@@ -19,6 +19,7 @@ import { BoardView } from './BoardView';
 import { CardPanel } from './CardPanel';
 import { INITIAL_UI, PlannerContext, usePlanner, type PlannerContextValue, type PlannerNotice, type PlannerUi, type PlannerViewKind, type PopKind } from './context';
 import { MapView } from './MapView';
+import { NoticeBar } from './parts';
 import { PopOutHost, openPipWindow, popMode } from './PopOut';
 import { InboxList } from './Requests';
 import { TreeView } from './TreeView';
@@ -292,19 +293,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
           {stale > 0 && <span className="text-caption text-warning">{stale} stale</span>}
           {board?.loading && board.data && <span className="text-caption text-muted">Refreshing…</span>}
         </div>
-        {p.notice && (
-          <p role={p.notice.tone === 'error' ? 'alert' : 'status'} className={cn('mx-3 mb-1 flex items-center gap-2 rounded-sm px-3 py-1.5 text-caption animate-fade-in', p.notice.tone === 'error' ? 'bg-error-wash text-error' : 'bg-surface text-body')}>
-            <span className="min-w-0 flex-1">{p.notice.text}</span>
-            {p.notice.task && (
-              <Button size="sm" variant="secondary" onClick={() => p.openTask(p.notice!.task!)}>
-                Open task
-              </Button>
-            )}
-            <Button size="icon-sm" aria-label="Dismiss" className="text-current" onClick={() => p.notify(null)}>
-              <X />
-            </Button>
-          </p>
-        )}
+        <NoticeBar className="mx-3 mb-1" />
         <div className={cn('flex min-h-0 flex-1 flex-col', ui.view === 'map' && 'relative')} aria-busy={!board?.data || undefined}>
           {body}
         </div>
