@@ -384,7 +384,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   happened. A question with one question is not a card: it appears at the
   top of the message box, with its options. Pick an option there (pick the
   same one again to clear it) or type the answer where the question allows
-  free text, then press Enter or Answer. Anything the answer cannot carry (a
+  free text, then press Enter or Answer. An option the agent marks
+  "(Recommended)" is already picked when the question appears; it is sent
+  only when you press Enter or Answer. Anything the answer cannot carry (a
   note typed beside a chosen option, images and files) is sent into the same
   turn first, as a steer, so the agent has it when it resumes. Decline is the
   × between Stop and Answer. What you had typed before the question arrived is

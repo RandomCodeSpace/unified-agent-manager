@@ -20,8 +20,10 @@ a phone.
 - **Safe / Yolo**: the permission policy. In Safe each permission request
   waits for the owner.
 - **Questions**: an `ask_user` question shows above the owner's composer with
-  its choices, and waits for an answer with no time limit. Offer choices; the
-  owner often answers from a phone.
+  its choices, and waits for an answer with no time limit. Put each option in
+  `choices`, not in the question text; the owner often answers from a phone.
+  List the one you recommend first, ending in "(Recommended)": the owner sees
+  it pre-selected.
 - **Changes**: the owner's view of the whole working tree diffed against
   `HEAD`, other Tasks' edits included.
 

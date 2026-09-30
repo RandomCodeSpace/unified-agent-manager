@@ -716,6 +716,11 @@ func media(c rpc.ModelCapabilities) *agentapi.Media {
 	return md
 }
 
+// taskSystem is appended to Copilot's own system message in every Task
+// session, created or resumed, so a question's options arrive as choices the
+// composer lists and pre-selects. Utility sessions replace the message.
+const taskSystem = `When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)".`
+
 func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agentapi.Conversation, error) {
 	if req.Events == nil {
 		return nil, errors.New("copilot: OpenRequest.Events is required")
@@ -764,6 +769,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Providers:             providers,
 			Models:                models,
 			Tools:                 uamTools,
+			SystemMessage:         &copilot.SystemMessageConfig{Mode: "append", Content: taskSystem},
 			Streaming:             copilot.Bool(true),
 			OnPermissionRequest:   deferPermission,
 			OnUserInputRequest:    c.askUser,
@@ -781,6 +787,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Providers:        providers,
 			Models:           models,
 			Tools:            uamTools,
+			SystemMessage:    &copilot.SystemMessageConfig{Mode: "append", Content: taskSystem},
 			Streaming:        copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.

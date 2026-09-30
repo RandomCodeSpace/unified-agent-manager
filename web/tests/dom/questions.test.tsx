@@ -76,9 +76,11 @@ describe('answering from the composer', () => {
   test('an options-only question takes typed text as a note, never as the answer', async () => {
     const { user, mock } = await openTask('t17');
     expect(composer().placeholder).toBe('Add a note (sent with your answer)…');
+    // The recommended option arrives staged; cleared, nothing is.
+    await user.click(box().getByRole('radio', { name: 'pnpm (Recommended)' }));
     await user.type(composer(), 'CI pins it');
     expect(answerButton()).toHaveProperty('disabled', true);
-    await user.click(box().getByRole('radio', { name: 'pnpm' }));
+    await user.click(box().getByRole('radio', { name: 'npm' }));
     expect(answerButton()).toHaveProperty('disabled', false);
     // Choosing leaves the focus on the option (arrow keys move between radios); Enter sends from the text.
     await user.click(composer());
@@ -86,7 +88,7 @@ describe('answering from the composer', () => {
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
     expect(mock.received.map((r) => r.route)).toEqual(['prompt', 'answer']);
     expect(mock.received[0].body.text).toBe('CI pins it');
-    expect(mock.received[1].body.answers).toEqual([['pnpm']]);
+    expect(mock.received[1].body.answers).toEqual([['npm']]);
   });
 
   test('several options may be chosen where the question allows it', async () => {
@@ -171,5 +173,64 @@ describe('answering from the composer', () => {
     expect(box().queryByText('Needs answer')).toBeNull();
     expect(box().queryByRole('button', { name: 'Decline' })).toBeNull();
     expect(composer().placeholder).toBe('Steer this turn, or queue a follow-up…');
+  });
+});
+
+// An option whose label ends with "(Recommended)" is staged when its question arrives, once; the owner still sends.
+describe('a recommended option', () => {
+  const recommended = () => box().getByRole('radio', { name: 'pnpm (Recommended)' });
+
+  test('arrives staged, sends nothing by itself, and Answer sends its label as offered', async () => {
+    const { user, mock } = await openTask('t17');
+    expect(recommended()).toHaveProperty('checked', true);
+    expect(answerButton()).toHaveProperty('disabled', false);
+    expect(mock.received).toEqual([]);
+    await user.click(answerButton());
+    await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
+    expect(mock.received.map((r) => r.route)).toEqual(['answer']);
+    expect(mock.received[0].body.answers).toEqual([['pnpm (Recommended)']]);
+  });
+
+  test('another option replaces it', async () => {
+    const { user, mock } = await openTask('t17');
+    await user.click(box().getByRole('radio', { name: 'yarn' }));
+    expect(recommended()).toHaveProperty('checked', false);
+    await user.click(answerButton());
+    await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
+    expect(mock.received[0].body.answers).toEqual([['yarn']]);
+  });
+
+  test('cleared, it is not staged again', async () => {
+    const { user } = await openTask('t17');
+    await user.click(recommended());
+    expect(recommended()).toHaveProperty('checked', false);
+    await user.type(composer(), 'still thinking');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(recommended()).toHaveProperty('checked', false);
+    expect(answerButton()).toHaveProperty('disabled', true);
+  });
+
+  test('without one, nothing is staged', async () => {
+    await openTask('t16');
+    expect(box().getAllByRole('radio').map((r) => (r as HTMLInputElement).checked)).toEqual([false, false, false]);
+    expect(answerButton()).toHaveProperty('disabled', true);
+  });
+
+  test('the task draft stays parked and a typed note goes beside it', async () => {
+    localStorage.setItem('uam.draft.t17', JSON.stringify({ text: 'half a thought', files: [], attachments: [] }));
+    const { user, mock } = await openTask('t17');
+    expect(composer().value).toBe('');
+    expect(recommended()).toHaveProperty('checked', true);
+    await user.type(composer(), 'CI pins it');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(composer().value).toBe('CI pins it');
+    expect(recommended()).toHaveProperty('checked', true);
+    expect(localStorage.getItem('uam.draft.t17')).toContain('half a thought');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
+    expect(mock.received.map((r) => r.route)).toEqual(['prompt', 'answer']);
+    expect(mock.received[0].body.text).toBe('CI pins it');
+    expect(mock.received[1].body.answers).toEqual([['pnpm (Recommended)']]);
+    await waitFor(() => expect(composer().value).toBe('half a thought'));
   });
 });
