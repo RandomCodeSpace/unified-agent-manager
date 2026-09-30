@@ -87,6 +87,27 @@ describe('new task', () => {
     expect(await log.findByText('Add a sitemap')).toBeTruthy();
   });
 
+  test('a first message of only an attachment creates the task and sends it without text', async () => {
+    const { user, mock } = renderApp();
+    const side = await sidebar();
+    await user.click(side.getByRole('button', { name: 'New task' }));
+    const palette = await screen.findByRole('dialog');
+    await user.click(within(palette).getByRole('option', { name: /notes-site/ }));
+    await waitFor(() => expect(header().textContent).toBe('New task'));
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveProperty('disabled', true);
+    const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
+    await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toHaveProperty('disabled', false));
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(window.location.hash).toMatch(/^#task=t\d+$/));
+    const log = within(await screen.findByRole('log'));
+    expect(await log.findByTitle('Open build.log')).toBeTruthy();
+    const sent = mock.received.filter((r) => r.route === 'prompt');
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body.text).toBe('');
+    expect(sent[0].body.attachments).toHaveLength(1);
+  });
+
   test('Alt+N opens the palette; Escape closes it', async () => {
     const { user } = renderApp();
     await sidebar();

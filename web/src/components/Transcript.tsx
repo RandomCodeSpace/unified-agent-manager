@@ -669,6 +669,7 @@ interface MessageParts { item: Item; text: string; sessionId?: string; streaming
 
 function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   const attachments = item.attachments ?? [];
+  const chips = attachments.length > 0 && !!sessionId;
   const accepted = item.steer_status === 'accepted';
   const width = 'max-w-[min(88%,720px)] max-sm:max-w-[88%]';
   const bubble = (
@@ -679,12 +680,14 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
       {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
       {text && (whole?.status === 'whole' ? plainText(text) : <Markdown text={text} />)}
       {whole && <WholeNote whole={whole} />}
-      {attachments.length > 0 && sessionId && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
+      {chips && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
+      {/* Nothing to show (a message of only file references, which the item does not list): say so rather than draw an empty bubble. */}
+      {!text && !whole && !chips && <span className="text-caption text-muted">No text</span>}
     </div>
   );
   return (
     <div data-history-anchor={item.id} className={cn('flex justify-end', className)}>
-      {/* A message of only attachments has no text to copy: its chips alone. */}
+      {/* A message without text has nothing to copy: its chips alone. */}
       {text ? (
         <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" side="left" className={width}>
           {bubble}

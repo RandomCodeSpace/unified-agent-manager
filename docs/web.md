@@ -433,12 +433,12 @@ are logged only at debug level (`UAM_DEBUG=1`).
   PDFs need a model that accepts them: Copilot reports this per model, `auto`
   is not checked, and the button says so when the Task's model takes text
   only. Attachments go with the message, whether it is sent, queued or
-  steered. A message can be only attachments or file references, with no
-  text; blank text beside them is not sent. A message with no text and
-  nothing attached cannot be sent. In the conversation, images show as
-  thumbnails that open larger on click and other files as chips that open
-  the stored copy, also after a reload. UAM keeps the files outside the
-  project (see Settle, archive, and delete).
+  steered. A message can be only attachments (or, through the API, only
+  file references), with no text; blank text beside them is not sent. A
+  message with no text and nothing attached cannot be sent. In the
+  conversation, images show as thumbnails that open larger on click and
+  other files as chips that open the stored copy, also after a reload. UAM
+  keeps the files outside the project (see Settle, archive, and delete).
 - **Images from tools**: when a tool returns an image, such as a screenshot
   or Copilot's `view` of an image file, UAM keeps a copy with the Task and
   shows it as a thumbnail under that tool call in the turn's activity, for

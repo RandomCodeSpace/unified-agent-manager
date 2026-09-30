@@ -95,6 +95,9 @@ func TestWebAttachmentOnlyMessageSendsAnEmptyPrompt(t *testing.T) {
 	}
 	encoded := base64.StdEncoding.EncodeToString([]byte(data))
 	want := [][]copilot.Attachment{{&rpc.AttachmentBlob{Data: &encoded, MIMEType: "image/png", DisplayName: &name}}, wantFileAttachments()[:1]}
+	if len(h.fs.msgs) != len(want) {
+		t.Fatalf("sent %d messages, want %d: %+v", len(h.fs.msgs), len(want), h.fs.msgs)
+	}
 	for i, msg := range h.fs.msgs {
 		if msg.Prompt != "" || msg.DisplayPrompt != "" || !reflect.DeepEqual(msg.Attachments, want[i]) {
 			t.Fatalf("message %d sent %+v", i, msg)

@@ -316,7 +316,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const queue = session.queue ?? [];
   // Cancelling a queued prompt or clearing the queue loses its text, so each is confirmed first (DESIGN.md Confirmations).
   const riskConfirm = useConfirm<{ run: () => void }>();
-  const discard = useConfirm<{ kind: 'one'; id: string; text: string } | { kind: 'all'; count: number }>();
+  const discard = useConfirm<{ kind: 'one'; id: string; text: string; label: string } | { kind: 'all'; count: number }>();
   function confirmDiscard() {
     const d = discard.target;
     if (!d) return;
@@ -625,7 +625,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // composer: its text and its stored uploads (file references are not recorded on the item). Never sent by itself.
   const failedTurn = session.state === 'failed' || session.state === 'interrupted' || session.state === 'cancelled';
   const lastSent = failedTurn && !locked && !text.trim() && !files.length && !uploads.length ? lastPrompt(session.items) : null;
-  // An attachment-only prompt comes back only with an upload it can put back.
+  // Offered only when there is something to put back: its text or an upload with a stored copy. A prompt of
+  // only file references, or of uploads without an ID, offers nothing rather than an older prompt.
   const resendable = lastSent?.text?.trim() || lastSent?.attachments?.some((a) => a.id) ? lastSent : null;
   function resend() {
     if (!resendable) return;
@@ -1032,6 +1033,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (discard.target?.kind !== 'all') return 'Cancel this queued prompt?';
     return discard.target.count === 1 ? 'Clear the queued prompt?' : `Clear ${discard.target.count} queued prompts?`;
   }
+  /** What cancelling loses: the text, or for a prompt of only attachments or files, just its sending. */
+  function describeDiscardLoss(): string {
+    if (discard.target?.kind === 'all') return 'Their text is not kept; nothing else changes.';
+    return discard.target?.text ? 'Its text is not kept; nothing else changes.' : 'It will not be sent; nothing else changes.';
+  }
   // A command's result under the composer: choices to pick from, Markdown, or plain text.
   let resultBody: ReactNode = null;
   if (commandResult?.kind === 'select') {
@@ -1188,7 +1194,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                   {q.settings && <span className="text-caption text-muted">{modelName(meta, session.provider, q.settings.model)} · {q.settings.effort || 'Default'} effort · {sizeLabel(q.settings.context_size)} context</span>}
                   <QueuedExtras files={q.files} attachments={q.attachments} />
                 </span>
-                <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel queued prompt: ${queuedLabel(q)}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: queuedLabel(q) })}>
+                <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel queued prompt: ${queuedLabel(q)}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: q.text, label: queuedLabel(q) })}>
                   <X />
                 </Button>
               </li>
@@ -1214,14 +1220,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <AlertDialog
           {...discard.props}
           title={describeDiscard()}
-          description={discard.target?.kind === 'all' ? 'Their text is not kept; nothing else changes.' : 'Its text is not kept; nothing else changes.'}
+          description={describeDiscardLoss()}
           confirmLabel={discard.target?.kind === 'all' ? 'Clear queue' : 'Cancel prompt'}
           cancelLabel="Keep"
           onConfirm={confirmDiscard}
         >
           {discard.target?.kind === 'one' && (
-            <p className="mt-3 line-clamp-3 rounded-sm bg-sunken px-3 py-2 text-ui text-ink" title={discard.target.text}>
-              {discard.target.text}
+            <p className="mt-3 line-clamp-3 rounded-sm bg-sunken px-3 py-2 text-ui text-ink" title={discard.target.label}>
+              {discard.target.label}
             </p>
           )}
         </AlertDialog>

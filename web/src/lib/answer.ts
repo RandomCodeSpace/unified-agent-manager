@@ -23,7 +23,7 @@ export interface Alongside {
   attachments: string[];
 }
 
-/** A prompt needs text: this stands in when only files ride along. */
+/** The steer's text when only files ride along beside the answer, so the model reads what they are for. */
 export const ALONGSIDE_TEXT = 'Files for my answer.';
 
 /** Whether the composer can send now: an option is staged, or the question takes free text and some is typed. */
