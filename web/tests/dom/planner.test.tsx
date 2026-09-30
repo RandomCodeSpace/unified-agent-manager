@@ -891,6 +891,42 @@ describe('the floating pop-out', () => {
     expect(plan.getByRole('treeitem', { name: /^#2 / }).getAttribute('aria-selected')).toBe('true');
   });
 
+  test('a Task’s panel moved into a separate window shows its Board, and the Planner switches to that Board', async () => {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const pipDoc = frame.contentDocument!;
+    const listeners = new Set<() => void>();
+    const pip = {
+      document: pipDoc,
+      closed: false,
+      close() {
+        this.closed = true;
+        for (const l of listeners) l();
+      },
+      addEventListener: (_: string, l: () => void) => listeners.add(l),
+      removeEventListener: (_: string, l: () => void) => listeners.delete(l),
+    };
+    window.documentPictureInPicture = { requestWindow: async () => pip as unknown as Window };
+    try {
+      const { user } = await openPlanner();
+      await user.click((await sidebar()).getAllByRole('button', { name: /Accessibility pass on the post template/ })[0]);
+      await waitFor(() => expect(header().textContent).toMatch(/^Accessibility pass on the post template/));
+      await user.click(within(await panel()).getByRole('button', { name: 'Open in a separate window' }));
+      expect(await within(pipDoc.body).findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
+      expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
+      await user.click(within(pipDoc.body).getByRole('button', { name: 'Close the pop-out' }));
+      await waitFor(() => expect(pipDoc.body.textContent).toBe(''));
+      // Closed over the Task: its panel stays the tab for the rest of the visit.
+      expect(await screen.findByRole('button', { name: /^Show the planner/ })).toBeTruthy();
+      await user.click((await sidebar()).getByRole('button', { name: 'Planner' }));
+      await waitFor(() => expect(header().textContent).toBe('Planner'));
+      expect(screen.getByRole('button', { name: 'Project: notes-site' })).toBeTruthy();
+    } finally {
+      delete window.documentPictureInPicture;
+      frame.remove();
+    }
+  });
+
   test('a pop-out from the Planner keeps its own Hide: a stored Hide neither folds it nor is erased', async () => {
     localStorage.setItem('uam.plannerHidden', JSON.stringify({ p1: true, p3: true }));
     const { user } = await openPlanner();
