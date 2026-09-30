@@ -81,6 +81,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [panel, setPanel] = useState<PanelView | null>(null);
   /** A command's output in its side panel; like the other right panels, it replaces them. */
   const [output, setOutput] = useState<CommandOutput | null>(null);
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
   const working = session.state === 'working' || session.state === 'starting';
@@ -316,6 +321,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, [onSheet, closePreview]);
   const closeFiles = useCallback(() => setFilesOpen(false), []);
   const showOutput = useCallback((next: CommandOutput) => {
+    // A reply that lands after this Task was left must not close the next Task's Changes (App state).
+    if (!alive.current) return;
     closePreview(false);
     setPanel(null);
     setFilesOpen(false);
@@ -323,8 +330,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     setOutput(next);
   }, [closePreview, onSheet]);
   const closeOutput = useCallback(() => {
+    // Esc from the composer leaves focus there; a close from inside the panel lands on the conversation.
+    const inside = !!document.activeElement?.closest('[data-command-output]');
     setOutput(null);
-    scroller.current?.focus({ preventScroll: true });
+    if (inside) scroller.current?.focus({ preventScroll: true });
   }, []);
   const { startRename } = actions;
   const renameInHeader = useCallback(() => startRename(session.id, 'header'), [startRename, session.id]);
@@ -339,11 +348,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }
 
   // Closes every right side panel without returning focus to its opener.
-  const closeSidePanels = useCallback(() => {
+  const closeSidePanels = useCallback((keepOutput = false) => {
     closePreview(false);
     setPanel(null);
     setFilesOpen(false);
-    setOutput(null);
+    if (!keepOutput) setOutput(null);
     panelOpener.current = null;
     onSheet(false, false);
   }, [closePreview, onSheet]);
@@ -355,10 +364,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const onConversationPointerDown = (e: PointerEvent) => {
     conversationPress.current = sidePanelInline && e.button === 0 && e.currentTarget.contains(e.target as Node) && !document.querySelector('[data-popup]:not([data-popup="tooltip"])');
   };
-  const onConversationClick = (e: MouseEvent) => {
+  const onConversationClick = (e: MouseEvent, keepOutput = false) => {
     if (!conversationPress.current || e.detail === 0) return;
     conversationPress.current = false;
-    closeSidePanels();
+    closeSidePanels(keepOutput);
   };
 
   // Esc closes the panel when no popup owns the key.
@@ -659,7 +668,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </section>
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
-        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}>
+        {/* A press here closes the inline panels too, but not the command output: the next command is typed here. */}
+        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
           {/* The working label stays centred just above the composer; while it shows, "Jump to bottom" is an arrow beside it, so it never moves. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
             <div className="relative flex">

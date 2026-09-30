@@ -15,9 +15,16 @@ export interface CommandOutput {
   markdown: boolean;
 }
 
-/** Output for the panel, not the composer: Markdown, or text longer than one short line. */
-export function isPanelOutput(result: CommandResult | null | undefined): result is Extract<CommandResult, { kind: 'text' }> {
-  return result?.kind === 'text' && (!!result.markdown || result.text.includes('\n') || result.text.length > 160);
+/** Output for the panel, not the composer: Markdown, or text (a confirmation's too) longer than one short line. */
+export function isPanelOutput(result: CommandResult | null | undefined): result is Extract<CommandResult, { kind: 'text' | 'completed' }> {
+  if (result?.kind !== 'text' && result?.kind !== 'completed') return false;
+  const text = result.text ?? '';
+  return (result.kind === 'text' && !!result.markdown) || text.includes('\n') || text.length > 160;
+}
+
+/** The panel's view of a command result that `isPanelOutput` sent to it. */
+export function panelOutput(id: string, name: string, result: Extract<CommandResult, { kind: 'text' | 'completed' }>): CommandOutput {
+  return { id, name, text: result.text ?? '', markdown: result.kind === 'text' && !!result.markdown };
 }
 
 /**
@@ -45,7 +52,9 @@ export function CommandOutputPanel({ output, inline, open, onClose, onClosed }: 
 
   const label = `Output of /${output.name}`;
   return (
-    <SidePanel id="command-output" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label={label} defaultWidth={520}>
+    <SidePanel id="command-output" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Command output" defaultWidth={520}>
+      {/* Marks the panel's content, so a close returns focus only when focus was in here. */}
+      <div data-command-output="" className="contents">
       <PanelHeader>
         <SquareSlash aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <span className="min-w-0 truncate text-title text-ink">/{output.name}</span>
@@ -57,6 +66,7 @@ export function CommandOutputPanel({ output, inline, open, onClose, onClosed }: 
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
       <div key={output.id} role="region" aria-label={label} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4">
         {output.markdown ? <Markdown text={output.text} /> : <pre translate="no" className="font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{output.text}</pre>}
+      </div>
       </div>
     </SidePanel>
   );

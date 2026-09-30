@@ -7,7 +7,7 @@ import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
 import { BackgroundTasks } from './BackgroundTasks';
-import { isPanelOutput, type CommandOutput } from './CommandOutput';
+import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
 import { ComposerUsage } from './ComposerUsage';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
@@ -285,6 +285,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     } catch { return []; }
   });
   const [commandAction, setCommandAction] = useState<Extract<CommandResult, { kind: 'action' }>['action'] | null>(null);
+  /** Says where a command's output went: the panel does not take focus, so nothing else would. */
+  const [announced, setAnnounced] = useState('');
   const pending = useRef<{ key: string; id: string } | null>(null);
   const refocus = useRef(false);
   const live = LIVE.includes(session.state);
@@ -778,7 +780,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         clearBuffer(prefill);
         if (cmd) {
           if (result?.kind === 'action') setCommandAction(result.action);
-          if (isPanelOutput(result)) onCommandOutput?.({ id: sub.request_id, name: cmd.name, text: result.text, markdown: !!result.markdown });
+          if (onCommandOutput && isPanelOutput(result)) {
+            onCommandOutput(panelOutput(sub.request_id, cmd.name, result));
+            setAnnounced(`Output of /${cmd.name} is in the side panel.`);
+          }
           setCommandVersion((v) => v + 1);
         }
         setPromptSettings(null);
@@ -1143,6 +1148,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           )}
         </div>
       )}
+      {onCommandOutput && <p role="status" className="sr-only">{announced}</p>}
       {commandResult && commandResult.kind !== 'action' && (
         <div className="px-3.5 py-2 text-ui text-body">
           <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon-sm" variant="subtle" aria-label="Dismiss command result" onClick={() => dismissResult()}><X /></Button></div>

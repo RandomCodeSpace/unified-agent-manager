@@ -134,6 +134,32 @@ describe('pickers', () => {
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
   });
 
+  test('beside the conversation, the output panel keeps composer focus on Esc and gives way to Files', async () => {
+    const happy = (window as unknown as { happyDOM: { setViewport: (v: { width: number; height: number }) => void } }).happyDOM;
+    happy.setViewport({ width: 1440, height: 900 });
+    try {
+      const { user } = await openTask('t3');
+      const run = async () => {
+        await user.click(composer());
+        await user.type(composer(), '/context');
+        await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/context/ });
+        await user.keyboard('{Enter}{Enter}');
+        return screen.findByRole('region', { name: 'Output of /context' });
+      };
+      const region = await run();
+      expect(region.closest('aside')?.getAttribute('aria-label')).toBe('Command output');
+      expect(screen.getByText('Output of /context is in the side panel.')).toBeTruthy();
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
+      expect(document.activeElement).toBe(composer());
+      await run();
+      await user.click(screen.getByRole('button', { name: 'Browse files' }));
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
+    } finally {
+      happy.setViewport({ width: 1024, height: 768 });
+    }
+  });
+
   test('$ lists skills only, and Escape closes the list', async () => {
     const { user } = await openTask('t3');
     await user.type(composer(), '$');
