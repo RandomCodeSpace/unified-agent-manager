@@ -21,9 +21,10 @@ vi.mock('../../src/components/planner/TreeView', async (importOriginal) => {
 });
 
 test('a streamed reply renders none of the Task’s planner panel', async () => {
-  await openTask('t6');
+  const { user } = await openTask('t6');
   const task = await api.createSession({ project_id: 'p1', provider: 'copilot', request_id: 'streamed-reply', prompt: 'Tidy the transcript code' });
   window.location.hash = `#task=${task.id}`;
+  await user.click(await screen.findByRole('button', { name: /^Show the planner/ }));
   const panel = within(await screen.findByRole('region', { name: 'Planner pop-out' }));
   await panel.findAllByRole('treeitem');
   // Settled before the reply starts streaming (600 ms in).
