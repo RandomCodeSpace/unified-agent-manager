@@ -1,6 +1,7 @@
 import { Ban, Check, CheckCheck, Ellipsis, MoveRight, PanelRightOpen, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { api, plannerErrorText, type Card, type TriageVerdict } from '../../api';
+import { cardPath } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { ContextMenu, Menu, type ActionItem } from '../ui/menu';
@@ -75,7 +76,10 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     }
     if (leaf && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'done', label: 'Mark done', icon: <CheckCheck />, onClick: () => open(c, 'done') });
     if (leaf && c.status === 'doing') actions.push({ key: 'release', label: 'Release', icon: <Undo2 />, onClick: () => setReason({ title: `Release #${c.seq}?`, description: 'The subtask goes back to To do and its Task stops holding it. Pending requests are withdrawn.', label: 'Comment (optional)', confirm: 'Release', required: false, run: (t) => api.planner.release(c.id, t) }) });
-    if (leaf && c.status === 'done') actions.push({ key: 'reopen', label: 'Reopen', icon: <Undo2 />, onClick: () => setReason({ title: `Reopen #${c.seq}?`, description: 'The subtask goes back to To do for another attempt.', label: 'Comment (optional)', confirm: 'Reopen', required: false, run: (t) => api.planner.status(c.id, 'todo', t) }) });
+    // Not under a cancelled card: the service refuses it until that is restored.
+    if (leaf && c.status === 'done' && !cardPath(c, byId).some((a) => a.status === 'cancelled')) {
+      actions.push({ key: 'todo', label: 'Back to To do', icon: <Undo2 />, onClick: () => setReason({ title: `Move #${c.seq} back to To do?`, description: 'The subtask goes back to To do for another attempt.', label: 'Comment (optional)', confirm: 'Back to To do', required: false, run: (t) => api.planner.status(c.id, 'todo', t) }) });
+    }
     if (leaf && c.confirmed && c.status !== 'done' && c.status !== 'cancelled') {
       actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, onClick: () => void run(c.id, 'check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && onCheck?.(c)) });
     }

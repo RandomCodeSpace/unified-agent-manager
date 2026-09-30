@@ -76,13 +76,14 @@ Planner on and the Project is a git repository.
   a steer with the reason, and you keep the subtask.
 - **Done** needs every checklist item ticked with `board_checklist` and no
   open blocker. uam then gathers the evidence itself (diff, commits, files
-  this Task touched) and runs the owner's acceptance command. If it passes,
-  the subtask is done at once: claim the next pending one. If it fails, the
-  request is refused. With no command set, the request waits for the owner.
+  this Task touched) and runs the owner's acceptance command. A failing
+  command refuses the request. It is accepted at once when the command
+  passes and nothing is flagged: claim the next pending one. Otherwise it
+  waits for the owner, and the reply says why.
 - **Proposals**: cards you create stay unconfirmed until the owner confirms
-  them, and expire after 14 days. Caps per Task: 20 created cards, 10
-  unconfirmed children per card or 10 epics at the root, 20 comments per
-  card.
+  them or a done request of yours on them is accepted, and expire after 14
+  days. Caps per Task: 20 created cards, 10 unconfirmed children per card or
+  10 epics at the root, 20 comments per card.
 
 ## Attachments
 

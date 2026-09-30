@@ -524,14 +524,23 @@ func (m *Manager) BoardProject(id string) (BoardProject, error) {
 	return BoardProject{AcceptCmd: ps.AcceptCmd, Git: noGit}, err
 }
 
-// SetBoardProject sets the Project id's default acceptance command.
+// SetBoardProject sets the Project id's default acceptance command, and
+// returns it as stored (trimmed).
 func (m *Manager) SetBoardProject(id, acceptCmd string) (BoardProject, error) {
 	a, err := m.boardOwner(m.ctx, id)
 	if err != nil {
 		return BoardProject{}, err
 	}
-	err = m.withBoard(func(st *board.Store) error { return st.SetProjectAcceptCmd(m.ctx, a, id, acceptCmd) })
-	return BoardProject{AcceptCmd: acceptCmd}, err
+	var ps board.ProjectSettings
+	err = m.withBoard(func(st *board.Store) error {
+		if err := st.SetProjectAcceptCmd(m.ctx, a, id, acceptCmd); err != nil {
+			return err
+		}
+		var err error
+		ps, err = st.ProjectSettings(m.ctx, id)
+		return err
+	})
+	return BoardProject{AcceptCmd: ps.AcceptCmd}, err
 }
 
 // BoardCardDetail is one card with its comments, requests and attempts.
@@ -1056,7 +1065,7 @@ func (p preambleInput) String() string {
 	default:
 		b.WriteString("- Finish with a done request.\n")
 	}
-	b.WriteString("- Never mark anything done yourself: a done request is accepted at once when its acceptance command passes, and otherwise waits for the owner.\n")
+	b.WriteString("- Never mark anything done yourself. A done request is refused when the acceptance command fails, accepted at once when it passes and nothing is flagged, and otherwise waits for the owner; the reply says why.\n")
 	return b.String()
 }
 

@@ -164,13 +164,14 @@ func (t *txn) finishable(o *outline, a Actor, n *node) error {
 }
 
 // acceptCmd resolves n's acceptance command: its own when set, else the
-// Project default.
+// Project default. A blank command is none; commands are stored trimmed, so
+// only one stored before that is blank.
 func (t *txn) acceptCmd(n *node) (string, error) {
 	if n.AcceptCmd != nil {
-		return *n.AcceptCmd, nil
+		return strings.TrimSpace(*n.AcceptCmd), nil
 	}
 	settings, err := t.settings(n.ProjectID)
-	return settings.AcceptCmd, err
+	return strings.TrimSpace(settings.AcceptCmd), err
 }
 
 // FileRequest files an agent's done, cancel or blocked request on the card
@@ -179,16 +180,33 @@ func (t *txn) acceptCmd(n *node) (string, error) {
 // flags. A newer request of the same kind from the same Task replaces the
 // older pending one. A done request whose PassedCmd is the command the
 // subtask resolves to is accepted at once, as the owner's Accept would
-// accept it, and is returned accepted.
+// accept it, and is returned accepted, unless accepting it would close a
+// container that still has proposals (see Filing).
 func (s *Store) FileRequest(ctx context.Context, a Actor, ref string, in RequestInput) (Request, error) {
+	f, err := s.File(ctx, a, ref, in)
+	return f.Request, err
+}
+
+// Filing is a filed request. A done request whose command passed is left
+// pending when accepting it would close Closes, a container that still has
+// the live unconfirmed subtasks Proposals, which closing would cancel.
+type Filing struct {
+	Request   Request
+	Closes    *Card
+	Proposals []Card
+}
+
+// File is FileRequest, also saying why a done request whose command passed
+// was left pending because of a container it would close.
+func (s *Store) File(ctx context.Context, a Actor, ref string, in RequestInput) (Filing, error) {
 	if err := permit(a, opRequest, ""); err != nil {
-		return Request{}, err
+		return Filing{}, err
 	}
 	f, err := checkInput(in)
 	if err != nil {
-		return Request{}, err
+		return Filing{}, err
 	}
-	var out Request
+	var out Filing
 	_, err = s.agentWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
 		if n.container() {
 			if in.Kind != RequestCancel || n.stored == StatusCancelled || n.Status == StatusDone {
@@ -211,7 +229,8 @@ func (s *Store) FileRequest(ctx context.Context, a Actor, ref string, in Request
 				f.payload.Blocker = blocker.ID
 			}
 		}
-		out, err = t.fileRequest(o, a, n, f)
+		out = Filing{}
+		out.Request, err = t.fileRequest(o, a, n, f)
 		if err != nil || in.PassedCmd == "" {
 			return err
 		}
@@ -219,9 +238,40 @@ func (s *Store) FileRequest(ctx context.Context, a Actor, ref string, in Request
 		if err != nil || cmd != in.PassedCmd {
 			return err
 		}
-		return t.acceptPassed(o, a, n, &out)
+		if c, proposals := o.closesWithProposals(n); c != nil {
+			out.Closes = &c.Card
+			for _, p := range proposals {
+				out.Proposals = append(out.Proposals, p.Card)
+			}
+			return nil
+		}
+		return t.acceptPassed(o, a, n, &out.Request)
 	})
 	return out, err
+}
+
+// closesWithProposals returns the nearest container that marking the subtask
+// n done would close while it still has live unconfirmed subtasks, and those
+// subtasks, which settle would cancel with it; nil when there is none.
+func (o *outline) closesWithProposals(n *node) (*node, []*node) {
+	for c := o.byID[n.ParentID]; c != nil; c = o.byID[c.ParentID] {
+		facts := make([]leafFact, 0, len(c.leaves))
+		var proposals []*node
+		for _, l := range c.leaves {
+			if l == n {
+				facts = append(facts, leafFact{status: StatusDone, confirmed: true})
+				continue
+			}
+			facts = append(facts, leafFact{status: l.stored, confirmed: l.Confirmed(), held: l.HeldBy != "", pending: l.PendingRequests > 0})
+			if !l.Confirmed() && l.HeldBy == "" && !l.stored.terminal() {
+				proposals = append(proposals, l)
+			}
+		}
+		if status, _ := derive(c.stored == StatusCancelled, facts); status == StatusDone && len(proposals) > 0 {
+			return c, proposals
+		}
+	}
+	return nil, nil
 }
 
 // acceptPassed accepts the done request r on n just filed, because the
@@ -813,8 +863,8 @@ func (t *txn) settings(projectID string) (ProjectSettings, error) {
 	return out, nil
 }
 
-// SetProjectAcceptCmd sets projectID's default acceptance command; "" means
-// none. Only the owner writes acceptance commands.
+// SetProjectAcceptCmd sets projectID's default acceptance command, trimmed;
+// "" means none. Only the owner writes acceptance commands.
 func (s *Store) SetProjectAcceptCmd(ctx context.Context, a Actor, projectID, cmd string) error {
 	if err := permit(a, opSettings, ""); err != nil {
 		return err
@@ -822,6 +872,8 @@ func (s *Store) SetProjectAcceptCmd(ctx context.Context, a Actor, projectID, cmd
 	if projectID == "" {
 		return errReadOnly
 	}
+	// A blank command would run and pass; it is none.
+	cmd = strings.TrimSpace(cmd)
 	if len(cmd) > maxTextBytes {
 		return invalid("acceptance command exceeds %d bytes", maxTextBytes)
 	}

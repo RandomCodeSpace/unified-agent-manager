@@ -137,18 +137,20 @@ func commandHash(cmd string) string {
 
 // acceptCmdOf is the acceptance command c resolves to: its own when set,
 // else its Project's default, read from st once per Project into defaults.
+// A blank command is none, as the store resolves it.
 func acceptCmdOf(ctx context.Context, st *board.Store, c board.Card, defaults map[string]string) (string, error) {
 	if c.AcceptCmd != nil {
-		return *c.AcceptCmd, nil
+		return strings.TrimSpace(*c.AcceptCmd), nil
 	}
 	if cmd, ok := defaults[c.ProjectID]; ok {
 		return cmd, nil
 	}
 	ps, err := st.ProjectSettings(ctx, c.ProjectID)
+	cmd := strings.TrimSpace(ps.AcceptCmd)
 	if err == nil {
-		defaults[c.ProjectID] = ps.AcceptCmd
+		defaults[c.ProjectID] = cmd
 	}
-	return ps.AcceptCmd, err
+	return cmd, err
 }
 
 // requestViews is list as the API sends it. A done request's acceptance
@@ -846,7 +848,8 @@ type claimResult struct {
 // the timeout refuses with acceptance_busy. When ctx ends the run is
 // discarded and ctx's cause returned. Only a shell that does not start
 // files the claim, flagged acceptance_could_not_run. A command that exits 0
-// is the Request's PassedCmd, so the store accepts the request as it files it.
+// with no flag raised is the Request's PassedCmd, so the store accepts the
+// request as it files it; any flag leaves it for the owner.
 func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in claimInput) (claimResult, error) {
 	fin, err := st.CheckFinishable(ctx, in.Actor, in.Ref)
 	if err != nil {
@@ -885,7 +888,7 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 	}
 	out.Evidence = ev
 
-	notRun, passed := false, ""
+	notRun := false
 	if cmd != "" {
 		res, err := runner.run(ctx, in.Dir, cmd)
 		switch {
@@ -902,32 +905,35 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 					"such as one that adds a failing test, fold the red and green steps into one subtask, or ask "+
 					"the owner to set this subtask's command to ''.\n\nOutput tail:\n%s", res.Exit, res.Tail)}
 		}
-		if !notRun {
-			passed = cmd
-		}
 	}
 	data, err := marshalEvidence(ev)
 	if err != nil {
 		return out, err
 	}
-	// Only the owner's command that ran green accepts the request as it is
-	// filed (ADR 0005 decision 5); the proposed one is text for the owner.
+	flags := evidenceFlags(ev, notRun)
+	// Only the owner's command that ran green, with nothing flagged, accepts
+	// the request as it is filed (ADR 0005 decision 5); the proposed one is
+	// text for the owner. A shell that did not start is flagged.
+	passed := ""
+	if cmd != "" && len(flags) == 0 {
+		passed = cmd
+	}
 	out.Request = board.RequestInput{Kind: board.RequestDone, Comment: in.Comment, Evidence: data,
-		Flags: evidenceFlags(ev, cmd, notRun), ProposedAcceptCmd: in.ProposedAcceptCmd, PassedCmd: passed}
+		Flags: flags, ProposedAcceptCmd: in.ProposedAcceptCmd, PassedCmd: passed}
 	return out, nil
 }
 
-// evidenceFlags are the flags of a done request with evidence ev, whose
-// acceptance command is cmd; notRun is set when its shell did not start.
-// Without the baseline commit, whether nothing changed cannot be told.
-func evidenceFlags(ev Evidence, cmd string, notRun bool) []string {
+// evidenceFlags are the flags of a done request with evidence ev; notRun is
+// set when its acceptance command's shell did not start. Without the
+// baseline commit, whether nothing changed cannot be told.
+func evidenceFlags(ev Evidence, notRun bool) []string {
 	var flags []string
 	if notRun {
 		flags = append(flags, board.FlagAcceptanceCouldNotRun)
 	}
 	if ev.baselineMissing {
 		flags = append(flags, board.FlagBaselineMissing)
-	} else if cmd == "" && len(ev.Diff.Files) == 0 && len(ev.Commits) == 0 {
+	} else if len(ev.Diff.Files) == 0 && len(ev.Commits) == 0 {
 		flags = append(flags, board.FlagNoChangeInTree)
 	}
 	if ev.testsOrBuild {

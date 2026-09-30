@@ -393,10 +393,13 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     }
   }
 
-  /** The derived fields: pending counts, then every container's status and progress. */
+  /**
+   * The derived fields: pending counts, then every container's status and progress. A container
+   * the owner cancelled stays cancelled whatever its subtasks are, as the service keeps it (§2).
+   */
   function refresh() {
     for (const c of cards) c.pending_requests = requests.filter((r) => r.card_id === c.id && r.status === 'pending').length;
-    cards = deriveBoard(cards);
+    cards = deriveBoard(cards).map((c) => (c.kind !== 'subtask' && cascadeOf.has(c.id) && c.status !== 'cancelled' ? { ...c, status: 'cancelled' } : c));
   }
   refresh();
 
@@ -653,6 +656,11 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         if (c.kind !== 'subtask') {
           if (status !== 'cancelled') return refuse('invalid', "a container's status is derived");
           return done(commit(() => cascade(c, comment)), ok);
+        }
+        if (status === 'todo') {
+          // internal/board's underCancelled: a subtask under a cancelled card waits for its restore.
+          const cancelled = cardPath(c, new Map(cards.map((x) => [x.id, x]))).find((a) => a !== c && a.status === 'cancelled');
+          if (cancelled) return refuse('invalid', `#${c.seq} is under cancelled #${cancelled.seq}; restore that first`);
         }
         if (status === 'done' && !body.force) {
           // internal/board's guard: open items (refs: their texts), the blocked flag, open blockers (refs: #seq).

@@ -304,7 +304,7 @@ var boardToolSet = []boardTool{
 			})),
 		}), (*Manager).toolSplit),
 	defineTool("board_request", "File a request on a card. done: you finished the subtask you hold, and evidence of the change is attached. "+
-		"When the owner set an acceptance command, it runs and must pass, and then the subtask is done at once; with none set, the request waits for the owner to accept. "+
+		"When the owner set an acceptance command, it runs and must pass. If it passes and nothing is flagged, the subtask is done at once; otherwise the request waits for the owner to accept, and the result says why. "+
 		"cancel: the card should not be done. blocked: you can't go on, because of the blocker card or what the comment says. The owner decides cancel and blocked.",
 		toolSchema([]string{"ref", "kind", "comment"}, map[string]any{
 			"ref":                 refProp,
@@ -933,11 +933,11 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 			Touched: touched, OtherHolds: m.otherHolds(task), Transcript: span,
 		})
 	}
-	var filed board.Request
+	var filed board.Filing
 	if err == nil {
 		err = m.withBoard(func(st *board.Store) error {
 			var err error
-			if filed, err = st.FileRequest(ctx, sc.actor, c.ID, res.Request); err != nil || filed.Status != board.RequestAccepted {
+			if filed, err = st.File(ctx, sc.actor, c.ID, res.Request); err != nil || filed.Request.Status != board.RequestAccepted {
 				return err
 			}
 			c, err = st.Card(ctx, c.ID)
@@ -947,7 +947,7 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 	if err != nil {
 		return toolReply{}, err
 	}
-	if filed.Status == board.RequestAccepted {
+	if filed.Request.Status == board.RequestAccepted {
 		return cardReply(c, "#%d is done; the acceptance command passed. Claim the next pending subtask, if any.", c.Seq), nil
 	}
 	ev := res.Evidence
@@ -957,15 +957,8 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 			byTask++
 		}
 	}
-	why := "the acceptance command changed while it ran"
-	switch {
-	case ev.Accept == nil:
-		why = "no acceptance command is set"
-	case slices.Contains(res.Request.Flags, board.FlagAcceptanceCouldNotRun):
-		why = "the acceptance command could not run"
-	}
 	text := fmt.Sprintf("Filed a done request on #%d; it waits for the owner to accept, because %s. Evidence: +%d −%d in %d files (%d touched by this task), %d commits",
-		c.Seq, why, ev.Diff.Added, ev.Diff.Deleted, len(ev.Diff.Files), byTask, len(ev.Commits))
+		c.Seq, waitReasons(res, filed), ev.Diff.Added, ev.Diff.Deleted, len(ev.Diff.Files), byTask, len(ev.Commits))
 	if ev.Accept != nil && ev.Accept.Exit >= 0 {
 		text += fmt.Sprintf(", acceptance command exited %d", ev.Accept.Exit)
 	}
@@ -977,6 +970,43 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 		text += " The transcript uam holds does not reach back to the hold's start, so the files touched by this task may be incomplete."
 	}
 	return cardReply(c, "%s", text), nil
+}
+
+// flagReasons says why each flag leaves a done request for the owner.
+var flagReasons = map[string]string{
+	board.FlagAcceptanceCouldNotRun: "the acceptance command could not run",
+	board.FlagBaselineMissing:       "the hold's baseline commit is gone",
+	board.FlagNoChangeInTree:        "nothing changed since the hold began",
+	board.FlagTestsOrBuildChanged:   "the change touches test or build files",
+	board.FlagOverlap:               "the change overlaps another task's hold",
+}
+
+// waitReasons says why the done claim res, filed as filed, waits for the
+// owner (ADR 0005 decision 5): no command, its flags, or a container it
+// would close with proposals. With none of those, the command that passed is
+// no longer the subtask's.
+func waitReasons(res claimResult, filed board.Filing) string {
+	var reasons []string
+	if res.Evidence.Accept == nil {
+		reasons = append(reasons, "no acceptance command is set")
+	}
+	for _, f := range res.Request.Flags {
+		reasons = append(reasons, flagReasons[f])
+	}
+	if filed.Closes != nil {
+		refs := make([]string, len(filed.Proposals))
+		for i, p := range filed.Proposals {
+			refs[i] = fmt.Sprintf("#%d", p.Seq)
+		}
+		reasons = append(reasons, fmt.Sprintf("accepting it would close #%d, which still has proposals %s", filed.Closes.Seq, strings.Join(refs, ", ")))
+	}
+	switch len(reasons) {
+	case 0:
+		return "the acceptance command changed while it ran"
+	case 1:
+		return reasons[0]
+	}
+	return strings.Join(reasons[:len(reasons)-1], ", ") + " and " + reasons[len(reasons)-1]
 }
 
 // openHold returns the open hold of task among holds.

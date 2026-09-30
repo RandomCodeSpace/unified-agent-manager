@@ -185,6 +185,82 @@ func TestDoneRequestAcceptedWhenItsCommandPassed(t *testing.T) {
 	}
 }
 
+// A passed done request that would close a container still holding
+// proposals, which closing cancels, waits for the owner and names them.
+func TestPassedDoneRequestWaitsWhenItWouldCloseProposals(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "make check"))
+	passed := RequestInput{Kind: RequestDone, Comment: "done", PassedCmd: "make check"}
+	f.launch(one.ID, "task-1")
+	worker := Agent("task-1", "")
+	followUp := f.create(worker, story.ID, KindSubtask, "Follow-up")
+	// #4 is still open, so accepting #3 closes nothing.
+	got, err := f.s.File(f.ctx, worker, one.ID, passed)
+	f.must(err)
+	if got.Request.Status != RequestAccepted || got.Closes != nil {
+		t.Fatalf("filing that closes nothing = %+v", got)
+	}
+	// Accepting the last confirmed subtask would close the story and cancel
+	// the proposal, so it waits.
+	f.launch(two.ID, "task-2")
+	got, err = f.s.File(f.ctx, Agent("task-2", ""), two.ID, passed)
+	f.must(err)
+	if got.Request.Status != RequestPending || got.Closes == nil || got.Closes.ID != story.ID ||
+		len(got.Proposals) != 1 || got.Proposals[0].ID != followUp.ID {
+		t.Fatalf("filing that would close proposals = %+v", got)
+	}
+	wantStatus(t, f.card(two.ID), StatusDoing)
+	wantStatus(t, f.card(followUp.ID), StatusPlanned)
+	wantStatus(t, f.card(story.ID), StatusDoing)
+	// With the proposal dismissed, it is accepted and the story closes.
+	_, err = f.s.Dismiss(f.ctx, owner, followUp.ID)
+	f.must(err)
+	got, err = f.s.File(f.ctx, Agent("task-2", ""), two.ID, passed)
+	f.must(err)
+	if got.Request.Status != RequestAccepted || got.Closes != nil {
+		t.Fatalf("filing with no proposal left = %+v", got)
+	}
+	wantStatus(t, f.card(story.ID), StatusDone)
+	wantStatus(t, f.card(epic.ID), StatusDone)
+}
+
+// A blank acceptance command is none: it is stored trimmed, and one stored
+// blank before that resolves to none, so nothing passes it.
+func TestBlankAcceptCmdIsNone(t *testing.T) {
+	f := newFixture(t)
+	_, _, one, two := f.tree()
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, " \t\n"))
+	if ps, err := f.s.ProjectSettings(f.ctx, proj); err != nil || ps.AcceptCmd != "" {
+		t.Fatalf("settings = %+v, %v", ps, err)
+	}
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "  make check\n"))
+	if ps, _ := f.s.ProjectSettings(f.ctx, proj); ps.AcceptCmd != "make check" {
+		t.Fatalf("a padded command is stored as %q", ps.AcceptCmd)
+	}
+	edited, err := f.s.Edit(f.ctx, owner, one.ID, Patch{AcceptCmd: &sql.NullString{String: "  ", Valid: true}})
+	f.must(err)
+	if c := edited.Card; c.AcceptCmd == nil || *c.AcceptCmd != "" {
+		t.Fatalf("a blank card command = %v", c.AcceptCmd)
+	}
+	// Stored blank before commands were trimmed.
+	f.raw(`UPDATE project_settings SET accept_cmd = ' ' WHERE project_id = ?`, proj)
+	f.raw(`UPDATE cards SET accept_cmd = ' ' WHERE id = ?`, one.ID)
+	f.launch(one.ID, "task-1")
+	f.launch(two.ID, "task-2")
+	for _, tc := range []struct{ ref, task string }{{one.ID, "task-1"}, {two.ID, "task-2"}} {
+		agent := Agent(tc.task, "")
+		fin, err := f.s.CheckFinishable(f.ctx, agent, tc.ref)
+		if err != nil || fin.AcceptCmd != "" {
+			t.Fatalf("finishable %s = %+v, %v", tc.ref, fin, err)
+		}
+		r, err := f.s.FileRequest(f.ctx, agent, tc.ref, RequestInput{Kind: RequestDone, Comment: "x", PassedCmd: " "})
+		if err != nil || r.Status != RequestPending {
+			t.Fatalf("filed on %s = %+v, %v", tc.ref, r, err)
+		}
+	}
+}
+
 // Only a done request is accepted automatically, and only with the command
 // the subtask resolves to: a proposed command never counts.
 func TestOnlyAPassedDoneRequestIsAcceptedAutomatically(t *testing.T) {

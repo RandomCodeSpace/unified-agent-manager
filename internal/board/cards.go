@@ -43,7 +43,8 @@ type Patch struct {
 
 	Blocked *bool `json:"-"`
 	// AcceptCmd sets the subtask's acceptance command: an invalid
-	// NullString inherits the Project default, a valid "" means none.
+	// NullString inherits the Project default, a valid "" means none. It is
+	// stored trimmed, so a blank one is none.
 	AcceptCmd *sql.NullString `json:"-"`
 	Paths     *[]string       `json:"-"`
 	// ProjectID moves a card out of Unassigned into a Project.
@@ -357,7 +358,7 @@ func (t *txn) planEdit(o *outline, a Actor, n *node, p Patch) (editPlan, error) 
 	if p.AcceptCmd != nil {
 		c.AcceptCmd = nil
 		if p.AcceptCmd.Valid {
-			cmd := p.AcceptCmd.String
+			cmd := strings.TrimSpace(p.AcceptCmd.String)
 			c.AcceptCmd = &cmd
 		}
 	}

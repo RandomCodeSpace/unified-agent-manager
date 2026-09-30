@@ -781,7 +781,7 @@ func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 	// No argument lets an agent say a command passed.
 	f.toolRefused(other.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"x","passed_cmd":"true"}`, none.ID), string(board.CodeInvalid))
 	r = f.toolOK(other.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"nothing changed","proposed_accept_cmd":"true"}`, none.ID))
-	if want := "Filed a done request on #2; it waits for the owner to accept, because no acceptance command is set. Evidence: +0 −0 in 0 files (0 touched by this task), 0 commits. Flags: no_change_in_tree."; r.Text != want || r.Card.Status != board.StatusDoing {
+	if want := "Filed a done request on #2; it waits for the owner to accept, because no acceptance command is set and nothing changed since the hold began. Evidence: +0 −0 in 0 files (0 touched by this task), 0 commits. Flags: no_change_in_tree."; r.Text != want || r.Card.Status != board.StatusDoing {
 		t.Fatalf("done without a command = %+v, want %q", r, want)
 	}
 	d = f.card(none.ID)
@@ -815,6 +815,7 @@ func TestBoardToolsDoneWaitsWhenAcceptanceCouldNotRun(t *testing.T) {
 	f.setAcceptCmd("true")
 	leaf := f.create(board.KindSubtask, "", "Leaf")
 	_, task := f.launch(leaf.ID)
+	writeRepoFile(t, f.repo, "made.txt", "x\n")
 	r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, leaf.ID))
 	if !strings.HasPrefix(r.Text, "Filed a done request on #1; it waits for the owner to accept, because the acceptance command could not run.") ||
 		!strings.Contains(r.Text, board.FlagAcceptanceCouldNotRun) {
@@ -822,6 +823,98 @@ func TestBoardToolsDoneWaitsWhenAcceptanceCouldNotRun(t *testing.T) {
 	}
 	if d := f.card(leaf.ID); d.Card.Status != board.StatusDoing || d.Requests[0].Status != board.RequestPending {
 		t.Fatalf("after a run that did not start = %+v", d)
+	}
+}
+
+// A green command with anything flagged leaves the request for the owner,
+// and the reply says why (ADR 0005 decision 5). So does a blank command,
+// which is none.
+func TestBoardToolsDoneWaitsOnAFlag(t *testing.T) {
+	acceptEnv(t)
+	f := newPlanner(t)
+	f.setAcceptCmd("true")
+	leaf := f.create(board.KindSubtask, "", "Leaf")
+	_, task := f.launch(leaf.ID)
+	writeRepoFile(t, f.repo, "made_test.go", "package x\n")
+	r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, leaf.ID))
+	if want := "Filed a done request on #1; it waits for the owner to accept, because the change touches test or build files. Evidence: +1 −0 in 1 files (0 touched by this task), 0 commits, acceptance command exited 0. Flags: tests_or_build_changed."; r.Text != want {
+		t.Fatalf("done = %q, want %q", r.Text, want)
+	}
+	if d := f.card(leaf.ID); d.Card.Status != board.StatusDoing || d.Requests[0].Status != board.RequestPending {
+		t.Fatalf("after a flagged claim = %+v", d)
+	}
+
+	var settings struct {
+		AcceptCmd string `json:"accept_cmd"`
+	}
+	f.call(http.MethodPatch, "/api/board/projects/"+f.project, `{"accept_cmd":"  "}`, http.StatusOK, &settings)
+	if settings.AcceptCmd != "" {
+		t.Fatalf("a blank default = %q", settings.AcceptCmd)
+	}
+	blank := f.create(board.KindSubtask, "", "Blank")
+	_, other := f.launch(blank.ID)
+	writeRepoFile(t, f.repo, "other.txt", "x\n")
+	r = f.toolOK(other.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, blank.ID))
+	if !strings.HasPrefix(r.Text, "Filed a done request on #2; it waits for the owner to accept, because no acceptance command is set. ") {
+		t.Fatalf("done with a blank command = %q", r.Text)
+	}
+}
+
+// A green claim whose acceptance would close the story it is in, while the
+// story still has proposals, waits for the owner: closing would cancel them.
+func TestBoardToolsDoneWaitsWhenItWouldCloseProposals(t *testing.T) {
+	acceptEnv(t)
+	f := newPlanner(t)
+	f.setAcceptCmd("true")
+	story := f.create(board.KindStory, "", "Story")
+	leaf := f.create(board.KindSubtask, story.ID, "Leaf")
+	_, task := f.launch(leaf.ID)
+	followUp := f.toolOK(task.ID, "board_create", fmt.Sprintf(`{"kind":"subtask","parent":%q,"title":"Follow-up"}`, story.ID)).Card
+	writeRepoFile(t, f.repo, "made.txt", "x\n")
+	r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, leaf.ID))
+	if want := fmt.Sprintf("Filed a done request on #2; it waits for the owner to accept, because accepting it would close #1, which still has proposals #%d. ", followUp.Seq); !strings.HasPrefix(r.Text, want) {
+		t.Fatalf("done = %q, want the prefix %q", r.Text, want)
+	}
+	if d := f.card(followUp.ID); d.Card.Status != board.StatusPlanned {
+		t.Fatalf("the proposal = %+v", d.Card)
+	}
+	if d := f.card(leaf.ID); d.Card.Status != board.StatusDoing || d.Requests[0].Status != board.RequestPending {
+		t.Fatalf("the subtask = %+v", d)
+	}
+}
+
+// A command the owner changes while it runs no longer vouches for the claim:
+// it waits, and the reply says so.
+func TestBoardToolsDoneWaitsWhenTheCommandChangedWhileItRan(t *testing.T) {
+	acceptEnv(t)
+	f := newPlanner(t)
+	f.setAcceptCmd(`touch started; i=0; while [ ! -f go ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done`)
+	leaf := f.create(board.KindSubtask, "", "Leaf")
+	_, task := f.launch(leaf.ID)
+	writeRepoFile(t, f.repo, "made.txt", "x\n")
+	results := make(chan agentapi.HostToolResult, 1)
+	go func() {
+		res, _ := f.conversation(task.ID).CallTool(context.Background(), agentapi.HostToolCall{Name: "board_request", CallID: "c1",
+			Arguments: json.RawMessage(fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, leaf.ID))})
+		results <- res
+	}()
+	waitUntil(t, "the acceptance command to start", func() bool {
+		_, err := os.Stat(filepath.Join(f.repo, "started"))
+		return err == nil
+	})
+	f.call(http.MethodPatch, "/api/board/projects/"+f.project, `{"accept_cmd":"make check"}`, http.StatusOK, nil)
+	writeRepoFile(t, f.repo, "go", "")
+	select {
+	case res := <-results:
+		r := decodeReply(t, res)
+		if res.Failed || !strings.HasPrefix(r.Text, "Filed a done request on #1; it waits for the owner to accept, because the acceptance command changed while it ran. ") {
+			t.Fatalf("done = %+v", r)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the claim did not finish")
+	}
+	if d := f.card(leaf.ID); d.Card.Status != board.StatusDoing || d.Requests[0].Status != board.RequestPending {
+		t.Fatalf("the subtask = %+v", d)
 	}
 }
 

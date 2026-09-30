@@ -144,11 +144,11 @@ func TestEvidenceWithTheBaselineCommitGone(t *testing.T) {
 	if len(files) != 2 || files["t.go"].Added != 1 || files["new.go"].Added != 1 || len(ev.Commits) != 0 || !ev.baselineMissing {
 		t.Fatalf("evidence = %+v", ev)
 	}
-	if flags := evidenceFlags(ev, "", false); !slices.Equal(flags, []string{board.FlagBaselineMissing}) {
+	if flags := evidenceFlags(ev, false); !slices.Equal(flags, []string{board.FlagBaselineMissing}) {
 		t.Fatalf("flags = %q", flags)
 	}
 	ev, err = collectEvidence(ctx, repo, gone, nil, nil)
-	if err != nil || len(ev.Diff.Files) != 0 || !slices.Equal(evidenceFlags(ev, "", false), []string{board.FlagBaselineMissing}) {
+	if err != nil || len(ev.Diff.Files) != 0 || !slices.Equal(evidenceFlags(ev, false), []string{board.FlagBaselineMissing}) {
 		t.Fatalf("with nothing touched: %+v, %v", ev, err)
 	}
 }
@@ -190,7 +190,7 @@ func TestEvidencePreDirtyPaths(t *testing.T) {
 		return out
 	}
 	ev, err := collectEvidence(ctx, repo, stored(base), nil, nil)
-	if err != nil || len(ev.Diff.Files) != 0 || !slices.Equal(evidenceFlags(ev, "", false), []string{board.FlagNoChangeInTree}) {
+	if err != nil || len(ev.Diff.Files) != 0 || !slices.Equal(evidenceFlags(ev, false), []string{board.FlagNoChangeInTree}) {
 		t.Fatalf("untouched leftovers = %+v, %v", ev.Diff, err)
 	}
 
@@ -214,8 +214,8 @@ func TestEvidencePreDirtyPaths(t *testing.T) {
 			t.Fatalf("%s = %+v, want pre-dirty with +%d", p, f, added)
 		}
 	}
-	if evidenceFlags(ev, "", false) != nil {
-		t.Fatalf("flags = %q", evidenceFlags(ev, "", false))
+	if evidenceFlags(ev, false) != nil {
+		t.Fatalf("flags = %q", evidenceFlags(ev, false))
 	}
 
 	// A baseline stored without blob names cannot prove a path unchanged.
@@ -296,7 +296,7 @@ func TestEvidenceFlagsCountFilesBeyondTheList(t *testing.T) {
 		ev.Diff.Added != maxChangedFiles+1 {
 		t.Fatalf("listed %d files, +%d", len(ev.Diff.Files), ev.Diff.Added)
 	}
-	if flags := evidenceFlags(ev, "make", false); !slices.Equal(flags, []string{board.FlagTestsOrBuildChanged, board.FlagOverlap}) {
+	if flags := evidenceFlags(ev, false); !slices.Equal(flags, []string{board.FlagTestsOrBuildChanged, board.FlagOverlap}) {
 		t.Fatalf("flags = %q", flags)
 	}
 }
@@ -792,8 +792,44 @@ func TestClaimCollectsEvidenceBeforeTheRun(t *testing.T) {
 	if want := []string{board.FlagOverlap}; !slices.Equal(res.Request.Flags, want) {
 		t.Fatalf("flags = %q, want %q", res.Request.Flags, want)
 	}
-	if res.Request.PassedCmd != st.fin.AcceptCmd {
-		t.Fatalf("passed = %q", res.Request.PassedCmd)
+	if res.Request.PassedCmd != "" {
+		t.Fatalf("an overlapping claim passed %q", res.Request.PassedCmd)
+	}
+}
+
+// A green command passes the claim, for the store to accept as it files it,
+// only when nothing is flagged: no change at all is flagged even with a
+// command (ADR 0005 decision 5).
+func TestClaimPassesOnlyWithNothingFlagged(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(repo string, st *fakeClaimStore)
+		flags []string
+	}{
+		{"a clean change", func(repo string, _ *fakeClaimStore) { writeRepoFile(t, repo, "x.go", "package x\n") }, nil},
+		{"no change", func(string, *fakeClaimStore) {}, []string{board.FlagNoChangeInTree}},
+		{"a test file", func(repo string, _ *fakeClaimStore) { writeRepoFile(t, repo, "x_test.go", "package x\n") }, []string{board.FlagTestsOrBuildChanged}},
+		{"the baseline gone", func(repo string, st *fakeClaimStore) {
+			writeRepoFile(t, repo, "x.go", "package x\n")
+			st.holds[2].Baseline = board.Baseline{Head: strings.Repeat("ab", 20)}
+		}, []string{board.FlagBaselineMissing}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, calls, st := claimScene(t, "make check")
+			tc.setup(repo, &st)
+			runner := fakeRunner{calls: calls, res: AcceptResult{Cmd: "make check", Exit: 0}}
+			res, err := evaluateClaim(context.Background(), st, runner, claimInput{Actor: board.Agent("task-1", ""), Ref: "#12", Dir: repo, Touched: []string{"x.go", "x_test.go"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if tc.flags == nil {
+				want = "make check"
+			}
+			if !slices.Equal(res.Request.Flags, tc.flags) || res.Request.PassedCmd != want {
+				t.Fatalf("flags %q, passed %q; want %q, %q", res.Request.Flags, res.Request.PassedCmd, tc.flags, want)
+			}
+		})
 	}
 }
 
@@ -805,7 +841,7 @@ func TestClaimFiledWhenAcceptanceCouldNotRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(res.Request.Flags, []string{board.FlagAcceptanceCouldNotRun}) || res.Evidence.Accept == nil || res.Evidence.Accept.Exit != -1 || res.Request.PassedCmd != "" {
+	if !slices.Equal(res.Request.Flags, []string{board.FlagAcceptanceCouldNotRun, board.FlagNoChangeInTree}) || res.Evidence.Accept == nil || res.Evidence.Accept.Exit != -1 || res.Request.PassedCmd != "" {
 		t.Fatalf("result = %+v", res)
 	}
 	st.holds = nil
