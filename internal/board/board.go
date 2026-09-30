@@ -52,6 +52,17 @@ func (k Kind) level() int {
 // canHold reports whether a card of kind k may be the parent of kind child.
 func (k Kind) canHold(child Kind) bool { return k.level() < child.level() }
 
+// holdRefusal refuses a card of kind child under a card of kind k.
+func (k Kind) holdRefusal(child Kind) error {
+	article := func(k Kind) string {
+		if k == KindEpic {
+			return "an"
+		}
+		return "a"
+	}
+	return invalid("%s %s cannot hold %s %s", article(k), k, article(child), child)
+}
+
 // Status is a leaf's stored status, or a container's derived one.
 type Status string
 
@@ -86,7 +97,7 @@ const ExpiryWindow = 14 * 24 * time.Hour
 // against the Task.
 const (
 	CapCreated     = 20 // cards a Task may create
-	CapUnconfirmed = 10 // live unconfirmed children a Task may add to one container
+	CapUnconfirmed = 10 // live unconfirmed children a Task may add to one container, the root included
 	CapComments    = 20 // non-automatic comments a Task may add to one card
 )
 

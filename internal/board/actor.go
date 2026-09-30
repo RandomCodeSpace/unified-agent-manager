@@ -48,8 +48,9 @@ func (a Actor) author() string {
 type op string
 
 const (
-	opCreate      op = "create"       // a story or subtask under a container
-	opCreateTop   op = "create_top"   // an epic, or any card at the root
+	opCreate      op = "create"       // a card under a container
+	opCreateEpic  op = "create_epic"  // an epic at the root
+	opCreateTop   op = "create_top"   // a story or subtask at the root
 	opEdit        op = "edit"         // fields of an unconfirmed card
 	opChange      op = "change"       // fields of a confirmed card
 	opOwnerFields op = "owner_fields" // accept_cmd, paths, project, blocked flag
@@ -80,6 +81,7 @@ const (
 // opChange is allowed for agents only as a request.
 var actorTable = map[op]struct{ owner, agent bool }{
 	opCreate:      {owner: true, agent: true},
+	opCreateEpic:  {owner: true, agent: true},
 	opCreateTop:   {owner: true},
 	opEdit:        {owner: true, agent: true},
 	opChange:      {owner: true, agent: true},

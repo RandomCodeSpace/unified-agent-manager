@@ -482,6 +482,23 @@ func (t *txn) inScope(o *outline, a Actor, n *node) error {
 	return refuse(CodeForbidden, "%s is outside the Task's scope", n.ref())
 }
 
+// atRoot refuses an agent's card at the root unless its Task has no scope
+// (ADR 0005 decision 4): a Task launched from a card, planning under one, or
+// a Utility job writes only within its container. The owner has no scope.
+func (t *txn) atRoot(a Actor) error {
+	if a.owner() {
+		return nil
+	}
+	sc, err := t.scope(a.TaskID)
+	if err != nil {
+		return err
+	}
+	if sc != nil {
+		return refuse(CodeForbidden, "the root is outside the Task's scope")
+	}
+	return nil
+}
+
 // mutate runs fn as one write to project: it sweeps expired cards first when
 // sweep is set, and afterwards settles every container fn brought to done.
 func (t *txn) mutate(project string, sweep bool, fn func() error) error {

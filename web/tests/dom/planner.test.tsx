@@ -80,6 +80,72 @@ describe('planner', () => {
     expect(tree.getByRole('treeitem', { name: /^#1 Faster first load of long transcripts/ }).textContent).toContain('4/10');
   });
 
+  test('an epic an agent proposed folds into +N suggested at the root, and the epic filter shows it to confirm or dismiss', async () => {
+    const { user } = renderApp('#planner=p3');
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board?project_id=p3'),
+      async (real) => {
+        const data = await (await real()).json();
+        const base = data.cards.find((c: { seq: number }) => c.seq === 32);
+        const epic = { ...base, id: 'cp3-90', seq: 90, rank: 99, title: 'Offline reading', win_condition: '', status: 'planned', progress: { done: 0, total: 0, proposed: 0 }, confirmed: false, expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString(), pinned_sha: '' };
+        return reply(200, { ...data, cards: [...data.cards, epic] });
+      },
+    );
+    try {
+      const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' });
+      expect(tree.queryByRole('treeitem', { name: /^#90 / })).toBeNull();
+      await user.click(tree.getByRole('treeitem', { name: '+1 suggested' }));
+      expect(await tree.findByRole('treeitem', { name: '#90 Offline reading, Planned' })).toBeTruthy();
+      // Filtered to it, the Tree shows the proposal itself, with its badge, Confirm and Dismiss.
+      await pick(user, within(document.body), 'Epic', /^#90 /);
+      const filtered = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      const row = within(await filtered.findByRole('treeitem', { name: '#90 Offline reading, Planned' }));
+      expect(row.getByText('Suggested')).toBeTruthy();
+      expect(row.getByRole('button', { name: 'Confirm Offline reading' })).toBeTruthy();
+      expect(row.getByRole('button', { name: 'Dismiss Offline reading' })).toBeTruthy();
+      expect(filtered.queryByRole('treeitem', { name: /^#32 / })).toBeNull();
+      expect(filtered.queryByRole('treeitem', { name: '+1 suggested' })).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('the epic filter lists no cancelled epic, except the one it is set to', async () => {
+    const { user } = renderApp('#planner=p3');
+    const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' });
+    const add = async (form: string, title: string, button: string) => {
+      const f = within(await screen.findByRole('form', { name: form }));
+      await user.type(f.getByRole('textbox', { name: 'Title' }), title);
+      await user.click(f.getByRole('button', { name: button }));
+    };
+    await user.click(screen.getByRole('button', { name: 'New epic' }));
+    await add('New epic', 'Offline mode', 'Add epic');
+    await user.click(within(await tree.findByRole('treeitem', { name: '#37 Offline mode, Planned' })).getByRole('button', { name: 'Add a subtask to #37' }));
+    await add('New subtask in #37', 'Cache posts', 'Add subtask');
+    await tree.findByRole('treeitem', { name: '#38 Cache posts, Planned' });
+    await pick(user, within(document.body), 'Epic', /^#37 /);
+    const panel = await openCard(user, tree, 37);
+    await user.click(panel.getByRole('button', { name: 'Cancel' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Cancel #37?' }));
+    await user.type(dialog.getByRole('textbox', { name: 'Why (required)' }), 'Not this quarter.');
+    await user.click(dialog.getByRole('button', { name: 'Cancel card' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Cancel #37?' })).toBeNull());
+    await closeCard(user);
+    // Cancelled, #37 stays listed while the filter is set to it, so the filter never names nothing.
+    const filter = screen.getByRole('combobox', { name: 'Epic' });
+    expect(filter.textContent).toContain('#37 Offline mode');
+    await user.click(filter);
+    expect(await screen.findByRole('option', { name: /^#37 / })).toBeTruthy();
+    await user.click(screen.getByRole('option', { name: 'All epics' }));
+    await waitFor(() => expect(screen.queryByRole('option', { name: 'All epics' })).toBeNull());
+    // Set to all epics, the filter lists only the live ones.
+    await user.click(screen.getByRole('combobox', { name: 'Epic' }));
+    expect(await screen.findByRole('option', { name: /^#32 / })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /^#37 / })).toBeNull();
+  });
+
   test('accepting a split under a story adds siblings after the subtask, cancels it and moves its hold', async () => {
     const { user, tree } = await openPlanner();
     await user.click(screen.getByRole('button', { name: 'Inbox, 6 pending' }));

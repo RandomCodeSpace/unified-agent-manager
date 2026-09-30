@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
 )
 
@@ -191,6 +193,157 @@ func TestBoardToolsOnlyInGitProjectsWhilePlannerIsOn(t *testing.T) {
 	}
 	f.m.refreshBranches(context.Background(), true, f.project)
 	f.toolRefused(task.ID, "board_list", `{}`, codeNoGit)
+}
+
+// setPlanner turns the planner switch on or off.
+func setPlanner(t *testing.T, m *Manager, on bool) {
+	t.Helper()
+	if _, err := m.UpdateSettings(SettingsPatch{Planner: &on}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// promptTask sends text to the Task id, ends the turn it starts, and returns
+// the conversation that took it and whether sending opened a conversation.
+func promptTask(t *testing.T, m *Manager, prov *agenttest.Provider, id, text string) (*agenttest.Conversation, bool) {
+	t.Helper()
+	opens := len(prov.Opens())
+	mustSubmit(t, m, id, text, mustUUID(t), ModeSend, SubmissionAccepted)
+	conv := prov.Last()
+	if sends := conv.Sends(); len(sends) == 0 || sends[len(sends)-1] != text {
+		t.Fatalf("%q was not sent to the open conversation: %q", text, sends)
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	return conv, len(prov.Opens()) > opens
+}
+
+// A Task opened with the planner off gets the tools on its next prompt once
+// the switch is on: the prompt reopens the conversation. A slash command,
+// and a prompt whose Task already has the right tools, reopen nothing.
+func TestPromptReopensATaskForThePlannerSwitchedOn(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	project := gitProject(t, m, "app")
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: project, Name: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := prov.Last()
+	if first.Request().Tools != nil {
+		t.Fatalf("a task opened with the planner off has tools: %q", toolNames(first.Request().Tools))
+	}
+	if _, reopened := promptTask(t, m, prov, sum.ID, "before"); reopened {
+		t.Fatal("a prompt reopened a task that has the right tools")
+	}
+	setPlanner(t, m, true)
+	prov.SetCommands([]agentapi.Command{{Name: "review"}}, nil)
+	if _, err := m.Command(sum.ID, CommandRequest{RequestID: mustUUID(t), Name: "review"}); err != nil || len(prov.Opens()) != 1 || len(first.CommandRuns()) != 1 {
+		t.Fatalf("command = %v, opens %d, runs %d", err, len(prov.Opens()), len(first.CommandRuns()))
+	}
+	first.EmitTurn(agentapi.TurnCompleted, "")
+	conv, reopened := promptTask(t, m, prov, sum.ID, "after")
+	if !reopened || conv == first || first.Closes() != 1 || conv.Request().ConversationID != sum.ConversationID {
+		t.Fatalf("reopened %v, closes %d, request %+v", reopened, first.Closes(), conv.Request())
+	}
+	if got := toolNames(conv.Request().Tools); !slices.Equal(got, allBoardTools) || conv.Request().CallTool == nil {
+		t.Fatalf("reopened with %q", got)
+	}
+	if next, reopened := promptTask(t, m, prov, sum.ID, "again"); reopened || next != conv {
+		t.Fatal("a prompt reopened a task that has the right tools")
+	}
+}
+
+// A Task opened with the tools loses them on its next prompt once the
+// planner is off or its Project has no git.
+func TestPromptReopensATaskThatLostTheTools(t *testing.T) {
+	for name, lose := range map[string]func(*testing.T, *Manager, string, string){
+		"planner off": func(t *testing.T, m *Manager, _, _ string) { setPlanner(t, m, false) },
+		"no git": func(t *testing.T, m *Manager, dir, project string) {
+			if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			m.refreshBranches(context.Background(), true, project)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, prov, _ := newTestManager(t)
+			setPlanner(t, m, true)
+			dir := branchRepo(t)
+			project := addProject(t, m, dir)
+			sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: project, Name: "task"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := prov.Last()
+			if got := toolNames(first.Request().Tools); !slices.Equal(got, allBoardTools) {
+				t.Fatalf("tools = %q", got)
+			}
+			lose(t, m, dir, project)
+			conv, reopened := promptTask(t, m, prov, sum.ID, "after")
+			if !reopened || first.Closes() != 1 || conv.Request().Tools != nil || conv.Request().CallTool != nil {
+				t.Fatalf("reopened %v, closes %d, tools %q", reopened, first.Closes(), toolNames(conv.Request().Tools))
+			}
+		})
+	}
+}
+
+// A conversation that still runs or waits for something, an idle
+// subagent's follow-up included, is not reopened for its tools: the prompt
+// goes to it as it is.
+func TestPromptKeepsABusyConversationWithStaleTools(t *testing.T) {
+	for name, keep := range map[string]func(*Manager, string, *agenttest.Conversation){
+		"background task": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{{ID: "server", Status: "running"}}}})
+		},
+		"running subagent": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.EmitSubagent(agentapi.Subagent{ID: "sa", Status: agentapi.SubagentRunning})
+		},
+		"idle subagent": func(_ *Manager, _ string, c *agenttest.Conversation) {
+			c.EmitSubagent(agentapi.Subagent{ID: "sa", Status: agentapi.SubagentIdle})
+		},
+		"paused queue": func(m *Manager, id string, _ *agenttest.Conversation) {
+			m.mu.Lock()
+			s := m.sessions[id]
+			s.queue, s.queuePaused = []QueuedPrompt{{RequestID: "queued", Text: "later"}}, true
+			m.mu.Unlock()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, prov, _ := newTestManager(t)
+			sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: gitProject(t, m, "app"), Name: "task"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			conv := prov.Last()
+			keep(m, sum.ID, conv)
+			setPlanner(t, m, true)
+			mustSubmit(t, m, sum.ID, "prompt", mustUUID(t), ModeSend, SubmissionAccepted)
+			if len(prov.Opens()) != 1 || conv.Closes() != 0 || !slices.Equal(conv.Sends(), []string{"prompt"}) {
+				t.Fatalf("opens %d, closes %d, sent %q", len(prov.Opens()), conv.Closes(), conv.Sends())
+			}
+		})
+	}
+}
+
+// Reopening for the tools keeps the transcript the Task holds, even when
+// the reopened conversation's record cannot be read.
+func TestToolsReopenKeepsTheTranscript(t *testing.T) {
+	prov := newScripted("fake")
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: gitProject(t, m, "app"), Name: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := prov.Last()
+	first.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "earlier"})
+	setPlanner(t, m, true)
+	prov.script(func(p *scriptedProvider) { p.historyErr = errors.New("record unreadable") })
+	if _, reopened := promptTask(t, m, prov.Provider, sum.ID, "after"); !reopened || first.Closes() != 1 {
+		t.Fatalf("reopened %v, closes %d", reopened, first.Closes())
+	}
+	d := detail(t, m, sum.ID)
+	if d.History != HistoryLoaded || !slices.ContainsFunc(d.Items, func(it agentapi.Item) bool { return it.ID == "a1" && it.Text == "earlier" }) {
+		t.Fatalf("history %q %q, items %+v", d.History, d.HistoryReason, d.Items)
+	}
 }
 
 // A ref resolves only on the Task's own Board: a card of another Project, or
@@ -371,10 +524,13 @@ func TestBoardToolsPlanUnderTheContainer(t *testing.T) {
 	if d := f.card(story.ID); d.Card.Title != "Story" || len(d.Requests) != 1 || d.Requests[0].Kind != board.RequestChange || d.Requests[0].Status != board.RequestPending {
 		t.Fatalf("confirmed card after edit = %+v", d)
 	}
-	f.toolRefused(plan, "board_create", `{"kind":"epic","parent":"#1","title":"E"}`, string(board.CodeForbidden))
+	f.toolRefused(plan, "board_create", `{"kind":"epic","parent":"#1","title":"E"}`, string(board.CodeInvalid))
 	f.toolRefused(plan, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"S"}`, outside.ID), string(board.CodeForbidden))
 	f.toolRefused(plan, "board_create", `{"kind":"story","parent":"#1","title":" story "}`, string(board.CodeDuplicate))
-	f.toolRefused(plan, "board_create", `{"kind":"subtask","title":"No parent"}`, string(board.CodeInvalid))
+	if r := f.toolRefused(plan, "board_create", `{"kind":"subtask","title":"No parent"}`, string(board.CodeInvalid)); r.Text != "a subtask needs a parent: the epic or story to create it under" {
+		t.Fatalf("no parent = %+v", r)
+	}
+	f.toolRefused(plan, "board_create", `{"kind":"epic","title":"From a planning task"}`, string(board.CodeForbidden))
 
 	for i := range board.CapUnconfirmed - 1 {
 		agent := ""
@@ -388,6 +544,75 @@ func TestBoardToolsPlanUnderTheContainer(t *testing.T) {
 	if r, failed := f.callTool(plan, "sub-2", "board_create", `{"kind":"subtask","parent":"#2","title":"One too many"}`); !failed || r.Code != string(board.CodeLimit) {
 		t.Fatalf("past the cap = %+v, %v", r, failed)
 	}
+}
+
+// A Task not started from a card proposes epics at the root (ADR 0005
+// decision 4): each stays a proposal with its expiry until the owner
+// confirms or dismisses it, within the caps and the duplicate rule. Stories
+// and subtasks still need a parent, and a Task started from a card proposes
+// no epic.
+func TestBoardToolsProposeRootEpics(t *testing.T) {
+	f := newPlanner(t)
+	epic := f.create(board.KindEpic, "", "Owner's epic")
+	leaf := f.create(board.KindSubtask, epic.ID, "Leaf")
+	task := f.newTask(f.project).ID
+
+	r := f.toolOK(task, "board_create", `{"kind":"epic","title":"Offline mode","win_condition":"works offline","prio":1}`)
+	if r.Card == nil || r.Card.Kind != board.KindEpic || r.Card.Status != board.StatusPlanned || r.Text != fmt.Sprintf("Created #%d at the root of the board. It stays a proposal until the owner confirms it.", r.Card.Seq) {
+		t.Fatalf("create = %+v", r)
+	}
+	c := f.card(r.Card.ID).Card
+	if c.Confirmed || c.ParentID != nil || c.ExpiresAt == nil || !c.ExpiresAt.Equal(c.CreatedAt.Add(board.ExpiryWindow)) || c.WinCondition != "works offline" || c.Prio != 1 {
+		t.Fatalf("created = %+v", c)
+	}
+	second := f.toolOK(task, "board_create", `{"kind":"epic","parent":" ","title":"Sync"}`).Card
+	f.toolRefused(task, "board_create", `{"kind":"epic","title":" offline MODE "}`, string(board.CodeDuplicate))
+	for _, kind := range []board.Kind{board.KindStory, board.KindSubtask} {
+		r := f.toolRefused(task, "board_create", fmt.Sprintf(`{"kind":%q,"parent":"","title":"Loose"}`, kind), string(board.CodeInvalid))
+		if want := fmt.Sprintf("a %s needs a parent: the epic or story to create it under", kind); r.Text != want {
+			t.Fatalf("loose %s = %q, want %q", kind, r.Text, want)
+		}
+	}
+	if r := f.toolRefused(task, "board_create", fmt.Sprintf(`{"kind":"epic","parent":%q,"title":"Nested"}`, second.ID), string(board.CodeInvalid)); r.Text != "an epic cannot hold an epic" {
+		t.Fatalf("nested = %q", r.Text)
+	}
+	// It proposes and nothing more: its own epic is outside any scope it has.
+	for name, args := range map[string]string{
+		"board_edit":      `{"ref":%q,"title":"Renamed"}`,
+		"board_comment":   `{"ref":%q,"body":"note"}`,
+		"board_checklist": `{"ref":%q,"add":["item"]}`,
+		"board_link":      `{"ref":%q,"blocker":"#1"}`,
+	} {
+		f.toolRefused(task, name, fmt.Sprintf(args, r.Card.ID), string(board.CodeForbidden))
+	}
+	if d := f.card(r.Card.ID); d.Card.Title != "Offline mode" || len(d.Comments) != 0 || len(d.Card.Checklist) != 0 || len(d.Card.BlockedBy) != 0 || len(d.Requests) != 0 {
+		t.Fatalf("a refused call wrote: %+v", d)
+	}
+	for i := range board.CapUnconfirmed - 2 {
+		f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"epic","title":"Epic %d"}`, i))
+	}
+	f.toolRefused(task, "board_create", `{"kind":"epic","title":"One too many"}`, string(board.CodeLimit))
+
+	// A Task planning under a card, or launched from one, proposes no epic.
+	plan := f.planTask(epic.ID)
+	_, worker := f.launch(leaf.ID)
+	for _, id := range []string{plan, worker.ID} {
+		f.toolRefused(id, "board_create", `{"kind":"epic","title":"From a scoped task"}`, string(board.CodeForbidden))
+	}
+
+	// The owner confirms one and dismisses the other.
+	var got BoardCard
+	f.call(http.MethodPost, "/api/board/cards/"+r.Card.ID+"/confirm", ``, http.StatusOK, &got)
+	if !got.Confirmed || got.ExpiresAt != nil || got.PinnedSHA != gitOutput(t, f.repo, "rev-parse", "HEAD") {
+		t.Fatalf("confirmed = %+v", got)
+	}
+	f.call(http.MethodPost, "/api/board/cards/"+second.ID+"/dismiss", `{}`, http.StatusOK, &got)
+	if got.Status != board.StatusCancelled {
+		t.Fatalf("dismissed = %+v", got)
+	}
+	// Each frees a place under the cap.
+	f.toolOK(task, "board_create", `{"kind":"epic","title":"After the owner decided"}`)
+	f.toolOK(task, "board_create", `{"kind":"epic","title":"Sync"}`)
 }
 
 // Claim holds a pending subtask for "Do whole story", within the one-hold
@@ -808,6 +1033,10 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	}
 	if d := f.card(r.Card.ID); d.Card.ParentID == nil || *d.Card.ParentID != story.ID || d.Card.Confirmed {
 		t.Fatalf("created = %+v", d.Card)
+	}
+	// Scoped to its container, the job proposes no epic at the root.
+	if r, failed := run("board_create", `{"kind":"epic","title":"Epic from the job"}`); !failed || r.Code != string(board.CodeForbidden) {
+		t.Fatalf("root epic from the job = %+v", r)
 	}
 
 	// board_get shows nothing outside the container: the path starts at it,

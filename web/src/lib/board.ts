@@ -128,7 +128,8 @@ export interface OutlineNode {
 
 /**
  * The plan as an outline: each parent's confirmed children in order, and its unconfirmed ones
- * apart as suggestions. The epic filter keeps one epic's subtree; cancelled cards leave unless shown.
+ * apart as suggestions. The epic filter keeps one epic's subtree, shown as it is even when the
+ * epic is an agent's proposal; cancelled cards leave unless shown.
  */
 export function buildOutline(cards: readonly Card[], filters: Filters): { roots: OutlineNode[]; suggested: OutlineNode[] } {
   const index = childIndex(cards);
@@ -142,9 +143,9 @@ export function buildOutline(cards: readonly Card[], filters: Filters): { roots:
       suggested: suggestion ? [] : kids.filter((k) => !k.confirmed).map((k) => node(k, true)),
     };
   };
-  let top = (index.get('') ?? []).filter(visible);
-  if (filters.epic) top = top.filter((c) => c.id === filters.epic);
-  return { roots: top.filter((c) => c.confirmed).map((c) => node(c, false)), suggested: filters.epic ? [] : top.filter((c) => !c.confirmed).map((c) => node(c, true)) };
+  const top = (index.get('') ?? []).filter(visible);
+  if (filters.epic) return { roots: top.filter((c) => c.id === filters.epic).map((c) => node(c, false)), suggested: [] };
+  return { roots: top.filter((c) => c.confirmed).map((c) => node(c, false)), suggested: top.filter((c) => !c.confirmed).map((c) => node(c, true)) };
 }
 
 /* ---------- The Map's layout ---------- */
