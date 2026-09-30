@@ -50,9 +50,9 @@ export function CardPanel({ inline, open, onClose, onClosed }: Readonly<{ inline
         )}
         {card ? (
           <>
+            {/* The title is the body's, where it is edited; the header names the card by its number. */}
             <KindIcon kind={card.kind} />
-            <span className="shrink-0 text-caption tabular-nums text-muted">#{card.seq}</span>
-            <span className="min-w-0 flex-1 truncate text-title text-ink" title={card.title}>{card.title}</span>
+            <span className="min-w-0 flex-1 text-ui tabular-nums text-body">#{card.seq}</span>
             <StatusMark status={card.status} label />
           </>
         ) : (
@@ -154,12 +154,12 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
         <div className="flex flex-col gap-2">
           {path.length > 0 && (
             <nav aria-label="Card path" className="flex min-w-0 flex-wrap items-center gap-1 text-caption text-muted">
-              {path.map((p) => (
+              {path.map((p, i) => (
                 <span key={p.id} className="flex min-w-0 items-center gap-1">
+                  {i > 0 && <span aria-hidden="true" className="text-faint">›</span>}
                   <button type="button" className="truncate hover:text-ink hover:underline" onClick={() => onOpen(p.id)}>
                     #{p.seq} {p.title}
                   </button>
-                  <span aria-hidden="true" className="text-faint">›</span>
                 </span>
               ))}
             </nav>
@@ -215,12 +215,13 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
         )}
 
         {check && (
-          <Note tone={check.exit === 0 ? 'muted' : 'error'} className="flex flex-col gap-1">
-            <span>
+          // The run's tail is a block of its own: a <pre> cannot sit inside the Note's paragraph.
+          <div className="flex flex-col gap-1">
+            <Note tone={check.exit === 0 ? 'muted' : 'error'}>
               <span className="font-mono text-code-sm">{check.cmd}</span> exited {check.exit} at {check.head}.
-            </span>
+            </Note>
             {check.tail && <pre className="max-h-40 overflow-auto rounded-sm bg-code-bg px-2 py-1.5 font-mono text-code-sm text-ink shadow-well">{check.tail}</pre>}
-          </Note>
+          </div>
         )}
         {triage && (
           <div className="flex flex-col gap-1.5 rounded-md bg-tint-well px-3 py-2">
