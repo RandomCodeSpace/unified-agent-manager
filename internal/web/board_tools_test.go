@@ -95,6 +95,13 @@ func toolNames(tools []agentapi.HostTool) []string {
 
 var allBoardTools = []string{"board_get", "board_list", "board_create", "board_edit", "board_checklist", "board_comment", "board_link", "board_claim", "board_split", "board_request"}
 
+// plannerTaskTools are the tools of a Task that gets the planner's:
+// uam_create_task follows them.
+var plannerTaskTools = append(slices.Clone(allBoardTools), createTaskToolName)
+
+// plainTaskTools are the tools of a Task without the planner's.
+var plainTaskTools = []string{createTaskToolName}
+
 // No schema takes an owner-only field or a status change (ADR 0005 §3,
 // §16, test plan 1), and every object in them is strict.
 func TestBoardToolSchemasAreStrictAndOwnerFree(t *testing.T) {
@@ -156,17 +163,17 @@ func TestBoardToolsOnlyInGitProjectsWhilePlannerIsOn(t *testing.T) {
 	f := newPlanner(t)
 	f.call(http.MethodPatch, "/api/settings", `{"planner":false}`, http.StatusOK, nil)
 	early := f.newTask(f.project)
-	if req := f.conversation(early.ID).Request(); req.Tools != nil || req.CallTool != nil {
-		t.Fatalf("a task opened with the planner off has tools: %q", toolNames(req.Tools))
+	if got := toolNames(f.conversation(early.ID).Request().Tools); !slices.Equal(got, plainTaskTools) {
+		t.Fatalf("a task opened with the planner off has tools: %q", got)
 	}
 	f.call(http.MethodPatch, "/api/settings", `{"planner":true}`, http.StatusOK, nil)
 	task := f.newTask(f.project)
-	if got := toolNames(f.conversation(task.ID).Request().Tools); !slices.Equal(got, allBoardTools) {
+	if got := toolNames(f.conversation(task.ID).Request().Tools); !slices.Equal(got, plannerTaskTools) {
 		t.Fatalf("tools = %q", got)
 	}
 	plain := f.newTask(addProject(t, f.m, t.TempDir()))
-	if req := f.conversation(plain.ID).Request(); req.Tools != nil {
-		t.Fatalf("a task of a project without git has tools: %q", toolNames(req.Tools))
+	if got := toolNames(f.conversation(plain.ID).Request().Tools); !slices.Equal(got, plainTaskTools) {
+		t.Fatalf("a task of a project without git has tools: %q", got)
 	}
 	// Turning the switch on reaches an earlier Task when its conversation
 	// opens again.
@@ -176,7 +183,7 @@ func TestBoardToolsOnlyInGitProjectsWhilePlannerIsOn(t *testing.T) {
 	if _, err := f.m.Commands(context.Background(), early.ID); err != nil {
 		t.Fatal(err)
 	}
-	if reopened := f.ts.prov.Last(); reopened.Request().SessionID != early.ID || len(reopened.Request().Tools) != len(allBoardTools) {
+	if reopened := f.ts.prov.Last(); reopened.Request().SessionID != early.ID || !slices.Equal(toolNames(reopened.Request().Tools), plannerTaskTools) {
 		t.Fatalf("reopened with %q", toolNames(reopened.Request().Tools))
 	}
 
@@ -228,8 +235,8 @@ func TestPromptReopensATaskForThePlannerSwitchedOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := prov.Last()
-	if first.Request().Tools != nil {
-		t.Fatalf("a task opened with the planner off has tools: %q", toolNames(first.Request().Tools))
+	if got := toolNames(first.Request().Tools); !slices.Equal(got, plainTaskTools) {
+		t.Fatalf("a task opened with the planner off has tools: %q", got)
 	}
 	if _, reopened := promptTask(t, m, prov, sum.ID, "before"); reopened {
 		t.Fatal("a prompt reopened a task that has the right tools")
@@ -244,7 +251,7 @@ func TestPromptReopensATaskForThePlannerSwitchedOn(t *testing.T) {
 	if !reopened || conv == first || first.Closes() != 1 || conv.Request().ConversationID != sum.ConversationID {
 		t.Fatalf("reopened %v, closes %d, request %+v", reopened, first.Closes(), conv.Request())
 	}
-	if got := toolNames(conv.Request().Tools); !slices.Equal(got, allBoardTools) || conv.Request().CallTool == nil {
+	if got := toolNames(conv.Request().Tools); !slices.Equal(got, plannerTaskTools) || conv.Request().CallTool == nil {
 		t.Fatalf("reopened with %q", got)
 	}
 	if next, reopened := promptTask(t, m, prov, sum.ID, "again"); reopened || next != conv {
@@ -274,12 +281,12 @@ func TestPromptReopensATaskThatLostTheTools(t *testing.T) {
 				t.Fatal(err)
 			}
 			first := prov.Last()
-			if got := toolNames(first.Request().Tools); !slices.Equal(got, allBoardTools) {
+			if got := toolNames(first.Request().Tools); !slices.Equal(got, plannerTaskTools) {
 				t.Fatalf("tools = %q", got)
 			}
 			lose(t, m, dir, project)
 			conv, reopened := promptTask(t, m, prov, sum.ID, "after")
-			if !reopened || first.Closes() != 1 || conv.Request().Tools != nil || conv.Request().CallTool != nil {
+			if !reopened || first.Closes() != 1 || !slices.Equal(toolNames(conv.Request().Tools), plainTaskTools) {
 				t.Fatalf("reopened %v, closes %d, tools %q", reopened, first.Closes(), toolNames(conv.Request().Tools))
 			}
 		})

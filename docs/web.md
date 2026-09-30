@@ -323,6 +323,24 @@ are logged only at debug level (`UAM_DEBUG=1`).
   still checks the current file; a temporary file requires the same
   explicit grant as an ordinary reference. A title or file-type hint cannot
   change those access rules.
+- **Tasks started by an agent**: the agent can call `uam_create_task` to
+  start a new Task in an existing Project. It gives the Project's ID or
+  exact name, the first message (up to 16 KiB, with no control characters
+  other than newlines and tabs), and optionally a name (up to 120
+  characters) and a model. The tool never creates a Project and takes no
+  directory. A name several Projects share is refused with their IDs. A
+  model is checked as for New task; without one, the Task gets the model
+  New task would pick from the Task defaults in Settings, and effort and
+  context size stay at their defaults. The new Task always starts in safe
+  mode. The call returns at once with the new Task's ID while its
+  conversation opens; the Task then appears in the sidebar with the message
+  sent. It runs on its own: nothing from it goes back to the Task that
+  started it. Its conversation begins with "Started by another task", and
+  the API lists that Task as `spawned_by`, which survives restarts. A Task
+  started this way does not get the tool itself. One Task can start at
+  most 5 Tasks, its subagents' calls included. Every Task it started counts
+  while its record exists, archived ones too; deleting one frees its
+  place. Only an Active Task can call the tool.
 - **Subagents**: when the agent delegates work to a subagent, the Task shows
   one compact row under the tool call that started it (name, status, and
   the duration once it ended) while the subagent runs. Once it is idle or has

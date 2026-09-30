@@ -56,6 +56,8 @@ interface Props {
   onInteractionUpdate: (sessionId: string, i: Interaction) => void;
   /** Leading header control (the drawer button on narrow screens). */
   leading?: ReactNode;
+  /** The name of the Task that started this one (`spawned_by`); empty when that Task is gone or unnamed. */
+  spawnedBy?: string;
 }
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
@@ -66,7 +68,7 @@ const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-c
 const PHONE = '(width < 40rem)';
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading }: Readonly<Props>) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy }: Readonly<Props>) {
   const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
   const tempAlias = meta?.temp_root_aliases?.[0];
@@ -625,6 +627,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
+            {session.spawned_by && visibleStart === 0 && !session.history_before && <Note>{spawnedBy ? `Started by another task, ${spawnedBy}.` : 'Started by another task.'}</Note>}
             {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
             {(visibleStart > 0 || session.history_before) && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</output>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}

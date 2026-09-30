@@ -809,6 +809,7 @@ func TestCreateWithRepeatedRequestIDReturnsSameSession(t *testing.T) {
 // the Task, on create and on reopen; without any, opens carry none.
 func TestOpensPassHostToolsBoundToTheTask(t *testing.T) {
 	m, prov, _ := newTestManager(t)
+	m.hostTools = nil
 	plain, conv := createSession(t, m, prov)
 	if req := conv.Request(); req.Tools != nil || req.CallTool != nil {
 		t.Fatalf("open without host tools = %+v", req)
@@ -819,7 +820,7 @@ func TestOpensPassHostToolsBoundToTheTask(t *testing.T) {
 	var mu sync.Mutex
 	var calls []agentapi.HostToolCall
 	tools := []agentapi.HostTool{{Name: "board_get", Parameters: map[string]any{"type": "object"}}, {Name: "board_list"}}
-	m.hostTools = func(taskID, _ string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
+	m.hostTools = func(taskID, _ string, _ bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
 		return tools, func(_ context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
 			mu.Lock()
 			defer mu.Unlock()

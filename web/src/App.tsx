@@ -822,6 +822,7 @@ export default function App() {
         onSessionUpdate={onSessionUpdate}
         onInteractionUpdate={onInteractionUpdate}
         leading={leading}
+        spawnedBy={taskName(state.sessions.find((s) => s.id === shown.spawned_by) ?? { name: '', title: '' })}
       />
       </DetailsProvider>
     );

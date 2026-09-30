@@ -359,8 +359,9 @@ func (m *Manager) boardToolsLocked(projectID string) bool {
 	return m.settings.Planner && p != nil && p.NoGit == ""
 }
 
-// taskHostToolsLocked is the Manager's hostTools: every planner tool, for a
-// Task of a Project with Git while the planner is on (boardToolsLocked).
+// taskHostToolsLocked is the planner's part of the Manager's hostTools
+// (taskToolsLocked): every planner tool, for a Task of a Project with Git
+// while the planner is on (boardToolsLocked).
 // Both are read when the conversation opens; a Task whose conversation
 // opened with another answer reopens on its next prompt (send), and every
 // call checks both again. Each call is tied to the Task while it runs
@@ -977,10 +978,10 @@ type taskCall struct {
 	done   chan struct{}
 }
 
-// startCall ties a planner call of the Task id to the Task. It refuses unless
-// the Task is active, checked under mu, where Settle and Archive change the
-// stage; the returned context ends with errTaskEnded once the Task leaves
-// the active stage. end must run when the call returns.
+// startCall ties a host tool call of the Task id to the Task. It refuses
+// unless the Task is active, checked under mu, where Settle and Archive
+// change the stage; the returned context ends with errTaskEnded once the
+// Task leaves the active stage. end must run when the call returns.
 func (m *Manager) startCall(ctx context.Context, id string) (context.Context, func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -988,7 +989,7 @@ func (m *Manager) startCall(ctx context.Context, id string) (context.Context, fu
 	case s == nil:
 		return nil, nil, newError(http.StatusNotFound, msgSessionNotFound)
 	case s.stage != StageActive:
-		return nil, nil, newError(http.StatusConflict, "the task is %s, so it can no longer use the planner", stageName(s.stage))
+		return nil, nil, newError(http.StatusConflict, "the task is %s, so it can no longer use uam tools", stageName(s.stage))
 	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	call := &taskCall{cancel: cancel, done: make(chan struct{})}

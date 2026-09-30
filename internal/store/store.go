@@ -393,6 +393,9 @@ type WebState struct {
 	TerminalSession string `json:"terminal_session,omitempty"`
 	// Imported marks a conversation created outside this web service.
 	Imported bool `json:"imported,omitempty"`
+	// SpawnedBy is the ID of the Task whose uam_create_task call created
+	// this one; empty for a Task the owner created or imported.
+	SpawnedBy string `json:"spawned_by,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -427,6 +430,7 @@ var knownWebStateFields = map[string]struct{}{
 	"archived_at":         {},
 	"terminal_session":    {},
 	"imported":            {},
+	"spawned_by":          {},
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {

@@ -154,10 +154,11 @@ type Manager struct {
 	terminals  map[*terminal]struct{}
 	terminalWG sync.WaitGroup
 	// hostTools, when set, returns the host tools the conversation of a Task
-	// in a Project registers and the CallTool bound to that Task. It runs
-	// with mu held, so it takes no lock and never uses the planner store.
-	// NewManager sets it to the planner's tools (board_tools.go).
-	hostTools func(taskID, projectID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
+	// in a Project registers, spawned when uam_create_task created the Task,
+	// and the CallTool bound to that Task. It runs with mu held, so it takes
+	// no lock and never uses the planner store. NewManager sets it to the
+	// planner's tools and uam_create_task (create_task.go).
+	hostTools func(taskID, projectID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
 	// skillDirs hold the built-in skills every Task's conversation loads
 	// (skills.go); Start installs them.
 	skillDirs []string
@@ -167,7 +168,7 @@ type Manager struct {
 	// accept runs the planner's acceptance commands, one per Project at a
 	// time (board_evidence.go).
 	accept acceptRunners
-	// calls are each Task's planner tool calls in progress, which settling or
+	// calls are each Task's host tool calls in progress, which settling or
 	// archiving the Task cancels and waits for (board_tools.go). Guarded by
 	// mu. boardCallHook, when set, runs as each such call starts; tests set
 	// it before the calls.
@@ -180,6 +181,9 @@ type Manager struct {
 	// boardJobs maps a card to its running planner job, a suggestion or a
 	// check (board_ai.go). Guarded by mu.
 	boardJobs map[string]string
+	// spawns maps each Task uam_create_task is creating to the Task that
+	// called it, until the create ends (create_task.go). Guarded by mu.
+	spawns map[string]string
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -222,7 +226,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		m.providers[p.Name()] = p
 		m.order = append(m.order, p.Name())
 	}
-	m.hostTools = m.taskHostToolsLocked
+	m.hostTools = m.taskToolsLocked
 	return m
 }
 
@@ -358,6 +362,9 @@ type webSession struct {
 	// It still requires the provider's external-holder check before sending.
 	terminalID string
 	imported   bool
+	// spawnedBy is the Task whose uam_create_task call created this one. It
+	// never changes, and such a Task does not get the tool itself.
+	spawnedBy string
 
 	persisted persistKey
 }
@@ -680,6 +687,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.projectID, s.model, s.title = web.ProjectID, web.Model, cleanTitle(web.Title)
 		s.terminalID = web.TerminalSession
 		s.imported = web.Imported
+		s.spawnedBy = web.SpawnedBy
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
@@ -882,7 +890,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
-		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt,
+		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy,
 	}
 }
 
@@ -1653,6 +1661,7 @@ func (m *Manager) flush() error {
 				Turn:              key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
+				SpawnedBy: s.spawnedBy,
 			},
 		})
 	}
@@ -1929,15 +1938,29 @@ type CreateRequest struct {
 	RequestID   string `json:"request_id"`
 	// Mode is safe (also when empty) or yolo.
 	Mode string `json:"mode"`
+	// spawnedBy is the Task whose uam_create_task call creates this one, and
+	// id the new Task's ID that call chose. Only that call sets them.
+	id, spawnedBy string
 }
 
 // Create opens a new provider conversation in a Project's directory, records
 // the session (a Task), and, when a prompt is given, submits it through the
 // same path as Submit.
 func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
-	prov, err := m.availableProvider(req.Provider)
+	prov, workdir, mode, err := m.checkCreate(&req)
 	if err != nil {
 		return SessionSummary{}, err
+	}
+	return m.createChecked(req, prov, workdir, mode)
+}
+
+// checkCreate refuses what Create refuses before it opens a conversation.
+// It cleans req's name, fills in its context size, and returns its provider,
+// its Project's directory and its mode.
+func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, store.Mode, error) {
+	prov, err := m.availableProvider(req.Provider)
+	if err != nil {
+		return nil, "", "", err
 	}
 	m.mu.Lock()
 	project := m.projects[req.ProjectID]
@@ -1949,28 +1972,34 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	selectionErr := m.validateSelectionLocked(prov.Name(), req.Model, req.Effort, req.ContextSize)
 	m.mu.Unlock()
 	if project == nil {
-		return SessionSummary{}, newError(http.StatusBadRequest, "unknown project_id %q", req.ProjectID)
+		return nil, "", "", newError(http.StatusBadRequest, "unknown project_id %q", req.ProjectID)
 	}
 	if selectionErr != nil {
-		return SessionSummary{}, selectionErr
+		return nil, "", "", selectionErr
 	}
-	name, err := cleanTaskName(req.Name)
-	if err != nil {
-		return SessionSummary{}, err
+	if req.Name, err = cleanTaskName(req.Name); err != nil {
+		return nil, "", "", err
 	}
 	mode := store.ModeSafe
 	if req.Mode != "" {
 		if mode, err = parseMode(req.Mode); err != nil {
-			return SessionSummary{}, err
+			return nil, "", "", err
 		}
 	}
 	if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
-		return SessionSummary{}, newError(http.StatusConflict, "the project directory %s no longer exists", workdir)
+		return nil, "", "", newError(http.StatusConflict, "the project directory %s no longer exists", workdir)
 	}
+	if strings.TrimSpace(req.Prompt) != "" && len(req.Prompt) > maxPromptBytes {
+		return nil, "", "", newError(http.StatusRequestEntityTooLarge, msgPromptTooLarge)
+	}
+	return prov, workdir, mode, nil
+}
+
+// createChecked is Create once checkCreate has taken req.
+func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workdir string, mode store.Mode) (SessionSummary, error) {
+	var err error
+	name := req.Name
 	hasPrompt := strings.TrimSpace(req.Prompt) != ""
-	if hasPrompt && len(req.Prompt) > maxPromptBytes {
-		return SessionSummary{}, newError(http.StatusRequestEntityTooLarge, msgPromptTooLarge)
-	}
 	reqID := req.RequestID
 	if reqID != "" && !validRequestID(reqID) {
 		return SessionSummary{}, newError(http.StatusBadRequest, msgRequestIDNotUUID)
@@ -1988,21 +2017,24 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	if m.isClosed() {
 		return SessionSummary{}, errShuttingDown
 	}
-	id, err := newUUID()
-	if err != nil {
-		return SessionSummary{}, fmt.Errorf("generate session id: %w", err)
+	id := req.id
+	if id == "" {
+		if id, err = newUUID(); err != nil {
+			return SessionSummary{}, fmt.Errorf("generate session id: %w", err)
+		}
 	}
 	now := m.now()
 	s := newSession(id, prov.Name(), name, workdir, "", now)
-	s.projectID, s.model, s.mode = project.ID, req.Model, mode
+	s.projectID, s.model, s.mode = req.ProjectID, req.Model, mode
 	s.effort, s.contextSize = req.Effort, req.ContextSize
 	s.createReq = reqID
+	s.spawnedBy = req.spawnedBy
 	// A new conversation has no earlier record: everything streams in.
 	s.history = HistoryLoaded
 	s.gen = 1
 	m.mu.Lock()
-	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}, project.ID)
-	s.convBoardTools = m.boardToolsLocked(project.ID)
+	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}, s)
+	s.convBoardTools = m.boardToolsLocked(s.projectID)
 	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	conv, err := prov.Open(ctx, open)
@@ -2021,9 +2053,13 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: project.ID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, SpawnedBy: req.spawnedBy},
 	}
-	if err := m.register(s, conv, rec, nil); err != nil {
+	var check func(*store.Config) error
+	if req.spawnedBy != "" {
+		check = func(cfg *store.Config) error { return spawnRoom(cfg, rec) }
+	}
+	if err := m.register(s, conv, rec, check); err != nil {
 		m.closeConversation(conv)
 		return SessionSummary{}, err
 	}
@@ -2211,13 +2247,12 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 	}
 }
 
-// withHostToolsLocked adds the host tools of req's Task, in the Project
-// projectID, when there are any, and the built-in skills to req. The caller
-// holds mu.
-func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, projectID string) agentapi.OpenRequest {
+// withHostToolsLocked adds the host tools of s, req's Task, when there are
+// any, and the built-in skills to req. The caller holds mu.
+func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) agentapi.OpenRequest {
 	req.SkillDirectories = m.skillDirs
 	if m.hostTools != nil {
-		req.Tools, req.CallTool = m.hostTools(req.SessionID, projectID)
+		req.Tools, req.CallTool = m.hostTools(req.SessionID, s.projectID, s.spawnedBy != "")
 	}
 	return req
 }
@@ -2264,7 +2299,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.cancelHistoryLocked(s)
 	s.gen++
 	gen := s.gen
-	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}, s.projectID)
+	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}, s)
 	boardTools := m.boardToolsLocked(s.projectID)
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
@@ -3316,11 +3351,11 @@ func (m *Manager) closeIdle(s *webSession) {
 
 // closeForToolsLocked closes s's conversation when it opened with or without
 // the planner tools and the Task now gets the other (boardToolsLocked), so
-// the openLocked that follows reopens it with the current ones. A
-// conversation that still runs or waits for anything, an idle subagent's
-// follow-up included, is left as it is. The transcript is kept for the
-// viewer; the reopen merges the provider's record into it. The caller holds
-// s.op.
+// the openLocked that follows reopens it with the current ones. Its other
+// host tools never change, so they are not compared. A conversation that
+// still runs or waits for anything, an idle subagent's follow-up included,
+// is left as it is. The transcript is kept for the viewer; the reopen
+// merges the provider's record into it. The caller holds s.op.
 func (m *Manager) closeForToolsLocked(s *webSession) {
 	m.mu.Lock()
 	if m.closed || s.removed || s.conv == nil || s.convBoardTools == m.boardToolsLocked(s.projectID) || s.runsOrWaitsLocked() ||
