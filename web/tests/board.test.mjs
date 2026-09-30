@@ -147,6 +147,11 @@ test('the outline sets unconfirmed children apart as suggestions, and filters ap
   const shown = buildOutline(cards, { epic: e1.id, showCancelled: true });
   assert.deepEqual(shown.roots[0].children[0].children.map((n) => n.card.id), [gone.id]);
   assert.deepEqual(shown.suggested, []);
+
+  const proposed = buildOutline([...cards, card({ parent_id: e2.id, confirmed: false })], { epic: e2.id, showCancelled: false });
+  assert.deepEqual(proposed.roots.map((n) => n.card.id), [e2.id], 'the epic filter shows an epic an agent proposed');
+  assert.equal(proposed.roots[0].children.length, 1, 'with its own suggestions under it');
+  assert.deepEqual(proposed.suggested, []);
 });
 
 test('the map lays kinds out in columns, centres parents on their children and never stacks rows', () => {

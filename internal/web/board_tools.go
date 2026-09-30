@@ -255,10 +255,11 @@ var boardToolSet = []boardTool{
 			"kind":   enumProp("Only cards of this kind.", string(board.KindEpic), string(board.KindStory), string(board.KindSubtask)),
 			"parent": stringProp("Only the direct children of this card. " + refDesc),
 		}), (*Manager).toolList),
-	defineTool("board_create", "Propose a story or subtask under an epic or story in your scope. It stays a proposal until the owner confirms it.",
-		toolSchema([]string{"kind", "parent", "title"}, map[string]any{
-			"kind":          enumProp("A story holds subtasks; a subtask is one piece of work.", string(board.KindStory), string(board.KindSubtask)),
-			"parent":        stringProp("The epic or story to create it under. " + refDesc),
+	defineTool("board_create", "Propose a card: an epic at the root of the board, with no parent; a story under an epic; or a subtask under a story or an epic. "+
+		"A task started from a card creates only under that card's container, so it proposes no epics. The card stays a proposal until the owner confirms it.",
+		toolSchema([]string{"kind", "title"}, map[string]any{
+			"kind":          enumProp("An epic holds stories and subtasks and needs no parent; a story holds subtasks; a subtask is one piece of work.", string(board.KindEpic), string(board.KindStory), string(board.KindSubtask)),
+			"parent":        stringProp("For a story or subtask: the epic or story to create it under. Leave it out for an epic. " + refDesc),
 			"title":         stringProp("One line."),
 			"desc":          stringProp("Markdown description."),
 			"win_condition": stringProp("One line saying what done means."),
@@ -649,9 +650,14 @@ type createArgs struct {
 func (m *Manager) toolCreate(ctx context.Context, sc boardScope, in createArgs) (toolReply, error) {
 	var reply toolReply
 	err := m.withBoard(func(st *board.Store) error {
-		parent, err := sc.card(ctx, st, in.Parent)
-		if err != nil {
-			return err
+		// No parent is the root, where the store takes only an epic, and only
+		// from a Task with no scope.
+		var parent board.Card
+		if strings.TrimSpace(in.Parent) != "" {
+			var err error
+			if parent, err = sc.card(ctx, st, in.Parent); err != nil {
+				return err
+			}
 		}
 		checklist := make([]board.Check, 0, len(in.Checklist))
 		for _, text := range in.Checklist {
@@ -662,7 +668,11 @@ func (m *Manager) toolCreate(ctx context.Context, sc boardScope, in createArgs) 
 		if err != nil {
 			return err
 		}
-		reply = cardReply(c, "Created #%d under #%d. It stays a proposal until the owner confirms it.", c.Seq, parent.Seq)
+		where := "at the root of the board"
+		if parent.ID != "" {
+			where = fmt.Sprintf("under #%d", parent.Seq)
+		}
+		reply = cardReply(c, "Created #%d %s. It stays a proposal until the owner confirms it.", c.Seq, where)
 		return nil
 	})
 	return reply, err

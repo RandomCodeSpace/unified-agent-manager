@@ -80,6 +80,37 @@ describe('planner', () => {
     expect(tree.getByRole('treeitem', { name: /^#1 Faster first load of long transcripts/ }).textContent).toContain('4/10');
   });
 
+  test('an epic an agent proposed folds into +N suggested at the root, and the epic filter shows it to confirm or dismiss', async () => {
+    const { user } = renderApp('#planner=p3');
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board?project_id=p3'),
+      async (real) => {
+        const data = await (await real()).json();
+        const base = data.cards.find((c: { seq: number }) => c.seq === 32);
+        const epic = { ...base, id: 'cp3-90', seq: 90, rank: 99, title: 'Offline reading', win_condition: '', status: 'planned', progress: { done: 0, total: 0, proposed: 0 }, confirmed: false, expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString(), pinned_sha: '' };
+        return reply(200, { ...data, cards: [...data.cards, epic] });
+      },
+    );
+    try {
+      const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' });
+      expect(tree.queryByRole('treeitem', { name: /^#90 / })).toBeNull();
+      await user.click(tree.getByRole('treeitem', { name: '+1 suggested' }));
+      expect(await tree.findByRole('treeitem', { name: '#90 Offline reading, Planned' })).toBeTruthy();
+      // Filtered to it, the Tree shows the proposal itself, with its badge, Confirm and Dismiss.
+      await pick(user, within(document.body), 'Epic', /^#90 /);
+      const filtered = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      const row = within(await filtered.findByRole('treeitem', { name: '#90 Offline reading, Planned' }));
+      expect(row.getByText('Suggested')).toBeTruthy();
+      expect(row.getByRole('button', { name: 'Confirm Offline reading' })).toBeTruthy();
+      expect(row.getByRole('button', { name: 'Dismiss Offline reading' })).toBeTruthy();
+      expect(filtered.queryByRole('treeitem', { name: /^#32 / })).toBeNull();
+      expect(filtered.queryByRole('treeitem', { name: '+1 suggested' })).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test('accepting a split under a story adds siblings after the subtask, cancels it and moves its hold', async () => {
     const { user, tree } = await openPlanner();
     await user.click(screen.getByRole('button', { name: 'Inbox, 6 pending' }));

@@ -86,7 +86,7 @@ const ExpiryWindow = 14 * 24 * time.Hour
 // against the Task.
 const (
 	CapCreated     = 20 // cards a Task may create
-	CapUnconfirmed = 10 // live unconfirmed children a Task may add to one container
+	CapUnconfirmed = 10 // live unconfirmed children a Task may add to one container, the root included
 	CapComments    = 20 // non-automatic comments a Task may add to one card
 )
 

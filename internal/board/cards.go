@@ -101,12 +101,16 @@ type Detail struct {
 var errReadOnly = refuse(CodeReadOnly, "Unassigned cards are read-only; move the card into a Project first")
 
 // Create adds a card. Agents may create stories and subtasks under a
-// container in their scope, within the caps; the owner may create any kind
-// anywhere, and the owner's card confirms its unconfirmed ancestors.
+// container in their scope, and a Task with no scope may propose epics at
+// the root, within the caps; the owner may create any kind anywhere the kind
+// rules allow, and the owner's card confirms its unconfirmed ancestors.
 func (s *Store) Create(ctx context.Context, a Actor, in NewCard) (Card, error) {
 	o := opCreate
-	if in.ParentID == "" || in.Kind == KindEpic {
+	if in.ParentID == "" {
 		o = opCreateTop
+		if in.Kind == KindEpic {
+			o = opCreateEpic
+		}
 	}
 	if err := permit(a, o, ""); err != nil {
 		return Card{}, err
@@ -166,6 +170,8 @@ func (t *txn) create(a Actor, project, parentID string, in NewCard) (*node, erro
 		if err := t.inScope(o, a, parent); err != nil {
 			return nil, err
 		}
+	} else if err := t.atRoot(a); err != nil {
+		return nil, err
 	}
 	n := &node{stored: StatusPlanned, Card: Card{
 		ProjectID: project, Kind: in.Kind, ParentID: parentID, Title: strings.TrimSpace(in.Title),
