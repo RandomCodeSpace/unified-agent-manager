@@ -108,6 +108,27 @@ describe('pickers', () => {
     expect(await log().findByText('/review')).toBeTruthy();
   });
 
+  test('a command that cannot run is dimmed and says why', async () => {
+    const { user } = await openTask('t3');
+    await user.type(composer(), '/compact');
+    const row = await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/compact/ });
+    expect(row.getAttribute('aria-disabled')).toBe('true');
+    expect(row.className).toContain('opacity-45');
+    expect(await screen.findAllByText('This native command has no supported web handler yet')).not.toHaveLength(0);
+  });
+
+  test('command text output keeps its lines, in mono', async () => {
+    const { user } = await openTask('t3');
+    await user.type(composer(), '/context');
+    await user.keyboard('{Enter}');
+    expect(composer().value).toBe('/context ');
+    await user.keyboard('{Enter}');
+    const out = await screen.findByText(/^Context Usage/);
+    expect(out.tagName).toBe('PRE');
+    expect(out.textContent?.split('\n')).toHaveLength(4);
+    expect(out.textContent).toContain('  · · · · · · · · · ·   ○ System Prompt     9.5k   (7%)');
+  });
+
   test('$ lists skills only, and Escape closes the list', async () => {
     const { user } = await openTask('t3');
     await user.type(composer(), '$');

@@ -957,7 +957,17 @@ export function install(): { received: Received[] } {
       if (!t) return fail(404, 'session not found');
       if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
       const name = String(body.name ?? '');
-      if (!st.commands.some((c) => c.name === name)) return fail(404, `/${name} is not one of this task's commands`);
+      const offered = st.commands.find((c) => c.name === name);
+      if (!offered) return fail(404, `/${name} is not one of this task's commands`);
+      if (offered.disabled_reason) return fail(409, offered.disabled_reason);
+      // A read-only command answers with native text laid out for a terminal, and starts no turn.
+      if (name === 'context') {
+        const text = 'Context Usage\n  ○ ○ ○ ◌ ◌ · · · · ·   gpt-6-luna · 17k/128k tokens (13%)\n  · · · · · · · · · ·   ○ System Prompt     9.5k   (7%)\n  · · · · · · · · · ·   · Free Space      104.8k  (82%)';
+        const sub: Submission = { request_id: String(body.request_id ?? ''), status: 'accepted', time: now(), command_result: { kind: 'text', text } };
+        t.last_submission = sub;
+        broadcast('submission', { session_id: t.id, submission: sub }, t.id);
+        return json(202, sub);
+      }
       // Mode switches apply at once, mid-turn too, and add no transcript line.
       if (name === 'autopilot' || name === 'allow-all') {
         const arg = String(body.arguments ?? '').trim().toLowerCase();

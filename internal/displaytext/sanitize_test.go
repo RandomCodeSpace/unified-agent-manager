@@ -19,6 +19,18 @@ func TestSanitizeRemovesTerminalControls(t *testing.T) {
 	}
 }
 
+func TestSanitizeTextKeepsLines(t *testing.T) {
+	in := "Context Usage\r\n  \u25cb System\t9.5k\rnext\n\x1b[31mred\x1b[0m\x00\x1b]52;c;YQ==\x07"
+	want := "Context Usage\n  \u25cb System\t9.5k\nnext\nred"
+	got := SanitizeText(in)
+	if got != want {
+		t.Fatalf("SanitizeText() = %q, want %q", got, want)
+	}
+	if twice := SanitizeText(got); twice != got {
+		t.Fatalf("SanitizeText() is not idempotent: once %q, twice %q", got, twice)
+	}
+}
+
 func TestSanitizeIsUTF8SafeAndIdempotent(t *testing.T) {
 	in := string([]byte{'o', 'k', 0xff, 0xfe}) + " 🚀\x1b[999999999999999999999Cdone"
 	got := Sanitize(in)

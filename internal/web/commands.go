@@ -219,8 +219,9 @@ func (m *Manager) saveCommandSubmission(s *webSession, sub Submission, publish b
 }
 
 func cleanCommandResult(value agentapi.CommandResult) *agentapi.CommandResult {
-	value.Text = clipRunes(displaytext.Sanitize(value.Text), maxPromptBytes)
+	// Output and a prefilled prompt keep their lines; a title is one line.
+	value.Text = clipRunes(displaytext.SanitizeText(value.Text), maxPromptBytes)
 	value.Title = clipRunes(displaytext.Sanitize(value.Title), maxDetailRunes)
-	value.PrefillInput = clipRunes(displaytext.Sanitize(value.PrefillInput), maxPromptBytes)
+	value.PrefillInput = clipRunes(displaytext.SanitizeText(value.PrefillInput), maxPromptBytes)
 	return &value
 }

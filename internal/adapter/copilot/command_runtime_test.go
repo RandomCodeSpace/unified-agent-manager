@@ -78,6 +78,15 @@ func TestWebCommandResultsDoNotStartForeground(t *testing.T) {
 	}
 }
 
+func TestWebCommandTextKeepsLines(t *testing.T) {
+	h, _ := runtimeHarness(t)
+	h.fs.invoke = &rpc.SlashCommandTextResult{Text: "Context Usage\r\n  System Prompt  9.5k\x1b[31m\n  Free Space  104.8k"}
+	result, err := h.conv.(agentapi.CommandExecutor).ExecuteCommand(context.Background(), "goal", agentapi.Prompt{})
+	if err != nil || result == nil || result.Text != "Context Usage\n  System Prompt  9.5k\n  Free Space  104.8k" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
 func TestWebAutopilotLifecycleAndStop(t *testing.T) {
 	h, runtime := runtimeHarness(t)
 	mode := rpc.SessionModeAutopilot

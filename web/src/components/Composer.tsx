@@ -1031,6 +1031,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     );
   } else if (commandResult?.kind === 'text' && commandResult.markdown) {
     resultBody = <Markdown text={commandResult.text} />;
+  } else if (commandResult?.kind === 'text') {
+    // Native output is laid out for a terminal (aligned columns, glyph bars): mono keeps it.
+    resultBody = <pre translate="no" role="status" className="font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{commandResult.text || 'Command completed.'}</pre>;
   } else if (commandResult && commandResult.kind !== 'action') {
     resultBody = <p className="whitespace-pre-wrap" role="status">{commandResult.text || 'Command completed.'}</p>;
   }
@@ -1140,7 +1143,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       {commandResult && commandResult.kind !== 'action' && (
         <div className="px-3.5 py-2 text-ui text-body">
           <div className="flex items-center gap-2 pb-1"><span className="text-caption text-muted">Command result</span><span className="flex-1" /><Button size="icon-sm" variant="subtle" aria-label="Dismiss command result" onClick={() => dismissResult()}><X /></Button></div>
-          {resultBody}
+          {/* Long output (/skills, /env) scrolls here instead of pushing the composer off screen. */}
+          <div className="max-h-[min(40dvh,360px)] overflow-y-auto overscroll-contain">{resultBody}</div>
         </div>
       )}
       {queueStrip.mounted && (
