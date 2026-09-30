@@ -1,7 +1,7 @@
 import { Ellipsis, Inbox, KanbanSquare, PictureInPicture2, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, plannerErrorText, type BoardJob, type Project } from '../../api';
-import { boardOf, childIndex } from '../../lib/board';
+import { boardOf, childIndex, epicOf } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
 import { Note, Skeleton, useApp, useMedia } from '../common';
@@ -192,10 +192,26 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
   useLayoutEffect(() => {
     boardsNow.current = boards;
   });
-  /** Shows a card, switching to its Board when another is shown: callers outside the planner (a transcript's card chip) name only the card. */
+  /**
+   * Shows a card, switching to its Board when another is shown: callers outside the planner (a
+   * transcript's card chip, the Task's panel) name only the card. The Planner's own filters never
+   * hide the card it selects: an epic filter it is not under clears, and a cancelled card shows cancelled ones.
+   */
   const openCard = useCallback((id: string) => {
     const home = boardOf(boardsNow.current, id);
-    setUi((u) => ({ ...(home && home !== u.project ? { project: home, epic: null, creating: null } : {}), selected: id, panel: 'card' }));
+    const cards = home ? (boardsNow.current[home].data?.cards ?? []) : [];
+    const card = cards.find((c) => c.id === id);
+    setUi((u) => {
+      const moved = !!home && home !== u.project;
+      const outsideEpic = !!u.epic && !!card && epicOf(card, new Map(cards.map((c) => [c.id, c])))?.id !== u.epic;
+      return {
+        ...(moved ? { project: home, creating: null } : {}),
+        epic: moved || outsideEpic ? null : u.epic,
+        ...(card?.status === 'cancelled' ? { showCancelled: true } : {}),
+        selected: id,
+        panel: 'card',
+      };
+    });
     onShowPlanner();
   }, [setUi, onShowPlanner]);
 

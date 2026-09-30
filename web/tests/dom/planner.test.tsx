@@ -164,6 +164,18 @@ describe('planner', () => {
     await waitFor(() => expect(document.title).toBe('(12) UAM'));
   });
 
+  test('a cancelled card opened from a link turns Show cancelled on, so the Tree lists what it selects', async () => {
+    const { user, tree } = await openPlanner();
+    await act(() => api.planner.status('cp1-20', 'cancelled', 'The release goes without it'));
+    await waitFor(() => expect(tree.queryByRole('treeitem', { name: /^#20 / })).toBeNull());
+    const card = await openCard(user, tree, 21);
+    await user.click(card.getByRole('button', { name: /^#20 / }));
+    expect(await screen.findByLabelText('Card #20')).toBeTruthy();
+    await closeCard(user);
+    expect(screen.getByRole('switch', { name: 'Show cancelled' }).getAttribute('aria-checked')).toBe('true');
+    expect(tree.getByRole('treeitem', { name: /^#20 / }).getAttribute('aria-selected')).toBe('true');
+  });
+
   test('the pop-out is a floating panel on the page, with no separate window where the API is missing', async () => {
     const { user } = await openPlanner();
     await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
@@ -862,6 +874,19 @@ describe('the floating pop-out', () => {
     await waitFor(() => expect(header().textContent).toBe('Planner'));
     expect(screen.getByRole('button', { name: 'Project: unified-agent-manager' })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: 'Epic' }).textContent).toContain('#1 Faster first load');
+    const plan = within(screen.getByRole('tree', { name: 'Plan outline' }));
+    expect(plan.getByRole('treeitem', { name: /^#2 / }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  test('a card opened from a Task’s panel shows in the Planner, clearing an epic filter that would hide it', async () => {
+    const { user } = await openPlanner();
+    await pick(user, within(document.body), 'Epic', /^#18 /);
+    await user.click((await sidebar()).getAllByRole('button', { name: /Fix re-attach redraw regression/ })[0]);
+    await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
+    await user.click(await within(await panel()).findByRole('treeitem', { name: /^#2 / }));
+    expect(await screen.findByLabelText('Card #2')).toBeTruthy();
+    await closeCard(user);
+    expect(screen.getByRole('combobox', { name: 'Epic' }).textContent).toContain('All epics');
     const plan = within(screen.getByRole('tree', { name: 'Plan outline' }));
     expect(plan.getByRole('treeitem', { name: /^#2 / }).getAttribute('aria-selected')).toBe('true');
   });
