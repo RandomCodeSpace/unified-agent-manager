@@ -111,6 +111,10 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 		result, err = executor.ExecuteCommand(ctx, req.Name, agentapi.Prompt{Text: req.Arguments, Files: files, Attachments: blobs})
 		cancel()
 	}
+	if result != nil {
+		// The reply carries the same cleaned result as the saved and broadcast one.
+		result = cleanCommandResult(*result)
+	}
 	sub := Submission{RequestID: req.RequestID, Status: SubmissionAccepted, Time: m.now(), CommandResult: result}
 	if err != nil {
 		sub.Status, sub.Error = SubmissionRejected, shortError(err)
@@ -219,8 +223,9 @@ func (m *Manager) saveCommandSubmission(s *webSession, sub Submission, publish b
 }
 
 func cleanCommandResult(value agentapi.CommandResult) *agentapi.CommandResult {
-	value.Text = clipRunes(displaytext.Sanitize(value.Text), maxPromptBytes)
+	// Output and a prefilled prompt keep their lines; a title is one line.
+	value.Text = clipRunes(displaytext.SanitizeText(value.Text), maxPromptBytes)
 	value.Title = clipRunes(displaytext.Sanitize(value.Title), maxDetailRunes)
-	value.PrefillInput = clipRunes(displaytext.Sanitize(value.PrefillInput), maxPromptBytes)
+	value.PrefillInput = clipRunes(displaytext.SanitizeText(value.PrefillInput), maxPromptBytes)
 	return &value
 }

@@ -20,6 +20,7 @@ import { Composer, type Answering, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
+import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript, WorkingLabel } from './Transcript';
 import { FileReferencesProvider } from './FileReferences';
@@ -78,6 +79,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [jump, setJump] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [panel, setPanel] = useState<PanelView | null>(null);
+  /** A command's output in its side panel; like the other right panels, it replaces them. */
+  const [output, setOutput] = useState<CommandOutput | null>(null);
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
   const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
   const working = session.state === 'working' || session.state === 'starting';
@@ -89,12 +97,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [locateError, setLocateError] = useState('');
   const density = useDensity();
   const scroller = useRef<HTMLElement>(null);
-  const previewOpened = useCallback(() => { setPanel(null); setFilesOpen(false); onSheet(false); }, [onSheet]);
+  const previewOpened = useCallback(() => { setPanel(null); setFilesOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
-  useLayoutEffect(() => { if (sheetOpen || panel || filesOpen) closePreview(false); }, [sheetOpen, panel, filesOpen, closePreview]);
+  useLayoutEffect(() => { if (sheetOpen || panel || filesOpen || output) closePreview(false); }, [sheetOpen, panel, filesOpen, output, closePreview]);
   // The Changes sheet can open from outside the header (the composer's count); it replaces Files.
   if (sheetOpen && filesOpen) setFilesOpen(false);
+  if (sheetOpen && output) setOutput(null);
   const atBottom = useRef(true);
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
@@ -280,6 +289,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const panelPresence = usePresence(!!shownPanel);
   const sheetPresence = usePresence(sheetOpen);
   const filesPresence = usePresence(filesOpen);
+  const outputPresence = usePresence(!!output);
+  const [lastOutput, setLastOutput] = useState<CommandOutput | null>(null);
+  if (output && output !== lastOutput) setLastOutput(output);
+  const outputView = output ?? lastOutput;
   const [lastPanel, setLastPanel] = useState<PanelView | null>(null);
   if (shownPanel && shownPanel !== lastPanel) setLastPanel(shownPanel);
   const panelView = shownPanel ?? lastPanel;
@@ -296,15 +309,32 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closePreview(false);
     setPanel(null);
     setFilesOpen(false);
+    setOutput(null);
     onSheet(true);
   }, [onSheet, closePreview]);
   const toggleFiles = useCallback(() => {
     closePreview(false);
     setPanel(null);
+    setOutput(null);
     onSheet(false);
     setFilesOpen((open) => !open);
   }, [onSheet, closePreview]);
   const closeFiles = useCallback(() => setFilesOpen(false), []);
+  const showOutput = useCallback((next: CommandOutput) => {
+    // A reply that lands after this Task was left must not close the next Task's Changes (App state).
+    if (!alive.current) return;
+    closePreview(false);
+    setPanel(null);
+    setFilesOpen(false);
+    onSheet(false, false);
+    setOutput(next);
+  }, [closePreview, onSheet]);
+  const closeOutput = useCallback(() => {
+    // Esc from the composer leaves focus there; a close from inside the panel lands on the conversation.
+    const inside = !!document.activeElement?.closest('[data-command-output]');
+    setOutput(null);
+    if (inside) scroller.current?.focus({ preventScroll: true });
+  }, []);
   const { startRename } = actions;
   const renameInHeader = useCallback(() => startRename(session.id, 'header'), [startRename, session.id]);
 
@@ -313,14 +343,16 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     panelOpener.current = opener;
     if (sheetOpen) onSheet(false);
     setFilesOpen(false);
+    setOutput(null);
     setPanel(view);
   }
 
   // Closes every right side panel without returning focus to its opener.
-  const closeSidePanels = useCallback(() => {
+  const closeSidePanels = useCallback((keepOutput = false) => {
     closePreview(false);
     setPanel(null);
     setFilesOpen(false);
+    if (!keepOutput) setOutput(null);
     panelOpener.current = null;
     onSheet(false, false);
   }, [closePreview, onSheet]);
@@ -332,10 +364,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const onConversationPointerDown = (e: PointerEvent) => {
     conversationPress.current = sidePanelInline && e.button === 0 && e.currentTarget.contains(e.target as Node) && !document.querySelector('[data-popup]:not([data-popup="tooltip"])');
   };
-  const onConversationClick = (e: MouseEvent) => {
+  const onConversationClick = (e: MouseEvent, keepOutput = false) => {
     if (!conversationPress.current || e.detail === 0) return;
     conversationPress.current = false;
-    closeSidePanels();
+    closeSidePanels(keepOutput);
   };
 
   // Esc closes the panel when no popup owns the key.
@@ -636,7 +668,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </section>
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
-        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={onConversationClick}>
+        {/* A press here closes the inline panels too, but not the command output: the next command is typed here. */}
+        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
           {/* The working label stays centred just above the composer; while it shows, "Jump to bottom" is an arrow beside it, so it never moves. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
             <div className="relative flex">
@@ -656,12 +689,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </Appear>
           </div>
-          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} />
+          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} onCommandOutput={showOutput} />
         </div>
       </div>
 
       {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
       {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
+      {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}
       {panelPresence.mounted && panelView && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
       {preview.selection && !sheetOpen && !shownPanel && <FilePreview selection={preview.selection} inline={sidePanelInline} onClose={() => closePreview()} />}
     </div>

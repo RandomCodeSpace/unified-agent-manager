@@ -282,7 +282,7 @@ func (c *conversation) ExecuteCommand(ctx context.Context, name string, args age
 		if value.SandboxSessionChange != nil {
 			return nil, fmt.Errorf("%w: unexpected sandbox change", agentapi.ErrSubmissionUncertain)
 		}
-		result.Kind, result.Text = "text", displaytext.Sanitize(value.Text)
+		result.Kind, result.Text = "text", displaytext.SanitizeText(value.Text)
 		result.Markdown = value.Markdown != nil && *value.Markdown
 	case *rpc.SlashCommandCompletedResult:
 		if value.Mode != nil {
@@ -290,14 +290,20 @@ func (c *conversation) ExecuteCommand(ctx context.Context, name string, args age
 				return nil, err
 			}
 		}
-		result.Kind, result.Text = "completed", cleanPointer(value.Message)
+		result.Kind = "completed"
+		if value.Message != nil {
+			result.Text = displaytext.SanitizeText(*value.Message)
+		}
 	case *rpc.SlashCommandSelectSubcommandResult:
 		result.Kind, result.Title, result.Command = "select", displaytext.Sanitize(value.Title), name
 		for _, option := range value.Options {
 			result.Options = append(result.Options, agentapi.CommandOption{Name: displaytext.Sanitize(option.Name), Description: displaytext.Sanitize(option.Description), Group: cleanPointer(option.Group)})
 		}
 	case *rpc.SlashCommandAddTimelineEntryResult:
-		result.Kind, result.Text, result.PrefillInput = "text", displaytext.Sanitize(value.Entry.Text), cleanPointer(value.PrefillInput)
+		result.Kind, result.Text = "text", displaytext.SanitizeText(value.Entry.Text)
+		if value.PrefillInput != nil {
+			result.PrefillInput = displaytext.SanitizeText(*value.PrefillInput)
+		}
 	default:
 		return nil, fmt.Errorf("%w: command returned an unsupported result", agentapi.ErrSubmissionUncertain)
 	}
