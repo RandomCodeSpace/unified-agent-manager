@@ -6,6 +6,7 @@
 export interface HistoryItem {
   kind: string;
   text?: string;
+  attachments?: readonly unknown[];
 }
 
 export interface HistoryQueued {
@@ -36,11 +37,11 @@ export function historyEntries(items: readonly HistoryItem[] | undefined, queue:
   return entries;
 }
 
-/** The newest user message with text (the one a failed, stopped or interrupted turn ran on), for Resend; null when there is none. */
+/** The newest user message with text or attachments (the one a failed, stopped or interrupted turn ran on), for Resend; null when there is none. */
 export function lastPrompt<T extends HistoryItem>(items: readonly T[] | undefined): T | null {
   for (let i = (items?.length ?? 0) - 1; i >= 0; i--) {
     const it = items![i];
-    if (it.kind === 'user' && it.text?.trim()) return it;
+    if (it.kind === 'user' && (it.text?.trim() || it.attachments?.length)) return it;
   }
   return null;
 }

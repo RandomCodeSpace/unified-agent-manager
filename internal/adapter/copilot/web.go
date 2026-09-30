@@ -2898,7 +2898,11 @@ func (c *conversation) undeliveredSteerLocked(st *steer) {
 	}
 	receipt := agentapi.Item{ID: st.id, Kind: agentapi.ItemUser, Text: st.prompt, Time: st.at, Delivery: agentapi.DeliverySteer, SteerStatus: agentapi.SteerNotDelivered, Attachments: st.attachments}
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &receipt})
-	it := agentapi.Item{ID: "steer-undelivered:" + st.id, Kind: agentapi.ItemNotice, Time: st.at, Text: "Steer not delivered: " + reason + "\n\n" + quote(st.prompt)}
+	text := "Steer not delivered: " + reason
+	if st.prompt != "" { // an attachment-only steer has no text to quote
+		text += "\n\n" + quote(st.prompt)
+	}
+	it := agentapi.Item{ID: "steer-undelivered:" + st.id, Kind: agentapi.ItemNotice, Time: st.at, Text: text}
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &it})
 }
 

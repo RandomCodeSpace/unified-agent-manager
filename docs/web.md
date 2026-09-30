@@ -430,10 +430,12 @@ are logged only at debug level (`UAM_DEBUG=1`).
   PDFs need a model that accepts them: Copilot reports this per model, `auto`
   is not checked, and the button says so when the Task's model takes text
   only. Attachments go with the message, whether it is sent, queued or
-  steered. In the conversation, images show as thumbnails that open
-  larger on click and other files as chips that open the stored copy, also
-  after a reload. UAM keeps the files outside the project (see Settle,
-  archive, and delete).
+  steered. A message can be only attachments or file references, with no
+  text; blank text beside them is not sent. A message with no text and
+  nothing attached cannot be sent. In the conversation, images show as
+  thumbnails that open larger on click and other files as chips that open
+  the stored copy, also after a reload. UAM keeps the files outside the
+  project (see Settle, archive, and delete).
 - **Images from tools**: when a tool returns an image, such as a screenshot
   or Copilot's `view` of an image file, UAM keeps a copy with the Task and
   shows it as a thumbnail under that tool call in the turn's activity, for
@@ -531,9 +533,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   It then shows the title, 60 characters at most, and writes it into the
   Copilot session, so `copilot --resume` shows it too. Only the first
   message counts: later messages, commands, reopened Tasks and a changed
-  setting never retitle a Task. A name you type wins, even while the title
-  is on its way. If the model fails or takes more than 20 s, the provider's
-  title stays, and the service log says why. Each title costs AI credits,
+  setting never retitle a Task, and a first message with no text is not
+  titled. A name you type wins, even while the title is on its way. If the
+  model fails or takes more than 20 s, the provider's title stays, and the
+  service log says why. Each title costs AI credits,
   about 0.002 with gpt-6-luna.
 - **Custom models (bring your own model)**: Settings → Models → Custom
   models adds OpenAI-compatible endpoints to Copilot's model list, next to

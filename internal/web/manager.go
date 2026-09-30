@@ -2361,8 +2361,9 @@ type turnInput struct {
 }
 
 // Submit sends one prompt in mode: ModeSend ("" too), ModeQueue or
-// ModeSteer. A repeated request ID returns the recorded outcome, or "queued"
-// while the prompt waits in the queue, without contacting the provider.
+// ModeSteer. A prompt needs text, a file or an attachment. A repeated request
+// ID returns the recorded outcome, or "queued" while the prompt waits in the
+// queue, without contacting the provider.
 func (m *Manager) Submit(id string, req PromptRequest) (Submission, error) {
 	if !validRequestID(req.RequestID) {
 		return Submission{}, newError(http.StatusBadRequest, msgRequestIDNotUUID)
@@ -2376,7 +2377,11 @@ func (m *Manager) Submit(id string, req PromptRequest) (Submission, error) {
 		return Submission{}, newError(http.StatusBadRequest, "mode must be send, queue or steer")
 	}
 	if strings.TrimSpace(req.Text) == "" {
-		return Submission{}, newError(http.StatusBadRequest, "prompt text is required")
+		if len(req.Files) == 0 && len(req.Attachments) == 0 {
+			return Submission{}, newError(http.StatusBadRequest, "prompt text, a file or an attachment is required")
+		}
+		// A message of only files or uploads goes with no text, not blanks.
+		req.Text = ""
 	}
 	if len(req.Text) > maxPromptBytes {
 		return Submission{}, newError(http.StatusRequestEntityTooLarge, msgPromptTooLarge)

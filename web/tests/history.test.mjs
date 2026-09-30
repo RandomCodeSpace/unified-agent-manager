@@ -86,10 +86,12 @@ test('editing a recalled entry makes it the new draft', () => {
   assert.equal(historyKey(first.browsing, entries, edited, edited.length, 'Escape'), null);
 });
 
-test('the last prompt is the newest user message with text; steer messages count, blanks and tool rows do not', async () => {
+test('the last prompt is the newest user message with text or attachments; steer messages count, blanks and tool rows do not', async () => {
   const { lastPrompt } = await import('../src/lib/history.ts');
   assert.equal(lastPrompt(items)?.text, 'third');
   assert.equal(lastPrompt([{ kind: 'user', text: 'a' }, { kind: 'user', text: 'b', delivery: 'steer' }, { kind: 'tool' }, { kind: 'user', text: ' ' }])?.text, 'b');
+  const attached = { kind: 'user', text: '', attachments: [{ id: 'a1', name: 'shot.png' }] };
+  assert.equal(lastPrompt([{ kind: 'user', text: 'a' }, attached, { kind: 'user', text: ' ', attachments: [] }]), attached);
   assert.equal(lastPrompt([{ kind: 'assistant', text: 'x' }]), null);
   assert.equal(lastPrompt(undefined), null);
   assert.equal(lastPrompt([]), null);
