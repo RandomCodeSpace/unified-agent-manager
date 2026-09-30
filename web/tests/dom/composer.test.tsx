@@ -117,16 +117,21 @@ describe('pickers', () => {
     expect(await screen.findAllByText('This native command has no supported web handler yet')).not.toHaveLength(0);
   });
 
-  test('command text output keeps its lines, in mono', async () => {
+  test('a longer command output opens in the side panel, in mono with its lines, not in the composer', async () => {
     const { user } = await openTask('t3');
     await user.type(composer(), '/context');
+    await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/context/ });
     await user.keyboard('{Enter}');
     expect(composer().value).toBe('/context ');
     await user.keyboard('{Enter}');
-    const out = await screen.findByText(/^Context Usage/);
+    const region = await screen.findByRole('region', { name: 'Output of /context' });
+    const out = within(region).getByText(/^Context Usage/);
     expect(out.tagName).toBe('PRE');
     expect(out.textContent?.split('\n')).toHaveLength(4);
     expect(out.textContent).toContain('  · · · · · · · · · ·   ○ System Prompt     9.5k   (7%)');
+    expect(screen.queryByText('Command result')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Close command output' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
   });
 
   test('$ lists skills only, and Escape closes the list', async () => {
