@@ -78,6 +78,7 @@ func TestHoldFromBeforeBaselineBlobs(t *testing.T) {
 	f.launch(one.ID, "task-1")
 	f.raw(`ALTER TABLE holds DROP COLUMN baseline_blobs`)
 	f.raw(`DROP TABLE import_refs`)
+	f.raw(`ALTER TABLE requests DROP COLUMN decided_by`)
 	f.raw(`UPDATE meta SET v = '1' WHERE k = 'schema_version'`)
 	f.must(f.s.Close())
 	s, err := Open(f.path, Options{})

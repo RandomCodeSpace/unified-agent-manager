@@ -548,6 +548,40 @@ describe('owner authoring', () => {
     expect(await tree.findByRole('treeitem', { name: '#15 Cover anchoring with a DOM test, Done' })).toBeTruthy();
   });
 
+  test('Back to To do moves a done subtask back through the status API, with an optional comment', async () => {
+    const { user, tree } = await openPlanner();
+    const status = vi.spyOn(api.planner, 'status');
+    try {
+      const panel = await openCard(user, tree, 4);
+      expect(panel.queryByRole('button', { name: 'Mark done' })).toBeNull();
+      await user.click(panel.getByRole('button', { name: 'Back to To do' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Move #4 back to To do?' }));
+      await user.type(dialog.getByRole('textbox', { name: 'Comment (optional)' }), 'A cold start still misses the cache.');
+      await user.click(dialog.getByRole('button', { name: 'Back to To do' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Move #4 back to To do?' })).toBeNull());
+      expect(status).toHaveBeenCalledWith('cp1-4', 'todo', 'A cold start still misses the cache.');
+      await closeCard(user);
+      expect(await tree.findByRole('treeitem', { name: '#4 Cache archive pages in IndexedDB, To do' })).toBeTruthy();
+    } finally {
+      status.mockRestore();
+    }
+  });
+
+  test('a done subtask under a cancelled card offers no Back to To do, which the service refuses there', async () => {
+    const { user, tree } = await openPlanner();
+    // #12 holds done #13 and #14; cancelling it cancels only its open #15.
+    await act(() => api.planner.status('cp1-12', 'cancelled', 'Anchoring moved to the new list.'));
+    await user.click(screen.getByRole('switch', { name: 'Show cancelled' }));
+    await waitFor(() => expect(tree.getByRole('treeitem', { name: /^#12 .*, Cancelled$/ })).toBeTruthy());
+    const panel = await openCard(user, tree, 13);
+    expect(within(panel.getByRole('navigation', { name: 'Card path' })).getByRole('button', { name: /^#12 / })).toBeTruthy();
+    expect(panel.queryByRole('button', { name: 'Back to To do' })).toBeNull();
+    await closeCard(user);
+    expect(itemsOf(await openMenu(user, 'Actions for #13'))).not.toContain('Back to To do');
+    await user.keyboard('{Escape}');
+    await expect(api.planner.status('cp1-13', 'todo', '')).rejects.toThrow(/#13 is under cancelled #12; restore that first/);
+  });
+
   test('Move to… puts a subtask last under another story', async () => {
     const { user, tree } = await openPlanner();
     const panel = await openCard(user, tree, 22);
@@ -775,6 +809,18 @@ describe('parity with the service', () => {
     const panel = await openCard(user, tree, 8);
     const trail = within(await panel.findByRole('region', { name: 'Evidence trail' }));
     expect(await trail.findByText('Touched files may be incomplete')).toBeTruthy();
+  });
+
+  test('the evidence trail tells a request accepted automatically from the owner’s, and keeps its evidence', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 4);
+    const trail = within(await panel.findByRole('region', { name: 'Evidence trail' }));
+    const request = within(await trail.findByRole('article', { name: 'Done request on #4' }));
+    expect(request.getByText('Accepted automatically')).toBeTruthy();
+    expect(request.getByText('make test')).toBeTruthy();
+    expect(request.getByText('exit 0')).toBeTruthy();
+    expect(request.queryByRole('button', { name: 'Accept' })).toBeNull();
+    expect(await panel.findByText('Accepted automatically: the acceptance command passed')).toBeTruthy();
   });
 
   test('Purge reports how many cards went', async () => {

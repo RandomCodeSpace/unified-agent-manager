@@ -163,7 +163,8 @@ func TestCheckAtHead(t *testing.T) {
 
 // Editing a command, the Project default a subtask inherits or its own,
 // shows the green rows of earlier runs stale (ADR 0005 §6) in the inbox,
-// the card detail and the board frame, with nothing stored.
+// the card detail and the board frame, with nothing stored. The Task changes
+// nothing, so its green request is flagged and waits (decision 5).
 func TestEditingACommandShowsEarlierGreenRowsStale(t *testing.T) {
 	acceptEnv(t)
 	f := newPlanner(t)

@@ -112,6 +112,194 @@ func TestDoneRequest(t *testing.T) {
 	_ = epic
 }
 
+// ADR 0005 decision 5: a done request whose acceptance command passed is
+// accepted as it is filed, through the owner's Accept path, and recorded as
+// uam's decision with an automatic comment and its evidence.
+func TestDoneRequestAcceptedWhenItsCommandPassed(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "make check"))
+	f.launch(one.ID, "task-1")
+	agent := Agent("task-1", "sub")
+	evidence := json.RawMessage(`{"accept":{"cmd":"make check","exit":0}}`)
+	done := func(ref string, a Actor, passed string) Request {
+		t.Helper()
+		r, err := f.s.FileRequest(f.ctx, a, ref, RequestInput{Kind: RequestDone, Comment: "finished " + ref, Evidence: evidence, PassedCmd: passed})
+		f.must(err)
+		return r
+	}
+	// A command the subtask no longer resolves to accepts nothing.
+	stale := done(one.ID, agent, "make old")
+	if stale.Status != RequestPending || f.card(one.ID).Status != StatusDoing {
+		t.Fatalf("filed with another command: %+v", stale)
+	}
+	got := done(one.ID, agent, "make check")
+	c, d := f.card(one.ID), f.detail(one.ID)
+	if got.Status != RequestAccepted || got.DecidedBy != AuthorUAM || got.DecidedAt == nil || got.DecisionComment != "" ||
+		string(got.Evidence) != string(evidence) || got.AgentID != "sub" {
+		t.Fatalf("accepted request = %+v", got)
+	}
+	if c.Status != StatusDone || c.HeldBy != "" || c.PendingRequests != 0 || d.Holds[0].EndReason != ReleaseAccepted {
+		t.Fatalf("accepted subtask = %+v, holds %+v", c, d.Holds)
+	}
+	if r, err := f.s.Request(f.ctx, stale.ID); err != nil || r.Status != RequestWithdrawn || r.DecidedBy != "" {
+		t.Fatalf("the replaced request = %+v, %v", r, err)
+	}
+	close, auto := d.Comments[len(d.Comments)-2], d.Comments[len(d.Comments)-1]
+	if close.Author != "task:task-1" || close.Body != "finished "+one.ID || !close.Close || close.Automatic ||
+		auto.Author != AuthorUAM || auto.Body != AutoAcceptComment || !auto.Automatic || auto.Close {
+		t.Fatalf("comments = %+v", d.Comments)
+	}
+	wantStatus(t, f.card(story.ID), StatusDoing)
+	// The last subtask rolls the story and the epic up.
+	f.launch(two.ID, "task-2")
+	done(two.ID, Agent("task-2", ""), "make check")
+	wantStatus(t, f.card(story.ID), StatusDone)
+	wantStatus(t, f.card(epic.ID), StatusDone)
+	if !hasComment(f.comments(story.ID), "uam: Closed with:") {
+		t.Fatalf("story comments = %v", f.comments(story.ID))
+	}
+
+	// A proposal and its proposed story are confirmed with it, and the owner
+	// can still tell its acceptance from their own.
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	planner := Agent("planner", "")
+	proposedStory := f.create(planner, epic.ID, KindStory, "Proposed story")
+	proposed := f.create(planner, proposedStory.ID, KindSubtask, "Proposed")
+	three := f.create(owner, epic.ID, KindSubtask, "Three")
+	_, err := f.s.Edit(f.ctx, owner, three.ID, Patch{AcceptCmd: &sql.NullString{Valid: true}})
+	f.must(err)
+	f.launch(three.ID, "task-3")
+	worker := Agent("task-3", "")
+	pending := done(three.ID, worker, "")
+	_, err = f.s.Claim(f.ctx, worker, proposed.ID, Baseline{Head: "h"})
+	f.must(err)
+	done(proposed.ID, worker, "make check")
+	if c := f.card(proposed.ID); c.Status != StatusDone || !c.Confirmed() || c.PinnedSHA != "" || !f.card(proposedStory.ID).Confirmed() {
+		t.Fatalf("accepted proposal = %+v, story %+v", c, f.card(proposedStory.ID))
+	}
+	byOwner, err := f.s.Accept(f.ctx, owner, pending.ID, "")
+	f.must(err)
+	if byOwner.DecidedBy != AuthorOwner || hasComment(f.comments(three.ID), AutoAcceptComment) {
+		t.Fatalf("the owner's acceptance = %+v, comments %v", byOwner, f.comments(three.ID))
+	}
+}
+
+// A passed done request that would close a container still holding
+// proposals, which closing cancels, waits for the owner and names them.
+func TestPassedDoneRequestWaitsWhenItWouldCloseProposals(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "make check"))
+	passed := RequestInput{Kind: RequestDone, Comment: "done", PassedCmd: "make check"}
+	f.launch(one.ID, "task-1")
+	worker := Agent("task-1", "")
+	followUp := f.create(worker, story.ID, KindSubtask, "Follow-up")
+	// #4 is still open, so accepting #3 closes nothing.
+	got, err := f.s.File(f.ctx, worker, one.ID, passed)
+	f.must(err)
+	if got.Request.Status != RequestAccepted || got.Closes != nil {
+		t.Fatalf("filing that closes nothing = %+v", got)
+	}
+	// Accepting the last confirmed subtask would close the story and cancel
+	// the proposal, so it waits.
+	f.launch(two.ID, "task-2")
+	got, err = f.s.File(f.ctx, Agent("task-2", ""), two.ID, passed)
+	f.must(err)
+	if got.Request.Status != RequestPending || got.Closes == nil || got.Closes.ID != story.ID ||
+		len(got.Proposals) != 1 || got.Proposals[0].ID != followUp.ID {
+		t.Fatalf("filing that would close proposals = %+v", got)
+	}
+	wantStatus(t, f.card(two.ID), StatusDoing)
+	wantStatus(t, f.card(followUp.ID), StatusPlanned)
+	wantStatus(t, f.card(story.ID), StatusDoing)
+	// With the proposal dismissed, it is accepted and the story closes.
+	_, err = f.s.Dismiss(f.ctx, owner, followUp.ID)
+	f.must(err)
+	got, err = f.s.File(f.ctx, Agent("task-2", ""), two.ID, passed)
+	f.must(err)
+	if got.Request.Status != RequestAccepted || got.Closes != nil {
+		t.Fatalf("filing with no proposal left = %+v", got)
+	}
+	wantStatus(t, f.card(story.ID), StatusDone)
+	wantStatus(t, f.card(epic.ID), StatusDone)
+}
+
+// A blank acceptance command is none: it is stored trimmed, and one stored
+// blank before that resolves to none, so nothing passes it.
+func TestBlankAcceptCmdIsNone(t *testing.T) {
+	f := newFixture(t)
+	_, _, one, two := f.tree()
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, " \t\n"))
+	if ps, err := f.s.ProjectSettings(f.ctx, proj); err != nil || ps.AcceptCmd != "" {
+		t.Fatalf("settings = %+v, %v", ps, err)
+	}
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "  make check\n"))
+	if ps, _ := f.s.ProjectSettings(f.ctx, proj); ps.AcceptCmd != "make check" {
+		t.Fatalf("a padded command is stored as %q", ps.AcceptCmd)
+	}
+	edited, err := f.s.Edit(f.ctx, owner, one.ID, Patch{AcceptCmd: &sql.NullString{String: "  ", Valid: true}})
+	f.must(err)
+	if c := edited.Card; c.AcceptCmd == nil || *c.AcceptCmd != "" {
+		t.Fatalf("a blank card command = %v", c.AcceptCmd)
+	}
+	// Stored blank before commands were trimmed.
+	f.raw(`UPDATE project_settings SET accept_cmd = ' ' WHERE project_id = ?`, proj)
+	f.raw(`UPDATE cards SET accept_cmd = ' ' WHERE id = ?`, one.ID)
+	f.launch(one.ID, "task-1")
+	f.launch(two.ID, "task-2")
+	for _, tc := range []struct{ ref, task string }{{one.ID, "task-1"}, {two.ID, "task-2"}} {
+		agent := Agent(tc.task, "")
+		fin, err := f.s.CheckFinishable(f.ctx, agent, tc.ref)
+		if err != nil || fin.AcceptCmd != "" {
+			t.Fatalf("finishable %s = %+v, %v", tc.ref, fin, err)
+		}
+		r, err := f.s.FileRequest(f.ctx, agent, tc.ref, RequestInput{Kind: RequestDone, Comment: "x", PassedCmd: " "})
+		if err != nil || r.Status != RequestPending {
+			t.Fatalf("filed on %s = %+v, %v", tc.ref, r, err)
+		}
+	}
+}
+
+// Only a done request is accepted automatically, and only with the command
+// the subtask resolves to: a proposed command never counts.
+func TestOnlyAPassedDoneRequestIsAcceptedAutomatically(t *testing.T) {
+	f := newFixture(t)
+	_, story, one, two := f.tree()
+	f.launch(one.ID, "task-1")
+	agent := Agent("task-1", "")
+	// No command resolves, so nothing passed.
+	r, err := f.s.FileRequest(f.ctx, agent, one.ID, RequestInput{Kind: RequestDone, Comment: "x", ProposedAcceptCmd: "make check", PassedCmd: "make check"})
+	f.must(err)
+	if r.Status != RequestPending || f.card(one.ID).Status != StatusDoing {
+		t.Fatalf("filed without a command: %+v", r)
+	}
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "make check"))
+	for _, in := range []RequestInput{
+		{Kind: RequestCancel, Comment: "x", PassedCmd: "make check"},
+		{Kind: RequestBlocked, Comment: "x", PassedCmd: "make check"},
+	} {
+		_, err := f.s.FileRequest(f.ctx, agent, one.ID, in)
+		wantCode(t, err, CodeInvalid)
+	}
+	for _, kind := range []RequestKind{RequestCancel, RequestBlocked} {
+		r, err := f.s.FileRequest(f.ctx, agent, one.ID, RequestInput{Kind: kind, Comment: "x"})
+		f.must(err)
+		if r.Status != RequestPending {
+			t.Fatalf("%s request = %+v", kind, r)
+		}
+	}
+	split, err := f.s.Split(f.ctx, agent, one.ID, []SplitChild{{Title: "Half"}})
+	f.must(err)
+	if split.Request == nil || split.Request.Status != RequestPending {
+		t.Fatalf("split = %+v", split)
+	}
+	if c := f.card(one.ID); c.Status != StatusDoing || c.PendingRequests != 4 {
+		t.Fatalf("subtask = %+v", c)
+	}
+	_, _ = story, two
+}
+
 func TestRejectRequest(t *testing.T) {
 	f := newFixture(t)
 	_, _, one, _ := f.tree()

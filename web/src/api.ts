@@ -370,6 +370,8 @@ export interface BoardRequest {
   created_at: string;
   decided_at?: string;
   decision_comment?: string;
+  /** Who decided: the owner, or `uam` for a done request accepted automatically because its acceptance command passed. */
+  decided_by?: 'owner' | 'uam';
 }
 
 export interface CardComment {

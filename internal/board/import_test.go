@@ -501,6 +501,12 @@ func TestOpenUpgradesAV1Board(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A request the owner decided before decided_by was recorded (v4).
+	now := stamp(time.Now())
+	if _, err := s.db.Exec(`INSERT INTO requests (id, card_id, task_id, kind, comment, status, created_at, decided_at, decision_comment)
+		VALUES ('old', ?, 'task-1', 'done', 'finished', 'accepted', ?, ?, 'fine')`, card.ID, now, now); err != nil {
+		t.Fatal(err)
+	}
 	_ = s.Close()
 	migrations = all
 	s, err = Open(path, Options{})
@@ -514,6 +520,9 @@ func TestOpenUpgradesAV1Board(t *testing.T) {
 	}
 	if got, err := s.Card(context.Background(), card.ID); err != nil || got.Title != "Before" {
 		t.Fatalf("card after the upgrade = %+v, %v", got, err)
+	}
+	if r, err := s.Request(context.Background(), "old"); err != nil || r.Status != RequestAccepted || r.DecisionComment != "fine" || r.DecidedAt == nil || r.DecidedBy != "" {
+		t.Fatalf("a request decided before the upgrade = %+v, %v", r, err)
 	}
 	r, err := s.Import(context.Background(), sourceCopy(t, "import-v11"), websiteOnly)
 	if err != nil || r.Imported != 12 {

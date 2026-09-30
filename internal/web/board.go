@@ -524,14 +524,23 @@ func (m *Manager) BoardProject(id string) (BoardProject, error) {
 	return BoardProject{AcceptCmd: ps.AcceptCmd, Git: noGit}, err
 }
 
-// SetBoardProject sets the Project id's default acceptance command.
+// SetBoardProject sets the Project id's default acceptance command, and
+// returns it as stored (trimmed).
 func (m *Manager) SetBoardProject(id, acceptCmd string) (BoardProject, error) {
 	a, err := m.boardOwner(m.ctx, id)
 	if err != nil {
 		return BoardProject{}, err
 	}
-	err = m.withBoard(func(st *board.Store) error { return st.SetProjectAcceptCmd(m.ctx, a, id, acceptCmd) })
-	return BoardProject{AcceptCmd: acceptCmd}, err
+	var ps board.ProjectSettings
+	err = m.withBoard(func(st *board.Store) error {
+		if err := st.SetProjectAcceptCmd(m.ctx, a, id, acceptCmd); err != nil {
+			return err
+		}
+		var err error
+		ps, err = st.ProjectSettings(m.ctx, id)
+		return err
+	})
+	return BoardProject{AcceptCmd: ps.AcceptCmd}, err
 }
 
 // BoardCardDetail is one card with its comments, requests and attempts.
@@ -1056,7 +1065,7 @@ func (p preambleInput) String() string {
 	default:
 		b.WriteString("- Finish with a done request.\n")
 	}
-	b.WriteString("- Never mark anything done yourself: only the owner closes work.\n")
+	b.WriteString("- Never mark anything done yourself. A done request is refused when the acceptance command fails, accepted at once when it passes and nothing is flagged, and otherwise waits for the owner; the reply says why.\n")
 	return b.String()
 }
 
@@ -1246,6 +1255,8 @@ type BoardRequest struct {
 	CreatedAt       time.Time           `json:"created_at"`
 	DecidedAt       *time.Time          `json:"decided_at,omitempty"`
 	DecisionComment string              `json:"decision_comment,omitempty"`
+	// DecidedBy is owner, or uam for a done request accepted automatically.
+	DecidedBy string `json:"decided_by,omitempty"`
 }
 
 // BoardComment is one comment on a card; its author is owner, task:<id> or
@@ -1323,7 +1334,7 @@ func boardRequest(r board.Request) BoardRequest {
 	return BoardRequest{
 		ID: r.ID, CardID: r.CardID, TaskID: r.TaskID, AgentID: r.AgentID, Kind: r.Kind, Comment: r.Comment,
 		Payload: jsonObject(r.Payload), Evidence: jsonObject(r.Evidence), Flags: nonNil(r.Flags), BaseRevision: r.BaseRevision,
-		Status: r.Status, CreatedAt: r.CreatedAt, DecidedAt: r.DecidedAt, DecisionComment: r.DecisionComment,
+		Status: r.Status, CreatedAt: r.CreatedAt, DecidedAt: r.DecidedAt, DecisionComment: r.DecisionComment, DecidedBy: r.DecidedBy,
 	}
 }
 

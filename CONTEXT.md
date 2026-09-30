@@ -17,9 +17,9 @@
 | **Card** | One node on a Board: an epic, a story or a subtask. |
 | **Epic** / **Story** | Container cards. Their status and progress are derived from the subtasks under them, and they are done only when every confirmed subtask is done. |
 | **Subtask** | The leaf card, the unit of work a Task is launched on. It is never called a "task": a Task is always a UAM conversation. |
-| **Confirmed** | A card the owner has saved, launched, accepted or restored. Agents can't change its fields directly; they file change requests. |
+| **Confirmed** | A card the owner has saved, launched, accepted or restored, or a subtask whose done Request was accepted automatically (an agent's own proposal included), with its ancestors. Agents can't change its fields directly; they file change requests. |
 | **Hold** | The link between a doing subtask and the Task working on it. It ends only through the release rules in ADR 0005. |
-| **Request** | An agent's ask for an owner decision on a card: done, cancel, blocked, split or change. Pending Requests form the Inbox. |
+| **Request** | An agent's ask for an owner decision on a card: done, cancel, blocked, split or change. A done Request is accepted automatically when the owner's acceptance command passes and nothing holds it back; it waits for the owner when no command is set, the command could not run or changed during the run, its evidence is flagged, or accepting it would close a container that still has proposals. A failing command refuses it. Pending Requests form the Inbox. |
 | **Finishing guard** | The refusal to finish a subtask with open checklist items, the blocked flag, or open blockers. Only the owner can override it. |
 
 See the [web guide](docs/web.md) for current behavior. Earlier terminal ADRs

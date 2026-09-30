@@ -303,8 +303,9 @@ var boardToolSet = []boardTool{
 				"win_condition": stringProp("One line saying what done means."),
 			})),
 		}), (*Manager).toolSplit),
-	defineTool("board_request", "Ask the owner to decide on a card. done: you finished the subtask you hold; its acceptance command must pass, and evidence of the change is attached. "+
-		"cancel: the card should not be done. blocked: you can't go on, because of the blocker card or what the comment says.",
+	defineTool("board_request", "File a request on a card. done: you finished the subtask you hold, and evidence of the change is attached. "+
+		"When the owner set an acceptance command, it runs and must pass. If it passes and nothing is flagged, the subtask is done at once; otherwise the request waits for the owner to accept, and the result says why. "+
+		"cancel: the card should not be done. blocked: you can't go on, because of the blocker card or what the comment says. The owner decides cancel and blocked.",
 		toolSchema([]string{"ref", "kind", "comment"}, map[string]any{
 			"ref":                 refProp,
 			"kind":                enumProp("What to ask for.", string(board.RequestDone), string(board.RequestCancel), string(board.RequestBlocked)),
@@ -832,7 +833,7 @@ func (m *Manager) toolClaim(ctx context.Context, sc boardScope, in refArgs) (too
 	if err != nil {
 		return toolReply{}, err
 	}
-	return cardReply(c, "You hold #%d now. Finish it with a done request (board_request); only the owner closes it.", c.Seq), nil
+	return cardReply(c, "You hold #%d now. Finish it with a done request (board_request); you never mark it done yourself.", c.Seq), nil
 }
 
 type splitArgs struct {
@@ -906,8 +907,9 @@ func (m *Manager) toolRequest(ctx context.Context, sc boardScope, in requestArgs
 
 // requestDone files a done claim (ADR 0005 §6): evaluateClaim gathers the
 // evidence and runs the subtask's acceptance command, then the request is
-// filed. Like every call of the Task it ends when the Task is settled or
-// archived (startCall): the run is killed and nothing is filed.
+// filed, and accepted at once when the command passed (decision 5). Like
+// every call of the Task it ends when the Task is settled or archived
+// (startCall): the run is killed and nothing is filed.
 func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs) (toolReply, error) {
 	task := sc.actor.TaskID
 	var c board.Card
@@ -931,14 +933,22 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 			Touched: touched, OtherHolds: m.otherHolds(task), Transcript: span,
 		})
 	}
+	var filed board.Filing
 	if err == nil {
 		err = m.withBoard(func(st *board.Store) error {
-			_, err := st.FileRequest(ctx, sc.actor, c.ID, res.Request)
+			var err error
+			if filed, err = st.File(ctx, sc.actor, c.ID, res.Request); err != nil || filed.Request.Status != board.RequestAccepted {
+				return err
+			}
+			c, err = st.Card(ctx, c.ID)
 			return err
 		})
 	}
 	if err != nil {
 		return toolReply{}, err
+	}
+	if filed.Request.Status == board.RequestAccepted {
+		return cardReply(c, "#%d is done; the acceptance command passed. Claim the next pending subtask, if any.", c.Seq), nil
 	}
 	ev := res.Evidence
 	byTask := 0
@@ -947,8 +957,8 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 			byTask++
 		}
 	}
-	text := fmt.Sprintf("Filed a done request on #%d for the owner to accept. Evidence: +%d −%d in %d files (%d touched by this task), %d commits",
-		c.Seq, ev.Diff.Added, ev.Diff.Deleted, len(ev.Diff.Files), byTask, len(ev.Commits))
+	text := fmt.Sprintf("Filed a done request on #%d; it waits for the owner to accept, because %s. Evidence: +%d −%d in %d files (%d touched by this task), %d commits",
+		c.Seq, waitReasons(res, filed), ev.Diff.Added, ev.Diff.Deleted, len(ev.Diff.Files), byTask, len(ev.Commits))
 	if ev.Accept != nil && ev.Accept.Exit >= 0 {
 		text += fmt.Sprintf(", acceptance command exited %d", ev.Accept.Exit)
 	}
@@ -960,6 +970,43 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 		text += " The transcript uam holds does not reach back to the hold's start, so the files touched by this task may be incomplete."
 	}
 	return cardReply(c, "%s", text), nil
+}
+
+// flagReasons says why each flag leaves a done request for the owner.
+var flagReasons = map[string]string{
+	board.FlagAcceptanceCouldNotRun: "the acceptance command could not run",
+	board.FlagBaselineMissing:       "the hold's baseline commit is gone",
+	board.FlagNoChangeInTree:        "nothing changed since the hold began",
+	board.FlagTestsOrBuildChanged:   "the change touches test or build files",
+	board.FlagOverlap:               "the change overlaps another task's hold",
+}
+
+// waitReasons says why the done claim res, filed as filed, waits for the
+// owner (ADR 0005 decision 5): no command, its flags, or a container it
+// would close with proposals. With none of those, the command that passed is
+// no longer the subtask's.
+func waitReasons(res claimResult, filed board.Filing) string {
+	var reasons []string
+	if res.Evidence.Accept == nil {
+		reasons = append(reasons, "no acceptance command is set")
+	}
+	for _, f := range res.Request.Flags {
+		reasons = append(reasons, flagReasons[f])
+	}
+	if filed.Closes != nil {
+		refs := make([]string, len(filed.Proposals))
+		for i, p := range filed.Proposals {
+			refs[i] = fmt.Sprintf("#%d", p.Seq)
+		}
+		reasons = append(reasons, fmt.Sprintf("accepting it would close #%d, which still has proposals %s", filed.Closes.Seq, strings.Join(refs, ", ")))
+	}
+	switch len(reasons) {
+	case 0:
+		return "the acceptance command changed while it ran"
+	case 1:
+		return reasons[0]
+	}
+	return strings.Join(reasons[:len(reasons)-1], ", ") + " and " + reasons[len(reasons)-1]
 }
 
 // openHold returns the open hold of task among holds.

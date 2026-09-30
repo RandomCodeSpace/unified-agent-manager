@@ -174,10 +174,26 @@ function seedBoard(big: boolean): Seeded {
       payload: { children: [{ title: 'Read merged pull requests since the last tag', win_condition: 'The list matches git log between the two tags.' }] },
     }),
     req(6, 29, 'cancel', 't18', 'The pull request template already produces upgrade notes; this section would repeat them.'),
+    // Decided: accepted as it was filed, because the Project's acceptance command passed (ADR 0005 decision 5).
+    req(7, 4, 'done', 't4', 'Archived pages are cached per cursor in IndexedDB; a revisit reads no network.', {
+      status: 'accepted',
+      created_at: ago(60 * 26),
+      decided_at: ago(60 * 26),
+      decided_by: 'uam',
+      evidence: {
+        baseline: { head: '7a2b3c4', dirty: [] },
+        diff: { added: 48, deleted: 6, files: [{ path: 'web/src/lib/historyCache.ts', added: 48, deleted: 6, by_task: true }] },
+        commits: [{ sha: '8d25dbb', subject: 'feat(web): cache archive pages in IndexedDB' }],
+        accept: { cmd: 'make test', cmd_hash: 'sha256:5d1e…a90c', head: '8d25dbb', dirty: false, exit: 0, tail: 'ok  \tinternal/web\t2.087s\n# tests 204\n# pass 204\n# fail 0', ran_at: ago(60 * 26), stale: false },
+        transcript: { task_id: 't4', from_item: 'h310', to_item: 'h-done' },
+        checklist: { done: 0, total: 0 },
+      },
+    }),
   ];
   const comment = (n: number, author: string, body: string, min: number, automatic = false): CardComment => ({ id: `cm${n}`, author, body, automatic, created_at: ago(min) });
   const comments: Record<string, CardComment[]> = {
     'cp1-3': [comment(1, 'task:t3', 'Cursors now encode the item id; the restart test passes.', 60 * 30), comment(2, 'owner', 'Accepted: cursors survive the restart.', 60 * 29)],
+    'cp1-4': [comment(6, 'task:t4', 'Archived pages are cached per cursor in IndexedDB; a revisit reads no network.', 60 * 26), comment(7, 'uam', 'Accepted automatically: the acceptance command passed', 60 * 26, true)],
     'cp1-5': [comment(3, 'uam', 'attempt #1 ended, uncommitted: web/src/lib/historyCache.ts', 60 * 3, true), comment(4, 'task:t15', 'Eviction keeps the reading window and the live tail.', 30)],
     'cp1-10': [comment(5, 'owner', 'The sign-in proxy already compresses every response.', 60 * 50)],
   };
@@ -188,6 +204,7 @@ function seedBoard(big: boolean): Seeded {
     'cp1-20': [hold(4, 't19', 40, 'c41d2e8')],
     'cp1-28': [hold(5, 't18', 9, 'c41d2e8')],
     'cp1-3': [hold(6, 't3', 60 * 31, '7a2b3c4', [60 * 29, 'accepted'])],
+    'cp1-4': [hold(7, 't4', 60 * 28, '7a2b3c4', [60 * 26, 'accepted'])],
   };
   return { cards, requests, comments, holds };
 }
@@ -344,7 +361,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
           say(leaf, 'uam', `closed unconfirmed with #${c.seq}`, true);
           again = true;
         }
-        const closes = leavesUnder(c.id, index).filter((l) => l.status === 'done').map((l) => comments[l.id]?.at(-1)?.body).filter(Boolean);
+        // Each done subtask's close comment: its last one that is not automatic.
+        const closes = leavesUnder(c.id, index).filter((l) => l.status === 'done').map((l) => comments[l.id]?.filter((cm) => !cm.automatic).at(-1)?.body).filter(Boolean);
         if (closes.length) say(c, 'uam', closes.map((b) => `• ${b}`).join('\n'), true);
       }
       if (!again) break;
@@ -375,10 +393,13 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     }
   }
 
-  /** The derived fields: pending counts, then every container's status and progress. */
+  /**
+   * The derived fields: pending counts, then every container's status and progress. A container
+   * the owner cancelled stays cancelled whatever its subtasks are, as the service keeps it (§2).
+   */
   function refresh() {
     for (const c of cards) c.pending_requests = requests.filter((r) => r.card_id === c.id && r.status === 'pending').length;
-    cards = deriveBoard(cards);
+    cards = deriveBoard(cards).map((c) => (c.kind !== 'subtask' && cascadeOf.has(c.id) && c.status !== 'cancelled' ? { ...c, status: 'cancelled' } : c));
   }
   refresh();
 
@@ -420,7 +441,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if (!c) return refuse('not_found', 'card not found');
     if (r.kind === 'done' && (c.status !== 'doing' || c.held_by !== r.task_id)) return refuse('not_held', 'the subtask is not held by the Task that asked');
     commit(() => {
-      Object.assign(r, { status: 'accepted', decided_at: now(), decision_comment: comment });
+      Object.assign(r, { status: 'accepted', decided_at: now(), decision_comment: comment, decided_by: 'owner' });
       touch(c);
       switch (r.kind) {
         case 'done':
@@ -549,7 +570,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       // An Active Task hears the reason as a steer and keeps its hold (steered); otherwise the hold is released with the reason.
       const steered = liveTask(r.task_id);
       return done(commit(() => {
-        Object.assign(r, { status: 'rejected', decided_at: now(), decision_comment: reason });
+        Object.assign(r, { status: 'rejected', decided_at: now(), decision_comment: reason, decided_by: 'owner' });
         if (c.held_by === r.task_id && !steered) releaseHold(c, 'todo', 'rejected', reason, 'uam');
         else say(c, 'owner', `Rejected: ${reason}`);
       }), () => json(200, { ...r, steered }));
@@ -635,6 +656,11 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         if (c.kind !== 'subtask') {
           if (status !== 'cancelled') return refuse('invalid', "a container's status is derived");
           return done(commit(() => cascade(c, comment)), ok);
+        }
+        if (status === 'todo') {
+          // internal/board's underCancelled: a subtask under a cancelled card waits for its restore.
+          const cancelled = cardPath(c, new Map(cards.map((x) => [x.id, x]))).find((a) => a !== c && a.status === 'cancelled');
+          if (cancelled) return refuse('invalid', `#${c.seq} is under cancelled #${cancelled.seq}; restore that first`);
         }
         if (status === 'done' && !body.force) {
           // internal/board's guard: open items (refs: their texts), the blocked flag, open blockers (refs: #seq).
