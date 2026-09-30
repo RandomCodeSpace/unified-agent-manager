@@ -185,8 +185,12 @@ A static actor table (owner or agent) sits in one transition function in `intern
 
 **Floating picture-in-picture.** Any of the three views, or the Inbox, can pop out into a floating panel above the page while you work in a Task.
 - On every browser the pop-out is an in-page panel. You can drag it by its header (touch too), resize it, maximise it, and hide it into a small tab. Its box persists.
-- A pop-out from the Planner renders the Planner's own view state and stays up across navigation until it is closed. Its Hide lasts only while it is up.
-- While a Task of a git Project is open and nothing is popped out, the panel shows the Task's Project's Board on its own, in a view state of its own. Following Tasks never changes the Planner's Board, selection or filters (21). The panel never shows over the Planner view.
+- A pop-out from the Planner renders the Planner's own view state and stays up across navigation until it is closed. Its Hide lasts only while it is up. Closing it while a Task is open leaves that Task's panel as the tab for the rest of the visit, even over a stored Show.
+- While a Task of a git Project is open and nothing is popped out, the panel shows the Task's Project's Board on its own, in a view state of its own. Following Tasks never changes the Planner's Board, selection or filters (21). Two explicit actions from the panel do change them:
+  - opening a card, which selects it in the Planner and clears any filter there that would hide it;
+  - moving the panel into a separate window.
+
+  The panel never shows over the Planner view.
 - Whether that panel opens expanded or as the tab is decided once each time a Task opens:
   - the owner's last Hide or Show of it for that Project, which persists, and only those two buttons write it;
   - else expanded when the Board has a live card;
@@ -255,7 +259,7 @@ Each item is a store, tool or UI test.
 
 **UI**
 
-21. The picture-in-picture window and the floating panel popped out from the Planner render the Planner's view state, and closing either loses no selection. The panel a Task shows on its own has its own view state and never changes the Planner's.
+21. The picture-in-picture window and the floating panel popped out from the Planner render the Planner's view state, and closing either loses no selection. The panel a Task shows on its own has its own view state, and following Tasks never changes the Planner's. Only two explicit actions from that panel change it: opening a card, and moving the panel into a separate window.
 
 ## Rejected (non-goals)
 
