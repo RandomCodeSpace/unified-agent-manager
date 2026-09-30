@@ -95,7 +95,7 @@ func TestOlderWebConfigRoundTripsWithoutProjectFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"web_projects"`, `"project_id"`, `"model"`, `"title"`, `"stage"`, `"settled_at"`, `"archived_at"`, `"terminal_session"`} {
+	for _, key := range []string{`"web_projects"`, `"project_id"`, `"model"`, `"title"`, `"stage"`, `"settled_at"`, `"archived_at"`, `"terminal_session"`, `"spawned_by"`} {
 		if strings.Contains(string(data), key) {
 			t.Fatalf("older config gained %s on save: %s", key, data)
 		}
@@ -117,6 +117,7 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 			Web: &WebState{
 				Turn: "idle", UpdatedAt: now, ProjectID: project.ID, Model: "gpt-5-mini", Effort: "high", ContextSize: "long_context", Title: "Fix the build",
 				Stage: "archived", SettledAt: now.Add(-time.Hour), ArchivedAt: now, TerminalSession: "0da22111-1111-4222-8333-444455556666",
+				SpawnedBy: "5a0b1c2d-1111-4222-8333-444455556666",
 			},
 		}
 		return nil
@@ -132,7 +133,8 @@ func TestWebProjectsAndTaskFieldsPersist(t *testing.T) {
 	}
 	web := cfg.Sessions["copilot:0f0e0d0c"].Web
 	if web == nil || web.ProjectID != project.ID || web.Model != "gpt-5-mini" || web.Effort != "high" || web.ContextSize != "long_context" || web.Title != "Fix the build" ||
-		web.Stage != "archived" || !web.SettledAt.Equal(now.Add(-time.Hour)) || !web.ArchivedAt.Equal(now) || web.TerminalSession != "0da22111-1111-4222-8333-444455556666" {
+		web.Stage != "archived" || !web.SettledAt.Equal(now.Add(-time.Hour)) || !web.ArchivedAt.Equal(now) || web.TerminalSession != "0da22111-1111-4222-8333-444455556666" ||
+		web.SpawnedBy != "5a0b1c2d-1111-4222-8333-444455556666" {
 		t.Fatalf("web state = %+v", web)
 	}
 	data, err := os.ReadFile(s.Path())

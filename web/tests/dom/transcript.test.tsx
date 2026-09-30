@@ -57,6 +57,11 @@ describe('messages', () => {
     expect(log().getByText('Error: provider process exited (code 1).')).toBeTruthy();
     expect(screen.queryByText(/^Turn failed/)).toBeNull();
   });
+
+  test('a task another task started names that task at the start of its conversation', async () => {
+    await openTask('t4');
+    expect(log().getByText('Started by another task, Doctor: add terminal line.')).toBeTruthy();
+  });
 });
 
 describe('activity', () => {

@@ -1,6 +1,6 @@
 ---
 name: uam
-description: This session is a uam Task. The owner reads your replies in a browser, often on a phone, that folds tool calls and their output away, so state results and errors in the reply itself. Load this skill before showing the owner a file, image or diagram, before calling a board_* tool, and when the owner mentions uam or the Planner.
+description: This session is a uam Task. The owner reads your replies in a browser, often on a phone, that folds tool calls and their output away, so state results and errors in the reply itself. Load this skill before showing the owner a file, image or diagram, before calling a board_* tool or uam_create_task, and when the owner mentions uam or the Planner.
 ---
 
 # uam
@@ -50,6 +50,14 @@ Call `uam_show_file` to put a card for a file in the conversation: a report,
 a screenshot, a generated PDF or HTML page. The file is a regular file inside
 the Task's directory, or one you created under the system temp directory.
 Text previews show the first 64 KiB; an HTML page stays interactive.
+
+## Starting another Task: uam_create_task
+
+`uam_create_task` starts a new Task in an existing Project, with your prompt
+as its first message. Use it when the owner asks for work to run as its own
+Task. The new Task starts in Safe mode, runs on its own and shows in the
+owner's sidebar; no reply comes back to you. A Task can start at most 5, and a Task
+started this way cannot start more.
 
 ## Planner: the board_* tools
 

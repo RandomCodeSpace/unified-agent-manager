@@ -539,6 +539,8 @@ export interface SessionSummary {
   /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
   settled_at?: string;
   archived_at?: string;
+  /** The Task whose agent started this one with uam_create_task; absent otherwise. */
+  spawned_by?: string;
   queued?: number;
   state: SessionState;
   state_detail?: string;
