@@ -349,14 +349,22 @@ func (m *Manager) boardHostTools(scope func(context.Context, agentapi.HostToolCa
 	}
 }
 
+// boardToolsLocked reports whether a Task of the Project projectID gets the
+// planner tools: the planner is on and the Project has Git. The caller holds
+// mu.
+func (m *Manager) boardToolsLocked(projectID string) bool {
+	p := m.projects[projectID]
+	return m.settings.Planner && p != nil && p.NoGit == ""
+}
+
 // taskHostToolsLocked is the Manager's hostTools: every planner tool, for a
-// Task of a Project with Git while the planner is on. The switch is read
-// when the conversation opens, so turning it on reaches the Tasks opened
-// afterwards, and every call checks both again. Each call is tied to the
-// Task while it runs (startCall). The caller holds mu; the store is used
-// only by the calls.
+// Task of a Project with Git while the planner is on (boardToolsLocked).
+// Both are read when the conversation opens; a Task whose conversation
+// opened with another answer reopens on its next prompt (send), and every
+// call checks both again. Each call is tied to the Task while it runs
+// (startCall). The caller holds mu; the store is used only by the calls.
 func (m *Manager) taskHostToolsLocked(taskID, projectID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
-	if p := m.projects[projectID]; !m.settings.Planner || p == nil || p.NoGit != "" {
+	if !m.boardToolsLocked(projectID) {
 		return nil, nil
 	}
 	tools, run := m.boardHostTools(func(ctx context.Context, call agentapi.HostToolCall) (boardScope, error) {

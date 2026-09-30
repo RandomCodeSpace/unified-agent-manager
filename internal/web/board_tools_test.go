@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
 )
 
@@ -191,6 +192,140 @@ func TestBoardToolsOnlyInGitProjectsWhilePlannerIsOn(t *testing.T) {
 	}
 	f.m.refreshBranches(context.Background(), true, f.project)
 	f.toolRefused(task.ID, "board_list", `{}`, codeNoGit)
+}
+
+// setPlanner turns the planner switch on or off.
+func setPlanner(t *testing.T, m *Manager, on bool) {
+	t.Helper()
+	if _, err := m.UpdateSettings(SettingsPatch{Planner: &on}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// promptTask sends text to the Task id, ends the turn it starts, and returns
+// the conversation that took it and whether sending opened a conversation.
+func promptTask(t *testing.T, m *Manager, prov *agenttest.Provider, id, text string) (*agenttest.Conversation, bool) {
+	t.Helper()
+	opens := len(prov.Opens())
+	mustSubmit(t, m, id, text, mustUUID(t), ModeSend, SubmissionAccepted)
+	conv := prov.Last()
+	if sends := conv.Sends(); len(sends) == 0 || sends[len(sends)-1] != text {
+		t.Fatalf("%q was not sent to the open conversation: %q", text, sends)
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	return conv, len(prov.Opens()) > opens
+}
+
+// A Task opened with the planner off gets the tools on its next prompt once
+// the switch is on: the prompt reopens the conversation. A prompt whose
+// Task already has the right tools reopens nothing.
+func TestPromptReopensATaskForThePlannerSwitchedOn(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	project := gitProject(t, m, "app")
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: project, Name: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := prov.Last()
+	if first.Request().Tools != nil {
+		t.Fatalf("a task opened with the planner off has tools: %q", toolNames(first.Request().Tools))
+	}
+	if _, reopened := promptTask(t, m, prov, sum.ID, "before"); reopened {
+		t.Fatal("a prompt reopened a task that has the right tools")
+	}
+	setPlanner(t, m, true)
+	conv, reopened := promptTask(t, m, prov, sum.ID, "after")
+	if !reopened || conv == first || first.Closes() != 1 || conv.Request().ConversationID != sum.ConversationID {
+		t.Fatalf("reopened %v, closes %d, request %+v", reopened, first.Closes(), conv.Request())
+	}
+	if got := toolNames(conv.Request().Tools); !slices.Equal(got, allBoardTools) || conv.Request().CallTool == nil {
+		t.Fatalf("reopened with %q", got)
+	}
+	if next, reopened := promptTask(t, m, prov, sum.ID, "again"); reopened || next != conv {
+		t.Fatal("a prompt reopened a task that has the right tools")
+	}
+}
+
+// A Task opened with the tools loses them on its next prompt once the
+// planner is off or its Project has no git.
+func TestPromptReopensATaskThatLostTheTools(t *testing.T) {
+	for name, lose := range map[string]func(*testing.T, *Manager, string, string){
+		"planner off": func(t *testing.T, m *Manager, _, _ string) { setPlanner(t, m, false) },
+		"no git": func(t *testing.T, m *Manager, dir, project string) {
+			if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			m.refreshBranches(context.Background(), true, project)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, prov, _ := newTestManager(t)
+			setPlanner(t, m, true)
+			dir := branchRepo(t)
+			project := addProject(t, m, dir)
+			sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: project, Name: "task"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := prov.Last()
+			if got := toolNames(first.Request().Tools); !slices.Equal(got, allBoardTools) {
+				t.Fatalf("tools = %q", got)
+			}
+			lose(t, m, dir, project)
+			conv, reopened := promptTask(t, m, prov, sum.ID, "after")
+			if !reopened || first.Closes() != 1 || conv.Request().Tools != nil || conv.Request().CallTool != nil {
+				t.Fatalf("reopened %v, closes %d, tools %q", reopened, first.Closes(), toolNames(conv.Request().Tools))
+			}
+		})
+	}
+}
+
+// A conversation that still runs or waits for something is not reopened for
+// its tools: the prompt, or a steer into the waiting turn, goes to it as it
+// is.
+func TestPromptKeepsABusyConversationWithStaleTools(t *testing.T) {
+	for name, tc := range map[string]struct {
+		keep func(*agenttest.Conversation)
+		mode string
+		sent func(*agenttest.Conversation) []string
+	}{
+		"background task": {
+			keep: func(c *agenttest.Conversation) {
+				c.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{{ID: "server", Status: "running"}}}})
+			},
+			mode: ModeSend, sent: (*agenttest.Conversation).Sends,
+		},
+		"subagent": {
+			keep: func(c *agenttest.Conversation) {
+				c.EmitSubagent(agentapi.Subagent{ID: "sa", Status: agentapi.SubagentRunning})
+			},
+			mode: ModeSend, sent: (*agenttest.Conversation).Sends,
+		},
+		"question": {
+			keep: func(c *agenttest.Conversation) {
+				c.EmitTurn(agentapi.TurnWorking, "")
+				ix := question("q1")
+				ix.State = agentapi.InteractionPending
+				c.EmitInteraction(ix)
+			},
+			mode: ModeSteer, sent: (*agenttest.Conversation).Steers,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, prov, _ := newTestManager(t)
+			sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: gitProject(t, m, "app"), Name: "task"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			conv := prov.Last()
+			tc.keep(conv)
+			setPlanner(t, m, true)
+			mustSubmit(t, m, sum.ID, "prompt", mustUUID(t), tc.mode, SubmissionAccepted)
+			if len(prov.Opens()) != 1 || conv.Closes() != 0 || !slices.Equal(tc.sent(conv), []string{"prompt"}) {
+				t.Fatalf("opens %d, closes %d, sent %q", len(prov.Opens()), conv.Closes(), tc.sent(conv))
+			}
+		})
+	}
 }
 
 // A ref resolves only on the Task's own Board: a card of another Project, or

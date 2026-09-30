@@ -270,6 +270,8 @@ type webSession struct {
 	timingRevision    uint64
 
 	conv agentapi.Conversation
+	// convTools is whether conv opened with host tools.
+	convTools bool
 	// gen identifies the current conversation; events from an older one are
 	// ignored.
 	gen     uint64
@@ -1984,6 +1986,7 @@ func (m *Manager) Create(req CreateRequest) (SessionSummary, error) {
 	s.gen = 1
 	m.mu.Lock()
 	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}, project.ID)
+	s.convTools = len(open.Tools) > 0
 	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	conv, err := prov.Open(ctx, open)
@@ -2300,6 +2303,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	switch {
 	case err == nil && !stale:
 		s.conv = conv
+		s.convTools = len(req.Tools) > 0
 		s.activeAt = m.now()
 		if s.base == StateClosed || s.base == StateFailed {
 			s.setBase(StateIdle, "")
@@ -2602,6 +2606,7 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	if sub, found, err := m.checkedPrompt(s, reqID); found || err != nil {
 		return sub, err
 	}
+	m.closeForToolsLocked(s)
 	if err := m.openLocked(s, true); err != nil {
 		if errors.Is(err, errShuttingDown) {
 			return Submission{}, err
@@ -3281,6 +3286,35 @@ func (m *Manager) closeIdle(s *webSession) {
 		return
 	}
 	before := m.summaryLocked(s)
+	conv := m.suspendLocked(s)
+	m.changedLocked(s, before)
+	m.mu.Unlock()
+	m.closeConversation(conv)
+	log.Info("closed idle web conversation", "session", s.id, "idle", idle.Round(time.Second))
+}
+
+// closeForToolsLocked closes s's conversation when it opened with other host
+// tools than the Task gets now (boardToolsLocked), so the openLocked that
+// follows reopens it with the current ones. A conversation that still runs
+// or waits for anything is left as it is. The caller holds s.op.
+func (m *Manager) closeForToolsLocked(s *webSession) {
+	m.mu.Lock()
+	if m.closed || s.removed || s.conv == nil || s.convTools == m.boardToolsLocked(s.projectID) || s.runsOrWaitsLocked() {
+		m.mu.Unlock()
+		return
+	}
+	before := m.summaryLocked(s)
+	conv := m.suspendLocked(s)
+	m.changedLocked(s, before)
+	m.mu.Unlock()
+	m.closeConversation(conv)
+	log.Info("closed web conversation to reopen it with its current tools", "session", s.id)
+}
+
+// suspendLocked detaches s from its open conversation and returns it for the
+// caller to close outside mu. The Task keeps its state; its next view or
+// prompt reopens the conversation, as after a restart.
+func (m *Manager) suspendLocked(s *webSession) agentapi.Conversation {
 	conv := s.conv
 	s.conv = nil
 	s.gen++
@@ -3290,10 +3324,7 @@ func (m *Manager) closeIdle(s *webSession) {
 	if m.infos[s.provider].Capabilities.History {
 		m.dropHistoryLocked(s)
 	}
-	m.changedLocked(s, before)
-	m.mu.Unlock()
-	m.closeConversation(conv)
-	log.Info("closed idle web conversation", "session", s.id, "idle", idle.Round(time.Second))
+	return conv
 }
 
 // keepsOpenLocked reports whether s has a viewer or anything its open
@@ -3304,6 +3335,13 @@ func (m *Manager) keepsOpenLocked(s *webSession) bool {
 			return true
 		}
 	}
+	return s.runsOrWaitsLocked()
+}
+
+// runsOrWaitsLocked reports whether s's open conversation still runs or
+// waits for anything: a turn, an answer, queued prompts, subagents,
+// background tasks or an active objective.
+func (s *webSession) runsOrWaitsLocked() bool {
 	if s.settleableLocked() != nil || s.runningSubagents() > 0 {
 		return true
 	}
