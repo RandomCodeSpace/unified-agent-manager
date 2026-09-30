@@ -15,8 +15,8 @@ export interface SelectOption {
 
 /**
  * A form select on Base UI, used where a labelled control belongs (the project dialogs).
- * `items` drives both the list and the trigger's text. Renders below the trigger; the popup
- * hides its scrollbar with a class, not Base UI's inline <style> (CSP).
+ * `items` drives both the list and the trigger's text. Renders below the trigger, aligned to
+ * its start edge; the popup hides its scrollbar with a class, not Base UI's inline <style> (CSP).
  */
 export function Select({
   id,
@@ -55,7 +55,7 @@ export function Select({
         </BaseSelect.Icon>
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
-        <BaseSelect.Positioner sideOffset={4} alignItemWithTrigger={false} collisionPadding={8} className="z-60 outline-hidden select-none">
+        <BaseSelect.Positioner sideOffset={4} align="start" alignItemWithTrigger={false} collisionPadding={8} className="z-60 outline-hidden select-none">
           <BaseSelect.Popup data-popup="" className={cn(popupClass, 'max-h-(--available-height) min-w-(--anchor-width) overflow-hidden')}>
             <BaseSelect.List className="max-h-[min(320px,var(--available-height))] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {items.map((it) => (
