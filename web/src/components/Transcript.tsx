@@ -678,7 +678,7 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
       <span className="sr-only">{accepted ? 'You (accepted, not delivered yet): ' : 'You: '}</span>
       {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
       {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
-      {text && (whole?.status === 'whole' ? plainText(text) : <Markdown text={text} />)}
+      {text && (whole?.status === 'whole' ? plainText(text) : <Markdown text={text} breaks />)}
       {whole && <WholeNote whole={whole} />}
       {chips && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
       {/* Nothing to show (a message of only file references, which the item does not list): say so rather than draw an empty bubble. */}

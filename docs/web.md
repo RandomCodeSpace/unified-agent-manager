@@ -268,7 +268,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   shows the same estimate for each model. No estimate appears without prices
   or reported context.
 - **Conversation**: your messages sit on the right, the agent's on the left,
-  both rendered as markdown (never as HTML) while they stream. The agent's
+  both rendered as markdown (never as HTML) while they stream; in your
+  messages a single line break (Shift+Enter) stays a line break. The agent's
   reasoning, when the provider reports it, shows inline in grey, three lines
   at a time with "Show more"; while it streams you see the latest lines, and
   "Thought for 12s" once done. Every tool call is its own line: what ran

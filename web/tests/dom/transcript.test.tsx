@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { Item } from '../../src/api';
+import { Markdown } from '../../src/components/common';
 import { PlannerContext, type PlannerContextValue } from '../../src/components/planner/context';
 import { ToolRow } from '../../src/components/Transcript';
 import { saveDensity } from '../../src/lib/density';
-import { log, openMenu, openTask } from './render';
+import { composer, log, openMenu, openTask } from './render';
 
 afterEach(() => saveDensity('compact'));
 
@@ -22,6 +23,23 @@ describe('messages', () => {
     expect(view.getByRole('button', { name: 'Open dumb-terminal.png' })).toBeTruthy();
     expect(view.getByText('doctor-output.txt')).toBeTruthy();
     expect(view.getByText('earlier-run.png')).toBeTruthy();
+  });
+
+  test('a line break typed with Shift+Enter stays a line break in the sent message', async () => {
+    const { user } = await openTask('t3');
+    await user.type(composer(), 'first line{Shift>}{Enter}{/Shift}second line');
+    await user.keyboard('{Enter}');
+    const first = await log().findByText(/^first line/);
+    expect(first.tagName).toBe('P');
+    expect(first.querySelectorAll('br')).toHaveLength(1);
+    expect(first.textContent).toBe('first line\nsecond line');
+  });
+
+  test('an agent reply keeps CommonMark: a single newline is not a line break', () => {
+    const view = render(<Markdown text={'first line\nsecond line'} />);
+    const p = view.container.querySelector('p');
+    expect(p?.querySelector('br')).toBeNull();
+    expect(p?.textContent).toBe('first line\nsecond line');
   });
 
   test('links open outside, and images in the project open in the viewer', async () => {
