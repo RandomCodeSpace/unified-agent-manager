@@ -12,7 +12,7 @@ import { SettingsView } from './components/Settings';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { mostRecentProject, needsYouCount, newsReader, pageTitle, tasksOf } from './lib/tasks';
+import { commandGroups, cycleTask, mostRecentProject, needsYouCount, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
 import { pendingRequests } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
 import { PlannerTasks } from './components/planner/context';
@@ -43,6 +43,8 @@ const SHEET_INLINE = '(min-width: 1280px)';
 /** A touch screen: focusing the composer would raise the keyboard over the conversation just opened. */
 const COARSE = '(pointer: coarse)';
 const VIEWED_KEY = 'uam.viewed';
+/** When this browser first ran the Task list's read tracking: a Task never opened here and changed since is unread. */
+const VIEWED_SINCE_KEY = 'uam.viewedSince';
 const SIDEBAR_KEY = 'uam.sidebar';
 const FILTER_KEY = 'uam.projectFilter';
 const HASH_PREFIX = '#task=';
@@ -127,7 +129,14 @@ export default function App() {
   const [newTask, setNewTask] = useState<{ projectId: string; defaults: TaskDefaults; tick: number } | null>(null);
   const newTaskTick = useRef(0);
   const aside = useRef<HTMLElement>(null);
-  const [loadedAt] = useState(() => new Date().toISOString());
+  // A Task never opened in this browser counts as read up to the first visit, so a reload (the phone drops pages often) never forgets what finished meanwhile.
+  const [loadedAt] = useState(() => {
+    const since = readJSON<string | null>(VIEWED_SINCE_KEY, null);
+    if (since) return since;
+    const now = new Date().toISOString();
+    localStorage.setItem(VIEWED_SINCE_KEY, JSON.stringify(now));
+    return now;
+  });
   // One create per project at a time; the request ID survives a failure so a retry is idempotent.
   const creating = useRef(new Map<string, { id: string; busy: boolean }>());
   // Task whose composer takes focus once its detail arrives (a Task just created, or one chosen
@@ -564,6 +573,31 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [auth, openNewTask]);
 
+  // Alt+J / Alt+K open the next / previous Task in the sidebar's Needs you group, wrapping. Not in the terminal (its keys are the
+  // shell's), a menu or a dialog, nor in a text field where the key types a character (macOS Option+J is "∆").
+  const needsYouIds = useMemo(
+    () => commandGroups(sidebarTasks(state.projects, state.sessions, filter).filter((s) => !readOnly(s)), hasNews).you.map((s) => s.id),
+    [state.projects, state.sessions, filter, hasNews],
+  );
+  const selectedId = state.selectedId;
+  useEffect(() => {
+    if (auth !== 'in') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || (e.code !== 'KeyJ' && e.code !== 'KeyK') || e.defaultPrevented) return;
+      if (document.querySelector('[data-popup]:not([role="tooltip"])')) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest('.xterm')) return;
+      const field = target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input, textarea, select'));
+      if (field && e.key.toLowerCase() !== (e.code === 'KeyJ' ? 'j' : 'k')) return;
+      const next = cycleTask(needsYouIds, selectedId, e.code === 'KeyJ' ? 1 : -1);
+      if (!next) return;
+      e.preventDefault();
+      if (next !== selectedId) select(next);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [auth, needsYouIds, selectedId, select]);
+
   /**
    * A new Task's first Send: create the Task with the chosen settings, upload the held
    * attachments to it, send the message, then open it. A failed create throws, so the draft
@@ -709,7 +743,8 @@ export default function App() {
 
   // The tab title and the installed app's badge carry how many Tasks wait for the user; the title names the open Task.
   // Pending planner requests need the owner too (ADR 0005 §10): they fold into the same count.
-  const attention = useMemo(() => needsYouCount(state.sessions) + (plannerOn ? pendingRequests(state.boards) : 0), [state.sessions, state.boards, plannerOn]);
+  const needsYouTasks = useMemo(() => needsYouCount(state.sessions, hasNews), [state.sessions, hasNews]);
+  const attention = needsYouTasks + (plannerOn ? pendingRequests(state.boards) : 0);
   // A new Task shows as "New task"; only real Tasks count as needing you.
   let openName: string | null = null;
   if (selected) openName = taskName(selected);
@@ -786,10 +821,10 @@ export default function App() {
 
   // The main pane's header starts with the sidebar toggle when the sidebar is hidden, or the drawer toggle on a narrow screen.
   let leading: React.ReactNode = null;
-  if (narrow) leading = <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1" />;
-  else if (!sidebarOpen) leading = <SidebarToggle id="sidebar-show" size="icon-md" open={false} onToggle={toggleSidebar} className="-ml-1" />;
+  if (narrow) leading = <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1" />;
+  else if (!sidebarOpen) leading = <SidebarToggle id="sidebar-show" size="icon-md" open={false} count={needsYouTasks} onToggle={toggleSidebar} className="-ml-1" />;
   // The sidebar's column, animated between its width and nothing.
-  const columns = sidebarOpen ? 'grid-cols-[264px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]';
+  const columns = sidebarOpen ? 'grid-cols-[320px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]';
 
   let pane: React.ReactNode;
   // The Board the planner opens on: the filtered Project when it has git, else the most recently active git Project.
@@ -870,7 +905,7 @@ export default function App() {
               </aside>
             )}
             {narrow && (
-              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects">
+              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-[360px]">
                 {sidebar}
               </Sheet>
             )}

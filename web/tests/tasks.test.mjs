@@ -128,3 +128,55 @@ test('a task whose turn ended shows Working while a subagent still runs', () => 
   assert.equal(shownState({ state: 'awaiting_permission', subagents_running: 1 }), 'awaiting_permission');
   assert.equal(shownState({ state: 'failed', subagents_running: 1 }), 'failed');
 });
+
+test('the Task list groups: Needs you, Ready for review, Working, Idle', async () => {
+  const { commandGroups, groupOf, needsYouCount } = await import('../src/lib/tasks.ts');
+  const unread = (t) => t.id.endsWith('*');
+  const list = [
+    s('ask', 'p1', '1', { state: 'awaiting_answer' }),
+    s('pending', 'p1', '2', { state: 'working', pending: 1 }),
+    s('failed*', 'p1', '3', { state: 'failed' }),
+    s('failed-read', 'p1', '4', { state: 'failed' }),
+    s('broke*', 'p1', '5', { state: 'interrupted' }),
+    s('done*', 'p1', '6', { state: 'completed' }),
+    s('done-read', 'p1', '7', { state: 'completed' }),
+    s('helpers*', 'p1', '8', { state: 'completed', subagents_running: 1 }),
+    s('work', 'p1', '9', { state: 'working' }),
+    s('stopped*', 'p1', '10', { state: 'cancelled' }),
+  ];
+  assert.deepEqual(list.map((t) => groupOf(t, unread)), ['you', 'you', 'you', 'idle', 'you', 'review', 'idle', 'working', 'working', 'idle']);
+  const g = commandGroups(list, unread);
+  // Latest change first; Working keeps creation order so busy rows hold still.
+  assert.deepEqual(g.you.map((t) => t.id), ['broke*', 'failed*', 'pending', 'ask']);
+  assert.deepEqual(g.working.map((t) => t.id), ['work', 'helpers*']);
+  assert.equal(needsYouCount(list, unread), 4);
+  assert.equal(needsYouCount([s('x*', 'p1', '1', { state: 'failed', stage: 'settled' })], unread), 0);
+});
+
+test('a Task row says in plain words what it needs or how it stands', async () => {
+  const { taskStatus } = await import('../src/lib/tasks.ts');
+  const now = Date.parse('2026-10-01T12:00:00Z');
+  const at = (min) => new Date(now - min * 60000).toISOString();
+  const status = (extra, unread = false) => taskStatus(s('t', 'p1', at(60), extra), unread, now).text;
+  assert.equal(status({ state: 'awaiting_answer', ask: { id: 'q', kind: 'question', title: 'Which option?' } }), 'Asks: Which option?');
+  assert.equal(status({ state: 'awaiting_permission', ask: { id: 'p', kind: 'permission', title: 'Run shell command' } }), 'Wants your OK to run a shell command');
+  assert.equal(status({ state: 'awaiting_permission', ask: { id: 'p', kind: 'permission', title: 'Confirm deploy' } }), 'Wants your OK to confirm deploy');
+  assert.equal(status({ state: 'awaiting_permission' }), 'Wants your OK to continue');
+  assert.equal(status({ state: 'working', updated_at: at(30), event_at: at(12) }), 'Working · quiet 12m');
+  assert.equal(status({ state: 'working', updated_at: at(30), event_at: at(1) }), 'Working');
+  assert.equal(status({ state: 'working', updated_at: at(90) }), 'Working · quiet 1h');
+  assert.equal(status({ state: 'completed' }, true), 'Finished, ready for your review');
+  assert.equal(status({ state: 'completed' }), 'Finished');
+  assert.equal(status({ state: 'failed' }), 'Stopped with an error');
+  assert.equal(status({ state: 'completed', stage: 'settled' }), 'Settled');
+});
+
+test('Alt+J and Alt+K cycle through the Needs you Tasks and wrap', async () => {
+  const { cycleTask } = await import('../src/lib/tasks.ts');
+  assert.equal(cycleTask([], 'a', 1), null);
+  assert.equal(cycleTask(['a', 'b', 'c'], null, 1), 'a');
+  assert.equal(cycleTask(['a', 'b', 'c'], 'gone', -1), 'c');
+  assert.equal(cycleTask(['a', 'b', 'c'], 'c', 1), 'a');
+  assert.equal(cycleTask(['a', 'b', 'c'], 'a', -1), 'c');
+  assert.equal(cycleTask(['a', 'b', 'c'], 'b', 1), 'c');
+});

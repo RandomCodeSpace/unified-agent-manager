@@ -7,7 +7,8 @@ import { composer, log, openTask } from './render';
 
 /** The composer's surface, where the question sits (the transcript's question block repeats the text once answered). */
 const box = () => within(composer().form!);
-const answerButton = () => screen.getByRole('button', { name: /^Answer|^Submitting/ });
+// Within the composer: the sidebar's Needs you row has its own Answer.
+const answerButton = () => box().getByRole('button', { name: /^Answer|^Submitting/ });
 const declineButton = () => screen.getByRole('button', { name: 'Decline' });
 const textFile = () => new File(['hello from a log\n'], 'build.log', { type: 'text/plain' });
 
@@ -44,7 +45,7 @@ describe('answering from the composer', () => {
 
   test('the action row reads Stop, Decline, Answer', async () => {
     await openTask('t16');
-    const order = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim() ?? '').filter((name) => ['Stop turn', 'Decline', 'Answer'].includes(name));
+    const order = within(screen.getByRole('main')).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim() ?? '').filter((name) => ['Stop turn', 'Decline', 'Answer'].includes(name));
     expect(order).toEqual(['Stop turn', 'Decline', 'Answer']);
   });
 

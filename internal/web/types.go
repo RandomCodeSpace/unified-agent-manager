@@ -247,6 +247,13 @@ type SessionSummary struct {
 	// SpawnedBy is the ID of the Task whose uam_create_task call created
 	// this one; omitted otherwise.
 	SpawnedBy string `json:"spawned_by,omitempty"`
+	// Ask is the request the Task waits on, for the Task list to answer in
+	// place; omitted when nothing waits for the user.
+	Ask *Ask `json:"ask,omitempty"`
+	// EventAt is when the provider last reported anything for the open
+	// conversation, to the minute, so a quiet Task can say how long it has
+	// been quiet. It is not persisted.
+	EventAt time.Time `json:"event_at,omitzero"`
 }
 
 // SessionDetail is a summary plus the retained main-agent transcript,
