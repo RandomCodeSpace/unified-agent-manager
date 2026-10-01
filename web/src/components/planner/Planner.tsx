@@ -82,6 +82,15 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
       .finally(() => inflight.current.delete(key));
   }, [dispatch]);
 
+  // An earlier version stored which Tasks hid the pop-out; nothing reads it now.
+  useEffect(() => {
+    try {
+      localStorage.removeItem('uam.plannerHidden');
+    } catch {
+      // Storage unavailable: nothing to remove.
+    }
+  }, []);
+
   const keys = plannerKeys(enabled, projects).join('\n');
   useEffect(() => {
     const wanted = keys ? keys.split('\n') : [];

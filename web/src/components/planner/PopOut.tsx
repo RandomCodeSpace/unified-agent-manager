@@ -23,7 +23,7 @@ declare global {
 }
 
 /** A phone: no separate window, and the floating panel spans the width. */
-export const PHONE = '(max-width: 480px)';
+const PHONE = '(max-width: 480px)';
 
 export type PopMode = 'pip' | 'float';
 
