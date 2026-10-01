@@ -24,7 +24,7 @@ describe('commit panel', () => {
     const own = await panel.findByRole('checkbox', { name: /docs\/terminal\.md/ });
     expect((own as HTMLInputElement).checked).toBe(true);
     expect((panel.getByRole('checkbox', { name: /internal\/vterm\/redraw\.go/ }) as HTMLInputElement).checked).toBe(false);
-    expect(panel.getByText('3 files from other tasks are not included')).toBeTruthy();
+    expect(panel.getByText('4 files from other tasks are not included')).toBeTruthy();
     expect(panel.getByText('No task is running in this repository')).toBeTruthy();
 
     await user.click(panel.getByRole('button', { name: 'Generate' }));

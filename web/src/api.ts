@@ -624,6 +624,8 @@ export interface SessionSummary {
   spawned_by?: string;
   /** The routine whose run started this Task; absent otherwise. */
   routine_id?: string;
+  /** This Task's own changes (the Changes "This task" scope) once known; absent while it has none. */
+  diff?: DiffStat;
   queued?: number;
   state: SessionState;
   state_detail?: string;
@@ -909,13 +911,22 @@ export interface HistoryPage extends Representation {
   archive?: boolean;
 }
 
-export type Scope = 'session' | 'workspace';
+/** `task`: files this Task's agent edited; `turn`: those of its latest turn; `workspace`: every uncommitted change; `session`: the provider's own record. */
+export type Scope = 'task' | 'turn' | 'workspace' | 'session';
+
+export interface DiffStat {
+  files: number;
+  additions: number;
+  deletions: number;
+}
 
 export interface ChangeFile {
   path: string;
   status: string;
   additions: number;
   deletions: number;
+  /** Changes whenever the file's content may have; absent where the scope cannot tell. */
+  digest?: string;
 }
 
 export interface Changes {
@@ -924,6 +935,8 @@ export interface Changes {
   supported: boolean;
   reason?: string;
   files: ChangeFile[];
+  /** File counts of the task, turn and workspace scopes; set on those scopes. */
+  counts?: { task: number; turn: number; workspace: number };
 }
 
 /** A changed file of the Task's repository, with whose edit tools touched it. */

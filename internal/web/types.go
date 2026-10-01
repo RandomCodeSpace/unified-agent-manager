@@ -70,6 +70,10 @@ const (
 const (
 	ScopeSession   = "session"
 	ScopeWorkspace = "workspace"
+	// ScopeTask is the files this Task's agent edited, and ScopeTurn those
+	// it edited in its latest turn, each compared with HEAD.
+	ScopeTask = "task"
+	ScopeTurn = "turn"
 )
 
 // ProviderInfo describes one provider for the create form.
@@ -262,6 +266,16 @@ type SessionSummary struct {
 	// RoutineID is the ID of the routine whose run created this Task;
 	// omitted otherwise.
 	RoutineID string `json:"routine_id,omitempty"`
+	// Diff totals the Task's own changes (the task scope of Changes); omitted
+	// while it has none or they are not known yet.
+	Diff *DiffStat `json:"diff,omitempty"`
+}
+
+// DiffStat totals a list of changed files.
+type DiffStat struct {
+	Files     int `json:"files"`
+	Additions int `json:"additions"`
+	Deletions int `json:"deletions"`
 }
 
 // SessionDetail is a summary plus the retained main-agent transcript,
@@ -373,6 +387,16 @@ type ChangedFile struct {
 	Status    string `json:"status"`
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
+	// Digest changes whenever the file's working-tree content may have
+	// changed; it is empty where the scope cannot tell.
+	Digest string `json:"digest,omitempty"`
+}
+
+// ScopeCounts are the changed-file counts of the git-based scopes.
+type ScopeCounts struct {
+	Task      int `json:"task"`
+	Turn      int `json:"turn"`
+	Workspace int `json:"workspace"`
 }
 
 // Changes lists changed files for one scope. Label states plainly what the
@@ -383,6 +407,8 @@ type Changes struct {
 	Supported bool          `json:"supported"`
 	Reason    string        `json:"reason"`
 	Files     []ChangedFile `json:"files"`
+	// Counts is set on the task, turn and workspace scopes.
+	Counts *ScopeCounts `json:"counts,omitempty"`
 }
 
 // Error is a failure with the HTTP status the server reports for it.

@@ -838,10 +838,30 @@ are logged only at debug level (`UAM_DEBUG=1`).
   appears only when the record itself is gone or the provider cannot page
   it.
 - **Changes**: the "Changes" button in the Task header shows how many files
-  differ from `HEAD` in the project directory and opens them beside the
-  conversation with the diff (a full-screen sheet on a narrow window). That
-  includes edits made by anything else in the working tree, not only this
-  session. On a wide window this panel and the Subagents panel can be
+  this Task changed and opens them beside the conversation with the diff (a
+  full-screen sheet on a narrow window). Three scopes sit at the top, each
+  with its file count: **This task** (the default) lists the files this
+  Task's agent or its subagents edited with an edit tool (create, edit or a
+  patch), compared with `HEAD`; **Last turn** narrows that to the files
+  edited since the latest prompt you sent (a steer joins the running turn
+  and does not start a new one); **All changes** is every uncommitted change in the working tree,
+  from any Task or source. A file this Task edited shows everything that
+  differs from `HEAD`, including changes something else made to it; a file
+  changed back or committed drops out. Files written by shell commands are
+  not attributed to the Task. Until a Task's history has been read, edits
+  from before it may be missing, and the panel says so. Each file shows its
+  status and `+added −removed` lines. Files that deserve a closer look come
+  first with a short reason: CI workflows, lockfiles, Dockerfiles,
+  migrations, deploy files, and sign-in, security or secrets code. A note
+  appears when the scope changes more than about 400 lines. Tick **Viewed**
+  on a file (in the list or above its diff) to mark it reviewed; the mark
+  clears and the row says "Changed since you viewed" when the file changes
+  again. Select a diff line (or its line number) to add a comment; comments
+  collect at the bottom of the panel, and **Send N comments to the task**
+  sends them as one message, at once to an idle Task or after the running
+  turn. Viewed marks and unsent comments are kept in this browser per Task
+  and survive a reload; a settled or archived Task takes no comments. On a
+  wide window this panel and the Subagents panel can be
   resized by dragging their inner edge (the handle also takes the arrow
   keys; double-click resets); the width is kept per browser.
   An open panel on the active, visible Task refreshes its selected scope
@@ -1230,7 +1250,8 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   the selection succeeded or try to roll it back. The next explicit send
   must first restore the recorded settings successfully.
 - **Copilot session diffs.** Copilot does not report per-conversation file
-  changes; use the Workspace view.
+  changes, so UAM attributes files to a Task from its edit tool calls (see
+  Changes); files written by shell commands show only under All changes.
 - **Opening a web conversation elsewhere at the same time.** Do not
   continue a web session's conversation in Copilot's own terminal UI while
   the web interface has it open.

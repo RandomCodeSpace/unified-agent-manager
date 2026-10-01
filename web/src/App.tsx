@@ -12,6 +12,7 @@ import { SettingsView } from './components/Settings';
 import { RoutinesView } from './components/Routines';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
+import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
 import { commandGroups, cycleTask, mostRecentProject, needsYouCount, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, type Notice } from './lib/notify';
@@ -373,6 +374,7 @@ export default function App() {
       // Composer drafts of Tasks that no longer exist go with them.
       try {
         for (const key of staleDraftKeys(Object.keys(localStorage), data.sessions.map((s) => s.id), data.projects.map((p) => p.id))) localStorage.removeItem(key);
+        for (const key of staleReviewKeys(Object.keys(localStorage), data.sessions.map((s) => s.id))) localStorage.removeItem(key);
       } catch {
         // Storage unavailable: nothing to sweep.
       }

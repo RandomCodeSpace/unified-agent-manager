@@ -1145,13 +1145,18 @@ export function install(): { received: Received[] } {
     if ((r = m(/^\/api\/sessions\/([^/]+)\/changes$/))) {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
-      const files = st.changes[t.project_id] ?? [];
+      const all = st.changes[t.project_id] ?? [];
+      const mine = all.filter((f) => f.by?.includes(t.id));
+      const turn = mine.filter((f) => f.turn?.includes(t.id));
       const p = st.projects.find((x) => x.id === t.project_id);
+      const scope = url.searchParams.get('scope') ?? 'workspace';
+      const files = scope === 'task' ? mine : scope === 'turn' ? turn : all;
       return json(200, {
-        scope: 'workspace',
-        label: `Uncommitted changes in ${p?.name ?? t.workdir}, from any source, versus HEAD`,
+        scope,
+        label: scope === 'workspace' ? `Uncommitted changes in ${p?.name ?? t.workdir}, from any source, versus HEAD` : scope === 'turn' ? 'Files the agent edited in its latest turn, compared with HEAD.' : "Files this task's agent edited, compared with HEAD. Changes made to them by anything else show too.",
         supported: true,
-        files: files.map(({ path: fp, status, additions, deletions }) => ({ path: fp, status, additions, deletions })),
+        counts: { task: mine.length, turn: turn.length, workspace: all.length },
+        files: files.map(({ path: fp, status, additions, deletions, patch }) => ({ path: fp, status, additions, deletions, digest: `${patch.length}` })),
       });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/changes\/file$/))) {

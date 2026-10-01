@@ -398,11 +398,7 @@ func touchedFiles(items []agentapi.Item) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, it := range items {
-		tool := it.Tool
-		if tool == nil || tool.Name == "view" || tool.Status == agentapi.ToolFailed {
-			continue
-		}
-		for _, p := range localToolFilePaths(tool) {
+		for _, p := range editedPaths(it.Tool) {
 			if !seen[p] {
 				seen[p] = true
 				out = append(out, p)
@@ -410,6 +406,71 @@ func touchedFiles(items []agentapi.Item) []string {
 		}
 	}
 	return out
+}
+
+// editedPaths lists the files one edit tool call touched; none for a call
+// that only reads or failed. A patch's files come from its headers alone, so
+// an input clipped at its size limit, or framed loosely, still names the
+// files before the cut; the paths are only matched against git's listing.
+func editedPaths(tool *agentapi.ToolCall) []string {
+	if tool == nil || tool.Name == "view" || tool.Status == agentapi.ToolFailed {
+		return nil
+	}
+	if tool.Name == "apply_patch" {
+		return patchHeaderPaths(tool.Input)
+	}
+	return localToolFilePaths(tool)
+}
+
+// patchHeaderPaths lists the files a patch's Add, Update, Delete and Move to
+// headers name, in order. The input may be the patch itself, the patch as a
+// JSON string, or a JSON object holding it as a string field. JSON clipped at
+// the size limit has its escaped line breaks split and its cut last line
+// dropped.
+func patchHeaderPaths(input string) []string {
+	patch := strings.TrimSpace(input)
+	switch {
+	case strings.HasPrefix(patch, `"`):
+		var value string
+		if json.Unmarshal([]byte(patch), &value) == nil {
+			patch = value
+		} else {
+			patch = clippedLines(patch)
+		}
+	case strings.HasPrefix(patch, "{"):
+		var obj map[string]json.RawMessage
+		if json.Unmarshal([]byte(patch), &obj) != nil {
+			patch = clippedLines(patch)
+			break
+		}
+		for _, raw := range obj {
+			var value string
+			if json.Unmarshal(raw, &value) == nil && strings.Contains(value, "*** ") {
+				patch = value
+				break
+			}
+		}
+	}
+	var paths []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(patch, "\n") {
+		line = strings.TrimSpace(line)
+		for _, prefix := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "} {
+			p, ok := strings.CutPrefix(line, prefix)
+			if p = strings.TrimSpace(p); ok && validResolvePath(p) && !seen[p] && len(paths) < maxChangedFiles {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	return paths
+}
+
+// clippedLines splits clipped JSON text at its escaped line breaks and drops
+// the last line, which the clip may have cut.
+func clippedLines(text string) string {
+	text = strings.ReplaceAll(text, `\n`, "\n")
+	return text[:strings.LastIndexByte(text, '\n')+1]
 }
 
 // collectEvidence records what changed in the repository at dir since

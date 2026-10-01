@@ -48,15 +48,8 @@ func (m *Manager) Changes(ctx context.Context, id, scope string) (Changes, error
 		m.refreshBranches(ctx, true, project)
 	}
 	switch scope {
-	case ScopeWorkspace:
-		s, err := m.lookup(id)
-		if err != nil {
-			return Changes{}, err
-		}
-		m.mu.Lock()
-		workdir := s.workdir
-		m.mu.Unlock()
-		return workspaceChanges(ctx, workdir)
+	case ScopeWorkspace, ScopeTask, ScopeTurn:
+		return m.gitChanges(ctx, id, scope)
 	case ScopeSession:
 		files, out, err := m.sessionDiff(ctx, id)
 		if err != nil || !out.Supported {
@@ -67,7 +60,7 @@ func (m *Manager) Changes(ctx context.Context, id, scope string) (Changes, error
 		}
 		return out, nil
 	default:
-		return Changes{}, newError(http.StatusBadRequest, "scope must be %q or %q", ScopeSession, ScopeWorkspace)
+		return Changes{}, errScope
 	}
 }
 
@@ -87,6 +80,8 @@ func (m *Manager) FileChange(ctx context.Context, id, scope, path string) (agent
 		workdir := s.workdir
 		m.mu.Unlock()
 		return workspaceFileDiff(ctx, workdir, path)
+	case ScopeTask, ScopeTurn:
+		return m.taskFileDiff(ctx, id, scope, path)
 	case ScopeSession:
 		files, out, err := m.sessionDiff(ctx, id)
 		if err != nil {
@@ -105,7 +100,7 @@ func (m *Manager) FileChange(ctx context.Context, id, scope, path string) (agent
 		}
 		return agentapi.FileDiff{}, newError(http.StatusBadRequest, "path is not among this conversation's changes")
 	default:
-		return agentapi.FileDiff{}, newError(http.StatusBadRequest, "scope must be %q or %q", ScopeSession, ScopeWorkspace)
+		return agentapi.FileDiff{}, errScope
 	}
 }
 
@@ -190,18 +185,25 @@ func openRepo(ctx context.Context, workdir string) (*gitRepo, string, error) {
 }
 
 func workspaceChanges(ctx context.Context, workdir string) (Changes, error) {
+	out, _, err := workspaceListing(ctx, workdir)
+	return out, err
+}
+
+// workspaceListing is workspaceChanges with the repository it read, nil
+// when the workspace view is unsupported.
+func workspaceListing(ctx context.Context, workdir string) (Changes, *gitRepo, error) {
 	out := Changes{Scope: ScopeWorkspace, Label: workspaceLabel, Files: []ChangedFile{}}
 	repo, reason, err := openRepo(ctx, workdir)
 	if err != nil {
-		return out, err
+		return out, nil, err
 	}
 	if repo == nil {
 		out.Reason = reason
-		return out, nil
+		return out, nil, nil
 	}
 	entries, truncated, err := repo.status(ctx)
 	if err != nil {
-		return out, err
+		return out, nil, err
 	}
 	out.Supported = true
 	if truncated || len(entries) > maxChangedFiles {
@@ -210,7 +212,7 @@ func workspaceChanges(ctx context.Context, workdir string) (Changes, error) {
 	}
 	root, err := os.OpenRoot(repo.top)
 	if err != nil {
-		return out, newError(http.StatusBadGateway, "could not open working tree: %s", shortError(err))
+		return out, nil, newError(http.StatusBadGateway, "could not open working tree: %s", shortError(err))
 	}
 	defer func() { _ = root.Close() }()
 	stats := repo.numstat(ctx)
@@ -224,7 +226,7 @@ func workspaceChanges(ctx context.Context, workdir string) (Changes, error) {
 		}
 		out.Files = append(out.Files, file)
 	}
-	return out, nil
+	return out, repo, nil
 }
 
 func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.FileDiff, error) {
