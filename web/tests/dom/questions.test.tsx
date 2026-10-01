@@ -11,6 +11,14 @@ const answerButton = () => screen.getByRole('button', { name: /^Answer|^Submitti
 const declineButton = () => screen.getByRole('button', { name: 'Decline' });
 const textFile = () => new File(['hello from a log\n'], 'build.log', { type: 'text/plain' });
 
+/** Opens another Task by its hash, as the sidebar does; the composer remounts for it. */
+async function switchTo(id: string, title?: string) {
+  history.pushState(null, '', `/#task=${id}`);
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+  if (title) await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(title));
+  else await waitFor(() => expect(box().getByText('Needs answer')).toBeTruthy());
+}
+
 describe('answering from the composer', () => {
   test('the question sits on the composer: an option is chosen there, another replaces it, choosing it again clears it', async () => {
     const { user } = await openTask('t16');
@@ -208,6 +216,28 @@ describe('a recommended option', () => {
     await new Promise((r) => setTimeout(r, 400));
     expect(recommended()).toHaveProperty('checked', false);
     expect(answerButton()).toHaveProperty('disabled', true);
+  });
+
+  test('cleared, it is not staged again after a task switch', async () => {
+    const { user } = await openTask('t17');
+    await user.click(recommended());
+    expect(recommended()).toHaveProperty('checked', false);
+    await switchTo('t4', 'Bump GitHub Actions pins');
+    await switchTo('t17');
+    expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
+    expect(answerButton()).toHaveProperty('disabled', true);
+  });
+
+  test('another option picked stays staged after a task switch', async () => {
+    const { user, mock } = await openTask('t17');
+    await user.click(box().getByRole('radio', { name: 'yarn' }));
+    await switchTo('t4', 'Bump GitHub Actions pins');
+    await switchTo('t17');
+    expect(box().getByRole('radio', { name: 'yarn' })).toHaveProperty('checked', true);
+    expect(recommended()).toHaveProperty('checked', false);
+    await user.click(answerButton());
+    await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
+    expect(mock.received[0].body.answers).toEqual([['yarn']]);
   });
 
   test('without one, nothing is staged', async () => {
