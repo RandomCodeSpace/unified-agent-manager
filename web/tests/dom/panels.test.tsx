@@ -8,8 +8,11 @@ describe('changes', () => {
     await user.click(await screen.findByRole('button', { name: 'Open changes, 3 files' }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     expect(await sheet.findByText(/^3 files/)).toBeTruthy();
-    expect(sheet.getByText('All uncommitted project changes vs HEAD.')).toBeTruthy();
-    await user.click(sheet.getByTitle('internal/vterm/redraw_test.go'));
+    expect(sheet.getByText(/^Files this task's agent edited/)).toBeTruthy();
+    expect(sheet.getByText('CI workflow')).toBeTruthy();
+    await user.click(sheet.getByRole('radio', { name: 'All changes · 4' }));
+    expect(await sheet.findByText(/^All uncommitted project changes vs HEAD/)).toBeTruthy();
+    await user.click(await sheet.findByTitle('internal/vterm/redraw_test.go'));
     expect(await sheet.findByText(/func TestRedrawReplaysFocusEvents/)).toBeTruthy();
     expect(sheet.getByTitle('internal/vterm/redraw_test.go').getAttribute('aria-pressed')).toBe('true');
     await user.click(sheet.getByRole('button', { name: 'Refresh' }));

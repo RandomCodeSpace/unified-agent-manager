@@ -16,6 +16,9 @@ export interface MockChange {
   additions: number;
   deletions: number;
   patch: string;
+  /** Tasks whose edit tools touched it (the "This task" scope); `turn` lists those that did in their latest turn. */
+  by?: string[];
+  turn?: string[];
 }
 
 export interface MockState {
@@ -941,12 +944,31 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
 
   const changes: Record<string, MockChange[]> = {
     p1: [
-      { path: 'internal/vterm/redraw.go', status: 'M', additions: 3, deletions: 0, patch: EDIT_DIFF },
+      { path: 'internal/vterm/redraw.go', status: 'M', additions: 3, deletions: 0, patch: EDIT_DIFF, by: ['t1'] },
+      {
+        path: '.github/workflows/ci.yml',
+        status: 'M',
+        additions: 2,
+        deletions: 1,
+        by: ['t1'],
+        turn: ['t1'],
+        patch: `--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -14,4 +14,5 @@ jobs:
+       - uses: actions/setup-go@v5
+         with:
+-          go-version: '1.26'
++          go-version: '1.26.6'
++      - run: go test -race ./internal/vterm/...
+       - run: make test`,
+      },
       {
         path: 'internal/vterm/redraw_test.go',
         status: 'M',
         additions: 12,
         deletions: 0,
+        by: ['t1'],
+        turn: ['t1'],
         patch: `--- a/internal/vterm/redraw_test.go
 +++ b/internal/vterm/redraw_test.go
 @@ -88,2 +88,14 @@ func TestRedrawReplaysPrivateModes(t *testing.T) {
@@ -994,12 +1016,14 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       },
     ],
     p3: [
-      { path: 'templates/post.html', status: 'M', additions: 1, deletions: 1, patch: TEMPLATE_DIFF },
+      { path: 'templates/post.html', status: 'M', additions: 1, deletions: 1, patch: TEMPLATE_DIFF, by: ['t8'] },
       {
         path: 'assets/theme.css',
         status: 'M',
         additions: 1,
         deletions: 1,
+        by: ['t8'],
+        turn: ['t8'],
         patch: `--- a/assets/theme.css
 +++ b/assets/theme.css
 @@ -3,3 +3,3 @@
@@ -1060,6 +1084,12 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
     p2: [prev('cli-p2-1', 'Trim the zsh prompt', 60 * 24 * 3)],
     p3: [prev('cli-p3-1', 'Feed validator errors', 60 * 24), prev('cli-p3-2', 'Dark cover images', 60 * 26)],
   };
+
+  // Each Task's own changes, totalled as the service sends them (SessionSummary.diff).
+  for (const t of tasks) {
+    const mine = (changes[t.project_id] ?? []).filter((f) => f.by?.includes(t.id));
+    if (mine.length) t.diff = { files: mine.length, additions: mine.reduce((n, f) => n + f.additions, 0), deletions: mine.reduce((n, f) => n + f.deletions, 0) };
+  }
 
   return { meta, projects, previous, settings: {
       send_default: 'steer',

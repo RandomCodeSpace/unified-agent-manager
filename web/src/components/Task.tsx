@@ -9,7 +9,7 @@ import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { shownState } from '../lib/tasks';
-import { ChangesSheet } from './Changes';
+import { ChangesSheet, defaultScope } from './Changes';
 import { SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useMedia, useScrolled } from './common';
@@ -227,11 +227,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // also reports its refreshed default list; a tool completion during a badge read queues another.
   const fetching = useRef(false);
   const again = useRef(false);
+  const listScope = defaultScope(session);
   useEffect(() => {
     let alive = true;
     fetching.current = true;
     api
-      .changes(session.id, session.capabilities.session_diff ? 'session' : 'workspace')
+      .changes(session.id, listScope)
       .then((c) => {
         if (!alive) return;
         setChanges(c);
@@ -253,7 +254,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     return () => {
       alive = false;
     };
-  }, [session.id, session.capabilities.session_diff, live, changesTick]);
+  }, [session.id, listScope, live, changesTick]);
   const edits = liveItems.filter(item => completedChanges([item]) > 0).map(item => item.id).join('\n');
   const seenEdits = useRef(new Set(edits.split('\n')));
   useEffect(() => {

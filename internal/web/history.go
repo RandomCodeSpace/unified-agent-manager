@@ -126,6 +126,7 @@ func (m *Manager) readSlot(ctx context.Context) (func(), error) {
 // shows as cancelled, as it does when a conversation closes.
 func (m *Manager) installHistoryLocked(s *webSession, h agentapi.History) {
 	before := m.summaryLocked(s)
+	m.noteHistoryLocked(s, h, true)
 	for i := range h.Subagents {
 		switch h.Subagents[i].Status {
 		case agentapi.SubagentRunning:

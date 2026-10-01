@@ -33,9 +33,10 @@ async function components(api, environment = {}) {
     },
   };
   const exports = {};
-  const names = ['Copy', 'Ellipsis', 'FileDiff', 'RefreshCw', 'X', 'CommitPanel', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'ContextMenu', 'Menu', 'Segmented', 'Tip'];
+  const names = ['Copy', 'Ellipsis', 'FileDiff', 'MessageSquarePlus', 'RefreshCw', 'ShieldAlert', 'X', 'CommitPanel', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'ContextMenu', 'Menu', 'Segmented', 'Tip'];
+  const review = await import('../src/lib/review.ts');
   runInNewContext(ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, jsxFactory: 'jsxNode', jsxFragmentFactory: 'Fragment' } }).outputText, {
-    exports, ...hooks, api, AbortController, ...environment, ...Object.fromEntries(names.map(name => [name, name])), Fragment: 'fragment',
+    exports, ...hooks, api, AbortController, ...review, LIVE: ['starting', 'working'], readOnly: () => false, newRequestId: () => 'request', cn: (...c) => c.filter(Boolean).join(' '), ...environment, ...Object.fromEntries(names.map(name => [name, name])), Fragment: 'fragment',
     jsxNode: (type, props, ...children) => ({ type, key: props?.key, props: { ...props, children } }),
     describeError: String, structuredPatch: require('diff').structuredPatch, parsePatch: require('diff').parsePatch,
   });
@@ -352,5 +353,53 @@ test('accepted list counts survive a failed detail refresh while the prior diff 
   const recovered = await rendered();
   assert.match(recovered, /replacement-content/);
   assert.doesNotMatch(recovered, /previous-content|detail refresh failed/);
+  sheet.close();
+});
+
+function memoryStorage(seed = {}) {
+  const data = new Map(Object.entries(seed));
+  return { data, getItem: k => data.get(k) ?? null, setItem: (k, v) => data.set(k, String(v)), removeItem: k => data.delete(k) };
+}
+
+test('viewed marks clear when the file changes, and comments go out as one queued message', async () => {
+  const storage = memoryStorage({ 'uam.review.owned': JSON.stringify({ viewed: {}, comments: [
+    { id: 'c1', path: 'b.go', line: 7, side: 'new', code: 'x := 1', body: 'Name this better.' },
+    { id: 'c2', path: 'a.go', line: 3, side: 'old', code: 'old()', body: 'Keep this call.' },
+  ] }) });
+  const sent = [];
+  const listing = digest => ({ supported: true, scope: 'task', counts: { task: 2, turn: 1, workspace: 3 }, files: [
+    { path: 'a.go', status: 'modified', additions: 1, deletions: 1, digest },
+    { path: '.github/workflows/ci.yml', status: 'modified', additions: 2, deletions: 0, digest: 'w' },
+  ] });
+  const api = {
+    changes: async () => listing('one'),
+    changeFile: async (_id, _scope, path) => ({ path, before: 'a\n', after: 'b\n' }),
+    prompt: async (id, text, requestId, mode) => { sent.push({ id, text, requestId, mode }); return { request_id: requestId, status: 'queued', time: '' }; },
+  };
+  const { ChangesSheet, mount } = await components(api, { ...environment(), localStorage: storage });
+  let props = { session: { id: 'owned', state: 'working', capabilities: { session_diff: false } }, changes: listing('one'), changesError: null, isDefaultPending: () => false, open: true, active: true, onChanges: () => {} };
+  const sheet = mount(ChangesSheet, props);
+  let tree = await sheet.flush();
+  const rows = () => { const out = []; (function walk(n) { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return; } if (n.type?.name === 'FileRow') out.push(n); (n.props?.children ?? []).forEach?.(walk); })(tree); return out; };
+  assert.deepEqual([...rows().map(r => r.props.file.path)], ['.github/workflows/ci.yml', 'a.go'], 'risky files first');
+  assert.deepEqual([...find(tree, node => node.type === 'Segmented').props.items.map(item => item.label.props.children.join(''))], ['This task · 2', 'Last turn · 1', 'All changes · 3']);
+  rows()[1].props.onViewed(true);
+  tree = await sheet.flush();
+  assert.equal(rows()[1].props.viewed, 'viewed');
+  assert.equal(JSON.parse(storage.data.get('uam.review.owned')).viewed['a.go'], 'one');
+  sheet.update({ ...props, changes: listing('two') });
+  tree = await sheet.flush();
+  assert.equal(rows()[1].props.viewed, 'changed', 'a new digest clears the mark');
+
+  const batch = find(tree, node => node.type?.name === 'CommentBatch');
+  assert.equal(batch.props.comments.length, 2);
+  assert.equal(batch.props.working, true);
+  batch.props.onSend();
+  tree = await sheet.flush();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].mode, 'queue');
+  assert.match(sent[0].text, /2 comments[\s\S]*1\. a\.go, removed line 3:[\s\S]*> old\(\)[\s\S]*Keep this call\.[\s\S]*2\. b\.go, line 7:[\s\S]*Name this better\./);
+  assert.equal(JSON.parse(storage.data.get('uam.review.owned') ?? '{"comments":[]}').comments.length, 0, 'sent comments leave storage');
+  assert.match(JSON.stringify(find(tree, node => node.type?.name === 'CommentBatch').props.note), /after this turn/);
   sheet.close();
 });

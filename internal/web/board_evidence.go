@@ -398,11 +398,7 @@ func touchedFiles(items []agentapi.Item) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, it := range items {
-		tool := it.Tool
-		if tool == nil || tool.Name == "view" || tool.Status == agentapi.ToolFailed {
-			continue
-		}
-		for _, p := range localToolFilePaths(tool) {
+		for _, p := range editedPaths(it.Tool) {
 			if !seen[p] {
 				seen[p] = true
 				out = append(out, p)
@@ -410,6 +406,15 @@ func touchedFiles(items []agentapi.Item) []string {
 		}
 	}
 	return out
+}
+
+// editedPaths lists the files one edit tool call touched; none for a call
+// that only reads or failed.
+func editedPaths(tool *agentapi.ToolCall) []string {
+	if tool == nil || tool.Name == "view" || tool.Status == agentapi.ToolFailed {
+		return nil
+	}
+	return localToolFilePaths(tool)
 }
 
 // collectEvidence records what changed in the repository at dir since

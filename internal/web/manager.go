@@ -392,6 +392,18 @@ type webSession struct {
 	// changes, and such a Task does not get uam_create_task either.
 	routineID string
 
+	// edits maps each file the Task's edit tools touched, as the tool gave
+	// its path, to when it was last touched, and turnStart is when the
+	// latest ordinary prompt to the main agent began (task_changes.go).
+	// Both outlive trimmed and evicted transcripts. editsKnown is set once
+	// the whole record passed through them. diff is the cached task-scope
+	// total; diffRunning and diffDirty schedule its recount.
+	edits                  map[string]time.Time
+	turnStart              time.Time
+	editsKnown             bool
+	diff                   *DiffStat
+	diffRunning, diffDirty bool
+
 	persisted persistKey
 }
 
@@ -923,6 +935,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt,
+		Diff: s.diff,
 	}
 }
 
@@ -1887,6 +1900,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			s.linkUploadsLocked(&it)
 			m.linkTurnTimingLocked(s, it)
 			m.upsertItemLocked(s, it, true)
+			if s.noteEdits(it) {
+				m.kickDiffLocked(s)
+			}
 			m.subagentSummaryItemLocked(s, it)
 		}
 	case agentapi.EventDelta:
@@ -1956,6 +1972,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 
 func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	m.observeTurnTimingLocked(s, turn.State)
+	if turn.State != agentapi.TurnWorking {
+		m.kickDiffLocked(s) // the turn may have changed files without an edit tool
+	}
 	if model := clipRunes(strings.TrimSpace(displaytext.Sanitize(turn.Model)), maxNameRunes); model != "" {
 		s.lastModel = model
 	}
@@ -2094,6 +2113,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	s.routineID = req.routineID
 	// A new conversation has no earlier record: everything streams in.
 	s.history = HistoryLoaded
+	s.editsKnown = true
 	s.gen = 1
 	m.mu.Lock()
 	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}, s)
@@ -2430,6 +2450,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 		if s.base == StateClosed || s.base == StateFailed {
 			s.setBase(StateIdle, "")
 		}
+		m.noteHistoryLocked(s, history, withHistory && histErr == nil)
 		m.applyHistoryLocked(s, history, false)
 		m.openedHistoryLocked(s, withHistory, histErr)
 		m.autoAllowPendingLocked(s)
