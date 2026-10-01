@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { describeSchedule, outcomeLabel, outcomeTone, scheduleOf, untilText } from '../src/lib/routines.ts';
+
+test('a schedule reads in plain words', () => {
+  assert.equal(describeSchedule({ kind: 'weekdays', time: '09:00' }), 'Every weekday at 09:00');
+  assert.equal(describeSchedule({ kind: 'daily', time: '18:30' }), 'Every day at 18:30');
+  assert.equal(describeSchedule({ kind: 'weekly', time: '08:00', weekday: 1 }), 'Every Monday at 08:00');
+  assert.equal(describeSchedule({ kind: 'hours', hours: 1 }), 'Every hour');
+  assert.equal(describeSchedule({ kind: 'hours', hours: 6 }), 'Every 6 hours');
+});
+
+test('the form sends only the fields its kind takes', () => {
+  assert.deepEqual(scheduleOf('hours', '09:00', 3, 6), { kind: 'hours', hours: 6 });
+  assert.deepEqual(scheduleOf('weekly', '09:00', 3, 6), { kind: 'weekly', time: '09:00', weekday: 3 });
+  assert.deepEqual(scheduleOf('weekdays', '07:15', 3, 6), { kind: 'weekdays', time: '07:15' });
+});
+
+test('a running run whose task waits for the owner needs you', () => {
+  assert.equal(outcomeLabel({ outcome: 'running' }, 'working'), 'Running');
+  assert.equal(outcomeLabel({ outcome: 'running' }, 'awaiting_permission'), 'Needs you');
+  assert.equal(outcomeTone({ outcome: 'running' }, 'awaiting_answer'), 'attention');
+  assert.equal(outcomeLabel({ outcome: 'time_limit' }), 'Stopped at the time limit');
+  assert.equal(outcomeTone({ outcome: 'failed' }), 'error');
+  assert.equal(outcomeTone({ outcome: 'skipped' }), 'muted');
+});
+
+test('the next run reads as a distance', () => {
+  const now = Date.parse('2026-10-01T09:00:00Z');
+  assert.equal(untilText('2026-10-01T09:00:20Z', now), 'now');
+  assert.equal(untilText('2026-10-01T09:05:00Z', now), 'in 5 min');
+  assert.equal(untilText('2026-10-01T12:00:00Z', now), 'in 3 h');
+  assert.equal(untilText('2026-10-04T09:00:00Z', now), 'in 3 days');
+});

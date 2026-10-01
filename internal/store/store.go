@@ -74,6 +74,8 @@ type Config struct {
 	WebProjects map[string]WebProject `json:"web_projects,omitempty"`
 	// WebSettings are the web interface's settings, shared by every browser.
 	WebSettings WebSettings `json:"web_settings,omitzero"`
+	// WebRoutines holds the web interface's routines, keyed by routine ID.
+	WebRoutines map[string]WebRoutine `json:"web_routines,omitempty"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -103,6 +105,7 @@ type configAlias struct {
 	UI             UISettings               `json:"ui"`
 	WebProjects    map[string]WebProject    `json:"web_projects,omitempty"`
 	WebSettings    WebSettings              `json:"web_settings,omitzero"`
+	WebRoutines    map[string]WebRoutine    `json:"web_routines,omitempty"`
 }
 
 // knownConfigFields lists modeled keys and runtime-only keys that must never
@@ -116,6 +119,7 @@ var knownConfigFields = map[string]struct{}{
 	"ui":                          {},
 	"web_projects":                {},
 	"web_settings":                {},
+	"web_routines":                {},
 	"client_id":                   {},
 	"client_ids":                  {},
 	"client_role":                 {},
@@ -150,6 +154,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		UI:             c.UI,
 		WebProjects:    c.WebProjects,
 		WebSettings:    c.WebSettings,
+		WebRoutines:    c.WebRoutines,
 	})
 	if err != nil {
 		return nil, err
@@ -170,6 +175,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.UI = alias.UI
 	c.WebProjects = alias.WebProjects
 	c.WebSettings = alias.WebSettings
+	c.WebRoutines = alias.WebRoutines
 	unknown, err := decodeUnknownJSON(data, knownConfigFields)
 	if err != nil {
 		return err
@@ -396,6 +402,9 @@ type WebState struct {
 	// SpawnedBy is the ID of the Task whose uam_create_task call created
 	// this one; empty for a Task the owner created or imported.
 	SpawnedBy string `json:"spawned_by,omitempty"`
+	// RoutineID is the routine whose run created this Task; empty
+	// otherwise.
+	RoutineID string `json:"routine_id,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -431,6 +440,7 @@ var knownWebStateFields = map[string]struct{}{
 	"terminal_session":    {},
 	"imported":            {},
 	"spawned_by":          {},
+	"routine_id":          {},
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {
@@ -1002,6 +1012,7 @@ func (s *Store) loadNoLock() (Config, error) {
 	// including the read-only newer-schema one below.
 	dropInvalidRecords(&cfg)
 	dropInvalidProjects(&cfg)
+	dropInvalidRoutines(&cfg)
 	cleanHiddenModels(&cfg.WebSettings)
 	cleanTitleModels(&cfg.WebSettings)
 	cleanCustomModels(&cfg.WebSettings)

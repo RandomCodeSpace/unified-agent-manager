@@ -1,4 +1,4 @@
-import { FolderMinus, FolderOpen, History } from 'lucide-react';
+import { Clock, FolderMinus, FolderOpen, History } from 'lucide-react';
 import { useRef, useState, type SubmitEvent } from 'react';
 import { api, describeError, isStatus, type Project, type SessionSummary } from '../api';
 import { Note, ProjectBadge, useApp } from './common';
@@ -137,7 +137,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
  * The one place for a Project: its name, with Previous sessions (import) and Remove project
  * opening over it, so closing either lands back here. What new Tasks start with is in Settings.
  */
-export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onUpdated, onRemoved }: DialogLifecycle & { project: Project; tasks: SessionSummary[]; onUpdated: (p: Project) => void; onRemoved: (id: string) => void }) {
+export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onUpdated, onRemoved, onRoutines }: DialogLifecycle & { project: Project; tasks: SessionSummary[]; onUpdated: (p: Project) => void; onRemoved: (id: string) => void; onRoutines?: () => void }) {
   const { meta } = useApp();
   const first = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(project.name);
@@ -194,9 +194,21 @@ export function EditProjectDialog({ open, onClose, onClosed, project, tasks, onU
             {error}
           </Note>
         )}
-        {/* The Project's other two doors, secondary here: each opens over this dialog and lands back on its button. */}
+        {/* The Project's other doors, secondary here: Routines opens its view in place of this dialog; the others open over it and land back on their button. */}
         <div className="fade-rule mt-1" aria-hidden="true" />
         <div className="flex flex-wrap gap-2 pt-3">
+          {onRoutines && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                onClose();
+                onRoutines();
+              }}
+            >
+              <Clock />
+              Routines
+            </Button>
+          )}
           {canImport(meta) && (
             <Button variant="secondary" onClick={() => setPrevious(true)}>
               <History />

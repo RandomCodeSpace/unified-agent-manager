@@ -8,6 +8,7 @@ import { itemCursor } from '../lib/historyWindow';
 import { boardMock } from './board';
 import { gitMock } from './git';
 import { chartMock } from './charts';
+import { routinesMock } from './routines';
 import { seed, type MockState, type MockTask } from './data';
 import { seedUtility, utilityLog } from './utility';
 
@@ -170,6 +171,7 @@ export function install(): { received: Received[] } {
   };
   const find = (id: string) => st.tasks.find((t) => t.id === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
+  const routines = routinesMock((id) => st.projects.some((p) => p.id === id));
   // The planner (ADR 0005); `?mock&bigplan` adds about 200 cards to notes-site.
   const charts = chartMock(st.projects, (project) => broadcast('project', { project }));
   const board = boardMock({
@@ -662,6 +664,8 @@ export function install(): { received: Received[] } {
     if (gitted) return gitted;
     const charted = charts(method, url, body);
     if (charted) return charted;
+    const routined = routines.route(method, path, body);
+    if (routined) return routined;
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
     if (path === '/api/utility' && method === 'GET') return json(200, utilityLog(utility, st.settings.utility_daily_limit ?? 200, Number(url.searchParams.get('before')) || 0, Number(url.searchParams.get('limit')) || 200));

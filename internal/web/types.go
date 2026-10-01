@@ -259,6 +259,9 @@ type SessionSummary struct {
 	// conversation, to the minute, so a quiet Task can say how long it has
 	// been quiet. It is not persisted.
 	EventAt time.Time `json:"event_at,omitzero"`
+	// RoutineID is the ID of the routine whose run created this Task;
+	// omitted otherwise.
+	RoutineID string `json:"routine_id,omitempty"`
 }
 
 // SessionDetail is a summary plus the retained main-agent transcript,

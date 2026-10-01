@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ChevronDown, CircleDashed, KanbanSquare, Layers, Search, Settings } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, CircleDashed, Clock, KanbanSquare, Layers, Search, Settings } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { Project, SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -51,12 +51,13 @@ const inputClass = 'h-8 min-w-0 flex-1 bg-transparent text-ui text-ink outline-n
  * for all of them. It opens a searchable list with All projects first; each Project row
  * carries a gear that opens Edit project once the list has closed, so focus returns to the badge.
  */
-export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onPlan }: Readonly<{ projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; onEdit: (p: Project) => void; onPlan?: (p: Project) => void }>) {
+export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onRoutines, onPlan }: Readonly<{ projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; onEdit: (p: Project) => void; onRoutines?: (p: Project) => void; onPlan?: (p: Project) => void }>) {
   const chosen = filteredProject(projects, filter);
   const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<Project | null>(null);
   const planning = useRef<Project | null>(null);
+  const scheduling = useRef<Project | null>(null);
   return (
     <Popover.Root
       open={open}
@@ -66,6 +67,9 @@ export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onPlan
         const plan = planning.current;
         planning.current = null;
         if (plan) onPlan?.(plan);
+        const routines = scheduling.current;
+        scheduling.current = null;
+        if (routines) onRoutines?.(routines);
         if (!pending.current) return;
         const p = pending.current;
         pending.current = null;
@@ -92,6 +96,10 @@ export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onPlan
           }}
           onPlan={onPlan && ((p) => {
             planning.current = p;
+            setOpen(false);
+          })}
+          onRoutines={onRoutines && ((p) => {
+            scheduling.current = p;
             setOpen(false);
           })}
         />
@@ -160,13 +168,14 @@ interface FilterRow {
  * Project its Plan and gear buttons; the Planner's picker lists no All projects, disables the
  * Projects `reason` names, and ends with its `tail` entry while that matches the search.
  */
-function FilterList({ projects, filter, input, onPick, onEdit, onPlan, all = true, reason, tail }: Readonly<{
+function FilterList({ projects, filter, input, onPick, onEdit, onPlan, onRoutines, all = true, reason, tail }: Readonly<{
   projects: Project[];
   filter: string | null;
   input: RefObject<HTMLInputElement | null>;
   onPick: (id: string | null) => void;
   onEdit?: (p: Project) => void;
   onPlan?: (p: Project) => void;
+  onRoutines?: (p: Project) => void;
   all?: boolean;
   reason?: (p: Project) => string | undefined;
   tail?: FilterRow;
@@ -247,6 +256,20 @@ function FilterList({ projects, filter, input, onPick, onEdit, onPlan, all = tru
                   }}
                 >
                   <KanbanSquare />
+                </Button>
+              )}
+              {p && onRoutines && (
+                <Button
+                  size="icon-sm"
+                  aria-label={`Routines of ${p.name}`}
+                  title="Routines"
+                  className="text-muted"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRoutines(p);
+                  }}
+                >
+                  <Clock />
                 </Button>
               )}
               {p && onEdit && (
