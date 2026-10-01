@@ -215,8 +215,12 @@ are logged only at debug level (`UAM_DEBUG=1`).
   GitHub MCP server. Hooks run their commands without asking, as they do in
   the terminal. Every Task also gets uam's built-in `uam` skill, which tells
   the agent what uam is, how its replies and files show here, and how to use
-  the Planner tools. uam writes it to `skills/uam/SKILL.md` beside
-  `sessions.json` at each start. uam also appends a system instruction asking
+  the Planner tools, and the built-in `uam-design` skill, which gives design
+  defaults for web and UI work such as prototypes. `uam-design` is a fallback:
+  it tells the agent to follow your own instructions and design skills and the
+  project's design system (a `DESIGN.md`, tokens, its component library) first.
+  uam writes both to `skills/<name>/SKILL.md` beside `sessions.json` at each
+  start. uam also appends a system instruction asking
   the agent to give a question's options as separate choices, with the
   recommended option first and marked "(Recommended)", and to write commit
   messages and pull or merge requests without a `Co-authored-by` trailer or
