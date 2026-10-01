@@ -11,6 +11,7 @@ import { modelCostLine } from '../lib/cost';
 import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
 import { loadDensity, saveDensity, type Density } from '../lib/density';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
+import { disableNotifications, enableNotifications, loadNotifyMode, notifySupport } from '../lib/notify';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Select } from './ui/select';
 import { Switch } from './ui/switch';
@@ -367,6 +368,47 @@ function PlannerSection({ settings, saving, projects, providers, onSave }: Reado
  * sidebar's gear and `#settings`. A change shows at once and is saved through PATCH; a
  * refusal puts the old value back and says why.
  */
+/** Notifications for this browser (lib/notify.ts): permission is asked only when the switch is turned on. */
+function NotifyRow() {
+  const [support] = useState(notifySupport);
+  const [mode, setMode] = useState(loadNotifyMode);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  async function toggle(on: boolean) {
+    setProblem(null);
+    setBusy(true);
+    try {
+      if (!on) {
+        await disableNotifications();
+        setMode(null);
+        return;
+      }
+      const result = await enableNotifications();
+      if ('error' in result) setProblem(result.error);
+      else setMode(result.mode);
+    } finally {
+      setBusy(false);
+    }
+  }
+  let help = 'When a Task asks you something, needs your permission, fails or finishes, unless you are looking at it.';
+  if (support === 'home-screen') help = 'On iPhone and iPad this works in the Home Screen app only: tap Share, then Add to Home Screen, open UAM from there and turn this on.';
+  else if (support === 'none') help = 'This browser cannot show notifications.';
+  else if (mode === 'push') help += ' They arrive even with UAM closed.';
+  else if (mode === 'page') help += ' This browser shows them only while UAM is open in a tab.';
+  return (
+    <>
+      <Row id="notify" label="Notify me when a Task needs me or finishes" help={help}>
+        <Switch aria-label="Notify me when a Task needs me or finishes" aria-describedby="notify-help" checked={mode !== null} disabled={busy || support !== 'ok'} onCheckedChange={(on) => void toggle(on)} />
+      </Row>
+      {problem && (
+        <Note tone="error" role="alert">
+          {problem}
+        </Note>
+      )}
+    </>
+  );
+}
+
 export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNode; onClose: () => void }>) {
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
   const projects = useContext(PlannerContext)?.projects ?? NO_PROJECTS;
@@ -541,6 +583,7 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
             </Row>
           </Section>}
           <Section id="browser" title="This browser">
+            <NotifyRow />
             <Row id="motion" label="Motion" help="Always on animates even when the OS asks for reduced motion; Match system follows your OS setting.">
               <Segmented
                 aria-labelledby="motion-label"
