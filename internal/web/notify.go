@@ -222,7 +222,7 @@ func (p *pushStore) loadLocked() error {
 }
 
 func (p *pushStore) saveLocked() error {
-	data, err := json.MarshalIndent(p.file, "", "  ")
+	data, err := json.MarshalIndent(p.file, "", "  ") // #nosec G117 -- web-push.json holds the VAPID private key on purpose; it is written owner-only (0600).
 	if err != nil {
 		return err
 	}
