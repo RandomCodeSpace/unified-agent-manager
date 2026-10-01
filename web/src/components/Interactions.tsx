@@ -98,7 +98,7 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
       )}
       {permission ? (
         <>
-          {!permitted && <Note className="mt-2">This provider does not accept decisions from UAM.</Note>}
+          {!permitted && <Note className="mt-2">This agent does not take decisions from here.</Note>}
           {permitted && ordered.length > 0 && (
             <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
               {ordered.map((o) => (
@@ -112,7 +112,7 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
       ) : (
         <QuestionForm interactionId={interaction.id} questions={interaction.questions ?? []} disabled={!permitted} sending={busy === 'answer' || busy === 'decline' ? busy : null} onSubmit={(answers) => respond({ answers }, 'answer')} onDecline={() => respond({ reject: true }, 'decline')} />
       )}
-      {!permission && !permitted && <Note className="mt-2">This provider does not accept answers from UAM.</Note>}
+      {!permission && !permitted && <Note className="mt-2">This agent does not take answers from here.</Note>}
       {note && (
         <Note tone="warn" role="alert" className="mt-2">
           {note}

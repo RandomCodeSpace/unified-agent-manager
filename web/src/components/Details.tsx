@@ -204,6 +204,11 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
   return <Details.Provider value={context}>{children}</Details.Provider>;
 }
 
+/** Reads an item's whole body once (the item itself when it is whole); absent outside a Task. */
+export function useBodyRead(): ((item: Item) => Promise<Item>) | undefined {
+  return useContext(Details)?.read;
+}
+
 export function useItemBody(item: Item, open: boolean) {
   const context = useContext(Details);
   const parentVisible = useContext(Visible);

@@ -678,7 +678,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     return commandBlocked;
   }
   const blocked = describeBlocked();
-  const settingsSteerReason = live && selectionChanged ? 'Model, effort and context changes apply to the next turn. Steering keeps the current settings.' : '';
+  const settingsSteerReason = live && selectionChanged ? 'Model, effort and context changes apply to the next turn; Send now keeps the current turn’s settings.' : '';
   const steerBlocked = steerUnavailable || settingsSteerReason;
   // A message needs text, a file reference or a finished upload; blank text alongside them goes as none.
   const empty = answering ? !canAnswer(answering.question, staged, text) : !text.trim() && !files.length && !uploads.some((u) => u.status === 'done');
@@ -686,6 +686,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The one send button is Enter's.
   const steerDefault = appSettings.send_default === 'steer';
   const { enter, modified } = enterActions(live, appSettings.send_default, !!steerUnavailable);
+  // While a turn runs a message has two buttons: After this turn (queue) and Send now (steer).
+  const twoChoices = live && !cmd && !answering && !locked && !newTask;
+  const labelledActions = twoChoices || (!!answering && !locked);
 
   /** A new Task's first Send: the text stays here, with the reason, unless the Task was created. */
   async function sendFirst(t: string) {
@@ -828,8 +831,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       }
     } catch (e) {
       if (!cmd && promptMode === 'steer' && isStatus(e, 409) && e.message.includes('cannot steer a running turn')) {
-        setSteerUnavailable('This provider cannot steer a running turn');
-        setError('This provider cannot steer a running turn. Your message is still here; Enter will queue it.');
+        setSteerUnavailable('This agent cannot take a message during a turn');
+        setError('This agent cannot take a message during a turn. Your message is still here; Enter sends it after this turn.');
         return;
       }
       setError(`${describeError(e)}. Nothing will be retried automatically. Repeating this action with unchanged message and settings uses the same request (${id.slice(0, 8)}).`);
@@ -1029,7 +1032,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (locked) return '';
     if (answering) return answerPlaceholder(answering.question, staged.length > 0);
     if (!live) return 'Ask anything, @ files, $ skills, / commands';
-    return steerDefault ? 'Steer this turn, or queue a follow-up…' : 'Queue a follow-up, or steer this turn…';
+    return steerDefault ? 'Send now to guide this turn, or after it…' : 'Send after this turn, or now to guide it…';
   }
   /** The send button's tip: why it is blocked, or what Enter and Ctrl+Enter do. */
   function describeSendTip(): ReactNode {
@@ -1042,14 +1045,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </>
       );
     }
-    if (live && !cmd) {
-      return (
-        <>
-          {enter === 'steer' ? 'Steer this turn (Enter)' : 'Queue for the next turn (Enter)'}
-          <span className="block text-on-primary/70">{steerBlocked || (enter === 'steer' ? 'Ctrl+Enter queues' : 'Ctrl+Enter steers')} · Shift+Enter adds a line</span>
-        </>
-      );
-    }
     return (
       <>
         {cmd ? `Run /${cmd.name} (Enter)` : 'Send (Enter)'}
@@ -1057,10 +1052,22 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       </>
     );
   }
+  /** A turn-time button's tip: what it does and its key, or why Send now cannot. */
+  function describeChoiceTip(mode: 'queue' | 'steer'): ReactNode {
+    if (blocked) return blocked;
+    if (mode === 'steer' && steerBlocked) return steerBlocked;
+    const shortcut = mode === enter ? 'Enter' : modified === mode ? 'Ctrl+Enter' : '';
+    return (
+      <>
+        {mode === 'steer' ? 'Send now: the agent reads it before its next step' : 'After this turn: sent when the current turn ends'}
+        {shortcut && <span className="block text-on-primary/70">{shortcut} · Shift+Enter adds a line</span>}
+      </>
+    );
+  }
   /** The confirmation for a discard: the one prompt, or the whole queue. */
   function describeDiscard(): string {
-    if (discard.target?.kind !== 'all') return 'Cancel this queued prompt?';
-    return discard.target.count === 1 ? 'Clear the queued prompt?' : `Clear ${discard.target.count} queued prompts?`;
+    if (discard.target?.kind !== 'all') return 'Cancel this waiting message?';
+    return discard.target.count === 1 ? 'Clear the waiting message?' : `Clear ${discard.target.count} waiting messages?`;
   }
   /** What cancelling loses: the text, or for a prompt of only attachments or files, just its sending. */
   function describeDiscardLoss(): string {
@@ -1176,9 +1183,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           )}
           {commandBlocked && <Note role="status">{commandBlocked}</Note>}
           {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
-          {live && steerUnavailable && !cmd && !answering && <Note>{steerUnavailable}. Enter queues the message for the next turn.</Note>}
+          {live && steerUnavailable && !cmd && !answering && <Note>{steerUnavailable}. Enter sends your message after this turn.</Note>}
           {selectionChanged && <Note>Current model: {modelName(meta, session.provider, session.model)} · {session.effort || 'Default'} effort · {sizeLabel(session.context_size || 'default')} context. Draft settings apply when its next turn starts.</Note>}
-          {settingsSteerReason && !cmd && !answering && <Note>{settingsSteerReason} <Button size="sm" variant="secondary" disabled={cannotSubmit} onClick={() => void send('queue')}>Queue next turn</Button></Note>}
+          {settingsSteerReason && !cmd && !answering && <Note>{settingsSteerReason}</Note>}
           {resendable && (
             <Tip label="Puts the last prompt back here to edit or send again. Nothing is sent until you do.">
               <Button size="sm" variant="secondary" className="self-start animate-rise" onClick={resend}>
@@ -1201,9 +1208,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <details className="group/queue px-3.5 py-1.5" open>
           <summary className="flex h-6 list-none items-center gap-2 text-caption text-muted select-none [&::-webkit-details-marker]:hidden">
             <ListEnd aria-hidden="true" className="size-3.5" />
-            <span className="tabular-nums">{shownQueue.length} queued</span>
+            <span className="tabular-nums">{shownQueue.length} waiting</span>
             <span aria-hidden="true">·</span>
-            <span>{session.queue_paused ? 'Paused' : 'Waiting for the current turn'}</span>
+            <span>{session.queue_paused ? 'Paused' : 'Sent after this turn'}</span>
             <span className="flex-1" />
             {session.queue_paused && (
               <Button size="sm" variant="secondary" className="h-6" disabled={!!busy || locked} onClick={() => void action('queue', () => api.queueAction(session.id, 'resume'))}>
@@ -1223,7 +1230,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                   {q.settings && <span className="text-caption text-muted">{modelName(meta, session.provider, q.settings.model)} · {q.settings.effort || 'Default'} effort · {sizeLabel(q.settings.context_size)} context</span>}
                   <QueuedExtras files={q.files} attachments={q.attachments} />
                 </span>
-                <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel queued prompt: ${queuedLabel(q)}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: q.text, label: queuedLabel(q) })}>
+                <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel waiting message: ${queuedLabel(q)}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: q.text, label: queuedLabel(q) })}>
                   <X />
                 </Button>
               </li>
@@ -1250,7 +1257,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           {...discard.props}
           title={describeDiscard()}
           description={describeDiscardLoss()}
-          confirmLabel={discard.target?.kind === 'all' ? 'Clear queue' : 'Cancel prompt'}
+          confirmLabel={discard.target?.kind === 'all' ? 'Clear all' : 'Cancel message'}
           cancelLabel="Keep"
           onConfirm={confirmDiscard}
         >
@@ -1301,8 +1308,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       />
 
       {/* One control row (DESIGN.md D3): Attach and the pickers at left, the actions at right. On a phone the effort,
-          context, permissions and execution pickers fold into a More menu. The row never wraps. */}
-      <div className="flex items-center gap-0.5 px-2 pt-1 pb-2">
+          context, permissions and execution pickers fold into a More menu. The row wraps only on a phone, when the actions
+          carry labels (Send now and After this turn, or Decline and Answer): they take a row of their own there. */}
+      <div className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2', labelledActions && 'max-sm:flex-wrap max-sm:gap-y-1')}>
         {!locked && (
           <>
             <input
@@ -1442,10 +1450,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </>
         )}
         {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
-        <span className="ml-auto flex shrink-0 items-center gap-0.5">
+        <span className={cn('ml-auto flex shrink-0 items-center gap-0.5', labelledActions && 'max-sm:w-full max-sm:justify-end')}>
         {busy === 'settings' && <Spinner className="mr-1" />}
         <Appear show={live || session.execution?.objective?.status === 'active'}>
-          <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop execution and pause queued follow-ups'}>
+          <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
             <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
               <Square className="!size-3" fill="currentColor" />
             </Button>
@@ -1453,12 +1461,35 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </Appear>
         <Appear show={!!answering}>
           <Tip label="Decline to answer this question">
-            <Button size="icon-md" variant="danger" aria-label="Decline" className="ml-1 rounded-full" loading={busy === 'decline'} disabled={!!busy || locked} onClick={() => void decline()}>
+            <Button size="md" variant="danger" className="ml-1" loading={busy === 'decline'} disabled={!!busy || locked} onClick={() => void decline()}>
               <X aria-hidden="true" strokeWidth={2.25} />
+              Decline
             </Button>
           </Tip>
         </Appear>
-        {!locked && (
+        {/* While a turn runs, two choices with fixed meanings; Enter's is the primary. */}
+        {twoChoices ? (
+          <>
+            <Tip label={describeChoiceTip('queue')}>
+              <Button size="md" variant={enter === 'queue' ? 'primary' : 'secondary'} className="ml-1" loading={busy === 'queue'} disabled={cannotSubmit} onClick={() => void send('queue')}>
+                After this turn
+              </Button>
+            </Tip>
+            <Tip label={describeChoiceTip('steer')}>
+              <Button size="md" variant={enter === 'steer' ? 'primary' : 'secondary'} className="ml-1" aria-disabled={steerBlocked ? 'true' : undefined} aria-label={steerBlocked ? `Send now. ${steerBlocked}` : undefined} loading={busy === 'steer'} disabled={cannotSubmit} onClick={() => void send('steer')}>
+                Send now
+                <ArrowUp aria-hidden="true" strokeWidth={2.25} />
+              </Button>
+            </Tip>
+          </>
+        ) : answering && !locked ? (
+          <Tip label={describeSendTip()}>
+            <Button type="submit" size="md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : undefined} className="ml-1" loading={busy === 'answer'} disabled={cannotSubmit}>
+              Answer
+              <ArrowUp aria-hidden="true" strokeWidth={2.25} />
+            </Button>
+          </Tip>
+        ) : !locked && (
           <Tip label={describeSendTip()}>
             <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === (answering ? 'answer' : enter)} disabled={cannotSubmit || (!answering && !cmd && enter === 'steer' && !!settingsSteerReason)}>
               <ArrowUp aria-hidden="true" strokeWidth={2.25} />

@@ -23,11 +23,11 @@ describe('settings', () => {
   test('the Enter default switches between steer and queue, saved on the service', async () => {
     const { user } = await openSettings();
     const composer = await section('Composer');
-    const steer = composer.getByRole('radio', { name: 'Steer' });
+    const steer = composer.getByRole('radio', { name: 'Send now' });
     expect(steer.getAttribute('aria-checked')).toBe('true');
-    await user.click(composer.getByRole('radio', { name: 'Queue' }));
-    await waitFor(() => expect(composer.getByRole('radio', { name: 'Queue' }).getAttribute('aria-checked')).toBe('true'));
-    expect(composer.getByText(/Steer stays on Ctrl\+Enter/)).toBeTruthy();
+    await user.click(composer.getByRole('radio', { name: 'After this turn' }));
+    await waitFor(() => expect(composer.getByRole('radio', { name: 'After this turn' }).getAttribute('aria-checked')).toBe('true'));
+    expect(composer.getByText(/Send now stays on Ctrl\+Enter/)).toBeTruthy();
   });
 
   test('new tasks start on the defaults shown, and a change is saved', async () => {
