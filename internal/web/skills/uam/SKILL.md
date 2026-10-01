@@ -85,8 +85,9 @@ the Project and refresh it later without you.
 `uam_create_task` starts a new Task in an existing Project, with your prompt
 as its first message. Use it when the owner asks for work to run as its own
 Task. The new Task starts in Safe mode, runs on its own and shows in the
-owner's sidebar; no reply comes back to you. A Task can start at most 5, and a Task
-started this way cannot start more.
+owner's sidebar; no reply comes back to you. A Task can start at most 5. A Task
+started this way, or by one of the owner's routines (scheduled runs), does
+not have the tool.
 
 ## Planner: the board_* tools
 

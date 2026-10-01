@@ -21,6 +21,8 @@ export interface WorkspaceActions {
   onAddProject: () => void;
   /** Edit project: the one place for a Project's name, defaults, previous sessions and removal. */
   onEditProject: (p: Project) => void;
+  /** A Project's routines, in the main pane. */
+  onRoutines: (p: Project) => void;
   /** The Project the sidebar is filtered to; null shows every Project. Remembered per browser. */
   filter: string | null;
   onFilter: (id: string | null) => void;
@@ -442,7 +444,7 @@ export const Sidebar = memo(function Sidebar({
           <input type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
         <SidebarToggle id="sidebar-hide" open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
-        {projects.length > 0 && <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} onPlan={actions.planner && ((p) => actions.planner!.onOpen(p.id))} />}
+        {projects.length > 0 && <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} onRoutines={actions.onRoutines} onPlan={actions.planner && ((p) => actions.planner!.onOpen(p.id))} />}
         <Tip label="Add project">
           <Button size="icon" aria-label="Add project" className="text-muted" onClick={actions.onAddProject}>
             <FolderPlus />

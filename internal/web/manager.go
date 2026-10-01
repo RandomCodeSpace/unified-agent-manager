@@ -156,8 +156,8 @@ type Manager struct {
 	terminals  map[*terminal]struct{}
 	terminalWG sync.WaitGroup
 	// hostTools, when set, returns the host tools the conversation of a Task
-	// in a Project registers, spawned when uam_create_task created the Task,
-	// and the CallTool bound to that Task. It runs with mu held, so it takes
+	// in a Project registers, spawned when uam_create_task or a routine's run
+	// created the Task, and the CallTool bound to that Task. It runs with mu held, so it takes
 	// no lock and never uses the planner store. NewManager sets it to the
 	// planner's tools and uam_create_task (create_task.go).
 	hostTools func(taskID, projectID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
@@ -194,6 +194,8 @@ type Manager struct {
 	utility utilityLog
 	// chartRuns bounds pinned chart refreshes (chart_pins.go).
 	chartRuns chartRuns
+	// routines is the routine scheduler (routines.go).
+	routines routineState
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -386,6 +388,9 @@ type webSession struct {
 	// spawnedBy is the Task whose uam_create_task call created this one. It
 	// never changes, and such a Task does not get the tool itself.
 	spawnedBy string
+	// routineID is the routine whose run created this Task. It never
+	// changes, and such a Task does not get uam_create_task either.
+	routineID string
 
 	persisted persistKey
 }
@@ -577,6 +582,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	usage := m.usageProviderLocked()
 	planner := m.settings.Planner
 	m.mu.Unlock()
+	m.loadRoutines(cfg)
 	// The Task records are loaded, so Reconcile runs before the planner
 	// takes a write.
 	if planner {
@@ -591,9 +597,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.sweepUploads()
 	m.loadUtilityLog()
 	m.sweepPins(cfg)
-	m.wg.Add(3)
+	m.wg.Add(4)
 	go m.persistLoop()
 	go m.sweepLoop()
+	go m.routineLoop()
 	if usage {
 		m.wg.Add(1)
 		go m.usageLoop()
@@ -711,6 +718,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.terminalID = web.TerminalSession
 		s.imported = web.Imported
 		s.spawnedBy = web.SpawnedBy
+		s.routineID = web.RoutineID
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
@@ -913,7 +921,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
-		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy,
+		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt,
 	}
 }
@@ -1214,15 +1222,27 @@ func (m *Manager) removeProject(id string) error {
 	case unarchived:
 		return newError(http.StatusConflict, "archive every task in this project first")
 	}
-	if err := m.store.Update(func(cfg *store.Config) error {
+	// The Project's routines go with it, in the same write.
+	m.routines.mu.Lock()
+	err := m.store.Update(func(cfg *store.Config) error {
 		delete(cfg.WebProjects, id)
 		for key, rec := range cfg.Sessions {
 			if rec.Surface == store.SurfaceWeb && rec.Web != nil && rec.Web.ProjectID == id {
 				delete(cfg.Sessions, key)
 			}
 		}
+		for key, r := range cfg.WebRoutines {
+			if r.ProjectID == id {
+				delete(cfg.WebRoutines, key)
+			}
+		}
 		return nil
-	}); err != nil {
+	})
+	if err == nil {
+		m.forgetRoutinesLocked(id)
+	}
+	m.routines.mu.Unlock()
+	if err != nil {
 		return fmt.Errorf("remove web project: %w", err)
 	}
 	m.mu.Lock()
@@ -1697,7 +1717,7 @@ func (m *Manager) flush() error {
 				Turn:              key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
-				SpawnedBy: s.spawnedBy,
+				SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 			},
 		})
 	}
@@ -1980,6 +2000,9 @@ type CreateRequest struct {
 	// spawnedBy is the Task whose uam_create_task call creates this one, and
 	// id the new Task's ID that call chose. Only that call sets them.
 	id, spawnedBy string
+	// routineID is the routine whose run creates this Task; only a run sets
+	// it.
+	routineID string
 }
 
 // Create opens a new provider conversation in a Project's directory, records
@@ -2068,6 +2091,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	s.effort, s.contextSize = req.Effort, req.ContextSize
 	s.createReq = reqID
 	s.spawnedBy = req.spawnedBy
+	s.routineID = req.routineID
 	// A new conversation has no earlier record: everything streams in.
 	s.history = HistoryLoaded
 	s.gen = 1
@@ -2092,7 +2116,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, SpawnedBy: req.spawnedBy},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, SpawnedBy: req.spawnedBy, RoutineID: req.routineID},
 	}
 	var check func(*store.Config) error
 	if req.spawnedBy != "" {
@@ -2296,7 +2320,7 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) agentapi.OpenRequest {
 	req.SkillDirectories = m.skillDirs
 	if m.hostTools != nil {
-		req.Tools, req.CallTool = m.hostTools(req.SessionID, s.projectID, s.spawnedBy != "")
+		req.Tools, req.CallTool = m.hostTools(req.SessionID, s.projectID, s.spawnedBy != "" || s.routineID != "")
 	}
 	return req
 }

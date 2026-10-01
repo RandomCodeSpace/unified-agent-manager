@@ -9,6 +9,7 @@ import { Login } from './components/Login';
 import { AddProjectDialog, EditProjectDialog } from './components/Projects';
 import { NewTaskPalette } from './components/ProjectPicker';
 import { SettingsView } from './components/Settings';
+import { RoutinesView } from './components/Routines';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
@@ -54,6 +55,8 @@ const QUIET_MS = 600;
 const SETTINGS_HASH = '#settings';
 /** The Planner view: `#planner=<project id or unassigned>`. */
 const PLANNER_PREFIX = '#planner=';
+/** A Project's routines: `#routines=<project id>`. */
+const ROUTINES_PREFIX = '#routines=';
 /** The shell fills the viewport and keeps clear of the notch, rounded corners and home indicator of an installed app (`viewport-fit=cover`). */
 /** Typing anywhere (Settings forms, a subagent follow-up) counts as unsent work, like a composer draft. */
 function editing(): boolean {
@@ -84,6 +87,11 @@ function readJSON<T>(key: string, fallback: T): T {
 function hashPlanner(): string | null {
   const h = window.location.hash;
   return h.startsWith(PLANNER_PREFIX) ? decodeURIComponent(h.slice(PLANNER_PREFIX.length)) || null : null;
+}
+
+function hashRoutines(): string | null {
+  const h = window.location.hash;
+  return h.startsWith(ROUTINES_PREFIX) ? decodeURIComponent(h.slice(ROUTINES_PREFIX.length)) || null : null;
 }
 
 function hashSelection(): string | null {
@@ -123,6 +131,7 @@ export default function App() {
   const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
   const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === SETTINGS_HASH);
   const [plannerOpen, setPlannerOpen] = useState(() => window.location.hash.startsWith(PLANNER_PREFIX));
+  const [routinesFor, setRoutinesFor] = useState<string | null>(hashRoutines);
   // Settle found subtasks the Task holds: the dialog decides each (ADR 0005 §5).
   const [settleAsk, setSettleAsk] = useState<SettleAsk | null>(null);
   // New task opens a draft for a Project on its defaults; nothing exists on the service until its first Send.
@@ -426,7 +435,7 @@ export default function App() {
   const late = useLate(state.connection !== 'connected', QUIET_MS);
   const loading = late && state.connection === 'connecting';
   const connection = late && !loading ? state.connection : 'connected';
-  const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen && !plannerOpen, QUIET_MS);
+  const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen && !plannerOpen && !routinesFor, QUIET_MS);
 
   // A refresh with the catalogs on screen keeps them on a failure (checkVersion); without them it is a retry of the first read.
   const refreshMeta = useCallback(() => (meta ? checkVersion(true) : setMetaAttempt((n) => n + 1)), [meta, checkVersion]);
@@ -485,6 +494,7 @@ export default function App() {
     setDrawerOpen(false);
     setSettingsOpen(false);
     setPlannerOpen(false);
+    setRoutinesFor(null);
     setNewTask(null);
   }, [recentTasks]);
 
@@ -492,11 +502,21 @@ export default function App() {
   const showPlanner = useCallback(() => {
     setPlannerOpen(true);
     setSettingsOpen(false);
+    setRoutinesFor(null);
     setNewTask(null);
     setDrawerOpen(false);
     setSheetOpen(false);
   }, []);
   const openTask = useCallback((id: string) => select(id), [select]);
+  /** A Project's routines in the main pane (like Settings, it keeps the selected Task behind it). */
+  const showRoutines = useCallback((projectId: string) => {
+    setRoutinesFor(projectId);
+    setSettingsOpen(false);
+    setPlannerOpen(false);
+    setNewTask(null);
+    setDrawerOpen(false);
+    setSheetOpen(false);
+  }, []);
   // Only `true` shows the planner: `false` leaves its Settings switch, and a service that does not know the setting (undefined) shows none of it.
   const plannerOn = state.settings.planner === true && state.loaded;
   // A `#planner=` link on a service without the planner on lands on the usual view.
@@ -533,9 +553,10 @@ export default function App() {
     let next = '';
     if (settingsOpen) next = SETTINGS_HASH;
     else if (plannerOpen) next = `${PLANNER_PREFIX}${encodeURIComponent(plannerProject ?? '')}`;
+    else if (routinesFor) next = `${ROUTINES_PREFIX}${encodeURIComponent(routinesFor)}`;
     else if (id) next = `${HASH_PREFIX}${encodeURIComponent(id)}`;
     if (window.location.hash !== next) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next}`);
-  }, [state.selectedId, settingsOpen, plannerOpen, plannerProject]);
+  }, [state.selectedId, settingsOpen, plannerOpen, plannerProject, routinesFor]);
   // A `#task=` fragment the user navigates to (back/forward, a pasted URL) selects that Task; the
   // write above uses replaceState, which fires no hashchange.
   useEffect(() => {
@@ -725,6 +746,7 @@ export default function App() {
       onNewTask: openNewTask,
       onAddProject: () => openDialog({ kind: 'add' }),
       onEditProject: (project) => openDialog({ kind: 'edit', project }),
+      onRoutines: (project) => showRoutines(project.id),
       filter,
       onFilter: (id) => {
         setFilter(id);
@@ -736,6 +758,7 @@ export default function App() {
       onSettings: () => {
         setSettingsOpen((o) => !o);
         setPlannerOpen(false);
+        setRoutinesFor(null);
         setDrawerOpen(false);
         setNewTask(null);
       },
@@ -750,7 +773,7 @@ export default function App() {
           }
         : undefined,
     }),
-    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, plannerOn, plannerOpen, setPlannerUi, showPlanner],
+    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, plannerOn, plannerOpen, setPlannerUi, showPlanner, showRoutines],
   );
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
@@ -782,7 +805,7 @@ export default function App() {
   let shown: SessionDetail | null = null;
   if (state.detail && selected) shown = state.detail;
   else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous;
-  const stale = !settingsOpen && !plannerShown && !newTask && !!shown && shown !== state.detail;
+  const stale = !settingsOpen && !plannerShown && !routinesFor && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
   const terminalProject = terminalId && state.settings.terminal ? state.projects.find((p) => p.id === terminalId) : undefined;
@@ -790,6 +813,9 @@ export default function App() {
   const dialogTask = taskDialog ? state.sessions.find((s) => s.id === taskDialog.id) : undefined;
   const dialogTaskName = dialogTask ? `“${dialogTask.name || dialogTask.title || 'this task'}”` : 'this task';
   const newTaskProject = newTask ? state.projects.find((p) => p.id === newTask.projectId) : undefined;
+  // A removed Project, or a `#routines=` link to none, lands on the usual view.
+  const routinesProject = routinesFor && !settingsOpen && !plannerShown ? state.projects.find((p) => p.id === routinesFor) : undefined;
+  if (routinesFor && state.loaded && !state.projects.some((p) => p.id === routinesFor)) setRoutinesFor(null);
 
   function showProject(id: string) {
     setFilter(id);
@@ -848,6 +874,8 @@ export default function App() {
     pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} />;
   } else if (plannerShown) {
     pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={() => setPlannerOpen(false)} />;
+  } else if (routinesProject) {
+    pane = <RoutinesView key={routinesProject.id} leading={leading} project={routinesProject} sessions={state.sessions} onOpenTask={openTask} onClose={() => setRoutinesFor(null)} />;
   } else if (newTask && newTaskProject) {
     pane = <NewTaskPane key={newTask.projectId} project={newTaskProject} defaults={newTask.defaults} onSend={createTask} leading={leading} />;
   } else if (shown) {
@@ -958,8 +986,8 @@ export default function App() {
                 <div className="flex min-h-0 flex-1 flex-col" inert={stale} aria-busy={stale || undefined}>
                   {pane}
                 </div>
-                {/* Settings, the planner and a new Task do not wait on the stream. */}
-                <LoadingVeil show={loading && !settingsOpen && !plannerShown && !newTask} />
+                {/* Settings, the planner, routines and a new Task do not wait on the stream. */}
+                <LoadingVeil show={loading && !settingsOpen && !plannerShown && !routinesProject && !newTask} />
               </div>
               {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} onClose={closeTerminal} />}
             </main>
@@ -984,6 +1012,7 @@ export default function App() {
                 onClosed={() => setDialog(null)}
                 project={dialog.project}
                 tasks={tasksOf(state.sessions, dialog.project.id)}
+                onRoutines={() => showRoutines(dialog.project.id)}
                 onUpdated={(p) => dispatch({ type: 'upsert_project', project: p })}
                 onRemoved={(id) => {
                   recentTasks.removeProject(id);

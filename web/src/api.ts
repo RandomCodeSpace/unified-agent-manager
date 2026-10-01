@@ -622,6 +622,8 @@ export interface SessionSummary {
   archived_at?: string;
   /** The Task whose agent started this one with uam_create_task; absent otherwise. */
   spawned_by?: string;
+  /** The routine whose run started this Task; absent otherwise. */
+  routine_id?: string;
   queued?: number;
   state: SessionState;
   state_detail?: string;
@@ -1278,7 +1280,52 @@ export const api = {
   /** Runs the chart's command again, no model involved: on demand at most once a minute (429 sooner); `auto` at most once an hour, else the chart as it is. */
   refreshChart: (projectId: string, chartId: string, auto = false) => call<PinnedChart>('POST', `/api/projects/${enc(projectId)}/charts/${enc(chartId)}/refresh`, { auto }),
   unpinChart: (projectId: string, chartId: string) => call<void>('DELETE', `/api/projects/${enc(projectId)}/charts/${enc(chartId)}`),
+  routines: (projectId: string) => call<{ routines: Routine[] }>('GET', `/api/projects/${enc(projectId)}/routines`),
+  createRoutine: (projectId: string, body: RoutineInput) => call<Routine>('POST', `/api/projects/${enc(projectId)}/routines`, body),
+  updateRoutine: (id: string, body: Partial<RoutineInput>) => call<Routine>('PATCH', `/api/routines/${enc(id)}`, body),
+  deleteRoutine: (id: string) => call<void>('DELETE', `/api/routines/${enc(id)}`),
+  runRoutine: (id: string) => call<Routine>('POST', `/api/routines/${enc(id)}/run`),
 };
+
+/** When a routine runs, in the service's local time: `time` is HH:MM, `weekday` 0 (Sunday) to 6. */
+export type RoutineSchedule =
+  | { kind: 'daily' | 'weekdays'; time: string }
+  | { kind: 'weekly'; time: string; weekday: number }
+  | { kind: 'hours'; hours: number };
+
+export type RoutineOutcome = 'running' | 'finished' | 'failed' | 'cancelled' | 'time_limit' | 'skipped';
+
+/** One firing of a routine: the schedule's, one missed while the service was down, or Run now. */
+export interface RoutineRun {
+  id: string;
+  at: string;
+  trigger: 'schedule' | 'missed' | 'manual';
+  task_id?: string;
+  outcome: RoutineOutcome;
+  reason?: string;
+  ended_at?: string;
+}
+
+export interface RoutineInput {
+  name: string;
+  prompt: string;
+  model: string;
+  schedule: RoutineSchedule;
+  enabled: boolean;
+  mode: 'safe' | 'yolo';
+  max_runs_per_day: number;
+  max_minutes: number;
+}
+
+/** Recurring work in a Project: each run starts a Task. `next_run` is absent while paused; `runs` is newest first. */
+export interface Routine extends RoutineInput {
+  id: string;
+  project_id: string;
+  provider: string;
+  created_at: string;
+  next_run?: string;
+  runs: RoutineRun[];
+}
 
 /**
  * The planner's routes (ADR 0005 §14). `ref` is a card id or its `#seq`; `project` is a Project

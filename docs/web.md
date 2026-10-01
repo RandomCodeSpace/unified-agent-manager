@@ -378,6 +378,43 @@ are logged only at debug level (`UAM_DEBUG=1`).
   with no agent and no model call; it works at most once a minute per
   chart. Opening the panel refreshes each chart whose rows are more than an
   hour old. A failed refresh keeps the last rows and shows why.
+- **Routines**: recurring work in a Project, such as "every weekday at
+  09:00, check the dependencies for updates" or "every 6 hours, run the
+  flaky tests and report failures". Open them from the clock beside a
+  Project in the sidebar's Project filter, or from Edit project →
+  Routines; the view replaces the Task pane like Settings, `#routines=` in
+  the URL. Each routine has a name, the first message its runs send, a
+  model (New task's model unless you choose one), a schedule, a permission
+  mode, and two limits. A schedule is every day at a time, every weekday
+  (Monday to Friday) at a time, every 1 to 24 hours, or once a week on a
+  day at a time, in the local time of the host the service runs on. A new
+  routine is Safe: each permission request waits for you and the Task
+  shows as Needs you. Yolo allows every request with nobody watching, and
+  the form says so. **Runs a day** (1 to 100, default 24) counts every run
+  that started, or tried to start, a Task since local midnight, Run now
+  included; a firing past it is skipped. **Stop a run after** (1 to 720
+  minutes, default 30) cancels the turn still running then, a turn waiting
+  for your answer included. Each run starts a normal Task in the Project,
+  named "<routine name> · <date and time>", with the routine's prompt as
+  its first message. It shows in the sidebar and Needs you like any Task,
+  begins with "Started by a routine.", and the API lists the routine as
+  `routine_id`. Like a Task started by an agent, it does not get
+  `uam_create_task`. A firing is skipped, with the reason "still running",
+  while the previous run's Task is still working, also on a follow-up you
+  sent it. Each card shows the schedule, the next run, the last run's
+  outcome with a link to its Task, and Run now, Pause or Resume, Edit and
+  Delete (asked first; the run history goes, the Tasks stay). Run now fires
+  at once under the same rules, paused or not, and leaves the next
+  scheduled run where it was. History lists the newest 100 runs: when,
+  what fired it (the schedule, Run now, or a firing missed while uam was
+  stopped), the Task, and the outcome: Running (Needs you while its Task
+  waits for you), Finished, Failed with the reason, Cancelled (stopped in
+  the Task), Stopped at the time limit, or Skipped and why. Routines are
+  kept in `sessions.json`; the next run survives a restart. Firings missed
+  while the service was down run once when it starts, not once each, and
+  a run the stop interrupted is recorded as failed. Pausing clears the
+  next run; resuming, or changing the schedule, sets it from then. Removing
+  the Project removes its routines.
 - **Subagents**: when the agent delegates work to a subagent, the Task shows
   one compact row under the tool call that started it (name, status, and
   the duration once it ended) while the subagent runs. Once it is idle or has

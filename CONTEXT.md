@@ -12,6 +12,7 @@
 | **Archived** | The final stage of a Task. It is read-only, cannot be reopened, and can be deleted. |
 | **Imported Task** | A Task linked to an existing Copilot conversation. UAM checks whether another client holds that conversation before importing or sending work. |
 | **Spawned Task** | A Task another Task's agent started with `uam_create_task`, in an existing Project. It starts in safe mode, records the Task that started it (`spawned_by`), and cannot start Tasks itself. |
+| **Routine** | Recurring work in a Project: on its schedule (daily, weekdays, every N hours or weekly, in the host's local time) it starts a Task with its prompt. Its runs never overlap, are capped per day and in minutes, and record their outcome. A Task a run started records the routine (`routine_id`) and cannot start Tasks itself. |
 | **Legacy terminal record** | Saved metadata from UAM's retired terminal support. It remains on disk but is not an active Task and has no terminal controls in current UAM. |
 | **Board** | A Project's plan in the planner (ADR 0005): cards arranged as epics, stories and subtasks. It exists only for git Projects, behind a Settings switch. |
 | **Card** | One node on a Board: an epic, a story or a subtask. |
