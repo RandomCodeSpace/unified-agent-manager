@@ -869,3 +869,28 @@ func TestMarshalEvidenceFitsTheStoreLimit(t *testing.T) {
 		t.Fatalf("files kept = %d, %v", len(got.Diff.Files), err)
 	}
 }
+
+// A multi-file patch names every file it adds, updates, deletes or moves,
+// however it is framed or clipped.
+func TestEditedPathsFromPatches(t *testing.T) {
+	patch := "*** Begin Patch\n*** Add File: new.go\n+package x\n*** Update File: a.go\n*** Move to: b.go\n@@\n-x\n+y\n*** Delete File: old.go\n*** Update File: a.go\n@@\n-y\n+z\n*** End Patch\n"
+	quoted, _ := json.Marshal(patch)
+	object, _ := json.Marshal(map[string]string{"input": patch})
+	want := []string{"new.go", "a.go", "b.go", "old.go"}
+	for name, input := range map[string]string{
+		"raw":              patch,
+		"crlf":             strings.ReplaceAll(patch, "\n", "\r\n"),
+		"json string":      string(quoted),
+		"json object":      string(object),
+		"clipped string":   string(quoted[:len(quoted)-30]),
+		"no @@ or framing": "*** Add File: new.go\n+x\n*** Update File: a.go\n*** Move to: b.go\n-x\n*** Delete File: old.go\n",
+	} {
+		tool := &agentapi.ToolCall{Name: "apply_patch", Status: agentapi.ToolCompleted, Input: input}
+		if got := editedPaths(tool); !slices.Equal(got, want) {
+			t.Errorf("%s: editedPaths = %q, want %q", name, got, want)
+		}
+	}
+	if got := editedPaths(&agentapi.ToolCall{Name: "apply_patch", Status: agentapi.ToolFailed, Input: patch}); got != nil {
+		t.Errorf("a failed patch touched %q", got)
+	}
+}

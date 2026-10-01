@@ -131,3 +131,17 @@ test('activity density is compact unless the browser stored "detailed"', () => {
   assert.equal(parseDensity('dense'), 'compact');
   assert.equal(parseDensity(''), 'compact');
 });
+
+test('an apply_patch call changes every file its patch names, framed loosely or not', async () => {
+  const { completedChanges, patchPaths } = await import('../src/lib/transcript.ts');
+  const patch = '*** Begin Patch\n*** Add File: new.ts\n+x\n*** Update File: a.ts\n*** Move to: b.ts\n@@\n-x\n+y\n*** Delete File: old.ts\n*** End Patch';
+  assert.deepEqual([...patchPaths(patch)], ['new.ts', 'a.ts', 'b.ts', 'old.ts']);
+  assert.deepEqual([...patchPaths(JSON.stringify(patch))], ['new.ts', 'a.ts', 'b.ts', 'old.ts']);
+  assert.deepEqual([...patchPaths(JSON.stringify({ input: patch }))], ['new.ts', 'a.ts', 'b.ts', 'old.ts']);
+  assert.deepEqual([...patchPaths(JSON.stringify(patch).slice(0, -12))], ['new.ts', 'a.ts', 'b.ts', 'old.ts'], 'a clipped JSON string keeps the headers before the cut');
+  assert.deepEqual([...patchPaths(JSON.stringify(patch).slice(0, -20))], ['new.ts', 'a.ts', 'b.ts'], 'and drops a header the cut went through');
+  const turn = entries(call('p1', tool('apply_patch', patch)), call('p2', tool('apply_patch', '', { file_paths: ['z.ts'] })), edit('c1', 'a.ts'));
+  assert.deepEqual(changedFiles(turn), ['new.ts', 'a.ts', 'b.ts', 'old.ts', 'z.ts']);
+  assert.equal(completedChanges(turn.map((e) => e.item)), 3);
+  assert.equal(toolKind('apply_patch'), 'file');
+});

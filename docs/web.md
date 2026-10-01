@@ -841,10 +841,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   this Task changed and opens them beside the conversation with the diff (a
   full-screen sheet on a narrow window). Three scopes sit at the top, each
   with its file count: **This task** (the default) lists the files this
-  Task's agent or its subagents edited with an edit tool, compared with
-  `HEAD`; **Last turn** narrows that to the files edited since the latest
-  prompt you sent (a steer joins the running turn and does not start a new
-  one); **All changes** is every uncommitted change in the working tree,
+  Task's agent or its subagents edited with an edit tool (create, edit or a
+  patch), compared with `HEAD`; **Last turn** narrows that to the files
+  edited since the latest prompt you sent (a steer joins the running turn
+  and does not start a new one); **All changes** is every uncommitted change in the working tree,
   from any Task or source. A file this Task edited shows everything that
   differs from `HEAD`, including changes something else made to it; a file
   changed back or committed drops out. Files written by shell commands are

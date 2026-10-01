@@ -337,7 +337,33 @@ const sentence = (parts: string[]) => {
 };
 
 /** The tools that write to the tree, by the names providers report; the Changes count follows their completions. */
-export const CHANGE_TOOLS: readonly string[] = ['edit', 'write', 'create'];
+export const CHANGE_TOOLS: readonly string[] = ['edit', 'write', 'create', 'apply_patch'];
+
+/** The files a patch's Add, Update, Delete and Move to headers name; the input may be the patch as a JSON string or inside a JSON object. */
+export function patchPaths(input: string | undefined): string[] {
+  let patch = input?.trim() ?? '';
+  if (patch.startsWith('"') || patch.startsWith('{')) {
+    try {
+      const v: unknown = JSON.parse(patch);
+      if (typeof v === 'string') patch = v;
+      else if (v && typeof v === 'object') patch = Object.values(v).find((x): x is string => typeof x === 'string' && x.includes('*** ')) ?? '';
+    } catch {
+      // Clipped JSON: split its escaped line breaks and drop the cut last line.
+      patch = patch.replaceAll('\\n', '\n');
+      patch = patch.slice(0, patch.lastIndexOf('\n') + 1);
+    }
+  }
+  const out: string[] = [];
+  for (const m of patch.matchAll(/^\s*\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$/gm)) if (!out.includes(m[1])) out.push(m[1]);
+  return out;
+}
+
+/** The files one change call names: a patch's (the service's `file_paths`, else its headers), else its path argument. */
+export function changePaths(t: ToolCall): string[] {
+  if (t.name.toLowerCase() === 'apply_patch') return t.file_paths?.length ? [...t.file_paths] : patchPaths(t.input);
+  const path = t.path ?? mainArgument(t.name, t.input);
+  return path ? [path] : [];
+}
 
 /** Completed calls of a tool that changes files, so far in the Task; a rise means the Changes count may be stale. */
 export function completedChanges(items: readonly Item[]): number {
@@ -363,7 +389,9 @@ function toolCounts(items: Item[], live: boolean): { done: string[]; active: num
     if (['bash', 'shell', 'powershell'].includes(name)) { commands++; continue; }
     const input = inputOf(t);
     const path = t.path || (input && [input.path, input.file_path, input.filePath].find((v): v is string => typeof v === 'string' && !!v.trim()));
-    if (path && CHANGE_TOOLS.includes(name)) changed.add(path);
+    const patched = name === 'apply_patch' ? changePaths(t) : [];
+    if (patched.length) patched.forEach((p) => changed.add(p));
+    else if (path && CHANGE_TOOLS.includes(name)) changed.add(path);
     else if (path && ['read', 'view'].includes(name)) read.add(path);
     else other++;
   }
@@ -723,9 +751,10 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
         commands++;
         break;
       case 'file': {
-        const path = t.path ?? mainArgument(name, t.input);
-        if (CHANGE_TOOLS.includes(name)) changed.add(path || item.id);
-        else read.add(path || item.id);
+        if (CHANGE_TOOLS.includes(name)) {
+          const paths = changePaths(t);
+          for (const p of paths.length ? paths : [item.id]) changed.add(p);
+        } else read.add(t.path ?? (mainArgument(name, t.input) || item.id));
         break;
       }
       case 'search':
@@ -851,14 +880,13 @@ export function callProduct(item: Item, cards: ReadonlySet<string>): 'card' | 'c
   return (item.images?.length ?? 0) > 0 || !!item.images_note ? 'images' : null;
 }
 
-/** The distinct paths the turn's completed edit, write and create calls named, in order. */
+/** The distinct paths the turn's completed edit, write, create and apply_patch calls named, in order. */
 export function changedFiles(entries: Entry[]): string[] {
   const out: string[] = [];
   for (const { item } of entries) {
     const t = item?.tool;
     if (item?.kind !== 'tool' || t?.status !== 'completed' || !CHANGE_TOOLS.includes(t.name.toLowerCase())) continue;
-    const path = t.path ?? mainArgument(t.name, t.input);
-    if (path && !out.includes(path)) out.push(path);
+    for (const path of changePaths(t)) if (!out.includes(path)) out.push(path);
   }
   return out;
 }
