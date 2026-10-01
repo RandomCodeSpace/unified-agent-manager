@@ -786,6 +786,32 @@ are logged only at debug level (`UAM_DEBUG=1`).
   every five seconds and when the browser tab becomes visible again. The
   previous diff remains visible while an update loads. Closing or hiding the
   panel cancels its reads; manual Refresh remains available.
+- **Commit, Push and Pull**: under the file list, the Changes panel shows the
+  branch, how many commits it is ahead of or behind its upstream (as last
+  fetched), and Push and Pull. "Commit" opens a message box and a checkbox for
+  every changed file. The boxes start on this Task's files (those its edit
+  tools touched; a shell command's edits are not counted); when its kept
+  transcript may miss edits, on every changed file no other Task touched. A
+  note says how many changed files are left out.
+  Generate (then Regenerate) asks the Utility model for a message from the
+  chosen files' diff and the repository's last 20 commit subjects, so it
+  follows their style, Conventional Commits included. It never commits, and
+  it counts toward Background AI's daily limit: while that pauses it, the
+  panel says so and you write the message yourself. The
+  message is yours to edit and is committed exactly as written: uam adds no
+  co-author, sign-off or AI credit, and removes any the model wrote. A counter
+  shows the subject's length against 72 characters. "Commit n files" stages
+  exactly those files, deletions included, and commits them; files you
+  staged yourself stay staged and out of the commit. The repository's hooks
+  run, and a hook's refusal shows its output. "Commit and push" also pushes.
+  Push never forces: it pushes to the branch's upstream, or, without one, to
+  `origin` under the branch's name and sets that as its upstream. Pull only
+  fast-forwards; when both sides have new commits it says so and changes
+  nothing. The service runs git without a terminal, so a remote that needs a
+  password, or an SSH key the service's environment cannot use, fails with
+  git's message. While any Task working in the same repository is mid-turn,
+  the panel names it and Commit, Push and Pull wait, so an agent's edits are
+  never committed half done.
 - **Files**: the "Files" button beside Changes opens the project directory as
   a read-only tree in the same place (a full-screen sheet on a narrow
   window). Git decides what is listed, so `.gitignore` applies; symbolic
@@ -822,7 +848,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   is not installed on the server, the Task header shows a warning in place of
   Changes and Files, and turns leave out their "Changed n files" line. Click
   the warning for the reason. It clears once the directory becomes a
-  repository, the next time the Project is re-read.
+  repository, the next time the Project is re-read. When git is installed,
+  the warning offers "Set up git here", which runs `git init` in the project
+  folder (only when it is in no repository) and brings Changes and Files
+  back.
 - **Sidebar**: active Tasks across every Project are grouped by what they
   need from you, each group with its count, with collapsible "Settled" and
   "Archived" shelves at the foot of the list:

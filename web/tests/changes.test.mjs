@@ -33,7 +33,7 @@ async function components(api, environment = {}) {
     },
   };
   const exports = {};
-  const names = ['Copy', 'Ellipsis', 'FileDiff', 'RefreshCw', 'X', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'ContextMenu', 'Menu', 'Segmented', 'Tip'];
+  const names = ['Copy', 'Ellipsis', 'FileDiff', 'RefreshCw', 'X', 'CommitPanel', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'ContextMenu', 'Menu', 'Segmented', 'Tip'];
   runInNewContext(ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, jsxFactory: 'jsxNode', jsxFragmentFactory: 'Fragment' } }).outputText, {
     exports, ...hooks, api, AbortController, ...environment, ...Object.fromEntries(names.map(name => [name, name])), Fragment: 'fragment',
     jsxNode: (type, props, ...children) => ({ type, key: props?.key, props: { ...props, children } }),

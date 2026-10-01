@@ -8,6 +8,7 @@ const PURPOSES: Record<string, string> = {
   'subagent-summary': 'Subagent summary',
   'planner-triage': 'Planner triage',
   'planner-suggest': 'Planner suggestion',
+  'commit-message': 'Commit message',
 };
 
 /** "Task title" for `title`; an unknown purpose reads as words. */

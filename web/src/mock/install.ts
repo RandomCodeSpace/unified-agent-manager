@@ -6,6 +6,7 @@
 import { BADGE_COLORS, LIVE, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { itemCursor } from '../lib/historyWindow';
 import { boardMock } from './board';
+import { gitMock } from './git';
 import { seed, type MockState, type MockTask } from './data';
 import { seedUtility, utilityLog } from './utility';
 
@@ -189,6 +190,23 @@ export function install(): { received: Received[] } {
       return summary(t);
     },
   }, { big: new URLSearchParams(window.location.search).has('bigplan') });
+  // The commit panel's routes; a Task's files are the ones its edit tools name.
+  const git = gitMock({
+    projects: () => st.projects,
+    tasks: () => st.tasks.map(summary),
+    task: (id) => { const t = find(id); return t && summary(t); },
+    changes: () => st.changes,
+    touched: (id) => {
+      const t = find(id);
+      const items = t ? [...t.items, ...Object.values(t.agentItems).flat()] : [];
+      return items.flatMap((i) => (i.tool && ['edit', 'create'].includes(i.tool.name) ? [(i.tool.title ?? '').replace(/^(Edit|Create) /, '')] : []));
+    },
+    utilityLimit: () => st.settings.utility_daily_limit,
+    projectChanged: (p) => {
+      st.projects = st.projects.map((x) => (x.id === p.id ? p : x));
+      broadcast('project', { project: p });
+    },
+  });
   /** Stored uploads by id: the bytes and the record the routes hand out. */
   const uploads = new Map<string, Attachment & { id: string; task: string; bytes: Uint8Array }>();
   /** The service's badge rule, roughly: first letter or digit plus one from the rest, unique text, an unused tone. */
@@ -638,6 +656,8 @@ export function install(): { received: Received[] } {
     if (path === '/api/meta') return json(200, st.meta);
     const planned = plannerKnown ? board.route(method, url, body) : null;
     if (planned) return planned;
+    const gitted = git.route(method, url, body);
+    if (gitted) return gitted;
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
     if (path === '/api/utility' && method === 'GET') return json(200, utilityLog(utility, st.settings.utility_daily_limit ?? 200, Number(url.searchParams.get('before')) || 0, Number(url.searchParams.get('limit')) || 200));

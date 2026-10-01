@@ -4,6 +4,7 @@ import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { api, describeError, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
+import { CommitPanel } from './CommitPanel';
 import { Note, Skeleton } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
@@ -225,6 +226,8 @@ export function ChangesSheet({
           <FileRow key={f.path} file={f} selected={f.path === shownPath} onOpen={() => setPath(f.path)} />
         ))}
       </ul>
+      <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
+      <CommitPanel session={session} onChanged={() => setTick(t => t + 1)} />
       <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
       <div className="min-h-0 flex-1 overflow-auto">{shownPath && <FileView path={shownPath} file={current?.path === shownPath ? current.file : null} error={current?.path === shownPath ? current.fileError : null} />}</div>
     </SidePanel>

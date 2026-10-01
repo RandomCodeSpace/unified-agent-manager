@@ -894,6 +894,49 @@ export interface Changes {
   files: ChangeFile[];
 }
 
+/** A changed file of the Task's repository, with whose edit tools touched it. */
+export interface GitFile extends ChangeFile {
+  /** This Task's edit tools touched it. */
+  mine?: boolean;
+  /** Another Task's edit tools touched it and this Task's did not. */
+  other_task?: boolean;
+}
+
+/** The Task's repository as the commit panel shows it (`GET /api/sessions/{id}/git`). */
+export interface GitState {
+  /** False when the Task's folder is in no repository: `reason` says why, `can_init` whether "Set up git here" may run. */
+  repo: boolean;
+  reason?: string;
+  can_init?: boolean;
+  /** Absent when HEAD is detached. */
+  branch?: string;
+  /** The branch's upstream, e.g. `origin/main`; ahead/behind count against it as last fetched. */
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  /** Whether Push has somewhere to go: an upstream, or a remote named origin. */
+  remote: boolean;
+  has_commits: boolean;
+  files: GitFile[];
+  /** False when the Task's retained transcript may miss edits, so `mine` may be incomplete. */
+  task_files_known: boolean;
+  /** Why commit, push, pull and set-up are refused now (a Task mid-turn in the repository); absent when they may run. */
+  busy?: string;
+}
+
+export interface GitResult {
+  summary: string;
+  commit?: string;
+  output?: string;
+}
+
+/** A commit message the Utility model drafted; `conventional` says the repository's recent subjects use Conventional Commits. */
+export interface CommitDraft {
+  message: string;
+  conventional: boolean;
+  model: string;
+}
+
 export interface FileDiff {
   path: string;
   status?: string;
@@ -1175,6 +1218,14 @@ export const api = {
   changes: (id: string, scope: Scope, signal?: AbortSignal) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`, undefined, false, signal),
   changeFile: (id: string, scope: Scope, path: string, signal?: AbortSignal) =>
     call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`, undefined, false, signal),
+  /** Git actions refuse with 409 `git_busy` while a Task in the repository is mid-turn. */
+  git: (id: string, signal?: AbortSignal) => call<GitState>('GET', `/api/sessions/${enc(id)}/git`, undefined, false, signal),
+  gitInit: (id: string) => call<GitState>('POST', `/api/sessions/${enc(id)}/git/init`),
+  gitCommit: (id: string, paths: string[], message: string) => call<GitResult>('POST', `/api/sessions/${enc(id)}/git/commit`, { paths, message }),
+  gitPush: (id: string) => call<GitResult>('POST', `/api/sessions/${enc(id)}/git/push`),
+  gitPull: (id: string) => call<GitResult>('POST', `/api/sessions/${enc(id)}/git/pull`),
+  /** Drafts a message on the Utility model; it never commits. */
+  gitMessage: (id: string, paths: string[]) => call<CommitDraft>('POST', `/api/sessions/${enc(id)}/git/message`, { paths }),
   subagent: (id: string, agentId: string, signal?: AbortSignal) =>
     foregroundRead(() => call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal), signal),
   olderSubagents: (id: string, before: string, signal?: AbortSignal) => foregroundRead(() => call<SubagentPage>('GET', `/api/sessions/${enc(id)}/subagents?before=${enc(before)}`, undefined, false, signal), signal),
