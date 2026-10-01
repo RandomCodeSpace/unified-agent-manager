@@ -10,6 +10,7 @@ import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { shownState } from '../lib/tasks';
 import { ChangesSheet } from './Changes';
+import { SetUpGitButton } from './CommitPanel';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useMedia, useScrolled } from './common';
 import { byCodeUnit } from '../lib/order';
 import { Chip } from './ui/chip';
@@ -553,6 +554,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 <Popover.Description>
                   {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has no Changes or Files view.
                 </Popover.Description>
+                {noGit === 'not_repository' && <SetUpGitButton session={session} />}
               </Popover.Content>
             </Popover.Root>
           ) : (
