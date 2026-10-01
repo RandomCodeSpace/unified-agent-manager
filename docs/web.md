@@ -216,7 +216,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   the terminal. Every Task also gets uam's built-in `uam` skill, which tells
   the agent what uam is, how its replies and files show here, and how to use
   the Planner tools. uam writes it to `skills/uam/SKILL.md` beside
-  `sessions.json` at each start.
+  `sessions.json` at each start. uam also appends a system instruction asking
+  the agent to give a question's options as separate choices, with the
+  recommended option first and marked "(Recommended)".
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is
