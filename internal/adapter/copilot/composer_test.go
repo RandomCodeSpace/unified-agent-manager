@@ -53,8 +53,9 @@ func TestWebSkillDirectoriesOnCreateAndResume(t *testing.T) {
 	}
 }
 
-// Every Task session, created or resumed, appends the ask_user rule to
-// Copilot's system message; a utility session keeps only its own message.
+// Every Task session, created or resumed, appends the ask_user and
+// no-attribution rules to Copilot's system message and turns the CLI's
+// co-author trailer off; a utility session keeps only its own message.
 func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 	h := openWeb(t)
 	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-2", ConversationID: "s-1", Workdir: "/work", Events: &recSink{}}); err != nil {
@@ -66,6 +67,12 @@ func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 	}
 	if got := h.fc.resume[0].SystemMessage; got == nil || !reflect.DeepEqual(*got, want) {
 		t.Fatalf("resume system message = %+v", got)
+	}
+	if got := h.fc.create[0].CoauthorEnabled; got == nil || *got {
+		t.Fatalf("create CoauthorEnabled = %v, want false", got)
+	}
+	if got := h.fc.resume[0].CoauthorEnabled; got == nil || *got {
+		t.Fatalf("resume CoauthorEnabled = %v, want false", got)
 	}
 	h.fc.mu.Lock()
 	h.fc.reply = func(context.Context, copilot.MessageOptions) (string, error) { return "ok", nil }
