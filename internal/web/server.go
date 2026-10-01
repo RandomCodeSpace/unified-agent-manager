@@ -229,6 +229,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}", s.handleItemBody)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
 	s.boardRoutes(mux)
+	s.chartRoutes(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})

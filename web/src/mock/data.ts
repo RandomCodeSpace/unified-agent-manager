@@ -569,6 +569,23 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       },
     }),
     task({
+      id: 't-chart',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'gpt-6-luna',
+      name: 'Chart this month\'s commits',
+      title: '',
+      state: 'completed',
+      created_at: ago(14),
+      updated_at: ago(11),
+      items: [
+        { id: 'i1', kind: 'user', time: ago(14), text: 'Chart commits per day this month, and lines of code per file type.' },
+        tool('call-chart-1', 13, { name: 'uam_chart', title: 'Chart: Commits per day, September', status: 'completed', input: JSON.stringify({ title: 'Commits per day, September', kind: 'line', x: 'day', y: ['commits'], format: 'csv', command: 'git log … | uniq -c' }), output: 'Charted "Commits per day, September" (line) for the owner from 30 rows.' }),
+        tool('call-chart-2', 12, { name: 'uam_chart', title: 'Chart: Lines of code per file type', status: 'completed', input: JSON.stringify({ title: 'Lines of code per file type', kind: 'bar', x: 'type', y: ['lines'], format: 'csv', command: 'git ls-files | …' }), output: 'Charted "Lines of code per file type" (bar) for the owner from 6 rows.' }),
+        { id: 'i4', kind: 'assistant', time: ago(11), text: 'September had **113 commits**, about 3.8 a day. The busiest days were the 20th (9) and the 13th (8); weekends are mostly empty.\n\nGo is most of the code at 41k lines across 212 files; the web UI adds 28k in TSX and TS.' },
+      ],
+    }),
+    task({
       id: 't9',
       project_id: 'p3',
       workdir: p('p3'),

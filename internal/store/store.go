@@ -470,8 +470,31 @@ type WebProject struct {
 	// Badge is zero until the web service assigns one; it also replaces an
 	// invalid one on load.
 	Badge WebBadge `json:"badge,omitzero"`
+	// Charts are the charts the owner pinned to the Project, oldest first.
+	// The web service checks them on load and keeps their rows elsewhere.
+	Charts []WebChart `json:"charts,omitempty"`
 
 	unknown map[string]json.RawMessage
+}
+
+// WebChart is a chart pinned to a Project. Command, when set, is the shell
+// command the owner approved by pinning it: Refresh runs it again in the
+// Project directory and reads Format (csv or json) for the field X and the
+// fields Y. A chart without a Command is a snapshot of its rows.
+type WebChart struct {
+	ID       string    `json:"id"`
+	Title    string    `json:"title"`
+	Kind     string    `json:"kind"`
+	XLabel   string    `json:"x_label,omitempty"`
+	YLabel   string    `json:"y_label,omitempty"`
+	Command  string    `json:"command,omitempty"`
+	Format   string    `json:"format,omitempty"`
+	X        string    `json:"x"`
+	Y        []string  `json:"y"`
+	PinnedAt time.Time `json:"pinned_at"`
+	// TaskID and CallID name the Task's chart it was pinned from.
+	TaskID string `json:"task_id,omitempty"`
+	CallID string `json:"call_id,omitempty"`
 }
 
 // WebBadge is a Project's badge: Text is two uppercase ASCII letters or
@@ -502,6 +525,7 @@ var knownWebProjectFields = map[string]struct{}{
 	"created_at": {},
 	"defaults":   {},
 	"badge":      {},
+	"charts":     {},
 }
 
 func (p WebProject) MarshalJSON() ([]byte, error) {

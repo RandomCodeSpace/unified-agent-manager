@@ -1,6 +1,6 @@
 ---
 name: uam
-description: This session is a uam Task. The owner reads your replies in a browser, often on a phone, that folds tool calls and their output away, so state results and errors in the reply itself. Load this skill before showing the owner a file, image or diagram, before calling a board_* tool or uam_create_task, and when the owner mentions uam or the Planner.
+description: This session is a uam Task. The owner reads your replies in a browser, often on a phone, that folds tool calls and their output away, so state results and errors in the reply itself. Load this skill before showing the owner a file, image, diagram or chart, before calling a board_*, uam_create_task or uam_chart tool, and when the owner mentions uam or the Planner.
 ---
 
 # uam
@@ -52,6 +52,33 @@ Call `uam_show_file` to put a card for a file in the conversation: a report,
 a screenshot, a generated PDF or HTML page. The file is a regular file inside
 the Task's directory, or one you created under the system temp directory.
 Text previews show the first 64 KiB; an HTML page stays interactive.
+
+## Charts: uam_chart
+
+When the owner asks a data question (counts over time, sizes per kind,
+durations), answer with a chart: call `uam_chart`. The owner's browser draws
+a line or bar chart from rows, with a table and Copy CSV, and can pin it to
+the Project and refresh it later without you.
+
+- **Prefer `command`, even when the rows need computing.** Give a shell
+  command (a pipeline, or a short script such as a `python3` heredoc) that
+  prints the rows as CSV with a header row (`format: "csv"`), or as JSON objects
+  (`format: "json"`). uam runs it in the Task's directory and reads the
+  output itself, so the rows cost you no tokens; you get back the row count
+  and each series' min, max, total and last value. The command must stand
+  on its own (no files you made earlier that may be gone), because Refresh
+  runs it again later. Example: commits per day this month:
+  `git log --since="$(date +%Y-%m-01)" --date=short --format=%ad | sort | uniq -c | awk 'BEGIN{print "day,commits"}{print $2","$1}'`.
+- **`data`** takes the rows inline as objects. Use it for a few rows you
+  already have. In Safe mode uam refuses to run a command: then run it with
+  your shell tool (the owner approves it) and pass its rows.
+- `x` names the field for the x axis (values must be unique; aggregate
+  first), `y` one to 4 numeric fields, one series each. `line` for a trend
+  over ordered x such as days, `bar` to compare categories. At most 500
+  rows: aggregate, or keep the last ones.
+- A refused call says what to fix. After the chart, write the takeaway in
+  your reply (the peak, the trend, anything odd), not the rows: the owner
+  sees them in the chart.
 
 ## Starting another Task: uam_create_task
 

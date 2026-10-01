@@ -127,7 +127,7 @@ func TestCreateTaskStartsATaskInAnExistingProject(t *testing.T) {
 	if sends := child.Sends(); !slices.Equal(sends, []string{"fix the build\n\tthen test"}) {
 		t.Fatalf("first messages = %q", sends)
 	}
-	if req := child.Request(); req.Tools != nil || req.CallTool != nil {
+	if req := child.Request(); !slices.Equal(toolNames(req.Tools), []string{chartToolName}) || req.CallTool == nil {
 		t.Fatalf("a created task has tools: %q", toolNames(req.Tools))
 	}
 
@@ -271,7 +271,7 @@ func TestCreateTaskSpawnedBySurvivesARestart(t *testing.T) {
 		t.Fatalf("after a restart: %+v, %v", sum, err)
 	}
 	mustSubmit(t, m, child.ID, "again", mustUUID(t), ModeSend, SubmissionAccepted)
-	if req := prov.Last().Request(); req.SessionID != child.ID || req.Tools != nil {
+	if req := prov.Last().Request(); req.SessionID != child.ID || !slices.Equal(toolNames(req.Tools), []string{chartToolName}) {
 		t.Fatalf("reopened created task = %+v", req)
 	}
 }
@@ -396,7 +396,7 @@ func TestPromptDoesNotReopenForTheCreateTaskTool(t *testing.T) {
 		}
 	}
 	setPlanner(t, m, true)
-	for id, want := range map[string][]string{caller.ID: plannerTaskTools, child.ID: allBoardTools} {
+	for id, want := range map[string][]string{caller.ID: plannerTaskTools, child.ID: append(slices.Clone(allBoardTools), chartToolName)} {
 		conv, reopened := promptOpened(t, m, prov, id, "on")
 		if got := toolNames(conv.Request().Tools); !reopened || !slices.Equal(got, want) {
 			t.Fatalf("task %s reopened %v with %q", id, reopened, got)

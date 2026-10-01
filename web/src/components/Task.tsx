@@ -1,4 +1,4 @@
-import { ArrowDown, Bot, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, SquareTerminal, TriangleAlert } from 'lucide-react';
+import { ArrowDown, Bot, ChartLine, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, SquareTerminal, TriangleAlert } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
@@ -11,6 +11,7 @@ import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, w
 import { shownState } from '../lib/tasks';
 import { ChangesSheet } from './Changes';
 import { SetUpGitButton } from './CommitPanel';
+import { PinnedChartsPanel } from './Chart';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useMedia, useScrolled } from './common';
 import { byCodeUnit } from '../lib/order';
 import { Chip } from './ui/chip';
@@ -85,6 +86,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   /** The jump-to-bottom control shows while the reader is away from the bottom. */
   const [jump, setJump] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  /** The Project's pinned charts beside the conversation, a right panel like Files. */
+  const [chartsOpen, setChartsOpen] = useState(false);
   const [panel, setPanel] = useState<PanelView | null>(null);
   /** A command's output in its side panel; like the other right panels, it replaces them. */
   const [output, setOutput] = useState<CommandOutput | null>(null);
@@ -108,12 +111,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [locateError, setLocateError] = useState('');
   const density = useDensity();
   const scroller = useRef<HTMLElement>(null);
-  const previewOpened = useCallback(() => { setPanel(null); setFilesOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
+  const previewOpened = useCallback(() => { setPanel(null); setFilesOpen(false); setChartsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
-  useLayoutEffect(() => { if (sheetOpen || panel || filesOpen || output) closePreview(false); }, [sheetOpen, panel, filesOpen, output, closePreview]);
+  useLayoutEffect(() => { if (sheetOpen || panel || filesOpen || chartsOpen || output) closePreview(false); }, [sheetOpen, panel, filesOpen, chartsOpen, output, closePreview]);
   // The Changes sheet can open from outside the header (the composer's count); it replaces Files.
   if (sheetOpen && filesOpen) setFilesOpen(false);
+  if (sheetOpen && chartsOpen) setChartsOpen(false);
   if (sheetOpen && output) setOutput(null);
   const atBottom = useRef(true);
   const lastScrollTop = useRef(0);
@@ -300,6 +304,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const panelPresence = usePresence(!!shownPanel);
   const sheetPresence = usePresence(sheetOpen);
   const filesPresence = usePresence(filesOpen);
+  const chartsPresence = usePresence(chartsOpen);
   const outputPresence = usePresence(!!output);
   const [lastOutput, setLastOutput] = useState<CommandOutput | null>(null);
   if (output && output !== lastOutput) setLastOutput(output);
@@ -320,23 +325,35 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closePreview(false);
     setPanel(null);
     setFilesOpen(false);
+    setChartsOpen(false);
     setOutput(null);
     onSheet(true);
   }, [onSheet, closePreview]);
   const toggleFiles = useCallback(() => {
     closePreview(false);
     setPanel(null);
+    setChartsOpen(false);
     setOutput(null);
     onSheet(false);
     setFilesOpen((open) => !open);
   }, [onSheet, closePreview]);
   const closeFiles = useCallback(() => setFilesOpen(false), []);
+  const toggleCharts = useCallback(() => {
+    closePreview(false);
+    setPanel(null);
+    setFilesOpen(false);
+    setOutput(null);
+    onSheet(false);
+    setChartsOpen((open) => !open);
+  }, [onSheet, closePreview]);
+  const closeCharts = useCallback(() => setChartsOpen(false), []);
   const showOutput = useCallback((next: CommandOutput) => {
     // A reply that lands after this Task was left must not close the next Task's Changes (App state).
     if (!alive.current) return;
     closePreview(false);
     setPanel(null);
     setFilesOpen(false);
+    setChartsOpen(false);
     onSheet(false, false);
     setOutput(next);
   }, [closePreview, onSheet]);
@@ -354,6 +371,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     panelOpener.current = opener;
     if (sheetOpen) onSheet(false);
     setFilesOpen(false);
+    setChartsOpen(false);
     setOutput(null);
     setPanel(view);
   }
@@ -363,6 +381,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closePreview(false);
     setPanel(null);
     setFilesOpen(false);
+    setChartsOpen(false);
     if (!keepOutput) setOutput(null);
     panelOpener.current = null;
     onSheet(false, false);
@@ -528,6 +547,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const phone = useMedia(PHONE);
   const folded: ActionItem[] = [];
   if (phone && !noGit) folded.push({ key: 'files', label: filesOpen ? 'Close files' : 'Browse files', icon: <FolderTree />, onSelect: toggleFiles });
+  const pinned = project?.charts ?? 0;
+  if (phone && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: toggleCharts });
   if (phone && settings.terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
   const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
   const renamable = canRename(session, actions);
@@ -611,6 +632,15 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 </Tip>
               )}
             </>
+          )}
+          {pinned > 0 && !phone && (
+            <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>
+              <Button id="charts-link" size="md" aria-pressed={chartsOpen} aria-label={`Pinned charts, ${pinned}`} className="px-2 text-muted" onClick={toggleCharts}>
+                <ChartLine />
+                <span className="max-sm:hidden">Charts</span>
+                <span className="tabular-nums text-ink">{pinned}</span>
+              </Button>
+            </Tip>
           )}
           {settings.terminal && project && !phone && (
             <Tip label={`Terminal in ${project.name}`}>
@@ -742,6 +772,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
       {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
       {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
+      {chartsPresence.mounted && project && <PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} />}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}
       {panelPresence.mounted && panelView && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
       {preview.selection && !sheetOpen && !shownPanel && <FilePreview selection={preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} />}

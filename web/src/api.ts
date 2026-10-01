@@ -560,6 +560,36 @@ export interface Project {
   branch?: string;
   /** Why the directory has no Changes or Files views: git is not installed, or the directory is in no Git repository. Absent in a repository and when git cannot tell. */
   no_git?: 'not_installed' | 'not_repository';
+  /** How many charts are pinned to the Project; absent when none. */
+  charts?: number;
+}
+
+/** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
+export interface Chart {
+  title: string;
+  kind: 'line' | 'bar';
+  x_label?: string;
+  y_label?: string;
+  /** The shell command that printed the rows, run in the Project directory; absent for rows the agent passed. */
+  command?: string;
+  format?: 'csv' | 'json';
+  x: string;
+  y: string[];
+  labels: string[];
+  series: { name: string; values: number[] }[];
+  /** When the rows were read. */
+  at: string;
+  /** The Project's pinned copy of this chart, if any. */
+  pinned_id?: string;
+}
+
+/** A chart pinned to a Project. `error` says why the latest refresh failed; the rows are then the last good ones. */
+export interface PinnedChart extends Omit<Chart, 'pinned_id'> {
+  id: string;
+  project_id: string;
+  pinned_at: string;
+  error?: string;
+  error_at?: string;
 }
 
 export interface SessionSummary {
@@ -1240,6 +1270,14 @@ export const api = {
    */
   settle: (id: string, holds?: Record<string, HoldDecision>) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/settle`, holds ? { holds } : {}),
   planner: plannerApi(),
+
+  /** The chart a Task drew with the `uam_chart` call `callId`. */
+  chart: (id: string, callId: string, signal?: AbortSignal) => call<Chart>('GET', `/api/sessions/${enc(id)}/chart?call=${enc(callId)}`, undefined, false, signal),
+  pinChart: (id: string, callId: string) => call<PinnedChart>('POST', `/api/sessions/${enc(id)}/chart/pin`, { call_id: callId }),
+  pinnedCharts: async (projectId: string, signal?: AbortSignal) => (await call<{ charts: PinnedChart[] }>('GET', `/api/projects/${enc(projectId)}/charts`, undefined, false, signal)).charts,
+  /** Runs the chart's command again, no model involved: on demand at most once a minute (429 sooner); `auto` at most once an hour, else the chart as it is. */
+  refreshChart: (projectId: string, chartId: string, auto = false) => call<PinnedChart>('POST', `/api/projects/${enc(projectId)}/charts/${enc(chartId)}/refresh`, { auto }),
+  unpinChart: (projectId: string, chartId: string) => call<void>('DELETE', `/api/projects/${enc(projectId)}/charts/${enc(chartId)}`),
 };
 
 /**

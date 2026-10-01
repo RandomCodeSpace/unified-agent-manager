@@ -7,6 +7,7 @@ import { BADGE_COLORS, LIVE, type Ask, type Attachment, type CustomModel, type B
 import { itemCursor } from '../lib/historyWindow';
 import { boardMock } from './board';
 import { gitMock } from './git';
+import { chartMock } from './charts';
 import { seed, type MockState, type MockTask } from './data';
 import { seedUtility, utilityLog } from './utility';
 
@@ -170,6 +171,7 @@ export function install(): { received: Received[] } {
   const find = (id: string) => st.tasks.find((t) => t.id === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
   // The planner (ADR 0005); `?mock&bigplan` adds about 200 cards to notes-site.
+  const charts = chartMock(st.projects, (project) => broadcast('project', { project }));
   const board = boardMock({
     broadcast: (name, payload) => broadcast(name, payload),
     projects: () => st.projects,
@@ -658,6 +660,8 @@ export function install(): { received: Received[] } {
     if (planned) return planned;
     const gitted = git.route(method, url, body);
     if (gitted) return gitted;
+    const charted = charts(method, url, body);
+    if (charted) return charted;
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
     if (path === '/api/utility' && method === 'GET') return json(200, utilityLog(utility, st.settings.utility_daily_limit ?? 200, Number(url.searchParams.get('before')) || 0, Number(url.searchParams.get('limit')) || 200));
