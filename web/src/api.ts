@@ -1050,6 +1050,10 @@ export const api = {
     call<{ models: string[]; truncated?: boolean; key_present: boolean }>('POST', '/api/settings/custom-models/discover', body),
   /** The cached account quotas; never calls the provider. */
   usage: () => call<AccountUsage>('GET', '/api/usage'),
+  /** Web Push: the service's public key, and this browser's subscription (lib/notify.ts). */
+  pushKey: () => call<{ public_key: string }>('GET', '/api/push'),
+  pushSubscribe: (subscription: PushSubscriptionJSON) => call<void>('POST', '/api/push/subscribe', subscription),
+  pushUnsubscribe: (endpoint: string) => call<void>('POST', '/api/push/unsubscribe', { endpoint }),
 
   createSession: (body: {
     project_id: string;

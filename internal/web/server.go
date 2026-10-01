@@ -59,6 +59,9 @@ const (
 	fileKeyRoute = "GET /api/sessions/{id}/files/key/{key}/{path...}"
 	// indexDocument is the app's page, served for every client-side route.
 	indexDocument = "index.html"
+	// serviceWorker is the app's service worker; it must sit at the root to
+	// control the whole app.
+	serviceWorker = "sw.js"
 	noCache       = "no-cache"
 )
 
@@ -168,6 +171,9 @@ func (s *Server) routes() {
 	mux.HandleFunc("PATCH /api/settings", s.handleUpdateSettings)
 	mux.HandleFunc("POST /api/settings/custom-models/discover", s.handleDiscoverModels)
 	mux.HandleFunc("GET /api/usage", s.handleUsage)
+	mux.HandleFunc("GET /api/push", s.handlePushKey)
+	mux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
+	mux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)
 	mux.HandleFunc("GET /api/fs/dirs", s.handleListDirs)
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
 	mux.HandleFunc("GET /api/projects/{id}/files", s.handleFileList((*Manager).ProjectFiles))
@@ -1209,6 +1215,10 @@ func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string)
 	}
 	switch name {
 	case indexDocument:
+		w.Header().Set(headerCacheControl, noCache)
+	case serviceWorker:
+		// The service worker (push and notification clicks only, no caching):
+		// revalidated, so a new version reaches every browser.
 		w.Header().Set(headerCacheControl, noCache)
 	case "manifest.webmanifest":
 		// The web app manifest: its type is not in Go's built-in table, and it is

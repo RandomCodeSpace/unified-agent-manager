@@ -13,6 +13,7 @@ import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions }
 import { cn } from './lib/cn';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
 import { mostRecentProject, needsYouCount, newsReader, pageTitle, tasksOf } from './lib/tasks';
+import { handleNotice, setViewing, startNotifications, type Notice } from './lib/notify';
 import { pendingRequests } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
 import { PlannerTasks } from './components/planner/context';
@@ -359,6 +360,10 @@ export default function App() {
       }
       retainArchive(data.sessions.map((s) => s.id));
     });
+    // A Task needs you or finished: a notification, when this browser asked for them (lib/notify.ts).
+    es.addEventListener('notify', (e) => {
+      if (alive) void handleNotice(JSON.parse((e as MessageEvent).data) as Notice);
+    });
     for (const name of UPDATE_EVENTS) {
       es.addEventListener(name, (e) => {
         if (!alive) return;
@@ -503,6 +508,12 @@ export default function App() {
   const plannerTasks = useMemo(() => ({ sessions: state.sessions, openTask }), [state.sessions, openTask]);
   const plannerProject = planner.value.ui.project;
   const setPlannerUi = planner.value.setUi;
+
+  useEffect(() => {
+    if (auth === 'in') return startNotifications();
+  }, [auth]);
+  // The Task on screen is not announced while this page is visible.
+  useEffect(() => setViewing(settingsOpen || plannerOpen ? null : state.selectedId), [state.selectedId, settingsOpen, plannerOpen]);
 
   // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#planner=…`, else the selected task.
   useEffect(() => {

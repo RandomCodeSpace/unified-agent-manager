@@ -837,6 +837,60 @@ shows *UAM was updated* with a **Reload** button above the pane and waits.
 There is no offline mode. The app is a live view of the service and needs it
 reachable, exactly as a browser tab does.
 
+## Notifications
+
+Settings → This browser → **Notify me when a Task needs me or finishes**
+turns notifications on for the browser you are using. The browser asks for
+permission when you turn the switch on, and at no other time.
+
+A notification is sent once each time a Task:
+
+- asks you a question: "<Task name> needs you: <question>"
+- needs your permission: "<Task name> needs you: <request>"
+- fails: "<Task name> failed"
+- finishes a turn, with no subagent or background shell still running:
+  "<Task name> finished"
+
+The Task you are looking at on a visible page is never announced. With
+several tabs open you still get one notification. Clicking it brings UAM to
+the front and opens that Task. A newer notification for the same Task
+replaces the older one. A notification holds the Task's name and the
+question or request title, and nothing else from the conversation.
+
+**Delivery.** Where the browser supports Web Push (desktop Chrome, Edge and
+Firefox, Android, and the iPhone and iPad Home Screen app), notifications
+arrive even when no UAM tab is open. The service sends them through the
+browser's push service (Google, Mozilla or Apple), so it needs outbound
+HTTPS access to that service. It uses the usual `HTTPS_PROXY` variables. An
+undelivered notification expires after 30 minutes. If push cannot be set up,
+the switch's help says notifications show only while UAM is open in a tab.
+An open tab also shows a notification itself when the push has not arrived
+within a few seconds. A browser or organisation policy that blocks
+notifications leaves the switch off, with a note on how to allow them.
+
+**iPhone and iPad** (iOS and iPadOS 16.4 or later): notifications work only
+in the Home Screen app, not in a Safari tab.
+
+1. In Safari, open UAM, tap *Share*, then *Add to Home Screen*.
+2. Open UAM from the Home Screen and sign in.
+3. Settings → This browser → turn on **Notify me when a Task needs me or
+   finishes**, then tap *Allow*.
+
+iOS notifications have no action buttons and no reply field. Tap one to open
+the Task. Apple requires every push to show a notification, so on iPhone you
+may also be notified about the Task you have open. Each push also updates
+the app icon's badge to the number of Tasks waiting for you. Opening the app
+recounts it, including planner requests.
+
+**Storage.** The first browser to turn notifications on makes the service
+generate its Web Push (VAPID) key pair. The keys and the subscribed
+browsers are stored in `~/.config/uam/web-push.json` (mode 0600, or
+`$UAM_CONFIG_DIR/web-push.json`). The service forgets a subscription when the push service
+reports it gone, and keeps at most 20 browsers. Turning the switch off
+removes this browser's subscription. If `web-push.json` is deleted, a new key
+pair is made, and each browser subscribes again the next time UAM is opened
+there.
+
 ## Disconnect and reconnect
 
 Close the browser, VS Code, or the SSH window whenever you like. The turn
