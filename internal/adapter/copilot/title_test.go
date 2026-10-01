@@ -210,3 +210,35 @@ func TestSubagentSummarySharesToollessUtilitySessionAndCleanup(t *testing.T) {
 		})
 	}
 }
+
+// A Utility call reports what its model requests' usage events said,
+// summed, and nothing when none came.
+func TestUtilityReportsItsUsage(t *testing.T) {
+	var fc *fakeClient
+	events := 2
+	p, fc := titleProvider(func(context.Context, copilot.MessageOptions) (string, error) {
+		emit := fc.create[len(fc.create)-1].OnEvent
+		for range events {
+			emit(copilot.SessionEvent{Data: &rpc.AssistantUsageData{Model: "gpt-6-luna", InputTokens: new(int64(120)), OutputTokens: new(int64(8)),
+				CopilotUsage: &rpc.AssistantUsageCopilotUsage{TotalNanoAiu: 1e6}}})
+		}
+		emit(copilot.SessionEvent{Data: &rpc.SessionIdleData{}})
+		return "Add dark mode", nil
+	})
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	var got []agentapi.UtilityUsage
+	onUsage := func(u agentapi.UtilityUsage) { got = append(got, u) }
+	if _, err := p.Title(context.Background(), agentapi.TitleRequest{Model: "gpt-6-luna", Text: "x", OnUsage: onUsage}); err != nil {
+		t.Fatal(err)
+	}
+	if want := (agentapi.UtilityUsage{InputTokens: 240, OutputTokens: 16, Credits: 0.002}); len(got) != 1 || got[0] != want {
+		t.Fatalf("usage = %+v, want %+v", got, want)
+	}
+	events = 0
+	if _, err := p.SummarizeSubagent(context.Background(), agentapi.SubagentSummaryRequest{Model: "gpt-6-luna", Description: "d", Result: "r", OnUsage: onUsage}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("usage reported without events: %+v", got)
+	}
+}

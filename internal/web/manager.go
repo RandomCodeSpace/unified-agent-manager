@@ -187,6 +187,9 @@ type Manager struct {
 	// Guarded by mu.
 	spawns    map[string]string
 	spawnWait time.Duration
+	// utility is the Utility log and today's count of Utility calls
+	// (utility.go).
+	utility utilityLog
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -542,7 +545,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge)}
 	}
 	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
-		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults)}
+		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -576,6 +579,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.loadUploads()
 	m.sweepUploads()
+	m.loadUtilityLog()
 	m.wg.Add(3)
 	go m.persistLoop()
 	go m.sweepLoop()
@@ -1250,6 +1254,8 @@ func (m *Manager) Settings() Settings {
 // with; they are checked as a Task's selection is. Turning Terminal off
 // closes every open terminal. Turning Planner on opens the planner database,
 // and turning it off closes it; it cannot turn on without Git.
+// UtilityLimit sets the daily limit of Utility calls, 0 to
+// store.MaxUtilityDailyLimit; pointing at nil puts the default back.
 type SettingsPatch struct {
 	SendDefault  *string
 	Terminal     *bool
@@ -1258,6 +1264,7 @@ type SettingsPatch struct {
 	TitleModel   map[string]string
 	CustomModels *[]store.WebCustomModel
 	TaskDefaults *TaskDefaults
+	UtilityLimit **int
 }
 
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
@@ -1293,6 +1300,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		if err := store.ValidCustomModels(*p.CustomModels); err != nil {
 			return Settings{}, newError(http.StatusBadRequest, "%s", err.Error())
 		}
+	}
+	if l := p.UtilityLimit; l != nil && *l != nil && (**l < 0 || **l > store.MaxUtilityDailyLimit) {
+		return Settings{}, newError(http.StatusBadRequest, "utility_daily_limit must be 0 to %d", store.MaxUtilityDailyLimit)
 	}
 	var defaults TaskDefaults
 	if p.TaskDefaults != nil {
@@ -1351,8 +1361,12 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.TaskDefaults != nil {
 		next.TaskDefaults = defaults
 	}
+	if p.UtilityLimit != nil {
+		next.UtilityDailyLimit = *p.UtilityLimit
+	}
 	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
-	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults {
+	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
+	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged {
 		return current, nil
 	}
 	opening := next.Planner && !current.Planner
@@ -1369,6 +1383,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.Terminal = next.Terminal
 		cfg.WebSettings.Planner = next.Planner
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
+		cfg.WebSettings.UtilityDailyLimit = next.UtilityDailyLimit
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
 		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, titles)
 		if p.CustomModels != nil {

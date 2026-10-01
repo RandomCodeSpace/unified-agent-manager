@@ -257,6 +257,53 @@ export interface Settings {
   terminal: boolean;
   /** The planner (ADR 0005): the Boards of git Projects; off by default, absent from a service older than it. */
   planner?: boolean;
+  /** Utility model calls a day, 0 for none; omitted for the service default (GET /api/utility reports the limit in force). */
+  utility_daily_limit?: number;
+}
+
+/** One Utility model call (Background AI); tokens are the provider's figures unless `estimated` (4 characters a token). */
+export interface UtilityCall {
+  id: number;
+  at: string;
+  /** The server's local date, YYYY-MM-DD. */
+  day: string;
+  purpose: string;
+  provider?: string;
+  model?: string;
+  task_id?: string;
+  project_id?: string;
+  prompt_chars: number;
+  reply_chars: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated?: boolean;
+  credits?: number;
+  duration_ms: number;
+  outcome: 'ok' | 'error' | 'skipped';
+  /** Why it was skipped (`daily_limit`, `off`) or failed. */
+  reason?: string;
+}
+
+export interface UtilityDay {
+  day: string;
+  calls: number;
+  errors: number;
+  skipped: number;
+  prompt_chars: number;
+  reply_chars: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated?: boolean;
+  credits?: number;
+}
+
+/** GET /api/utility: today against the daily limit, every day kept with its totals, and a page of calls, newest first. */
+export interface UtilityLog {
+  today: { day: string; calls: number; limit: number; paused: boolean; resets_at: string };
+  days: UtilityDay[];
+  calls: UtilityCall[];
+  /** Pass as `before` for the next page; absent on the last. */
+  next?: number;
 }
 
 /* ---------- The planner (ADR 0005 §14–§15) ---------- */
@@ -1070,6 +1117,7 @@ export const api = {
     call<{ models: string[]; truncated?: boolean; key_present: boolean }>('POST', '/api/settings/custom-models/discover', body),
   /** The cached account quotas; never calls the provider. */
   usage: () => call<AccountUsage>('GET', '/api/usage'),
+  utility: (before?: number, limit = 25) => call<UtilityLog>('GET', `/api/utility?limit=${limit}${before ? `&before=${before}` : ''}`),
 
   createSession: (body: {
     project_id: string;

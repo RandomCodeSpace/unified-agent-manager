@@ -114,15 +114,17 @@ func (m *Manager) startTitle(s *webSession, model, text string) {
 		input = string(runes[:maxTitleInputRunes])
 	}
 	req := agentapi.TitleRequest{Model: model, Workdir: s.workdir, Text: input}
+	call := UtilityCall{Purpose: purposeTitle, Provider: s.provider, Model: model, TaskID: s.id, ProjectID: s.projectID}
 	renames := s.renames
 	m.titles.Add(1)
 	m.mu.Unlock()
-	go m.title(s, titler, req, renames)
+	go m.title(s, titler, req, call, renames)
 }
 
-// title runs one title job. A failure, a timeout or an empty title leaves the
-// provider's title; nothing is retried. A rename made meanwhile wins.
-func (m *Manager) title(s *webSession, titler agentapi.Titler, req agentapi.TitleRequest, renames uint64) {
+// title runs one title job as a Utility call. A failure, a timeout, today's
+// Utility limit or an empty title leaves the provider's title; nothing is
+// retried. A rename made meanwhile wins.
+func (m *Manager) title(s *webSession, titler agentapi.Titler, req agentapi.TitleRequest, call UtilityCall, renames uint64) {
 	defer m.titles.Done()
 	select {
 	case m.titleSlots <- struct{}{}:
@@ -131,7 +133,10 @@ func (m *Manager) title(s *webSession, titler agentapi.Titler, req agentapi.Titl
 		return
 	}
 	ctx, cancel := context.WithTimeout(m.ctx, titleTimeout)
-	reply, err := titler.Title(ctx, req)
+	reply, err := m.runUtility(ctx, call, req.Text, func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
+		req.OnUsage = onUsage
+		return titler.Title(ctx, req)
+	})
 	cancel()
 	title := cleanGeneratedTitle(reply)
 	if err == nil && title == "" {

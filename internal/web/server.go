@@ -168,6 +168,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("PATCH /api/settings", s.handleUpdateSettings)
 	mux.HandleFunc("POST /api/settings/custom-models/discover", s.handleDiscoverModels)
 	mux.HandleFunc("GET /api/usage", s.handleUsage)
+	mux.HandleFunc("GET /api/utility", s.handleUtility)
 	mux.HandleFunc("GET /api/fs/dirs", s.handleListDirs)
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
 	mux.HandleFunc("GET /api/projects/{id}/files", s.handleFileList((*Manager).ProjectFiles))
@@ -546,6 +547,13 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			patch.TaskDefaults = new(TaskDefaults)
 			if json.Unmarshal(raw, patch.TaskDefaults) != nil || string(raw) == "null" {
 				writeError(w, http.StatusBadRequest, "task_defaults must be an object with provider, model, effort, context_size and mode")
+				return
+			}
+		case "utility_daily_limit":
+			// null puts the default back.
+			patch.UtilityLimit = new(*int)
+			if json.Unmarshal(raw, patch.UtilityLimit) != nil {
+				writeError(w, http.StatusBadRequest, "utility_daily_limit must be a whole number or null")
 				return
 			}
 		default:
