@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import { useContext, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { PlannerContext } from './planner/context';
 import { api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
+import { BackgroundAI } from './BackgroundAI';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { byCodeUnit } from '../lib/order';
 import { Field, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
@@ -492,6 +493,9 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
                 ]} onValueChange={(id) => void save({ title_model: { ...settings.title_model, [p.name]: id } })} />
               </Row>;
             })}
+          </Section>}
+          {loaded && <Section id="background-ai" title="Background AI">
+            <BackgroundAI limitSetting={settings.utility_daily_limit} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} />
           </Section>}
           {loaded && !catalogPending && <Section id="models" title="Models">
             <Note>Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.</Note>
