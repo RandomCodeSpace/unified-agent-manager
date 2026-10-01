@@ -309,6 +309,10 @@ type webSession struct {
 
 	interactions []*interaction
 	ixIdx        map[string]*interaction
+	// ask is the summary's Ask, kept while unchanged (pendingAsk).
+	ask *Ask
+	// eventAt is the last provider event, to the minute.
+	eventAt time.Time
 
 	subagents []*agentapi.Subagent
 	subIdx    map[string]*agentapi.Subagent
@@ -899,6 +903,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy,
+		Ask: s.pendingAsk(), EventAt: s.eventAt,
 	}
 }
 
@@ -1840,6 +1845,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	}
 	s.activeAt = m.now()
 	before := m.summaryLocked(s)
+	// After before: a new minute publishes the summary, a further event in
+	// the same minute does not.
+	s.eventAt = m.now().Truncate(time.Minute)
 	switch ev.Kind {
 	case agentapi.EventItem:
 		if ev.Item != nil && ev.Item.ID != "" {

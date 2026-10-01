@@ -20,7 +20,7 @@ describe('app shell', () => {
   test('opening a task from the sidebar shows it and keeps it in the URL', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    await user.click(side.getByRole('button', { name: /Completed.*Doctor: add terminal line/ }));
+    await user.click(side.getByRole('button', { name: /, Doctor: add terminal line/ }));
     await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
     expect(window.location.hash).toBe('#task=t3');
     const log = within(screen.getByRole('log'));
@@ -52,7 +52,7 @@ describe('app shell', () => {
     await user.keyboard('{Control>}b{/Control}');
     await waitFor(() => expect(aside.getAttribute('aria-hidden')).toBe('true'));
     expect(localStorage.getItem('uam.sidebar')).toBe('false');
-    await user.click(screen.getByRole('button', { name: 'Show sidebar' }));
+    await user.click(screen.getByRole('button', { name: /^Show sidebar/ }));
     await waitFor(() => expect(aside.getAttribute('aria-hidden')).toBe('false'));
     expect(localStorage.getItem('uam.sidebar')).toBe('true');
   });

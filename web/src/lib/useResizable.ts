@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type Poin
 const COLUMN_MIN = 480;
 /** The Task view keeps at least this much height above a bottom panel (its header, a few rows and the composer). */
 const PANE_MIN = 280;
-const RAIL = 264;
+const RAIL = 320;
 const STEP = 16;
 
 export interface Resizable {

@@ -19,9 +19,120 @@ function hasPending(s: Pick<SessionSummary, 'pending'>): boolean {
   return !!s.pending;
 }
 
-/** The sidebar's "Needs permission/answer" rows (`needsYou` in api.ts, minus the shelves): the count the tab title and app badge carry. */
-export function needsYouCount(sessions: readonly SessionSummary[]): number {
-  return sessions.filter((s) => !readOnly(s) && (s.state === 'awaiting_permission' || s.state === 'awaiting_answer' || hasPending(s))).length;
+/** Whether a Task changed since it was last opened in this browser (`newsReader`). */
+export type Unread = (s: SessionSummary) => boolean;
+
+const never: Unread = () => false;
+
+/**
+ * The Task list's Needs you group: a request waits (`needsYou` in api.ts), or the Task failed
+ * or was interrupted and has not been opened since. Never the shelves.
+ */
+export function needsYouNow(s: SessionSummary, unread: Unread = never): boolean {
+  if (readOnly(s)) return false;
+  return s.state === 'awaiting_permission' || s.state === 'awaiting_answer' || hasPending(s) || ((s.state === 'failed' || s.state === 'interrupted') && unread(s));
+}
+
+/** The Needs you group's size: the count the tab title, the app badge and the drawer button carry. */
+export function needsYouCount(sessions: readonly SessionSummary[], unread: Unread = never): number {
+  return sessions.filter((s) => needsYouNow(s, unread)).length;
+}
+
+/** The Task list's groups, in order; the Settled and Archived shelves follow them. */
+export type GroupKey = 'you' | 'review' | 'working' | 'idle';
+export const GROUP_TITLES: Record<GroupKey, string> = { you: 'Needs you', review: 'Ready for review', working: 'Working', idle: 'Idle' };
+
+/** The group an active Task belongs to: Needs you, then finished and not opened since (Ready for review), then Working, else Idle. */
+export function groupOf(s: SessionSummary, unread: Unread): GroupKey {
+  if (needsYouNow(s, unread)) return 'you';
+  const state = shownState(s);
+  if (state === 'completed' && unread(s)) return 'review';
+  if (state === 'starting' || state === 'working') return 'working';
+  return 'idle';
+}
+
+const byUpdated = (a: SessionSummary, b: SessionSummary) => b.updated_at.localeCompare(a.updated_at) || b.created_at.localeCompare(a.created_at);
+const byCreated = (a: SessionSummary, b: SessionSummary) => b.created_at.localeCompare(a.created_at);
+
+/**
+ * Active Tasks by group. Each group lists its latest change first, except Working, which keeps
+ * creation order so rows that are busy do not trade places.
+ */
+export function commandGroups(active: readonly SessionSummary[], unread: Unread): Record<GroupKey, SessionSummary[]> {
+  const groups: Record<GroupKey, SessionSummary[]> = { you: [], review: [], working: [], idle: [] };
+  for (const s of active) groups[groupOf(s, unread)].push(s);
+  groups.you.sort(byUpdated);
+  groups.review.sort(byUpdated);
+  groups.working.sort(byCreated);
+  groups.idle.sort(byUpdated);
+  return groups;
+}
+
+/** Alt+J / Alt+K: the next (or previous) Task in `ids` after the open one, wrapping; the first (or last) when the open one is not among them. */
+export function cycleTask(ids: readonly string[], current: string | null, step: 1 | -1): string | null {
+  if (!ids.length) return null;
+  const i = current ? ids.indexOf(current) : -1;
+  if (i < 0) return step === 1 ? ids[0] : ids[ids.length - 1];
+  return ids[(i + step + ids.length) % ids.length];
+}
+
+/** What a permission asks for, as the end of "Wants your OK to …". */
+const PERMISSION_WORDS: Record<string, string> = {
+  'Run shell command': 'run a shell command',
+  'Write file': 'write a file',
+  'Read file': 'read a file',
+  'Access paths outside the workspace': 'use paths outside the project',
+  'Fetch URL': 'fetch a web page',
+  'Store memory': 'remember something',
+};
+
+/** How long ago, in words: "12m", "3h", "2d". */
+function span(ms: number): string {
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
+}
+
+/** Quiet this long and a Working row says so. */
+export const QUIET_MS = 3 * 60_000;
+
+/**
+ * A Task row's one plain line: what waits for you, or how the Task stands. Working says only how
+ * long it has been quiet (from the provider's last event), never what it is doing.
+ */
+export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now()): { text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' } {
+  if (s.stage === 'settled') return { text: 'Settled', tone: 'muted' };
+  if (s.stage === 'archived') return { text: 'Archived', tone: 'muted' };
+  const ask = s.ask;
+  if (ask?.kind === 'permission') {
+    const what = PERMISSION_WORDS[ask.title] ?? (ask.title ? ask.title.charAt(0).toLowerCase() + ask.title.slice(1) : 'continue');
+    return { text: `Wants your OK to ${what}`, tone: 'attention' };
+  }
+  if (ask?.kind === 'question') return { text: `Asks: ${ask.title}`, tone: 'attention' };
+  if (s.state === 'awaiting_permission') return { text: 'Wants your OK to continue', tone: 'attention' };
+  if (s.state === 'awaiting_answer' || hasPending(s)) return { text: 'Has a question for you', tone: 'attention' };
+  const state = shownState(s);
+  switch (state) {
+    case 'starting':
+      return { text: 'Starting', tone: 'accent' };
+    case 'working': {
+      const quiet = now - Date.parse(s.event_at ?? s.updated_at);
+      return { text: quiet >= QUIET_MS ? `Working · quiet ${span(quiet)}` : 'Working', tone: 'accent' };
+    }
+    case 'completed':
+      return unread ? { text: 'Finished, ready for your review', tone: 'success' } : { text: 'Finished', tone: 'muted' };
+    case 'failed':
+      return { text: 'Stopped with an error', tone: 'error' };
+    case 'interrupted':
+      return { text: 'Interrupted before it finished', tone: 'warning' };
+    case 'cancelled':
+      return { text: 'You stopped it', tone: 'muted' };
+    case 'closed':
+      return { text: 'Conversation closed', tone: 'muted' };
+    default:
+      return { text: 'Waiting for your message', tone: 'muted' };
+  }
 }
 
 /** The document title: the needs-you count first, then the open Task's name, then the app. */
