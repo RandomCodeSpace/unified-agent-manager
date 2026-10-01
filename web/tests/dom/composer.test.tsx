@@ -6,10 +6,12 @@ import { choose, composer, log, openMenu, openTask, renderApp } from './render';
 const sendButton = (name: string | RegExp) => screen.getByRole('button', { name });
 
 describe('sending', () => {
-  test('Enter sends on an idle task; the composer clears and the task starts working', async () => {
+  test('Enter sends on an idle task, which has one Send; the composer clears and the task starts working', async () => {
     const { user } = await openTask('t3');
     await user.type(composer(), 'Cover TERM=vt100 too');
     expect(sendButton('Send')).toHaveProperty('disabled', false);
+    expect(screen.queryByRole('button', { name: 'Send now' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'After this turn' })).toBeNull();
     await user.keyboard('{Enter}');
     expect(await log().findByText('Cover TERM=vt100 too')).toBeTruthy();
     await waitFor(() => expect(composer().value).toBe(''));
@@ -25,15 +27,27 @@ describe('sending', () => {
 
   test('while a turn runs, Enter steers it and Ctrl+Enter queues a follow-up', async () => {
     const { user } = await openTask('t1');
-    expect(composer().placeholder).toBe('Steer this turn, or queue a follow-up…');
+    expect(composer().placeholder).toBe('Send now to guide this turn, or after it…');
     await user.type(composer(), 'Also check the resize path');
-    expect(sendButton('Steer')).toBeTruthy();
+    expect(sendButton('Send now')).toBeTruthy();
     await user.keyboard('{Enter}');
     expect(await log().findByText('Also check the resize path')).toBeTruthy();
     await user.type(composer(), 'Then update the changelog');
     await user.keyboard('{Control>}{Enter}{/Control}');
-    expect(await screen.findByText('2 queued')).toBeTruthy();
+    expect(await screen.findByText('2 waiting')).toBeTruthy();
     expect(screen.getByTitle('Then update the changelog')).toBeTruthy();
+  });
+
+  test('while a turn runs, two buttons send now or after this turn', async () => {
+    const { user, mock } = await openTask('t1');
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    await user.type(composer(), 'Steer by button');
+    await user.click(sendButton('Send now'));
+    expect(await log().findByText('Steer by button')).toBeTruthy();
+    await user.type(composer(), 'Queue by button');
+    await user.click(sendButton('After this turn'));
+    expect(await screen.findByText('2 waiting')).toBeTruthy();
+    expect(mock.received.filter((r) => r.route === 'prompt').map((r) => r.body.mode)).toEqual(['steer', 'queue']);
   });
 
   test('Stop ends the turn and pauses the queue; Resume sends the queued prompt', async () => {
@@ -42,21 +56,21 @@ describe('sending', () => {
     expect(await log().findByText('Turn stopped.')).toBeTruthy();
     expect(await screen.findByText('Paused')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Resume' }));
-    await waitFor(() => expect(screen.queryByText(/queued$/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/waiting$/)).toBeNull());
     expect(await log().findAllByText(/Then describe the new behaviour/)).not.toHaveLength(0);
   });
 
   test('clearing the queue and cancelling one prompt are confirmed first', async () => {
     const { user } = await openTask('t1');
-    await user.click(screen.getByRole('button', { name: /^Cancel queued prompt: Then describe/ }));
-    const one = await screen.findByRole('alertdialog', { name: 'Cancel this queued prompt?' });
+    await user.click(screen.getByRole('button', { name: /^Cancel waiting message: Then describe/ }));
+    const one = await screen.findByRole('alertdialog', { name: 'Cancel this waiting message?' });
     await user.click(within(one).getByRole('button', { name: 'Keep' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    expect(screen.getByText('1 queued')).toBeTruthy();
+    expect(screen.getByText('1 waiting')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Clear' }));
-    const all = await screen.findByRole('alertdialog', { name: 'Clear the queued prompt?' });
-    await user.click(within(all).getByRole('button', { name: 'Clear queue' }));
-    await waitFor(() => expect(screen.queryByText('1 queued')).toBeNull());
+    const all = await screen.findByRole('alertdialog', { name: 'Clear the waiting message?' });
+    await user.click(within(all).getByRole('button', { name: 'Clear all' }));
+    await waitFor(() => expect(screen.queryByText('1 waiting')).toBeNull());
   });
 
   test('after a failed turn the last prompt can be put back to edit', async () => {
@@ -210,10 +224,10 @@ describe('settings in the toolbar', () => {
     const { user } = await openTask('t1');
     await choose(user, 'Model: Auto', /Claude Haiku 4\.5/);
     expect(await screen.findByText(/Draft settings apply when its next turn starts\./)).toBeTruthy();
-    expect(screen.getByText(/Steering keeps the current settings\./)).toBeTruthy();
+    expect(screen.getByText(/Send now keeps the current turn’s settings\./)).toBeTruthy();
     await user.type(composer(), 'next');
-    await user.click(screen.getByRole('button', { name: 'Queue next turn' }));
-    expect(await screen.findByText('2 queued')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'After this turn' }));
+    expect(await screen.findByText('2 waiting')).toBeTruthy();
     // Queued with its settings, the draft settings are spent.
     await waitFor(() => expect(screen.queryByText(/Draft settings apply/)).toBeNull());
   });
@@ -293,7 +307,7 @@ describe('attachments', () => {
     const { user, mock } = await openTask('t1');
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
-    await waitFor(() => expect(sendButton('Steer')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await waitFor(() => expect(sendButton('Send now')).toHaveProperty('disabled', false), { timeout: 3000 });
     await user.click(composer());
     await user.keyboard('{Enter}');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull());
@@ -308,12 +322,12 @@ describe('attachments', () => {
     const { user } = await openTask('t1');
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
-    await waitFor(() => expect(sendButton('Steer')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await waitFor(() => expect(sendButton('Send now')).toHaveProperty('disabled', false), { timeout: 3000 });
     await user.click(composer());
     await user.keyboard('{Control>}{Enter}{/Control}');
-    expect(await screen.findByText('2 queued')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Cancel queued prompt: build.log' }));
-    const dialog = await screen.findByRole('alertdialog', { name: 'Cancel this queued prompt?' });
+    expect(await screen.findByText('2 waiting')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Cancel waiting message: build.log' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Cancel this waiting message?' });
     expect(within(dialog).getByText('It will not be sent; nothing else changes.')).toBeTruthy();
     expect(within(dialog).getByText('build.log')).toBeTruthy();
   });

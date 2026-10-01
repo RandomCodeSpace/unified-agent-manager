@@ -459,7 +459,7 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
     }
   }
 
-  const other = settings.send_default === 'steer' ? 'Queue' : 'Steer';
+  const other = settings.send_default === 'steer' ? 'After this turn' : 'Send now';
   const titled = (meta?.providers ?? []).filter((p) => p.capabilities.titles);
   // What New task uses today: the setting checked against the live catalog, or the provider's own defaults until it is set.
   const taskDefaults = resolveTaskDefaults(meta, settings.task_defaults, settings.hidden_models);
@@ -493,7 +493,7 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               label="While a task is running, Enter…"
               help={
                 <>
-                  Steer adds the message to the running turn; Queue holds it for the next one. {other} stays on Ctrl+Enter (⌘+Enter on a Mac) and on its own button.
+                  Send now adds the message to the running turn; After this turn holds it until the turn ends. {other} stays on Ctrl+Enter (⌘+Enter on a Mac) and on its own button.
                 </>
               }
             >
@@ -504,8 +504,8 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
                 value={settings.send_default}
                 onValueChange={(v) => void save({ send_default: v as SendDefault })}
                 items={[
-                  { value: 'steer', label: 'Steer' },
-                  { value: 'queue', label: 'Queue' },
+                  { value: 'steer', label: 'Send now' },
+                  { value: 'queue', label: 'After this turn' },
                 ]}
               />
             </Row>

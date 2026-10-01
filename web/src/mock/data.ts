@@ -894,6 +894,32 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         },
       ],
     }),
+    // A finished turn with evidence: a passing test run, a piped vet run and claims the runs and edits do not all back (the finish card).
+    task({
+      id: 't20',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'gpt-5-mini',
+      last_model: 'gpt-5-mini',
+      name: 'Replay focus events on re-attach',
+      title: '',
+      state: 'completed',
+      created_at: ago(70),
+      updated_at: ago(42),
+      turn_timings: [{ id: 'tt-f1', user_item_id: 'f1', started_at: ago(70), ended_at: ago(42), state: 'completed' }],
+      items: [
+        { id: 'f1', kind: 'user', time: ago(70), text: 'Focus events stop after a re-attach. Fix it, add a regression test, and document the replay order in docs/terminal.md.' },
+        { id: 'f2', kind: 'reasoning', time: ago(69), ended_at: ago(68), text: '`Redraw` replays the private modes but not `?1004`. Add the replay after them and a test that re-attaches.' },
+        { ...tool('f3', 60, { name: 'edit', title: 'Edit internal/vterm/redraw.go', status: 'completed', path: `${p('p1')}/internal/vterm/redraw.go`, output: '+\tif err := v.replayFocusEvents(w); err != nil {' }), ended_at: ago(60) },
+        { ...tool('f4', 55, { name: 'edit', title: 'Edit internal/vterm/redraw_test.go', status: 'completed', path: `${p('p1')}/internal/vterm/redraw_test.go`, output: '+func TestRedrawReplaysFocusEvents(t *testing.T) {' }), ended_at: ago(55) },
+        {
+          ...tool('f5', 50, { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go test ./internal/vterm/... -run Redraw' }), output: '=== RUN   TestRedrawReplaysModes\n--- PASS: TestRedrawReplaysModes (0.00s)\n=== RUN   TestRedrawReplaysFocusEvents\n--- PASS: TestRedrawReplaysFocusEvents (0.01s)\nok  \tgithub.com/example/uam/internal/vterm\t1.204s\n<shellId: 0 completed with exit code 0>' }),
+          ended_at: new Date(Date.parse(ago(50)) + 1400).toISOString(),
+        },
+        { ...tool('f6', 46, { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go vet ./internal/vterm/... 2>&1 | tail -5' }), output: '\n<shellId: 1 completed with exit code 0>' }), ended_at: ago(46) },
+        { id: 'f7', kind: 'assistant', time: ago(42), text: 'Fixed: `Redraw` now replays focus events after the private-mode replay, so a re-attached client gets them again.\n\n- `TestRedrawReplaysFocusEvents` covers it, and the vterm tests pass.\n- go vet is clean.\n- docs/terminal.md describes the new replay order.' },
+      ],
+    }),
   ];
 
   const changes: Record<string, MockChange[]> = {

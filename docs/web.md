@@ -399,9 +399,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   "(Recommended)" is already picked when the question appears; it is sent
   only when you press Enter or Answer. Anything the answer cannot carry (a
   note typed beside a chosen option, images and files) is sent into the same
-  turn first, as a steer, so the agent has it when it resumes. Decline is the
-  × between Stop and Answer. What you had typed before the question arrived is
-  kept and comes back once the question is settled.
+  turn first, as a steer, so the agent has it when it resumes. **Decline**
+  sits between Stop and **Answer**. What you had typed before the question
+  arrived is kept and comes back once the question is settled.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
   once". That includes requests from subagents. Shell commands, file writes,
@@ -482,15 +482,16 @@ are logged only at debug level (`UAM_DEBUG=1`).
   come back after a reload or a restart of UAM, because Copilot records the
   image's bytes in its session. They are deleted with the Task, like
   attachments.
-- **Messages while a turn runs**: you can queue a message or steer the turn
-  with it.
-  - **Queue** holds the message until the turn completes, then sends it as
+- **Messages while a turn runs**: the composer shows two buttons, **After
+  this turn** (queue) and **Send now** (steer), in place of Send.
+  - **After this turn** holds the message until the turn completes, then sends it as
     the next prompt. A Task queues up to 20 messages and sends them one turn
     at a time, oldest first. You can cancel a queued message until it is
     sent; to change one, cancel it and queue it again. Each queued message
     retains its selected model, effort and context size. Changing the next
     draft or the Task's settings does not change messages already queued.
-  - **Steer** adds the message to the turn that is running. The agent reads
+    The waiting messages are listed above the message box ("2 waiting").
+  - **Send now** adds the message to the turn that is running. The agent reads
     it before its next step. Once Copilot accepts it, the conversation shows
     the message in bold italic (accepted); once Copilot records delivery, the
     same message turns to normal text (delivered). If it arrives as a new
@@ -501,13 +502,17 @@ are logged only at debug level (`UAM_DEBUG=1`).
     why. With Copilot, a steer also moves a
     shell command that is running to the background.
     A steer uses the current turn's model settings. If your draft selects
-    different settings, use **Queue next turn**; UAM does not silently change
-    a requested Steer into Queue or restart the running response.
-  - When no turn is running, both send the message at once.
-  - While a turn runs, Enter does what the Settings view says (steer by
-    default) and Ctrl+Enter (⌘+Enter on a Mac) the other; the two buttons
-    and their tooltips follow the setting. Files and attachments go with a
-    steer as with any other message.
+    different settings, Send now is dimmed and says why; use **After this
+    turn**. UAM does not silently change a requested steer into a queued
+    message or restart the running response. When the provider cannot steer
+    a running turn, Send now stays dimmed with that reason and Enter queues.
+  - When no turn is running there is one button, **Send**, which sends the
+    message at once.
+  - While a turn runs, Enter does what the Settings view says (Send now by
+    default) and Ctrl+Enter (⌘+Enter on a Mac) the other. The button Enter
+    presses is the dark one; the tooltips name the keys. On a phone both
+    buttons sit on their own row under the toolbar. Files and attachments go
+    with a steer as with any other message.
   - **History**: with the caret on the first line (or an empty message), Up
     recalls the previous prompt from this Task, newest first, as in a shell;
     Up again goes further back. Down from the last line comes forward, and
@@ -525,9 +530,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
 - **Settings**: the gear at the bottom of the sidebar opens the Settings view
   in the main pane (`#settings` in the address bar). UAM keeps the web
   interface's settings in `sessions.json`, so they apply in every browser.
-  The first is what Enter does while a turn runs: steer (the default) or
-  queue. A change is saved as you make it; if the service refuses it, the
-  old value comes back with the reason. `GET /api/settings` returns the
+  The first is what Enter does while a turn runs: **Send now** (steer, the
+  default) or **After this turn** (queue). A change is saved as you make
+  it; if the service refuses it, the old value comes back with the reason. `GET /api/settings` returns the
   settings as `{"send_default": "steer", "terminal": false}` (see
   [Terminal](#terminal)), and `PATCH /api/settings` with
   `{"send_default": "queue"}` changes them. An unknown key or value is
@@ -646,6 +651,44 @@ are logged only at debug level (`UAM_DEBUG=1`).
   another model or set the variable and restart the service. Custom models
   report no prices and cost no AI credits; the endpoint bills you directly.
   This uses the Copilot SDK's experimental multi-provider support.
+- **Since you left**: when you open a Task that changed since you last had it
+  open in this browser, a line under the header says how long ago that was
+  and what happened since, from the Task's own record: whether the agent
+  finished (or the turn failed or was stopped), whether it ran the tests and
+  how many other commands, how many files it changed, and whether it asked
+  you something, for example "Since you left (42 min): the agent finished,
+  ran the tests, and changed 3 files." What happens while you watch is not
+  counted. **Jump to where you stopped** scrolls to the first thing you have
+  not seen (once the page has stopped moving, so a scroll on a phone is never
+  fought) and closes the line; × closes it too. It does not come back until
+  the Task changes again while you are away. The last look is kept per
+  browser, the same mark that makes a Task read in the sidebar.
+- **Finish card**: under a turn that completed, a card titled "Finished —
+  check the evidence" puts what the agent did before what it says it did.
+  It never uses a model; fixed rules read the turn's record:
+  - **Checks**: each shell command of the turn that runs tests, a build, a
+    linter, `go vet` or a type check (`go test`, `npm test`, `pytest`,
+    `cargo test`, `go build`, `npm run build`, `eslint`, `golangci-lint`,
+    `tsc`, `mypy` and similar, recognised by how the command starts, also
+    after `cd …&&` or `VAR=value`), with the command, its exit status, the
+    counts its output reports (Go packages, Jest, Vitest, pytest, cargo and
+    TAP summaries) and how long it took. A command piped into another
+    (`go test ./... | tail`) reports the last command's exit status, so it
+    counts as passed or failed only when its output's counts say so;
+    otherwise its result is unclear. **Show output** opens the command's
+    whole output beside the conversation.
+  - **Claims**: each sentence of the turn's final message that says tests,
+    the build, linting, vet or type checks pass, or that docs (a README,
+    CHANGELOG, `.md` or `docs/` file) were updated, is listed with what
+    backs it, or **Not verified** and why: no such check ran in the turn,
+    the last one failed or is unclear, code changed after it, or no doc file
+    (the one the sentence names, if it names one) was edited. Sentences with
+    a negation or a failure word are not read as claims. The header counts
+    the claims not verified.
+  - **Changed in this turn**: the files the turn's edit tools changed, with
+    their line counts from Changes; each opens Changes.
+  - **Review changes** opens Changes and **Ask for changes** puts the cursor
+    in the message box.
 - **Paused queue**: the queue pauses when a turn is stopped or fails, when
   the provider process ends, when you close the session, and when the
   provider refuses a message or may not have received it. A paused queue

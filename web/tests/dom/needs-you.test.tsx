@@ -14,7 +14,7 @@ describe('the Task list', () => {
     renderApp('?planner=unset');
     const side = await sidebar();
     const titles = side.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
-    expect(titles).toEqual(['Needs you9Alt+J next', 'Ready for review2', 'Working3', 'Idle2']);
+    expect(titles).toEqual(['Needs you9Alt+J next', 'Ready for review3', 'Working3', 'Idle2']);
     const you = within(side.getByRole('region', { name: /Needs you/ }));
     expect(you.getByRole('button', { name: /Bump GitHub Actions pins.*Stopped with an error/ })).toBeTruthy();
     expect(you.getByRole('button', { name: /Tidy zsh startup.*Wants your OK to run a shell command outside the project/ })).toBeTruthy();
