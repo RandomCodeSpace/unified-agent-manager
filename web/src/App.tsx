@@ -27,6 +27,8 @@ import { checkDue, decideUpdate } from './lib/update';
 import { NewTaskPane, Task } from './components/Task';
 import type { FirstMessage } from './components/Composer';
 import { TaskActionsContext, type Renaming, type TaskActions } from './components/taskActions';
+import { TryModelDialog } from './components/Assist';
+import { saveBlob } from './lib/assist';
 import { Button } from './components/ui/button';
 import { Appear } from './components/ui/appear';
 import { AlertDialog, Sheet } from './components/ui/dialog';
@@ -702,6 +704,14 @@ export default function App() {
     }
   }, []);
 
+  /** Run again and Try with another model: the new Task opens; a refusal becomes the notice line. */
+  const rerun = useCallback((id: string, model?: string) => runTask(id, async () => {
+    const s = await api.rerun(id, { model, request_id: newRequestId() });
+    dispatch({ type: 'upsert_session', session: s });
+    select(s.id);
+  }, 'run the task again'), [runTask, select]);
+  const [tryModel, setTryModel] = useState<string | null>(null);
+
   const taskActions: TaskActions = useMemo(
     () => ({
       select: (id) => select(id),
@@ -739,8 +749,11 @@ export default function App() {
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
       busy: busyTasks,
+      runAgain: (id) => void rerun(id).catch(() => {}),
+      tryModel: setTryModel,
+      exportMarkdown: (id) => void runTask(id, async () => { const f = await api.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task').catch(() => {}),
     }),
-    [renaming, busyTasks, select, runTask, state.sessions, openTaskDialog, plannerOn],
+    [renaming, busyTasks, select, runTask, state.sessions, openTaskDialog, plannerOn, rerun],
   );
 
   const actions: WorkspaceActions = useMemo(
@@ -905,6 +918,7 @@ export default function App() {
         leading={leading}
         spawnedBy={taskName(state.sessions.find((s) => s.id === shown.spawned_by) ?? { name: '', title: '' })}
         since={opened.id === shown.id ? opened.mark : undefined}
+        rerunOf={taskName(state.sessions.find((s) => s.id === shown.rerun_of) ?? { name: '', title: '' })}
       />
       </DetailsProvider>
     );
@@ -1057,6 +1071,7 @@ export default function App() {
               onConfirm={() => void confirmTaskDialog()}
             />
             <SettleDialog ask={settleAsk} onClose={() => setSettleAsk(null)} />
+            <TryModelDialog session={state.sessions.find((s) => s.id === tryModel) ?? null} onClose={() => setTryModel(null)} onRun={(model) => rerun(tryModel ?? '', model)} />
             {planner.host}
           </div>
         </TooltipProvider>

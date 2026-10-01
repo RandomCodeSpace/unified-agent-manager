@@ -231,6 +231,7 @@ func (s *Server) routes() {
 	s.boardRoutes(mux)
 	s.chartRoutes(mux)
 	s.routineRoutes(mux)
+	s.assistRoutes(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
@@ -557,6 +558,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			patch.CustomModels = &list
+		case "suggest_replies":
+			patch.SuggestReplies = new(bool)
+			if json.Unmarshal(raw, patch.SuggestReplies) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "suggest_replies must be true or false")
+				return
+			}
 		case "task_defaults":
 			patch.TaskDefaults = new(TaskDefaults)
 			if json.Unmarshal(raw, patch.TaskDefaults) != nil || string(raw) == "null" {

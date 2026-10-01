@@ -120,8 +120,10 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
       const quiet = now - Date.parse(s.event_at ?? s.updated_at);
       return { text: quiet >= QUIET_MS ? `Working · quiet ${span(quiet)}` : 'Working', tone: 'accent' };
     }
+    // The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests pass") says what finished.
     case 'completed':
-      return unread ? { text: 'Finished, ready for your review', tone: 'success' } : { text: 'Finished', tone: 'muted' };
+      if (unread) return { text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
+      return { text: s.outcome || 'Finished', tone: 'muted' };
     case 'failed':
       return { text: 'Stopped with an error', tone: 'error' };
     case 'interrupted':

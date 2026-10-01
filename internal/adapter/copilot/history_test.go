@@ -376,3 +376,19 @@ func TestReadSubagentsReadsTheRecordsUpToOne(t *testing.T) {
 		t.Fatalf("long window = %v, %v", err, subagentIDs(w.Subagents))
 	}
 }
+
+func TestReadHistoryKeepsShellExitCodes(t *testing.T) {
+	journal := []copilot.SessionEvent{
+		ev("e0", &rpc.ToolExecutionStartData{ToolCallID: "sh", ToolName: "bash", Arguments: map[string]any{"command": "go test ./..."}}),
+		ev("e1", &rpc.ToolExecutionCompleteData{ToolCallID: "sh", Success: true, ShellExecution: &rpc.ToolExecutionCompleteShellExecution{ExitCode: 2}, Result: &rpc.ToolExecutionCompleteResult{Content: "FAIL"}}),
+		ev("e2", &rpc.ToolExecutionStartData{ToolCallID: "view", ToolName: "view"}),
+		ev("e3", &rpc.ToolExecutionCompleteData{ToolCallID: "view", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "text"}}),
+	}
+	h, err := readerProvider(&fakeClient{journal: journal}).ReadHistory(context.Background(), agentapi.ReadRequest{ConversationID: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Items) != 2 || h.Items[0].Tool.ExitCode == nil || *h.Items[0].Tool.ExitCode != 2 || h.Items[1].Tool.ExitCode != nil {
+		t.Fatalf("items = %+v", h.Items)
+	}
+}

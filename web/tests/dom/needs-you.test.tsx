@@ -19,7 +19,7 @@ describe('the Task list', () => {
     const you = within(side.getByRole('region', { name: /Needs you/ }));
     expect(you.getByRole('button', { name: /Bump GitHub Actions pins.*Stopped with an error/ })).toBeTruthy();
     expect(you.getByRole('button', { name: /Tidy zsh startup.*Wants your OK to run a shell command outside the project/ })).toBeTruthy();
-    expect(within(side.getByRole('region', { name: /Ready for review/ })).getByRole('button', { name: /Doctor: add terminal line.*Finished, ready for your review/ })).toBeTruthy();
+    expect(within(side.getByRole('region', { name: /Ready for review/ })).getByRole('button', { name: /Doctor: add terminal line.*Ready for review: Explained how a dumb terminal/ })).toBeTruthy();
     // The title, the badge and the drawer button count the same group.
     expect(document.title).toBe('(9) UAM');
   });

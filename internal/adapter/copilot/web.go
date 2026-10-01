@@ -3324,6 +3324,10 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 				tc.Declaration = parseDeclarationResult(d.Result.Content)
 			}
 		}
+		if d.ShellExecution != nil {
+			code := int(d.ShellExecution.ExitCode)
+			tc.ExitCode = &code
+		}
 		if !d.Success {
 			tc.Status = agentapi.ToolFailed
 			if d.Error != nil {

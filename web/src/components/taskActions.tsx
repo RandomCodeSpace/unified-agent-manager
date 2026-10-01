@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Check, Pencil, PowerOff, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Check, Cpu, Download, Pencil, PowerOff, RotateCw, Trash2 } from 'lucide-react';
 import { createContext, useContext } from 'react';
 import { LIVE, needsYou, type SessionSummary } from '../api';
 import type { ActionItem } from './ui/menu';
@@ -32,6 +32,12 @@ export interface TaskActions {
   close: (id: string) => void;
   /** Tasks with a lifecycle request in flight, by id; several may run at once. */
   busy: Readonly<Record<string, boolean>>;
+  /** Starts a new Task with this one's last message and settings, linked back to it (`rerun_of`). */
+  runAgain?: (id: string) => void;
+  /** The same, on a model the owner picks in a dialog. */
+  tryModel?: (id: string) => void;
+  /** Downloads the whole conversation as a Markdown file. */
+  exportMarkdown?: (id: string) => void;
 }
 
 export const TaskActionsContext = createContext<TaskActions>({
@@ -64,7 +70,8 @@ export function canRename(s: SessionSummary, a: TaskActions): boolean {
 
 /**
  * The same items everywhere (T3 Code): Rename, Settle or Reopen, Archive, Delete; Close
- * for an open conversation. Delete appears only for archived Tasks. Rules unchanged:
+ * for an open conversation; Run again, Try with another model and Export as Markdown when
+ * App provides them. Delete appears only for archived Tasks. Rules unchanged:
  * settle → archive (from any stage, final) → delete only after archive.
  */
 export function taskMenuItems(s: SessionSummary, a: TaskActions, place: Renaming['place']): ActionItem[] {
@@ -75,6 +82,10 @@ export function taskMenuItems(s: SessionSummary, a: TaskActions, place: Renaming
     { key: 'rename', label: 'Rename', icon: <Pencil />, disabled: !canRename(s, a), takesFocus: true, onSelect: () => a.startRename(s.id, place) },
   ];
   if (stage === 'active' && s.open) items.push({ key: 'close', label: 'Close conversation', icon: <PowerOff />, disabled: busy, onSelect: () => a.close(s.id) });
+  const { runAgain, tryModel, exportMarkdown } = a;
+  if (runAgain) items.push({ key: 'run-again', label: 'Run again', icon: <RotateCw />, disabled: busy, onSelect: () => runAgain(s.id), separator: true });
+  if (tryModel) items.push({ key: 'try-model', label: 'Try with another model…', icon: <Cpu />, disabled: busy, onSelect: () => tryModel(s.id) });
+  if (exportMarkdown) items.push({ key: 'export', label: 'Export as Markdown', icon: <Download />, disabled: busy, onSelect: () => exportMarkdown(s.id), separator: !runAgain });
   if (stage === 'active') items.push({ key: 'settle', label: 'Settle', icon: <Check />, disabled: busy || blocked, reason: blocked ? STAGE_REASON : undefined, onSelect: () => a.settle(s.id), separator: true });
   if (stage === 'settled') items.push({ key: 'reopen', label: 'Reopen', icon: <ArchiveRestore />, disabled: busy, onSelect: () => a.reopen(s.id), separator: true });
   if (stage !== 'archived') items.push({ key: 'archive', label: 'Archive', icon: <Archive />, disabled: busy || (stage === 'active' && blocked), reason: stage === 'active' && blocked ? STAGE_REASON : undefined, onSelect: () => a.archive(s.id) });

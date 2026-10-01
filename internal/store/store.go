@@ -405,6 +405,13 @@ type WebState struct {
 	// RoutineID is the routine whose run created this Task; empty
 	// otherwise.
 	RoutineID string `json:"routine_id,omitempty"`
+	// RerunOf is the ID of the Task whose last message this one runs again
+	// (Run again, Try with another model); empty otherwise.
+	RerunOf string `json:"rerun_of,omitempty"`
+	// Outcome is the one-line summary of the last completed turn.
+	Outcome string `json:"outcome,omitempty"`
+	// Suggestions are the replies suggested after the last completed turn.
+	Suggestions *WebSuggestions `json:"suggestions,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -441,6 +448,9 @@ var knownWebStateFields = map[string]struct{}{
 	"imported":            {},
 	"spawned_by":          {},
 	"routine_id":          {},
+	"rerun_of":            {},
+	"outcome":             {},
+	"suggestions":         {},
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {
@@ -591,6 +601,12 @@ type WebSettings struct {
 	// to make none, at most MaxUtilityDailyLimit; nil means
 	// DefaultUtilityDailyLimit.
 	UtilityDailyLimit *int `json:"utility_daily_limit,omitempty"`
+	// SuggestReplies, when false, stops suggesting replies after a turn;
+	// absent means on.
+	SuggestReplies *bool `json:"suggest_replies,omitempty"`
+	// SavedPrompts are the prompts the owner saved, valid as
+	// ValidSavedPrompt checks, oldest first.
+	SavedPrompts []WebSavedPrompt `json:"saved_prompts,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -765,6 +781,8 @@ var knownWebSettingsFields = map[string]struct{}{
 	"custom_models":       {},
 	"task_defaults":       {},
 	"utility_daily_limit": {},
+	"suggest_replies":     {},
+	"saved_prompts":       {},
 }
 
 func (w WebSettings) MarshalJSON() ([]byte, error) {
@@ -1021,6 +1039,7 @@ func (s *Store) loadNoLock() (Config, error) {
 		log.Warn("clearing invalid stored utility daily limit")
 		cfg.WebSettings.UtilityDailyLimit = nil
 	}
+	cleanSavedPrompts(&cfg.WebSettings)
 	migrateProjectDefaults(&cfg)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of

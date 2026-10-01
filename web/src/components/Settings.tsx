@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { useContext, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { PlannerContext } from './planner/context';
+import { SavedPromptsSettings } from './Assist';
 import { api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { BackgroundAI } from './BackgroundAI';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
@@ -509,6 +510,12 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
                 ]}
               />
             </Row>
+            <Row id="suggest-replies" label="Suggest replies" help="After a turn, up to three short replies you might send next show above the composer. Choosing one fills the composer; nothing is sent. It takes one Utility model call per finished turn you open.">
+              <Switch aria-label="Suggest replies" aria-describedby="suggest-replies-help" checked={settings.suggest_replies !== false} disabled={saving} onCheckedChange={(suggest_replies) => void save({ suggest_replies })} />
+            </Row>
+          </Section>}
+          {loaded && <Section id="saved-prompts" title="Saved prompts">
+            <SavedPromptsSettings prompts={settings.saved_prompts ?? []} projects={projects} />
           </Section>}
           {loaded && catalogPending && <PendingSection id="new-tasks" title="New tasks" label="Loading the model catalog…" />}
           {loaded && catalogPending && <PendingSection id="utility" title="Utility model" label="" />}
@@ -527,7 +534,7 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current === UTILITY_NONE ? '' : current);
               const cost = (m: Model) => (p.capabilities.usage ? modelCostLine(m) : '');
               const cheapest = p.models.find((m) => m.id === p.cheapest_model);
-              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses to title new tasks and summarize completed subagent results. None keeps provider titles and result excerpts without utility AI calls.">
+              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses to title new tasks, summarize completed subagent results, suggest replies and phrase turn outcomes. None keeps provider titles and result excerpts without utility AI calls.">
                 <Select aria-label={`${p.display_name} utility model`} aria-describedby={`utility-${p.name}-help`} value={current} disabled={saving} className="sm:w-72" items={[
                   { value: '', label: cheapestLabel(p), description: cheapest && cost(cheapest) },
                   { value: UTILITY_NONE, label: 'None (no utility AI)' },

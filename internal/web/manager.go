@@ -404,6 +404,17 @@ type webSession struct {
 	diff                   *DiffStat
 	diffRunning, diffDirty bool
 
+	// rerunOf is the Task whose last message this one ran again (assist.go).
+	rerunOf string
+	// outcome is the last completed turn's outcome line; outcomeRun counts
+	// turn transitions, so a late verb phrase for an older turn is dropped.
+	outcome    string
+	outcomeRun uint64
+	// suggestions are the replies suggested for the transcript's last item;
+	// suggesting is the call in flight for them.
+	suggestions *store.WebSuggestions
+	suggesting  *suggestionRun
+
 	persisted persistKey
 }
 
@@ -433,6 +444,7 @@ type persistKey struct {
 	turn, detail, name, convID, reqID, reqStatus, commandLedger, projectID, model, effort, contextSize, title, stage string
 	mode                                                                                                             store.Mode
 	settledAt, archivedAt                                                                                            time.Time
+	outcome                                                                                                          string
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -491,7 +503,7 @@ func (s *webSession) durableState() string {
 
 func (s *webSession) key() persistKey {
 	k := persistKey{summaryRevision: s.summaryRevision, timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
-		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt}
+		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 		k.commandResult = s.last.CommandResult
@@ -572,7 +584,8 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: len(p.Charts)}
 	}
 	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
-		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit}
+		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit,
+		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), SavedPrompts: cfg.WebSettings.SavedPrompts}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -731,6 +744,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.imported = web.Imported
 		s.spawnedBy = web.SpawnedBy
 		s.routineID = web.RoutineID
+		s.rerunOf, s.outcome, s.suggestions = web.RerunOf, clipRunes(displaytext.Sanitize(web.Outcome), maxOutcomeRunes), loadSuggestions(web.Suggestions)
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
@@ -935,7 +949,8 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt,
-		Diff: s.diff,
+		Diff:    s.diff,
+		RerunOf: s.rerunOf, Outcome: s.outcome,
 	}
 }
 
@@ -1309,6 +1324,8 @@ type SettingsPatch struct {
 	CustomModels *[]store.WebCustomModel
 	TaskDefaults *TaskDefaults
 	UtilityLimit **int
+	// SuggestReplies turns suggested replies on or off.
+	SuggestReplies *bool
 }
 
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
@@ -1405,12 +1422,15 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.TaskDefaults != nil {
 		next.TaskDefaults = defaults
 	}
+	if p.SuggestReplies != nil {
+		next.SuggestReplies = suggestSetting(*p.SuggestReplies)
+	}
 	if p.UtilityLimit != nil {
 		next.UtilityDailyLimit = *p.UtilityLimit
 	}
 	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
-	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged {
+	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() {
 		return current, nil
 	}
 	opening := next.Planner && !current.Planner
@@ -1428,6 +1448,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.Planner = next.Planner
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.UtilityDailyLimit = next.UtilityDailyLimit
+		cfg.WebSettings.SuggestReplies = next.SuggestReplies
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
 		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, titles)
 		if p.CustomModels != nil {
@@ -1730,7 +1751,7 @@ func (m *Manager) flush() error {
 				Turn:              key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
-				SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
+				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions,
 			},
 		})
 	}
@@ -1975,6 +1996,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	if turn.State != agentapi.TurnWorking {
 		m.kickDiffLocked(s) // the turn may have changed files without an edit tool
 	}
+	m.outcomeTurnLocked(s, turn.State)
 	if model := clipRunes(strings.TrimSpace(displaytext.Sanitize(turn.Model)), maxNameRunes); model != "" {
 		s.lastModel = model
 	}
@@ -2022,6 +2044,8 @@ type CreateRequest struct {
 	// routineID is the routine whose run creates this Task; only a run sets
 	// it.
 	routineID string
+	// rerunOf is the Task Rerun runs again.
+	rerunOf string
 }
 
 // Create opens a new provider conversation in a Project's directory, records
@@ -2111,6 +2135,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	s.createReq = reqID
 	s.spawnedBy = req.spawnedBy
 	s.routineID = req.routineID
+	s.rerunOf = req.rerunOf
 	// A new conversation has no earlier record: everything streams in.
 	s.history = HistoryLoaded
 	s.editsKnown = true
@@ -2136,7 +2161,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, SpawnedBy: req.spawnedBy, RoutineID: req.routineID},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf},
 	}
 	var check func(*store.Config) error
 	if req.spawnedBy != "" {

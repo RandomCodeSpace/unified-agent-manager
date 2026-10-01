@@ -257,8 +257,27 @@ export interface Settings {
   terminal: boolean;
   /** The planner (ADR 0005): the Boards of git Projects; off by default, absent from a service older than it. */
   planner?: boolean;
+  /** `false` when replies to send next are not offered after a turn; absent while they are (the default). */
+  suggest_replies?: boolean;
+  /** The prompts the owner saved, oldest first; changed one at a time through `api.addPrompt` and friends, never PATCH. */
+  saved_prompts?: SavedPrompt[];
   /** Utility model calls a day, 0 for none; omitted for the service default (GET /api/utility reports the limit in force). */
   utility_daily_limit?: number;
+}
+
+/** A message the owner saved to insert again from a composer; `project_id` limits it to that Project's Tasks. */
+export interface SavedPrompt {
+  id: string;
+  name: string;
+  text: string;
+  project_id?: string;
+  created_at: string;
+}
+
+/** Replies suggested for the transcript ending with item `item_id`; both empty when none are offered. */
+export interface Suggestions {
+  item_id: string;
+  replies: string[];
 }
 
 /** One Utility model call (Background AI); tokens are the provider's figures unless `estimated` (4 characters a token). */
@@ -626,6 +645,10 @@ export interface SessionSummary {
   routine_id?: string;
   /** This Task's own changes (the Changes "This task" scope) once known; absent while it has none. */
   diff?: DiffStat;
+  /** The Task whose last message this one runs again (Run again, Try with another model); absent otherwise. */
+  rerun_of?: string;
+  /** The last completed turn in one line ("Fixed the flaky test; 3 files changed; tests pass"); absent while a turn runs or when there is nothing to say. */
+  outcome?: string;
   queued?: number;
   state: SessionState;
   state_detail?: string;
@@ -1135,6 +1158,23 @@ async function errorBody(res: Response): Promise<{ message: string; body: Record
   return { message: `${res.status} ${res.statusText}`.trim(), body: {} };
 }
 
+/** A file the service sends as an attachment, with the name its Content-Disposition gives. */
+async function download(path: string): Promise<{ blob: Blob; name: string }> {
+  let res: Response;
+  try {
+    res = await fetch(path, { credentials: 'same-origin' });
+  } catch {
+    throw new ApiError(0, 'Could not reach the server');
+  }
+  if (res.status === 401) notifyUnauthorized();
+  if (!res.ok) {
+    const parsed = await errorBody(res);
+    throw new ApiError(res.status, parsed.message, parsed.body);
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'download';
+  return { blob: await res.blob(), name };
+}
+
 /** Click-only file reads share admission and authentication handling with other UI reads. */
 async function filePreview(url: string, signal: AbortSignal, knownMetadata?: PreviewMetadata): Promise<PreviewMetadata & Partial<TextPreview>> {
   return foregroundRead(async () => {
@@ -1234,6 +1274,15 @@ export const api = {
   promptSubagent: (id: string, agentId: string, text: string, request_id: string) =>
     call<Submission>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/prompt`, { text, request_id }),
   deleteSession: (id: string) => call<void>('DELETE', `/api/sessions/${enc(id)}`),
+  /** Replies to send next for the Task's last completed turn; the service asks the Utility model once per state. */
+  suggestions: (id: string, signal?: AbortSignal) => call<Suggestions>('POST', `/api/sessions/${enc(id)}/suggestions`, undefined, false, signal),
+  /** A new Task in the same Project with the same settings (or `model`) whose first message is this Task's last one. */
+  rerun: (id: string, body: { model?: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/rerun`, body),
+  /** The whole conversation as a Markdown file. */
+  exportMarkdown: (id: string) => download(`/api/sessions/${enc(id)}/export`),
+  addPrompt: (body: { name: string; text: string; project_id?: string }) => call<SavedPrompt>('POST', '/api/prompts', body),
+  renamePrompt: (id: string, name: string) => call<SavedPrompt>('PATCH', `/api/prompts/${enc(id)}`, { name }),
+  deletePrompt: (id: string) => call<void>('DELETE', `/api/prompts/${enc(id)}`),
   prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) =>
     call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id, mode, ...extras }),
   /** Runs a listed command; the rules of a send (409 while a turn runs, no queue or steer). */
