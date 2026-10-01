@@ -6,7 +6,9 @@ import { formatSize } from '../lib/attachments';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { downloadUrl, type PreviewMetadata, type TextPreview } from '../lib/preview';
+import { PreviewContext, type OpenPreview } from '../lib/previewContext';
 import { CodeBlock, Highlighted, Note, Skeleton } from './common';
+import { isMarkdown, MarkdownFile } from './MarkdownFile';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button, buttonVariants } from './ui/button';
 import { Tip } from './ui/tooltip';
@@ -16,6 +18,17 @@ interface Shown { path: string; file?: PreviewMetadata & Partial<TextPreview>; e
 
 /** Beyond this depth rows stop indenting, so a deep path cannot push names out of the panel. */
 const MAX_INDENT = 8;
+
+/** A changed file's mark, by its git status as Changes names it. */
+const STATUS_MARK: Record<string, { mark: string; label: string; tone: string }> = {
+  modified: { mark: 'M', label: 'Modified', tone: 'text-warning' },
+  added: { mark: 'A', label: 'Added', tone: 'text-success' },
+  untracked: { mark: 'U', label: 'New, not tracked by Git', tone: 'text-success' },
+  deleted: { mark: 'D', label: 'Deleted', tone: 'text-error' },
+  renamed: { mark: 'R', label: 'Renamed', tone: 'text-info' },
+  copied: { mark: 'C', label: 'Copied', tone: 'text-info' },
+  conflicted: { mark: '!', label: 'Merge conflict', tone: 'text-error' },
+};
 
 /** The highlight.js name for a path: its extension, or the whole name for `Makefile` and the like. */
 function language(path: string): string {
@@ -61,6 +74,12 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
       (error: unknown) => { if (!controller.signal.aborted) setShown({ path, error: describeError(error) }); },
     );
   }, [session.id]);
+
+  // A link in a rendered Markdown file opens its target here; anything else opens in a new tab.
+  const openHere = useCallback<OpenPreview>((target) => {
+    if (target.path) read(target.path);
+    else if (target.url) window.open(target.url, '_blank', 'noopener,noreferrer');
+  }, [read]);
 
   useEffect(() => {
     closeRef.current?.focus({ preventScroll: true });
@@ -128,21 +147,26 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
       const folder = entry.type === 'directory';
       const isOpen = folder && expanded.has(entry.path);
       const selected = !folder && shown?.path === entry.path;
+      const deleted = entry.status === 'deleted';
+      const mark = folder ? undefined : STATUS_MARK[entry.status ?? ''];
       out.push(
         <li key={entry.path}>
           <button
             type="button"
             aria-expanded={folder ? isOpen : undefined}
             aria-current={selected ? 'true' : undefined}
-            title={entry.path}
+            title={mark ? `${entry.path} · ${mark.label}` : entry.path}
+            disabled={deleted}
             style={{ paddingLeft: `${0.25 + Math.min(depth, MAX_INDENT) * 0.875}rem` }}
-            className={cn('flex min-h-7 w-full items-start gap-1 rounded-sm py-1 pr-2 text-left text-caption transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-11 pointer-coarse:items-center', selected ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-tint-hover')}
+            className={cn('flex min-h-7 w-full items-start gap-1 rounded-sm py-1 pr-2 text-left text-caption transition-colors focus-visible:-outline-offset-2 disabled:cursor-default pointer-coarse:min-h-11 pointer-coarse:items-center', selected ? 'bg-raised text-ink shadow-raised' : 'text-body enabled:hover:bg-tint-hover')}
             onClick={() => (folder ? toggle(entry.path) : read(entry.path))}
           >
             {folder
               ? <ChevronRight aria-hidden="true" className={cn('mt-px size-3.5 shrink-0 text-muted transition-transform duration-160 ease-app', isOpen && 'rotate-90')} />
               : <span aria-hidden="true" className="size-3.5 shrink-0" />}
-            <span className={cn('min-w-0 flex-1 [overflow-wrap:anywhere]', folder && 'font-medium')}>{name}</span>
+            <span className={cn('min-w-0 flex-1 [overflow-wrap:anywhere]', folder && 'font-medium', mark && !deleted && 'text-ink', deleted && 'text-muted line-through')}>{name}</span>
+            {mark && <span className={cn('w-3 shrink-0 text-center font-mono text-code-sm font-semibold', mark.tone)} aria-label={mark.label}>{mark.mark}</span>}
+            {folder && entry.status === 'changed' && <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-warning pointer-coarse:mt-0" role="img" aria-label="Holds changed files" />}
           </button>
         </li>,
       );
@@ -169,13 +193,15 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
       <ul aria-label="Project files" className={cn('overflow-y-auto p-1', shown ? 'max-h-[45%] shrink-0' : 'min-h-0 flex-1')}>{rows('', 0)}</ul>
       {shown && <>
         <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
-        <FileView key={shown.path} sessionId={session.id} shown={shown} />
+        <PreviewContext.Provider value={openHere}>
+          <FileView key={shown.path} sessionId={session.id} workdir={session.workdir} shown={shown} />
+        </PreviewContext.Provider>
       </>}
     </SidePanel>
   );
 }
 
-function FileView({ sessionId, shown: { path, file, error } }: Readonly<{ sessionId: string; shown: Shown }>) {
+function FileView({ sessionId, workdir, shown: { path, file, error } }: Readonly<{ sessionId: string; workdir: string; shown: Shown }>) {
   const [copied, copy] = useCopied();
   const url = api.viewFileUrl(sessionId, path);
   const name = path.slice(path.lastIndexOf('/') + 1);
@@ -187,8 +213,7 @@ function FileView({ sessionId, shown: { path, file, error } }: Readonly<{ sessio
   else if (file.kind !== 'text') body = <Note>This file is not shown here. Open it in a new tab or download it.</Note>;
   else if (!file.text) body = <Note>This file is empty.</Note>;
   else {
-    body = <>
-      {file.truncated && <Note>Showing the first 64 KiB. Open or download the file to read the rest.</Note>}
+    const source = (
       <CodeBlock
         language={lang}
         text={file.text}
@@ -197,6 +222,10 @@ function FileView({ sessionId, shown: { path, file, error } }: Readonly<{ sessio
       >
         {null}
       </CodeBlock>
+    );
+    body = <>
+      {file.truncated && <Note>Showing the first 64 KiB. Open or download the file to read the rest.</Note>}
+      {isMarkdown(path) ? <MarkdownFile sessionId={sessionId} workdir={workdir} path={path} text={file.text}>{source}</MarkdownFile> : source}
     </>;
   }
   return (

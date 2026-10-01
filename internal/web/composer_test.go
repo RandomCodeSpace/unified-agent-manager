@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -132,6 +133,58 @@ func TestFilesOutsideGitGiveAReason(t *testing.T) {
 	list, err := m.Files(context.Background(), sum.ID, "", 50)
 	if err != nil || len(list.Files) != 0 || !strings.Contains(list.Reason, "not in a Git working tree") {
 		t.Fatalf("non-git listing = %+v, %v", list, err)
+	}
+}
+
+// The tree marks each changed file with its git status and each folder that
+// holds one, from a Project at the repository root and from one in a subfolder.
+func TestTreeMarksChangedFilesAndFolders(t *testing.T) {
+	dir := composerRepo(t)
+	git, _ := execpath.Resolve("git")
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(git, append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("commit", "-q", "-m", "init")
+	for name, text := range map[string]string{"README.md": "# changed\n", "src/util/new.go": "package util\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(filepath.Join(dir, "src/main.go")); err != nil {
+		t.Fatal(err)
+	}
+	statuses := func(m *Manager, id, folder string) map[string]string {
+		t.Helper()
+		list, err := m.Tree(context.Background(), id, folder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, f := range list.Files {
+			out[f.Path] = f.Status
+		}
+		return out
+	}
+
+	m, _, sum, _ := composerTask(t, dir)
+	if got, want := statuses(m, sum.ID, ""), map[string]string{"src": "changed", ".gitignore": "", "README.md": "modified", "bin.dat": "untracked", "notes.txt": "untracked"}; !maps.Equal(got, want) {
+		t.Fatalf("top = %v, want %v", got, want)
+	}
+	if got, want := statuses(m, sum.ID, "src"), map[string]string{"src/util": "changed", "src/main.go": "deleted"}; !maps.Equal(got, want) {
+		t.Fatalf("src = %v, want %v", got, want)
+	}
+
+	sub, _, subSum, _ := composerTask(t, filepath.Join(dir, "src"))
+	if got, want := statuses(sub, subSum.ID, ""), map[string]string{"util": "changed", "main.go": "deleted"}; !maps.Equal(got, want) {
+		t.Fatalf("subfolder Project top = %v, want %v", got, want)
+	}
+	if got, want := statuses(sub, subSum.ID, "util"), map[string]string{"util/helper.go": "", "util/new.go": "untracked"}; !maps.Equal(got, want) {
+		t.Fatalf("subfolder Project util = %v, want %v", got, want)
 	}
 }
 

@@ -2,6 +2,8 @@ import { createContext, useContext } from 'react';
 
 interface PreviewDetails {
   name: string;
+  /** The file's path in the Task's folder, when it is one: a Markdown file renders from it. */
+  path?: string;
   description?: string;
   /** Only the server's file-view route permits framing; attachments retain external open. */
   frameable?: boolean;

@@ -81,10 +81,11 @@ export function localPath(ref: string | undefined): string | null {
 /**
  * The file a markdown link names, as a "/"-separated path relative to the Task's folder
  * `workdir` with the link's `#fragment`, or null when it is a web address or lies outside
- * the folder. A relative path is relative to the folder; a path is percent-decoded, as
- * markdown encodes it, and its `?query` dropped.
+ * the folder. A relative path is relative to `base`, a folder of the Task's folder ("" is
+ * the folder itself, as for a reply; a Markdown file's own folder when one renders); a path
+ * is percent-decoded, as markdown encodes it, and its `?query` dropped.
  */
-export function taskFile(ref: string | undefined, workdir: string | undefined): { path: string; hash: string } | null {
+export function taskFile(ref: string | undefined, workdir: string | undefined, base = ''): { path: string; hash: string } | null {
   let p = localPath(ref);
   if (!p || !ref) return null;
   const hash = /#.*/s.exec(ref)?.[0] ?? '';
@@ -94,7 +95,7 @@ export function taskFile(ref: string | undefined, workdir: string | undefined): 
     const dir = workdir?.replace(/(?<!\/)\/+$/, '');
     if (!dir || !p.startsWith(`${dir}/`)) return null;
     p = p.slice(dir.length + 1);
-  }
+  } else if (base && p) p = `${base}/${p}`;
   const parts: string[] = [];
   for (const part of p.split('/')) {
     if (part === '..') {

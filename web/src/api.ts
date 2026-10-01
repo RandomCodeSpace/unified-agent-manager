@@ -147,6 +147,8 @@ export interface ExecutionState {
 export interface FileEntry {
   path: string;
   type: 'file' | 'directory';
+  /** Tree listings only: a file's git status as Changes names it (`modified`, `untracked`, `deleted`, ...), or `changed` for a folder holding changed files. */
+  status?: string;
 }
 
 export interface FileList {

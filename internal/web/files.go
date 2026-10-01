@@ -38,6 +38,10 @@ type FileEntry struct {
 	Path string `json:"path"`
 	// Type is "file" or "directory".
 	Type string `json:"type"`
+	// Status is set by Tree only: a file's working-tree status as Changes names
+	// it ("modified", "added", "untracked", "deleted", ...), or "changed" for a
+	// folder that holds changed files. Empty when unchanged or unknown.
+	Status string `json:"status,omitempty"`
 }
 
 // FileList answers GET /api/sessions/{id}/files and
@@ -251,15 +255,20 @@ func listDir(ctx context.Context, workdir, dir string) (FileList, error) {
 		seen[name] = true
 		names = append(names, name)
 	}
+	status := childStatus(ctx, repo, workdir, dir)
 	for _, name := range names {
 		rel := path.Join(dir, name)
 		info, err := root.Lstat(rel)
 		switch {
 		case err != nil:
+			// A tracked file deleted from the working tree stays listed, marked.
+			if status[name] == "deleted" {
+				out.Files = append(out.Files, FileEntry{Path: rel, Type: "file", Status: "deleted"})
+			}
 		case info.IsDir():
-			out.Files = append(out.Files, FileEntry{Path: rel, Type: "directory"})
+			out.Files = append(out.Files, FileEntry{Path: rel, Type: "directory", Status: status[name]})
 		case info.Mode().IsRegular():
-			out.Files = append(out.Files, FileEntry{Path: rel, Type: "file"})
+			out.Files = append(out.Files, FileEntry{Path: rel, Type: "file", Status: status[name]})
 		}
 	}
 	sort.Slice(out.Files, func(i, j int) bool {
@@ -270,6 +279,42 @@ func listDir(ctx context.Context, workdir, dir string) (FileList, error) {
 		return a.Path < b.Path
 	})
 	return out, nil
+}
+
+// childStatus maps each name directly in dir to its git status: a file's own,
+// or "changed" for a folder holding changed files. git status reports paths
+// from the repository root, so the workdir's prefix inside the repository is
+// cut first. It is best effort: on any failure the listing goes unmarked.
+func childStatus(ctx context.Context, repo *gitRepo, workdir, dir string) map[string]string {
+	prefix, code, _, err := runGit(ctx, repo.git, workdir, 4096, "rev-parse", "--show-prefix")
+	if err != nil || code != 0 {
+		return nil
+	}
+	spec := "."
+	if dir != "" {
+		spec = dir
+	}
+	raw, code, _, err := runGit(ctx, repo.git, workdir, maxStatusBytes+1, "--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", spec)
+	if err != nil || code != 0 || len(raw) > maxStatusBytes {
+		return nil
+	}
+	base := strings.TrimSpace(string(prefix))
+	if dir != "" {
+		base += dir + "/"
+	}
+	out := map[string]string{}
+	for _, e := range parseStatus(raw) {
+		rest, ok := strings.CutPrefix(e.path, base)
+		if !ok || rest == "" {
+			continue
+		}
+		if name, _, nested := strings.Cut(rest, "/"); nested {
+			out[name] = "changed"
+		} else {
+			out[name] = e.status
+		}
+	}
+	return out
 }
 
 // checkFiles validates the files a prompt references, relative to workdir,
