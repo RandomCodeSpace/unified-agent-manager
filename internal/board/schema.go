@@ -169,7 +169,10 @@ CREATE TABLE import_refs (
 `,
 	// v4: who decided a request, owner or uam (a done request accepted
 	// automatically because its acceptance command passed). It is empty while
-	// pending, when withdrawn, and for decisions stored before v4, which were
-	// all the owner's.
-	`ALTER TABLE requests ADD COLUMN decided_by TEXT NOT NULL DEFAULT '';`,
+	// pending and when withdrawn. Every decision stored before v4, accepted
+	// or rejected, was the owner's.
+	`
+ALTER TABLE requests ADD COLUMN decided_by TEXT NOT NULL DEFAULT '';
+UPDATE requests SET decided_by = 'owner' WHERE status IN ('accepted', 'rejected');
+`,
 }

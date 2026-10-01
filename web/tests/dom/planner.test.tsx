@@ -1049,6 +1049,8 @@ describe('the floating pop-out', () => {
   test('a pop-out from the Planner opens expanded and follows the Planner’s Board, whatever an earlier version stored', async () => {
     localStorage.setItem('uam.plannerHidden', JSON.stringify({ p1: true, p3: true }));
     const { user } = await openPlanner();
+    // The earlier version's key is removed once the planner mounts.
+    expect(localStorage.getItem('uam.plannerHidden')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
     await panel();
     await pickProject(user, /^notes-site/);

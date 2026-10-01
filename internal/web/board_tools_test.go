@@ -728,9 +728,9 @@ func TestBoardToolsDoneRefusedWithOpenItems(t *testing.T) {
 
 // A done claim runs the owner's acceptance command, then files the request
 // with evidence of the Task's work since the hold started; a command that
-// passes accepts it at once (ADR 0005 decision 5), and the owner can reopen
-// the subtask. A subtask whose command is the empty one, none, runs nothing
-// and waits for the owner.
+// passes accepts it at once (ADR 0005 decision 5), and the owner can move
+// the subtask back to To do. A subtask whose command is the empty one, none,
+// runs nothing and waits for the owner.
 func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 	acceptEnv(t)
 	f := newPlanner(t)
@@ -764,11 +764,11 @@ func TestBoardToolsDoneFilesEvidence(t *testing.T) {
 	if ev.Accept == nil || ev.Accept.Exit != 0 || !strings.Contains(ev.Accept.Tail, "checked") || ev.Transcript == nil || ev.Transcript.TaskID != task.ID || ev.Transcript.ToItem != "edit-1" || ev.Transcript.Partial {
 		t.Fatalf("evidence = %+v, accept %+v, transcript %+v", ev, ev.Accept, ev.Transcript)
 	}
-	// The owner reopens it.
-	var reopened BoardCard
-	f.call(http.MethodPost, "/api/board/cards/"+leaf.ID+"/status", `{"status":"todo","comment":"one more case"}`, http.StatusOK, &reopened)
-	if reopened.Status != board.StatusTodo || reopened.HeldBy != "" || !slices.Contains(comments(f.card(leaf.ID)), "owner: one more case") {
-		t.Fatalf("reopened = %+v", reopened)
+	// The owner moves it back to To do.
+	var backToTodo BoardCard
+	f.call(http.MethodPost, "/api/board/cards/"+leaf.ID+"/status", `{"status":"todo","comment":"one more case"}`, http.StatusOK, &backToTodo)
+	if backToTodo.Status != board.StatusTodo || backToTodo.HeldBy != "" || !slices.Contains(comments(f.card(leaf.ID)), "owner: one more case") {
+		t.Fatalf("back to To do = %+v", backToTodo)
 	}
 
 	none := f.create(board.KindSubtask, "", "Nothing to run")
@@ -860,23 +860,36 @@ func TestBoardToolsDoneWaitsOnAFlag(t *testing.T) {
 	}
 }
 
-// A green claim whose acceptance would close the story it is in, while the
-// story still has proposals, waits for the owner: closing would cancel them.
+// A green claim whose acceptance would close the story it is in and the
+// epic above it, while they still have proposals, waits for the owner:
+// closing would cancel them, and the reply names them all.
 func TestBoardToolsDoneWaitsWhenItWouldCloseProposals(t *testing.T) {
 	acceptEnv(t)
 	f := newPlanner(t)
 	f.setAcceptCmd("true")
-	story := f.create(board.KindStory, "", "Story")
+	epic := f.create(board.KindEpic, "", "Epic")
+	story := f.create(board.KindStory, epic.ID, "Story")
 	leaf := f.create(board.KindSubtask, story.ID, "Leaf")
 	_, task := f.launch(leaf.ID)
 	followUp := f.toolOK(task.ID, "board_create", fmt.Sprintf(`{"kind":"subtask","parent":%q,"title":"Follow-up"}`, story.ID)).Card
+	var underEpic board.Card
+	f.store(func(ctx context.Context, st *board.Store) error {
+		if err := st.StartPlanning(ctx, board.Owner(""), epic.ID, "planner"); err != nil {
+			return err
+		}
+		var err error
+		underEpic, err = st.Create(ctx, board.Agent("planner", ""), board.NewCard{ProjectID: f.project, Kind: board.KindSubtask, ParentID: epic.ID, Title: "Under the epic"})
+		return err
+	})
 	writeRepoFile(t, f.repo, "made.txt", "x\n")
 	r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"done"}`, leaf.ID))
-	if want := fmt.Sprintf("Filed a done request on #2; it waits for the owner to accept, because accepting it would close #1, which still has proposals #%d. ", followUp.Seq); !strings.HasPrefix(r.Text, want) {
+	if want := fmt.Sprintf("Filed a done request on #3; it waits for the owner to accept, because accepting it would close #2 and #1, which still have proposals #%d and #%d. ", followUp.Seq, underEpic.Seq); !strings.HasPrefix(r.Text, want) {
 		t.Fatalf("done = %q, want the prefix %q", r.Text, want)
 	}
-	if d := f.card(followUp.ID); d.Card.Status != board.StatusPlanned {
-		t.Fatalf("the proposal = %+v", d.Card)
+	for _, id := range []string{followUp.ID, underEpic.ID} {
+		if d := f.card(id); d.Card.Status != board.StatusPlanned {
+			t.Fatalf("the proposal = %+v", d.Card)
+		}
 	}
 	if d := f.card(leaf.ID); d.Card.Status != board.StatusDoing || d.Requests[0].Status != board.RequestPending {
 		t.Fatalf("the subtask = %+v", d)

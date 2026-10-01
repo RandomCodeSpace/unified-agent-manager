@@ -792,15 +792,16 @@ func TestClaimCollectsEvidenceBeforeTheRun(t *testing.T) {
 	if want := []string{board.FlagOverlap}; !slices.Equal(res.Request.Flags, want) {
 		t.Fatalf("flags = %q, want %q", res.Request.Flags, want)
 	}
-	if res.Request.PassedCmd != "" {
-		t.Fatalf("an overlapping claim passed %q", res.Request.PassedCmd)
+	// The store, not the claim, holds a flagged request back.
+	if res.Request.PassedCmd != st.fin.AcceptCmd {
+		t.Fatalf("an overlapping green claim passed %q", res.Request.PassedCmd)
 	}
 }
 
-// A green command passes the claim, for the store to accept as it files it,
-// only when nothing is flagged: no change at all is flagged even with a
-// command (ADR 0005 decision 5).
-func TestClaimPassesOnlyWithNothingFlagged(t *testing.T) {
+// A green command passes the claim, flags or not, and the store decides
+// whether it accepts it as it files it: no change at all is flagged even
+// with a command (ADR 0005 decision 5).
+func TestClaimPassesAGreenCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup func(repo string, st *fakeClaimStore)
@@ -822,12 +823,8 @@ func TestClaimPassesOnlyWithNothingFlagged(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := ""
-			if tc.flags == nil {
-				want = "make check"
-			}
-			if !slices.Equal(res.Request.Flags, tc.flags) || res.Request.PassedCmd != want {
-				t.Fatalf("flags %q, passed %q; want %q, %q", res.Request.Flags, res.Request.PassedCmd, tc.flags, want)
+			if !slices.Equal(res.Request.Flags, tc.flags) || res.Request.PassedCmd != "make check" {
+				t.Fatalf("flags %q, passed %q; want %q", res.Request.Flags, res.Request.PassedCmd, tc.flags)
 			}
 		})
 	}
