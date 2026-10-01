@@ -469,7 +469,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       check();
     });
     atBottom.current = false;
-    target.scrollIntoView({ block: 'start' });
+    // Scroll the conversation only: scrollIntoView also scrolls clipped ancestors, sliding the app.
+    const view = scroller.current;
+    if (view) view.scrollTo({ top: view.scrollTop + target.getBoundingClientRect().top - view.getBoundingClientRect().top });
     target.classList.add('animate-flash');
     window.setTimeout(() => target.classList.remove('animate-flash'), 1400);
   }

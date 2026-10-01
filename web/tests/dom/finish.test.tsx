@@ -9,14 +9,19 @@ const seen = (minutes: number) => localStorage.setItem('uam.viewed', JSON.string
 describe('since you left', () => {
   test('a Task that changed since the last look says what happened and jumps to the first new item', async () => {
     seen(69.5);
-    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
+    // Only the conversation scrolls: scrollIntoView would also slide the app's clipped ancestors.
+    const into = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
+    const scroll = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { value: scroll, configurable: true, writable: true });
     const { user } = await openTask('t20');
     const strip = await screen.findByText(/^Since you left/);
     expect(strip.closest('p')?.textContent).toBe('Since you left (1 h): the agent finished, ran the tests plus 1 other command, and changed 2 files.');
     await user.click(screen.getByRole('button', { name: 'Jump to where you stopped' }));
     await waitFor(() => expect(scroll).toHaveBeenCalled());
+    expect(into).not.toHaveBeenCalled();
     expect(screen.queryByText(/^Since you left/)).toBeNull();
-    scroll.mockRestore();
+    into.mockRestore();
+    delete (HTMLElement.prototype as Partial<HTMLElement>).scrollTo;
   });
 
   test('it can be dismissed, and a Task with nothing new has none', async () => {
