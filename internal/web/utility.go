@@ -296,7 +296,7 @@ func (m *Manager) loadUtilityLog() {
 		log.Warn("read the utility log failed", "error", err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	dropped := false
