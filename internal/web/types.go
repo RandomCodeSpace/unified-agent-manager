@@ -158,6 +158,12 @@ type Settings struct {
 	// UtilityDailyLimit is how many Utility model calls UAM makes a day, 0
 	// for none; omitted for store.DefaultUtilityDailyLimit (utility.go).
 	UtilityDailyLimit *int `json:"utility_daily_limit,omitempty"`
+	// SuggestReplies is false when replies to send next are not offered
+	// after a turn (assist.go); omitted while they are, the default.
+	SuggestReplies *bool `json:"suggest_replies,omitempty"`
+	// SavedPrompts are the prompts the owner saved (prompts.go), oldest
+	// first; omitted when there are none.
+	SavedPrompts []SavedPrompt `json:"saved_prompts,omitempty"`
 }
 
 // CustomModel is one custom model in Settings. APIKeyEnv only names the
@@ -269,6 +275,15 @@ type SessionSummary struct {
 	// Diff totals the Task's own changes (the task scope of Changes); omitted
 	// while it has none or they are not known yet.
 	Diff *DiffStat `json:"diff,omitempty"`
+	// RerunOf is the ID of the Task whose last message this one runs again
+	// (Run again, Try with another model); omitted otherwise.
+	RerunOf string `json:"rerun_of,omitempty"`
+	// Outcome is a one-line summary of the last completed turn: a short
+	// phrase from the Utility model, when one ran, then what the turn's tool
+	// calls show (files changed, tests, failed commands). Omitted while a
+	// turn runs, after one that did not complete, and when there is nothing
+	// to say.
+	Outcome string `json:"outcome,omitempty"`
 }
 
 // DiffStat totals a list of changed files.

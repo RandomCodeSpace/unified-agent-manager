@@ -589,6 +589,54 @@ are logged only at debug level (`UAM_DEBUG=1`).
   prompt and pauses the remaining queue. Attachment uploads accept an optional
   `model` query parameter for the draft's offered model; submission and dispatch
   recheck its media support without changing the running turn.
+- **Suggested replies**: when a turn completes with an answer, up to three
+  short replies you would likely send next show as buttons above the
+  composer's text. Choosing one puts it in the composer; nothing is sent until
+  you send it. They come from one Utility model call, made the first time a
+  composer shows that turn, with your last message and the agent's final
+  answer; the replies are kept with the Task, so opening it again, in any
+  browser or after a restart, asks for nothing more. None show while the
+  Task works, waits for you, has queued messages, or once you start typing.
+  Without a Utility model, or past today's Background AI limit, there are
+  none. Settings → Composer → **Suggest replies** turns them off.
+- **Saved prompts**: the speech-bubble button in the composer's toolbar lists
+  the prompts you saved, for every Project or for this Task's Project. Type
+  to search them by name; choosing one inserts it at the cursor on its own
+  line. **Save as prompt** saves the composer's text under a name, for this
+  Project or all Projects. The service keeps them, so they are the same in
+  every browser. Settings → **Saved prompts** renames and deletes them; a
+  prompt whose Project was removed stays there until you delete it.
+- **Outcome line**: when a turn completes, the Task gets a one-line summary
+  such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
+  Task's row in the sidebar shows it as its status line ("Ready for review:"
+  first while you have not opened the Task since), and the Task header
+  beside its state (not on a phone). Everything after the opening phrase
+  comes from the main agent's own tool calls in that turn, read as the
+  finish card reads them: files its edit, write and create tools changed,
+  whether its last test run (a "Ran the tests" row on the card) exited 0
+  ("tests pass") or not ("tests fail"), saying nothing when that run's
+  status is unclear (piped without `pipefail`, or not recorded), and how
+  many commands failed or exited non-zero. The opening phrase comes from one
+  Utility model call, told to describe only what the agent's final answer
+  says it did and to leave tests, files and commands to the evidence; until
+  it answers, or without a Utility model, the line holds the evidence only.
+  A new turn clears the line, and a turn that is stopped or fails gets none.
+- **Run again and Try with another model**: the Task's actions menu (the "…"
+  button in its header, or its sidebar row's context menu) has **Run
+  again**, which starts a new Task in the same Project with the same model,
+  effort, context size and Safe/Yolo mode, and this Task's last message as
+  its first, and **Try with another model…**, which does the same on a model
+  you pick (effort and context size then start at their defaults). The new
+  Task opens; its transcript begins with a note naming the Task it repeats,
+  which opens that Task, so the two can be compared. Attachments of the
+  message are not sent again.
+- **Export as Markdown**: the Task's actions menu downloads the whole
+  conversation as a `.md` file: every message in order, with older history
+  the service no longer holds read from Copilot's record, each tool call
+  folded into a `<details>` block whose summary names the command and its
+  exit code (the call's input and output inside), and a subagent's call
+  with its generated summary line. When the record cannot be read, the file
+  holds what the service keeps and says what is missing.
 - **Settings**: the gear at the bottom of the sidebar opens the Settings view
   in the main pane (`#settings` in the address bar). UAM keeps the web
   interface's settings in `sessions.json`, so they apply in every browser.
@@ -615,7 +663,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
   lists is kept. Hiding is only a display preference: a Task or Project
   already on a hidden model keeps it.
   The **Utility model** is the model UAM uses for its own small AI jobs,
-  including Task titles and completed subagent result lines. Pick the cheapest
+  including Task titles, completed subagent result lines, suggested replies
+  and the opening phrase of outcome lines. Pick the cheapest
   that does the job. It is kept per provider under `title_model` (the key keeps
   its first name). With no entry, UAM uses the provider's cheapest priced
   model, worked out whenever it is needed: among the models `/api/meta`
@@ -642,13 +691,14 @@ are logged only at debug level (`UAM_DEBUG=1`).
   service log says why. Each title costs AI credits,
   about 0.002 with gpt-6-luna.
 - **Background AI**: every call UAM makes on the Utility model (Task
-  titles, subagent result lines, planner triage and suggestions) counts
+  titles, subagent result lines, suggested replies, outcome lines, planner
+  triage and suggestions) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log, newest
   first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
-  what it was for ("Task title", "Subagent summary", "Planner triage",
-  "Planner suggestion"), the Task (a click opens it) or Project, the model,
+  what it was for ("Task title", "Subagent summary", "Suggested replies",
+  "Outcome line", "Planner triage", "Planner suggestion"), the Task (a click opens it) or Project, the model,
   the characters sent and received, the tokens, how long it took and how it
   ended. Tokens and credits are what Copilot reported for the call; when it
   reports none, the tokens are estimated at 4 characters each and marked
@@ -662,7 +712,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   Once today's calls reach the limit, further calls are not made: they are
   logged as skipped (daily limit, or off when the limit is 0), new Tasks
   keep their first message as the title, completed subagents keep their own
-  report, triage answers 409 `utility_paused` with the reason, and a
+  report, no replies are suggested (and the next look asks again), outcome
+  lines keep the evidence alone, triage answers 409 `utility_paused` with
+  the reason, and a
   suggestion job fails with that reason. Settings then says Background AI is
   paused until tomorrow; raising the limit resumes it at once.
   `GET /api/utility` returns `{"today": {"day", "calls", "limit",

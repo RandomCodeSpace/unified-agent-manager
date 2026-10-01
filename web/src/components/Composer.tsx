@@ -7,6 +7,8 @@ import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
 import { BackgroundTasks } from './BackgroundTasks';
+import { SavedPrompts, SuggestedReplies } from './Assist';
+import { insertAt } from '../lib/assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
 import { ComposerUsage } from './ComposerUsage';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
@@ -490,6 +492,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     setText(next.text);
     setCaret(next.caret);
     setHighlight(0);
+    textarea.current?.focus();
+  }
+
+  /** A suggested reply or a saved prompt goes in at the caret; nothing is sent. */
+  function insertText(insert: string) {
+    const next = insertAt(text, caret, insert);
+    updateText(next.text, next.caret);
+    pendingCaret.current = next.caret;
     textarea.current?.focus();
   }
 
@@ -1280,6 +1290,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </div>
       )}
 
+      <SuggestedReplies session={session} hidden={!!newTask || !!answering || locked || !!text.trim()} onPick={insertText} />
       <label className="sr-only" htmlFor="composer-text">
         {answering ? 'Your answer' : 'Message'}
       </label>
@@ -1347,6 +1358,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                 <Paperclip />
               </Button>
             </Tip>
+            <SavedPrompts projectId={session.project_id} text={text} onInsert={insertText} />
           </>
         )}
         {catalogPending ? (

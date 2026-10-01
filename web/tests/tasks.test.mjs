@@ -167,6 +167,8 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'working', updated_at: at(90) }), 'Working · quiet 1h');
   assert.equal(status({ state: 'completed' }, true), 'Finished, ready for your review');
   assert.equal(status({ state: 'completed' }), 'Finished');
+  assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass' }), 'Fixed the test; tests pass');
+  assert.equal(status({ state: 'completed', outcome: 'Fixed the test' }, true), 'Ready for review: Fixed the test');
   assert.equal(status({ state: 'failed' }), 'Stopped with an error');
   assert.equal(status({ state: 'completed', stage: 'settled' }), 'Settled');
 });

@@ -64,6 +64,8 @@ interface Props {
   spawnedBy?: string;
   /** The Task's `updated_at` when the owner last had it open, before this visit; "Since you left" counts from it. */
   since?: string;
+  /** The name of the Task whose last message this one runs again (`rerun_of`); empty when that Task is gone or unnamed. */
+  rerunOf?: string;
 }
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
@@ -74,7 +76,7 @@ const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-c
 const PHONE = '(width < 40rem)';
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since }: Readonly<Props>) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
   const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
   const tempAlias = meta?.temp_root_aliases?.[0];
@@ -584,6 +586,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             ) : (
               <StateMark state={state} label={!phone} title={state !== session.state ? runningTitle : detail} className="shrink-0" />
             )}
+            {/* The last completed turn in one line, beside its state (phones show it in the list). */}
+            {state === 'completed' && session.outcome && !readOnly(session) && <span className="min-w-0 max-w-[45%] truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
             {busy && <Spinner className="shrink-0" />}
             {/* The pencil takes no room until the title is hovered or it is focused, so the state chip sits by the title. */}
             {renamable && !renaming && (
@@ -703,6 +707,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
             {session.spawned_by && visibleStart === 0 && !session.history_before && <Note>{spawnedBy ? `Started by another task, ${spawnedBy}.` : 'Started by another task.'}</Note>}
             {session.routine_id && visibleStart === 0 && !session.history_before && <Note>Started by a routine.</Note>}
+            {session.rerun_of && visibleStart === 0 && !session.history_before && <Note>Runs again the last message of {rerunOf ? <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.rerun_of!)}>{rerunOf}</button> : 'another task'}, to compare.</Note>}
             {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
             {(visibleStart > 0 || session.history_before) && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</output>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}

@@ -9,6 +9,7 @@ import { boardMock } from './board';
 import { gitMock } from './git';
 import { chartMock } from './charts';
 import { routinesMock } from './routines';
+import { assistMock } from './assist';
 import { seed, type MockState, type MockTask } from './data';
 import { seedUtility, utilityLog } from './utility';
 
@@ -174,6 +175,15 @@ export function install(): { received: Received[] } {
   const routines = routinesMock((id) => st.projects.some((p) => p.id === id));
   // The planner (ADR 0005); `?mock&bigplan` adds about 200 cards to notes-site.
   const charts = chartMock(st.projects, (project) => broadcast('project', { project }));
+  const assist = assistMock({
+    broadcast: (name, payload) => broadcast(name, payload),
+    settings: () => st.settings,
+    setSettings: (s) => { st.settings = s; },
+    task: find,
+    create: (body) => route('POST', new URL('/api/sessions', window.location.origin), body),
+    newest: () => st.tasks.at(-1),
+    summary: (t) => summary(t),
+  });
   const board = boardMock({
     broadcast: (name, payload) => broadcast(name, payload),
     projects: () => st.projects,
@@ -666,6 +676,8 @@ export function install(): { received: Received[] } {
     if (charted) return charted;
     const routined = routines.route(method, path, body);
     if (routined) return routined;
+    const assisted = assist(method, url, body);
+    if (assisted) return assisted;
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
     if (path === '/api/utility' && method === 'GET') return json(200, utilityLog(utility, st.settings.utility_daily_limit ?? 200, Number(url.searchParams.get('before')) || 0, Number(url.searchParams.get('limit')) || 200));
@@ -675,7 +687,11 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'suggest_replies' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
+      if (typeof body.suggest_replies === 'boolean') {
+        st.settings = { ...st.settings, suggest_replies: body.suggest_replies };
+        broadcast('settings', { settings: st.settings });
+      }
       if (body.utility_daily_limit !== undefined) {
         const limit = body.utility_daily_limit;
         if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0 || limit > 1000) return fail(400, 'utility_daily_limit must be 0 to 1000');

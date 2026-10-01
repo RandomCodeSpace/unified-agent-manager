@@ -130,7 +130,7 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
   return (
     <>
       <Note>
-        UAM's own AI calls on the Utility model: task titles, subagent summaries and planner suggestions and triage. Each one costs AI credits. Every call is kept here for 30 days.
+        UAM's own AI calls on the Utility model: task titles, subagent summaries, suggested replies, outcome lines, and planner suggestions and triage. Each one costs AI credits. Every call is kept here for 30 days.
       </Note>
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-baseline gap-x-2">

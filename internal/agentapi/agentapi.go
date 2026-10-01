@@ -831,6 +831,9 @@ type ToolCall struct {
 	Status ToolStatus `json:"status"`
 	Input  string     `json:"input,omitempty"`
 	Output string     `json:"output,omitempty"`
+	// ExitCode is a shell command's exit code, when the provider reports
+	// one; nil otherwise.
+	ExitCode *int `json:"exit_code,omitempty"`
 	// Declaration is display intent from a completed host tool call. It is
 	// neither file provenance nor authority to open the path.
 	Declaration *FileDeclaration `json:"declaration,omitempty"`
