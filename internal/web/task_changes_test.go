@@ -11,7 +11,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
 
-func editItem(id, tool, path string, status agentapi.ToolStatus, at time.Time) agentapi.Item {
+func toolEdit(id, tool, path string, status agentapi.ToolStatus, at time.Time) agentapi.Item {
 	input, _ := json.Marshal(map[string]string{"path": path})
 	return agentapi.Item{ID: id, Kind: agentapi.ItemTool, Time: at, Tool: &agentapi.ToolCall{Name: tool, Status: status, Input: string(input)}}
 }
@@ -51,12 +51,12 @@ func TestTaskAndTurnScopes(t *testing.T) {
 	conv := prov.Last()
 	t0 := time.Now().Add(-time.Hour)
 	conv.EmitItem(agentapi.Item{ID: "u1", Kind: agentapi.ItemUser, Text: "first", Time: t0})
-	conv.EmitItem(editItem("e1", "edit", filepath.Join(repo, "tracked.txt"), agentapi.ToolCompleted, t0.Add(time.Second)))
+	conv.EmitItem(toolEdit("e1", "edit", filepath.Join(repo, "tracked.txt"), agentapi.ToolCompleted, t0.Add(time.Second)))
 	conv.EmitTurn(agentapi.TurnCompleted, "")
 	conv.EmitItem(agentapi.Item{ID: "u2", Kind: agentapi.ItemUser, Text: "second", Time: t0.Add(time.Minute)})
-	conv.EmitItem(editItem("e2", "create", "sub/new file.txt", agentapi.ToolCompleted, t0.Add(time.Minute+time.Second)))
-	conv.EmitItem(editItem("v1", "view", "unchanged.txt", agentapi.ToolCompleted, t0.Add(time.Minute+2*time.Second)))
-	conv.EmitItem(editItem("f1", "edit", "unchanged.txt", agentapi.ToolFailed, t0.Add(time.Minute+3*time.Second)))
+	conv.EmitItem(toolEdit("e2", "create", "sub/new file.txt", agentapi.ToolCompleted, t0.Add(time.Minute+time.Second)))
+	conv.EmitItem(toolEdit("v1", "view", "unchanged.txt", agentapi.ToolCompleted, t0.Add(time.Minute+2*time.Second)))
+	conv.EmitItem(toolEdit("f1", "edit", "unchanged.txt", agentapi.ToolFailed, t0.Add(time.Minute+3*time.Second)))
 	// A steer joins the running turn; it does not start a new one.
 	conv.EmitItem(agentapi.Item{ID: "s1", Kind: agentapi.ItemUser, Text: "steer", Delivery: agentapi.DeliverySteer, Time: t0.Add(2 * time.Minute)})
 	writeRepoFile(t, repo, "other.txt", "by hand\n")
@@ -93,7 +93,7 @@ func TestTaskAndTurnScopes(t *testing.T) {
 	// A later edit is counted in the background and its digest changes.
 	before := task.Files[0].Digest
 	writeRepoFile(t, repo, "tracked.txt", "one\nthree\nfour\nfive\n")
-	conv.EmitItem(editItem("e3", "edit", "tracked.txt", agentapi.ToolCompleted, t0.Add(3*time.Minute)))
+	conv.EmitItem(toolEdit("e3", "edit", "tracked.txt", agentapi.ToolCompleted, t0.Add(3*time.Minute)))
 	deadline := time.Now().Add(5 * time.Second)
 	for d := cachedDiff(m, sum.ID); d == nil || d.Additions != 6; d = cachedDiff(m, sum.ID) {
 		if time.Now().After(deadline) {
@@ -132,12 +132,12 @@ func TestNoteHistoryRecordsEdits(t *testing.T) {
 	m := &Manager{}
 	m.closed = true // no recount in this unit test
 	at := time.Now()
-	sub := editItem("e2", "edit", "b.go", agentapi.ToolCompleted, at)
+	sub := toolEdit("e2", "edit", "b.go", agentapi.ToolCompleted, at)
 	sub.AgentID = "agent-1"
 	m.noteHistoryLocked(s, agentapi.History{Items: []agentapi.Item{
 		{ID: "u", Kind: agentapi.ItemUser, Time: at},
-		editItem("e1", "apply_patch", "", agentapi.ToolCompleted, at),
-		editItem("e3", "create", "a.go", agentapi.ToolRunning, at.Add(-time.Second)),
+		toolEdit("e1", "apply_patch", "", agentapi.ToolCompleted, at),
+		toolEdit("e3", "create", "a.go", agentapi.ToolRunning, at.Add(-time.Second)),
 		sub,
 	}, Truncated: true}, true)
 	if s.editsKnown || len(s.edits) != 2 || !s.turnStart.Equal(at) {
