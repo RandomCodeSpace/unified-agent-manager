@@ -130,6 +130,8 @@ type SubagentSummarizer interface {
 type SubagentSummaryRequest struct {
 	Model, Workdir      string
 	Description, Result string
+	// OnUsage is as in UtilityRequest.
+	OnUsage func(UtilityUsage)
 }
 
 // UtilityRunner is implemented by a provider whose Capabilities.HostTools is
@@ -157,6 +159,18 @@ type UtilityRequest struct {
 	CallTool func(context.Context, HostToolCall) HostToolResult
 	// Timeout, when positive, also bounds the whole call.
 	Timeout time.Duration
+	// OnUsage, when set, receives what the call's model requests reported,
+	// summed, once before the call returns; it is not called when none
+	// reported usage.
+	OnUsage func(UtilityUsage)
+}
+
+// UtilityUsage is what the model requests of one Utility call reported,
+// summed: tokens in and out, and their cost in AI Credits, 0 when not
+// reported.
+type UtilityUsage struct {
+	InputTokens, OutputTokens int64
+	Credits                   float64
 }
 
 // CustomModelUser is implemented by a provider that can offer custom
@@ -193,6 +207,8 @@ type TitleRequest struct {
 	Workdir string
 	// Text is the Task's first message, already sanitized and clipped.
 	Text string
+	// OnUsage is as in UtilityRequest.
+	OnUsage func(UtilityUsage)
 }
 
 // Quota is one account quota as the provider reported it.

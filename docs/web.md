@@ -579,6 +579,34 @@ are logged only at debug level (`UAM_DEBUG=1`).
   model fails or takes more than 20 s, the provider's title stays, and the
   service log says why. Each title costs AI credits,
   about 0.002 with gpt-6-luna.
+- **Background AI**: every call UAM makes on the Utility model (Task
+  titles, subagent result lines, planner triage and suggestions) counts
+  against a daily limit and is logged. Settings → **Background AI** shows
+  today's calls against the limit, the limit itself, and the log, newest
+  first and grouped by day with each day's totals: calls, failures,
+  skipped calls, tokens in and out, and AI credits. Each entry has the time,
+  what it was for ("Task title", "Subagent summary", "Planner triage",
+  "Planner suggestion"), the Task (a click opens it) or Project, the model,
+  the characters sent and received, the tokens, how long it took and how it
+  ended. Tokens and credits are what Copilot reported for the call; when it
+  reports none, the tokens are estimated at 4 characters each and marked
+  with ≈. **Show older calls** pages back through everything kept: the log
+  keeps 30 days, by the server's local date, in `utility-log.jsonl` beside
+  `sessions.json`.
+  The limit is `utility_daily_limit` in the settings, 200 calls a day when
+  unset, 0 to 1000; `PATCH /api/settings` with
+  `{"utility_daily_limit": 50}` sets it, `0` turns Background AI off, and
+  `null` puts the default back. The day starts at midnight on the server.
+  Once today's calls reach the limit, further calls are not made: they are
+  logged as skipped (daily limit, or off when the limit is 0), new Tasks
+  keep their first message as the title, completed subagents keep their own
+  report, triage answers 409 `utility_paused` with the reason, and a
+  suggestion job fails with that reason. Settings then says Background AI is
+  paused until tomorrow; raising the limit resumes it at once.
+  `GET /api/utility` returns `{"today": {"day", "calls", "limit",
+  "paused", "resets_at"}, "days": [totals per day, newest first], "calls":
+  [newest first], "next"}`; pass `next` as `?before=` for the following
+  page, and `?limit=` (1 to 200, default 200) to size it.
 - **Custom models (bring your own model)**: Settings → Models → Custom
   models adds OpenAI-compatible endpoints to Copilot's model list, next to
   the account's own models, so a Task can switch between them mid-Task in

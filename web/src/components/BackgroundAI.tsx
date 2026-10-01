@@ -1,0 +1,219 @@
+import { useCallback, useContext, useEffect, useRef, useState, type SubmitEvent } from 'react';
+import { api, describeError, taskName, type UtilityCall, type UtilityLog } from '../api';
+import { byDay, clockText, dayLabel, dayText, durationText, mergeCalls, outcomeLabel, purposeLabel, sizeText, tokenText } from '../lib/utility';
+import { formatCredits } from '../lib/cost';
+import { Note, Skeleton } from './common';
+import { PlannerContext, usePlannerTasks } from './planner/context';
+import { Field } from './TaskDefaults';
+import { Button } from './ui/button';
+import { Chip } from './ui/chip';
+import { Input } from './ui/input';
+
+/** How often the open section reads today's count and the newest calls again. */
+const REFRESH_MS = 15000;
+const MAX_LIMIT = 1000;
+
+function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
+  const { sessions, openTask } = usePlannerTasks();
+  const projects = useContext(PlannerContext)?.projects;
+  const task = call.task_id ? sessions.find((s) => s.id === call.task_id) : undefined;
+  const project = call.project_id ? projects?.find((p) => p.id === call.project_id) : undefined;
+  const outcome = outcomeLabel(call);
+  const ran = call.outcome !== 'skipped';
+  const meta = [call.model, ran && sizeText(call), ran && tokenText(call), ran && durationText(call.duration_ms), call.credits ? `${formatCredits(call.credits)} credits` : ''].filter(Boolean).join(' · ');
+  return (
+    <li className="flex min-w-0 flex-col gap-0.5 py-2">
+      <div className="flex min-w-0 items-baseline gap-2">
+        <span className="shrink-0 text-caption text-muted tabular-nums">{clockText(call.at)}</span>
+        <span className="shrink-0 text-ui font-medium text-ink">{purposeLabel(call.purpose)}</span>
+        <span className="flex min-w-0 flex-1">
+          {task ? (
+            <Button size="sm" variant="subtle" className="h-auto max-w-full min-w-0 px-1 py-0 text-ui text-body" title="Open the task" onClick={() => openTask(task.id)}>
+              <span className="truncate">{taskName(task)}</span>
+            </Button>
+          ) : (
+            <span className="min-w-0 truncate text-ui text-muted">{project?.name ?? (call.task_id ? 'A removed task' : '')}</span>
+          )}
+        </span>
+        {outcome && (
+          <Chip tone={call.outcome === 'error' ? 'error' : 'warning'}>
+            {outcome}
+          </Chip>
+        )}
+      </div>
+      {meta && <span className="min-w-0 text-caption text-muted tabular-nums [overflow-wrap:anywhere]">{meta}</span>}
+      {call.outcome === 'error' && call.reason && <span className="min-w-0 text-caption text-error [overflow-wrap:anywhere]">{call.reason}</span>}
+    </li>
+  );
+}
+
+/**
+ * Settings → Background AI: UAM's own calls on the Utility model (titles, subagent summaries, planner jobs), today's
+ * count against the daily limit, the limit, and the log grouped by server-local day with each day's totals. Older
+ * calls load page by page, so every call kept stays reachable.
+ */
+export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ limitSetting?: number; saving: boolean; onSaveLimit: (limit: number) => Promise<void> }>) {
+  const [log, setLog] = useState<UtilityLog | null>(null);
+  const [calls, setCalls] = useState<UtilityCall[]>([]);
+  const [next, setNext] = useState<number | undefined>();
+  const [error, setError] = useState<string | null>(null);
+  const [older, setOlder] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = useRef<{ calls: UtilityCall[]; next: number | undefined }>({ calls: [], next: undefined });
+
+  // Bumped to read again at once: Retry, a saved limit.
+  const [reads, setReads] = useState(0);
+  const refresh = () => setReads((n) => n + 1);
+  const apply = useCallback((page: UtilityLog) => {
+    shown.current = mergeCalls(shown.current.calls, shown.current.next, page.calls, page.next);
+    setLog(page);
+    setCalls(shown.current.calls);
+    setNext(shown.current.next);
+    setError(null);
+  }, []);
+
+  useEffect(() => {
+    let current = true;
+    const read = () => api.utility().then((page) => { if (current) apply(page); }).catch((e: unknown) => { if (current) setError(describeError(e)); });
+    void read();
+    const timer = window.setInterval(() => void read(), REFRESH_MS);
+    return () => {
+      current = false;
+      window.clearInterval(timer);
+    };
+  }, [apply, limitSetting, reads]);
+
+  async function loadOlder() {
+    if (next === undefined) return;
+    setOlder(true);
+    try {
+      const page = await api.utility(next);
+      shown.current = { calls: [...shown.current.calls, ...page.calls.filter((c) => c.id < next)], next: page.next };
+      setCalls(shown.current.calls);
+      setNext(page.next);
+      setError(null);
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setOlder(false);
+    }
+  }
+
+  const limit = log?.today.limit ?? limitSetting;
+  const value = draft ?? (limit === undefined ? '' : String(limit));
+  const parsed = Number(value);
+  const valid = value.trim() !== '' && Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_LIMIT;
+  async function save(e: SubmitEvent) {
+    e.preventDefault();
+    if (!valid) return;
+    await onSaveLimit(parsed);
+    setDraft(null);
+    refresh();
+  }
+
+  if (!log) {
+    return error ? (
+      <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1">Could not load Background AI: {error}</span>
+        <Button size="sm" variant="secondary" onClick={refresh}>
+          Retry
+        </Button>
+      </Note>
+    ) : (
+      <Skeleton label="Loading Background AI…" rows={3} />
+    );
+  }
+
+  const today = log.today;
+  const days = new Map(log.days.map((d) => [d.day, d]));
+  const fraction = today.limit > 0 ? Math.min(1, today.calls / today.limit) : 1;
+  return (
+    <>
+      <Note>
+        UAM's own AI calls on the Utility model: task titles, subagent summaries and planner suggestions and triage. Each one costs AI credits. Every call is kept here for 30 days.
+      </Note>
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-title text-ink tabular-nums">
+            {today.calls.toLocaleString('en-US')} of {today.limit.toLocaleString('en-US')}
+          </span>
+          <span className="text-caption text-muted">calls today</span>
+        </div>
+        <div
+          role="meter"
+          aria-label="Background AI calls today"
+          aria-valuemin={0}
+          aria-valuemax={today.limit}
+          aria-valuenow={Math.min(today.calls, today.limit)}
+          className="h-1.5 w-full max-w-md overflow-hidden rounded-xs bg-sunken shadow-well"
+        >
+          <div className={today.paused ? 'h-full origin-left bg-warning' : 'h-full origin-left bg-accent'} style={{ transform: `scaleX(${fraction})` }} />
+        </div>
+        {today.paused && (
+          <Note tone="warn" role="status" className="max-w-3xl">
+            {today.limit === 0
+              ? 'Background AI is off. New tasks keep their first message as the title, subagent results keep their own report, and planner suggestions and triage are refused. Set a daily limit above 0 to turn it on.'
+              : `Background AI is paused until tomorrow (midnight on the server, ${new Date(today.resets_at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} here). Until then new tasks keep their first message as the title, subagent results keep their own report, and planner suggestions and triage are refused. Raise the limit to resume now.`}
+          </Note>
+        )}
+      </div>
+      <form aria-label="Daily limit" className="flex flex-wrap items-end gap-2" onSubmit={(e) => void save(e)}>
+        <div className="w-40">
+          <Field id="utility-limit" label="Daily limit (calls)">
+            <Input
+              id="utility-limit"
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={MAX_LIMIT}
+              step={1}
+              aria-describedby="utility-limit-help"
+              aria-invalid={!valid || undefined}
+              disabled={saving}
+              value={value}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+          </Field>
+        </div>
+        <Button type="submit" variant="secondary" size="lg" disabled={saving || !valid || parsed === limit}>
+          Save
+        </Button>
+        <Note id="utility-limit-help" className="basis-full">
+          At most {MAX_LIMIT.toLocaleString('en-US')}; 0 turns Background AI off. The count starts again at midnight on the server.
+        </Note>
+      </form>
+      <div className="flex flex-col gap-1">
+        <h3 className="text-ui font-medium text-ink">Log</h3>
+        <Note>Newest first. Tokens marked ≈ are estimated from the characters; the others are what the provider reported.</Note>
+        {error && (
+          <Note tone="error" role="alert">
+            Could not refresh the log: {error}
+          </Note>
+        )}
+        {calls.length === 0 && <Note>No Background AI calls in the last 30 days.</Note>}
+        {byDay(calls).map((group) => {
+          const totals = days.get(group.day);
+          const label = dayLabel(group.day, today.day);
+          return (
+            <section key={group.day} aria-label={label} className="flex flex-col pt-2">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                <h4 className="text-ui font-medium text-ink">{label}</h4>
+                {totals && <span className="text-caption text-muted tabular-nums">{dayText(totals)}</span>}
+              </div>
+              <ul className="flex flex-col pl-3">
+                {group.calls.map((c) => (
+                  <CallRow key={c.id} call={c} />
+                ))}
+              </ul>
+            </section>
+          );
+        })}
+        {next !== undefined && (
+          <Button size="lg" variant="secondary" className="self-start" loading={older} onClick={() => void loadOlder()}>
+            Show older calls
+          </Button>
+        )}
+      </div>
+    </>
+  );
+}

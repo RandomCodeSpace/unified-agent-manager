@@ -149,6 +149,9 @@ type Settings struct {
 	// TaskDefaults are the settings a new Task starts with; omitted when
 	// unset, and the browser then starts from the provider's own defaults.
 	TaskDefaults TaskDefaults `json:"task_defaults,omitzero"`
+	// UtilityDailyLimit is how many Utility model calls UAM makes a day, 0
+	// for none; omitted for store.DefaultUtilityDailyLimit (utility.go).
+	UtilityDailyLimit *int `json:"utility_daily_limit,omitempty"`
 }
 
 // CustomModel is one custom model in Settings. APIKeyEnv only names the

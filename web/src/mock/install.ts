@@ -7,6 +7,7 @@ import { BADGE_COLORS, LIVE, type Ask, type Attachment, type CustomModel, type B
 import { itemCursor } from '../lib/historyWindow';
 import { boardMock } from './board';
 import { seed, type MockState, type MockTask } from './data';
+import { seedUtility, utilityLog } from './utility';
 
 type Json = Record<string, unknown>;
 
@@ -114,6 +115,9 @@ export function install(): { received: Received[] } {
   const plannerKnown = plannerMode !== 'unset';
   if (!plannerKnown) delete st.settings.planner;
   else if (plannerMode === 'off') st.settings.planner = false;
+  // Background AI: today's limit (40 here) is reached, so Settings shows the paused notice.
+  st.settings.utility_daily_limit = 40;
+  const utility = seedUtility(40);
   const createdBy = new Map<string, string>();
   const sources = new Set<FakeEventSource>();
   let seq = 1;
@@ -636,13 +640,20 @@ export function install(): { received: Received[] } {
     if (planned) return planned;
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
+    if (path === '/api/utility' && method === 'GET') return json(200, utilityLog(utility, st.settings.utility_daily_limit ?? 200, Number(url.searchParams.get('before')) || 0, Number(url.searchParams.get('limit')) || 200));
     if (path === '/api/settings/custom-models/discover' && method === 'POST') {
       // The mock serves a fixed list, as an OpenAI-compatible /models would; keys are never set.
       if (!/^UAM_BYOM_[A-Za-z0-9_]+$/.test(String(body.api_key_env ?? ''))) return fail(400, 'API key variable must be named UAM_BYOM_<NAME>');
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
+      if (body.utility_daily_limit !== undefined) {
+        const limit = body.utility_daily_limit;
+        if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0 || limit > 1000) return fail(400, 'utility_daily_limit must be 0 to 1000');
+        st.settings = { ...st.settings, utility_daily_limit: limit };
+        broadcast('settings', { settings: st.settings });
+      }
       if (body.planner !== undefined) {
         if (typeof body.planner !== 'boolean') return fail(400, 'planner must be true or false');
         st.settings = { ...st.settings, planner: body.planner };

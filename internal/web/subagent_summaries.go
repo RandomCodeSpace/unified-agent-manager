@@ -44,6 +44,7 @@ type subagentSummaryJob struct {
 	identity  subagentResultIdentity
 	provider  agentapi.SubagentSummarizer
 	request   agentapi.SubagentSummaryRequest
+	call      UtilityCall
 	record    store.SubagentSummary
 }
 
@@ -210,6 +211,7 @@ func (m *Manager) queueSubagentSummaryLocked(s *webSession, sa *agentapi.Subagen
 	job := subagentSummaryJob{sessionID: s.id, agentID: sa.ID, run: run, ctx: ctx, cancel: cancel, identity: identity, provider: provider,
 		request: agentapi.SubagentSummaryRequest{Model: model, Workdir: s.workdir, Description: strings.TrimSpace(displaytext.Sanitize(clipRunes(sa.Description, 255))), Result: result},
 		record:  store.SubagentSummary{AgentID: sa.ID, ItemID: run.resultID, ItemAgentID: run.resultAgentID, Digest: identity.digest, LastAssistantID: latestAssistant},
+		call:    UtilityCall{Purpose: purposeSubagentSummary, Provider: s.provider, Model: model, TaskID: s.id, ProjectID: s.projectID},
 	}
 	if len(job.record.LastAssistantID) > maxToolCallID {
 		cancel()
@@ -252,7 +254,11 @@ func (m *Manager) generateSubagentSummary(job subagentSummaryJob) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(job.ctx, titleTimeout)
-	reply, err := job.provider.SummarizeSubagent(ctx, job.request)
+	// Past today's Utility limit the provider's report stays.
+	reply, err := m.runUtility(ctx, job.call, job.request.Description+job.request.Result, func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
+		job.request.OnUsage = onUsage
+		return job.provider.SummarizeSubagent(ctx, job.request)
+	})
 	timedOut := ctx.Err() != nil
 	cancel()
 	if err != nil || timedOut {

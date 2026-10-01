@@ -553,9 +553,19 @@ type WebSettings struct {
 	CustomModels []WebCustomModel `json:"custom_models,omitempty"`
 	// TaskDefaults are the settings a new Task starts with; zero when unset.
 	TaskDefaults WebTaskDefaults `json:"task_defaults,omitzero"`
+	// UtilityDailyLimit is how many Utility model calls UAM makes a day, 0
+	// to make none, at most MaxUtilityDailyLimit; nil means
+	// DefaultUtilityDailyLimit.
+	UtilityDailyLimit *int `json:"utility_daily_limit,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
+
+// The bounds of WebSettings.UtilityDailyLimit.
+const (
+	DefaultUtilityDailyLimit = 200
+	MaxUtilityDailyLimit     = 1000
+)
 
 // WebCustomModel is one OpenAI-compatible model. Name names its provider
 // connection, and models with the same Name share BaseURL, WireAPI and
@@ -713,13 +723,14 @@ const (
 type webSettingsAlias WebSettings
 
 var knownWebSettingsFields = map[string]struct{}{
-	"send_default":  {},
-	"terminal":      {},
-	"planner":       {},
-	"hidden_models": {},
-	"title_model":   {},
-	"custom_models": {},
-	"task_defaults": {},
+	"send_default":        {},
+	"terminal":            {},
+	"planner":             {},
+	"hidden_models":       {},
+	"title_model":         {},
+	"custom_models":       {},
+	"task_defaults":       {},
+	"utility_daily_limit": {},
 }
 
 func (w WebSettings) MarshalJSON() ([]byte, error) {
@@ -971,6 +982,10 @@ func (s *Store) loadNoLock() (Config, error) {
 	cleanTitleModels(&cfg.WebSettings)
 	cleanCustomModels(&cfg.WebSettings)
 	cleanTaskDefaults(&cfg.WebSettings)
+	if l := cfg.WebSettings.UtilityDailyLimit; l != nil && (*l < 0 || *l > MaxUtilityDailyLimit) {
+		log.Warn("clearing invalid stored utility daily limit")
+		cfg.WebSettings.UtilityDailyLimit = nil
+	}
 	migrateProjectDefaults(&cfg)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
