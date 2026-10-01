@@ -90,8 +90,7 @@ properties. Mermaid, which needs inline styles, runs only in the sandboxed
 frame document, which the service serves with its own policy; the page shows
 the result as a `data:` image.
 
-The sidebar lists Tasks without project group headings. Select a Project in the
-filter to manage it or open Previous sessions. Task titles use 12px, metadata 11px.
-The Copilot provider mark is the official Primer Octicon, vendored as
-`src/assets/copilot.svg` with its pinned source and MIT notice. No icon package
-or provider lookup is added.
+The sidebar groups the active Tasks by what they need (Needs you, Ready for
+review, Working, Idle) without project group headings; each row carries its
+Project badge. Select a Project in the filter to manage it or open Previous
+sessions.

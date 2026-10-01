@@ -1,17 +1,18 @@
-import { ChevronRight, CircleCheck, FolderPlus, GitBranch, KanbanSquare, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
-import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, needsYou, readOnly, taskName, type Project, type SessionSummary } from '../api';
+import { ChevronRight, CircleCheck, FolderPlus, KanbanSquare, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
+import { ViewTransition, memo, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
-import { filteredProject, groupTasks, shownState, sidebarTasks } from '../lib/tasks';
+import { GROUP_TITLES, commandGroups, filteredProject, groupTasks, needsYouNow, sidebarTasks, taskStatus, type GroupKey } from '../lib/tasks';
 import type { Connection } from '../state';
-import { Dot, InlineName, ProjectBadge, STATE_LABELS, STATE_TONE, Skeleton, StateMark, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
+import { Dot, InlineName, ProjectBadge, Skeleton, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
+import { Key } from './InlinePicker';
 import { ProjectFilterPicker } from './ProjectPicker';
+import { TaskAsk } from './TaskAsk';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
 import { ContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
-import copilotIcon from '../assets/copilot.svg';
 
 /** Project-level navigation and actions. */
 export interface WorkspaceActions {
@@ -37,8 +38,8 @@ export interface WorkspaceActions {
  * of the main pane's header, once hidden, it brings it back. On a narrow screen it opens
  * and closes the drawer instead.
  */
-export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = false, className }: Readonly<{ id?: string; open: boolean; onToggle: () => void; size?: 'icon' | 'icon-md'; wordmark?: boolean; className?: string }>) {
-  const label = open ? 'Hide sidebar' : 'Show sidebar';
+export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = false, count = 0, className }: Readonly<{ id?: string; open: boolean; onToggle: () => void; size?: 'icon' | 'icon-md'; wordmark?: boolean; /** Tasks that need you, shown on the button while the list is out of sight. */ count?: number; className?: string }>) {
+  const label = (open ? 'Hide sidebar' : 'Show sidebar') + (count > 0 ? `, ${count} need you` : '');
   return (
     <Tip
       label={
@@ -50,6 +51,11 @@ export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = fa
     >
       <Button id={id} size={wordmark ? 'md' : size} aria-label={label} aria-expanded={open} aria-keyshortcuts="Control+B Meta+B" className={cn('[&_svg]:size-4', wordmark && 'px-1', className)} onClick={onToggle}>
         <Brand markOnly={!wordmark} />
+        {count > 0 && (
+          <span aria-hidden="true" className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-attention px-1 text-meta font-semibold text-on-primary tabular-nums pointer-coarse:top-0.5 pointer-coarse:right-0.5">
+            {count}
+          </span>
+        )}
       </Button>
     </Tip>
   );
@@ -120,16 +126,6 @@ function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
 
 /* ---------- Task row ---------- */
 
-/** Right-slot text: the header's status word for act-now, in-motion, completed, broken and unread rows; the relative time otherwise. */
-function rowMeta(s: SessionSummary, unread: boolean): { text: string; tone: string } {
-  if (readOnly(s)) return { text: relTime(s.updated_at), tone: 'text-muted' };
-  const tone = STATE_TONE[s.state];
-  if (needsYou(s) || LIVE.includes(s.state) || s.state === 'completed' || s.state === 'failed' || s.state === 'interrupted' || unread) {
-    return { text: STATE_LABELS[s.state], tone: TONE_TEXT[tone] };
-  }
-  return { text: relTime(s.updated_at), tone: 'text-muted' };
-}
-
 /** Rows enter, leave and move with a view transition when the Task list changes (type "sessions"); every other render, the selection included, leaves them to their CSS transitions. */
 const ROW_TRANSITION = { sessions: 'vt-row', default: 'none' } as const;
 const ROW_ENTER = { sessions: 'vt-row-enter', default: 'none' } as const;
@@ -152,25 +148,30 @@ function shelfTip(s: SessionSummary, project: Project) {
   );
 }
 
-/** `compact`: a Settled or Archived shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest. */
+/** This Task's own changes (contract C1), when the service reports them. */
+type DiffStat = { files: number; additions: number; deletions: number };
+
+/**
+ * `compact`: a Settled or Archived shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
+ * Otherwise a Task row: the Project badge, the name, `+N −M` and the time, then one plain status line; a Needs you row answers its request below them.
+ */
 function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean }>) {
   const { hasNews } = useApp();
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
   const contextOpen = useRef(false);
   const unread = hasNews(s);
-  const attention = needsYou(s) && !readOnly(s);
+  const attention = needsYouNow(s, hasNews);
   const strong = selected || attention || unread;
   const items = taskMenuItems(s, a, 'row');
   // The menu's own Settle item, shown on hover only while its rules allow it.
   const settle = compact ? undefined : items.find((item) => item.key === 'settle' && !item.disabled);
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
-  const state = shownState(s);
-  const meta = rowMeta({ ...s, state }, unread);
-  // Working and Completed (its time, or the word while unread) carry weight so they read at a glance; a Settled or Archived card stays quiet.
-  const heavy = !readOnly(s) && (state === 'working' || state === 'completed');
+  const status = taskStatus(s, unread);
+  const diff = (s as SessionSummary & { diff?: DiffStat }).diff;
+  const ask = attention && !readOnly(s) ? s.ask : undefined;
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
-  // A card on the rail: `raised` with the soft ring; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
+  // A row on the rail: flat until hovered; the open one is `raised` with the soft ring, its answer controls included.
   const weight = strong ? 'font-medium text-ink' : 'text-body';
   let rowClass: string;
   if (compact) {
@@ -181,15 +182,17 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
     );
   } else {
     rowClass = cn(
-      'flex min-h-14 w-full flex-col justify-center gap-1 rounded-md bg-raised px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color,color] duration-100 focus-visible:-outline-offset-2',
-      selected ? 'bg-tint-selected text-ink' : 'hover:bg-raised',
+      'flex min-h-14 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 py-2 text-left text-caption focus-visible:-outline-offset-2',
       readOnly(s) && !selected && 'text-muted',
       weight,
     );
   }
 
   const row = (
-    <div data-task-row={s.id} className={compact ? undefined : 'lift group/row rounded-md'}>
+    <div
+      data-task-row={s.id}
+      className={compact ? undefined : cn('group/row relative rounded-md transition-[background-color,box-shadow] duration-100', selected ? 'bg-raised shadow-raised' : 'hover:bg-tint-hover')}
+    >
       {renaming ? (
         // Not a button while the input is inside: interactive content cannot nest in one.
         <div className={rowClass}>
@@ -202,7 +205,7 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
             type="button"
             data-nav=""
             aria-current={selected ? 'true' : undefined}
-            title={compact ? undefined : taskName(s) || 'New task'}
+            title={compact ? undefined : `${taskName(s) || 'New task'} · ${project.name}`}
             className={rowClass}
             onClick={(event) => {
               if (contextOpen.current) { event.preventDefault(); return; }
@@ -224,36 +227,41 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
               </>
             ) : (
               <>
-                <span className="flex w-full min-w-0 items-center gap-1.5 text-meta font-normal text-muted">
+                <span className="flex w-full min-w-0 items-center gap-2">
                   <ProjectBadge badge={project.badge} />
-                  <span className={cn('min-w-0 flex-1 truncate text-caption', selected && 'font-semibold')} title={project.dir}>{project.name}</span>
-                  {project.branch && <span className="flex min-w-0 max-w-[50%] items-center gap-1" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate">{project.branch}</span></span>}
-                  {readOnly(s) && <span className="shrink-0">{s.stage === 'archived' ? 'Archived' : 'Settled'}</span>}
-                </span>
-                <span className="flex w-full min-w-0 items-center gap-1.5">
-                  <span className={cn('flex shrink-0 items-center gap-1 text-caption tabular-nums whitespace-nowrap transition-colors duration-160', heavy ? 'font-semibold' : 'font-normal', meta.tone)}>
-                    {(needsYou(s) || LIVE.includes(state)) && <StateMark state={state} />}
-                    {meta.text}
-                  </span>
+                  <span className="sr-only">{project.name}, </span>
                   <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
-                  {s.provider && <span className="shrink-0 text-meta font-normal text-muted" title={s.provider === 'copilot' ? 'GitHub Copilot' : s.provider}>
-                    {s.provider === 'copilot' ? <img src={copilotIcon} alt="GitHub Copilot" className="size-3.5 opacity-70" /> : s.provider}
-                  </span>}
+                  {diff && diff.additions + diff.deletions > 0 && (
+                    <span className="shrink-0 font-mono text-meta font-normal tabular-nums">
+                      <span className="text-success">+{diff.additions}</span> <span className="text-error">−{diff.deletions}</span>
+                      <span className="sr-only"> lines,</span>
+                    </span>
+                  )}
+                  <time dateTime={s.updated_at} className="shrink-0 text-meta font-normal text-muted tabular-nums">{relTime(s.updated_at)}</time>
+                </span>
+                <span className={cn('block w-full pl-6 font-normal', attention ? 'line-clamp-2' : 'truncate', TONE_TEXT[status.tone])}>
+                  <span className="sr-only">, </span>
+                  {status.text}
                 </span>
               </>
             )}
           </button>
         </Tip>
       )}
+      {ask && !renaming && (
+        <div className="px-2.5 pb-2">
+          <TaskAsk key={ask.id} session={s} ask={ask} onReply={() => a.select(s.id)} />
+        </div>
+      )}
       {settle && !renaming && (
-        // A sibling of the row button, not inside it, so clicking Settle never selects the row. It sits over the provider icon.
+        // A sibling of the row button, not inside it, so clicking Settle never selects the row. It sits at the end of the status line.
         <Tip label="Settle">
           <Button
             size="icon-sm"
             aria-label={`Settle ${taskName(s) || 'New task'}`}
             className={cn(
               'absolute right-1.5 bottom-1.5 text-muted opacity-0 transition-[opacity,background-color,color] group-hover/row:opacity-100 group-has-focus-visible/row:opacity-100 pointer-coarse:opacity-100',
-              selected ? 'bg-tint-selected' : 'bg-raised',
+              selected ? 'bg-raised' : 'bg-tint-hover pointer-coarse:bg-rail',
             )}
             onClick={settle.onSelect}
           >
@@ -277,6 +285,30 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
     </ViewTransition>
   );
 }
+
+/* ---------- State groups ---------- */
+
+/** One state group: its title and count, then its rows. Needs you carries the Alt+J hint (not on touch, where there are no keys). */
+function Group({ group, projects, tasks, selectedId }: Readonly<{ group: GroupKey; projects: ReadonlyMap<string, Project>; tasks: SessionSummary[]; selectedId: string | null }>) {
+  const id = useId();
+  if (tasks.length === 0) return null;
+  return (
+    <section aria-labelledby={id} className="mb-3">
+      <h2 id={id} className={cn('flex h-7 items-center gap-2 px-2 text-eyebrow uppercase', group === 'you' ? 'text-attention' : 'text-muted')}>
+        {GROUP_TITLES[group]}
+        <span className="rounded-full bg-sunken px-1.5 text-meta font-normal tracking-normal tabular-nums text-muted normal-case">{tasks.length}</span>
+        {group === 'you' && (
+          <span className="ml-auto flex items-center gap-1 text-meta font-normal tracking-normal text-muted normal-case pointer-coarse:hidden" aria-hidden="true">
+            <Key>Alt</Key>+<Key>J</Key> next
+          </span>
+        )}
+      </h2>
+      <ul className="flex flex-col gap-0.5">{tasks.map((t) => <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+    </section>
+  );
+}
+
+const GROUPS: readonly GroupKey[] = ['you', 'review', 'working', 'idle'];
 
 /* ---------- Shelf (Settled / Archived) ---------- */
 
@@ -340,6 +372,7 @@ export const Sidebar = memo(function Sidebar({
   version?: string;
 }) {
   useMinuteTick();
+  const { hasNews } = useApp();
   const [query, setQuery] = useState('');
   const [shelves, setShelves] = useState<Record<string, boolean>>(readShelves);
   const list = useRef<HTMLDivElement>(null);
@@ -347,6 +380,7 @@ export const Sidebar = memo(function Sidebar({
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const tasks = useMemo(() => sidebarTasks(projects, sessions, actions.filter, query), [projects, sessions, actions.filter, query]);
   const { active, settled, archived } = groupTasks(tasks);
+  const groups = commandGroups(active, hasNews);
   const shelfScope = chosen?.id ?? 'all';
   const toggleShelf = (key: string) =>
     setShelves((s) => {
@@ -381,14 +415,16 @@ export const Sidebar = memo(function Sidebar({
     body = (
       <>
         <p className="px-2 py-2 text-caption text-muted" role="status">{tasks.length} matching tasks</p>
-        <ul className="flex flex-col gap-1 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+        <ul className="flex flex-col gap-0.5 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
       </>
     );
   } else {
     body = (
       // The shelves sit at the foot of the list while the active Tasks are few, and follow them once they scroll.
       <div className="flex min-h-full flex-col">
-        <ul className="flex flex-col gap-1 animate-fade-in">{active.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+        <div className="animate-fade-in">
+          {GROUPS.map((g) => <Group key={g} group={g} projects={projectMap} tasks={groups[g]} selectedId={selectedId} />)}
+        </div>
         {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
         <div className="mt-auto">
           <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${shelfScope}:settled`]} onToggle={() => toggleShelf(`${shelfScope}:settled`)} />

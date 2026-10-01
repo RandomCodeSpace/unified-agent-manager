@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { BADGE_COLORS, LIVE, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { BADGE_COLORS, LIVE, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { itemCursor } from '../lib/historyWindow';
 import { boardMock } from './board';
 import { seed, type MockState, type MockTask } from './data';
@@ -122,7 +122,7 @@ export function install(): { received: Received[] } {
 
   const summary = (t: MockTask): SessionSummary => {
     const { items: _i, interactions: _n, subagents: _s, history_truncated: _h, last_submission: _l, agentItems: _a, representation: _r, detail_stream: _d, ...rest } = t;
-    return rest;
+    return { ...rest, ask: askOf(t.interactions) };
   };
   // A compact Task's detail carries its newest page and a cursor for the rest.
   const detail = (t: MockTask): SessionDetail => {
@@ -1182,6 +1182,17 @@ export function install(): { received: Received[] } {
   }
 
   return { received };
+}
+
+/** Mirrors the server's pendingAsk: the first pending permission, else the first pending question, yolo's own left out. */
+function askOf(interactions: readonly Interaction[]): Ask | undefined {
+  const waiting = interactions.filter((i) => i.state === 'pending' && !i.auto);
+  const i = waiting.find((x) => x.kind === 'permission') ?? waiting[0];
+  if (!i) return undefined;
+  const line = (text = '') => text.trim().split('\n')[0] ?? '';
+  if (i.kind === 'permission') return { id: i.id, kind: i.kind, title: i.title, detail: line(i.detail) || undefined, options: i.options };
+  const q = i.questions?.[0];
+  return { id: i.id, kind: i.kind, title: line(q?.text) || q?.header || i.title, choices: q?.choices, multiple: q?.multiple, custom: q?.custom, questions: i.questions?.length };
 }
 
 /** Mirrors the server's svgRoot: after a BOM, whitespace, `<?…?>`, `<!--…-->` and `<!…>`, does the text start with `<svg`? */

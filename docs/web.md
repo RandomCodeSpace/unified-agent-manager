@@ -384,8 +384,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   not see that conversation, and a follow-up whose delivery is uncertain is
   never resent.
 - **Approvals and questions**: when the provider asks for permission or asks a
-  question, a card appears in the conversation and the Task's row in the
-  sidebar says Approval or Input. Nothing is approved
+  question, a card appears in the conversation and the Task's row moves to
+  "Needs you" in the sidebar, where you can answer it without opening the
+  Task (see Sidebar). Nothing is approved
   automatically unless you turned on yolo for that Task, and questions always
   wait for you. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused. Once decided, the
@@ -751,20 +752,48 @@ are logged only at debug level (`UAM_DEBUG=1`).
   Changes and Files, and turns leave out their "Changed n files" line. Click
   the warning for the reason. It clears once the directory becomes a
   repository, the next time the Project is re-read.
-- **Sidebar**: Tasks form one flat list with a compact card for each Task,
-  with collapsible "Settled" and "Archived" shelves at the foot of the list.
-  A card shows its Project, state or last activity, title, provider icon and
-  branch when known; hovering an active card that can settle shows Settle.
+- **Sidebar**: active Tasks across every Project are grouped by what they
+  need from you, each group with its count, with collapsible "Settled" and
+  "Archived" shelves at the foot of the list:
+  - **Needs you**: a question or a permission request waits, or the Task
+    failed or was interrupted and you have not opened it since.
+  - **Ready for review**: the Task finished and you have not opened it since.
+  - **Working**: a turn, or a subagent, is still running.
+  - **Idle**: everything else.
+
+  "Opened since" is tracked per browser: a Task you never opened in this
+  browser counts as unread once it changes after your first visit.
+  A row shows the Project badge, the Task's name, the lines it changed
+  (`+N −M`, when known) and how long ago it changed, then one plain status
+  line: "Asks: …" with the question, "Wants your OK to …" with what a
+  permission is for, "Finished, ready for your review", "Stopped with an
+  error", or "Working · quiet 12m" once Copilot has reported nothing for a
+  few minutes (the status never shows what the agent is doing). Hovering an
+  active row that can settle shows Settle.
+  - **Answer in place**: a question's choices show as chips under its row,
+    the recommended one already picked, as in the message box; pick others
+    (several where the question allows it) and press Answer. A question
+    without choices, with several parts, or that you want to say more about
+    takes "Reply…", which opens the Task. A permission request shows Allow
+    (allow once) and Don't allow beside the first line of what it asks to
+    run. The first answer from any tab wins, as on the Task's own card.
+  - **Alt+J / Alt+K** open the next / previous Task in "Needs you", wrapping
+    round. They do nothing in the terminal, and in a text field where the
+    keys type a character (Option+J on a Mac).
+  - The tab title, the installed app's badge and the sidebar button on a
+    narrow window carry the Needs you count (the app badge and title add
+    pending planner requests).
+
   A shelf row shows the Project badge and title, faded until hovered or
   selected; its tooltip adds the Project name and directory and when the Task
   was created, settled and archived.
   A settled or archived Task opens read-only. Search matches Task names and
   titles, Project names and branches within the chosen Project filter.
-  Right-click a card, press Shift+F10 or the Menu key, or long-press on touch
+  Right-click a row, press Shift+F10 or the Menu key, or long-press on touch
   for Rename, Close conversation, Settle or Reopen, Archive and Delete.
-  Arrow keys move between cards,
-  Enter opens a Task and F2 renames it. There are no collapsible Project
-  headings.
+  Arrow keys move between rows,
+  Enter opens a Task and F2 renames it. There are no Project headings: the
+  filter below shows one Project's Tasks.
   - **Filter**: the badge button beside Search shows the chosen Project's
     badge, or a stacked-layers icon for all Projects. It opens a list with a
     search box, "All projects" and every Project; choosing one shows only that
