@@ -10,7 +10,7 @@ import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { shownState } from '../lib/tasks';
 import { ChangesSheet, defaultScope } from './Changes';
-import { SetUpGitButton } from './CommitPanel';
+import { CommitPanel, SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useMedia, useScrolled } from './common';
 import { byCodeUnit } from '../lib/order';
@@ -734,7 +734,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               changedLine={!noGit}
             />
             </HistoryAnchor>
-            {finished && <FinishCard session={session} items={liveItems} changes={changes} onShowOutput={showOutput} onReview={noGit ? undefined : openChanges} />}
+            {finished && <FinishCard session={session} items={liveItems} changes={changes} onShowOutput={showOutput} onReview={noGit ? undefined : openChanges} commit={!noGit && !!changes?.files.length && <CommitPanel session={session} defaultOpen onChanged={() => setChangesTick((t) => t + 1)} />} />}
             {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
             {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (
