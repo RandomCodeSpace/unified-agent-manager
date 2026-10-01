@@ -23,7 +23,11 @@ function render() {
 
 // Development only: `?mock` swaps fetch and EventSource for an in-browser fake of the
 // service. Vite drops this branch, and the module, from the production bundle.
-if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('mock')) {
+// PROTOTYPE (branch prototype/ui-redesign only): `?variant=` renders the redesign directions.
+if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('variant')) {
+  const { default: PrototypeApp } = await import('./prototype/redesign');
+  createRoot(document.getElementById('root')!).render(<PrototypeApp />);
+} else if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('mock')) {
   const m = await import('./mock/install');
   m.install();
   render();
