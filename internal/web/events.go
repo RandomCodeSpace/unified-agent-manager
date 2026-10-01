@@ -217,6 +217,7 @@ func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, com
 			return nil, nil, newError(http.StatusNotFound, msgSessionNotFound)
 		}
 		m.viewHistoryLocked(s)
+		s.unseenEnd = false
 		d := m.detailLocked(s)
 		if recentHistory && !compact {
 			d = recentDetail(d)

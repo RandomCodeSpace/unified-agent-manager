@@ -13,6 +13,7 @@ import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions }
 import { cn } from './lib/cn';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
 import { commandGroups, cycleTask, mostRecentProject, needsYouCount, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
+import { handleNotice, setViewing, startNotifications, type Notice } from './lib/notify';
 import { pendingRequests } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
 import { PlannerTasks } from './components/planner/context';
@@ -368,6 +369,10 @@ export default function App() {
       }
       retainArchive(data.sessions.map((s) => s.id));
     });
+    // A Task needs you or finished: a notification, when this browser asked for them (lib/notify.ts).
+    es.addEventListener('notify', (e) => {
+      if (alive) void handleNotice(JSON.parse((e as MessageEvent).data) as Notice);
+    });
     for (const name of UPDATE_EVENTS) {
       es.addEventListener(name, (e) => {
         if (!alive) return;
@@ -413,6 +418,9 @@ export default function App() {
   }, [auth, state.selectedId, streamKey, markViewed, checkVersion, recentTasks]);
 
   const hasNews = useMemo(() => newsReader(state.selectedId, viewed, loadedAt), [state.selectedId, viewed, loadedAt]);
+  // What the owner last saw of the Task just opened, read before this visit marks it viewed: "Since you left" starts there.
+  const [opened, setOpened] = useState<{ id: string | null; mark?: string }>({ id: null });
+  if (opened.id !== state.selectedId) setOpened({ id: state.selectedId, mark: state.selectedId ? viewed[state.selectedId] : undefined });
 
   // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
   const late = useLate(state.connection !== 'connected', QUIET_MS);
@@ -512,6 +520,12 @@ export default function App() {
   const plannerTasks = useMemo(() => ({ sessions: state.sessions, openTask }), [state.sessions, openTask]);
   const plannerProject = planner.value.ui.project;
   const setPlannerUi = planner.value.setUi;
+
+  useEffect(() => {
+    if (auth === 'in') return startNotifications();
+  }, [auth]);
+  // The Task on screen is not announced while this page is visible.
+  useEffect(() => setViewing(settingsOpen || plannerOpen ? null : state.selectedId), [state.selectedId, settingsOpen, plannerOpen]);
 
   // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#planner=…`, else the selected task.
   useEffect(() => {
@@ -860,6 +874,7 @@ export default function App() {
         onInteractionUpdate={onInteractionUpdate}
         leading={leading}
         spawnedBy={taskName(state.sessions.find((s) => s.id === shown.spawned_by) ?? { name: '', title: '' })}
+        since={opened.id === shown.id ? opened.mark : undefined}
       />
       </DetailsProvider>
     );

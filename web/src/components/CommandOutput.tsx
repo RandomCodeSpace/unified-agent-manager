@@ -1,4 +1,4 @@
-import { SquareSlash, X } from 'lucide-react';
+import { SquareSlash, SquareTerminal, X } from 'lucide-react';
 import { useEffect } from 'react';
 import type { CommandResult } from '../api';
 import { popupOpen } from '../App';
@@ -11,6 +11,8 @@ export interface CommandOutput {
   /** The submission's request ID: a new run replaces the shown output and starts at its top. */
   id: string;
   name: string;
+  /** A shell command's output names the command instead of `/name`. */
+  title?: string;
   text: string;
   markdown: boolean;
 }
@@ -50,14 +52,16 @@ export function CommandOutputPanel({ output, inline, open, onClose, onClosed }: 
     return () => document.removeEventListener('keydown', escape);
   }, [inline, open, onClose]);
 
-  const label = `Output of /${output.name}`;
+  const heading = output.title ?? `/${output.name}`;
+  const Icon = output.title ? SquareTerminal : SquareSlash;
+  const label = `Output of ${heading}`;
   return (
     <SidePanel id="command-output" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Command output" defaultWidth={520}>
       {/* Marks the panel's content, so a close returns focus only when focus was in here. */}
       <div data-command-output="" className="contents">
       <PanelHeader>
-        <SquareSlash aria-hidden="true" className="size-4 shrink-0 text-muted" />
-        <span className="min-w-0 truncate text-title text-ink">/{output.name}</span>
+        <Icon aria-hidden="true" className="size-4 shrink-0 text-muted" />
+        <span className="min-w-0 truncate text-title text-ink" title={output.title}>{heading}</span>
         <span className="flex-1" />
         <Button size="icon-md" aria-label="Close command output" className="text-muted" onClick={onClose}>
           <X />

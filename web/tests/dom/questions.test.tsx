@@ -119,7 +119,7 @@ describe('answering from the composer', () => {
     expect(mock.received.map((r) => r.route)).toEqual(['answer']);
     expect(mock.received[0].body.reject).toBe(true);
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull());
-    expect(composer().placeholder).toBe('Steer this turn, or queue a follow-up…');
+    expect(composer().placeholder).toBe('Send now to guide this turn, or after it…');
   });
 
   test('the task draft is kept while answering and comes back once the question is answered', async () => {
@@ -181,7 +181,7 @@ describe('answering from the composer', () => {
     expect(card.getAllByRole('textbox', { name: 'Your answer' })).toHaveLength(2);
     expect(box().queryByText('Needs answer')).toBeNull();
     expect(box().queryByRole('button', { name: 'Decline' })).toBeNull();
-    expect(composer().placeholder).toBe('Steer this turn, or queue a follow-up…');
+    expect(composer().placeholder).toBe('Send now to guide this turn, or after it…');
   });
 });
 

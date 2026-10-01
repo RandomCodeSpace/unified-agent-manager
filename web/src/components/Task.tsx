@@ -22,6 +22,8 @@ import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
+import { FinishCard, SinceYouLeft } from './Finish';
+import { away, sinceYouLeft } from '../lib/evidence';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Transcript, WorkingLabel } from './Transcript';
 import { FileReferencesProvider } from './FileReferences';
@@ -59,6 +61,8 @@ interface Props {
   leading?: ReactNode;
   /** The name of the Task that started this one (`spawned_by`); empty when that Task is gone or unnamed. */
   spawnedBy?: string;
+  /** The Task's `updated_at` when the owner last had it open, before this visit; "Since you left" counts from it. */
+  since?: string;
 }
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
@@ -69,7 +73,7 @@ const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-c
 const PHONE = '(width < 40rem)';
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy }: Readonly<Props>) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since }: Readonly<Props>) {
   const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
   const tempAlias = meta?.temp_root_aliases?.[0];
@@ -94,6 +98,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const working = session.state === 'working' || session.state === 'starting';
   const compactWindow = session.representation === 'compact-v1';
   const liveItems = session.recent_items ?? session.items;
+  // "Since you left": from the owner's last look to this opening; what happens while they watch is seen. Dismissed for this visit.
+  const [opened] = useState(() => new Date().toISOString());
+  const [sinceMark, setSinceMark] = useState(since);
+  const sinceSummary = useMemo(() => (sinceMark ? sinceYouLeft(liveItems, session.turn_timings ?? [], session.interactions, sinceMark, opened, session.workdir, working) : null), [sinceMark, liveItems, session.turn_timings, session.interactions, opened, session.workdir, working]);
   const latestSession = useRef(session);
   useLayoutEffect(() => { latestSession.current = session; }, [session]);
   const [windowReset, setWindowReset] = useState(0);
@@ -420,6 +428,30 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
   }
 
+  /**
+   * "Jump to where you stopped": scroll to the first of `ids` on screen, its own row or the folded
+   * run that holds it, once no finger is down and the view has stopped moving (iOS WebKit jumps
+   * on a scroll write mid-scroll). The strip has done its job then.
+   */
+  async function jumpTo(ids: readonly string[]) {
+    setSinceMark(undefined);
+    const root = log.current;
+    if (!root) return;
+    const folds = [...root.querySelectorAll<HTMLElement>('[data-history-items]')];
+    const find = (id: string) => root.querySelector<HTMLElement>(`[id="${CSS.escape(`item-${id}`)}"], [data-history-anchor="${CSS.escape(id)}"]`)
+      ?? folds.find((node) => (JSON.parse(node.dataset.historyItems ?? '[]') as string[]).includes(id));
+    const target = ids.map(find).find(Boolean);
+    if (!target) return;
+    if (TOUCH_WEBKIT) await new Promise<void>((resolve) => {
+      const check = () => (!touching.current && performance.now() - lastScrollAt.current > 150 ? resolve() : window.setTimeout(check, 50));
+      check();
+    });
+    atBottom.current = false;
+    target.scrollIntoView({ block: 'start' });
+    target.classList.add('animate-flash');
+    window.setTimeout(() => target.classList.remove('animate-flash'), 1400);
+  }
+
   const touchY = useRef(0);
   // A single upward-demand read can start three viewports ahead. This gives
   // slow responses time to arrive without fetching anything on initial open.
@@ -485,6 +517,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
   // A subagent still running after the turn keeps the Task Working (lib/tasks shownState).
   const state = shownState(session);
+  // The finish card follows a turn that completed, at the live end of the history.
+  const lastTiming = session.turn_timings?.at(-1);
+  const finished = !live && state !== 'working' && !session.history_after && !historyLoading && liveItems.some((item) => item.kind === 'assistant' && !item.agent_id)
+    && (lastTiming ? lastTiming.state === 'completed' : session.state === 'completed');
   // Then the floating label stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
@@ -611,6 +647,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           </Menu.Root>
         </header>
 
+        {sinceMark && sinceSummary && !historyLoading && (
+          <div className="shrink-0 px-3 pt-2 sm:px-4 md:px-6">
+            <SinceYouLeft away={away(sinceMark, Date.parse(opened))} text={sinceSummary.text} onJump={() => void jumpTo(sinceSummary.ids)} onDismiss={() => setSinceMark(undefined)} />
+          </div>
+        )}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
         <section aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
           onKeyDown={e => {
@@ -656,6 +697,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               changedLine={!noGit}
             />
             </HistoryAnchor>
+            {finished && <FinishCard session={session} items={liveItems} changes={changes} onShowOutput={showOutput} onReview={noGit ? undefined : openChanges} />}
             {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
             {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (

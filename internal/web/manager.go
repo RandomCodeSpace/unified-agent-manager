@@ -122,6 +122,8 @@ type Manager struct {
 	// pick returns a random int in [0, n) for badge choices; tests replace
 	// it before Start.
 	pick func(n int) int
+	// push keeps the Web Push keys and subscriptions (notify.go).
+	push pushStore
 	// branchAt is when each Project's branch was last read.
 	branchAt map[string]time.Time
 	// boardRevs is each Board's latest revision while the planner store is
@@ -234,6 +236,9 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		m.order = append(m.order, p.Name())
 	}
 	m.hostTools = m.taskToolsLocked
+	if st != nil {
+		m.push.path = filepath.Join(filepath.Dir(st.Path()), pushFileName)
+	}
 	return m
 }
 
@@ -313,6 +318,9 @@ type webSession struct {
 	ask *Ask
 	// eventAt is the last provider event, to the minute.
 	eventAt time.Time
+	// unseenEnd is set when the Task failed or was interrupted while no page
+	// had it open, until one opens it (notify.go).
+	unseenEnd bool
 
 	subagents []*agentapi.Subagent
 	subIdx    map[string]*agentapi.Subagent
@@ -1629,6 +1637,7 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	}
 	summary := m.summaryLocked(s)
 	m.broadcastLocked("session", "", func(seq uint64) any { return sessionEvent{Seq: seq, Session: summary} })
+	m.noticeLocked(s, before, summary)
 	if durable || queue {
 		if durable {
 			s.persisted = key
