@@ -578,8 +578,32 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // is what the storage keeps meanwhile. An answer left unsent stays only where the draft was empty.
   const answeringId = answering?.interaction.id ?? null;
   // The options chosen on the question, its own: another question starts with its recommended option
-  // staged, else none. Once per question, so a pick the owner changes or clears stays that way.
-  const [chosen, setChosen] = useState<{ id: string; choices: string[] }>({ id: '', choices: [] });
+  // staged, else none. Once per question, so a pick the owner changes or clears stays that way: the
+  // tab's storage keeps it per Task (one question at a time), so leaving the Task or reloading restores it.
+  const choicesKey = `uam:question-choices:${session.id}`;
+  const [chosen, setChosen] = useState<{ id: string; choices: string[] }>(() => {
+    try {
+      const saved: unknown = JSON.parse(sessionStorage.getItem(choicesKey) ?? 'null');
+      if (saved && typeof saved === 'object' && 'id' in saved && 'choices' in saved && typeof saved.id === 'string' && Array.isArray(saved.choices)) {
+        return { id: saved.id, choices: saved.choices.filter((c): c is string => typeof c === 'string') };
+      }
+    } catch { /* Nothing kept: the question stages as it arrives. */ }
+    return { id: '', choices: NO_CHOICES };
+  });
+  useEffect(() => {
+    if (!chosen.id) return;
+    try { sessionStorage.setItem(choicesKey, JSON.stringify(chosen)); }
+    catch { /* The pick holds until the composer leaves. */ }
+  }, [chosen, choicesKey]);
+  // Resolved here, the question's pick goes with it.
+  const askedId = useRef(answeringId);
+  useEffect(() => {
+    if (askedId.current && !answeringId) {
+      try { sessionStorage.removeItem(choicesKey); }
+      catch { /* Overwritten by the next question. */ }
+    }
+    askedId.current = answeringId;
+  }, [answeringId, choicesKey]);
   if (answering && chosen.id !== answering.interaction.id) {
     const recommended = recommendedChoice(answering.question.choices);
     setChosen({ id: answering.interaction.id, choices: recommended ? [recommended] : NO_CHOICES });
