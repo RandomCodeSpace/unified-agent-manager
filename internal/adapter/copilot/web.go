@@ -718,8 +718,13 @@ func media(c rpc.ModelCapabilities) *agentapi.Media {
 
 // taskSystem is appended to Copilot's own system message in every Task
 // session, created or resumed, so a question's options arrive as choices the
-// composer lists and pre-selects. Utility sessions replace the message.
-const taskSystem = `When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)".`
+// composer lists and pre-selects, and commits and pull requests carry no agent
+// attribution. Task sessions also set CoauthorEnabled false, which drops the
+// CLI's own co-author tool and commit-trailer instructions. Utility sessions
+// replace the message.
+const taskSystem = `When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)".
+
+Write commit messages and pull or merge request titles and descriptions as the owner's own work: no Co-authored-by trailer and no line crediting an AI, agent or tool, unless the owner asks for one.`
 
 func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agentapi.Conversation, error) {
 	if req.Events == nil {
@@ -770,6 +775,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Models:                models,
 			Tools:                 uamTools,
 			SystemMessage:         &copilot.SystemMessageConfig{Mode: "append", Content: taskSystem},
+			CoauthorEnabled:       copilot.Bool(false),
 			Streaming:             copilot.Bool(true),
 			OnPermissionRequest:   deferPermission,
 			OnUserInputRequest:    c.askUser,
@@ -788,6 +794,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			Models:           models,
 			Tools:            uamTools,
 			SystemMessage:    &copilot.SystemMessageConfig{Mode: "append", Content: taskSystem},
+			CoauthorEnabled:  copilot.Bool(false),
 			Streaming:        copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
