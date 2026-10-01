@@ -52,17 +52,19 @@ type createTaskArgs struct {
 }
 
 // taskToolsLocked is the Manager's hostTools: the planner tools the Task
-// gets (taskHostToolsLocked), and uam_create_task unless that tool created
-// the Task. Its CallTool runs each call by the tool's name. The caller holds
-// mu.
+// gets (taskHostToolsLocked), uam_create_task unless that tool created the
+// Task, and uam_chart (charts.go). Its CallTool runs each call by the tool's
+// name. The caller holds mu.
 func (m *Manager) taskToolsLocked(taskID, projectID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
 	tools, board := m.taskHostToolsLocked(taskID, projectID)
-	if spawned {
-		return tools, board
+	if !spawned {
+		tools = append(tools, createTaskTool)
 	}
-	return append(tools, createTaskTool), func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
+	return append(tools, chartTool), func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
 		switch {
-		case call.Name == createTaskToolName:
+		case call.Name == chartToolName:
+			return m.chartCall(ctx, taskID, call)
+		case call.Name == createTaskToolName && !spawned:
 			return m.createTask(ctx, taskID, call)
 		case board == nil:
 			return agentapi.HostToolResult{Text: fmt.Sprintf("there is no uam tool %q", call.Name), Failed: true}

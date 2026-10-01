@@ -3,6 +3,7 @@ import { Bot, Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageC
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolBoardCard, type ToolStatus, type TurnTiming } from '../api';
+import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
@@ -11,6 +12,7 @@ import { groupIdentities } from '../lib/historyState';
 import { turnVerb } from '../lib/verbs';
 import type { AgentTranscript } from '../state';
 import { ImageThumbs, ItemAttachments } from './Attachments';
+import { ChartCard } from './Chart';
 import { CodeBlock, DeclaredFileCard, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkdirContext, WorkingMark, useApp } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { usePlannerOpenCard } from './planner/context';
@@ -98,9 +100,9 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   // other: a declared file's card in both densities, the images its result returned in Compact.
   const product = (item: Item) => {
     const kind = callProduct(item, declarations);
-    return kind === 'card' || (compact && kind) ? <CallProduct key={`${item.agent_id ?? 'main'}:${item.id}`} item={item} sessionId={sessionId} card={kind === 'card'} className={arrival(item.id)} /> : null;
+    return kind === 'card' || kind === 'chart' || (compact && kind) ? <CallProduct key={`${item.agent_id ?? 'main'}:${item.id}`} item={item} sessionId={sessionId} card={kind === 'card'} className={arrival(item.id)} /> : null;
   };
-  const own = (item: Item) => running(item) || callProduct(item, declarations) === 'card';
+  const own = (item: Item) => running(item) || ['card', 'chart'].includes(callProduct(item, declarations) ?? '');
 
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
   const out: ReactNode[] = [];
@@ -956,7 +958,7 @@ function ToolImages({ item, sessionId, className }: Readonly<{ item: Item; sessi
 const CallProduct = memo(function CallProduct({ item, sessionId, card, className }: { item: Item; sessionId?: string; card: boolean; className?: string }) {
   return (
     <div data-history-anchor={item.id} className={className}>
-      {card && item.tool?.declaration ? <DeclaredFileCard declaration={item.tool.declaration} /> : <ToolImages item={item} sessionId={sessionId} />}
+      {isChartCall(item) && sessionId ? <ChartCard sessionId={sessionId} callId={item.id} /> : card && item.tool?.declaration ? <DeclaredFileCard declaration={item.tool.declaration} /> : <ToolImages item={item} sessionId={sessionId} />}
     </div>
   );
 });

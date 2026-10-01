@@ -3,6 +3,7 @@
 // sits on which tool row, and what a question asked and got. No DOM, so the unit tests
 // run in node.
 
+import { isChartCall } from './chart.ts';
 import type { Interaction, InteractionState, Item, Subagent, ToolCall, TurnTiming } from '../api';
 
 /** Argument keys per tool name, most telling first; `GENERIC` serves every other tool. */
@@ -843,8 +844,9 @@ export function newestFileDeclarations(items: readonly Item[]): Set<string> {
  * declaration among the window's newest (`cards`, from `newestFileDeclarations`), `images`
  * for a call whose result returned images or a note on them; null for anything else.
  */
-export function callProduct(item: Item, cards: ReadonlySet<string>): 'card' | 'images' | null {
+export function callProduct(item: Item, cards: ReadonlySet<string>): 'card' | 'chart' | 'images' | null {
   if (item.kind !== 'tool') return null;
+  if (isChartCall(item)) return 'chart';
   if (isFileDeclaration(item) && cards.has(declarationIdentity(item))) return 'card';
   return (item.images?.length ?? 0) > 0 || !!item.images_note ? 'images' : null;
 }

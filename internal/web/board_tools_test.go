@@ -96,11 +96,11 @@ func toolNames(tools []agentapi.HostTool) []string {
 var allBoardTools = []string{"board_get", "board_list", "board_create", "board_edit", "board_checklist", "board_comment", "board_link", "board_claim", "board_split", "board_request"}
 
 // plannerTaskTools are the tools of a Task that gets the planner's:
-// uam_create_task follows them.
-var plannerTaskTools = append(slices.Clone(allBoardTools), createTaskToolName)
+// uam_create_task and uam_chart follow them.
+var plannerTaskTools = append(slices.Clone(allBoardTools), createTaskToolName, chartToolName)
 
 // plainTaskTools are the tools of a Task without the planner's.
-var plainTaskTools = []string{createTaskToolName}
+var plainTaskTools = []string{createTaskToolName, chartToolName}
 
 // No schema takes an owner-only field or a status change (ADR 0005 §3,
 // §16, test plan 1), and every object in them is strict.

@@ -192,6 +192,8 @@ type Manager struct {
 	// utility is the Utility log and today's count of Utility calls
 	// (utility.go).
 	utility utilityLog
+	// chartRuns bounds pinned chart refreshes (chart_pins.go).
+	chartRuns chartRuns
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -550,7 +552,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	for id, p := range cfg.WebProjects {
-		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge)}
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: len(p.Charts)}
 	}
 	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit}
@@ -588,6 +590,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.loadUploads()
 	m.sweepUploads()
 	m.loadUtilityLog()
+	m.sweepPins(cfg)
 	m.wg.Add(3)
 	go m.persistLoop()
 	go m.sweepLoop()

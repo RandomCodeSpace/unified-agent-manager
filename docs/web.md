@@ -353,6 +353,31 @@ are logged only at debug level (`UAM_DEBUG=1`).
   most 5 Tasks, its subagents' calls included. Every Task it started counts
   while its record exists, archived ones too; deleting one frees its
   place. Only an Active Task can call the tool.
+- **Charts**: ask a Task a data question ("chart commits per day this
+  month") and its agent can answer with a chart through the `uam_chart`
+  tool: a line or bar chart of up to 500 rows and 4 series, drawn in your
+  browser with Mermaid like a diagram. The agent either passes the rows or,
+  cheaper, gives a shell command that prints them as CSV or JSON. uam runs
+  that command itself in the Task's folder (30 seconds at most, 1 MiB of
+  output), so the rows never pass through the model; the agent gets only a
+  summary. uam runs a chart's command only for a Task in Yolo mode: in Safe
+  mode the agent must run the command with its own shell tool, which asks
+  you first, and pass the rows. The chart shows as a card in the
+  conversation with **Table** (the rows), **Copy CSV** and **Pin to
+  project**, and a footer naming the command and when it ran. The rows are
+  kept with the Task, so the card survives a reload and a restart, and goes
+  when the Task is deleted.
+  **Pin to project** shows the command that a refresh will run; pinning is
+  your approval of it. A chart made from rows the agent passed pins as a
+  snapshot and never refreshes. A Project keeps up to 12 pinned charts.
+  Once it has any, the Task header shows **Charts** with their count (on a
+  phone, in the task's actions menu); it opens a panel beside the
+  conversation with each chart's latest value, a small chart (click it for
+  a larger one), when it was refreshed, **Refresh** and unpin (×).
+  Refresh runs the saved command again in the Project folder and redraws,
+  with no agent and no model call; it works at most once a minute per
+  chart. Opening the panel refreshes each chart whose rows are more than an
+  hour old. A failed refresh keeps the last rows and shows why.
 - **Subagents**: when the agent delegates work to a subagent, the Task shows
   one compact row under the tool call that started it (name, status, and
   the duration once it ended) while the subagent runs. Once it is idle or has

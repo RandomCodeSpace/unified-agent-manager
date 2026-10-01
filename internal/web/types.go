@@ -103,6 +103,8 @@ type Project struct {
 	// (git reports Dir is in no work tree). It is empty in a work tree and
 	// when git cannot tell. Read with Branch and never stored.
 	NoGit string `json:"no_git,omitempty"`
+	// Charts counts the charts pinned to the Project (chart_pins.go).
+	Charts int `json:"charts,omitempty"`
 }
 
 // TaskDefaults are the settings a new Task starts with (Settings). The

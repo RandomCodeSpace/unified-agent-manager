@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ts from 'typescript';
+import * as chart from '../src/lib/chart.ts';
 import * as transcript from '../src/lib/transcript.ts';
 import * as history from '../src/lib/historyState.ts';
 import { shownState } from '../src/lib/tasks.ts';
@@ -25,6 +26,8 @@ const element = tag => ({ children }) => React.createElement(tag, null, children
 const modules = {
   './Details': { DetailVisibility: shell, BodyNotice: () => null, useBodyCopy: () => ({}), useDisclosure: key => { disclosureKeys.push(key); return React.useState(disclosureValues.get(key) ?? expanded); }, useItemBody: item => ({ item }) },
   '../api': { modelName: (_meta, _provider, model) => model },
+  '../lib/chart': chart,
+  './Chart': { ChartCard: () => null },
   '../lib/clipboard': { useCopied: () => [false, () => {}] },
   '../lib/cn': { cn: (...values) => values.filter(value => typeof value === 'string').join(' ') },
   '../lib/transcript': transcript,
