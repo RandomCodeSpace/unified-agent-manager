@@ -942,9 +942,11 @@ in the Home Screen app, not in a Safari tab.
 
 iOS notifications have no action buttons and no reply field. Tap one to open
 the Task. Apple requires every push to show a notification, so on iPhone you
-may also be notified about the Task you have open. Each push also updates
-the app icon's badge to the number of Tasks waiting for you. Opening the app
-recounts it, including planner requests.
+may also be notified about the Task you have open. Each push also sets
+the app icon's badge to the Task list's **Needs you** count. Failed or
+interrupted Tasks count until any browser opens them, because the service
+does not know which browser has read them. Opening the app recounts the badge
+with this browser's read marks and planner requests.
 
 **Storage.** The first browser to turn notifications on makes the service
 generate its Web Push (VAPID) key pair. The keys and the subscribed

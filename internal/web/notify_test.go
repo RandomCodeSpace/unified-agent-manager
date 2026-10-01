@@ -83,7 +83,7 @@ func TestNoticesFireOncePerTransition(t *testing.T) {
 	conv.EmitTurn(agentapi.TurnWorking, "")
 	conv.EmitInteraction(agentapi.Interaction{
 		ID: "q1", Kind: agentapi.InteractionQuestion, Title: "Question from Copilot", State: agentapi.InteractionPending,
-		Questions: []agentapi.Question{{Text: "Which   colour\nshould it be?", Choices: []string{"red", "blue"}}},
+		Questions: []agentapi.Question{{Text: "Which   colour should it be?\nPick one.", Choices: []string{"red", "blue"}}},
 	})
 	conv.EmitTitle("a new title") // no transition
 	got := notices(t, sub)
@@ -104,6 +104,39 @@ func TestNoticesFireOncePerTransition(t *testing.T) {
 	if got = notices(t, sub); len(got) != 1 || got[0].Kind != noticeFailed || got[0].Title != "task failed" {
 		t.Fatalf("after failing: %+v", got)
 	}
+}
+
+// The pushed badge is the Task list's Needs you count: Tasks waiting on a
+// request, and failed ones no page has opened since they failed.
+func TestNeedsYouCountMatchesTheNeedsYouGroup(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	count := func() int {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.needsYouLocked()
+	}
+	asking, askConv := createSession(t, m, prov)
+	askConv.EmitInteraction(agentapi.Interaction{ID: "p1", Kind: agentapi.InteractionPermission, Title: "Run", State: agentapi.InteractionPending})
+	failed, failConv := createSession(t, m, prov)
+	failConv.EmitTurn(agentapi.TurnWorking, "")
+	failConv.EmitTurn(agentapi.TurnFailed, "boom")
+	if n := count(); n != 2 {
+		t.Fatalf("needs you = %d, want 2 (%s asking, %s failed unread)", n, asking.ID, failed.ID)
+	}
+	sub, _, err := m.Subscribe(failed.ID) // a page opens the failed Task
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := count(); n != 1 {
+		t.Fatalf("needs you after opening the failed Task = %d, want 1", n)
+	}
+	// Failing again while that page shows it leaves it read.
+	failConv.EmitTurn(agentapi.TurnWorking, "")
+	failConv.EmitTurn(agentapi.TurnFailed, "again")
+	if n := count(); n != 1 {
+		t.Fatalf("needs you after failing on screen = %d, want 1", n)
+	}
+	m.Unsubscribe(sub)
 }
 
 func TestClipNotice(t *testing.T) {

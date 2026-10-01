@@ -318,6 +318,9 @@ type webSession struct {
 	ask *Ask
 	// eventAt is the last provider event, to the minute.
 	eventAt time.Time
+	// unseenEnd is set when the Task failed or was interrupted while no page
+	// had it open, until one opens it (notify.go).
+	unseenEnd bool
 
 	subagents []*agentapi.Subagent
 	subIdx    map[string]*agentapi.Subagent

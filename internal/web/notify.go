@@ -22,7 +22,6 @@ import (
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
@@ -98,11 +97,16 @@ func noticeKind(s SessionSummary) string {
 // noticeLocked announces s when its summary moved into a notice kind it was
 // not in before. It runs from changedLocked with the published summary.
 func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
+	if failedOrInterrupted(after.State) && !failedOrInterrupted(before.State) {
+		// Unread, as the Task list's Needs you group counts it, unless a
+		// page shows the Task as it ends.
+		s.unseenEnd = !m.watchedLocked(s.id)
+	}
 	kind := noticeKind(after)
 	if kind == "" || kind == noticeKind(before) || m.closed {
 		return
 	}
-	title := noticeTitle(s, kind)
+	title := noticeTitle(s, kind, after.Ask)
 	m.broadcastLocked("notify", "", func(seq uint64) any {
 		return noticeEvent{Seq: seq, SessionID: s.id, Kind: kind, Title: title}
 	})
@@ -116,24 +120,42 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 	}()
 }
 
-// needsYouLocked counts the active Tasks waiting for the owner, as the page's
-// title and badge do (without the planner's requests).
+func failedOrInterrupted(state string) bool { return state == StateFailed || state == StateInterrupted }
+
+// watchedLocked reports whether a page has Task id open.
+func (m *Manager) watchedLocked(id string) bool {
+	for sub := range m.subs {
+		if sub.session == id {
+			return true
+		}
+	}
+	return false
+}
+
+// needsYouLocked is the Task list's Needs you count, which the app badge
+// carries (without the planner's requests): active Tasks waiting on a
+// request, and failed or interrupted ones no page has opened since they
+// ended (the service's stand-in for each browser's unread mark).
 func (m *Manager) needsYouLocked() int {
 	n := 0
 	for _, s := range m.sessions {
 		if s.stage != StageActive {
 			continue
 		}
-		if st := s.state(); st == StateAwaitingPermission || st == StateAwaitingAnswer {
+		switch st := s.state(); {
+		case st == StateAwaitingPermission || st == StateAwaitingAnswer:
+			n++
+		case failedOrInterrupted(st) && s.unseenEnd:
 			n++
 		}
 	}
 	return n
 }
 
-// noticeTitle is the notice's one line: "<Task> needs you: <question>",
-// "<Task> failed" or "<Task> finished".
-func noticeTitle(s *webSession, kind string) string {
+// noticeTitle is the notice's one line: "<Task> needs you: <request>",
+// "<Task> failed" or "<Task> finished". The request is the summary's Ask,
+// as the Task list shows it.
+func noticeTitle(s *webSession, kind string, ask *Ask) string {
 	name := clipNotice(cmp.Or(s.name, s.title, "New task"))
 	switch kind {
 	case noticeFailed:
@@ -142,23 +164,10 @@ func noticeTitle(s *webSession, kind string) string {
 		return name + " finished"
 	}
 	var asked string
-	for _, ix := range s.interactions {
-		if ix.State != agentapi.InteractionPending || ix.yolo {
-			continue
-		}
-		if kind == noticePermission && ix.Kind == agentapi.InteractionPermission {
-			asked = ix.Title
-			break
-		}
-		if kind == noticeQuestion && ix.Kind != agentapi.InteractionPermission {
-			asked = ix.Title
-			if len(ix.Questions) > 0 {
-				asked = cmp.Or(ix.Questions[0].Header, ix.Questions[0].Text, ix.Title)
-			}
-			break
-		}
+	if ask != nil {
+		asked = clipNotice(ask.Title)
 	}
-	if asked = clipNotice(asked); asked == "" {
+	if asked == "" {
 		return name + " needs you"
 	}
 	return name + " needs you: " + asked
