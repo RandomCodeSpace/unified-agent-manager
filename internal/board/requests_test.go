@@ -145,8 +145,8 @@ func TestDoneRequestAcceptedWhenItsCommandPassed(t *testing.T) {
 	if r, err := f.s.Request(f.ctx, stale.ID); err != nil || r.Status != RequestWithdrawn || r.DecidedBy != "" {
 		t.Fatalf("the replaced request = %+v, %v", r, err)
 	}
-	close, auto := d.Comments[len(d.Comments)-2], d.Comments[len(d.Comments)-1]
-	if close.Author != "task:task-1" || close.Body != "finished "+one.ID || !close.Close || close.Automatic ||
+	closing, auto := d.Comments[len(d.Comments)-2], d.Comments[len(d.Comments)-1]
+	if closing.Author != "task:task-1" || closing.Body != "finished "+one.ID || !closing.Close || closing.Automatic ||
 		auto.Author != AuthorUAM || auto.Body != AutoAcceptComment || !auto.Automatic || auto.Close {
 		t.Fatalf("comments = %+v", d.Comments)
 	}
@@ -185,8 +185,9 @@ func TestDoneRequestAcceptedWhenItsCommandPassed(t *testing.T) {
 	}
 }
 
-// A passed done request that would close a container still holding
-// proposals, which closing cancels, waits for the owner and names them.
+// A passed done request that would close containers still holding
+// proposals, which closing cancels, waits for the owner and names every
+// proposal of every container it would close.
 func TestPassedDoneRequestWaitsWhenItWouldCloseProposals(t *testing.T) {
 	f := newFixture(t)
 	epic, story, one, two := f.tree()
@@ -195,34 +196,97 @@ func TestPassedDoneRequestWaitsWhenItWouldCloseProposals(t *testing.T) {
 	f.launch(one.ID, "task-1")
 	worker := Agent("task-1", "")
 	followUp := f.create(worker, story.ID, KindSubtask, "Follow-up")
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	underEpic := f.create(Agent("planner", ""), epic.ID, KindSubtask, "Under the epic")
+	ids := func(cards []Card) []string {
+		var out []string
+		for _, c := range cards {
+			out = append(out, c.ID)
+		}
+		return out
+	}
 	// #4 is still open, so accepting #3 closes nothing.
-	got, err := f.s.File(f.ctx, worker, one.ID, passed)
+	got, err := f.s.FileRequestDetail(f.ctx, worker, one.ID, passed)
 	f.must(err)
-	if got.Request.Status != RequestAccepted || got.Closes != nil {
+	if got.Request.Status != RequestAccepted || got.Wait != WaitNone || got.Closes != nil {
 		t.Fatalf("filing that closes nothing = %+v", got)
 	}
-	// Accepting the last confirmed subtask would close the story and cancel
-	// the proposal, so it waits.
+	// Accepting the last confirmed subtask would close the story and the
+	// epic and cancel both proposals, so it waits.
 	f.launch(two.ID, "task-2")
-	got, err = f.s.File(f.ctx, Agent("task-2", ""), two.ID, passed)
+	got, err = f.s.FileRequestDetail(f.ctx, Agent("task-2", ""), two.ID, passed)
 	f.must(err)
-	if got.Request.Status != RequestPending || got.Closes == nil || got.Closes.ID != story.ID ||
-		len(got.Proposals) != 1 || got.Proposals[0].ID != followUp.ID {
+	if got.Request.Status != RequestPending || got.Wait != WaitClosesWithProposals ||
+		!slices.Equal(ids(got.Closes), []string{story.ID, epic.ID}) || !slices.Equal(ids(got.Proposals), []string{followUp.ID, underEpic.ID}) {
 		t.Fatalf("filing that would close proposals = %+v", got)
 	}
 	wantStatus(t, f.card(two.ID), StatusDoing)
 	wantStatus(t, f.card(followUp.ID), StatusPlanned)
 	wantStatus(t, f.card(story.ID), StatusDoing)
-	// With the proposal dismissed, it is accepted and the story closes.
+	// With the story's proposal dismissed, the epic still has one.
 	_, err = f.s.Dismiss(f.ctx, owner, followUp.ID)
 	f.must(err)
-	got, err = f.s.File(f.ctx, Agent("task-2", ""), two.ID, passed)
+	got, err = f.s.FileRequestDetail(f.ctx, Agent("task-2", ""), two.ID, passed)
 	f.must(err)
-	if got.Request.Status != RequestAccepted || got.Closes != nil {
+	if got.Request.Status != RequestPending || got.Wait != WaitClosesWithProposals ||
+		!slices.Equal(ids(got.Closes), []string{epic.ID}) || !slices.Equal(ids(got.Proposals), []string{underEpic.ID}) {
+		t.Fatalf("filing that would close the epic's proposal = %+v", got)
+	}
+	// With none left, it is accepted and both close.
+	_, err = f.s.Dismiss(f.ctx, owner, underEpic.ID)
+	f.must(err)
+	got, err = f.s.FileRequestDetail(f.ctx, Agent("task-2", ""), two.ID, passed)
+	f.must(err)
+	if got.Request.Status != RequestAccepted || got.Wait != WaitNone || got.Closes != nil {
 		t.Fatalf("filing with no proposal left = %+v", got)
 	}
 	wantStatus(t, f.card(story.ID), StatusDone)
 	wantStatus(t, f.card(epic.ID), StatusDone)
+}
+
+// The store says why a done request waits, and any flag holds it back even
+// when the command the subtask resolves to passed (ADR 0005 decision 5).
+func TestDoneRequestWaitReasons(t *testing.T) {
+	f := newFixture(t)
+	_, _, one, two := f.tree()
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "make check"))
+	f.launch(one.ID, "task-1")
+	agent := Agent("task-1", "")
+	for _, tc := range []struct {
+		name string
+		in   RequestInput
+		want WaitReason
+	}{
+		{"flagged", RequestInput{Flags: []string{FlagTestsOrBuildChanged}, PassedCmd: "make check"}, WaitFlagged},
+		{"overlap", RequestInput{Flags: []string{FlagOverlap}, PassedCmd: "make check"}, WaitFlagged},
+		{"could not run", RequestInput{Flags: []string{FlagNoChangeInTree, FlagAcceptanceCouldNotRun}}, WaitCouldNotRun},
+		{"another command", RequestInput{PassedCmd: "make old"}, WaitCommandChanged},
+		{"none passed", RequestInput{}, WaitCommandChanged},
+	} {
+		in := tc.in
+		in.Kind, in.Comment = RequestDone, tc.name
+		got, err := f.s.FileRequestDetail(f.ctx, agent, one.ID, in)
+		f.must(err)
+		if got.Request.Status != RequestPending || got.Wait != tc.want || got.Closes != nil {
+			t.Fatalf("%s: filed %+v, want waiting for %q", tc.name, got, tc.want)
+		}
+	}
+	if c := f.card(one.ID); c.Status != StatusDoing || c.PendingRequests != 1 {
+		t.Fatalf("subtask after the waiting requests = %+v", c)
+	}
+	got, err := f.s.FileRequestDetail(f.ctx, agent, one.ID, RequestInput{Kind: RequestBlocked, Comment: "stuck"})
+	f.must(err)
+	if got.Request.Status != RequestPending || got.Wait != WaitNone {
+		t.Fatalf("a blocked request = %+v", got)
+	}
+	_, err = f.s.Edit(f.ctx, owner, two.ID, Patch{AcceptCmd: &sql.NullString{Valid: true}})
+	f.must(err)
+	f.launch(two.ID, "task-2")
+	got, err = f.s.FileRequestDetail(f.ctx, Agent("task-2", ""), two.ID, RequestInput{Kind: RequestDone, Comment: "x", PassedCmd: "make check"})
+	f.must(err)
+	if got.Request.Status != RequestPending || got.Wait != WaitNoCommand {
+		t.Fatalf("filed with no command = %+v", got)
+	}
 }
 
 // A blank acceptance command is none: it is stored trimmed, and one stored

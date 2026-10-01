@@ -848,8 +848,8 @@ type claimResult struct {
 // the timeout refuses with acceptance_busy. When ctx ends the run is
 // discarded and ctx's cause returned. Only a shell that does not start
 // files the claim, flagged acceptance_could_not_run. A command that exits 0
-// with no flag raised is the Request's PassedCmd, so the store accepts the
-// request as it files it; any flag leaves it for the owner.
+// is the Request's PassedCmd; the store accepts the request as it files it
+// unless something holds it back, such as a flag.
 func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in claimInput) (claimResult, error) {
 	fin, err := st.CheckFinishable(ctx, in.Actor, in.Ref)
 	if err != nil {
@@ -911,11 +911,11 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 		return out, err
 	}
 	flags := evidenceFlags(ev, notRun)
-	// Only the owner's command that ran green, with nothing flagged, accepts
-	// the request as it is filed (ADR 0005 decision 5); the proposed one is
-	// text for the owner. A shell that did not start is flagged.
+	// Only the owner's command that ran green may accept the request as it
+	// is filed, and the store decides whether it does (ADR 0005 decision 5);
+	// the proposed one is text for the owner.
 	passed := ""
-	if cmd != "" && len(flags) == 0 {
+	if cmd != "" && !notRun {
 		passed = cmd
 	}
 	out.Request = board.RequestInput{Kind: board.RequestDone, Comment: in.Comment, Evidence: data,

@@ -515,7 +515,7 @@ func TestPlannerLaunchHoldsAndSendsThePreamble(t *testing.T) {
 		"Subtask: #3 One\nPath: #1 › #2 › #3\nWin condition: one passes\n\nDescription:\nDo the thing.\n\n" +
 		"Checklist:\n- [ ] write it\n\n" +
 		"Rules:\n- Read and update the board with the board tools.\n- Finish with a done request.\n" +
-		"- Never mark anything done yourself. A done request is refused when the acceptance command fails, accepted at once when it passes and nothing is flagged, and otherwise waits for the owner; the reply says why.\n"
+		"- Never mark anything done yourself. A done request is refused when the acceptance command fails, accepted at once when the command passes and nothing holds it back, and otherwise waits for the owner; the reply says why.\n"
 	if len(sends) != 1 || sends[0] != want {
 		t.Fatalf("preamble = %q, want %q", sends, want)
 	}

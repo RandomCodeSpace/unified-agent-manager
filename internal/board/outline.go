@@ -178,7 +178,7 @@ func (o *outline) walk(parent string, depth int) []*node {
 		n.leaves = o.walk(n.ID, depth+1)
 		facts := make([]leafFact, len(n.leaves))
 		for i, l := range n.leaves {
-			facts[i] = leafFact{status: l.stored, confirmed: l.Confirmed(), held: l.HeldBy != "", pending: l.PendingRequests > 0}
+			facts[i] = leafFactOf(l)
 		}
 		status, progress := derive(n.stored == StatusCancelled, facts)
 		n.Status, n.Progress = status, &progress
@@ -193,6 +193,17 @@ type leafFact struct {
 	confirmed bool
 	held      bool
 	pending   bool
+}
+
+// leafFactOf is what derivation needs to know about the subtask l.
+func leafFactOf(l *node) leafFact {
+	return leafFact{status: l.stored, confirmed: l.Confirmed(), held: l.HeldBy != "", pending: l.PendingRequests > 0}
+}
+
+// cancelsOnClose reports whether settle cancels the subtask l when a
+// container over it closes: l is live, unconfirmed and unheld.
+func cancelsOnClose(l *node) bool {
+	return !l.Confirmed() && l.HeldBy == "" && !l.stored.terminal()
 }
 
 // derive is ADR 0005 §2's table for a container, over the subtasks in its
@@ -538,7 +549,7 @@ func (t *txn) settle(project string, before map[string]Status) error {
 	for _, c := range closing {
 		cascade := t.s.newID()
 		for _, leaf := range c.leaves {
-			if closed[leaf.ID] || leaf.Confirmed() || leaf.HeldBy != "" || leaf.stored.terminal() {
+			if closed[leaf.ID] || !cancelsOnClose(leaf) {
 				continue
 			}
 			closed[leaf.ID] = true

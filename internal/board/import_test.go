@@ -501,10 +501,14 @@ func TestOpenUpgradesAV1Board(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A request the owner decided before decided_by was recorded (v4).
+	// Requests the owner decided before decided_by was recorded (v4), and
+	// ones nobody decided.
 	now := stamp(time.Now())
 	if _, err := s.db.Exec(`INSERT INTO requests (id, card_id, task_id, kind, comment, status, created_at, decided_at, decision_comment)
-		VALUES ('old', ?, 'task-1', 'done', 'finished', 'accepted', ?, ?, 'fine')`, card.ID, now, now); err != nil {
+		VALUES ('old', ?1, 'task-1', 'done', 'finished', 'accepted', ?2, ?2, 'fine'),
+		       ('old-split', ?1, 'task-1', 'split', 'halve it', 'rejected', ?2, ?2, 'no'),
+		       ('old-withdrawn', ?1, 'task-1', 'cancel', 'drop it', 'withdrawn', ?2, ?2, ''),
+		       ('old-pending', ?1, 'task-1', 'blocked', 'stuck', 'pending', ?2, '', '')`, card.ID, now); err != nil {
 		t.Fatal(err)
 	}
 	_ = s.Close()
@@ -521,8 +525,13 @@ func TestOpenUpgradesAV1Board(t *testing.T) {
 	if got, err := s.Card(context.Background(), card.ID); err != nil || got.Title != "Before" {
 		t.Fatalf("card after the upgrade = %+v, %v", got, err)
 	}
-	if r, err := s.Request(context.Background(), "old"); err != nil || r.Status != RequestAccepted || r.DecisionComment != "fine" || r.DecidedAt == nil || r.DecidedBy != "" {
+	if r, err := s.Request(context.Background(), "old"); err != nil || r.Status != RequestAccepted || r.DecisionComment != "fine" || r.DecidedAt == nil || r.DecidedBy != DecidedByOwner {
 		t.Fatalf("a request decided before the upgrade = %+v, %v", r, err)
+	}
+	for id, want := range map[string]DecidedBy{"old-split": DecidedByOwner, "old-withdrawn": "", "old-pending": ""} {
+		if r, err := s.Request(context.Background(), id); err != nil || r.DecidedBy != want {
+			t.Fatalf("request %s after the upgrade = %+v, %v, want decided by %q", id, r, err, want)
+		}
 	}
 	r, err := s.Import(context.Background(), sourceCopy(t, "import-v11"), websiteOnly)
 	if err != nil || r.Imported != 12 {

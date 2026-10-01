@@ -65,11 +65,18 @@ type Request struct {
 	CreatedAt       time.Time
 	DecidedAt       *time.Time
 	DecisionComment string
-	// DecidedBy is AuthorOwner, or AuthorUAM for a done request accepted
-	// automatically; "" while pending, when withdrawn, and for decisions
-	// stored before it was recorded, which were the owner's.
-	DecidedBy string
+	// DecidedBy is "" while pending and when withdrawn.
+	DecidedBy DecidedBy
 }
+
+// DecidedBy is who decided a request.
+type DecidedBy string
+
+// The deciders: the owner, or uam for a done request accepted automatically.
+const (
+	DecidedByOwner DecidedBy = AuthorOwner
+	DecidedByUAM   DecidedBy = AuthorUAM
+)
 
 // AutoAcceptComment is the automatic comment on a subtask whose done request
 // was accepted because its acceptance command passed.
@@ -91,8 +98,8 @@ type RequestInput struct {
 	ProposedAcceptCmd string
 	// PassedCmd is the acceptance command the caller ran for a done request
 	// and saw exit 0, "" when none ran or it did not pass. While the subtask
-	// still resolves to it, the request is accepted as soon as it is filed
-	// (ADR 0005 decision 5).
+	// still resolves to it and nothing else holds it back, the request is
+	// accepted as soon as it is filed (ADR 0005 decision 5).
 	PassedCmd string
 }
 
@@ -180,33 +187,57 @@ func (t *txn) acceptCmd(n *node) (string, error) {
 // flags. A newer request of the same kind from the same Task replaces the
 // older pending one. A done request whose PassedCmd is the command the
 // subtask resolves to is accepted at once, as the owner's Accept would
-// accept it, and is returned accepted, unless accepting it would close a
-// container that still has proposals (see Filing).
+// accept it, and is returned accepted, unless something holds it back (see
+// WaitReason).
 func (s *Store) FileRequest(ctx context.Context, a Actor, ref string, in RequestInput) (Request, error) {
-	f, err := s.File(ctx, a, ref, in)
+	f, err := s.FileRequestDetail(ctx, a, ref, in)
 	return f.Request, err
 }
 
-// Filing is a filed request. A done request whose command passed is left
-// pending when accepting it would close Closes, a container that still has
-// the live unconfirmed subtasks Proposals, which closing would cancel.
-type Filing struct {
+// WaitReason is why a done request was left pending for the owner instead
+// of accepted as it was filed (ADR 0005 decision 5).
+type WaitReason string
+
+// The wait reasons, in the order they are checked.
+const (
+	// WaitNone: the request was accepted, or is not a done request.
+	WaitNone WaitReason = ""
+	// WaitNoCommand: the subtask resolves to no acceptance command.
+	WaitNoCommand WaitReason = "no_command"
+	// WaitCouldNotRun: the command's shell did not start.
+	WaitCouldNotRun WaitReason = "could_not_run"
+	// WaitFlagged: the request carries another flag.
+	WaitFlagged WaitReason = "flagged"
+	// WaitCommandChanged: the command the subtask resolves to is not the one
+	// that passed, as when the owner changed it during the run.
+	WaitCommandChanged WaitReason = "command_changed"
+	// WaitClosesWithProposals: accepting it would close containers that
+	// still have proposals.
+	WaitClosesWithProposals WaitReason = "closes_with_proposals"
+)
+
+// FiledRequest is a filed request, with Wait saying why a done request was
+// left pending. For WaitClosesWithProposals, Closes are the containers
+// accepting it would close, nearest first, and Proposals their live
+// unconfirmed subtasks, which closing would cancel.
+type FiledRequest struct {
 	Request   Request
-	Closes    *Card
+	Wait      WaitReason
+	Closes    []Card
 	Proposals []Card
 }
 
-// File is FileRequest, also saying why a done request whose command passed
-// was left pending because of a container it would close.
-func (s *Store) File(ctx context.Context, a Actor, ref string, in RequestInput) (Filing, error) {
+// FileRequestDetail is FileRequest, also saying why a done request was left
+// pending.
+func (s *Store) FileRequestDetail(ctx context.Context, a Actor, ref string, in RequestInput) (FiledRequest, error) {
 	if err := permit(a, opRequest, ""); err != nil {
-		return Filing{}, err
+		return FiledRequest{}, err
 	}
 	f, err := checkInput(in)
 	if err != nil {
-		return Filing{}, err
+		return FiledRequest{}, err
 	}
-	var out Filing
+	var out FiledRequest
 	_, err = s.agentWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
 		if n.container() {
 			if in.Kind != RequestCancel || n.stored == StatusCancelled || n.Status == StatusDone {
@@ -229,20 +260,20 @@ func (s *Store) File(ctx context.Context, a Actor, ref string, in RequestInput) 
 				f.payload.Blocker = blocker.ID
 			}
 		}
-		out = Filing{}
+		out = FiledRequest{}
 		out.Request, err = t.fileRequest(o, a, n, f)
-		if err != nil || in.PassedCmd == "" {
+		if err != nil || in.Kind != RequestDone {
 			return err
 		}
 		cmd, err := t.acceptCmd(n)
-		if err != nil || cmd != in.PassedCmd {
+		if err != nil {
 			return err
 		}
-		if c, proposals := o.closesWithProposals(n); c != nil {
-			out.Closes = &c.Card
-			for _, p := range proposals {
-				out.Proposals = append(out.Proposals, p.Card)
-			}
+		if out.Wait = waitReason(f, in.PassedCmd, cmd); out.Wait != WaitNone {
+			return nil
+		}
+		if out.Closes, out.Proposals = o.closesWithProposals(n); len(out.Closes) > 0 {
+			out.Wait = WaitClosesWithProposals
 			return nil
 		}
 		return t.acceptPassed(o, a, n, &out.Request)
@@ -250,28 +281,56 @@ func (s *Store) File(ctx context.Context, a Actor, ref string, in RequestInput) 
 	return out, err
 }
 
-// closesWithProposals returns the nearest container that marking the subtask
-// n done would close while it still has live unconfirmed subtasks, and those
-// subtasks, which settle would cancel with it; nil when there is none.
-func (o *outline) closesWithProposals(n *node) (*node, []*node) {
+// waitReason is why the done request f, whose caller saw passed exit 0 on a
+// subtask that now resolves to cmd, can't be accepted as it is filed, before
+// the containers it would close are looked at; WaitNone when nothing there
+// holds it back.
+func waitReason(f requestFiling, passed, cmd string) WaitReason {
+	switch {
+	case cmd == "":
+		return WaitNoCommand
+	case slices.Contains(f.flags, FlagAcceptanceCouldNotRun):
+		return WaitCouldNotRun
+	case len(f.flags) > 0:
+		return WaitFlagged
+	case passed != cmd:
+		return WaitCommandChanged
+	}
+	return WaitNone
+}
+
+// closesWithProposals returns the containers, nearest first, that marking the
+// subtask n done would close while they still have live unconfirmed
+// subtasks, and those subtasks, which settle would cancel with them; nil when
+// there are none.
+func (o *outline) closesWithProposals(n *node) ([]Card, []Card) {
+	var closes, proposals []Card
+	seen := map[string]bool{}
 	for c := o.byID[n.ParentID]; c != nil; c = o.byID[c.ParentID] {
-		facts := make([]leafFact, 0, len(c.leaves))
-		var proposals []*node
-		for _, l := range c.leaves {
+		facts := make([]leafFact, len(c.leaves))
+		var cancels []*node
+		for i, l := range c.leaves {
 			if l == n {
-				facts = append(facts, leafFact{status: StatusDone, confirmed: true})
+				facts[i] = leafFact{status: StatusDone, confirmed: true}
 				continue
 			}
-			facts = append(facts, leafFact{status: l.stored, confirmed: l.Confirmed(), held: l.HeldBy != "", pending: l.PendingRequests > 0})
-			if !l.Confirmed() && l.HeldBy == "" && !l.stored.terminal() {
-				proposals = append(proposals, l)
+			facts[i] = leafFactOf(l)
+			if cancelsOnClose(l) {
+				cancels = append(cancels, l)
 			}
 		}
-		if status, _ := derive(c.stored == StatusCancelled, facts); status == StatusDone && len(proposals) > 0 {
-			return c, proposals
+		if status, _ := derive(c.stored == StatusCancelled, facts); status != StatusDone || len(cancels) == 0 {
+			continue
+		}
+		closes = append(closes, c.Card)
+		for _, l := range cancels {
+			if !seen[l.ID] {
+				seen[l.ID] = true
+				proposals = append(proposals, l.Card)
+			}
 		}
 	}
-	return nil, nil
+	return closes, proposals
 }
 
 // acceptPassed accepts the done request r on n just filed, because the
@@ -279,7 +338,7 @@ func (o *outline) closesWithProposals(n *node) (*node, []*node) {
 // owner's Accept path, but records uam as the decider and adds an automatic
 // comment saying so; r keeps its evidence. r is read back as accepted.
 func (t *txn) acceptPassed(o *outline, a Actor, n *node, r *Request) error {
-	if err := t.decide(r, RequestAccepted, AuthorUAM, ""); err != nil {
+	if err := t.decide(r, RequestAccepted, DecidedByUAM, ""); err != nil {
 		return err
 	}
 	if err := t.acceptDone(o, a, n, r, false); err != nil {
@@ -562,7 +621,7 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 			return err
 		}
 		if accept {
-			if err := t.decide(&req, RequestAccepted, AuthorOwner, ""); err != nil {
+			if err := t.decide(&req, RequestAccepted, DecidedByOwner, ""); err != nil {
 				return err
 			}
 			if err := t.markDone(o, kid, &req, a); err != nil {
@@ -600,7 +659,7 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 		return Request{}, err
 	}
 	return s.decideWrite(ctx, id, func(t *txn, o *outline, n *node, r *Request, p payload) error {
-		if err := t.decide(r, RequestAccepted, AuthorOwner, strings.TrimSpace(comment)); err != nil {
+		if err := t.decide(r, RequestAccepted, DecidedByOwner, strings.TrimSpace(comment)); err != nil {
 			return err
 		}
 		switch r.Kind {
@@ -702,7 +761,7 @@ func (s *Store) Reject(ctx context.Context, a Actor, id, reason string, holderAc
 		return Request{}, invalid("a rejection needs a reason")
 	}
 	return s.decideWrite(ctx, id, func(t *txn, _ *outline, n *node, r *Request, _ payload) error {
-		if err := t.decide(r, RequestRejected, AuthorOwner, body); err != nil {
+		if err := t.decide(r, RequestRejected, DecidedByOwner, body); err != nil {
 			return err
 		}
 		if holderActive || r.TaskID == "" || n.HeldBy != r.TaskID {
@@ -755,10 +814,10 @@ func (s *Store) decideWrite(ctx context.Context, id string, fn func(*txn, *outli
 	return out, err
 }
 
-// decide records the decision on r by, the owner or uam.
-func (t *txn) decide(r *Request, status RequestStatus, by, comment string) error {
+// decide records by's decision on r: status, with the decision comment.
+func (t *txn) decide(r *Request, status RequestStatus, by DecidedBy, comment string) error {
 	if err := t.exec(`UPDATE requests SET status = ?, decided_at = ?, decision_comment = ?, decided_by = ? WHERE id = ?`,
-		string(status), stamp(t.now), comment, by, r.ID); err != nil {
+		string(status), stamp(t.now), comment, string(by), r.ID); err != nil {
 		return err
 	}
 	project, _, err := t.locate(r.CardID)
@@ -806,12 +865,12 @@ func (t *txn) queryRequests(query string, args ...any) ([]Request, error) {
 	var out []Request
 	for rows.Next() {
 		var r Request
-		var kind, status, payloadText, evidence, flags, created, decided string
+		var kind, status, payloadText, evidence, flags, created, decided, decidedBy string
 		if err := rows.Scan(&r.ID, &r.CardID, &r.TaskID, &r.AgentID, &kind, &r.Comment, &payloadText, &evidence, &flags,
-			&r.BaseRevision, &status, &created, &decided, &r.DecisionComment, &r.DecidedBy); err != nil {
+			&r.BaseRevision, &status, &created, &decided, &r.DecisionComment, &decidedBy); err != nil {
 			return nil, fmt.Errorf("board: scan request: %w", err)
 		}
-		r.Kind, r.Status, r.Payload = RequestKind(kind), RequestStatus(status), json.RawMessage(payloadText)
+		r.Kind, r.Status, r.Payload, r.DecidedBy = RequestKind(kind), RequestStatus(status), json.RawMessage(payloadText), DecidedBy(decidedBy)
 		if evidence != "" {
 			r.Evidence = json.RawMessage(evidence)
 		}
