@@ -117,6 +117,19 @@ describe('new task', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
+
+  test('Alt+N in the terminal stays with the shell', async () => {
+    renderApp();
+    await sidebar();
+    // xterm.js lets a key it does not handle bubble from its textarea, as with Option+N on macOS.
+    const term = document.body.appendChild(document.createElement('div'));
+    term.className = 'xterm';
+    const input = term.appendChild(document.createElement('textarea'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Dead', code: 'KeyN', altKey: true, bubbles: true }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    term.remove();
+  });
 });
 
 describe('task lifecycle', () => {

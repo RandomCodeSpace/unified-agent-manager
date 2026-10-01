@@ -731,7 +731,10 @@ are logged only at debug level (`UAM_DEBUG=1`).
   turning the setting off ends the shell and everything it runs, and there
   is no reattaching. Esc goes to the terminal, so only × (or the header's
   Terminal button) closes it; Changes, Files, Subagents and file previews
-  open beside the conversation above it. At
+  open beside the conversation above it. While the terminal has focus, keys
+  go to the shell, not to uam's shortcuts. The browser keeps a few keys for
+  itself before the page sees them, such as Ctrl+W, Ctrl+T, Ctrl+N and
+  Ctrl+Tab on Windows and Linux; those cannot reach the shell. At
   most eight terminals run at once. When the service refuses one (too many,
   the folder is gone, or the setting is off) the panel says "Could not open a
   terminal." with Retry. The terminal draws with WebGL; in a browser with

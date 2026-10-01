@@ -550,11 +550,13 @@ export default function App() {
     if (onlyProject) startTask(onlyProject);
     else if (projectCount > 0) setPaletteOpen(true);
   }, [onlyProject, projectCount, startTask]);
-  // Alt+N opens it from anywhere but a menu or dialog (Ctrl+N is the browser's); the pen's own tooltip, which names the shortcut, does not stand in the way.
+  // Alt+N opens it from anywhere but a menu, a dialog or the terminal (Ctrl+N is the browser's); the pen's own tooltip, which names the shortcut, does not stand in the way.
+  // The terminal's keys are the shell's: on macOS, Option+N is a dead key xterm.js lets through.
   useEffect(() => {
     if (auth !== 'in') return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== 'KeyN' || e.defaultPrevented || document.querySelector('[data-popup]:not([role="tooltip"])')) return;
+      if (e.target instanceof Element && e.target.closest('.xterm')) return;
       e.preventDefault();
       openNewTask();
     };
