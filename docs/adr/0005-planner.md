@@ -6,7 +6,7 @@ Status: accepted (2026-09-29). Decided in [#255](https://github.com/RandomCodeSp
 
 uam gets a planner: an agile board of **epics, stories and subtasks** for each git Project.
 - Agents decompose the work and carry it out through in-process tools.
-- The owner confirms, launches and closes the work; uam accepts a done request whose acceptance command passes with nothing flagged (decision 5).
+- The owner confirms, launches and closes the work; uam accepts a done request when the owner's acceptance command passes and nothing holds it back (decision 5).
 - The storage and rules are ported from kb (github.com/RandomCodeSpace/kb, MIT), using SQLite through `modernc.org/sqlite` (no CGO).
 - It is not a record of every Task. A uam Task appears on the board only when it holds a subtask or plans under a container.
 
@@ -138,7 +138,7 @@ A static actor table (owner or agent) sits in one transition function in `intern
 - It runs `$SHELL -lc` in the Project directory, in its own process group, bound to the Task's context. Archive or Delete kills the run and discards the result.
 - Editing a command marks the earlier green rows for that command as stale.
 
-**A passing command**, with nothing flagged, accepts the done request as it is filed (decision 5). Otherwise **the owner** accepts or rejects:
+**A passing command** accepts the done request as it is filed when nothing holds it back (decision 5 lists the conditions). Otherwise **the owner** accepts or rejects:
 - Accept turns the claim text into the close comment and counts as a touch.
 - Reject requires a reason.
 
@@ -268,10 +268,10 @@ Each item is a store, tool or UI test.
 - Parsing the agent's shell commands for evidence.
 - Per-Task git worktrees: overlap between Tasks is flagged, not prevented. Running acceptance in a temporary worktree is prototype-only, and only if overlap proves painful.
 - Tracking every uam Task: no automatic card per Task, and no `#12` composer references in this effort.
+- An auto-accept switch per Project: decision 5 accepts a done request automatically under its conditions, with no switch.
 
 ## Deferred
 
-- Auto-accept per Project: replaced by decision 5, which accepts a done request whose acceptance command passes with nothing flagged, with no switch.
 - "Start next card".
 - Queueing cards onto a running Task.
 - Forge import (#248 item 8).
@@ -514,31 +514,7 @@ These record how `internal/board` reads this contract, plus five later decisions
 2. **An owner touch confirms ancestors.** Any owner touch on a card (save, create, launch, accept, restore, confirm or a status change) also confirms and re-pins each unconfirmed ancestor in the same transaction. This replaces the `unconfirmed_parent` refusal. So launching a leaf under an agent-suggested story confirms the story, and the sweep can't expire it.
 3. **Board revisions in the snapshot** (added to §15). While the planner is on, the `snapshot` frame carries `boards`: each Project's board revision, plus `""` for Unassigned. It is omitted while the planner is off. A client reloads only the boards it holds an older revision of.
 4. **Agents propose epics** (2026-09-30; changes §3, §4 and §16). `board_create` also takes kind `epic` with no parent, from a Task with no scope: one that was neither launched from a card nor started with Plan with agent. Such a Task sees the whole Project board (§16) and before this decision could write nothing. Now it may propose epics at the root and nothing else, so it can't edit, comment on or add under an epic it proposed. A Task with a scope writes only within its container, so a planning Task, a working Task (one launched on a root subtask included) and a Utility job propose no epics. An agent's epic is a proposal like any other: it expires 14 days after creation unless the owner confirms it, it counts toward the 20 created cards, the root counts as its container for the 10 unconfirmed children, and a duplicate live title at the root is refused. The owner confirms or dismisses it in the Tree, where root proposals fold into "+N suggested" at the root, and can confirm or cancel it from the card panel; the epic filter shows a proposed epic too, and lists no cancelled epic except the one it is set to, so expired proposals don't linger there. Stories and subtasks still need a parent, and an epic under any card is refused by the kind rule (`invalid`), as it is for the owner.
-5. **A done request with a green acceptance command is accepted automatically** (2026-09-30; changes §1, §3, §5, §6 and §14). An agent files `board_request` kind `done` on the subtask it holds.
-   - **When.** All of these hold:
-     - the finishing guard passes;
-     - a resolved acceptance command exists: the subtask's `accept_cmd`, else the Project default, both written by the owner only. A blank command is none: commands are stored trimmed, and one stored blank earlier resolves to none;
-     - that command exits 0;
-     - the evidence carries no flag. `no_change_in_tree` (no diff and no commits since the hold's baseline) is now raised whether or not a command exists (§6);
-     - the subtask still resolves to the command that ran, checked in the filing transaction;
-     - accepting it would not close a container that still has live unconfirmed subtasks. Closing cancels them (§2), and they may be the Task's own follow-up proposals or the owner's unreviewed suggestions. This is checked in the filing transaction too.
-   - **What.** uam files the request with its evidence and accepts it in the same transaction, through the owner's Accept path.
-     - The subtask is done, and its hold ends as accepted.
-     - The subtask and its unconfirmed ancestors are confirmed, but not re-pinned, since no owner HEAD is known. That includes a subtask the agent proposed itself and holds (§1: an automatic acceptance also sets `expires_at` to NULL).
-     - The subtask's other pending requests are withdrawn, and its story and epic roll up as on any accept.
-     - The claim text is the close comment, and uam adds the automatic comment "Accepted automatically: the acceptance command passed".
-     - The request records `decided_by: uam`, and the owner's decisions record `owner`; decisions stored earlier have none. So the owner's own acceptances stay distinguishable, and the evidence stays on the accepted request for review.
-   - **Otherwise the request waits in the Inbox for the owner.** That covers:
-     - no command;
-     - a shell that could not start;
-     - a flag;
-     - a command changed during the run;
-     - a container it would close with proposals.
-
-     A non-zero exit still refuses the claim.
-   - **Never automatic.** Cancel, blocked, split and change requests are never accepted automatically, and a `proposed_accept_cmd` never runs and never counts.
-   - **The `board_request` result** says the subtask is done, or names each reason it waits.
-   - **Back to To do.** The owner can move a done subtask back to To do from the card panel or a card's menu (`status: todo`, with an optional comment). The action is hidden under a cancelled card, where the store refuses it until that card is restored.
+5. **A done request with a green acceptance command is accepted automatically** (2026-09-30; changes §1, §3, §5, §6, §10 and §14). An agent files `board_request` kind `done` on the subtask it holds, and uam accepts it as it files it, in the same transaction and through the owner's Accept path, when all of these hold: the finishing guard passes; a resolved acceptance command exists (the subtask's `accept_cmd`, else the Project default, both written by the owner only; a blank command is none, since commands are stored trimmed and one stored blank earlier resolves to none); that command exits 0; the request carries no flag (`no_change_in_tree`, no diff and no commits since the hold's baseline, is now raised whether or not a command exists, §6); the subtask still resolves to the command that ran; and accepting it would not close a container that still has live unconfirmed subtasks, which closing cancels (§2) and which may be the Task's own follow-up proposals or the owner's unreviewed suggestions. The store checks the flags, the command and the containers in the filing transaction. The accepted subtask is done and its hold ends as accepted. It and its unconfirmed ancestors are confirmed but not re-pinned, since no owner HEAD is known; that includes a subtask the agent proposed itself and holds (§1: an automatic acceptance also sets `expires_at` to NULL). Its other pending requests are withdrawn, and its story and epic roll up as on any accept. The claim text is the close comment, and uam adds the automatic comment "Accepted automatically: the acceptance command passed". The request records `decided_by: uam` and keeps its evidence for review; the owner's decisions record `owner`, and decisions stored before `decided_by` existed are backfilled as the owner's, so the owner's own acceptances stay distinguishable. Otherwise the request waits in the Inbox for the owner, and the store says why: no command is set, the shell could not start, a flag is raised, the command changed during the run, or accepting it would close containers with proposals. A non-zero exit still refuses the claim. Cancel, blocked, split and change requests are never accepted automatically, and a `proposed_accept_cmd` never runs and never counts. The `board_request` result says the subtask is done, or why the request waits, naming its flags and, for containers, every proposal closing would cancel. The owner can move a done subtask back to To do from the card panel or a card's menu (`status: todo`, with an optional comment); the action is hidden under a cancelled card, where the store refuses it until that card is restored.
 
 ## Amendment: `uam_create_task` (2026-09-30)
 

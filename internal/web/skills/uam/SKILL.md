@@ -80,8 +80,8 @@ Planner on and the Project is a git repository.
   open blocker. uam then gathers the evidence itself (diff, commits, files
   this Task touched) and runs the owner's acceptance command. A failing
   command refuses the request. It is accepted at once when the command
-  passes and nothing is flagged: claim the next pending one. Otherwise it
-  waits for the owner, and the reply says why.
+  passes and nothing holds it back: claim the next pending one. Otherwise
+  it waits for the owner, and the reply says why.
 - **Proposals**: cards you create stay unconfirmed until the owner confirms
   them or a done request of yours on them is accepted, and expire after 14
   days. Caps per Task: 20 created cards, 10 unconfirmed children per card or
