@@ -685,8 +685,13 @@ func (m *Manager) DraftCommitMessage(ctx context.Context, id string, paths []str
 	defer m.titles.Done()
 	ctx, cancel := m.bound(ctx)
 	defer cancel()
-	reply, err := runner.RunUtility(ctx, agentapi.UtilityRequest{Model: model.Model, Workdir: repo.top, Purpose: "commit-message",
-		System: commitDraftSystem, Prompt: prompt, Timeout: commitDraftTimeout})
+	req := agentapi.UtilityRequest{Model: model.Model, Workdir: repo.top, Purpose: purposeCommitMessage,
+		System: commitDraftSystem, Prompt: prompt, Timeout: commitDraftTimeout}
+	reply, err := m.runUtility(ctx, UtilityCall{Purpose: purposeCommitMessage, Provider: model.Provider, Model: model.Model, TaskID: id, ProjectID: t.projectID}, req.System+req.Prompt,
+		func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
+			req.OnUsage = onUsage
+			return runner.RunUtility(ctx, req)
+		})
 	if err != nil {
 		return CommitDraft{}, utilityFailed("drafting the commit message", err)
 	}

@@ -45,6 +45,18 @@ describe('commit panel', () => {
     await waitFor(() => expect(panel.queryByRole('checkbox', { name: /docs\/terminal\.md/ })).toBeNull());
   });
 
+  test('with Background AI paused, Generate says so and the message stays editable', async () => {
+    const { user } = await openIdle('t3');
+    await fetch('/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ utility_daily_limit: 0 }) });
+    const panel = await commitPanel(user);
+    await user.click(panel.getByRole('button', { name: /^Commit/ }));
+    await user.click(await panel.findByRole('button', { name: 'Generate' }));
+    expect(await panel.findByText(/Background AI is off.*You can still write the message yourself\./)).toBeTruthy();
+    const message = panel.getByRole('textbox', { name: 'Commit message' }) as HTMLTextAreaElement;
+    await user.type(message, 'fix: by hand');
+    expect(message.value).toBe('fix: by hand');
+  });
+
   test('push refuses until a pull fast-forwards, then pushes', async () => {
     const { user } = await openIdle('t3');
     const panel = await commitPanel(user);

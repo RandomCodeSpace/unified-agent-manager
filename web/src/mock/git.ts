@@ -12,6 +12,8 @@ export interface GitHost {
   /** Paths a Task's edit tools touched, as the service reads them from its transcript. */
   touched: (taskId: string) => string[];
   projectChanged: (p: Project) => void;
+  /** Background AI's daily limit in Settings; 0 pauses drafting. */
+  utilityLimit: () => number | undefined;
 }
 
 function json(status: number, body?: unknown): Response {
@@ -76,6 +78,7 @@ export function gitMock(host: GitHost) {
       const paths = Array.isArray(body.paths) ? (body.paths as string[]) : [];
       if (action === '/message') {
         if (paths.length === 0) return fail(400, 'choose at least one file to describe');
+        if (host.utilityLimit() === 0) return fail(409, 'Background AI is off: its daily limit is 0. Raise it in Settings → Background AI', 'utility_paused');
         return json(200, { message: DRAFT, conventional: true, model: 'gpt-6-luna' });
       }
       if (st.busy) return fail(409, st.busy, 'git_busy');

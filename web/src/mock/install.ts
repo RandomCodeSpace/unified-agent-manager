@@ -201,6 +201,7 @@ export function install(): { received: Received[] } {
       const items = t ? [...t.items, ...Object.values(t.agentItems).flat()] : [];
       return items.flatMap((i) => (i.tool && ['edit', 'create'].includes(i.tool.name) ? [(i.tool.title ?? '').replace(/^(Edit|Create) /, '')] : []));
     },
+    utilityLimit: () => st.settings.utility_daily_limit,
     projectChanged: (p) => {
       st.projects = st.projects.map((x) => (x.id === p.id ? p : x));
       broadcast('project', { project: p });

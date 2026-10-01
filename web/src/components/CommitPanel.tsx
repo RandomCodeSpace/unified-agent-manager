@@ -1,6 +1,6 @@
 import { ArrowDownToLine, Check, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, RefreshCw, Sparkles, TriangleAlert, Upload } from 'lucide-react';
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
-import { api, describeError, type GitFile, type GitState, type SessionSummary } from '../api';
+import { ApiError, api, describeError, type GitFile, type GitState, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { Note } from './common';
 import { Button } from './ui/button';
@@ -73,7 +73,7 @@ export function CommitPanel({
   // Null until the owner changes the checks: until then they follow the defaults as files change.
   const [picked, setPicked] = useState<string[] | null>(null);
   const [running, setRunning] = useState<Action | null>(null);
-  const [result, setResult] = useState<{ tone: 'info' | 'error'; text: string } | null>(null);
+  const [result, setResult] = useState<{ tone: 'info' | 'warn' | 'error'; text: string } | null>(null);
   const request = useRef<AbortController | null>(null);
   const formId = useId();
 
@@ -130,7 +130,9 @@ export function CommitPanel({
       const summary = await work();
       if (summary) setResult({ tone: 'info', text: summary });
     } catch (e) {
-      setResult({ tone: 'error', text: describeError(e) });
+      // Background AI paused (its daily limit) is no failure: the message can still be written by hand.
+      if (e instanceof ApiError && e.body.code === 'utility_paused') setResult({ tone: 'warn', text: `${e.message.replace(/\.$/, '')}. You can still write the message yourself.` });
+      else setResult({ tone: 'error', text: describeError(e) });
     } finally {
       setRunning(null);
       request.current?.abort();

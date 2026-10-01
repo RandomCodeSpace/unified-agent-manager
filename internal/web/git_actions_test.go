@@ -334,6 +334,16 @@ func TestDraftCommitMessage(t *testing.T) {
 		}
 	}
 	g.call(http.MethodPost, "/message", `{"paths":["unchanged.txt"]}`, http.StatusBadRequest, nil)
+	// Background AI off: refused before the model, with the limit's own words.
+	if w := g.ts.do(http.MethodPatch, "/api/settings", `{"utility_daily_limit":0}`, withCookie(g.ts)); w.Code != http.StatusOK {
+		t.Fatalf("settings = %d %s", w.Code, w.Body)
+	}
+	if reply := g.call(http.MethodPost, "/message", `{"paths":["tracked.txt"]}`, http.StatusConflict, nil); reply["code"] != codeUtilityPaused || len(g.prov.UtilityRequests()) != 1 {
+		t.Fatalf("paused draft = %v", reply)
+	}
+	if w := g.ts.do(http.MethodPatch, "/api/settings", `{"utility_daily_limit":null}`, withCookie(g.ts)); w.Code != http.StatusOK {
+		t.Fatalf("settings = %d %s", w.Code, w.Body)
+	}
 	g.prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return "", errors.New("model gone") })
 	if reply := g.call(http.MethodPost, "/message", `{"paths":["tracked.txt"]}`, http.StatusBadGateway, nil); reply["code"] != codeUtilityFailed {
 		t.Fatalf("failed draft = %v", reply)

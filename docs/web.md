@@ -752,7 +752,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   note says how many changed files are left out.
   Generate (then Regenerate) asks the Utility model for a message from the
   chosen files' diff and the repository's last 20 commit subjects, so it
-  follows their style, Conventional Commits included. It never commits. The
+  follows their style, Conventional Commits included. It never commits, and
+  it counts toward Background AI's daily limit: while that pauses it, the
+  panel says so and you write the message yourself. The
   message is yours to edit and is committed exactly as written: uam adds no
   co-author, sign-off or AI credit, and removes any the model wrote. A counter
   shows the subject's length against 72 characters. "Commit n files" stages
