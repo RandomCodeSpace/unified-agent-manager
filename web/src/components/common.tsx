@@ -488,6 +488,9 @@ export const SessionContext = createContext<string | undefined>(undefined);
 /** That Task's directory, so a link by absolute path inside it opens and one outside stays text. */
 export const WorkdirContext = createContext<string | undefined>(undefined);
 
+/** The folder, in the Task's directory, that relative links and images resolve from: "" for replies, a Markdown file's own folder when it renders. */
+export const MdBaseContext = createContext('');
+
 /** Natural sizes of local images that loaded, by URL, so a block parsed again reserves the same box before the bytes arrive. */
 const imageSizes = new Map<string, { width: number; height: number }>();
 
@@ -538,7 +541,7 @@ function FileLink({ path, url }: Readonly<{ path: string; url: string }>) {
     <a href={url} target="_blank" rel="noopener noreferrer" title={label.path} aria-label={`Open ${label.path}`} className={cn(chipVariants({ fill: 'well', tone: 'accent' }), 'max-w-full min-w-0 align-middle hover:bg-sunken')} onClick={event => {
       if (preview && previewClick(event)) {
         event.preventDefault();
-        preview({ url, name: label.name, description: label.path, frameable: true }, event.currentTarget);
+        preview({ url, name: label.name, description: label.path, path: label.path, frameable: true }, event.currentTarget);
       }
     }}>
       <Icon className="size-3.5 shrink-0" aria-hidden="true" />
@@ -650,10 +653,11 @@ function MdImage({ src, alt }: Readonly<{ src?: string; alt?: string }>) {
   const tempRoots = useContext(TempRootContext);
   const sessionId = useContext(SessionContext);
   const workdir = useContext(WorkdirContext);
+  const base = useContext(MdBaseContext);
   const { streaming } = useContext(MdContext);
   const text = alt ?? '';
   const path = localPath(src);
-  const file = taskFile(src, workdir);
+  const file = taskFile(src, workdir, base);
   const temporary = !streaming && sessionId && preview ? tempFile(src, workdir, tempRoots) : null;
   if (temporary) return <TempFileAction file={temporary}>{text && <span>{text}</span>}</TempFileAction>;
   if (path) return sessionId && file ? <LocalImage sessionId={sessionId} path={file.path} alt={text} /> : <ImageNote alt={text} detail={path} />;
@@ -673,8 +677,9 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
   const tempRoots = useContext(TempRootContext);
   const sessionId = useContext(SessionContext);
   const workdir = useContext(WorkdirContext);
+  const base = useContext(MdBaseContext);
   const { streaming } = useContext(MdContext);
-  const file = !streaming ? taskFile(href, workdir) : null;
+  const file = !streaming ? taskFile(href, workdir, base) : null;
   const { eligible, exists } = useFileReference(file?.path);
   const temporary = !streaming && sessionId && preview ? tempFile(href, workdir, tempRoots) : null;
   if (temporary) return <TempFileAction file={temporary}>{children}</TempFileAction>;
@@ -684,7 +689,7 @@ function MdLink({ href, children, node }: Readonly<{ href?: string; children?: R
   else if (target) link = <a href={target} rel="noopener noreferrer" target="_blank" onClick={event => {
     if (preview && file && localPath(href) && previewClick(event)) {
       event.preventDefault();
-      preview({ url: target, name: file.path.split('/').pop() || file.path, description: file.path, frameable: true }, event.currentTarget);
+      preview({ url: target, name: file.path.split('/').pop() || file.path, description: file.path, path: file.path, frameable: true }, event.currentTarget);
     }
   }}>{children}</a>;
   else link = children;

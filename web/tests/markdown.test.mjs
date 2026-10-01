@@ -88,6 +88,16 @@ test('a link names a file of the Task folder by its path relative to it', () => 
   assert.deepEqual(taskFile('x.html', undefined), { path: 'x.html', hash: '' });
 });
 
+test('a link in a rendered Markdown file resolves from that file\'s folder', () => {
+  const dir = '/home/dev/proj';
+  const file = (ref) => taskFile(ref, dir, 'docs/guide');
+  assert.deepEqual(file('img/a.png'), { path: 'docs/guide/img/a.png', hash: '' });
+  assert.deepEqual(file('../README.md#top'), { path: 'docs/README.md', hash: '#top' });
+  assert.deepEqual(file('../../Makefile'), { path: 'Makefile', hash: '' });
+  assert.deepEqual(file('/home/dev/proj/src/a.ts'), { path: 'src/a.ts', hash: '' });
+  for (const outside of ['../../../x.md', '#top', 'https://example.com/a.md']) assert.equal(file(outside), null, outside);
+});
+
 test('inline code looks like a path when it has a slash or a file extension, and is no call, glob, flag or version', () => {
   for (const path of ['ai-news.html', 'out/report.html', 'package.json', '.gitignore', 'src/lib', '/home/dev/proj/a.ts', './x.md', 'docs/README.md#install', 'a.tar.gz', '100%.txt', 'a'.repeat(295) + '.html']) {
     assert.equal(looksLikePath(path), true, path);

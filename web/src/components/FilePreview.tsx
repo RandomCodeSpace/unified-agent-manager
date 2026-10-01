@@ -7,6 +7,7 @@ import { downloadUrl, previewMetadata, PreviewOwner, type PreviewMetadata, type 
 import type { OpenPreview, PreviewTarget } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
 import { CodeBlock, Note, Spinner } from './common';
+import { isMarkdown, MarkdownFile } from './MarkdownFile';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button, buttonVariants } from './ui/button';
 
@@ -70,7 +71,7 @@ export function useFilePreview(sessionId: string, lifetime: string, active: bool
   return { open, close, selection: active && selection?.owner === owner ? selection : null };
 }
 
-export function FilePreview({ selection, inline, onClose }: Readonly<{ selection: Selection; inline: boolean; onClose: () => void }>) {
+export function FilePreview({ selection, sessionId, workdir, inline, onClose }: Readonly<{ selection: Selection; sessionId: string; workdir: string; inline: boolean; onClose: () => void }>) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const { target, file, error } = selection;
   useEffect(() => { closeButton.current?.focus({ preventScroll: true }); }, [selection.target]);
@@ -100,16 +101,17 @@ export function FilePreview({ selection, inline, onClose }: Readonly<{ selection
   if (error) body = <Note tone="error">{error}</Note>;
   else if (!file) body = <output className="flex items-center gap-2 text-caption text-muted"><Spinner />Opening file…</output>;
   else if (file.kind === 'text') {
+    const source = file.text ? <CodeBlock
+      language="text"
+      text={file.text}
+      className="my-0 flex min-h-64 flex-1 flex-col"
+      body={<pre translate="no" className="flex-1 overflow-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink"><code>{file.text}</code></pre>}
+    >
+      {null}
+    </CodeBlock> : <Note>This file is empty.</Note>;
     body = <>
       {file.truncated && <Note>Showing a text preview of at most 64 KiB. Open or download the full file to read the rest.</Note>}
-      {file.text ? <CodeBlock
-        language="text"
-        text={file.text}
-        className="my-0 flex min-h-64 flex-1 flex-col"
-        body={<pre translate="no" className="flex-1 overflow-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink"><code>{file.text}</code></pre>}
-      >
-        {null}
-      </CodeBlock> : <Note>This file is empty.</Note>}
+      {file.text && !temporary && isMarkdown(target.path) ? <MarkdownFile sessionId={sessionId} workdir={workdir} path={target.path!} text={file.text}>{source}</MarkdownFile> : source}
     </>;
   } else if (file.kind === 'html' && target.frameable) {
     body = <iframe
