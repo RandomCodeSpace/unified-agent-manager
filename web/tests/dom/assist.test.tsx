@@ -1,10 +1,13 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { composer, openMenu, openTask, renderApp } from './render';
 
+/** The suggestion's accessible description, present while the ghost shows. */
+const ghost = () => document.getElementById('composer-suggestion');
+
 describe('assist', () => {
-  // First in the file: the replies are kept per Task for the page's life.
-  test('replies withheld while Background AI is paused are asked for again on the next look', async () => {
+  // First in the file: the suggestions are kept per Task for the page's life.
+  test('a suggestion withheld while Background AI is paused is asked for again on the next look', async () => {
     renderApp('#task=t3');
     const real = window.fetch;
     let paused = true;
@@ -19,44 +22,93 @@ describe('assist', () => {
     await waitFor(() => expect(asked).toBeGreaterThan(0));
     const title = screen.getByRole('heading', { level: 1 }).textContent;
     await new Promise((r) => setTimeout(r, 200));
-    expect(screen.queryByRole('group', { name: 'Suggested replies' })).toBeNull();
+    expect(ghost()).toBeNull();
+    expect(composer().placeholder).not.toBe('');
     // The limit is raised; another Task, then back: the service kept nothing, so the page asks again.
     paused = false;
     window.location.hash = '#task=t1';
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).not.toBe(title));
     window.location.hash = '#task=t3';
-    expect(await screen.findByRole('group', { name: 'Suggested replies' })).toBeTruthy();
+    await waitFor(() => expect(ghost()).not.toBeNull());
   });
 
-  test('a suggested reply fills the composer and sends nothing', async () => {
-    const { user, mock } = await openTask('t3');
-    const group = within(await screen.findByRole('group', { name: 'Suggested replies' }));
-    await user.click(group.getByRole('button', { name: 'Show me the diff' }));
-    expect(composer().value).toBe('Show me the diff');
-    expect(mock.received.filter((r) => r.route === 'prompt')).toHaveLength(0);
-    expect(screen.queryByRole('group', { name: 'Suggested replies' })).toBeNull();
-  });
-
-  test('suggested replies float above the composer, out of its flow, so it keeps its size', async () => {
+  test('after a finished turn the first suggestion is ghost text in the empty composer, described, not its value', async () => {
     await openTask('t3');
-    const group = await screen.findByRole('group', { name: 'Suggested replies' });
-    const form = composer().closest('form')!;
-    // Anchored to the composer's top edge (the form is its positioning box) and out of the flow, so the
-    // composer's height is the same with and without them; it never wraps, it scrolls sideways.
-    expect(form.classList.contains('relative')).toBe(true);
-    expect(group.parentElement).toBe(form);
-    for (const c of ['absolute', 'bottom-full', 'inset-x-0', 'overflow-x-auto']) expect(group.classList.contains(c)).toBe(true);
-    expect(group.classList.contains('flex-wrap')).toBe(false);
-    // Only the chips take pointer events: the conversation beneath still scrolls and clicks.
-    expect(group.classList.contains('pointer-events-none')).toBe(true);
-    const chips = within(group).getAllByRole('button');
-    expect(chips.length).toBeGreaterThan(0);
-    for (const chip of chips) {
-      expect(chip.classList.contains('pointer-events-auto')).toBe(true);
-      expect(chip.classList.contains('shrink-0')).toBe(true);
+    await waitFor(() => expect(ghost()).not.toBeNull());
+    const box = composer();
+    expect(box.value).toBe('');
+    // It stands in for the placeholder: the native one steps aside, and the ghost is read as the box's description.
+    expect(box.placeholder).toBe('');
+    expect(box.getAttribute('aria-describedby')).toBe('composer-suggestion');
+    expect(ghost()!.textContent).toBe('Suggestion: Run the whole test suite, press Right Arrow to use it');
+    // The visible copy is hidden from screen readers and sits over the textarea, out of its flow, so the composer keeps its height.
+    const shown = screen.getByText('Run the whole test suite');
+    expect(shown.getAttribute('aria-hidden')).toBe('true');
+    expect(shown.classList.contains('line-clamp-2')).toBe(true);
+    const layer = shown.parentElement!;
+    expect(layer.classList.contains('absolute')).toBe(true);
+    expect(layer.classList.contains('pointer-events-none')).toBe(true);
+    expect(layer.parentElement).toBe(box.parentElement);
+    // Only the first of the replies shows.
+    expect(screen.queryByText('Show me the diff')).toBeNull();
+  });
+
+  test('Right Arrow or End in the empty composer uses the suggestion and sends nothing; typing replaces it; clearing brings it back', async () => {
+    const { user, mock } = await openTask('t3');
+    await waitFor(() => expect(ghost()).not.toBeNull());
+    await user.click(composer());
+    await user.keyboard('{ArrowRight}');
+    expect(composer().value).toBe('Run the whole test suite');
+    expect(composer().selectionStart).toBe('Run the whole test suite'.length);
+    expect(ghost()).toBeNull();
+    // Once there is text, the arrow keys move the caret as usual.
+    await user.keyboard('{ArrowLeft}{ArrowRight}');
+    expect(composer().value).toBe('Run the whole test suite');
+    expect(mock.received.filter((r) => r.route === 'prompt')).toHaveLength(0);
+
+    await user.clear(composer());
+    await waitFor(() => expect(ghost()).not.toBeNull());
+    await user.keyboard('{End}');
+    expect(composer().value).toBe('Run the whole test suite');
+
+    await user.clear(composer());
+    await waitFor(() => expect(ghost()).not.toBeNull());
+    await user.keyboard('Wait');
+    expect(composer().value).toBe('Wait');
+    expect(ghost()).toBeNull();
+    expect(composer().getAttribute('aria-describedby')).toBeNull();
+    expect(mock.received.filter((r) => r.route === 'prompt')).toHaveLength(0);
+  });
+
+  test('on a touch screen the arrow button at the end of the ghost text uses the suggestion', async () => {
+    const { user, mock } = await openTask('t3');
+    const use = await screen.findByRole('button', { name: 'Use suggestion' });
+    // Shown only for a coarse pointer, whose keyboard has no Right Arrow; its target grows to 44px there (Button `icon`).
+    expect(use.classList.contains('hidden')).toBe(true);
+    expect(use.classList.contains('pointer-coarse:inline-flex')).toBe(true);
+    await user.click(use);
+    expect(composer().value).toBe('Run the whole test suite');
+    expect(document.activeElement).toBe(composer());
+    expect(mock.received.filter((r) => r.route === 'prompt')).toHaveLength(0);
+  });
+
+  test('no suggestion while the Task works, waits for an answer, or is read-only', async () => {
+    const { user } = await openTask('t3');
+    await waitFor(() => expect(ghost()).not.toBeNull());
+    // Sending starts a turn: the ghost goes with it.
+    await user.click(composer());
+    await user.keyboard('Go on{Enter}');
+    await waitFor(() => expect(composer().value).toBe(''));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(ghost()).toBeNull();
+    expect(composer().placeholder).not.toBe('');
+    for (const id of ['t1', 't2', 't12']) {
+      window.location.hash = `#task=${id}`;
+      await waitFor(() => expect(window.location.hash).toBe(`#task=${id}`));
+      await new Promise((r) => setTimeout(r, 150));
+      expect(ghost()).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Use suggestion' })).toBeNull();
     }
-    // Focus order is unchanged: the chips come before the composer's text.
-    expect(chips[0].compareDocumentPosition(composer()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   test('the composer has no saved prompts', async () => {

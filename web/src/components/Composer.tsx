@@ -8,8 +8,7 @@ import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '.
 import { visibleModels } from '../lib/models';
 import { foldToFit } from '../lib/toolbarFold';
 import { BackgroundTasks } from './BackgroundTasks';
-import { SuggestedReplies } from './Assist';
-import { insertAt } from '../lib/assist';
+import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
 import { ComposerUsage } from './ComposerUsage';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
@@ -528,14 +527,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     textarea.current?.focus();
   }
 
-  /** A suggested reply goes in at the caret; nothing is sent. */
-  function insertText(insert: string) {
-    const next = insertAt(text, caret, insert);
-    updateText(next.text, next.caret);
-    pendingCaret.current = next.caret;
-    textarea.current?.focus();
-  }
-
   function removeFile(path: string) {
     const next = removeToken(text, path);
     setFiles((f) => f.filter((x) => x !== path));
@@ -908,8 +899,22 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     });
   }
 
+  // The reply the owner would likely send next, as ghost text in the empty composer (Assist.tsx).
+  const suggestion = useSuggestion(session, !!newTask || !!answering || locked || !!busy || text !== '');
+  /** Puts the suggestion in the composer, the caret at its end; nothing is sent. */
+  function takeSuggestion() {
+    updateText(suggestion, suggestion.length);
+    pendingCaret.current = suggestion.length;
+    textarea.current?.focus();
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.nativeEvent.isComposing) return;
+    if (suggestion && (e.key === 'ArrowRight' || e.key === 'End') && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      takeSuggestion();
+      return;
+    }
     if (trigger) {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -1337,16 +1342,17 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </div>
       )}
 
-      <SuggestedReplies session={session} hidden={!!newTask || !!answering || locked || !!text.trim()} onPick={insertText} />
       <label className="sr-only" htmlFor="composer-text">
         {answering ? 'Your answer' : 'Message'}
       </label>
+      <div className="relative">
       <textarea
         ref={textarea}
         id="composer-text"
         rows={2}
         value={text}
-        placeholder={describePlaceholder()}
+        placeholder={suggestion ? '' : describePlaceholder()}
+        aria-describedby={suggestion ? SUGGESTION_ID : undefined}
         onChange={(e) => updateText(e.target.value, e.target.selectionStart ?? e.target.value.length)}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
         onKeyDown={onKeyDown}
@@ -1364,6 +1370,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {...combo}
         className={cn('max-h-[40dvh] min-h-14 w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-chat text-ink outline-hidden [field-sizing:content] disabled:text-muted max-sm:text-chat-lg', locked && 'min-h-0 h-2 pt-0')}
       />
+      {suggestion && <SuggestionGhost text={suggestion} onUse={takeSuggestion} />}
+      </div>
 
       {/* One control row (DESIGN.md D3): Attach and the pickers at left, the actions at right. On a phone the effort,
           context, permissions and execution pickers fold into a More menu; a narrow row folds its labels in priority order

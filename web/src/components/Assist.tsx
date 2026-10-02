@@ -1,3 +1,4 @@
+import { ArrowRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api, describeError, provider, type SessionDetail, type SessionSummary } from '../api';
 import { suggestionKey } from '../lib/assist';
@@ -13,11 +14,11 @@ import { Select } from './ui/select';
 const suggested = new Map<string, { key: string; replies: string[] }>();
 
 /**
- * Up to three replies the owner would likely send next, as buttons floating above the composer once a
- * turn has completed. One fills the composer and sends nothing. The service asks the Utility model
- * once per finished turn, only when a composer shows it; Settings → Composer turns them off.
+ * The reply the owner would likely send next, once a turn has completed with an answer: the first of the
+ * replies the service suggests, or '' while there is none. The service asks the Utility model once per
+ * finished turn, only when a composer would show it (`hidden` false); Settings → Composer turns it off.
  */
-export function SuggestedReplies({ session, hidden, onPick }: Readonly<{ session: SessionDetail; hidden: boolean; onPick: (text: string) => void }>) {
+export function useSuggestion(session: SessionDetail, hidden: boolean): string {
   const { settings } = useApp();
   const key = settings.suggest_replies === false ? '' : suggestionKey(session, session.recent_items ?? session.items);
   const [, setFetched] = useState(0);
@@ -36,19 +37,30 @@ export function SuggestedReplies({ session, hidden, onPick }: Readonly<{ session
     return () => controller.abort();
   }, [session.id, key, hidden]);
   const cached = suggested.get(session.id);
-  const replies = key && cached?.key === key ? cached.replies : [];
-  if (hidden || replies.length === 0) return null;
-  // Floats just above the composer's top edge, over the transcript's fading foot: out of the composer's flow, so
-  // showing or hiding it never resizes the composer or moves the conversation. One row; many replies scroll
-  // sideways in it. Only the chips take pointer events, so the conversation beneath still scrolls and clicks.
-  // The padding holds each chip's shadow and enlarged touch target (sm), which the scroller would otherwise clip.
+  return !hidden && key && cached?.key === key ? (cached.replies[0] ?? '') : '';
+}
+
+/** The suggestion's accessible description, which the composer's textarea points at. */
+export const SUGGESTION_ID = 'composer-suggestion';
+
+/**
+ * The suggestion as ghost text in the empty composer, where its placeholder would be: muted, in the
+ * textarea's font and padding, over the textarea and out of its flow, so it never changes the composer's
+ * height (two lines, then an ellipsis). Right Arrow or End in the empty composer uses it (Composer.tsx);
+ * on a touch screen, which has neither key, the arrow button at its end does. Typed text replaces it.
+ */
+export function SuggestionGhost({ text, onUse }: Readonly<{ text: string; onUse: () => void }>) {
   return (
-    <div role="group" aria-label="Suggested replies" data-suggestions="" className="pointer-events-none absolute inset-x-0 bottom-full flex gap-1.5 overflow-x-auto overscroll-x-contain px-1.5 py-2 animate-fade-in">
-      {replies.map((r) => (
-        <Button key={r} size="sm" variant="secondary" className="pointer-events-auto max-w-[min(20rem,75vw)] shrink-0 font-normal shadow-raised" title={r} onClick={() => onPick(r)}>
-          <span className="truncate">{r}</span>
-        </Button>
-      ))}
+    <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start gap-1 px-3.5 pt-3 animate-fade-in pointer-coarse:pr-1.5">
+      <span aria-hidden="true" className="line-clamp-2 min-w-0 flex-1 text-chat text-muted max-sm:text-chat-lg">
+        {text}
+      </span>
+      <span id={SUGGESTION_ID} className="sr-only">
+        Suggestion: {text}, press Right Arrow to use it
+      </span>
+      <Button size="icon" variant="subtle" aria-label="Use suggestion" className="pointer-events-auto -mt-0.5 hidden shrink-0 text-muted pointer-coarse:inline-flex" onClick={onUse}>
+        <ArrowRight />
+      </Button>
     </div>
   );
 }

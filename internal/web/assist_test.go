@@ -100,7 +100,8 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 	waitUntil(t, "the suggestion call", func() bool { return utilityCalls(prov, "suggest-replies") == 1 })
 	close(release)
 	wg.Wait()
-	want := []string{"Run the full suite", "Commit this", "Show me the diff"}
+	// A model that writes several lines anyway still yields one suggestion, its first, cleaned.
+	want := []string{"Run the full suite"}
 	for _, got := range results {
 		if got.ItemID != "a-make the test pass" || !slices.Equal(got.Replies, want) {
 			t.Fatalf("suggestions = %+v", got)
