@@ -14,7 +14,7 @@ import (
 // a proposal, since dependencies are part of planning and only starting work
 // needs the owner's confirmation. Self links, duplicates and links that
 // would close a cycle are refused. Agents may link a blocked card in their
-// scope, and a Task with no scope an epic it proposed (linkScope).
+// scope (inScope), which includes the epics a Task proposed.
 func (s *Store) Link(ctx context.Context, a Actor, blockerRef, blockedRef string) error {
 	if err := permit(a, opLink, ""); err != nil {
 		return err
@@ -32,7 +32,7 @@ func (s *Store) Link(ctx context.Context, a Actor, blockerRef, blockedRef string
 			if err != nil {
 				return err
 			}
-			if err := t.linkScope(o, a, blocked); err != nil {
+			if err := t.inScope(o, a, blocked); err != nil {
 				return err
 			}
 			blocker, err := t.blocker(o, blocked, blockerRef)
@@ -43,22 +43,6 @@ func (s *Store) Link(ctx context.Context, a Actor, blockerRef, blockedRef string
 		})
 	})
 	return err
-}
-
-// linkScope is inScope for the card a link blocks, except that a Task with
-// no scope, which proposes epics at the root (ADR 0005 decision 4), may also
-// link an epic it proposed, so it can map how its epics depend on each other.
-func (t *txn) linkScope(o *outline, a Actor, n *node) error {
-	if !a.owner() && n.Kind == KindEpic && n.ParentID == "" && !n.Confirmed() && n.CreatedBy == a.author() {
-		sc, err := t.scope(a.TaskID)
-		if err != nil {
-			return err
-		}
-		if sc == nil {
-			return nil
-		}
-	}
-	return t.inScope(o, a, n)
 }
 
 // blocker resolves ref as a blocker of n: a card in n's Project other than
@@ -208,7 +192,7 @@ func (s *Store) Unlink(ctx context.Context, a Actor, aRef, bRef string) error {
 			if slices.Contains(x.BlockedBy, y.ID) {
 				o, blocked = oa, x
 			}
-			if err := t.linkScope(o, a, blocked); err != nil {
+			if err := t.inScope(o, a, blocked); err != nil {
 				return err
 			}
 		}

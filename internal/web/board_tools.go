@@ -256,7 +256,8 @@ var boardToolSet = []boardTool{
 			"parent": stringProp("Only the direct children of this card. " + refDesc),
 		}), (*Manager).toolList),
 	defineTool("board_create", "Propose a card: an epic at the root of the board, with no parent; a story under an epic; or a subtask under a story or an epic. "+
-		"A task not started from a card may propose only epics, and can't change them afterwards; a task started from a card creates only within its scope and proposes no epics. "+
+		"A task not started from a card may propose epics and build them out: stories, subtasks and links under the epics it proposed, until work on a card starts. "+
+		"A task started from a card creates only within its scope and under cards it created, and proposes no epics. "+
 		"The card stays a proposal until the owner confirms it.",
 		toolSchema([]string{"kind", "title"}, map[string]any{
 			"kind":          enumProp("An epic holds stories and subtasks and needs no parent; a story holds subtasks; a subtask is one piece of work.", string(board.KindEpic), string(board.KindStory), string(board.KindSubtask)),

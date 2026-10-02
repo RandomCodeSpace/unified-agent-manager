@@ -556,7 +556,9 @@ func (t *txn) setScope(taskID, project, cardID string, working bool) error {
 }
 
 // inScope refuses an agent's write to n unless n is the Task's scope
-// container, under it, or the subtask the Task holds. The owner has no scope.
+// container, under it, a card the Task created that has not started or under
+// one (so a Task builds out the epics it proposes), or the subtask the Task
+// holds. The owner has no scope.
 func (t *txn) inScope(o *outline, a Actor, n *node) error {
 	if a.owner() {
 		return nil
@@ -568,11 +570,13 @@ func (t *txn) inScope(o *outline, a Actor, n *node) error {
 	if err != nil {
 		return err
 	}
-	if sc != nil && sc.project == o.project && sc.cardID != "" {
-		for m := n; m != nil; m = o.byID[m.ParentID] {
-			if m.ID == sc.cardID {
-				return nil
-			}
+	author := a.author()
+	for m := n; m != nil; m = o.byID[m.ParentID] {
+		if m.CreatedBy == author && !m.started() {
+			return nil
+		}
+		if sc != nil && sc.project == o.project && sc.cardID != "" && m.ID == sc.cardID {
+			return nil
 		}
 	}
 	return refuse(CodeForbidden, "%s is outside the Task's scope", n.ref())
