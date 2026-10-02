@@ -1,49 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ALONGSIDE_TEXT, answerFromComposer, answerPlaceholder, canAnswer, recommendedChoice } from '../src/lib/answer.ts';
+import { answerFromComposer, answerPlaceholder, canAnswer, recommendedChoice } from '../src/lib/answer.ts';
 
 const both = { custom: true };
 const optionsOnly = { custom: false };
-const input = (over = {}) => ({ text: '', staged: [], files: [], attachments: [], ...over });
 
-test('staged options are the answer; typed text beside them rides alongside as a steer', () => {
-  assert.deepEqual(answerFromComposer(both, input({ staged: ['Retry once'] })), { answers: [['Retry once']], alongside: null });
-  assert.deepEqual(answerFromComposer(both, input({ staged: ['npm', 'yarn'], text: '  and keep the lockfile ' })), {
-    answers: [['npm', 'yarn']],
-    alongside: { text: 'and keep the lockfile', files: [], attachments: [] },
-  });
+test('the answer is the typed text or the staged options, never both and nothing beside them', () => {
+  assert.deepEqual(answerFromComposer(both, '', ['Retry once']), [['Retry once']]);
+  assert.deepEqual(answerFromComposer(both, '', ['npm', 'yarn']), [['npm', 'yarn']]);
+  assert.deepEqual(answerFromComposer(both, ' Once, then fail. ', []), [['Once, then fail.']]);
+  assert.deepEqual(answerFromComposer(both, 'bun', ['npm']), [['bun']]);
+  assert.equal(answerFromComposer(both, '   ', []), null);
 });
 
-test('without a staged option the typed text answers, only where the question allows free text', () => {
-  assert.deepEqual(answerFromComposer(both, input({ text: ' Once, then fail. ' })), { answers: [['Once, then fail.']], alongside: null });
-  assert.equal(answerFromComposer(optionsOnly, input({ text: 'npm please' })), null);
-  assert.equal(answerFromComposer(both, input({ text: '   ' })), null);
-  assert.equal(answerFromComposer(optionsOnly, input()), null);
-});
-
-test('files never answer: they go alongside, with the typed note or the default text', () => {
-  assert.deepEqual(answerFromComposer(both, input({ staged: ['npm'], attachments: ['att-1'], files: ['docs/web.md'] })), {
-    answers: [['npm']],
-    alongside: { text: ALONGSIDE_TEXT, files: ['docs/web.md'], attachments: ['att-1'] },
-  });
-  assert.deepEqual(answerFromComposer(both, input({ text: 'See the screenshot', attachments: ['att-1'] })), {
-    answers: [['See the screenshot']],
-    alongside: { text: ALONGSIDE_TEXT, files: [], attachments: ['att-1'] },
-  });
-  assert.deepEqual(answerFromComposer(optionsOnly, input({ staged: ['pnpm'], text: 'the CI uses it', attachments: ['att-2'] })), {
-    answers: [['pnpm']],
-    alongside: { text: 'the CI uses it', files: [], attachments: ['att-2'] },
-  });
+test('a question without free text takes only an option', () => {
+  assert.equal(answerFromComposer(optionsOnly, 'npm please', []), null);
+  assert.deepEqual(answerFromComposer(optionsOnly, 'npm please', ['pnpm']), [['pnpm']]);
+  assert.equal(answerFromComposer(optionsOnly, '', []), null);
 });
 
 test('the result never shares arrays with the input', () => {
   const staged = ['npm'];
-  const files = ['a.go'];
-  const out = answerFromComposer(both, input({ staged, files, text: 'x' }));
-  out.answers[0].push('extra');
-  out.alongside.files.push('b.go');
+  const out = answerFromComposer(both, '', staged);
+  out[0].push('extra');
   assert.deepEqual(staged, ['npm']);
-  assert.deepEqual(files, ['a.go']);
 });
 
 test('Answer is enabled by a staged option, or by typed text where free text is allowed', () => {
@@ -54,10 +34,10 @@ test('Answer is enabled by a staged option, or by typed text where free text is 
   assert.equal(canAnswer(optionsOnly, ['npm'], ''), true);
 });
 
-test('the placeholder says whether typed text answers or annotates', () => {
+test('the placeholder invites a typed answer, which replaces a staged option', () => {
   assert.equal(answerPlaceholder(both, false), 'Type your answer…');
-  assert.equal(answerPlaceholder(both, true), 'Add a note (sent with your answer)…');
-  assert.equal(answerPlaceholder(optionsOnly, false), 'Add a note (sent with your answer)…');
+  assert.equal(answerPlaceholder(both, true), 'Or type your own answer…');
+  assert.equal(answerPlaceholder(optionsOnly, false), 'Choose an option above…');
 });
 
 test('the recommended option is the first whose label ends with "(Recommended)", in any case', () => {

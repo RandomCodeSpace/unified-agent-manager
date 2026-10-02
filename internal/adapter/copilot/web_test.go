@@ -1095,6 +1095,9 @@ func TestWebQuestionAnswers(t *testing.T) {
 	}{
 		{"choice", nil, "blue", copilot.UserInputResponse{Answer: "blue", WasFreeform: false}},
 		{"custom", copilot.Bool(true), "teal", copilot.UserInputResponse{Answer: "teal", WasFreeform: true}},
+		// The owner may always type their own answer, even where the agent asked for a choice only.
+		{"choice only", copilot.Bool(false), "teal", copilot.UserInputResponse{Answer: "teal", WasFreeform: true}},
+		{"choice only, picked", copilot.Bool(false), "red", copilot.UserInputResponse{Answer: "red", WasFreeform: false}},
 	}
 	for _, tc := range cases {
 		done := askAsync(h.fs, copilot.UserInputRequest{Question: "Colour?", Choices: []string{"red", "blue"}, AllowFreeform: tc.freeform})
@@ -1115,11 +1118,8 @@ func TestWebQuestionAnswers(t *testing.T) {
 	}
 
 	done := askAsync(h.fs, copilot.UserInputRequest{Question: "Pick", Choices: []string{"a"}, AllowFreeform: copilot.Bool(false)})
-	waitFor(t, "strict question", func() bool { q := h.sink.question(); return q.Questions[0].Text == "Pick" })
+	waitFor(t, "declined question", func() bool { q := h.sink.question(); return q.Questions[0].Text == "Pick" })
 	q := h.sink.question()
-	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"zzz"}}}); err == nil {
-		t.Fatal("free-form answer accepted for a choice-only question")
-	}
 	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Reject: true}); err != nil {
 		t.Fatalf("reject: %v", err)
 	}
