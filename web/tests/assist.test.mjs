@@ -1,12 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { insertAt, suggestionKey } from '../src/lib/assist.ts';
-
-test('an inserted text sits on its own line at the caret', () => {
-  assert.deepEqual(insertAt('', 0, 'go'), { text: 'go', caret: 2 });
-  assert.deepEqual(insertAt('ab', 1, 'go'), { text: 'a\ngo\nb', caret: 4 });
-  assert.deepEqual(insertAt('a\n', 2, 'go'), { text: 'a\ngo', caret: 4 });
-});
+import { suggestionKey } from '../src/lib/assist.ts';
 
 test('replies are suggested only after a completed turn that ends with the answer', () => {
   const items = [{ id: 'u', kind: 'user' }, { id: 'a', kind: 'assistant' }, { id: 's', kind: 'assistant', agent_id: 'sub' }];

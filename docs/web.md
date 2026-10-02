@@ -689,18 +689,21 @@ sign-outs are logged without the token.
   prompt and pauses the remaining queue. Attachment uploads accept an optional
   `model` query parameter for the draft's offered model; submission and dispatch
   recheck its media support without changing the running turn.
-- **Suggested replies**: when a turn completes with an answer, up to three
-  short replies you would likely send next float in one row just above the
-  composer, over the end of the conversation, so the composer keeps its size
-  as they come and go (on a narrow screen the row scrolls sideways; "Jump to
-  bottom" rises above it). Choosing one puts it in the composer; nothing is sent until
-  you send it. They come from one Utility model call, made the first time a
-  composer shows that turn, with your last message and the agent's final
-  answer; the replies are kept with the Task, so opening it again, in any
-  browser or after a restart, asks for nothing more. None show while the
-  Task works, waits for you, has queued messages, or once you start typing.
-  Without a Utility model, or past today's Background AI limit, there are
-  none. Settings → Composer → **Suggest replies** turns them off.
+- **Suggested reply**: when a turn completes with an answer, the message you
+  would most likely send next shows as muted ghost text in the empty composer,
+  where its placeholder would be (two lines, then an ellipsis; the composer
+  keeps its size). Right Arrow or End in the empty composer puts it in the
+  box with the cursor at its end, ready to edit or send; nothing is sent
+  until you send it. On a touch screen an arrow button at the end of the
+  ghost text does the same. Typing replaces it, and clearing the box brings
+  it back. Screen readers hear it as the box's description. It comes from
+  one Utility model call, made the first time a composer shows that turn,
+  with your last message and the agent's final answer; the service keeps the
+  result with the Task, so opening it again, in any browser or after a
+  restart, asks for nothing more. None shows while the Task works, waits for
+  you, has queued messages, or is read-only. Without a Utility model, or past
+  today's Background AI limit, there is none. Settings → Composer →
+  **Suggest replies** turns it off.
 - **Outcome line**: when a turn completes, the Task gets a one-line summary
   such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
   Task's row in the sidebar shows it as its status line ("Ready for review:"

@@ -1,19 +1,7 @@
-// The assist features' pure parts (docs/web.md): inserting text at the caret, when a Task's last
-// turn may get suggested replies, and saving a downloaded file. Pure, so the node
-// tests run them.
+// The assist features' pure parts (docs/web.md): when a Task's last turn may get a suggested
+// reply, and saving a downloaded file. Pure, so the node tests run them.
 
 import type { Item, SessionSummary } from '../api';
-
-/** `text` with `insert` at `caret`, on its own line when the text around it is not empty; and the caret after it. */
-export function insertAt(text: string, caret: number, insert: string): { text: string; caret: number } {
-  const at = Math.max(0, Math.min(caret, text.length));
-  const before = text.slice(0, at);
-  const after = text.slice(at);
-  const lead = before && !before.endsWith('\n') ? '\n' : '';
-  const tail = after && !after.startsWith('\n') ? '\n' : '';
-  const next = before + lead + insert + tail + after;
-  return { text: next, caret: (before + lead + insert).length };
-}
 
 /**
  * The ID of the item the Task's main transcript ends with when replies may be suggested for it:

@@ -49,6 +49,10 @@ const EVIDENCE: Record<string, Omit<TurnEvidence, 'since'>> = {
 
 /** Replies the mock suggests for a Task's last answer. */
 const REPLIES = ['Run the whole test suite', 'Commit this with a short message', 'Show me the diff'];
+/** A Task whose suggestion is longer than the empty composer holds. */
+const LONG_REPLIES: Record<string, string[]> = {
+  t21: ['Upload the .sig files next to each archive in the release job, then add a section to the install docs that explains how to fetch the public key and verify a downloaded archive with cosign before anyone runs it, and link it from the README.'],
+};
 
 export function assistMock(host: AssistHost) {
   return function route(method: string, url: URL, body: Json): Response | null {
@@ -59,7 +63,7 @@ export function assistMock(host: AssistHost) {
       if (!t) return fail(404, 'session not found');
       const last = t.items.filter((i) => !i.agent_id).at(-1);
       const on = host.settings().suggest_replies !== false && t.state === 'completed' && last?.kind === 'assistant';
-      return json(200, on ? { item_id: last.id, replies: REPLIES } : { item_id: '', replies: [] });
+      return json(200, on ? { item_id: last.id, replies: LONG_REPLIES[t.id] ?? REPLIES } : { item_id: '', replies: [] });
     }
     if ((r = path.match(/^\/api\/sessions\/([^/]+)\/evidence$/)) && method === 'GET') {
       const t = host.task(decodeURIComponent(r[1]));
