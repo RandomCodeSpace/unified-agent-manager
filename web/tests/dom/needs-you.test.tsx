@@ -35,6 +35,24 @@ describe('the Task list', () => {
     await waitFor(() => expect(header().textContent).toBe('Set up the dependency lockfile'));
   });
 
+  test('a Task row stays two lines: the status line is one truncated line, its whole text in the row title', async () => {
+    renderApp();
+    const side = await sidebar();
+    const rows = side.getByRole('region', { name: /Needs you/ }).querySelectorAll<HTMLElement>('[data-task-row]');
+    expect(rows.length).toBeGreaterThan(2);
+    for (const el of rows) {
+      const button = el.querySelector<HTMLButtonElement>('button[data-nav]')!;
+      // Line one (badge, name, changes, time) and the status line; nothing else stacks in the row.
+      expect(button.children).toHaveLength(2);
+      const status = button.children[1] as HTMLElement;
+      expect(status.classList.contains('truncate')).toBe(true);
+      expect(el.querySelector('[class*="line-clamp"]')).toBeNull();
+      expect(button.title).toContain(status.textContent!.replace(/^, /, ''));
+    }
+    // The long ask is cut on the row, never lost: the title holds all of it.
+    expect(row('t19').getByRole('button', { name: /Cross-compile the release binaries/ }).title).toMatch(/Asks: Pick every platform the release should ship\. Each one is a CI job/);
+  });
+
   test('Alt+J and Alt+K walk the Needs you group and wrap; a key that types in a field is left alone', async () => {
     renderApp();
     const side = await sidebar();
