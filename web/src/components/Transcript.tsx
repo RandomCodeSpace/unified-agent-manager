@@ -445,9 +445,9 @@ function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; l
  * turn runs, the working mark, the turn's verb and how long the turn has been busy; what the
  * agent is doing stays in the transcript. It sits outside the transcript, so it stays in view at
  * any scroll position and whichever history page is loaded; `items` is the live tail. Its width
- * holds while the time counts up, so it never shifts.
+ * holds while the time counts up, so it never shifts. While the conversation compacts it says so in place of the verb.
  */
-export function WorkingLabel({ working, since, items, identityItems = items, turnTimings = [] }: Readonly<{ working: boolean; since?: string; items: Item[]; identityItems?: Item[]; turnTimings?: TurnTiming[] }>) {
+export function WorkingLabel({ working, compacting = false, since, items, identityItems = items, turnTimings = [] }: Readonly<{ working: boolean; compacting?: boolean; since?: string; items: Item[]; identityItems?: Item[]; turnTimings?: TurnTiming[] }>) {
   const [now, setNow] = useState(() => Date.now());
   const timing = turnTimings.at(-1);
   const ticking = working && (!!since || !timing?.paused_at);
@@ -467,10 +467,10 @@ export function WorkingLabel({ working, since, items, identityItems = items, tur
   const elapsed = working ? (since ? elapsedSince(since, now) : timing?.state === 'working' ? turnElapsed(timing, now) : null) : null;
   return (
     <Appear show={working}>
-      {working && <output className="sr-only">Busy</output>}
+      {working && <output className="sr-only">{compacting ? 'Compacting the conversation' : 'Busy'}</output>}
       <span aria-hidden="true" className="flex h-7 items-center gap-2 rounded-sm bg-raised px-2.5 text-caption text-muted shadow-float">
         <WorkingMark />
-        <span className="animate-shimmer whitespace-nowrap motion-reduce:animate-none">{turnVerb(turnId)}…</span>
+        <span className="animate-shimmer whitespace-nowrap motion-reduce:animate-none">{compacting ? 'Compacting the conversation' : turnVerb(turnId)}…</span>
         {/* Under an hour the time is at most three characters wide: the slot holds them all. */}
         {elapsed && <span className="min-w-[3ch] text-right tabular-nums text-faint">{elapsed}</span>}
       </span>

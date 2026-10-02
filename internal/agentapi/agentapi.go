@@ -718,6 +718,10 @@ const (
 	// EventUsage reports the conversation's AI units so far in Event.Usage.
 	EventUsage     EventKind = "usage"
 	EventExecution EventKind = "execution"
+	// EventCompaction reports that the provider started (Compacting) or
+	// finished compacting the main conversation; how it ended arrives as a
+	// notice item.
+	EventCompaction EventKind = "compaction"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -736,6 +740,8 @@ type Event struct {
 	Error string
 	// Title is the untrusted provider title for EventTitle.
 	Title string
+	// Compacting is the payload of EventCompaction.
+	Compacting bool
 }
 
 // ItemKind classifies transcript entries.

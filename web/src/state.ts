@@ -538,9 +538,9 @@ function upsert<T extends { id: string }>(list: T[], v: T): T[] {
 
 function withSession(state: State, s: SessionSummary): State {
   const detail = state.detail;
-  // state_detail, last_model, context and usage are omitempty on the wire: an absent key must clear the old value.
+  // state_detail, last_model, context, usage and compacting are omitempty on the wire: an absent key must clear the old value.
   const merged =
-    detail?.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context, usage: s.usage, execution: s.execution } : detail;
+    detail?.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context, usage: s.usage, execution: s.execution, compacting: s.compacting } : detail;
   return { ...state, sessions: upsert(state.sessions, s), detail: merged };
 }
 

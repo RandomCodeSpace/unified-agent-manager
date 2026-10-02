@@ -504,9 +504,11 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       name: '',
       title: '',
       state: 'working',
+      // The provider compacts the conversation while the turn runs; an earlier compaction left its notice.
+      compacting: true,
       created_at: ago(0),
       updated_at: ago(0),
-      items: [{ id: 'i1', kind: 'user', time: ago(0), text: 'Which of these aliases are never used? Check the zsh history file.\n\n```sh\nalias gs="git status"\nalias gl="git log --oneline"\nalias dcu="docker compose up"\nalias serve="python -m http.server"\n```' }],
+      items: [{ id: 'n0', kind: 'notice', time: ago(0), text: 'Compacted the conversation · freed 41,210 tokens.' }, { id: 'i1', kind: 'user', time: ago(0), text: 'Which of these aliases are never used? Check the zsh history file.\n\n```sh\nalias gs="git status"\nalias gl="git log --oneline"\nalias dcu="docker compose up"\nalias serve="python -m http.server"\n```' }],
     }),
     task({
       id: 't8',

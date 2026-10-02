@@ -238,3 +238,32 @@ func TestTaskContextCapabilityAndHTTPPatch(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskCompactingFollowsProviderAndConversation(t *testing.T) {
+	m, p, _ := newTestManager(t)
+	sum, c := createSession(t, m, p)
+	if data, _ := json.Marshal(sum); strings.Contains(string(data), `"compacting"`) {
+		t.Fatalf("new task = %s", data)
+	}
+	c.Emit(agentapi.Event{Kind: agentapi.EventCompaction, Compacting: true})
+	if got := summaryOf(t, m, sum.ID); !got.Compacting || got.State != sum.State {
+		t.Fatalf("compacting summary = %+v", got)
+	}
+	c.Emit(agentapi.Event{Kind: agentapi.EventCompaction})
+	if summaryOf(t, m, sum.ID).Compacting {
+		t.Fatal("finished compaction still reported")
+	}
+	c.Emit(agentapi.Event{Kind: agentapi.EventCompaction, Compacting: true})
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if summaryOf(t, m, sum.ID).Compacting {
+		t.Fatal("closed conversation reported compacting")
+	}
+	if _, err := m.Submit(sum.ID, PromptRequest{Text: "reopen", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+		t.Fatal(err)
+	}
+	if summaryOf(t, m, sum.ID).Compacting {
+		t.Fatal("reopened conversation inherited compacting")
+	}
+}

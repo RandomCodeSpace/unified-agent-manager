@@ -287,6 +287,9 @@ type SessionSummary struct {
 	// turn runs, after one that did not complete, and when there is nothing
 	// to say.
 	Outcome string `json:"outcome,omitempty"`
+	// Compacting is set while the open conversation is being compacted
+	// (the /compact command or the provider's automatic compaction).
+	Compacting bool `json:"compacting,omitempty"`
 }
 
 // DiffStat totals a list of changed files.

@@ -23,6 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/dustin/go-humanize"
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 
@@ -2802,6 +2803,17 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		if agentID == "" {
 			c.turnErr = clip(displaytext.Sanitize(d.Message), maxErrorText)
 		}
+	case *rpc.SessionCompactionStartData:
+		// Manual (/compact) and automatic compaction both report here.
+		if agentID == "" {
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction, Compacting: true})
+		}
+		return
+	case *rpc.SessionCompactionCompleteData:
+		// Its notice item follows.
+		if agentID == "" {
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction})
+		}
 	case *rpc.UserMessageData:
 		if agentID == "" && d.MessageID != nil {
 			c.steers = slices.DeleteFunc(c.steers, func(st *steer) bool { return st.id == *d.MessageID })
@@ -3271,12 +3283,15 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		it.ID, it.Kind, it.Text = reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.Content
 		it.Time, it.EndedAt = t.thoughtStart(it.AgentID, ev.Timestamp), ev.Timestamp
 	case *rpc.SessionCompactionCompleteData:
-		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Conversation compacted."
+		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Compacted the conversation."
+		if d.TokensRemoved != nil && *d.TokensRemoved > 0 {
+			it.Text = "Compacted the conversation · freed " + humanize.Comma(*d.TokensRemoved) + " tokens."
+		}
 		if !d.Success {
-			it.Text = "Conversation compaction failed."
+			it.Text = "Compacting the conversation failed."
 			if d.Error != nil {
 				text, cut := t.clip(displaytext.Sanitize(*d.Error), maxErrorText)
-				it.Text, it.Clipped = it.Text+" "+text, cut
+				it.Text, it.Clipped = "Compacting the conversation failed: "+text, cut
 			}
 		}
 	case *rpc.SessionTruncationData:

@@ -378,3 +378,11 @@ test('older subagent pages go before the held list until the first recorded one,
   assert.deepEqual(state.detail.subagents.map((s) => s.id), ['d']);
   assert.equal(state.detail.subagents_before, 'a.d');
 });
+
+test('a summary without compacting clears it on the open Task and its row', () => {
+  let state = update(loading(), { name: 'session', seq: 11, session: { id: 'task', state: 'completed', compacting: true } });
+  assert.equal(state.detail.compacting, true);
+  state = update(state, { name: 'session', seq: 12, session: { id: 'task', state: 'completed' } });
+  assert.equal(state.detail.compacting, undefined);
+  assert.equal(state.sessions.find((s) => s.id === 'task').compacting, undefined);
+});
