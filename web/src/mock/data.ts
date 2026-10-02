@@ -229,6 +229,11 @@ export function seed(): MockState {
     started_at: ago(11),
     model: 'gpt-5-mini',
     effort: 'low',
+    // Resumed a minute ago; nothing of this run is recorded yet.
+    runs: [
+      { started_at: ago(11), ended_at: ago(10.5), status: 'completed', trigger: 'spawn' },
+      { started_at: ago(1), status: 'running', trigger: 'agent' },
+    ],
   };
   const a3: Subagent = {
     id: 'a3',

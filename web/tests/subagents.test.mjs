@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countParts, countSubagents, earlierTag, indexGroups, inFilter, liveRows, liveSet, matches, parentMap, ranAgain, replyIndex, runLines, spawnedBy, statusGroups } from '../src/lib/subagents.ts';
+import { countParts, countSubagents, earlierTag, indexGroups, inFilter, liveRows, liveSet, matches, parentMap, ranAgain, replyIndex, runCount, runLines, spawnedBy, statusGroups } from '../src/lib/subagents.ts';
 
 const at = (m) => `2026-10-02T17:${String(m).padStart(2, '0')}:00Z`;
 const user = (id, m, text = `Message ${id}`) => ({ id, kind: 'user', time: at(m), text });
@@ -86,7 +86,7 @@ test('the live card shows failed then running rows, five at most, plus the open 
   assert.equal(all.rest, '');
   assert.equal(liveRows(set.slice(0, 2), false).rest, '');
   // An open row that has finished stays where it was read.
-  const kept = liveRows(set, false, 'd1');
+  const kept = liveRows(set, false, { id: 'd1' });
   assert.deepEqual(kept.rows.map((x) => x.subagent.id), ['f1', 'r1', 'r2', 'r3', 'r4', 'd1']);
   assert.equal(kept.rest, '1 more running · 1 done · 1 stopped');
 });
@@ -152,4 +152,47 @@ test('the header index groups subagents by the user message that started their r
   ]);
   // A message whose text is not loaded keeps its time; the caller words it.
   assert.deepEqual(indexGroups(index, [], [agent('a1', 'c1')]).map((g) => [g.key, g.text, g.time]), [['u1', '', at(0)]]);
+});
+
+test('an open row keeps its place: in the live card at the index it was opened at, in a long list in the group it was opened in', () => {
+  const set = [agent('f', 'c-f', 'failed'), agent('r1', 'c-r1', 'running'), agent('r2', 'c-r2', 'running'), agent('r3', 'c-r3', 'running')].map((subagent) => ({ subagent, earlier: false }));
+  assert.deepEqual(liveRows(set, false, { id: 'r1' }).rows.map((x) => x.subagent.id), ['f', 'r1', 'r2', 'r3']);
+  // r1 finished while open: sorted by state it would go last; held at 1 it stays put.
+  const after = set.map((x) => (x.subagent.id === 'r1' ? { ...x, subagent: agent('r1', 'c-r1') } : x));
+  assert.deepEqual(liveRows(after, false, { id: 'r1' }).rows.map((x) => x.subagent.id), ['f', 'r2', 'r3', 'r1']);
+  assert.deepEqual(liveRows(after, false, { id: 'r1', at: 1 }).rows.map((x) => x.subagent.id), ['f', 'r1', 'r2', 'r3']);
+  assert.deepEqual(liveRows(after, true, { id: 'r1', at: 1 }).rows.map((x) => x.subagent.id), ['f', 'r1', 'r2', 'r3']);
+  const list = [agent('a', 'c1', 'completed'), agent('b', 'c2', 'running')];
+  assert.deepEqual(statusGroups(list, { id: 'a', key: 'running' }).map((g) => [g.key, g.subagents.map((x) => x.id)]), [['running', ['a', 'b']]]);
+  assert.deepEqual(statusGroups(list).map((g) => g.key), ['running', 'done']);
+});
+
+test('a full run record says "50+ runs" and marks where earlier runs were dropped', () => {
+  const run = (m, trigger = 'agent') => ({ started_at: at(m % 60), ended_at: at(m % 60), status: 'completed', trigger });
+  assert.equal(runCount(agent('a', 'c')), '');
+  assert.equal(runCount(agent('a', 'c', 'completed', { runs: [run(1, 'spawn'), run(2)] })), '2 runs');
+  const full = agent('a', 'c', 'completed', { runs: [run(0, 'spawn'), ...Array.from({ length: 49 }, (_, i) => run(i + 1))] });
+  assert.equal(runCount(full), '50+ runs');
+  const lines = runLines(full);
+  assert.deepEqual(lines.slice(0, 3).map((l) => [l.n, l.gapBefore]), [[1, false], [null, true], [null, false]]);
+  assert.equal(lines.at(-1).n, null);
+});
+
+test('a run without a recorded start keeps its line without a time and is not used for wording', () => {
+  const lines = runLines(agent('a', 'c', 'running', { runs: [{ status: 'completed', trigger: 'spawn' }, { started_at: at(20), status: 'running', trigger: 'user' }] }));
+  assert.deepEqual(lines.map((l) => [l.n, l.started_at, l.outcome]), [[1, undefined, '✓'], [2, at(20), 'running']]);
+  assert.deepEqual(earlierTag(agent('a', 'c', 'running', { runs: [{ status: 'completed', trigger: 'spawn' }, { started_at: at(20), status: 'running', trigger: 'user' }] })), { text: 'your follow-up', first: undefined });
+  const replies = replyIndex([user('u1', 0), call('c1', 1), user('u2', 10)], [agent('a1', 'c1')]);
+  assert.equal(ranAgain(agent('a1', 'c1', 'completed', { runs: [{ status: 'completed', trigger: 'spawn' }, { status: 'completed', trigger: 'agent' }] }), replies), null);
+});
+
+test('"ran again" compares instants, whatever the zone or fraction of each time', () => {
+  const index = [user('u1', 0), call('c1', 1), { ...user('u2', 10), time: '2026-10-02T17:10:00.500Z' }];
+  const replies = replyIndex(index, [agent('a1', 'c1')]);
+  const run = (started_at) => ({ started_at, status: 'completed', trigger: 'agent' });
+  // 18:05 at +02:00 is 16:05Z, before the second message: as text it would sort after it.
+  assert.equal(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(at(1)), run('2026-10-02T18:05:00+02:00')] }), replies), null);
+  // Half a second before the message, though "…00Z" sorts after "…00.500Z" as text.
+  assert.equal(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(at(1)), run('2026-10-02T17:10:00Z')] }), replies), null);
+  assert.deepEqual(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(at(1)), run('2026-10-02T19:12:00.123+02:00')] }), replies), { at: '2026-10-02T19:12:00.123+02:00', reply: 'u2' });
 });

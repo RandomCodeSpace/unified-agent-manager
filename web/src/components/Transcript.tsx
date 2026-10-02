@@ -120,7 +120,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       </div>
     ) : null;
   };
-  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
+  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
   const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
   // other: a declared file's card in both densities, the images its result returned in Compact.
@@ -537,6 +537,8 @@ interface RenderContext {
   /** The subagent a `task` call spawned (main transcript only), and its row, which takes the call's place in its turn's activity (Detailed). */
   subagentOf?: (item: Item) => Subagent | undefined;
   foldedSubagentRow?: (item: Item) => ReactNode | null;
+  /** The subagents' identity tones, which their rows (in `foldedSubagentRow`) draw. */
+  tones?: ReadonlyMap<string, IdentityTone>;
   /** The `task` calls of the reply whose list a call hosts (Detailed, past eight), so `locate` finds the run that holds it. */
   hostedBy?: (item: Item) => string[] | undefined;
 }
@@ -661,7 +663,7 @@ const ActivityRun = memo(function ActivityRun({ identity, entries, ctx, endedAt,
 }, (a, b) => {
   const same = (x: Entry, y: Entry) => (x.item ?? x.interaction) === (y.item ?? y.interaction);
   // `thoughtEnd` is rebuilt every render; what it says about these entries changes only with them or with `endedAt`.
-  return a.endedAt === b.endedAt && a.className === b.className && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.approvals === b.ctx.approvals && a.ctx.arrival === b.ctx.arrival
+  return a.endedAt === b.endedAt && a.className === b.className && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.approvals === b.ctx.approvals && a.ctx.arrival === b.ctx.arrival && a.ctx.tones === b.ctx.tones
     && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]))
     && a.entries.every((e) => !e.item || (a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item) && a.ctx.hostedBy?.(e.item) === b.ctx.hostedBy?.(e.item)));
 });

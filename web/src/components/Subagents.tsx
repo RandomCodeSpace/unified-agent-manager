@@ -9,7 +9,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
-import { FILTER_OVER, GROUP_OVER, IDENTITY_LIMIT, LIVE_ROWS, PAGE_ROWS, countParts, countSubagents, earlierTag, inFilter, indexGroups, liveRows, liveSet, matches, ranAgain, replyIndex, runLines, statusGroups, subagentNoun, type CountPart, type IdentityTone, type IndexFilter, type IndexGroup, type LiveSubagent, type Replies, type StatusGroup, type SubagentCounts } from '../lib/subagents';
+import { FILTER_OVER, GROUP_OVER, IDENTITY_LIMIT, LIVE_ROWS, PAGE_ROWS, countParts, countSubagents, earlierTag, inFilter, indexGroups, liveRows, liveSet, matches, ms, parentMap, ranAgain, replyIndex, runCount, runLines, statusGroups, subagentNoun, type CountPart, type IdentityTone, type IndexFilter, type IndexGroup, type LiveSubagent, type Replies, type StatusGroup, type SubagentCounts } from '../lib/subagents';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
@@ -32,8 +32,12 @@ interface StopState {
 const NOT_STOPPING: StopState = { busy: false, requested: false, error: null };
 
 /** One record of stop requests per Task, so every row of a subagent agrees. */
-function useStops(sessionId: string): [Record<string, StopState>, (agentId: string) => void] {
+function useStops(sessionId: string, subagents: readonly Subagent[]): [Record<string, StopState>, (agentId: string) => void] {
   const [stops, setStops] = useState<Record<string, StopState>>({});
+  // A request (or its failure) belongs to the run it was for: once the subagent no longer runs it
+  // goes, so a later run can be stopped again.
+  const over = Object.keys(stops).filter((agentId) => !stops[agentId].busy && subagents.find((x) => x.id === agentId)?.status !== 'running');
+  if (over.length) setStops((all) => Object.fromEntries(Object.entries(all).filter(([agentId]) => !over.includes(agentId))));
   const set = (agentId: string, v: StopState) => setStops((all) => ({ ...all, [agentId]: v }));
   async function stop(agentId: string) {
     const current = stops[agentId];
@@ -49,7 +53,11 @@ function useStops(sessionId: string): [Record<string, StopState>, (agentId: stri
   return [stops, (agentId) => void stop(agentId)];
 }
 
-const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+/** HH:MM on the local clock; empty for a missing or unreadable time. */
+const clock = (iso?: string) => {
+  const at = iso ? new Date(iso) : null;
+  return at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+};
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
 const BOTTOM_SLACK = 32;
@@ -66,7 +74,7 @@ function nearEdge(el: HTMLElement, direction: 'older' | 'newer'): boolean {
 }
 
 /** Why a follow-up cannot be sent now; null when it can. */
-function followUpBlocked(session: SessionDetail): string | null {
+function followUpBlocked(session: Pick<SessionDetail, 'stage' | 'state'>): string | null {
   if (readOnly(session)) return session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.';
   if (LIVE.includes(session.state)) return 'Unavailable while the task is running a turn.';
   return null;
@@ -141,16 +149,44 @@ interface Expanded {
   place: Place;
 }
 
-/** Everything a subagent row may read, swapped whole on every change of the Task; rows select only what they show. */
-interface ScopeData {
-  session: SessionDetail;
+/** A run picked in an open row: its transcript shows the run's first item. `n` counts the picks. */
+interface Seek {
+  time: string;
+  /** The first run: the transcript's start. */
+  first: boolean;
+  /** Still running: with nothing of it recorded yet, the transcript's end. */
+  running: boolean;
+  n: number;
+}
+
+/** What of the Task a subagent row and its composer read; kept while those fields are unchanged, so streaming leaves it alone. */
+type TaskInfo = Pick<SessionDetail, 'id' | 'provider' | 'workdir' | 'interactions' | 'stage' | 'state'>;
+
+/** What a row's one line is read from: its transcript or latest step, and its `task` call. */
+interface Summaries {
   agents: Record<string, AgentTranscript>;
   agentSteps: Record<string, Item>;
+  /** The `task` calls held (the window and the live tail), by id. */
+  calls: ReadonlyMap<string, Item>;
+}
+
+/**
+ * Everything a subagent row may read, swapped whole when it changes; rows select only what they
+ * show. Nothing in it changes while the main agent streams, so a token renders none of them.
+ */
+interface ScopeData {
+  task: TaskInfo;
+  subagents: Subagent[];
+  subagentsBefore?: string;
+  agents: Record<string, AgentTranscript>;
   snapshotSeq: number;
-  /** The window's and the live tail's items by id, for a subagent's `task` call. */
-  items: ReadonlyMap<string, Item>;
-  /** The identity index (it outlives history pages), for when a call ran. */
-  index: readonly Item[];
+  summaries: Summaries;
+  /** The identity index's user messages and `task` calls (it outlives history pages). */
+  outline: readonly Item[];
+  /** The user messages held, for the index's quotes. */
+  messages: readonly Item[];
+  /** When each `task` call ran, from the outline. */
+  callTimes: ReadonlyMap<string, string>;
   replies: Replies;
   /** The live card's set; empty while there is no card. */
   live: LiveSubagent[];
@@ -170,6 +206,8 @@ interface ScopeActions {
   stop: (s: Subagent) => void;
   /** Opens one row (closing any other) or none; `row`, the opened row, stays in view. */
   expand: (next: Expanded | null, row?: HTMLElement | null) => void;
+  /** Folds a row open in the header index, and only that. */
+  closeIndex: () => void;
 }
 
 class ScopeStore {
@@ -201,6 +239,14 @@ function useScope<T>(select: (d: ScopeData) => T): T | undefined {
 }
 const useActions = () => useContext(SubagentContext)?.actions;
 
+/** `next` itself when any element differs from `kept` (by reference), else `kept`: a list rebuilt with the same members stays the same list. */
+function useKept<T>(next: readonly T[]): readonly T[] {
+  const [kept, setKept] = useState(next);
+  if (kept === next || (kept.length === next.length && kept.every((x, i) => x === next[i]))) return kept;
+  setKept(next);
+  return next;
+}
+
 /** The replies of the Task and the subagents each spawned (lib/subagents `replyIndex`); undefined outside a Task. */
 export const useSubagentReplies = () => useScope((d) => d.replies);
 /** The subagents the live card shows, while it shows. */
@@ -212,7 +258,7 @@ export const useLiveSubagentIds = () => useScope((d) => d.liveIds);
  * their one confirmation, and `locate`.
  */
 export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal, onLocate, onJumpToReply, onExpand, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; reveal: Reveal | null; onLocate: (toolCallId: string, expand?: boolean) => void; onJumpToReply: (key: string) => void; /** A row opened in the conversation: keep it in view. */ onExpand: (row: HTMLElement) => void; children: ReactNode }>) {
-  const [stops, stopNow] = useStops(session.id);
+  const [stops, stopNow] = useStops(session.id, session.subagents);
   // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations).
   const stopConfirm = useConfirm<Subagent>();
   const [expanded, setExpanded] = useState<Expanded | null>(null);
@@ -222,16 +268,20 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
     const s = reveal.expand ? session.subagents.find((x) => x.parent_tool_call_id === reveal.toolCallId) : undefined;
     if (s) setExpanded({ id: s.id, place: 'list' });
   }
-  const items = useMemo(() => new Map([...session.items, ...(session.recent_items ?? [])].map((item) => [item.id, item])), [session.items, session.recent_items]);
-  const index = session.history_index ?? session.items;
-  // The index changes with every streamed token; the replies only with a message or a `task` call, so they are kept until then.
-  const shape = useMemo(() => index.flatMap((item) => ((item.kind === 'user' && !item.delivery) || isSubagentCall(item) ? [`${item.id}@${item.time}`] : [])).join(','), [index]);
-  const [held, setHeld] = useState(() => ({ shape, subagents: session.subagents, replies: replyIndex(index, session.subagents) }));
-  let replies = held.replies;
-  if (held.shape !== shape || held.subagents !== session.subagents) {
-    replies = replyIndex(index, session.subagents);
-    setHeld({ shape, subagents: session.subagents, replies });
-  }
+  // The items and the index change with every streamed token; what is read from them (the user
+  // messages and the `task` calls) only with a message or a call, so those lists are kept until then.
+  const byParent = parentMap(session.subagents);
+  const held = [...session.items, ...(session.recent_items ?? [])];
+  const calls = useKept(held.filter((item) => isSubagentCall(item) || byParent.has(item.id)));
+  const messages = useKept(held.filter((item) => item.kind === 'user'));
+  const outline = useKept((session.history_index ?? session.items).filter((item) => (item.kind === 'user' && !item.delivery) || isSubagentCall(item) || byParent.has(item.id)));
+  const callMap = useMemo(() => new Map(calls.map((item) => [item.id, item])), [calls]);
+  const callTimes = useMemo(() => new Map(outline.flatMap((item) => (item.kind === 'tool' && item.time ? [[item.id, item.time] as const] : []))), [outline]);
+  const messageIds = useMemo(() => new Set(messages.map((item) => item.id)), [messages]);
+  const replies = useMemo(() => replyIndex(outline, session.subagents), [outline, session.subagents]);
+  const summaries = useMemo<Summaries>(() => ({ agents, agentSteps, calls: callMap }), [agents, agentSteps, callMap]);
+  const { id, provider, workdir, interactions, stage, state } = session;
+  const task = useMemo<TaskInfo>(() => ({ id, provider, workdir, interactions, stage, state }), [id, provider, workdir, interactions, stage, state]);
   const keep = expanded?.place === 'live' ? expanded.id : undefined;
   const live = useMemo(() => liveSet(replies.list.at(-1), session.subagents, keep), [replies, session.subagents, keep]);
   const liveIds = useMemo(() => new Set(live.map((x) => x.subagent.id)), [live]);
@@ -239,9 +289,12 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
   if (expanded) {
     const s = session.subagents.find((x) => x.id === expanded.id);
     const parent = s?.parent_tool_call_id ?? '';
-    if (!s || (expanded.place === 'list' && !items.has(parent) && !items.has(replies.ofCall.get(parent)?.key ?? ''))) setExpanded(null);
+    if (!s || (expanded.place === 'list' && !callMap.has(parent) && !messageIds.has(replies.ofCall.get(parent)?.key ?? ''))) setExpanded(null);
   }
-  const data = useMemo<ScopeData>(() => ({ session, agents, agentSteps, snapshotSeq, items, index, replies, live, liveIds, stops, expanded, reveal }), [session, agents, agentSteps, snapshotSeq, items, index, replies, live, liveIds, stops, expanded, reveal]);
+  const data = useMemo<ScopeData>(
+    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, expanded, reveal }),
+    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, expanded, reveal],
+  );
   const [store] = useState(() => new ScopeStore(data));
   useLayoutEffect(() => store.set(data), [store, data]);
   const handlers = useRef({ onLocate, onJumpToReply, onExpand, ask: stopConfirm.ask });
@@ -258,6 +311,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
         setExpanded(next);
         if (next && row) handlers.current.onExpand(row);
       },
+      closeIndex: () => setExpanded((x) => (x?.place === 'index' ? null : x)),
     } satisfies ScopeActions,
   }));
   const stopName = stopConfirm.target ? `“${stopConfirm.target.name}”` : '';
@@ -335,13 +389,10 @@ function SubagentMark({ status }: Readonly<{ status: SubagentStatus }>) {
 }
 
 /** The line under a subagent's name: what it is doing or what it reported (`subagentSummary`). */
-function rowSummary(d: ScopeData, s: Subagent): string {
+function rowSummary(d: Summaries, s: Subagent): string {
   const steps = d.agents[s.id]?.items ?? (d.agentSteps[s.id] ? [d.agentSteps[s.id]] : undefined);
-  return subagentSummary(s, steps, d.items.get(s.parent_tool_call_id ?? '')?.tool);
+  return subagentSummary(s, steps, d.calls.get(s.parent_tool_call_id ?? '')?.tool);
 }
-
-/** When a call ran, from the items held or the identity index. */
-const callTime = (d: ScopeData, id: string) => d.items.get(id)?.time ?? d.index.find((item) => item.id === id)?.time;
 
 /**
  * A reply's subagents on its turn line (DESIGN.md subagent chip): identity dots (the `Bot` glyph
@@ -395,13 +446,22 @@ export function SubagentList({ id, subagents, calls = subagents.length, tones }:
   const reveal = useScope((d) => d.reveal);
   const open = useScope((d) => (d.expanded?.place === 'list' ? d.expanded.id : ''));
   // Only while a filter is set does the list read every row's line.
-  const filtering = useScope((d) => (query ? d : null));
+  const filtering = useScope((d) => (query ? d.summaries : null));
+  // The open row stays in the group it was opened in until it is folded: moving it would remount it.
+  const [pin, setPin] = useState<{ id: string; key: StatusGroup['key'] } | null>(null);
+  if (!open || !grouped || !subagents.some((s) => s.id === open)) {
+    if (pin) setPin(null);
+  } else if (pin?.id !== open) {
+    const key = statusGroups(subagents).find((g) => g.subagents.some((s) => s.id === open))?.key;
+    if (key) setPin({ id: open, key });
+  }
+  const pinned = pin && pin.id === open ? pin : undefined;
   // A reveal from before this list mounted is not replayed (`locate` asks again once it has opened what holds the list).
   const [seen, setSeen] = useState(reveal?.n);
   if (reveal && reveal.n !== seen) {
     setSeen(reveal.n);
     const target = subagents.find((s) => s.parent_tool_call_id === reveal.toolCallId);
-    const group = target && grouped ? statusGroups(subagents).find((g) => g.subagents.includes(target)) : undefined;
+    const group = target && grouped ? statusGroups(subagents, pinned).find((g) => g.subagents.includes(target)) : undefined;
     if (target && group) {
       setQuery('');
       setFolds((f) => ({ ...f, [group.key]: true }));
@@ -409,7 +469,7 @@ export function SubagentList({ id, subagents, calls = subagents.length, tones }:
       setLimits((l) => ({ ...l, [group.key]: Math.max(l[group.key] ?? PAGE_ROWS, at) }));
     }
   }
-  const shown = filtering ? subagents.filter((s) => matches(s, rowSummary(filtering, s), query)) : subagents;
+  const shown = filtering ? subagents.filter((s) => s.id === open || matches(s, rowSummary(filtering, s), query)) : subagents;
   const row = (s: Subagent) => (
     <li key={s.id}>
       <SubagentRow subagent={s} tone={tones.get(s.id)} place="list" anchor />
@@ -429,7 +489,7 @@ export function SubagentList({ id, subagents, calls = subagents.length, tones }:
         )}
       </header>
       {grouped ? (
-        statusGroups(shown).map((g) => {
+        statusGroups(shown, pinned).map((g) => {
           // A filter shows every match, and the open row's group stays open.
           const holdsOpen = !!open && g.subagents.some((s) => s.id === open);
           const opened = query || holdsOpen ? true : folds[g.key] ?? g.open;
@@ -482,10 +542,10 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, place,
   const toggleRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
   const expanded = useScope((d) => d.expanded?.id === s.id && d.expanded.place === place) ?? false;
-  const summary = useScope((d) => rowSummary(d, s)) ?? '';
-  const provider = useScope((d) => d.session.provider) ?? '';
+  const summary = useScope((d) => rowSummary(d.summaries, s)) ?? '';
+  const provider = useScope((d) => d.task.provider) ?? '';
   const stopping = useScope((d) => d.stops[s.id]) ?? NOT_STOPPING;
-  const locked = useScope((d) => readOnly(d.session)) ?? true;
+  const locked = useScope((d) => readOnly(d.task)) ?? true;
   // "ran again 17:26 ↓", in an earlier reply's list: "<start>|<reply>".
   const again = useScope((d) => (place === 'list' ? ranAgainKey(s, d.replies) : '')) ?? '';
   const presence = usePresence(expanded);
@@ -494,8 +554,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, place,
   const parentId = s.parent_tool_call_id;
   const took = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
   const when = took ?? (s.status === 'running' && s.started_at ? `since ${clock(s.started_at)}` : '');
-  const runs = s.runs?.length ?? 0;
-  const info = [s.model ? modelName(meta, provider, s.model) : '', when, runs > 1 ? `${runs} runs` : ''].filter(Boolean).join(' · ');
+  const info = [s.model ? modelName(meta, provider, s.model) : '', when, runCount(s)].filter(Boolean).join(' · ');
   const [againAt, againReply] = again.split('|');
   const collapse = () => {
     actions.expand(null);
@@ -580,9 +639,10 @@ function ranAgainKey(s: Subagent, replies: Replies): string {
 function EarlierTag({ subagent }: Readonly<{ subagent: Subagent }>) {
   const actions = useActions();
   const parentId = subagent.parent_tool_call_id;
-  const parentTime = useScope((d) => (parentId ? callTime(d, parentId) : undefined));
+  const parentTime = useScope((d) => (parentId ? d.callTimes.get(parentId) : undefined));
   const tag = earlierTag(subagent, parentTime);
-  const text = tag.first ? `${tag.text} · first ran ${clock(tag.first)}` : tag.text;
+  const first = clock(tag.first);
+  const text = first ? `${tag.text} · first ran ${first}` : tag.text;
   if (!parentId || !actions) return <span className={cn(TAG, 'hover:bg-tint-well hover:text-muted')}>{text}</span>;
   return (
     <button type="button" className={TAG} title="Show where it was first spawned" onClick={() => actions.locate(parentId)}>
@@ -598,14 +658,15 @@ const otherPopupOpen = (target: EventTarget) => [...document.querySelectorAll('[
 function SubagentDetail({ id, open, subagent: s, name, onCollapse }: Readonly<{ id: string; open: boolean; subagent: Subagent; name: string; onCollapse: () => void }>) {
   const { meta } = useApp();
   const actions = useActions();
-  // The open row follows the session as a whole (its transcript and composer need it).
-  const d = useScope((x) => x);
-  const [seek, setSeek] = useState<{ time: string; n: number } | null>(null);
-  if (!d || !actions) return null;
-  const { session } = d;
-  const setup = [s.model ? modelName(meta, session.provider, s.model) : '', s.effort ?? '', s.started_at ? `started ${clock(s.started_at)}` : ''].filter(Boolean).join(' · ');
-  const parent = d.items.get(s.parent_tool_call_id ?? '');
-  const stopping = d.stops[s.id] ?? NOT_STOPPING;
+  const task = useScope((d) => d.task);
+  const transcript = useScope((d) => d.agents[s.id]);
+  const snapshotSeq = useScope((d) => d.snapshotSeq) ?? 0;
+  const parent = useScope((d) => d.summaries.calls.get(s.parent_tool_call_id ?? ''));
+  const stopping = useScope((d) => d.stops[s.id]) ?? NOT_STOPPING;
+  const [seek, setSeek] = useState<Seek | null>(null);
+  if (!task || !actions) return null;
+  const started = clock(s.started_at);
+  const setup = [s.model ? modelName(meta, task.provider, s.model) : '', s.effort ?? '', started ? `started ${started}` : ''].filter(Boolean).join(' · ');
   const runs = runLines(s);
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Esc anywhere inside folds the row back.
@@ -629,13 +690,24 @@ function SubagentDetail({ id, open, subagent: s, name, onCollapse }: Readonly<{ 
       )}
       {runs.length > 0 && (
         <ol aria-label="Runs" className="flex flex-col pl-5">
-          {runs.map((r) => (
-            <li key={r.n}>
-              <button type="button" className="block h-6 max-w-full truncate rounded-sm px-1.5 text-left leading-6 text-caption text-muted tabular-nums transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11" title="Show this run in the transcript" onClick={() => setSeek((x) => ({ time: r.started_at, n: (x?.n ?? 0) + 1 }))}>
-                <span className="text-body">Run {r.n}</span> · {clock(r.started_at)} · {r.trigger} · <span className={PART_TONE[r.tone]}>{r.outcome}</span>
-              </button>
-            </li>
-          ))}
+          {runs.map((r, i) => {
+            const at = clock(r.started_at);
+            const parts = [r.n === null ? '' : `Run ${r.n}`, at, r.trigger].filter(Boolean).join(' · ');
+            return (
+              <li key={i}>
+                {r.gapBefore && <p className="px-1.5 text-meta text-faint">Earlier runs not kept · latest runs</p>}
+                <button
+                  type="button"
+                  disabled={!at}
+                  className="block h-6 max-w-full truncate rounded-sm px-1.5 text-left leading-6 text-caption text-muted tabular-nums transition-colors duration-100 hover:bg-tint-hover hover:text-body disabled:hover:bg-transparent pointer-coarse:min-h-11"
+                  title={at ? 'Show this run in the transcript' : 'When this run started was not recorded, so it cannot be found in the transcript.'}
+                  onClick={() => setSeek((x) => ({ time: r.started_at!, first: i === 0, running: r.running, n: (x?.n ?? 0) + 1 }))}
+                >
+                  <span className="text-body">{parts}</span> · <span className={PART_TONE[r.tone]}>{r.outcome}</span>
+                </button>
+              </li>
+            );
+          })}
         </ol>
       )}
       <DetailVisibility open={open}>
@@ -643,13 +715,13 @@ function SubagentDetail({ id, open, subagent: s, name, onCollapse }: Readonly<{ 
           <AgentTranscriptView
             key={s.id}
             name={name}
-            provider={session.provider}
-            sessionId={session.id}
-            workdir={session.workdir}
+            provider={task.provider}
+            sessionId={task.id}
+            workdir={task.workdir}
             subagent={s}
-            interactions={session.interactions}
-            transcript={d.agents[s.id]}
-            snapshotSeq={d.snapshotSeq}
+            interactions={task.interactions}
+            transcript={transcript}
+            snapshotSeq={snapshotSeq}
             open={open}
             parent={parent}
             result={s.status === 'completed' || s.status === 'idle' ? parent?.tool?.output : undefined}
@@ -659,10 +731,10 @@ function SubagentDetail({ id, open, subagent: s, name, onCollapse }: Readonly<{ 
       </DetailVisibility>
       {s.status === 'running' && (
         <div className="flex flex-wrap items-center gap-2">
-          <StopSubagent session={session} subagent={s} stopping={stopping} onStop={() => actions.stop(s)} />
+          <StopSubagent session={task} subagent={s} stopping={stopping} onStop={() => actions.stop(s)} />
         </div>
       )}
-      <SubagentComposer session={session} subagent={s} />
+      <SubagentComposer session={task} subagent={s} />
     </div>
   );
 }
@@ -696,6 +768,14 @@ export function LiveSubagents() {
   const [all, setAll] = useState(false);
   const [limit, setLimit] = useState(PAGE_ROWS);
   const listId = useId();
+  // The open row keeps the place it was opened at until it is folded: moving it would reset its scroll and focus.
+  const [pin, setPin] = useState<{ id: string; at: number } | null>(null);
+  if (!keep) {
+    if (pin) setPin(null);
+  } else if (pin?.id !== keep) {
+    const at = liveRows(set, all, { id: keep }).rows.findIndex((x) => x.subagent.id === keep);
+    if (at >= 0) setPin({ id: keep, at });
+  }
   // Failures said aloud: the ones seen failed already, and the last sentence.
   const failedNow = set.filter((x) => x.subagent.status === 'failed').map((x) => x.subagent.id).join(',');
   const [failedSeen, setFailedSeen] = useState(failedNow);
@@ -717,7 +797,7 @@ export function LiveSubagents() {
   );
   if (!set.length || !tones) return status;
   const c = countSubagents(set.map((x) => x.subagent));
-  const { rows, rest } = liveRows(set, all, keep || undefined);
+  const { rows, rest } = liveRows(set, all, keep ? { id: keep, at: pin?.id === keep ? pin.at : undefined } : undefined);
   return (
     <>
       {status}
@@ -785,21 +865,22 @@ const INDEX_ROWS = 100;
  */
 export function SubagentIndex({ labels, error }: Readonly<{ labels: boolean; /** Why the last jump did not land, said where the reader is. */ error?: string }>) {
   const actions = useActions();
-  const session = useScope((d) => d.session);
+  const subagents = useScope((d) => d.subagents);
+  const before = useScope((d) => d.subagentsBefore);
   const [open, setOpen] = useState(false);
   // Where to go once the popover has closed; a pick keeps focus off the trigger (`finalFocus`), the row it lands on takes it.
   const picked = useRef<{ id: string; expand: boolean } | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  if (!session || !actions) return null;
-  const running = session.subagents.filter((s) => s.status === 'running').length;
-  const label = `Subagents, ${session.subagents.length}${session.subagents_before ? ' or more' : ''}${running ? `, ${running} running` : ''}`;
+  if (!subagents || !actions) return null;
+  const running = subagents.filter((s) => s.status === 'running').length;
+  const label = `Subagents, ${subagents.length}${before ? ' or more' : ''}${running ? `, ${running} running` : ''}`;
   return (
     <Popover.Root
       open={open}
       onOpenChange={(o) => {
         if (o) picked.current = null;
-        // A row opened in here goes with it.
-        else actions.expand(null);
+        // A row opened in here goes with it; one open in the conversation stays.
+        else actions.closeIndex();
         setOpen(o);
       }}
       onOpenChangeComplete={(o) => {
@@ -811,8 +892,8 @@ export function SubagentIndex({ labels, error }: Readonly<{ labels: boolean; /**
           <Bot />
           {labels && <span>Subagents</span>}
           <span className="tabular-nums text-ink">
-            {session.subagents.length}
-            {session.subagents_before && '+'}
+            {subagents.length}
+            {before && '+'}
           </span>
           {running > 0 && <WorkingMark />}
           <ChevronDown className="text-muted" />
@@ -824,6 +905,7 @@ export function SubagentIndex({ labels, error }: Readonly<{ labels: boolean; /**
           error={error}
           onPick={(id, expand) => {
             picked.current = { id, expand };
+            actions.closeIndex();
             setOpen(false);
           }}
         />
@@ -833,22 +915,25 @@ export function SubagentIndex({ labels, error }: Readonly<{ labels: boolean; /**
 }
 
 function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInputElement | null>; error?: string; onPick: (toolCallId: string, expand: boolean) => void }>) {
-  // The index is open only while someone reads it: it may follow the session as a whole.
-  const d = useScope((x) => x);
+  const taskId = useScope((d) => d.task.id);
+  const subagents = useScope((d) => d.subagents);
+  const before = useScope((d) => d.subagentsBefore);
+  const outline = useScope((d) => d.outline);
+  const messages = useScope((d) => d.messages);
+  const summaries = useScope((d) => d.summaries);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<IndexFilter>('all');
   const [limit, setLimit] = useState(INDEX_ROWS);
-  const session = d?.session;
-  const groups = useMemo(() => (session && d ? indexGroups(d.index, [...session.items, ...(session.recent_items ?? [])], session.subagents) : []), [d, session]);
-  if (!d || !session) return null;
-  const all = countSubagents(session.subagents);
+  const groups = useMemo(() => (outline && messages && subagents ? indexGroups(outline, messages, subagents) : []), [outline, messages, subagents]);
+  if (!taskId || !subagents || !summaries) return null;
+  const all = countSubagents(subagents);
   const counts: Record<IndexFilter, number> = { all: all.total, running: all.running, failed: all.failed, done: all.done };
   // At most `limit` rows across the groups; the rest wait behind "Show more".
   let budget = limit;
   let hidden = 0;
   const shown: (IndexGroup & { rows: Subagent[] })[] = [];
   for (const g of groups) {
-    const rows = g.subagents.filter((s) => inFilter(s, filter) && matches(s, rowSummary(d, s), query));
+    const rows = g.subagents.filter((s) => inFilter(s, filter) && matches(s, rowSummary(summaries, s), query));
     const take = rows.slice(0, Math.max(0, budget));
     hidden += rows.length - take.length;
     budget -= take.length;
@@ -899,7 +984,7 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
               {g.key ? (
                 <ul className="flex flex-col">
                   {g.rows.map((s) => {
-                    const summary = rowSummary(d, s);
+                    const summary = rowSummary(summaries, s);
                     return (
                       <li key={s.id}>
                         <button
@@ -938,7 +1023,7 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
           </button>
         )}
       </div>
-      {session.subagents_before && <OlderSubagents key={`${session.id}:${session.subagents_before}`} sessionId={session.id} before={session.subagents_before} />}
+      {before && <OlderSubagents key={`${taskId}:${before}`} sessionId={taskId} before={before} />}
     </>
   );
 }
@@ -1009,7 +1094,7 @@ function AgentTranscriptView({
   parent?: Item;
   name: string;
   /** A run picked in the row: show the first item at or after its start, paging to it if need be. */
-  seek?: { time: string; n: number } | null;
+  seek?: Seek | null;
 }>) {
   const { dispatch } = useApp();
   const density = useDensity();
@@ -1076,24 +1161,30 @@ function AgentTranscriptView({
       if (pageRead.current?.token === token && !controller.signal.aborted) { retryAfter.current = Date.now() + 1000; store.action({ type: 'page_failed', agentId: subagent.id, token, error: describeError(error) }); }
     }).finally(() => { window.clearTimeout(timer); if (pageRead.current?.token === token) pageRead.current = null; });
   }
+  // When the reader last moved the transcript themselves (wheel, touch, keys), and whether a finger is down.
+  const userAt = useRef(0);
+  const touching = useRef(false);
   const loadOnDemand = useEffectEvent(loadOlder);
   useEffect(() => {
     const el = scroller.current;
     if (!el || !open) return;
     let touchY = 0;
     const key = (event: globalThis.KeyboardEvent) => {
+      userAt.current = performance.now();
       if (['Home', 'PageUp', 'ArrowUp'].includes(event.key) && nearEdge(el, 'older')) loadOnDemand();
       if (['End', 'PageDown', 'ArrowDown'].includes(event.key) && nearEdge(el, 'newer')) loadOnDemand('newer');
     };
-    const start = (event: TouchEvent) => { touchY = event.touches[0]?.clientY ?? 0; };
+    const start = (event: TouchEvent) => { touchY = event.touches[0]?.clientY ?? 0; touching.current = true; userAt.current = performance.now(); };
+    const end = (event: TouchEvent) => { touching.current = event.touches.length > 0; };
     const move = (event: TouchEvent) => {
+      userAt.current = performance.now();
       const y = event.touches[0]?.clientY ?? touchY;
       if (y > touchY && nearEdge(el, 'older')) loadOnDemand();
       if (y < touchY && nearEdge(el, 'newer')) loadOnDemand('newer');
       touchY = y;
     };
-    el.addEventListener('keydown', key); el.addEventListener('touchstart', start, { passive: true }); el.addEventListener('touchmove', move, { passive: true });
-    return () => { el.removeEventListener('keydown', key); el.removeEventListener('touchstart', start); el.removeEventListener('touchmove', move); };
+    el.addEventListener('keydown', key); el.addEventListener('touchstart', start, { passive: true }); el.addEventListener('touchmove', move, { passive: true }); el.addEventListener('touchend', end); el.addEventListener('touchcancel', end);
+    return () => { el.removeEventListener('keydown', key); el.removeEventListener('touchstart', start); el.removeEventListener('touchmove', move); el.removeEventListener('touchend', end); el.removeEventListener('touchcancel', end); };
   }, [open]);
   const scrollTop = useRef(0);
   function onScroll() {
@@ -1105,24 +1196,46 @@ function AgentTranscriptView({
     scrollTop.current = el.scrollTop;
   }
 
-  // Seeking a run: page towards its start until the first item at or after it is here, then show it; else say it is gone.
+  // Seeking a run: page towards its start until the first item at or after it is here, then show
+  // it; the first run is the transcript's start, a running run with nothing recorded yet its end.
+  // The reader scrolling or touching meanwhile takes over: nothing is written under them.
   const [sought, setSought] = useState(seek?.n);
-  const [seeking, setSeeking] = useState<string | null>(null);
+  const [seeking, setSeeking] = useState<Seek | null>(null);
   const [lost, setLost] = useState(false);
   if (seek && seek.n !== sought) {
     setSought(seek.n);
-    setSeeking(seek.time);
+    setSeeking(seek);
     setLost(false);
   }
+  const seekStart = useRef(0);
+  useEffect(() => {
+    if (seeking) seekStart.current = performance.now();
+  }, [seeking]);
   const seekNow = useEffectEvent(() => {
     const el = scroller.current;
-    if (seeking === null || !el || !transcript || transcript.loading || detail.agent?.page) return;
-    if (detail.agent?.pageError) return setSeeking(null);
-    const at = items.findIndex((item) => item.time && item.time >= seeking);
+    const run = seeking;
+    if (!run || !el || !transcript || transcript.loading || detail.agent?.page) return;
+    // A failed read says so itself; the run is not called gone for it.
+    if (transcript.error || detail.agent?.pageError || touching.current || userAt.current > seekStart.current) return setSeeking(null);
     const more = detail.compact && open;
-    if ((at === 0 || (at < 0 && !items.length)) && more && detail.agent?.before) return loadOlder();
-    if (at < 0 && more && detail.agent?.after) return loadOlder('newer');
+    const before = more && detail.agent?.before, after = more && detail.agent?.after;
+    if (run.first) {
+      if (before) return loadOlder();
+      setSeeking(null);
+      atBottom.current = false;
+      el.scrollTop = 0;
+      return;
+    }
+    // Compared as instants: an item's and a run's times may differ in zone or fraction.
+    const start = ms(run.time);
+    const at = items.findIndex((item) => ms(item.time) >= start);
+    if ((at === 0 || (at < 0 && !items.length)) && before) return loadOlder();
+    if (at < 0 && after) return loadOlder('newer');
     setSeeking(null);
+    if (at < 0 && run.running) {
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
     const id = items[at]?.id;
     const row = id ? (el.querySelector<HTMLElement>(`[data-history-anchor="${CSS.escape(id)}"], #${CSS.escape(`item-${id}`)}`) ?? [...el.querySelectorAll<HTMLElement>('[data-history-items]')].find((node) => (JSON.parse(node.dataset.historyItems ?? '[]') as string[]).includes(id))) : undefined;
     if (!row) return setLost(true);
@@ -1133,7 +1246,7 @@ function AgentTranscriptView({
     if (seeking === null) return;
     const frame = requestAnimationFrame(seekNow);
     return () => cancelAnimationFrame(frame);
-  }, [seeking, items, transcript?.loading, detail.agent?.page, detail.agent?.pageError]);
+  }, [seeking, items, transcript?.loading, transcript?.error, detail.agent?.page, detail.agent?.pageError]);
 
   const visibleInteractions = detail.compact ? windowInteractions(items, interactions, 0, !!detail.agent?.before, !!detail.agent?.after) : interactions;
   function latest() {
@@ -1170,6 +1283,7 @@ function AgentTranscriptView({
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
     <div className="flex max-h-[60vh] min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain px-3 py-3 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheel={event => {
+      userAt.current = performance.now();
       if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder();
       if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer');
     }}>
@@ -1198,7 +1312,7 @@ const UNCERTAIN_FOLLOW_UP = 'The subagent may or may not have received your mess
  * subagent is idle; enabled only while the task itself is active and between turns. The
  * status change and the user item both arrive over SSE, so nothing is added optimistically.
  */
-function SubagentComposer({ session, subagent }: Readonly<{ session: SessionDetail; subagent: Subagent }>) {
+function SubagentComposer({ session, subagent }: Readonly<{ session: TaskInfo; subagent: Subagent }>) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1295,7 +1409,7 @@ function SubagentComposer({ session, subagent }: Readonly<{ session: SessionDeta
 }
 
 /** Cancellation requests never invent a terminal status; the provider's SSE owns it. */
-function StopSubagent({ session, subagent, stopping, onStop }: Readonly<{ session: SessionDetail; subagent: Subagent; stopping: StopState; onStop: () => void }>) {
+function StopSubagent({ session, subagent, stopping, onStop }: Readonly<{ session: TaskInfo; subagent: Subagent; stopping: StopState; onStop: () => void }>) {
   const { busy, requested, error } = stopping;
   if (subagent.status !== 'running') return null;
   return (

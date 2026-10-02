@@ -178,19 +178,38 @@ export interface LiveRows {
 /**
  * The live card's rows: its failed and running subagents, failed first, at most `LIVE_ROWS`, and
  * the open one (`keep`) whatever its state, so an open row never leaves under the reader; with
- * `all`, every one of the set (failed, running, idle, completed, stopped). `rest` names the ones
- * left out, empty when none is.
+ * `all`, every one of the set (failed, running, idle, completed, stopped). `keep.at`, the place
+ * the open row had when it was opened, holds it there whatever its state becomes, so it is never
+ * moved (a move would reset its scroll and focus). `rest` names the ones left out, empty when none is.
  */
-export function liveRows(set: readonly LiveSubagent[], all: boolean, keep?: string): LiveRows {
+export function liveRows(set: readonly LiveSubagent[], all: boolean, keep?: { id: string; at?: number }): LiveRows {
   const sorted = byStatus(set, (x) => x.subagent.status);
-  if (all) return { rows: sorted, rest: '' };
+  const kept = sorted.find((x) => x.subagent.id === keep?.id);
+  const place = (rows: LiveSubagent[]) => {
+    if (!kept || keep?.at === undefined) return rows;
+    const others = rows.filter((x) => x !== kept);
+    return [...others.slice(0, keep.at), kept, ...others.slice(keep.at)];
+  };
+  if (all) return { rows: place(sorted), rest: '' };
   const picked = new Set(sorted.filter((x) => x.subagent.status === 'failed' || x.subagent.status === 'running').slice(0, LIVE_ROWS));
-  const kept = sorted.find((x) => x.subagent.id === keep);
   if (kept) picked.add(kept);
-  const rows = sorted.filter((x) => picked.has(x));
+  const rows = place(sorted.filter((x) => picked.has(x)));
   const c = countSubagents(sorted.filter((x) => !picked.has(x)).map((x) => x.subagent));
   const rest = [c.running && `${c.running} more running`, c.failed && `${c.failed} more failed`, c.done && `${c.done} done`, c.stopped && `${c.stopped} stopped`].filter(Boolean).join(' · ');
   return { rows, rest };
+}
+
+/** An ISO time as milliseconds, whatever its zone or fraction; NaN when absent or unreadable. */
+export const ms = (iso?: string) => (iso ? Date.parse(iso) : NaN);
+
+/** The service keeps a subagent's first run and its newest 49: at this many, runs in between may be gone. */
+export const RUNS_KEPT = 50;
+
+/** "3 runs", "50+ runs" once the record may have dropped some; empty for one run or none. */
+export function runCount(s: Subagent): string {
+  const n = s.runs?.length ?? 0;
+  if (n < 2) return '';
+  return n >= RUNS_KEPT ? `${RUNS_KEPT}+ runs` : `${n} runs`;
 }
 
 export type Run = NonNullable<Subagent['runs']>[number];
@@ -204,7 +223,7 @@ const TRIGGER: Record<Run['trigger'], string> = { spawn: 'started by the agent',
 export function earlierTag(s: Subagent, parentTime?: string): { text: 'resumed by the agent' | 'your follow-up' | 'from an earlier reply'; first?: string } {
   const runs = s.runs ?? [];
   const last = runs.at(-1);
-  if (runs.length > 1 && last && last.trigger !== 'spawn') return { text: last.trigger === 'agent' ? 'resumed by the agent' : 'your follow-up', first: runs[0].started_at || parentTime };
+  if (runs.length > 1 && last && last.trigger !== 'spawn') return { text: last.trigger === 'agent' ? 'resumed by the agent' : 'your follow-up', first: runs[0].started_at || parentTime || undefined };
   return { text: 'from an earlier reply' };
 }
 
@@ -216,35 +235,46 @@ export function earlierTag(s: Subagent, parentTime?: string): { text: 'resumed b
 export function ranAgain(s: Subagent, replies: Replies): { at: string; reply: string } | null {
   const own = replies.ofCall.get(s.parent_tool_call_id ?? '');
   if (!own || !s.runs?.length) return null;
-  const next = replies.list[replies.list.indexOf(own) + 1];
-  if (!next?.time) return null;
-  const later = s.runs.filter((r) => r.started_at >= next.time!).at(-1);
-  if (!later) return null;
-  const reply = replies.list.filter((r) => r.time && r.time <= later.started_at).at(-1) ?? next;
-  return { at: later.started_at, reply: reply.key };
+  const next = ms(replies.list[replies.list.indexOf(own) + 1]?.time);
+  if (Number.isNaN(next)) return null;
+  // Times compared as instants: a run's and a message's may differ in zone or fraction.
+  const later = s.runs.filter((r) => ms(r.started_at) >= next).at(-1);
+  if (!later?.started_at) return null;
+  const at = ms(later.started_at);
+  const reply = replies.list.filter((r) => ms(r.time) <= at).at(-1);
+  return reply ? { at: later.started_at, reply: reply.key } : null;
 }
 
 export interface RunLine {
-  n: number;
-  started_at: string;
+  /** Its place among the runs; null after the gap where the record dropped runs. */
+  n: number | null;
+  /** The record dropped runs between the first and this one. */
+  gapBefore: boolean;
+  started_at?: string;
   /** "started by the agent", "your follow-up", "resumed by the agent". */
   trigger: string;
   /** "✓ 2m 40s", "✗ failed · 1m 0s", "stopped", "running". */
   outcome: string;
   tone: 'muted' | 'success' | 'error' | 'accent';
+  running: boolean;
 }
 
-/** A subagent's runs as lines for its expanded row; empty with fewer than two. */
+/**
+ * A subagent's runs as lines for its expanded row; empty with fewer than two. At `RUNS_KEPT` the
+ * record holds the first run and the newest ones: the lines after the first carry no number and
+ * the second says runs before it are gone.
+ */
 export function runLines(s: Subagent): RunLine[] {
   const runs = s.runs ?? [];
   if (runs.length < 2) return [];
+  const gap = runs.length >= RUNS_KEPT;
   return runs.map((r, i) => {
-    const took = r.ended_at ? duration(r.started_at, r.ended_at) : null;
+    const took = r.started_at && r.ended_at ? duration(r.started_at, r.ended_at) : null;
     let outcome = 'running', tone: RunLine['tone'] = 'accent';
     if (r.status === 'failed') [outcome, tone] = [took ? `✗ failed · ${took}` : '✗ failed', 'error'];
     else if (r.status === 'cancelled') [outcome, tone] = ['stopped', 'muted'];
     else if (r.status !== 'running') [outcome, tone] = [took ? `✓ ${took}` : '✓', 'success'];
-    return { n: i + 1, started_at: r.started_at, trigger: TRIGGER[r.trigger] ?? r.trigger, outcome, tone };
+    return { n: gap && i > 0 ? null : i + 1, gapBefore: gap && i === 1, started_at: r.started_at || undefined, trigger: TRIGGER[r.trigger] ?? r.trigger, outcome, tone, running: r.status === 'running' };
   });
 }
 
@@ -263,9 +293,14 @@ const GROUPS: { key: StatusGroup['key']; label: string; open: boolean; has: (s: 
   { key: 'stopped', label: 'Stopped', open: false, has: (s) => s.status === 'cancelled' },
 ];
 
-/** A long list by status: Failed and Running open, Done (completed and idle) and Stopped folded; empty groups left out. */
-export function statusGroups(list: readonly Subagent[]): StatusGroup[] {
-  return GROUPS.map(({ has, ...g }) => ({ ...g, subagents: list.filter(has) })).filter((g) => g.subagents.length > 0);
+/**
+ * A long list by status: Failed and Running open, Done (completed and idle) and Stopped folded;
+ * empty groups left out. `pin` holds the open row in the group it was opened in, whatever its state
+ * becomes, so it is never unmounted under the reader.
+ */
+export function statusGroups(list: readonly Subagent[], pin?: { id: string; key: StatusGroup['key'] }): StatusGroup[] {
+  const groupOf = (s: Subagent) => (s.id === pin?.id ? pin.key : GROUPS.find((g) => g.has(s))?.key);
+  return GROUPS.map(({ has: _has, ...g }) => ({ ...g, subagents: list.filter((s) => groupOf(s) === g.key) })).filter((g) => g.subagents.length > 0);
 }
 
 /** Whether a subagent's name or one-line summary holds `query`, case-insensitively; an empty query holds everything. */
