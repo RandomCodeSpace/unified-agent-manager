@@ -128,7 +128,7 @@ export function FinishCard({ session, items, changes, onShowOutput, onReview, co
       {files.length > 0 && (
         <div className="flex flex-col gap-1">
           <h3 className="text-eyebrow text-muted uppercase">Changed in this turn</h3>
-          <ul className="flex flex-col">
+          <ul className="flex max-h-60 flex-col overflow-y-auto overscroll-contain">
             {files.map((path) => {
               const f = stat.get(path);
               const row = (
@@ -154,7 +154,6 @@ export function FinishCard({ session, items, changes, onShowOutput, onReview, co
       {commit}
       <div className="flex flex-wrap items-center gap-2 max-sm:[&>button]:flex-1">
         {onReview && (files.length > 0 || !!changes?.files.length) && <Button variant="secondary" onClick={onReview}>Review changes</Button>}
-        <Button variant="secondary" onClick={() => document.getElementById('composer-text')?.focus()}>Ask for changes</Button>
       </div>
     </section>
   );
