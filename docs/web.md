@@ -364,7 +364,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
   mode the agent must run the command with its own shell tool, which asks
   you first, and pass the rows. The chart shows as a card in the
   conversation with **Table** (the rows), **Copy CSV** and **Pin to
-  project**, and a footer naming the command and when it ran. The rows are
+  project**, and a footer saying where the rows came from and when. The rows are
   kept with the Task, so the card survives a reload and a restart, and goes
   when the Task is deleted.
   **Pin to project** shows the command that a refresh will run; pinning is
@@ -801,8 +801,8 @@ are logged only at debug level (`UAM_DEBUG=1`).
     the claims not verified.
   - **Changed in this turn**: the files the turn's edit tools changed, with
     their line counts from Changes; each opens Changes.
-  - **Review changes** opens Changes and **Ask for changes** puts the cursor
-    in the message box.
+  - **Review changes** opens Changes. Long file lists scroll inside the card,
+    as they do in the commit panel.
 - **Paused queue**: the queue pauses when a turn is stopped or fails, when
   the provider process ends, when you close the session, and when the
   provider refuses a message or may not have received it. A paused queue

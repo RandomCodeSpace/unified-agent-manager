@@ -21,7 +21,6 @@ type ChartRows = Pick<Chart, 'title' | 'kind' | 'x_label' | 'y_label' | 'x' | 'l
 const SWATCHES = ['bg-accent', 'bg-badge-orange', 'bg-badge-teal', 'bg-badge-violet'];
 
 /** A script's first line and an ellipsis; the whole command is in the title and the pin prompt. */
-const firstLine = (command: string) => (command.includes('\n') ? `${command.slice(0, command.indexOf('\n'))} …` : command);
 
 const ago = (iso: string) => {
   const t = relTime(iso);
@@ -196,11 +195,7 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
       {table ? <RowsTable chart={chart} /> : <div ref={box} className="px-3"><ChartImage chart={chart} look={{ width, height: phone ? 260 : 320 }} /></div>}
       <Legend chart={chart} />
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline px-5 py-2.5 text-meta text-muted">
-        {chart.command ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]" title={chart.command}>Data: <code className="font-mono">{firstLine(chart.command)}</code>, {ago(chart.at)}</span>
-        ) : (
-          <span>Data: rows the agent gave, {ago(chart.at)}</span>
-        )}
+        <span>{chart.command ? 'From a command' : 'From rows the agent gave'}, {ago(chart.at)}</span>
         <span>· Drawn from {rows} {rows === 1 ? 'row' : 'rows'}</span>
       </p>
     </figure>
@@ -252,7 +247,6 @@ function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ char
       )}
       {chart.error && <Note tone="warn" className="[overflow-wrap:anywhere]">Last refresh failed{chart.error_at ? `, ${ago(chart.error_at)}` : ''}: {chart.error}</Note>}
       {notice && <Note tone="warn" role="status">{notice}</Note>}
-      {chart.command && <code className="mt-1 truncate font-mono text-meta text-muted" title={chart.command}>{firstLine(chart.command)}</code>}
     </section>
   );
 }

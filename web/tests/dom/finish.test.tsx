@@ -1,7 +1,7 @@
 // The Task pane on reopening and after a turn: the "Since you left" strip and the finish card (mock t20).
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import { composer, openTask } from './render';
+import { openTask } from './render';
 
 /** Marks t20 as last seen `minutes` ago, as an earlier visit would have. */
 const seen = (minutes: number) => localStorage.setItem('uam.viewed', JSON.stringify({ t20: new Date(Date.now() - minutes * 60000).toISOString() }));
@@ -51,8 +51,7 @@ describe('finish card', () => {
     expect(card.getByText(/describes the new replay order/).closest('li')!.textContent).toContain('Not verified · no edit to docs/terminal.md in this turn');
     expect(card.getByText('internal/vterm/redraw_test.go')).toBeTruthy();
 
-    await user.click(card.getByRole('button', { name: 'Ask for changes' }));
-    expect(document.activeElement).toBe(composer());
+    expect(card.queryByRole('button', { name: 'Ask for changes' })).toBeNull();
     await user.click(card.getByRole('button', { name: 'Review changes' }));
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
   });
