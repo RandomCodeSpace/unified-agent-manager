@@ -11,6 +11,7 @@ import (
 	"github.com/github/copilot-sdk/go/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/daemonruntime"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 )
 
@@ -39,7 +40,7 @@ const mcpSignInMessage = "Signed in. You can close this tab and return to uam."
 // CLI (mcp.config.* and mcp.discover). sdkClientAdapter implements it.
 type mcpConfigClient interface {
 	MCPConfigList(ctx context.Context) (map[string]rpc.MCPSerializableServerConfig, error)
-	MCPDiscover(ctx context.Context) ([]rpc.DiscoveredMCPServer, error)
+	MCPDiscover(ctx context.Context, workdir string) ([]rpc.DiscoveredMCPServer, error)
 	MCPConfigAdd(ctx context.Context, name string, cfg rpc.MCPSerializableServerConfig) error
 	MCPConfigUpdate(ctx context.Context, name string, cfg rpc.MCPSerializableServerConfig) error
 	MCPConfigRemove(ctx context.Context, name string) error
@@ -65,8 +66,8 @@ func (a sdkClientAdapter) MCPConfigList(ctx context.Context) (map[string]rpc.MCP
 	return res.Servers, nil
 }
 
-func (a sdkClientAdapter) MCPDiscover(ctx context.Context) ([]rpc.DiscoveredMCPServer, error) {
-	res, err := a.c.RPC.MCP.Discover(ctx, &rpc.MCPDiscoverRequest{})
+func (a sdkClientAdapter) MCPDiscover(ctx context.Context, workdir string) ([]rpc.DiscoveredMCPServer, error) {
+	res, err := a.c.RPC.MCP.Discover(ctx, &rpc.MCPDiscoverRequest{WorkingDirectory: &workdir})
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +165,9 @@ func (p *webProvider) MCPServers(ctx context.Context) ([]agentapi.MCPServer, err
 	if err != nil {
 		return nil, fmt.Errorf("list MCP servers: %s", rpcText(err))
 	}
-	discovered, err := mc.MCPDiscover(ctx)
+	// Without a folder the CLI discovers from its own working directory,
+	// which fails once that directory is gone.
+	discovered, err := mc.MCPDiscover(ctx, daemonruntime.WorkDir())
 	if err != nil {
 		return nil, fmt.Errorf("discover MCP servers: %s", rpcText(err))
 	}

@@ -34,20 +34,39 @@ describe('routines', () => {
     expect(card.getAllByText('still running').length).toBeGreaterThan(1);
   });
 
-  test('a new routine is created from the form, Yolo with its warning', async () => {
+  test('a new routine is Yolo with autopilot unless chosen otherwise, with the risk spelled out', async () => {
     const { user } = renderApp('#routines=p1');
     await screen.findByRole('region', { name: 'Dependency check' });
     await user.click(screen.getByRole('button', { name: 'New routine' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'New routine' }));
+    expect((dialog.getByRole('radio', { name: 'Yolo with autopilot' }) as HTMLElement).getAttribute('aria-checked')).toBe('true');
+    expect(dialog.getByText(/keeps working until the task is done or the time limit stops it/)).toBeTruthy();
+    expect(dialog.getByText(/acts without asking while nobody is watching/)).toBeTruthy();
+    await user.click(dialog.getByRole('radio', { name: 'Safe' }));
+    expect(dialog.getByText(/waits for you/)).toBeTruthy();
+    expect(dialog.queryByText(/acts without asking/)).toBeNull();
+    await user.click(dialog.getByRole('radio', { name: 'Yolo with autopilot' }));
     await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'Nightly smoke');
     await user.type(dialog.getByRole('textbox', { name: 'What the agent should do' }), 'Run the smoke tests and report failures.');
-    await user.click(dialog.getByRole('radio', { name: 'Yolo' }));
-    expect(dialog.getByText(/allows every permission request without asking/)).toBeTruthy();
     await user.click(dialog.getByRole('button', { name: 'Create routine' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New routine' })).toBeNull());
     const card = within(await screen.findByRole('region', { name: 'Nightly smoke' }));
-    expect(card.getByText('Yolo')).toBeTruthy();
+    expect(card.getByText('Yolo with autopilot')).toBeTruthy();
+    expect(card.getByText(/· Yolo with autopilot ·/)).toBeTruthy();
     expect(card.getByText(/Every weekday at 09:00/)).toBeTruthy();
+  });
+
+  test('a routine saved before autopilot keeps its mode, shown on its card and in its form', async () => {
+    const { user } = renderApp('#routines=p1');
+    const safe = within(await screen.findByRole('region', { name: 'Dependency check' }));
+    expect(safe.getByText(/· Safe ·/)).toBeTruthy();
+    const yolo = within(screen.getByRole('region', { name: 'Flaky test sweep' }));
+    expect(yolo.getByText('Yolo')).toBeTruthy();
+    expect(yolo.queryByText(/autopilot/)).toBeNull();
+    await user.click(yolo.getByRole('button', { name: 'Edit' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Edit routine' }));
+    expect((dialog.getByRole('radio', { name: 'Yolo' }) as HTMLElement).getAttribute('aria-checked')).toBe('true');
+    expect(dialog.getByText(/for one turn/)).toBeTruthy();
   });
 
   test('the sidebar’s Routines lists every project’s routines under its name, and closes again', async () => {

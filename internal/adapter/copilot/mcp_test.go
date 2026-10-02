@@ -1,11 +1,15 @@
 package copilot
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/github/copilot-sdk/go/rpc"
 
@@ -84,5 +88,60 @@ func TestMCPStatusesAreTheContracts(t *testing.T) {
 	}
 	if got := mcpStatus(rpc.MCPServerStatusNotConfigured); got != agentapi.MCPNotConfigured {
 		t.Fatalf("not configured = %q", got)
+	}
+}
+
+// mcpFakeClient adds the user-wide MCP surface to fakeClient and records the
+// folder discovery ran in.
+type mcpFakeClient struct {
+	*fakeClient
+	discoverDirs []string
+}
+
+func (f *mcpFakeClient) MCPConfigList(context.Context) (map[string]rpc.MCPSerializableServerConfig, error) {
+	return map[string]rpc.MCPSerializableServerConfig{}, nil
+}
+
+func (f *mcpFakeClient) MCPDiscover(_ context.Context, workdir string) ([]rpc.DiscoveredMCPServer, error) {
+	f.discoverDirs = append(f.discoverDirs, workdir)
+	return []rpc.DiscoveredMCPServer{{Name: "github", Source: rpc.MCPServerSourceBuiltin, Enabled: true}}, nil
+}
+
+func (f *mcpFakeClient) MCPConfigAdd(context.Context, string, rpc.MCPSerializableServerConfig) error {
+	return nil
+}
+
+func (f *mcpFakeClient) MCPConfigUpdate(context.Context, string, rpc.MCPSerializableServerConfig) error {
+	return nil
+}
+func (f *mcpFakeClient) MCPConfigRemove(context.Context, string) error       { return nil }
+func (f *mcpFakeClient) MCPConfigEnable(context.Context, string, bool) error { return nil }
+func (f *mcpFakeClient) MCPConfigReload(context.Context) error               { return nil }
+
+// Discovery names an existing folder, the user's home, rather than leaving
+// the CLI to use its own working directory, which may have been deleted.
+func TestMCPServersDiscoverInTheHomeFolder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	gone := filepath.Join(t.TempDir(), "worktree")
+	if err := os.Mkdir(gone, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(gone)
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	fc := &mcpFakeClient{fakeClient: &fakeClient{}}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	servers, err := p.MCPServers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 1 || servers[0].Name != "github" {
+		t.Fatalf("servers = %+v", servers)
+	}
+	if len(fc.discoverDirs) != 1 || fc.discoverDirs[0] != home {
+		t.Fatalf("discovery folders = %q, want [%q]", fc.discoverDirs, home)
 	}
 }

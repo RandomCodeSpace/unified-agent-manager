@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -140,14 +141,107 @@ func TestRoutineScheduleValidation(t *testing.T) {
 	}
 }
 
+// commandProvider opens conversations that run typed commands, as Copilot's
+// do, and records each command with its arguments.
+type commandProvider struct {
+	*agenttest.Provider
+	mu       sync.Mutex
+	commands []string
+}
+
+type commandConversation struct {
+	agentapi.Conversation
+	p *commandProvider
+}
+
+func (p *commandProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agentapi.Conversation, error) {
+	conv, err := p.Provider.Open(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &commandConversation{Conversation: conv, p: p}, nil
+}
+
+func (c *commandConversation) ExecuteCommand(_ context.Context, name string, prompt agentapi.Prompt) (*agentapi.CommandResult, error) {
+	c.p.mu.Lock()
+	defer c.p.mu.Unlock()
+	c.p.commands = append(c.p.commands, name+" "+prompt.Text)
+	return &agentapi.CommandResult{Kind: "completed"}, nil
+}
+
+func (p *commandProvider) ran() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.commands)
+}
+
+// newCommandRoutineManager is newRoutineManager with a provider whose
+// conversations offer /autopilot.
+func newCommandRoutineManager(t *testing.T) (*Manager, *commandProvider, string) {
+	t.Helper()
+	prov := &commandProvider{Provider: agenttest.NewProvider("fake", allCaps)}
+	prov.SetModels(routineModels, nil)
+	prov.SetCommands([]agentapi.Command{{Name: "autopilot", AllowDuringTurn: true}}, nil)
+	m := startManager(t, openTestStore(t), prov)
+	return m, prov, addProject(t, m, t.TempDir())
+}
+
+// Nobody watches a run, so a new routine is Yolo with autopilot: its Task
+// turns autopilot on before the first message goes.
+func TestRoutineDefaultsToYoloWithAutopilot(t *testing.T) {
+	m, prov, project := newCommandRoutineManager(t)
+	r := mustRoutine(t, m, project, hourly("Unattended"))
+	if r.Mode != "yolo" || !r.Autopilot {
+		t.Fatalf("created = %+v", r)
+	}
+	run := runNow(t, m, project, r.ID)
+	sum, err := m.Summary(run.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Mode != "yolo" {
+		t.Fatalf("task mode = %q", sum.Mode)
+	}
+	if got := prov.ran(); !slices.Equal(got, []string{"autopilot on"}) {
+		t.Fatalf("commands = %q", got)
+	}
+	if sends := taskConv(t, prov.Provider, sum.ID).Sends(); !slices.Equal(sends, []string{"check the dependencies"}) {
+		t.Fatalf("sends = %q", sends)
+	}
+}
+
+// Safe, or Yolo without autopilot, is kept when asked for: no autopilot.
+func TestRoutineExplicitModesSkipAutopilot(t *testing.T) {
+	m, prov, project := newCommandRoutineManager(t)
+	safe := hourly("Watched")
+	safe.Mode = ptr("safe")
+	yolo := hourly("One turn")
+	yolo.Mode, yolo.Autopilot = ptr("yolo"), ptr(false)
+	for _, in := range []RoutineInput{safe, yolo} {
+		r := mustRoutine(t, m, project, in)
+		if r.Mode != *in.Mode || r.Autopilot {
+			t.Fatalf("created = %+v", r)
+		}
+		run := runNow(t, m, project, r.ID)
+		if sum, err := m.Summary(run.TaskID); err != nil || sum.Mode != *in.Mode {
+			t.Fatalf("task = %+v, %v", sum, err)
+		}
+	}
+	if got := prov.ran(); len(got) != 0 {
+		t.Fatalf("commands = %q", got)
+	}
+}
+
 // A run starts a normal Task in the Project: named after the routine and the
-// date, in safe mode by default, marked as the routine's, without
+// date, in the routine's mode, marked as the routine's, without
 // uam_create_task, with the prompt as its first message. Its turn's end is
 // the run's outcome.
 func TestRoutineRunStartsATaskAndRecordsItsOutcome(t *testing.T) {
 	m, prov, _, project := newRoutineManager(t)
-	r := mustRoutine(t, m, project, hourly("Deps check"))
-	if r.Mode != "safe" || !r.Enabled || r.MaxRunsPerDay != defaultRoutineRunsPerDay || r.MaxMinutes != defaultRoutineMinutes || r.NextRun.IsZero() {
+	in := hourly("Deps check")
+	in.Mode = ptr("safe")
+	r := mustRoutine(t, m, project, in)
+	if r.Mode != "safe" || r.Autopilot || !r.Enabled || r.MaxRunsPerDay != defaultRoutineRunsPerDay || r.MaxMinutes != defaultRoutineMinutes || r.NextRun.IsZero() {
 		t.Fatalf("created = %+v", r)
 	}
 	run := runNow(t, m, project, r.ID)
@@ -206,14 +300,18 @@ func TestRoutineRunsNeverOverlap(t *testing.T) {
 	}
 }
 
-// A turn still running after the time limit is cancelled, and the run says so.
+// A turn still running after the time limit is cancelled, and the run says
+// so: the safety net of an autopilot run that never calls task_complete.
 func TestRoutineTimeLimitCancelsTheTurn(t *testing.T) {
-	m, prov, _, project := newRoutineManager(t)
+	m, prov, project := newCommandRoutineManager(t)
 	in := hourly("Long one")
 	in.MaxMinutes = ptr(5)
 	r := mustRoutine(t, m, project, in)
 	run := runNow(t, m, project, r.ID)
-	conv := taskConv(t, prov, run.TaskID)
+	if got := prov.ran(); !slices.Equal(got, []string{"autopilot on"}) {
+		t.Fatalf("commands = %q", got)
+	}
+	conv := taskConv(t, prov.Provider, run.TaskID)
 	m.checkRoutines()
 	if conv.Cancels() != 0 {
 		t.Fatal("cancelled within the limit")

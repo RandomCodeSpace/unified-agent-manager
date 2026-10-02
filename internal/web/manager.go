@@ -2094,9 +2094,11 @@ type CreateRequest struct {
 	// spawnedBy is the Task whose uam_create_task call creates this one, and
 	// id the new Task's ID that call chose. Only that call sets them.
 	id, spawnedBy string
-	// routineID is the routine whose run creates this Task; only a run sets
-	// it.
+	// routineID is the routine whose run creates this Task, and autopilot
+	// whether the run turns autopilot on before the first message; only a
+	// run sets them.
 	routineID string
+	autopilot bool
 	// rerunOf is the Task Rerun runs again.
 	rerunOf string
 }
@@ -2225,6 +2227,9 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 		return SessionSummary{}, err
 	}
 	log.Info("web session created", "session", id, "provider", prov.Name())
+	if req.autopilot {
+		m.startAutopilot(s)
+	}
 	if hasPrompt {
 		if _, err := m.submit(s, turnInput{text: req.Prompt}, reqID, ModeSend); err != nil {
 			log.Warn("initial web prompt not submitted", "session", id, "error", err)

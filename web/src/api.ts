@@ -1517,6 +1517,8 @@ export interface RoutineInput {
   schedule: RoutineSchedule;
   enabled: boolean;
   mode: 'safe' | 'yolo';
+  /** Each run's Task turns autopilot on before its first message. */
+  autopilot: boolean;
   max_runs_per_day: number;
   max_minutes: number;
 }

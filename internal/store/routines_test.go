@@ -30,6 +30,10 @@ func TestLoadDropsInvalidRoutines(t *testing.T) {
 	if err != nil || !strings.Contains(string(out), `"future":1`) {
 		t.Fatalf("good routine = %s, %v; want its unknown field kept", out, err)
 	}
+	// A routine stored before autopilot existed keeps its mode, without it.
+	if good := cfg.WebRoutines["good"]; good.Mode != ModeSafe || good.Autopilot || strings.Contains(string(out), "autopilot") {
+		t.Fatalf("good routine = %+v, %s", good, out)
+	}
 }
 
 // A routine's run history keeps its newest MaxRoutineRuns runs.

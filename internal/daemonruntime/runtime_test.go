@@ -9,6 +9,44 @@ import (
 	"testing"
 )
 
+// The daemon's folder is the user's home, or / when that is missing; its
+// environment keeps relative path settings pointing where they did.
+func TestWorkDirAndWorkEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if got := WorkDir(); got != home {
+		t.Fatalf("WorkDir = %q, want %q", got, home)
+	}
+	t.Setenv("HOME", filepath.Join(home, "missing"))
+	if got := WorkDir(); got != "/" {
+		t.Fatalf("WorkDir without a home = %q, want /", got)
+	}
+
+	start := t.TempDir()
+	t.Chdir(start)
+	t.Setenv("UAM_CONFIG_DIR", "cfg")
+	t.Setenv("UAM_SESSION_DIR", "/abs/sess")
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("UAM_OTHER", "rel")
+	env, err := WorkEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"UAM_CONFIG_DIR": filepath.Join(start, "cfg"), "UAM_SESSION_DIR": "/abs/sess", "XDG_CACHE_HOME": "", "UAM_OTHER": "rel"}
+	for _, kv := range env {
+		name, v, _ := strings.Cut(kv, "=")
+		if w, ok := want[name]; ok {
+			if v != w {
+				t.Fatalf("%s = %q, want %q", name, v, w)
+			}
+			delete(want, name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing from the environment: %v", want)
+	}
+}
+
 func TestVerifyDirRejectsUnsafeRuntimeDirectories(t *testing.T) {
 	parent := t.TempDir()
 
