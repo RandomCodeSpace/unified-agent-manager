@@ -1,7 +1,7 @@
 import { Ban, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { api, plannerErrorText, type Card, type TriageVerdict } from '../../api';
-import { cardPath, isStarted } from '../../lib/board';
+import { cardPath, isStarted, startedUnderReason } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { ContextMenu, Menu, type ActionItem } from '../ui/menu';
@@ -22,6 +22,8 @@ export interface CardAction {
   onClick: () => void;
   primary?: boolean;
   danger?: boolean;
+  /** Why the service refuses it now: shown off, with this reason. */
+  reason?: string;
 }
 
 /**
@@ -72,8 +74,12 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
         // Its own suggested blockers, then its parents', which hold it back too.
         const waits = cardPath(c, byId)
           .reverse()
-          .flatMap((at) => at.blocked_by.map((id) => byId.get(id)))
-          .filter((b): b is Card => !!b && !b.confirmed && b.status !== 'done' && b.status !== 'cancelled');
+          .flatMap((at) =>
+            at.blocked_by.flatMap((id) => {
+              const b = byId.get(id);
+              return b && !b.confirmed && b.status !== 'done' && b.status !== 'cancelled' ? [{ card: b, via: at === c ? undefined : at }] : [];
+            }),
+          );
         setLaunching({ card: c, confirms, waits, run: () => api.planner.launch(c.id, { confirm: true }).then(launched) });
         return;
       }
@@ -98,9 +104,10 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, onClick: () => void run(c.id, 'check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && onCheck?.(c)) });
     }
     if (leaf && c.stale && onTriage) actions.push({ key: 'triage', label: 'Triage', icon: <Stethoscope />, onClick: () => void run(c.id, 'triage', 'triage the subtask', () => api.planner.triage(c.id)).then((r) => r && onTriage(c, r)) });
-    // A started subtask keeps its plan until it is released: no move, no split.
+    // A started subtask keeps its plan until it is released: no move, no split. A story moves
+    // only while nothing under it has started, so it says which subtask holds it in place.
     const started = isStarted(c);
-    if (c.kind !== 'epic' && c.status !== 'cancelled' && !started && (c.parent_id || moveTargets(c, cards).length > 0)) actions.push({ key: 'move', label: 'Move to…', icon: <MoveRight />, onClick: () => open(c, 'move') });
+    if (c.kind !== 'epic' && c.status !== 'cancelled' && !started && (c.parent_id || moveTargets(c, cards).length > 0)) actions.push({ key: 'move', label: 'Move to…', icon: <MoveRight />, reason: startedUnderReason(c, byId) ?? undefined, onClick: () => open(c, 'move') });
     if (leaf && c.status !== 'cancelled' && !started) actions.push({ key: 'split', label: 'Split', icon: <Split />, onClick: () => open(c, 'split') });
     if (c.status !== 'cancelled' && c.status !== 'done') {
       actions.push({
@@ -127,8 +134,8 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       icon: a.icon,
       danger: a.danger,
       separator: i === 0 || a.danger,
-      disabled: waiting,
-      reason: waiting ? 'Wait for the action running on this card.' : undefined,
+      disabled: waiting || !!a.reason,
+      reason: a.reason ?? (waiting ? 'Wait for the action running on this card.' : undefined),
       onSelect: a.onClick,
     }));
     return [{ key: 'open', label: 'Open', icon: <PanelRightOpen />, onSelect: () => openCard(c.id) }, ...lead, ...acts, ...trail];

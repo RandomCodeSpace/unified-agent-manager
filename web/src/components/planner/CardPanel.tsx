@@ -164,13 +164,14 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
         {unassigned ? <MoveToProject card={c} projects={projects} /> : actions.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {actions.map((a) => (
-              <Button key={a.key} size="sm" variant={a.primary ? 'primary' : a.danger ? 'danger' : 'secondary'} loading={busy === a.key} disabled={!!busy && busy !== a.key} onClick={a.onClick}>
+              <Button key={a.key} size="sm" variant={a.primary ? 'primary' : a.danger ? 'danger' : 'secondary'} loading={busy === a.key} disabled={!!a.reason || (!!busy && busy !== a.key)} aria-describedby={a.reason ? `planner-action-${a.key}-reason` : undefined} onClick={a.onClick}>
                 {a.icon}
                 {a.label}
               </Button>
             ))}
           </div>
         )}
+        {!unassigned && actions.map((a) => a.reason && <Note key={a.key} id={`planner-action-${a.key}-reason`} className="-mt-3">{a.reason}</Note>)}
 
         {check && (
           // The run's tail is a block of its own: a <pre> cannot sit inside the Note's paragraph.
