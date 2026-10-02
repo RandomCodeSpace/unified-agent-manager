@@ -39,6 +39,8 @@ export interface Capabilities {
   import?: boolean;
   /** The provider's runtime sign-in is shown and changed in Settings (`api.account`). */
   account?: boolean;
+  /** The provider's MCP servers can be listed and managed (Settings → MCP servers, a Task's MCP servers). */
+  mcp?: boolean;
 }
 
 /** What a model accepts as uploads; absent on the model means it reports nothing and is not gated. */
@@ -1147,7 +1149,7 @@ export function isStatus(e: unknown, status: number): e is ApiError {
   return e instanceof ApiError && e.status === status;
 }
 
-type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 async function call<T>(method: Method, path: string, body?: unknown, omitBody = false, signal?: AbortSignal): Promise<T> {
   // GET and DELETE carry no body; the others are JSON (the server rejects anything else).
@@ -1244,6 +1246,74 @@ function detailEventsQuery(id: string, agentId: string, bodies: BodyReference[],
   if (agentUntil) query.push(`agent_until=${enc(agentUntil)}`);
   for (const b of bodies) query.push(`item=${enc(JSON.stringify(b.coveredSeq === undefined ? [b.agentId, b.itemId] : [b.agentId, b.itemId, b.coveredSeq]))}`);
   return query.join('&');
+}
+
+/** An env variable or header of an MCP server: its name and that a value is stored; the value never leaves the service. */
+export interface McpSecret {
+  key: string;
+  set: boolean;
+}
+
+export type McpType = 'stdio' | 'http' | 'sse';
+
+/** One server of the provider's user-wide MCP configuration (Settings → MCP servers). `source` other than `user` is read-only. */
+export interface McpServer {
+  name: string;
+  type: McpType | '';
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  url?: string;
+  env: McpSecret[];
+  headers: McpSecret[];
+  enabled: boolean;
+  source: string;
+}
+
+export interface McpServers {
+  available: boolean;
+  /** Settings → Shell access → Terminal: a server that runs a command can be added or edited only while it is on. */
+  stdio_allowed: boolean;
+  servers: McpServer[];
+}
+
+/** An env variable or header to save; no `value` keeps the stored one (edit only). */
+export interface McpSecretInput {
+  key: string;
+  value?: string;
+}
+
+export interface McpServerInput {
+  name?: string;
+  type: McpType;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  url?: string;
+  env?: McpSecretInput[];
+  headers?: McpSecretInput[];
+}
+
+export interface McpTool {
+  name: string;
+  description?: string;
+}
+
+/** One MCP server as a Task's conversation sees it. */
+export interface McpStatus {
+  name: string;
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled' | 'stopped' | 'not_configured' | (string & {});
+  error?: string;
+  source?: string;
+  /** A remote server, which may need a sign-in. */
+  remote?: boolean;
+  tools?: McpTool[];
+}
+
+/** A started MCP sign-in: the page to open (none when a kept sign-in sufficed) and whether the address the browser ends on can be pasted back. */
+export interface McpSignIn {
+  url?: string;
+  relay?: boolean;
 }
 
 export const api = {
@@ -1374,6 +1444,16 @@ export const api = {
   /** Runs the chart's command again, no model involved: on demand at most once a minute (429 sooner); `auto` at most once an hour, else the chart as it is. */
   refreshChart: (projectId: string, chartId: string, auto = false) => call<PinnedChart>('POST', `/api/projects/${enc(projectId)}/charts/${enc(chartId)}/refresh`, { auto }),
   unpinChart: (projectId: string, chartId: string) => call<void>('DELETE', `/api/projects/${enc(projectId)}/charts/${enc(chartId)}`),
+  mcpServers: () => call<McpServers>('GET', '/api/mcp'),
+  addMcpServer: (body: McpServerInput) => call<McpServers>('POST', '/api/mcp/servers', body),
+  updateMcpServer: (name: string, body: McpServerInput) => call<McpServers>('PUT', `/api/mcp/servers/${enc(name)}`, body),
+  enableMcpServer: (name: string, enabled: boolean) => call<McpServers>('PATCH', `/api/mcp/servers/${enc(name)}`, { enabled }),
+  removeMcpServer: (name: string) => call<McpServers>('DELETE', `/api/mcp/servers/${enc(name)}`),
+  taskMcp: (id: string) => call<{ servers: McpStatus[] }>('GET', `/api/sessions/${enc(id)}/mcp`),
+  taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}`),
+  reconnectTaskMcp: (id: string) => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/reconnect`),
+  startMcpSignIn: (id: string, name: string, again: boolean) => call<McpSignIn>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/sign-in`, { again }),
+  finishMcpSignIn: (id: string, name: string, url: string) => call<void>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/sign-in/finish`, { url }),
   routines: (projectId: string) => call<{ routines: Routine[] }>('GET', `/api/projects/${enc(projectId)}/routines`),
   createRoutine: (projectId: string, body: RoutineInput) => call<Routine>('POST', `/api/projects/${enc(projectId)}/routines`, body),
   updateRoutine: (id: string, body: Partial<RoutineInput>) => call<Routine>('PATCH', `/api/routines/${enc(id)}`, body),

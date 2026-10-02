@@ -235,6 +235,7 @@ func (s *Server) routes() {
 	s.chartRoutes(mux)
 	s.routineRoutes(mux)
 	s.assistRoutes(mux)
+	s.mcpRoutes(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})

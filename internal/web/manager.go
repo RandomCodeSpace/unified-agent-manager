@@ -104,6 +104,8 @@ type Manager struct {
 	imageJobs      chan imageJob
 	imageWG        sync.WaitGroup
 	storeImageHook func()
+	// signIns holds the MCP sign-ins waiting for a pasted callback address.
+	signIns mcpSignIns
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo

@@ -40,7 +40,7 @@ export interface MockState {
 const NOW = Date.now();
 const ago = (min: number) => new Date(NOW - min * 60000).toISOString();
 
-const CAPS = { cancel: true, permissions: true, questions: true, session_diff: false, history: true, context_size: true, import: true };
+const CAPS = { cancel: true, permissions: true, questions: true, session_diff: false, history: true, context_size: true, import: true, mcp: true };
 const SIZES = [
   { id: 'default', tokens: 200_000 },
   { id: 'long_context', tokens: 1_000_000 },

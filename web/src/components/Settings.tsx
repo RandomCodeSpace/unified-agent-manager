@@ -5,6 +5,7 @@ import { SavedPromptsSettings } from './Assist';
 import { DEFAULT_COMPACT_THRESHOLD, api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
+import { McpServersSettings } from './McpServers';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { byCodeUnit } from '../lib/order';
 import { Field, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
@@ -600,6 +601,9 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
             <Row id="terminal" label="Terminal" help="Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on this machine as the uam user, without the agent's permission prompts.">
               <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />
             </Row>
+          </Section>}
+          {loaded && (meta?.providers ?? []).some((p) => p.capabilities.mcp) && <Section id="mcp" title="MCP servers">
+            <McpServersSettings terminal={!!settings.terminal} />
           </Section>}
           <Section id="browser" title="This browser">
             <NotifyRow />
