@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -122,21 +123,39 @@ func TestWebContextAndCompactionEvents(t *testing.T) {
 	if e := h.sink.last(); e.Kind != agentapi.EventContext || e.Context.Used != 25 || e.Context.Limit != 20 {
 		t.Fatalf("context event = %+v", e)
 	}
+	trigger := rpc.CompactionTriggerThreshold
+	removed := int64(12345)
 	events := []copilot.SessionEvent{
-		ev("compact", &rpc.SessionCompactionCompleteData{Success: true}),
+		ev("start", &rpc.SessionCompactionStartData{Trigger: &trigger}),
+		ev("compact", &rpc.SessionCompactionCompleteData{Success: true, Trigger: &trigger, TokensRemoved: &removed}),
+		ev("bare", &rpc.SessionCompactionCompleteData{Success: true}),
 		ev("failed", &rpc.SessionCompactionCompleteData{Success: false, Error: option("provider failed")}),
 		ev("truncate", &rpc.SessionTruncationData{MessagesRemovedDuringTruncation: 2, TokensRemovedDuringTruncation: 600}),
 	}
 	for _, e := range events {
 		h.fs.onEvent(e)
 	}
+	var compacting []bool
+	for _, e := range h.sink.all() {
+		if e.Kind == agentapi.EventCompaction {
+			compacting = append(compacting, e.Compacting)
+		}
+	}
+	if !slices.Equal(compacting, []bool{true, false, false, false}) {
+		t.Fatalf("compaction events = %v", compacting)
+	}
+	h.fs.onEvent(agentEv("substart", "child", &rpc.SessionCompactionStartData{}))
+	if e := h.sink.last(); e.Kind == agentapi.EventCompaction {
+		t.Fatal("subagent compaction reported as the Task's")
+	}
 	notice := notices(h.sink.all())
-	if len(notice) != 3 || !strings.Contains(notice[0], "compacted") || !strings.Contains(notice[1], "failed") || !strings.Contains(notice[2], "600") {
+	want := []string{"compact|Compacted the conversation · freed 12,345 tokens.", "bare|Compacted the conversation.", "failed|Compacting the conversation failed: provider failed"}
+	if len(notice) != 4 || !slices.Equal(notice[:3], want) || !strings.Contains(notice[3], "600") {
 		t.Fatalf("notices = %q", notice)
 	}
 	h.fs.events = events
 	hist, err := h.conv.History(context.Background())
-	if err != nil || len(hist.Items) != 3 {
+	if err != nil || len(hist.Items) != 4 {
 		t.Fatalf("history = %+v, %v", hist, err)
 	}
 	for _, it := range hist.Items {

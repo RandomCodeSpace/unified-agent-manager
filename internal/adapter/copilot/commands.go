@@ -124,7 +124,7 @@ const allowAllCommand = "allow-all"
 
 func commandDisabled(name string) string {
 	switch name {
-	case allowAllCommand, "permissions", "model", "rename", "context", "usage", "list-dirs", "env", "skills", "autopilot", "init", "review", "blame", "fleet", "research", "security-review":
+	case allowAllCommand, "permissions", "model", "rename", "context", "usage", "list-dirs", "env", "skills", "compact", "autopilot", "init", "review", "blame", "fleet", "research", "security-review":
 		return ""
 	case "plan":
 		return "Plan exit approval is not supported by the web client yet"

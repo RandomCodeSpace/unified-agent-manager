@@ -123,8 +123,7 @@ export function useMedia(query: string): boolean {
  * finished ones, always with the word for assistive tech. `label` renders the word too,
  * as a chip; only the attention chip has a fill.
  */
-export function StateMark({ state, label = false, title, className }: Readonly<{ state: SessionState; label?: boolean; title?: string; className?: string }>) {
-  const text = STATE_LABELS[state] ?? state;
+export function StateMark({ state, label = false, title, className, text = STATE_LABELS[state] ?? state }: Readonly<{ state: SessionState; label?: boolean; title?: string; className?: string; /** The word in place of the state's ("Compacting…"). */ text?: string }>) {
   const tone = STATE_TONE[state];
   // Keyed on the state, so a change fades the new glyph in (`base`) in the same 16px slot; the chip's colour transitions with it.
   const glyph = (

@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/coder/websocket v1.8.15
 	github.com/creack/pty v1.1.24
+	github.com/dustin/go-humanize v1.0.1
 	github.com/github/copilot-sdk/go v1.0.14
 	github.com/google/uuid v1.6.0
 	golang.org/x/sys v0.47.0
@@ -14,7 +15,6 @@ require (
 )
 
 require (
-	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

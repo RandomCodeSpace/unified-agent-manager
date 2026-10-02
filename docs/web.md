@@ -300,6 +300,18 @@ sign-outs are logged without the token.
   or changing its selection clears it until a fresh report. Compaction or
   truncation appears as a notice in the conversation; the next usage report
   updates the meter.
+- **Compacting**: while Copilot compacts the conversation, whether you ran
+  `/compact` or it compacts on its own as the context fills, the Task says
+  so: the label above the message box (and, during a turn, the line at the
+  foot of the conversation) reads "Compacting the conversation…",
+  the header chip and the Task's row read "Compacting…", and the Task sits
+  under Working in the list (a request waiting for you still wins). When it
+  ends a quiet notice stays in the conversation, "Compacted the conversation
+  · freed 2,332 tokens." (the count only when Copilot reports one), or
+  "Compacting the conversation failed: …" with Copilot's reason. Messages you
+  send meanwhile follow the usual Send now / After this turn rules. The
+  service reports it as `compacting: true` on the Task summary, absent
+  otherwise; it is live only and never saved.
 - **Usage and credits**: for a provider that reports quota (Copilot has the
   `usage` capability), UAM reads the account's quotas when it starts, after
   each turn ends, and at most once a minute while a browser is open, and
@@ -1072,8 +1084,9 @@ sign-outs are logged without the token.
   (`+N −M`, when known) and how long ago it changed, then one plain status
   line: "Asks: …" with the question, "Wants your OK to …" with what a
   permission is for, "Finished, ready for your review", "Stopped with an
-  error", or "Working · quiet 12m" once Copilot has reported nothing for a
-  few minutes (the status never shows what the agent is doing). Hovering an
+  error", "Compacting…" while the conversation is compacted, or "Working ·
+  quiet 12m" once Copilot has reported nothing for a few minutes (the status
+  never shows what the agent is doing). Hovering an
   active row that can settle shows Settle.
   - **Alt+J / Alt+K** open the next / previous Task in "Needs you", wrapping
     round. They do nothing in the terminal, and in a text field where the
