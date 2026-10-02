@@ -6,6 +6,7 @@ import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind 
 import { cn } from '../lib/cn';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
+import { foldToFit } from '../lib/toolbarFold';
 import { BackgroundTasks } from './BackgroundTasks';
 import { SavedPrompts, SuggestedReplies } from './Assist';
 import { insertAt } from '../lib/assist';
@@ -95,12 +96,15 @@ interface Choice {
   group?: string;
 }
 
+/** The picker gives up width only once the lower-priority controls have folded away (on a phone they always have). */
+const SHRINK = 'max-sm:min-w-0 max-sm:shrink in-data-[fold~=more]:min-w-0 in-data-[fold~=more]:shrink';
+
 /**
  * One compact toolbar picker: the current value on a small ghost trigger, a radio menu to
  * change it. When the value cannot be changed the trigger stays visible, disabled, and
  * says why on hover and focus, so the rule is visible instead of a missing control.
- * `compact` drops the value text on a phone, where the toolbar must stay one row; the
- * glyph, the accessible name and the menu still carry it.
+ * The value truncates no shorter than SQUEEZE_MIN and leaves at the `model` fold (lib/toolbarFold);
+ * the glyph, the accessible name, the tooltip and the menu still carry it.
  */
 function Picker({
   id,
@@ -112,7 +116,6 @@ function Picker({
   disabled,
   reason,
   hint,
-  compact = false,
   className,
   onChange,
 }: Readonly<{
@@ -126,14 +129,13 @@ function Picker({
   reason?: string;
   /** A second tooltip line (the model the latest turn was routed to). */
   hint?: string;
-  compact?: boolean;
   className?: string;
   onChange: (value: string) => void;
 }>) {
   const face = (
     <>
       {icon}
-      <span className={cn('max-w-36 truncate max-sm:max-w-16', compact && 'max-sm:hidden')}>{display}</span>
+      <span data-squeeze="" className="max-w-36 truncate max-sm:max-w-16 in-data-[fold~=model]:hidden">{display}</span>
       <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
     </>
   );
@@ -142,12 +144,14 @@ function Picker({
       {c.label}
     </Menu.RadioItem>
   );
-  const tip = (first: string) => (hint ? <>{first}<span className="block text-on-primary/70">{hint}</span></> : first);
+  const line = (text?: string) => text && <span className="block text-on-primary/70">{text}</span>;
+  // The value leads, since the trigger can be a bare glyph.
+  const tip = (why?: string) => <>{`${label}: ${display}`}{line(why)}{line(hint)}</>;
   if (disabled) {
     const hintSuffix = hint ? ` ${hint}.` : '';
     return (
       <Tip label={tip(reason ?? `${label} cannot change now`)}>
-        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hintSuffix}`} className={cn('min-w-0 shrink text-muted', className)}>
+        <Button id={id} size="sm" variant="subtle" aria-disabled="true" aria-label={`${label}: ${display}. ${reason ?? ''}${hintSuffix}`} className={cn(SHRINK, 'text-muted', className)}>
           {face}
         </Button>
       </Tip>
@@ -155,8 +159,8 @@ function Picker({
   }
   return (
     <Menu.Root modal={false}>
-      <Tip label={tip(compact ? `${label}: ${display}` : label)}>
-        <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} className={cn('min-w-0 shrink text-body', className)} />}>{face}</Menu.Trigger>
+      <Tip label={tip()}>
+        <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} className={cn(SHRINK, 'text-body', className)} />}>{face}</Menu.Trigger>
       </Tip>
       <Menu.Content side="top" align="start" sideOffset={6} className="min-w-52">
         <Menu.RadioGroup value={value} onValueChange={(v) => onChange(v as string)}>
@@ -354,6 +358,25 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /* ---------- `/` and `@` pickers ---------- */
 
   const textarea = useRef<HTMLTextAreaElement>(null);
+  // The control row folds to fit its width (lib/toolbarFold) whenever that or its contents change. Folding writes one
+  // attribute on the row, never state, so a resize does not render the composer.
+  const toolbar = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const row = toolbar.current;
+    if (!row) return;
+    const fit = () => void foldToFit(row);
+    fit();
+    void document.fonts?.ready?.then(fit);
+    if (typeof ResizeObserver === 'undefined') return;
+    const resized = new ResizeObserver(fit);
+    resized.observe(row);
+    const changed = new MutationObserver(fit);
+    changed.observe(row, { childList: true, characterData: true, subtree: true });
+    return () => {
+      resized.disconnect();
+      changed.disconnect();
+    };
+  }, []);
   const popup = useRef<HTMLDivElement>(null);
   const pendingCaret = useRef<number | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -992,7 +1015,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const executionSupported = !newTask && !!session.capabilities.execution_modes;
   const executionKnown = executionSupported && session.execution?.known === true && !!session.execution.mode;
   const executionMode = executionKnown ? session.execution!.mode! : '';
-  const runLabel = [mode === 'yolo' ? 'Yolo' : 'Safe', executionMode.charAt(0).toUpperCase() + executionMode.slice(1)].filter(Boolean).join(' · ');
+  const permission = mode === 'yolo' ? 'Yolo' : 'Safe';
+  const execution = executionMode.charAt(0).toUpperCase() + executionMode.slice(1);
+  const runLabel = [permission, execution].filter(Boolean).join(' · ');
+  // The toolbar's folds shorten it to the permission, then to the glyph alone.
+  const runFace = (
+    <span className="max-w-40 truncate in-data-[fold~=permissions]:hidden">
+      {permission}
+      {execution && <span className="in-data-[fold~=execution]:hidden"> · {execution}</span>}
+    </span>
+  );
   const risk = RISKS[(mode === 'yolo' ? 2 : 0) + (autopilot ? 1 : 0)];
   const runIcon = <risk.Icon aria-hidden="true" className={risk.tone} />;
   const riskLine = (
@@ -1332,10 +1364,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       />
 
       {/* One control row (DESIGN.md D3): Attach and the pickers at left, the actions at right. On a phone the effort,
-          context, permissions and execution pickers fold into a More menu. On a phone in answer mode Decline and Answer
+          context, permissions and execution pickers fold into a More menu; a narrow row folds its labels in priority order
+          (lib/toolbarFold), the model's last. On a phone in answer mode Decline and Answer
           carry labels and take a row of their own; while a turn runs the actions stay on the row and wrap under it only
           when the pickers cannot keep their touch targets beside them. */}
-      <div className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2', (labelledActions || twoChoices) && 'max-sm:flex-wrap max-sm:gap-y-1')}>
+      <div ref={toolbar} className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2 data-[fold~=wrap]:flex-wrap data-[fold~=wrap]:gap-y-1', (labelledActions || twoChoices) && 'max-sm:flex-wrap max-sm:gap-y-1')}>
         {!locked && (
           <>
             <input
@@ -1400,43 +1433,43 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         />
         {hiddenModel && <span className="text-caption text-muted max-sm:hidden">Hidden in Settings</span>}
         <ComposerUsage session={session} model={catalog.find((m) => m.id === session.model)} />
-        <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline-strong max-sm:hidden" />
+        <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {settingsLocked || fixedTuning ? (
-          <Tip label={tuningReason}>
-            <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort and context size: ${tuningLabel}. ${tuningReason}`} className="text-muted max-sm:hidden">
+          <Tip label={<>{`Effort and context size: ${tuningLabel}`}<span className="block text-on-primary/70">{tuningReason}</span></>}>
+            <Button id="composer-effort-context" size="sm" variant="subtle" aria-disabled="true" aria-label={`Effort and context size: ${tuningLabel}. ${tuningReason}`} className={cn('text-muted max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')}>
               <Gauge aria-hidden="true" className="text-faint" />
-              <span>{tuningLabel}</span>
+              <span className="in-data-[fold~=tuning]:hidden">{tuningLabel}</span>
               <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
             </Button>
           </Tip>
         ) : (
           <Menu.Root modal={false}>
-            <Tip label="Effort and context size">
-              <Menu.Trigger render={<Button id="composer-effort-context" size="sm" variant="subtle" aria-label={`Effort and context size: ${tuningLabel}`} className="max-sm:hidden" />}>
+            <Tip label={`Effort and context size: ${tuningLabel}`}>
+              <Menu.Trigger render={<Button id="composer-effort-context" size="sm" variant="subtle" aria-label={`Effort and context size: ${tuningLabel}`} className="max-sm:hidden in-data-[fold~=more]:hidden" />}>
                 <Gauge aria-hidden="true" className="text-faint" />
-                <span>{tuningLabel}</span>
+                <span className="in-data-[fold~=tuning]:hidden">{tuningLabel}</span>
                 <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
               </Menu.Trigger>
             </Tip>
             <Menu.Content side="top" align="start">{tuningItems}</Menu.Content>
           </Menu.Root>
         )}
-        <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline-strong max-sm:hidden" />
+        <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {/* Permissions and execution: one menu, since both say how freely the agent acts; its glyph follows both. */}
         {locked ? (
-          <Tip label="This task is read-only.">
-            <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}. This task is read-only.`} className="min-w-0 shrink text-muted max-sm:hidden">
+          <Tip label={<>{`Permissions and execution: ${runLabel}`}<span className="block text-on-primary/70">This task is read-only.</span></>}>
+            <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}. This task is read-only.`} className="text-muted max-sm:hidden">
               {runIcon}
-              <span className="max-w-40 truncate">{runLabel}</span>
+              {runFace}
               <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
             </Button>
           </Tip>
         ) : (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
             <Tip label={<>{`Permissions and execution: ${runLabel}${objectiveSuffix}`}<span className="block text-on-primary/70">{risk.text}</span></>}>
-              <Menu.Trigger render={<Button id="composer-mode" size="sm" variant="subtle" aria-label={`Permissions and execution: ${runLabel}`} aria-busy={!!busy} className="min-w-0 shrink max-sm:hidden" />}>
+              <Menu.Trigger render={<Button id="composer-mode" size="sm" variant="subtle" aria-label={`Permissions and execution: ${runLabel}`} aria-busy={!!busy} className="max-sm:hidden in-data-[fold~=more]:hidden" />}>
                 {runIcon}
-                <span className="max-w-40 truncate">{runLabel}</span>
+                {runFace}
                 <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
               </Menu.Trigger>
             </Tip>
@@ -1457,7 +1490,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {!locked && (
           <Menu.Root modal={false} onOpenChange={setExecutionOpen}>
             <Tip label="Effort, context, permissions and execution">
-              <Menu.Trigger render={<Button id="composer-more" size="icon" variant="subtle" aria-label="More settings: effort, context, permissions and execution" className="text-muted sm:hidden" />}>
+              <Menu.Trigger render={<Button id="composer-more" size="icon" variant="subtle" aria-label="More settings: effort, context, permissions and execution" className="text-muted sm:hidden sm:in-data-[fold~=more]:inline-flex" />}>
                 <Ellipsis />
               </Menu.Trigger>
             </Tip>

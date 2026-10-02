@@ -258,7 +258,12 @@ sign-outs are logged without the token.
   automatically. Hiding is a display preference, not an access rule.
 - **Composer layout**: the toolbar groups Model, Effort/Context and Safe/Yolo.
   The strip underneath shows the Project, branch and changed-file count;
-  click the count to open Changes. The toolbar wraps on phones. Type `$`
+  click the count to open Changes. When the toolbar is narrow (side panels
+  open, or a phone), its labels give way in order: the execution word, the
+  credits, effort and context, then permissions become glyphs and move into
+  the More menu, and the model's name goes last. Hover a glyph for its value.
+  The toolbar wraps on phones, and elsewhere only when even that does not
+  fit. Type `$`
   at the start of a message to pick a skill; `/` still lists commands and
   skills, and `@` references files.
 - **Copilot configuration**: Copilot Tasks load what the terminal CLI loads

@@ -12,3 +12,12 @@ test('the vertical fading rule works under a variant (the thought and step rails
   assert.match(css, /\.before\\:fade-rule-y::before\s*\{[^}]*linear-gradient\(to bottom/);
   assert.match(css, /\.fade-rule-y\s*\{[^}]*linear-gradient\(to bottom/);
 });
+
+test('the composer toolbar folds (lib/toolbarFold) match the row attribute, and the More fold wins over sm:hidden', () => {
+  const css = styles.build(['sm:hidden', 'sm:in-data-[fold~=more]:inline-flex', 'in-data-[fold~=model]:hidden']);
+  assert.match(css, /:where\(\[data-fold~="model"\]\) \.in-data-\\\[fold\\~\\=model\\\]\\:hidden\s*\{\s*display: none/);
+  // Same specificity, so the later rule decides.
+  const hidden = css.indexOf('.sm\\:hidden {');
+  const shown = css.indexOf(':where([data-fold~="more"]) .sm\\:in-data-');
+  assert.ok(hidden >= 0 && shown > hidden, 'the More fold comes after sm:hidden');
+});
