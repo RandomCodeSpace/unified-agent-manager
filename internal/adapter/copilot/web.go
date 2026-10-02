@@ -1560,7 +1560,11 @@ type conversation struct {
 	// broader background-work boundary and must not end another turn.
 	assistantIdleSeen bool
 	autopilotTurn     bool
-	foregroundIdle    bool
+	// taskCompleted marks a main-agent session.task_complete in the current
+	// turn: the session.idle that follows ends an autopilot run even though
+	// it still reports the autopilot mode.
+	taskCompleted  bool
+	foregroundIdle bool
 	// turnRunning is set from a foreground turn's start until its end. Send
 	// refuses a prompt while it is: the CLI holds any prompt sent during a
 	// turn until session.idle, which never comes while a background shell runs.
@@ -2090,7 +2094,7 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	// An idle seen while Send was in flight already ended this turn.
 	if c.idles == idles {
 		c.foregroundIdle, c.turnRunning = false, true
-		c.idleUnresolved = false
+		c.idleUnresolved, c.taskCompleted = false, false
 		c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 	}
@@ -2795,7 +2799,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.tr.stepStart[agentID] = ev.Timestamp
 		if agentID == "" {
 			c.foregroundIdle, c.turnRunning = false, true
-			c.idleUnresolved = false
+			c.idleUnresolved, c.taskCompleted = false, false
 			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 		} else if c.resumeSubagentLocked(agentID, ev.Timestamp) {
@@ -2828,7 +2832,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		// reached the CLI after the idle of the turn it was meant for.
 		if agentID == "" && d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliveryIdle {
 			c.foregroundIdle, c.turnRunning = false, true
-			c.idleUnresolved = false
+			c.idleUnresolved, c.taskCompleted = false, false
 			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 		}
@@ -2870,8 +2874,14 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.assistantIdleSeen = true
 		c.finishTurnLocked(d.Aborted, ev.Timestamp)
 		return
+	case *rpc.SessionTaskCompleteData:
+		if agentID == "" {
+			c.taskCompleted = true
+		}
 	case *rpc.SessionIdleData:
-		if agentID == "" && d.Mode != nil && *d.Mode == rpc.SessionModeAutopilot && (d.Aborted == nil || !*d.Aborted) {
+		// Copilot CLI 1.0.89 reports the autopilot mode on the idle that ends
+		// a run after task_complete too; only a task_complete tells them apart.
+		if agentID == "" && d.Mode != nil && *d.Mode == rpc.SessionModeAutopilot && (d.Aborted == nil || !*d.Aborted) && !c.taskCompleted {
 			c.autopilotTurn = true
 			next := agentapi.ExecutionState{Mode: "autopilot"}
 			if c.execution != nil {
@@ -2885,7 +2895,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			c.checkExecutionLocked()
 			return
 		}
-		if agentID == "" && (!c.assistantIdleSeen || c.autopilotTurn) && (d.Mode == nil || *d.Mode != rpc.SessionModeAutopilot || d.Aborted != nil && *d.Aborted) {
+		if agentID == "" && (!c.assistantIdleSeen || c.autopilotTurn) && (c.taskCompleted || d.Mode == nil || *d.Mode != rpc.SessionModeAutopilot || d.Aborted != nil && *d.Aborted) {
 			c.finishTurnLocked(d.Aborted, ev.Timestamp)
 			c.autopilotTurn = false
 		}
