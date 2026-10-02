@@ -556,8 +556,8 @@ sign-outs are logged without the token.
   when the question appears; it is sent only when you press Enter or Answer.
   Nothing else goes with an answer: Attach is unavailable while a question
   waits, and a dropped or pasted file is refused with "Answer the question
-  first." **Decline**
-  sits between Stop and **Answer**. What you had typed before the question
+  first." **Decline** (an ×)
+  sits between Stop and **Answer** (an up arrow). What you had typed before the question
   arrived is kept and comes back once the question is settled.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
@@ -639,10 +639,12 @@ sign-outs are logged without the token.
   come back after a reload or a restart of UAM, because Copilot records the
   image's bytes in its session. They are deleted with the Task, like
   attachments.
-- **Messages while a turn runs**: Send carries the name of what it will do,
-  **Send now** (steer) or **After this turn** (queue), following the Settings
-  view; the menu beside it (the chevron, "More send options") offers the
-  other.
+- **Messages while a turn runs**: Send shows what it will do as an icon,
+  **Send now** (steer, an up arrow) or **After this turn** (queue, the
+  waiting list's icon), following the Settings view; its tooltip names the
+  action and its key. The menu beside it (the chevron, "More send options")
+  offers the other. The send buttons carry icons only; screen readers hear
+  their names.
   - **After this turn** holds the message until the turn completes, then sends it as
     the next prompt. A Task queues up to 20 messages and sends them one turn
     at a time, oldest first. You can cancel a queued message until it is
@@ -667,7 +669,7 @@ sign-outs are logged without the token.
     into a queued message or restart the running response.
   - When no turn is running there is one button, **Send**, which sends the
     message at once.
-  - While a turn runs, Enter does what Send says (Send now by default) and
+  - While a turn runs, Enter does what Send shows (Send now by default) and
     Ctrl+Enter (⌘+Enter on a Mac) the other; the tooltip and the menu name
     the keys. Files and attachments go with a steer as with any other
     message.
@@ -697,13 +699,6 @@ sign-outs are logged without the token.
   Task works, waits for you, has queued messages, or once you start typing.
   Without a Utility model, or past today's Background AI limit, there are
   none. Settings → Composer → **Suggest replies** turns them off.
-- **Saved prompts**: the speech-bubble button in the composer's toolbar lists
-  the prompts you saved, for every Project or for this Task's Project. Type
-  to search them by name; choosing one inserts it at the cursor on its own
-  line. **Save as prompt** saves the composer's text under a name, for this
-  Project or all Projects. The service keeps them, so they are the same in
-  every browser. Settings → **Saved prompts** renames and deletes them.
-  Removing a Project removes the prompts saved for it.
 - **Outcome line**: when a turn completes, the Task gets a one-line summary
   such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
   Task's row in the sidebar shows it as its status line ("Ready for review:"

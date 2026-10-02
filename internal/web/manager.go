@@ -611,7 +611,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit,
-		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), SavedPrompts: cfg.WebSettings.SavedPrompts, CompactionThreshold: cfg.WebSettings.CompactionThreshold}
+		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -1277,14 +1277,10 @@ func (m *Manager) removeProject(id string) error {
 	case unarchived:
 		return newError(http.StatusConflict, "archive every task in this project first")
 	}
-	// The Project's routines and saved prompts go with it, in the same
-	// write. settingsMu keeps a concurrent prompt change from writing them
-	// back.
-	m.settingsMu.Lock()
+	// The Project's routines go with it, in the same write.
 	m.routines.mu.Lock()
 	err := m.store.Update(func(cfg *store.Config) error {
 		delete(cfg.WebProjects, id)
-		cfg.WebSettings.SavedPrompts = slices.DeleteFunc(cfg.WebSettings.SavedPrompts, func(p store.WebSavedPrompt) bool { return p.ProjectID == id })
 		for key, rec := range cfg.Sessions {
 			if rec.Surface == store.SurfaceWeb && rec.Web != nil && rec.Web.ProjectID == id {
 				delete(cfg.Sessions, key)
@@ -1302,7 +1298,6 @@ func (m *Manager) removeProject(id string) error {
 	}
 	m.routines.mu.Unlock()
 	if err != nil {
-		m.settingsMu.Unlock()
 		return fmt.Errorf("remove web project: %w", err)
 	}
 	m.mu.Lock()
@@ -1315,13 +1310,7 @@ func (m *Manager) removeProject(id string) error {
 	delete(m.projects, id)
 	delete(m.branchAt, id)
 	m.broadcastLocked("project_removed", "", func(seq uint64) any { return projectRemovedEvent{Seq: seq, ProjectID: id} })
-	if prompts := slices.DeleteFunc(slices.Clone(m.settings.SavedPrompts), func(p SavedPrompt) bool { return p.ProjectID == id }); len(prompts) != len(m.settings.SavedPrompts) {
-		m.settings.SavedPrompts = prompts
-		settings := m.settings
-		m.broadcastLocked("settings", "", func(seq uint64) any { return settingsEvent{Seq: seq, Settings: settings} })
-	}
 	m.mu.Unlock()
-	m.settingsMu.Unlock()
 	for _, conv := range convs {
 		m.closeConversation(conv)
 	}

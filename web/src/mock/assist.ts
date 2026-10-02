@@ -1,7 +1,7 @@
-// Development-only: the assist routes (suggested replies, Run again, Export as Markdown, saved
-// prompts) for the in-browser mock service (install.ts). Not part of the production bundle.
+// Development-only: the assist routes (suggested replies, Run again, Export as Markdown) for the
+// in-browser mock service (install.ts). Not part of the production bundle.
 
-import type { SavedPrompt, SessionSummary, Settings, TurnEvidence } from '../api';
+import type { SessionSummary, Settings, TurnEvidence } from '../api';
 import type { MockTask } from './data';
 
 type Json = Record<string, unknown>;
@@ -10,7 +10,6 @@ type Json = Record<string, unknown>;
 export interface AssistHost {
   broadcast: (name: string, payload: Json) => void;
   settings: () => Settings;
-  setSettings: (s: Settings) => void;
   task: (id: string) => MockTask | undefined;
   /** The create route, as POST /api/sessions answers; the Task it made is the newest. */
   create: (body: Json) => Response;
@@ -52,11 +51,6 @@ const EVIDENCE: Record<string, Omit<TurnEvidence, 'since'>> = {
 const REPLIES = ['Run the whole test suite', 'Commit this with a short message', 'Show me the diff'];
 
 export function assistMock(host: AssistHost) {
-  let counter = 0;
-  const savePrompts = (list: SavedPrompt[]) => {
-    host.setSettings({ ...host.settings(), saved_prompts: list });
-    host.broadcast('settings', { settings: host.settings() });
-  };
   return function route(method: string, url: URL, body: Json): Response | null {
     const path = url.pathname;
     let r: RegExpMatchArray | null;
@@ -99,31 +93,6 @@ export function assistMock(host: AssistHost) {
         if (it.kind === 'tool' && it.tool) lines.push(`<details><summary>${it.tool.title ?? it.tool.name}</summary>`, '', '```text', it.tool.output ?? '', '```', '', '</details>', '');
       }
       return new Response(lines.join('\n'), { status: 200, headers: { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `attachment; filename="${(t.name || 'task').toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md"` } });
-    }
-    if (path === '/api/prompts' && method === 'POST') {
-      const name = String(body.name ?? '').trim();
-      const text = String(body.text ?? '');
-      if (!name || !text.trim()) return fail(400, 'prompt name and text are required');
-      const p: SavedPrompt = { id: `prompt${++counter}`, name, text, created_at: new Date().toISOString(), ...(typeof body.project_id === 'string' && body.project_id ? { project_id: body.project_id } : {}) };
-      savePrompts([...(host.settings().saved_prompts ?? []), p]);
-      return json(201, p);
-    }
-    if ((r = path.match(/^\/api\/prompts\/([^/]+)$/))) {
-      const id = decodeURIComponent(r[1]);
-      const list = host.settings().saved_prompts ?? [];
-      const at = list.findIndex((p) => p.id === id);
-      if (at < 0) return fail(404, 'prompt not found');
-      if (method === 'DELETE') {
-        savePrompts(list.filter((p) => p.id !== id));
-        return json(204);
-      }
-      if (method === 'PATCH') {
-        const name = String(body.name ?? '').trim();
-        if (!name) return fail(400, 'prompt name is required');
-        const next = { ...list[at], name };
-        savePrompts(list.map((p) => (p.id === id ? next : p)));
-        return json(200, next);
-      }
     }
     return null;
   };

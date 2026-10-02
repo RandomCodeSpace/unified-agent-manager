@@ -186,7 +186,6 @@ export function install(): { received: Received[] } {
   const assist = assistMock({
     broadcast: (name, payload) => broadcast(name, payload),
     settings: () => st.settings,
-    setSettings: (s) => { st.settings = s; },
     task: find,
     create: (body) => route('POST', new URL('/api/sessions', window.location.origin), body),
     newest: () => st.tasks.at(-1),

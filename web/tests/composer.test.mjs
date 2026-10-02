@@ -28,7 +28,7 @@ test('the active composer permits draft settings and retains settings in prompt 
   const current = { model: 'a', effort: 'low', context_size: 'default' };
   assert.equal(init('selectionChanged', { session: current, selection: current }), false);
   assert.equal(init('selectionChanged', { session: current, selection: { ...current, effort: 'high' } }), true);
-  // Draft settings make a steer impossible: Send is labelled After this turn and Enter queues (Send now stays in its menu, dimmed).
+  // Draft settings make a steer impossible: Send is After this turn and Enter queues (Send now stays in its menu, dimmed).
   assert.deepEqual(JSON.parse(JSON.stringify(init('{ enter, modified }', { enterActions, live: true, appSettings: { send_default: 'steer' }, steerBlocked: 'Queue new settings' }))), { enter: 'queue', modified: 'queue' });
   assert.deepEqual(JSON.parse(JSON.stringify(init('{ enter, modified }', { enterActions, live: true, appSettings: { send_default: 'steer' }, steerBlocked: '' }))), { enter: 'steer', modified: 'queue' });
   const input = { t: 'follow up', files: ['notes.md'], attachmentIds: ['image-id'], cmd: null, selection: current };
