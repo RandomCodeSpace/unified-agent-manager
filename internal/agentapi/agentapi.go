@@ -78,6 +78,8 @@ type Capabilities struct {
 	// HostTools is true when the provider registers OpenRequest.Tools in its
 	// conversations and implements UtilityRunner.
 	HostTools bool `json:"host_tools,omitempty"`
+	// Account is true when the provider implements AccountManager.
+	Account bool `json:"account,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.

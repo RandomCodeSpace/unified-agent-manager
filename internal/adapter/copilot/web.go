@@ -390,7 +390,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -398,9 +398,9 @@ func (p *webProvider) Check(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, webCheckTimeout)
+	vctx, cancel := context.WithTimeout(ctx, webCheckTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "--version") // #nosec G204 -- resolveCopilot uses the service owner's PATH; fixed argument, no shell or request input.
+	cmd := exec.CommandContext(vctx, path, "--version") // #nosec G204 -- resolveCopilot uses the service owner's PATH; fixed argument, no shell or request input.
 	// The npm shim runs the real binary as a child that inherits the output
 	// pipe; WaitDelay stops a timed-out check from waiting on that child.
 	cmd.WaitDelay = time.Second
@@ -414,6 +414,9 @@ func (p *webProvider) Check(ctx context.Context) error {
 	}
 	if !cliVersionExpr.Match(out) {
 		return fmt.Errorf("copilot --version printed no version: %s", clip(displaytext.Sanitize(string(out)), maxErrorText))
+	}
+	if p.signedOut(ctx) {
+		return fmt.Errorf("copilot is not signed in: %w", agentapi.ErrSignedOut)
 	}
 	return nil
 }

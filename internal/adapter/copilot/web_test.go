@@ -1942,7 +1942,8 @@ func TestWebToolImagesFromHistory(t *testing.T) {
 func TestWebCheck(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
-	p := newWebProvider(nil, time.Hour)
+	// No runtime starts here, so the sign-in is not checked.
+	p := newWebProvider(func() (sdkClient, error) { return nil, errors.New("no runtime in this test") }, time.Hour)
 	ctx := context.Background()
 	if err := p.Check(ctx); err == nil || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("missing CLI err = %v", err)
@@ -1956,6 +1957,12 @@ func TestWebCheck(t *testing.T) {
 	script("#!/bin/sh\necho 'GitHub Copilot CLI 1.0.88.'\n")
 	if err := p.Check(ctx); err != nil {
 		t.Fatalf("Check: %v", err)
+	}
+	// A runtime that answers it is signed out fails the check as signed out.
+	out, fc := accountProvider(t, nil)
+	fc.status = copilot.GetAuthStatusResponse{StatusMessage: copilot.String("Not authenticated")}
+	if err := out.Check(ctx); !errors.Is(err, agentapi.ErrSignedOut) {
+		t.Fatalf("signed-out Check = %v", err)
 	}
 	script("#!/bin/sh\necho 'something else'\n")
 	if err := p.Check(ctx); err == nil {

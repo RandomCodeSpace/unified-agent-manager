@@ -18,7 +18,8 @@ On the Linux host:
 - `uam` installed from a release or `make install`. The web assets are built
   into the binary; Node.js is not needed to serve them.
 - `copilot` (GitHub Copilot CLI, which needs `node` on `PATH`), installed and
-  signed in exactly as for the terminal. UAM reuses its existing
+  signed in exactly as for the terminal, or signed in later from Settings (see
+  [GitHub Copilot sign-in](#github-copilot-sign-in)). UAM reuses its existing
   configuration, credentials, model settings, and permission rules. It does
   not install, update, or reconfigure it.
 - Start `uam web` from a normal login shell, where `copilot` resolves on
@@ -139,6 +140,57 @@ long or a symbolic-link loop is 400, one you cannot read or write is 403,
 a missing one 404, and a full disk or quota 507. Both need sign-in like
 other protected API routes. Created folders are logged with their path; listings
 are logged only at debug level (`UAM_DEBUG=1`).
+
+## GitHub Copilot sign-in
+
+Copilot has one sign-in per server: the one the `copilot` CLI uses for the
+service user. Every Task on the server, and the `copilot` command run as the
+same user, uses it. Settings → **GitHub Copilot** shows it, read again each
+time Settings opens or **Check again** is chosen:
+
+- **Signed in as** the account's login, and how: a sign-in Copilot stored on
+  the server, the token in a named environment variable (never its value),
+  or the GitHub CLI (`gh`) sign-in.
+- **Signed out**, with Copilot's own reason. While Copilot is signed out a
+  banner over the main pane says "GitHub Copilot is signed out. Sign in in
+  Settings." with **Open Settings**; creating a Task or sending to one is
+  refused with that sentence (code `provider_signed_out`, HTTP 409) instead of
+  the runtime's error, and a turn that fails because the sign-in was lost says
+  so in place of that error. `GET /api/meta` lists the provider as
+  `available: false` with `signed_out: true`.
+
+**Sign in with a token.** Paste a fine-grained personal access token with the
+**Copilot Requests** permission (create one on GitHub under Settings →
+Developer settings → Personal access tokens → Fine-grained tokens); classic
+`ghp_` tokens are not accepted. The field is a password field. The token goes
+straight to Copilot's `account.login`, which checks it with GitHub and stores
+it the way `copilot login` does; UAM never logs, stores or returns it, and the
+field is cleared whatever the outcome. A refused token shows GitHub's reason.
+Replacing an existing sign-in asks for confirmation first. Copilot's models
+load at once: no service restart is needed. If Copilot could not store the
+sign-in, Settings says it lasts until the service restarts.
+
+**Sign out** is offered only for a sign-in Copilot stored, after a
+confirmation; it also signs the `copilot` command out for that user. A `gh`
+sign-in is changed with `gh auth logout` on the server.
+
+**Environment tokens win.** A token in `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or
+`GITHUB_TOKEN` (in that order) in the service's environment takes precedence
+over any stored sign-in, so while one is set Settings names the variable and
+turns signing in and out off. Change or remove it where the service starts,
+then restart the service.
+
+**Device code sign-in is not supported** in the browser: Copilot offers no
+supported way for UAM to run it. Run `copilot login` on the server as the user
+that runs UAM, then choose **Check again**.
+
+The API: `GET /api/providers/copilot/account` returns `{"signed_in", "login"?,
+"host"?, "source"? ("stored", "env", "gh-cli" or "other"), "env_var"?,
+"message"?}`; `POST /api/providers/copilot/account/sign-in` with `{"token"}`
+and `POST /api/providers/copilot/account/sign-out` return the same shape, or
+400 with the reason for a refused token, 409 while an environment token takes
+precedence. All need sign-in like other protected API routes. Sign-ins and
+sign-outs are logged without the token.
 
 ## Use it
 

@@ -4,6 +4,7 @@ import { PlannerContext } from './planner/context';
 import { SavedPromptsSettings } from './Assist';
 import { api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { BackgroundAI } from './BackgroundAI';
+import { CopilotAccount } from './CopilotAccount';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { byCodeUnit } from '../lib/order';
 import { Field, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
@@ -481,6 +482,11 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
         <ScrollSentinel sentinelRef={sentinel} />
         <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
           <p className="text-caption text-muted">Kept by the service, so they apply in every browser. This browser's own settings are at the end.</p>
+          {(meta?.providers ?? []).filter((p) => p.capabilities.account).map((p) => (
+            <Section key={p.name} id={`account-${p.name}`} title={p.display_name}>
+              <CopilotAccount provider={p} />
+            </Section>
+          ))}
           {!loaded && (
             <>
               <PendingSection id="composer" title="Composer" label="Loading settings…" />
