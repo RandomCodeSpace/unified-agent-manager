@@ -665,8 +665,10 @@ sign-outs are logged without the token.
   `model` query parameter for the draft's offered model; submission and dispatch
   recheck its media support without changing the running turn.
 - **Suggested replies**: when a turn completes with an answer, up to three
-  short replies you would likely send next show as buttons above the
-  composer's text. Choosing one puts it in the composer; nothing is sent until
+  short replies you would likely send next float in one row just above the
+  composer, over the end of the conversation, so the composer keeps its size
+  as they come and go (on a narrow screen the row scrolls sideways; "Jump to
+  bottom" rises above it). Choosing one puts it in the composer; nothing is sent until
   you send it. They come from one Utility model call, made the first time a
   composer shows that turn, with your last message and the agent's final
   answer; the replies are kept with the Task, so opening it again, in any
