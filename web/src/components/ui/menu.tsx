@@ -30,6 +30,8 @@ export interface ActionItem {
   disabled?: boolean;
   /** Why it is disabled; shown under the item so the rule is visible, not guessed. */
   reason?: string;
+  /** Its keyboard shortcut, shown at the row's end. */
+  hint?: string;
   /** The action moves focus itself (an inline editor); the closing menu then leaves focus alone. */
   takesFocus?: boolean;
   danger?: boolean;
@@ -93,6 +95,7 @@ function renderActions(parts: MenuParts, items: ActionItem[], defer: Deferred['d
       <parts.Item className={cn(itemClass, it.danger && dangerItemClass)} disabled={it.disabled} onClick={() => defer(it.onSelect, it.takesFocus)}>
         {it.icon}
         <span className="flex-1">{it.label}</span>
+        {it.hint && <span className="text-caption text-muted">{it.hint}</span>}
       </parts.Item>
       {it.disabled && it.reason && <p className="max-w-64 px-2 pb-1.5 text-caption text-muted">{it.reason}</p>}
     </div>

@@ -623,8 +623,10 @@ sign-outs are logged without the token.
   come back after a reload or a restart of UAM, because Copilot records the
   image's bytes in its session. They are deleted with the Task, like
   attachments.
-- **Messages while a turn runs**: the composer shows two buttons, **After
-  this turn** (queue) and **Send now** (steer), in place of Send.
+- **Messages while a turn runs**: Send carries the name of what it will do,
+  **Send now** (steer) or **After this turn** (queue), following the Settings
+  view; the menu beside it (the chevron, "More send options") offers the
+  other.
   - **After this turn** holds the message until the turn completes, then sends it as
     the next prompt. A Task queues up to 20 messages and sends them one turn
     at a time, oldest first. You can cancel a queued message until it is
@@ -643,17 +645,16 @@ sign-outs are logged without the token.
     why. With Copilot, a steer also moves a
     shell command that is running to the background.
     A steer uses the current turn's model settings. If your draft selects
-    different settings, Send now is dimmed and says why; use **After this
-    turn**. UAM does not silently change a requested steer into a queued
-    message or restart the running response. When the provider cannot steer
-    a running turn, Send now stays dimmed with that reason and Enter queues.
+    different settings, or the provider cannot steer a running turn, Send
+    becomes **After this turn**, Enter queues, and Send now stays in the menu,
+    dimmed, with the reason. UAM does not silently change a requested steer
+    into a queued message or restart the running response.
   - When no turn is running there is one button, **Send**, which sends the
     message at once.
-  - While a turn runs, Enter does what the Settings view says (Send now by
-    default) and Ctrl+Enter (⌘+Enter on a Mac) the other. The button Enter
-    presses is the dark one; the tooltips name the keys. On a phone both
-    buttons sit on their own row under the toolbar. Files and attachments go
-    with a steer as with any other message.
+  - While a turn runs, Enter does what Send says (Send now by default) and
+    Ctrl+Enter (⌘+Enter on a Mac) the other; the tooltip and the menu name
+    the keys. Files and attachments go with a steer as with any other
+    message.
   - **History**: with the caret on the first line (or an empty message), Up
     recalls the previous prompt from this Task, newest first, as in a shell;
     Up again goes further back. Down from the last line comes forward, and

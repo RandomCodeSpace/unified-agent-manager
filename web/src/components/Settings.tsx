@@ -504,7 +504,7 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               label="While a task is running, Enter…"
               help={
                 <>
-                  Send now adds the message to the running turn; After this turn holds it until the turn ends. {other} stays on Ctrl+Enter (⌘+Enter on a Mac) and on its own button.
+                  Send now adds the message to the running turn; After this turn holds it until the turn ends. {other} stays on Ctrl+Enter (⌘+Enter on a Mac) and in the menu beside the send button.
                 </>
               }
             >
