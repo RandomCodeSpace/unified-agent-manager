@@ -651,6 +651,111 @@ describe('owner authoring', () => {
     expect(paths()).toBe(typed);
   });
 
+  test('the checklist adds an item, also to a card without one, renames one and removes one', async () => {
+    const { user, tree } = await openPlanner();
+    // #9 has no checklist yet: the group offers only the add row.
+    let panel = await openCard(user, tree, 9);
+    const empty = within(panel.getByRole('region', { name: 'Checklist' }));
+    expect(empty.queryByRole('listitem')).toBeNull();
+    expect((empty.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(true);
+    await user.type(empty.getByRole('textbox', { name: 'Add an item' }), 'Drop previews from closed Tasks{Enter}');
+    const one = within(await panel.findByRole('region', { name: 'Checklist 0/1' }));
+    expect(one.getByRole('checkbox', { name: 'Drop previews from closed Tasks' })).toBeTruthy();
+    await waitFor(() => expect((one.getByRole('textbox', { name: 'Add an item' }) as HTMLInputElement).value).toBe(''));
+    await closeCard(user);
+
+    panel = await openCard(user, tree, 15);
+    // Click the text to rename it; Enter saves and hands focus back to the item.
+    await user.click(panel.getByRole('button', { name: 'Edit Scroll to the middle' }));
+    const field = panel.getByRole('textbox', { name: 'Item text' });
+    expect(document.activeElement).toBe(field);
+    await user.clear(field);
+    await user.type(field, 'Scroll to the middle row{Enter}');
+    const renamed = await panel.findByRole('button', { name: 'Edit Scroll to the middle row' });
+    await waitFor(() => expect(document.activeElement).toBe(renamed));
+    // Esc keeps the old text.
+    await user.click(renamed);
+    await user.type(panel.getByRole('textbox', { name: 'Item text' }), ' and back{Escape}');
+    expect(panel.queryByRole('textbox', { name: 'Item text' })).toBeNull();
+    expect(panel.getByRole('button', { name: 'Edit Scroll to the middle row' })).toBeTruthy();
+    // Leaving the field saves too.
+    await user.click(panel.getByRole('button', { name: 'Edit Land an older page' }));
+    await user.type(panel.getByRole('textbox', { name: 'Item text' }), ' above it');
+    await user.tab();
+    expect(await panel.findByRole('button', { name: 'Edit Land an older page above it' })).toBeTruthy();
+    // × removes an item at once.
+    await user.click(panel.getByRole('button', { name: 'Remove Scroll to the middle row' }));
+    const left = within(await panel.findByRole('region', { name: 'Checklist 0/1' }));
+    expect(left.getAllByRole('checkbox').map((x) => x.getAttribute('aria-label'))).toEqual(['Land an older page above it']);
+  });
+
+  test('a checklist item emptied is refused in place, with no request', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 15);
+    const fetchSpy = vi.spyOn(window, 'fetch');
+    try {
+      await user.click(panel.getByRole('button', { name: 'Edit Land an older page' }));
+      const field = panel.getByRole('textbox', { name: 'Item text' });
+      await user.clear(field);
+      await user.type(field, '   {Enter}');
+      expect(within(panel.getByRole('region', { name: 'Checklist 0/2' })).getByRole('alert').textContent).toBe('An item needs text. Esc keeps the old one, or remove the item.');
+      expect(field.getAttribute('aria-invalid')).toBe('true');
+      expect(document.activeElement).toBe(field);
+      expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(0);
+      // Typing clears the error; Esc leaves the item as it was.
+      await user.type(field, 'x');
+      expect(panel.queryByRole('alert')).toBeNull();
+      await user.keyboard('{Escape}');
+      expect(panel.getByRole('button', { name: 'Edit Land an older page' })).toBeTruthy();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('the checklist is read-only on a cancelled or Unassigned card, and waits while a save runs', async () => {
+    const { user, tree } = await openPlanner();
+    // A cancelled card's items show, but nothing edits them until it is restored.
+    await user.click(screen.getByRole('switch', { name: 'Show cancelled' }));
+    let panel = await openCard(user, tree, 10);
+    const cancelled = within(panel.getByRole('region', { name: 'Checklist 1/2' }));
+    expect(cancelled.getAllByRole('checkbox').every((x) => (x as HTMLInputElement).disabled)).toBe(true);
+    expect(cancelled.queryByRole('button')).toBeNull();
+    expect(cancelled.queryByRole('textbox')).toBeNull();
+    await closeCard(user);
+
+    // While a save runs, the other controls wait for it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const spy = serviceReply(
+      (url, method) => method === 'PATCH' && url.includes('/api/board/cards/'),
+      async (real) => {
+        await gate;
+        return real();
+      },
+    );
+    try {
+      panel = await openCard(user, tree, 15);
+      await user.type(panel.getByRole('textbox', { name: 'Add an item' }), 'Assert the row');
+      await user.click(panel.getByRole('button', { name: 'Remove Scroll to the middle' }));
+      expect((panel.getByRole('button', { name: 'Remove Land an older page' }) as HTMLButtonElement).disabled).toBe(true);
+      expect((panel.getByRole('button', { name: 'Edit Land an older page' }) as HTMLButtonElement).disabled).toBe(true);
+      expect((panel.getByRole('checkbox', { name: 'Land an older page' }) as HTMLInputElement).disabled).toBe(true);
+      expect((panel.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(true);
+      release();
+      expect(await panel.findByRole('region', { name: 'Checklist 0/1' })).toBeTruthy();
+      await waitFor(() => expect((panel.getByRole('button', { name: 'Add item' }) as HTMLButtonElement).disabled).toBe(false));
+    } finally {
+      spy.mockRestore();
+    }
+    await closeCard(user);
+
+    // An Unassigned card has no checklist to show and none to add.
+    await pickProject(user, /^Unassigned, 1 card/);
+    const unassigned = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    panel = await openCard(user, unassigned, 36);
+    expect(panel.queryByRole('region', { name: /^Checklist/ })).toBeNull();
+  });
+
   test('a card’s description renders as Markdown', async () => {
     const { user, tree } = await openPlanner();
     const panel = await openCard(user, tree, 1);

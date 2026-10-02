@@ -94,7 +94,7 @@ function seedBoard(big: boolean): Seeded {
     card(7, P, 'story', 1, 'Trim the snapshot payload', { win_condition: 'The first snapshot of a 30-Task workspace is under 64 KiB.' }),
     card(8, P, 'subtask', 7, 'Drop unused fields from the task summary', { status: 'doing', held_by: 't1', win_condition: 'No summary field goes unread by the web client.', effort: 'S' }),
     card(9, P, 'subtask', 7, 'Send subagent previews only for the open Task', { win_condition: 'Closed Tasks carry no subagent previews in the snapshot.', blocked_by: ['cp1-8'] }),
-    card(10, P, 'subtask', 7, 'Compress the snapshot with gzip', { status: 'cancelled' }),
+    card(10, P, 'subtask', 7, 'Compress the snapshot with gzip', { status: 'cancelled', checklist: items(['Measure the gzip ratio', true], ['Gzip the first snapshot', false]) }),
     card(11, P, 'subtask', 7, 'Benchmark snapshot size per Task count', { ...suggestion, win_condition: 'A table of snapshot sizes for 10, 30 and 100 Tasks.' }),
     card(12, P, 'story', 1, 'Keep the transcript steady while pages land', { win_condition: 'Nothing on screen moves when an older page arrives.' }),
     card(13, P, 'subtask', 12, 'Anchor on the first visible row', { status: 'done' }),
