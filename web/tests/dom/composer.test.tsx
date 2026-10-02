@@ -38,16 +38,38 @@ describe('sending', () => {
     expect(screen.getByTitle('Then update the changelog')).toBeTruthy();
   });
 
-  test('while a turn runs, two buttons send now or after this turn', async () => {
+  test('while a turn runs, one Send does what Enter does and its menu the other', async () => {
     const { user, mock } = await openTask('t1');
     expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'After this turn' })).toBeNull();
     await user.type(composer(), 'Steer by button');
     await user.click(sendButton('Send now'));
     expect(await log().findByText('Steer by button')).toBeTruthy();
-    await user.type(composer(), 'Queue by button');
-    await user.click(sendButton('After this turn'));
+    await user.type(composer(), 'Queue from the menu');
+    const menu = await openMenu(user, 'More send options');
+    await user.click(menu.getByRole('menuitem', { name: 'After this turn Ctrl+Enter' }));
     expect(await screen.findByText('2 waiting')).toBeTruthy();
     expect(mock.received.filter((r) => r.route === 'prompt').map((r) => r.body.mode)).toEqual(['steer', 'queue']);
+    await waitFor(() => expect(document.activeElement).toBe(composer()));
+  });
+
+  test('with After this turn as the default, Send and Enter queue, and Ctrl+Enter and the menu steer', async () => {
+    const { user, mock } = await openTask('t1');
+    await api.updateWebSettings({ send_default: 'queue' });
+    expect(await screen.findByRole('button', { name: 'After this turn' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Send now' })).toBeNull();
+    expect(composer().placeholder).toBe('Send after this turn, or now to guide it…');
+    await user.type(composer(), 'Queue by Enter');
+    await user.keyboard('{Enter}');
+    expect(await screen.findByText('2 waiting')).toBeTruthy();
+    await user.type(composer(), 'Steer by Ctrl+Enter');
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(await log().findByText('Steer by Ctrl+Enter')).toBeTruthy();
+    await user.type(composer(), 'Steer from the menu');
+    const menu = await openMenu(user, 'More send options');
+    await user.click(menu.getByRole('menuitem', { name: 'Send now Ctrl+Enter' }));
+    expect(await log().findByText('Steer from the menu')).toBeTruthy();
+    expect(mock.received.filter((r) => r.route === 'prompt').map((r) => r.body.mode)).toEqual(['queue', 'steer', 'steer']);
   });
 
   test('Stop ends the turn and pauses the queue; Resume sends the queued prompt', async () => {
@@ -221,13 +243,24 @@ describe('settings in the toolbar', () => {
   });
 
   test('on a running task a new model is a draft setting for the next turn', async () => {
-    const { user } = await openTask('t1');
+    const { user, mock } = await openTask('t1');
     await choose(user, 'Model: Auto', /Claude Haiku 4\.5/);
     expect(await screen.findByText(/Draft settings apply when its next turn starts\./)).toBeTruthy();
     expect(screen.getByText(/Send now keeps the current turn’s settings\./)).toBeTruthy();
+    // A steer is impossible: Send and Enter queue, and the menu says why Send now is not offered.
+    expect(composer().placeholder).toBe('Send after this turn, or now to guide it…');
+    expect(screen.queryByRole('button', { name: 'Send now' })).toBeNull();
     await user.type(composer(), 'next');
-    await user.click(screen.getByRole('button', { name: 'After this turn' }));
+    const menu = await openMenu(user, 'More send options');
+    expect(menu.getByRole('menuitem', { name: 'Send now' }).getAttribute('aria-disabled')).toBe('true');
+    expect(menu.getByText(/Send now keeps the current turn’s settings\./)).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
+    expect(screen.getByRole('button', { name: 'After this turn' })).toBeTruthy();
+    await user.click(composer());
+    await user.keyboard('{Enter}');
     expect(await screen.findByText('2 waiting')).toBeTruthy();
+    expect(mock.received.filter((r) => r.route === 'prompt').map((r) => r.body.mode)).toEqual(['queue']);
     // Queued with its settings, the draft settings are spent.
     await waitFor(() => expect(screen.queryByText(/Draft settings apply/)).toBeNull());
   });
