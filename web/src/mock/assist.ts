@@ -24,8 +24,16 @@ function json(status: number, body?: unknown): Response {
 }
 const fail = (status: number, error: string) => json(status, { error });
 
-/** The service's reading of t20's turn (GET /api/sessions/{id}/evidence); other Tasks show none. */
+/**
+ * The service's reading of a turn (GET /api/sessions/{id}/evidence): t20's ran checks, t3's last
+ * turn only claims; other Tasks show none, so a chat-only answer (t-chart) has no finish card.
+ */
 const EVIDENCE: Record<string, Omit<TurnEvidence, 'since'>> = {
+  t3: {
+    checks: [],
+    claims: [{ text: 'Covered by TestDoctorDumbTerminal, and the doctor tests pass.', verified: false, detail: 'Not verified · no test run in this turn' }],
+    files: [],
+  },
   t20: {
     checks: [
       { item_id: 'f5', kinds: ['test'], command: 'go test ./internal/vterm/... -run Redraw', outcome: 'pass', exit: 0, counts: '1 package ok', took_ms: 1400, has_output: true },
@@ -65,7 +73,7 @@ export function assistMock(host: AssistHost) {
       const out: TurnEvidence = { ...(EVIDENCE[t.id] ?? { checks: [], claims: [], files: [] }) };
       const since = url.searchParams.get('since'), until = url.searchParams.get('until') ?? new Date().toISOString();
       const fresh = since ? t.items.filter((i) => !i.agent_id && i.time > since && i.time <= until) : [];
-      if (fresh.length && EVIDENCE[t.id]) out.since = { text: 'the agent finished, ran the tests plus 1 other command, and changed 2 files', ids: fresh.map((i) => i.id) };
+      if (fresh.length && t.id === 't20') out.since = { text: 'the agent finished, ran the tests plus 1 other command, and changed 2 files', ids: fresh.map((i) => i.id) };
       return json(200, out);
     }
     if ((r = path.match(/^\/api\/sessions\/([^/]+)\/rerun$/)) && method === 'POST') {

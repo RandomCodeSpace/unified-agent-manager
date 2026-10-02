@@ -441,7 +441,11 @@ sign-outs are logged without the token.
   conversation with **Table** (the rows), **Copy CSV** and **Pin to
   project**, and a footer saying where the rows came from and when. The rows are
   kept with the Task, so the card survives a reload and a restart, and goes
-  when the Task is deleted.
+  when the Task is deleted. A chart fills the width of the conversation and
+  keeps its text at the same size at any width. Each series has a fixed
+  colour: several series take blue, orange, green and purple in order, and a
+  chart of one series takes the colour its name picks, so the same measure
+  keeps its colour across charts and refreshes.
   **Pin to project** shows the command that a refresh will run; pinning is
   your approval of it. A chart made from rows the agent passed pins as a
   snapshot and never refreshes. A Project keeps up to 12 pinned charts.
@@ -666,8 +670,10 @@ sign-outs are logged without the token.
   `model` query parameter for the draft's offered model; submission and dispatch
   recheck its media support without changing the running turn.
 - **Suggested replies**: when a turn completes with an answer, up to three
-  short replies you would likely send next show as buttons above the
-  composer's text. Choosing one puts it in the composer; nothing is sent until
+  short replies you would likely send next float in one row just above the
+  composer, over the end of the conversation, so the composer keeps its size
+  as they come and go (on a narrow screen the row scrolls sideways; "Jump to
+  bottom" rises above it). Choosing one puts it in the composer; nothing is sent until
   you send it. They come from one Utility model call, made the first time a
   composer shows that turn, with your last message and the agent's final
   answer; the replies are kept with the Task, so opening it again, in any
@@ -870,7 +876,12 @@ sign-outs are logged without the token.
 - **Finish card**: under a turn that completed, a card titled "Finished —
   check the evidence" puts what the agent did before what it says it did.
   It never uses a model; fixed rules in the service read the whole turn,
-  however long, and the outcome line reads the same result:
+  however long, and the outcome line reads the same result. The card
+  appears once that reading arrives and shows only the parts below that
+  have something; a turn that ran no check, made no claim and edited no
+  file, in a Task with no change to review or commit (a question answered
+  in chat), has no card at all. Once shown for a turn it stays, so a
+  commit's outcome stays in view:
   - **Checks**: each shell command of the main agent in the turn that runs
     tests, a build, a linter, `go vet` or a type check (`go test`,
     `npm test`, `pytest`, `cargo test`, `go build`, `npm run build`,
@@ -897,6 +908,8 @@ sign-outs are logged without the token.
     failure word is not read as a claim ("I did not run the linter, but the
     build passes" claims the build only); "no errors", "no failures" and
     the like are not negations. The header counts the claims not verified.
+    When the turn made claims but ran no check, one line says no tests,
+    builds or linters ran.
   - **Changed in this turn**: the files the turn's edit tools changed (the
     main agent's and its subagents'; edits that failed left out), the same
     files Changes lists for "Last turn", named from the repository's top
@@ -1131,7 +1144,8 @@ sign-outs are logged without the token.
   permission is for, "Finished, ready for your review", "Stopped with an
   error", "Compacting…" while the conversation is compacted, or "Working ·
   quiet 12m" once Copilot has reported nothing for a few minutes (the status
-  never shows what the agent is doing). Hovering an
+  never shows what the agent is doing). A row is two lines at most: a long
+  status line is cut short, and hovering the row shows all of it. Hovering an
   active row that can settle shows Settle.
   - **Alt+J / Alt+K** open the next / previous Task in "Needs you", wrapping
     round. They do nothing in the terminal, and in a text field where the
