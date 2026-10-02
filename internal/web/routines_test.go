@@ -329,6 +329,23 @@ func TestRoutineTimeLimitCancelsTheTurn(t *testing.T) {
 	if got.Outcome != RunTimeLimit || !strings.Contains(got.Reason, "5 minutes") {
 		t.Fatalf("run = %+v", got)
 	}
+	// The Task says the routine stopped it, not the owner.
+	sum, err := m.Summary(run.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.State != StateCancelled || sum.StateDetail != "Stopped at the routine's time limit (5 min)" {
+		t.Fatalf("task = %s, %q", sum.State, sum.StateDetail)
+	}
+	// The owner's own Stop on a later turn records no such reason.
+	mustSubmit(t, m, run.TaskID, "try again", mustUUID(t), ModeSend, SubmissionAccepted)
+	if _, err := m.Cancel(run.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	conv.EmitTurn(agentapi.TurnCancelled, "")
+	if sum, _ := m.Summary(run.TaskID); sum.State != StateCancelled || sum.StateDetail != "" {
+		t.Fatalf("task after the owner's stop = %s, %q", sum.State, sum.StateDetail)
+	}
 }
 
 // Runs that started a Task count against the day's limit; skips do not.

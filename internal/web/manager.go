@@ -359,6 +359,7 @@ type webSession struct {
 	commandSubmissions []Submission
 	commandLedger      string
 	stopSeq            uint64
+	stopReason         string // what asked to stop the turn when not the owner; the cancelled state's detail
 	submissions        []Submission
 	last               *Submission
 	createReq          string
@@ -2057,7 +2058,8 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		// The whole turn is over, steers included: the queue may go on.
 		m.kickDrainLocked(s)
 	case agentapi.TurnCancelled:
-		s.setBase(StateCancelled, "")
+		s.setBase(StateCancelled, s.stopReason)
+		s.stopReason = ""
 		m.pauseQueueLocked(s)
 	case agentapi.TurnFailed:
 		detail := "the provider reported that the turn failed"
@@ -3278,9 +3280,15 @@ func (m *Manager) cancelledLocked(s *webSession, reqID string) {
 	s.remember(Submission{RequestID: reqID, Status: SubmissionCancelled, Time: m.now()})
 }
 
-// Cancel aborts the running turn. It is distinct from a viewer leaving and
-// from Close: the conversation stays open.
+// Cancel aborts the running turn at the owner's request. It is distinct from
+// a viewer leaving and from Close: the conversation stays open.
 func (m *Manager) Cancel(id string) (SessionSummary, error) {
+	return m.cancelBecause(id, "")
+}
+
+// cancelBecause is Cancel by uam itself: reason says why, and becomes the
+// cancelled Task's detail. An empty reason is the owner's Stop.
+func (m *Manager) cancelBecause(id, reason string) (SessionSummary, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return SessionSummary{}, err
@@ -3302,6 +3310,7 @@ func (m *Manager) Cancel(id string) (SessionSummary, error) {
 		return SessionSummary{}, newError(http.StatusConflict, "no turn is running")
 	}
 	s.stopSeq++
+	s.stopReason = reason
 	before := m.summaryLocked(s)
 	m.pauseQueueLocked(s)
 	m.changedLocked(s, before)

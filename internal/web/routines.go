@@ -286,7 +286,8 @@ func (m *Manager) checkRoutines() {
 		return
 	}
 	rs := &m.routines
-	var cancels []string
+	// cancels maps each Task over its run's time limit to its stop reason.
+	cancels := map[string]string{}
 	var starts []routineStart
 	rs.mu.Lock()
 	if len(rs.list) == 0 {
@@ -303,7 +304,7 @@ func (m *Manager) checkRoutines() {
 		}
 		outcome, reason, cancel := m.runOutcome(r, run, now)
 		if cancel {
-			cancels = append(cancels, run.taskID)
+			cancels[run.taskID] = fmt.Sprintf("Stopped at the routine's time limit (%d min)", r.MaxMinutes)
 		}
 		if outcome != "" {
 			endRun(r, run.runID, outcome, reason, now)
@@ -328,8 +329,8 @@ func (m *Manager) checkRoutines() {
 	}
 	m.saveRoutinesLocked(slices.Sorted(maps.Keys(changed))...)
 	rs.mu.Unlock()
-	for _, id := range cancels {
-		if _, err := m.Cancel(id); err != nil {
+	for _, id := range slices.Sorted(maps.Keys(cancels)) {
+		if _, err := m.cancelBecause(id, cancels[id]); err != nil {
 			log.Warn("cancel a routine run over its time limit failed", "session", id, "error", err)
 		}
 	}

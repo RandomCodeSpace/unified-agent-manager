@@ -143,8 +143,9 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
       return { text: 'Stopped with an error', tone: 'error' };
     case 'interrupted':
       return { text: 'Interrupted before it finished', tone: 'warning' };
+    // uam names what stopped it when it was not you (a routine's time limit).
     case 'cancelled':
-      return { text: 'You stopped it', tone: 'muted' };
+      return { text: s.state_detail || 'You stopped it', tone: 'muted' };
     case 'closed':
       return { text: 'Conversation closed', tone: 'muted' };
     default:

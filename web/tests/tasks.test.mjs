@@ -179,6 +179,9 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass' }), 'Fixed the test; tests pass');
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test' }, true), 'Ready for review: Fixed the test');
   assert.equal(status({ state: 'failed' }), 'Stopped with an error');
+  assert.equal(status({ state: 'cancelled' }), 'You stopped it');
+  // uam stopped it, not the owner: the service says what did.
+  assert.equal(status({ state: 'cancelled', state_detail: "Stopped at the routine's time limit (5 min)" }), "Stopped at the routine's time limit (5 min)");
   assert.equal(status({ state: 'completed', stage: 'settled' }), 'Settled');
 });
 
