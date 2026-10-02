@@ -129,6 +129,15 @@ test('a task whose turn ended shows Working while a subagent still runs', () => 
   assert.equal(shownState({ state: 'failed', subagents_running: 1 }), 'failed');
 });
 
+test('a compacting Task shows Working and its row says Compacting', async () => {
+  const { taskStatus } = await import('../src/lib/tasks.ts');
+  for (const state of ['idle', 'completed', 'working', 'cancelled']) assert.equal(shownState({ state, subagents_running: 0, compacting: true }), 'working');
+  // A request waiting for the user still wins.
+  assert.equal(shownState({ state: 'awaiting_answer', subagents_running: 0, compacting: true }), 'awaiting_answer');
+  assert.equal(taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { state: 'completed', compacting: true }), true).text, 'Compacting…');
+  assert.equal(taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { state: 'awaiting_permission', compacting: true })).text, 'Wants your OK to continue');
+});
+
 test('the Task list groups: Needs you, Ready for review, Working, Idle', async () => {
   const { commandGroups, groupOf, needsYouCount } = await import('../src/lib/tasks.ts');
   const unread = (t) => t.id.endsWith('*');

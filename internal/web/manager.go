@@ -269,6 +269,8 @@ type webSession struct {
 	// renames counts Rename calls, so a title job knows when a rename came
 	// while it ran.
 	renames uint64
+	// compacting is set while the open conversation compacts; not persisted.
+	compacting bool
 	// mode is safe or yolo: a yolo Task's permission requests are allowed
 	// once without asking.
 	mode      store.Mode
@@ -948,7 +950,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
-		Ask: s.pendingAsk(), EventAt: s.eventAt,
+		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil,
 		Diff:    s.diff,
 		RerunOf: s.rerunOf, Outcome: s.outcome,
 	}
@@ -1980,6 +1982,8 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 				s.context = &usage
 			}
 		}
+	case agentapi.EventCompaction:
+		s.compacting = ev.Compacting
 	case agentapi.EventUsage:
 		m.applyUsageLocked(s, ev.Usage)
 	case agentapi.EventTitle:
@@ -2438,7 +2442,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	boardTools := m.boardToolsLocked(s.projectID)
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
-	s.context = nil
+	s.context, s.compacting = nil, false
 	var selectionErr error
 	if effort != "" || contextSize != "default" {
 		selectionErr = m.validateSelectionLocked(s.provider, model, effort, contextSize)

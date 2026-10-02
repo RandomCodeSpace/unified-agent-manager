@@ -147,6 +147,7 @@ func TestWebCommandsListSupportedAndDisabledNativeCommands(t *testing.T) {
 		{Name: "review", Kind: rpc.SlashCommandKindBuiltin, Description: "Review changes", Input: &rpc.SlashCommandInput{Hint: "focus"}},
 		{Name: "init", Kind: rpc.SlashCommandKindBuiltin},
 		{Name: "model", Kind: rpc.SlashCommandKindBuiltin},
+		{Name: "compact", Kind: rpc.SlashCommandKindBuiltin},
 		{Name: "plan", Kind: rpc.SlashCommandKindBuiltin},
 		{Name: "add-dir", Kind: rpc.SlashCommandKindBuiltin},
 		{Name: "probe-skill", Kind: rpc.SlashCommandKindSkill, Description: "Probe"},

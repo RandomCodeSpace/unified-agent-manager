@@ -8,8 +8,12 @@ export function newsReader(selectedId: string | null, viewed: Readonly<Record<st
   return (session: SessionSummary) => session.id !== selectedId && session.updated_at > (viewed[session.id] ?? loadedAt);
 }
 
-/** The state a Task shows on its card and header chip: Working while a subagent still runs after its turn completed (Copilot lets background subagents outlive the turn that started them). */
-export function shownState(s: Pick<SessionSummary, 'state' | 'subagents_running'>): SessionState {
+/**
+ * The state a Task shows on its card and header chip: Working while a subagent still runs after its turn completed (Copilot
+ * lets background subagents outlive the turn that started them), and while the conversation compacts, unless it waits for the user.
+ */
+export function shownState(s: Pick<SessionSummary, 'state' | 'subagents_running' | 'compacting'>): SessionState {
+  if (s.compacting && s.state !== 'awaiting_permission' && s.state !== 'awaiting_answer' && s.state !== 'starting') return 'working';
   return (s.state === 'completed' || s.state === 'idle') && s.subagents_running > 0 ? 'working' : s.state;
 }
 
@@ -117,6 +121,7 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
     case 'starting':
       return { text: 'Starting', tone: 'accent' };
     case 'working': {
+      if (s.compacting) return { text: 'Compacting…', tone: 'accent' };
       const quiet = now - Date.parse(s.event_at ?? s.updated_at);
       return { text: quiet >= QUIET_MS ? `Working · quiet ${span(quiet)}` : 'Working', tone: 'accent' };
     }

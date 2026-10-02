@@ -539,8 +539,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const noGit = project?.no_git;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
-  // A subagent still running after the turn keeps the Task Working (lib/tasks shownState).
+  // A subagent still running after the turn, or compacting, keeps the Task Working (lib/tasks shownState).
   const state = shownState(session);
+  const compacting = !!session.compacting && state === 'working';
   // The finish card follows a turn that completed, at the live end of the history.
   const lastTiming = session.turn_timings?.at(-1);
   const finished = !live && state !== 'working' && !session.history_after && !historyLoading && liveItems.some((item) => item.kind === 'assistant' && !item.agent_id)
@@ -586,7 +587,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {readOnly(session) ? (
               <Chip fill="outline">{stageLabel(session)}</Chip>
             ) : (
-              <StateMark state={state} label={!phone} title={state !== session.state ? runningTitle : detail} className="shrink-0" />
+              <StateMark state={state} label={!phone} text={compacting ? 'Compacting…' : undefined} title={compacting ? 'Compacting the conversation' : state !== session.state ? runningTitle : detail} className="shrink-0" />
             )}
             {/* The last completed turn in one line, beside its state (phones show it in the list). */}
             {state === 'completed' && session.outcome && !readOnly(session) && <span className="min-w-0 max-w-[45%] truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
@@ -731,6 +732,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               workdir={session.workdir}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
               footVerb={false}
+              compacting={compacting}
               density={density}
               onOpenChanges={openChanges}
               changedLine={!noGit}
@@ -759,7 +761,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           {/* The working label stays centred just above the composer; while it shows, "Jump to bottom" is an arrow beside it, so it never moves. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
             <div className="relative flex">
-              <WorkingLabel working={labelled} since={agentsSince} items={liveItems} identityItems={session.history_index} turnTimings={session.turn_timings} />
+              <WorkingLabel working={labelled} compacting={compacting} since={agentsSince} items={liveItems} identityItems={session.history_index} turnTimings={session.turn_timings} />
               <Appear show={jump && labelled} className="absolute top-0 left-full ml-2">
                 <Tip label="Jump to bottom">
                   <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={scrollToBottom}>

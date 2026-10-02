@@ -675,6 +675,8 @@ export interface SessionSummary {
   rerun_of?: string;
   /** The last completed turn in one line ("Fixed the flaky test; 3 files changed; tests pass"); absent while a turn runs or when there is nothing to say. */
   outcome?: string;
+  /** Set while the conversation is being compacted (/compact or the provider's automatic compaction); absent otherwise. */
+  compacting?: boolean;
   queued?: number;
   state: SessionState;
   state_detail?: string;
